@@ -827,6 +827,154 @@ outgoing_queue ◄────┼──── ServerEvents ◄──── agent
 
 ---
 
+### 边界情况与陷阱
+
+#### MsgHub 的发布订阅陷阱
+
+**Critical: 循环订阅导致死循环**
+
+```python
+# 如果参与者列表包含 MsgHub 自身，会导致无限广播
+async with MsgHub(participants=[agent1, msg_hub_instance, agent2]):
+    # 错误：msg_hub_instance 也是参与者，会收到自己的广播
+    pass
+```
+
+**High: enable_auto_broadcast 与手动 broadcast 的交互**
+
+```python
+# 当 enable_auto_broadcast=False 时，broadcast() 仍然可以手动调用
+# 但不会触发自动广播，可能导致消息丢失
+hub = MsgHub(participants=[a1, a2], enable_auto_broadcast=False)
+async with hub:
+    await hub.broadcast(msg)  # 只发送给 a1, a2，不会自动广播
+    # 后续 a1 的回复不会被自动广播！
+```
+
+#### FanoutPipeline 的并发陷阱
+
+**High: deepcopy 性能开销**
+
+```python
+# deepcopy 在消息较大时会产生显著性能开销
+# 对于包含大量历史的消息，每次分发都会完整拷贝
+large_msg = Msg(content=very_long_history * 1000)  # 10MB 消息
+fanout_pipeline([agent1, agent2, agent3], large_msg)  # 3次拷贝 = 30MB
+```
+
+**Medium: 并发异常传播**
+
+```python
+# asyncio.gather() 默认行为：一个任务异常会取消其他任务
+tasks = [asyncio.create_task(agent(deepcopy(msg))) for agent in agents]
+# 如果 agent2 抛出异常，agent1 和 agent3 会被取消
+results = await asyncio.gather(*tasks)  # 异常会传播
+```
+
+#### Formatter 的格式陷阱
+
+**High: 不同模型 API 的 tool_call 格式差异**
+
+```python
+# OpenAI: tool_call 是独立字段
+{"role": "assistant", "tool_calls": [...]}
+
+# Anthropic: tool_use 是 content 内的块
+{"role": "user", "content": [{"type": "tool_use", ...}]}
+
+# Gemini: function_call 是独立字段
+{"role": "model", "function_call": {...}}
+
+# 如果错误混用，会导致 API 报 400 错误
+```
+
+**Medium: 消息截断的语义丢失**
+
+```python
+# TruncatedFormatter 截断消息时，可能截断在句子中间
+# 导致 LLM 收到不完整的句子，理解出现偏差
+content = "Please buy 100 shares of AAPL, 50 shares of MSFT, and 30..."  # 被截断
+# LLM 可能只看到 "Please buy 100 shares of AAPL, 50 shares of MSFT, and 30"
+```
+
+#### Session 的持久化陷阱
+
+**High: StateModule 未正确初始化的对象无法加载**
+
+```python
+# 如果 StateModule 子类在 __init__ 中忘记调用 super().__init__()
+# load_state_dict 会静默失败（strict=False 时）
+class BadAgent(AgentBase):
+    def __init__(self):
+        self.memory = InMemoryMemory()  # 忘记调用 super().__init__()！
+        # 此时 _module_dict 不存在，memory 不会被追踪
+
+agent.load_state_dict(state)  # memory 字段不会被恢复！
+```
+
+**Medium: 并发写入同一 Session**
+
+```python
+# 多个协程同时保存同一 session_id，会产生竞态条件
+# RedisSession 不提供原子性保证
+await asyncio.gather(
+    session.save_session_state("s1", user_id="u1", agent=agent1),
+    session.save_session_state("s1", user_id="u1", agent=agent2),  # 覆盖！
+)
+```
+
+#### Tracing 的采样陷阱
+
+**Medium: trace_enabled 默认关闭导致数据丢失**
+
+```python
+# 如果忘记在 init() 中启用 tracing，追踪数据不会发送
+agentscope.init(project="my-project")  # 没有 tracing_url
+# 所有 @trace_reply 等装饰器不会记录任何数据
+# 在生产环境排查问题时会丢失关键链路信息
+```
+
+---
+
+### 性能考量
+
+#### Pipeline 执行性能
+
+| 场景 | 推荐模式 | 原因 |
+|------|----------|------|
+| 少量快速 Agent | SequentialPipeline | 避免并发开销 |
+| 大量耗时 Agent | FanoutPipeline (enable_gather=True) | 最大化并发 |
+| 内存敏感 | FanoutPipeline (enable_gather=False) | 避免 deepcopy |
+| 流式响应 | stream_printing_messages | 支持增量输出 |
+
+**deepcopy 开销分析**：
+- 消息 < 1KB：开销可忽略 (< 1ms)
+- 消息 1KB-100KB：需要注意 (~5-50ms)
+- 消息 > 100KB：考虑使用 `msg.copy()` 或只拷贝必要字段
+
+#### Formatter 性能
+
+**消息格式转换开销**：
+- SimpleFormatter: 最快（直接字典转换）
+- OpenAIChatFormatter: 中等（需要处理 tool_calls）
+- TruncatedFormatterBase: 最慢（需要计算 token 并截断）
+
+**优化建议**：
+- 批量格式化时复用 Formatter 实例
+- 避免在热路径中重复创建 Formatter 对象
+
+#### Session 性能
+
+**存储后端选择**：
+
+| 后端 | 适用场景 | 延迟 | 容量 |
+|------|----------|------|------|
+| JSONSession | 开发/小规模 | ~10ms | 本地磁盘 |
+| RedisSession | 生产/分布式 | ~1ms | 内存（可持久化）|
+| TablestoreSession | 超大规模 | ~10ms | 云存储无限 |
+
+---
+
 ## 3. Formatter 消息格式化
 
 ### 3.1 FormatterBase 基类
@@ -1266,7 +1414,7 @@ class StateModule:
 
 ### 9.1 创建顺序 Pipeline
 
-```python
+```python showLineNumbers
 from agentscope.pipeline import SequentialPipeline
 from agentscope import AgentBase, Msg
 
@@ -1284,9 +1432,17 @@ result = await pipeline(initial)
 print(f"Final result: {result.content}")
 ```
 
+**预期输出**：
+```
+[Pipeline] agent1: Start -> processing
+[Pipeline] agent2: agent1 result -> processing
+[Pipeline] agent3: agent2 result -> processing
+Final result: agent3 output
+```
+
 ### 9.2 创建并行 Pipeline
 
-```python
+```python showLineNumbers
 from agentscope.pipeline import FanoutPipeline
 import asyncio
 
@@ -1305,9 +1461,18 @@ initial = Msg(name="user", content="Search for AI news", role="user")
 results = await pipeline(initial)  # 返回 list[Msg]
 ```
 
+**预期输出**：
+```
+[Pipeline] Fanout: Dispatching to 3 agents in parallel
+[Pipeline] searcher1: Searching...
+[Pipeline] searcher2: Searching...
+[Pipeline] searcher3: Searching...
+[Pipeline] Fanout: Gathered 3 results
+```
+
 ### 9.3 使用 MsgHub 进行多代理协作
 
-```python
+```python showLineNumbers
 from agentscope.pipeline import MsgHub
 from agentscope import AgentBase, Msg
 
@@ -1323,9 +1488,19 @@ async with MsgHub(
     # agent2 的回复会自动广播给 agent1 和 agent3
 ```
 
+**预期输出**：
+```
+[MsgHub] Broadcasting announcement: 开始协作
+[agent2] Observed: Msg(name='system', content='开始协作')
+[agent3] Observed: Msg(name='system', content='开始协作')
+[agent1] -> Reply: 你好
+[agent2] Observed: Msg(name='agent1', content='你好')
+[agent3] Observed: Msg(name='agent1', content='你好')
+```
+
 ### 9.4 使用 ChatRoom 进行实时广播
 
-```python
+```python showLineNumbers
 from agentscope.pipeline import ChatRoom
 from agentscope.agent import RealtimeAgent
 
@@ -1342,7 +1517,7 @@ await room.stop()
 
 ### 9.5 使用 Formatter
 
-```python
+```python showLineNumbers
 from agentscope.formatter import OpenAIChatFormatter
 from agentscope.message import Msg
 
@@ -1357,9 +1532,15 @@ formatted = await formatter.format(messages)
 print(formatted)
 ```
 
+**预期输出**：
+```
+[{'role': 'system', 'content': 'You are helpful.'},
+ {'role': 'user', 'content': 'Hello!'}]
+```
+
 ### 9.6 会话管理
 
-```python
+```python showLineNumbers
 from agentscope.session import JSONSession
 
 # 创建会话（save_dir 参数指定存储目录）
@@ -1380,9 +1561,15 @@ await session.load_session_state(
 )
 ```
 
+**预期输出**：
+```
+[Session] Saved state for session123
+[Session] Loaded state for session123
+```
+
 ### 9.7 启用追踪
 
-```python
+```python showLineNumbers
 import agentscope
 
 # 启用追踪（通过 init 函数配置 tracing endpoint）
@@ -1455,6 +1642,210 @@ agentscope.init(
 13. **为 FanoutPipeline 添加超时控制和错误处理机制。**
 
 14. **分析 OpenTelemetry 追踪数据的收集和导出流程。**
+
+### 练习 10.15: Sequential 与 Fanout 执行顺序验证 [基础]
+
+**题目描述**：
+给定以下代码，分别预测 `sequential_pipeline` 和 `fanout_pipeline` 的消息传递顺序，并指出两者的根本差异。
+
+```python
+import asyncio
+from agentscope.pipeline import sequential_pipeline, fanout_pipeline
+from agentscope import ReActAgent, Msg
+
+# 假设 a1, a2, a3 是已初始化的 ReActAgent
+async def test_sequential():
+    result = await sequential_pipeline([a1, a2, a3], Msg("user", "hello", "user"))
+    return result  # 返回什么？
+
+async def test_fanout():
+    results = await fanout_pipeline([a1, a2, a3], Msg("user", "hello", "user"))
+    return results  # 返回什么？
+```
+
+**预期输出/行为**：
+- `sequential_pipeline` 返回值类型是 `Msg`，`fanout_pipeline` 返回值类型是 `list[Msg]`
+- 顺序执行时，a1 的输出是 a2 的输入；并发执行时，a1/a2/a3 各自收到原始消息的深拷贝
+
+<details>
+<summary>参考答案</summary>
+
+```python
+# sequential_pipeline: 链式传递，每个 agent 的输出是下一个的输入
+# 返回值: 最后一个 agent 的输出 (Msg)
+#
+# fanout_pipeline: 并发分发，使用 deepcopy 保证消息隔离
+# 返回值: 所有 agent 输出的列表 (list[Msg])
+#
+# 验证方法:
+print(type(await test_sequential()))  # <class 'agentscope.message.Msg'>
+print(type(await test_fanout()))       # <class 'list'>
+
+# 执行顺序验证（加日志）:
+async def sequential_with_log(agents, msg):
+    for i, agent in enumerate(agents):
+        print(f"sequential: agent {i} executing...")
+        msg = await agent(msg)
+    return msg
+
+async def fanout_with_log(agents, msg):
+    async def run(agent, i):
+        print(f"fanout: agent {i} executing...")
+        return await agent(msg)
+    tasks = [run(a, i) for i, a in enumerate(agents)]
+    return await asyncio.gather(*tasks)
+```
+</details>
+
+### 练习 10.16: Pipeline 消息转换函数 [基础]
+
+**题目描述**：
+实现一个 `transform_pipeline`，在每个 agent 执行后对其输出消息进行转换（如添加前缀 `[{agent.name}]`）。
+
+```python
+from typing import Callable
+from agentscope import AgentBase, Msg
+
+async def transform_pipeline(
+    agents: list[AgentBase],
+    msg: Msg,
+    transform: Callable[[Msg, AgentBase], Msg],
+) -> Msg:
+    # 实现：遍历 agents，对每个输出应用 transform 函数
+    # 返回最终结果
+    ...
+```
+
+**预期输出/行为**：
+给定 2 个 agent，transform 函数添加 agent 名称前缀，输出消息的 `content` 应包含 `[agent1_name]` 和 `[agent2_name]` 前缀。
+
+<details>
+<summary>参考答案</summary>
+
+```python
+from typing import Callable
+from agentscope import AgentBase, Msg
+
+async def transform_pipeline(
+    agents: list[AgentBase],
+    msg: Msg,
+    transform: Callable[[Msg, AgentBase], Msg],
+) -> Msg:
+    for agent in agents:
+        output = await agent(msg)
+        if output is not None:
+            output = transform(output, agent)
+        msg = output  # 转换后的消息传递给下一个 agent
+    return msg
+
+# 使用示例
+def add_prefix(msg: Msg, agent: AgentBase) -> Msg:
+    return Msg(
+        role=msg.role,
+        content=f"[{agent.name}] {msg.content}",
+        name=msg.name,
+    )
+
+result = await transform_pipeline([agent1, agent2], initial_msg, add_prefix)
+# result.content 以 "[agent1_name] ..." 开头
+```
+</details>
+
+### 练习 10.17: MsgHub 广播路径追踪 [中级]
+
+**题目描述**：
+分析 MsgHub 中 `broadcast` 方法与 AgentBase 的 `_broadcast_to_subscribers` 方法的区别，指出以下场景中消息实际走了哪条路径。
+
+```python
+async with MsgHub(participants=[a1, a2], announce=True) as hub:
+    result = await a1(Msg("user", "hello", "user"))
+    # result 会被广播给 a2 吗？
+```
+
+**预期输出/行为**：
+当 `announce=True` 时，AgentBase 的 `_broadcast_to_subscribers` 会触发自动广播，消息经过 `MsgHub._announced_host` 广播。`broadcast()` 只影响手动调用 `hub.broadcast()` 的场景。
+
+<details>
+<summary>参考答案</summary>
+
+```python
+# broadcast() vs _broadcast_to_subscribers() 的区别：
+# - broadcast() 是 MsgHub 的公开方法，供外部手动广播
+# - _broadcast_to_subscribers() 是 AgentBase 的内部方法，
+#   在 agent.reply() 完成后自动触发
+#
+# announce=True 时：
+# - agent.reply() 完成后 → _broadcast_to_subscribers()
+#   → MsgHub._announced_host 捕获 → 广播给所有 participants
+#
+# 所以 result 会自动广播给 a2，无需手动调用 hub.broadcast()
+#
+# 验证方法：给 a2 的 observe() 方法加日志
+def logging_observe(self, msg):
+    print(f"{self.name} received: {msg.content}")
+    return super().observe(msg)
+
+a2.observe = lambda msg: logging_observe(a2, msg)
+```
+</details>
+
+### 练习 10.18: 带断点恢复的 Pipeline [挑战]
+
+**题目描述**：
+设计一个 `ResumablePipeline`，支持在 Pipeline 执行中断后从上一个成功 agent 的位置恢复，而无需重新执行已完成的部分。
+
+**预期输出/行为**：
+模拟 agent2 执行中途失败的场景，重试时只有 agent2 和 agent3 重新执行，agent1 的结果从缓存读取。
+
+<details>
+<summary>参考答案</summary>
+
+```python
+import asyncio
+from typing import Any
+from agentscope import AgentBase, Msg
+
+class ResumablePipeline:
+    """支持断点恢复的 Pipeline。"""
+
+    def __init__(self, agents: list[AgentBase]):
+        self.agents = agents
+        self._cache: dict[int, Msg] = {}  # agent index → output cache
+
+    async def __call__(
+        self,
+        msg: Msg,
+        start_from: int = 0,
+    ) -> Msg:
+        current_msg = msg
+        for i, agent in enumerate(self.agents):
+            if i < start_from:
+                # 跳过已执行的部分，从缓存恢复
+                current_msg = self._cache[i]
+                continue
+
+            try:
+                current_msg = await agent(current_msg)
+                self._cache[i] = current_msg  # 缓存成功的结果
+            except Exception as e:
+                print(f"Agent {i} ({agent.name}) failed: {e}")
+                # 从缓存的最后一个成功位置恢复
+                raise e
+
+        return current_msg
+
+# 使用示例
+async def main():
+    pipeline = ResumablePipeline([a1, a2, a3])
+    msg = Msg("user", "hello", "user")
+
+    try:
+        result = await pipeline(msg)
+    except Exception:
+        # 从 agent2 (index=1) 恢复
+        result = await pipeline(msg, start_from=1)
+```
+</details>
 
 ---
 
@@ -1568,13 +1959,15 @@ class TimedFanoutPipeline(FanoutPipeline):
 | **Observer** | MsgHub broadcast | 消息变更时自动通知观察者（Agent） |
 | **State（状态）** | StateModule | 状态序列化/反序列化支持持久化 |
 
-## 章节关联
+| 关联模块 | 关联点 | 参考位置 |
+|----------|--------|----------|
+| [智能体模块](module_agent_deep.md#3-agentbase-源码解读) | MsgHub 如何基于 AgentBase 的 `_broadcast_to_subscribers` 实现消息广播，Pipeline 如何编排 Agent 的执行顺序 | 第 3.5 节 |
+| [工具模块](module_tool_mcp_deep.md#7-mcp-协议与-java-jdbcodbc-驱动对比) | A2A 协议与 MCP 协议的对比，智能体间通信的两种范式 | 第 7.1-7.4 节 |
+| [模型模块](module_model_deep.md#3-格式化器与-消息转换) | Formatter 如何针对不同模型 API 格式化消息，Realtime 模块的流式输出与模型流式响应的关系 | 第 3.1-3.4 节 |
+| [记忆模块](module_memory_rag_deep.md#5-rag-模块架构) | Session 如何持久化记忆状态，Tracing 如何追踪 RAG 检索和记忆操作的链路 | 第 5.4 节、第 6.3 节 |
+| [调度器模块](module_dispatcher_deep.md#4-源码解读) | MsgHub 消息路由机制详解 | 第 4.1-4.6 节 |
+| [追踪模块](module_tracing_deep.md#6-练习题) | 练习题参考答案涉及 Pipeline 追踪 | 第 6 节 |
 
-| 关联模块 | 关联点 |
-|----------|--------|
-| [智能体模块](module_agent_deep.md) | Pipeline 编排 Agent 执行 |
-| [调度器模块](module_dispatcher_deep.md) | MsgHub 消息路由机制 |
-| [工具模块](module_tool_mcp_deep.md) | MCP ↔ A2A 协议对比 |
 
 ---
 

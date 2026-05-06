@@ -152,7 +152,7 @@ tests/
 
 ### 测试示例
 
-```python
+```python showLineNumbers
 # tests/agent/test_react_agent.py
 
 import pytest
@@ -269,7 +269,7 @@ class ReActAgentTest {
 
 ### 启用调试模式
 
-```python
+```python showLineNumbers
 import agentscope
 
 # 启用调试模式 (详细日志)
@@ -288,7 +288,7 @@ agentscope.init(
 
 ### 查看 LLM 调用
 
-```python
+```python showLineNumbers
 import agentscope
 import logging
 
@@ -321,7 +321,7 @@ response = agent("你的问题", callbacks=[print_callback])
 
 ### AgentScope Studio 可视化调试
 
-```python
+```python showLineNumbers
 # 启用 Studio 进行可视化调试
 agentscope.init(
     project="my-project",
@@ -352,7 +352,7 @@ Studio 提供：
 
 按顺序执行，前一个输出作为下一个输入：
 
-```python
+```python showLineNumbers
 from agentscope.pipeline import SequentialPipeline
 
 seq = SequentialPipeline(agents=[researcher, writer])
@@ -364,7 +364,7 @@ article = writer(f"基于研究写文章: {research}")
 
 将任务广播给多个 Agent 并收集响应：
 
-```python
+```python showLineNumbers
 from agentscope.pipeline import FanoutPipeline
 
 fanout = FanoutPipeline(agents=[agent1, agent2, agent3])
@@ -375,7 +375,7 @@ results = fanout("并行执行这个任务")
 
 支持多 Agent 之间的自由消息传递：
 
-```python
+```python showLineNumbers
 from agentscope.pipeline import ChatRoom
 import asyncio
 
@@ -395,7 +395,7 @@ async def send_messages():
 
 作为代理间的消息中介，支持订阅-发布模式：
 
-```python
+```python showLineNumbers
 from agentscope.pipeline import MsgHub
 
 async with MsgHub(participants=[agent1, agent2, agent3]) as hub:
@@ -407,7 +407,7 @@ async with MsgHub(participants=[agent1, agent2, agent3]) as hub:
 
 ### 创建带语音输出的 Agent
 
-```python
+```python showLineNumbers
 from agentscope.agent import ReActAgent
 from agentscope.formatter import DashScopeChatFormatter
 from agentscope.tool import Toolkit
@@ -428,7 +428,7 @@ agent = ReActAgent(
 
 ### DeepResearchAgent 深度研究
 
-```python
+```python showLineNumbers
 from agentscope.agent import DeepResearchAgent
 from agentscope.formatter import OpenAIChatFormatter
 from agentscope.tool import Toolkit
@@ -511,3 +511,365 @@ git commit -m "test(memory): add unit tests for RedisMemory"
 - **Pipeline 使用**: SequentialPipeline 和 FanoutPipeline 通过直接实例化使用，不支持上下文管理器
 - **调试**: 通过 `agentscope.init(debug=True)` 启用调试模式，AgentScope Studio 提供可视化调试
 - **Voice Agent**: ReActAgent 通过 `speech` 参数支持 TTS 语音输出
+
+## 练习题
+
+### 练习 6.1: 代码规范检查 [基础]
+
+**题目**：
+以下 Python 代码违反了 AgentScope 的代码规范，请指出问题：
+
+```python showLineNumbers
+# test_agent.py
+import agentscope
+from agentscope.agent import ReActAgent
+from agentscope.model import OpenAIChatModel, DashScopeChatModel
+from agentscope.formatter import OpenAIChatFormatter
+
+def create_agent():
+    agent = ReActAgent(
+        name="助手",
+        model=OpenAIChatModel(model_name="gpt-4o"),
+        sys_prompt="你是一个有帮助的助手。",
+        formatter=OpenAIChatFormatter(),
+    )
+    return agent
+```
+
+**验证方式**：
+使用 `flake8`、`isort`、`black` 检查代码。
+
+<details>
+<summary>参考答案</summary>
+
+**答案/解题思路**：
+
+**问题 1：import 顺序**
+- `DashScopeChatModel` 被导入但未使用
+- 应使用 `isort` 排序：标准库 → 第三方库 → 本地库
+
+**问题 2：缺少类型注解**
+- `create_agent` 函数应有返回类型注解
+
+**问题 3：函数之间应有空行**
+- PEP 8 规定函数之间应有两个空行
+
+**修正后的代码**：
+```python showLineNumbers
+# test_agent.py
+import agentscope
+from agentscope.agent import ReActAgent
+from agentscope.formatter import OpenAIChatFormatter
+from agentscope.model import OpenAIChatModel
+
+
+def create_agent() -> ReActAgent:
+    """创建测试用 Agent"""
+    return ReActAgent(
+        name="助手",
+        model=OpenAIChatModel(model_name="gpt-4o"),
+        sys_prompt="你是一个有帮助的助手。",
+        formatter=OpenAIChatFormatter(),
+    )
+```
+
+**运行检查命令**：
+```bash
+isort test_agent.py  # 自动排序 imports
+black test_agent.py  # 格式化代码
+flake8 test_agent.py  # 风格检查
+```
+</details>
+
+---
+
+### 练习 6.2: 测试用例编写 [中级]
+
+**题目**：
+请为以下工具函数编写一个 pytest 测试用例：
+
+```python showLineNumbers
+def add_numbers(a: int, b: int) -> ToolResponse:
+    """计算两个数的和
+
+    Args:
+        a: 第一个数
+        b: 第二个数
+    """
+    result = a + b
+    return ToolResponse(content=[TextBlock(type="text", text=str(result))])
+```
+
+**验证方式**：
+检查测试用例是否正确覆盖正常和边界情况。
+
+<details>
+<summary>参考答案</summary>
+
+**答案/解题思路**：
+
+**测试用例示例**：
+
+```python showLineNumbers
+# tests/tool/test_my_tools.py
+import pytest
+from agentscope.tool import ToolResponse
+from agentscope.message import TextBlock
+from my_module import add_numbers  # 假设函数在 my_module 中
+
+
+class TestAddNumbers:
+    """测试 add_numbers 函数"""
+
+    def test_positive_numbers(self):
+        """测试正数相加"""
+        result = add_numbers(1, 2)
+        assert isinstance(result, ToolResponse)
+        assert "3" in result.content[0].text
+
+    def test_negative_numbers(self):
+        """测试负数相加"""
+        result = add_numbers(-5, -3)
+        assert "-8" in result.content[0].text
+
+    def test_mixed_numbers(self):
+        """测试正负数混合"""
+        result = add_numbers(10, -3)
+        assert "7" in result.content[0].text
+
+    def test_zero(self):
+        """测试零"""
+        result = add_numbers(0, 5)
+        assert "5" in result.content[0].text
+
+    def test_large_numbers(self):
+        """测试大数"""
+        result = add_numbers(999999, 1)
+        assert "1000000" in result.content[0].text
+```
+
+**pytest 常用命令**：
+```bash
+pytest tests/tool/test_my_tools.py -v          # 详细输出
+pytest tests/tool/test_my_tools.py --cov=my_module  # 覆盖率
+```
+</details>
+
+---
+
+### 练习 6.3: 调试模式启用 [基础]
+
+**题目**：
+小王发现 Agent 的响应不符合预期，想要启用调试模式来排查问题。请帮他修改以下代码：
+
+```python showLineNumbers
+import agentscope
+
+agentscope.init(
+    project="my-project",
+    logging_level="INFO"  # 当前是 INFO，想改成 DEBUG
+)
+```
+
+**验证方式**：
+检查是否正确启用了调试模式。
+
+<details>
+<summary>参考答案</summary>
+
+**答案/解题思路**：
+
+**方案 1：修改 logging_level**
+
+```python showLineNumbers
+import agentscope
+
+agentscope.init(
+    project="my-project",
+    logging_level="DEBUG"  # 改为 DEBUG 级别
+)
+```
+
+**方案 2：设置 debug=True**
+
+```python showLineNumbers
+import agentscope
+
+agentscope.init(
+    project="my-project",
+    debug=True  # 启用调试模式
+)
+```
+
+**debug=True 和 logging_level="DEBUG" 的区别**：
+
+| 参数 | 作用范围 | 说明 |
+|------|----------|------|
+| `debug=True` | 框架级别 | 启用详细的框架日志，包括内部状态 |
+| `logging_level="DEBUG"` | 日志级别 | 仅改变日志输出的详细程度 |
+
+**推荐使用 `debug=True`**，因为它还会启用其他调试相关的功能。
+
+**调试时查看的具体信息**：
+- LLM 调用的输入输出
+- 工具调用的参数和结果
+- 记忆的读写操作
+- Hook 的执行情况
+</details>
+
+---
+
+### 练习 6.4: Mock 测试 [挑战]
+
+**题目**：
+某团队需要测试一个依赖外部 API 的 Agent，但不想每次都调用真实 API。请使用 unittest.mock 为以下场景编写 Mock 测试：
+
+**场景**：测试当 LLM 返回工具调用时，Agent 是否正确执行工具。
+
+**验证方式**：
+检查 Mock 设置是否正确，测试用例是否能验证工具调用逻辑。
+
+<details>
+<summary>参考答案</summary>
+
+**答案/解题思路**：
+
+**Mock 测试示例**：
+
+```python showLineNumbers
+# tests/agent/test_react_agent_tool_call.py
+import pytest
+from unittest.mock import AsyncMock, MagicMock
+from agentscope.agent import ReActAgent
+from agentscope.formatter import OpenAIChatFormatter
+from agentscope.message import Msg, TextBlock, ToolUseBlock
+from agentscope.model import ChatModelBase, ChatResponse
+
+
+class MockModelWithToolCall(ChatModelBase):
+    """模拟返回工具调用的 Model"""
+
+    def __init__(self):
+        super().__init__()
+        self.model_name = "mock-model"
+        self.stream = False
+
+    async def __call__(self, *args, **kwargs):
+        """返回 ToolUseBlock，模拟 LLM 决定调用工具"""
+        return ChatResponse(
+            content=[
+                TextBlock(type="text", text="我将为你计算"),
+                ToolUseBlock(
+                    type="tool_use",
+                    id="call_123",
+                    name="calculate",
+                    input={"a": 10, "b": 20},
+                ),
+            ],
+            id="mock-123",
+            created_at="2024-01-01",
+            type="chat",
+            usage=None,
+            metadata=None,
+        )
+
+
+@pytest.fixture
+def mock_model():
+    return MockModelWithToolCall()
+
+
+@pytest.fixture
+def agent(mock_model):
+    return ReActAgent(
+        name="测试助手",
+        model=mock_model,
+        sys_prompt="你是一个计算助手。",
+        formatter=OpenAIChatFormatter(),
+        toolkit=Toolkit(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_agent_calls_tool(agent):
+    """测试 Agent 正确调用工具"""
+    # 调用 Agent
+    response = await agent("计算 10 + 20")
+
+    # 验证：Agent 应该执行了工具
+    # （具体断言取决于实现，可能需要检查记忆或工具调用记录）
+    assert response is not None
+    assert isinstance(response, Msg)
+```
+
+**Mock 测试的关键点**：
+1. 创建继承自 `ChatModelBase` 的 Mock 类
+2. 在 `__call__` 中返回模拟的 `ChatResponse`
+3. 使用 `pytest.mark.asyncio` 标记异步测试
+4. 使用 `@pytest.fixture` 管理测试依赖
+</details>
+
+---
+
+### 练习 6.5: pre-commit 配置 [基础]
+
+**题目**：
+某新同事克隆了 AgentScope 仓库，但提交代码时 pre-commit 检查失败了。请说明：
+1. 如何安装 pre-commit hooks？
+2. pre-commit 会在什么时机自动运行？
+3. 如果想跳过 pre-commit 临时提交代码，应该怎么做（不推荐）？
+
+**验证方式**：
+对照文档中的 pre-commit 使用说明。
+
+<details>
+<summary>参考答案</summary>
+
+**答案/解题思路**：
+
+**1. 安装 pre-commit hooks**：
+
+```bash
+# 在项目根目录下执行
+pre-commit install
+```
+
+**2. 自动运行时机**：
+
+`pre-commit` 会在以下时机自动运行：
+- **git commit 时**：在提交之前自动执行所有 hooks
+- **git push 时**：如果配置了 `git push` 时运行
+- **手动触发**：`pre-commit run --all-files`
+
+**pre-commit 工作流程**：
+```
+git commit → pre-commit hook 触发 → 检查代码 → 通过则提交，失败则拒绝
+```
+
+**3. 跳过 pre-commit（不推荐）**：
+
+```bash
+# 临时跳过 pre-commit
+git commit --no-verify -m "临时提交"
+```
+
+**警告**：不推荐跳过 pre-commit，因为：
+- 代码规范检查失败说明代码有问题
+- 跳过后可能导致 CI/CD 失败
+- 影响团队代码质量
+
+**推荐做法**：
+1. 先运行 `pre-commit run --all-files` 查看具体问题
+2. 修复问题后再次提交
+3. 保持代码符合规范
+
+**常见 pre-commit 检查**：
+| 检查工具 | 作用 |
+|----------|------|
+| `black` | 代码格式化 |
+| `isort` | import 排序 |
+| `flake8` | 代码风格 |
+| `mypy` | 类型检查 |
+</details>
+
+## 6.9 下一步

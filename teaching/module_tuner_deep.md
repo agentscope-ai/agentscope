@@ -106,7 +106,7 @@ tuner/
 
 ### 3.1 tune() 入口函数
 
-```python
+```python showLineNumbers
 def tune(
     *,
     workflow_func: WorkflowType,           # 必需：工作流函数
@@ -141,7 +141,7 @@ tune()
 
 **Trinity-RFT 集成**：
 
-```python
+```python showLineNumbers
 # 惰性导入 Trinity
 from trinity.cli.launcher import run_stage
 
@@ -153,7 +153,7 @@ from trinity.cli.launcher import run_stage
 
 ### 3.2 WorkflowType 工作流定义
 
-```python
+```python showLineNumbers
 class WorkflowOutput(BaseModel):
     reward: float | None = None        # 直接奖励（无需 Judge）
     response: Any | None = None        # 原始响应（交给 Judge 评估）
@@ -178,7 +178,7 @@ WorkflowType = Callable[..., Awaitable[WorkflowOutput]]
 
 **工作流函数签名**：
 
-```python
+```python showLineNumbers
 async def my_workflow(
     task: Dict,                                    # 任务数据
     model: ChatModelBase,                          # 被调优的模型
@@ -191,7 +191,7 @@ async def my_workflow(
 
 ### 3.3 JudgeType 评判函数
 
-```python
+```python showLineNumbers
 class JudgeOutput(BaseModel):
     reward: float                    # 标量奖励值（必需）
     metrics: Dict[str, float] | None = None  # 额外指标
@@ -201,7 +201,7 @@ JudgeType = Callable[..., Awaitable[JudgeOutput]]
 
 **评判函数签名**：
 
-```python
+```python showLineNumbers
 async def my_judge(
     task: Dict,                                    # 原始任务
     response: Any,                                 # 工作流的响应
@@ -223,7 +223,7 @@ Judge 使用 auxiliary_models 调用 LLM 评估 response 质量
 
 ### 3.4 AlgorithmConfig 算法配置
 
-```python
+```python showLineNumbers
 class AlgorithmConfig(BaseModel):
     algorithm_type: str = "multi_step_grpo"  # 算法类型
     learning_rate: float = 1e-6              # 学习率
@@ -247,7 +247,7 @@ class AlgorithmConfig(BaseModel):
 
 ### 3.5 DatasetConfig 数据集配置
 
-```python
+```python showLineNumbers
 class DatasetConfig(BaseModel):
     path: str                    # HuggingFace 数据集路径或本地路径
     name: str | None = None      # 数据集配置名
@@ -258,7 +258,7 @@ class DatasetConfig(BaseModel):
 
 **`preview()` 方法**：
 
-```python
+```python showLineNumbers
 def preview(self, n: int = 5) -> List:
     dataset = load_dataset(
         path=self.path, name=self.name,
@@ -274,7 +274,7 @@ def preview(self, n: int = 5) -> List:
 
 ### 3.6 TunerModelConfig 模型配置
 
-```python
+```python showLineNumbers
 class TunerModelConfig(BaseModel):
     model_path: str                     # 模型路径
     max_model_len: int                  # 最大上下文+生成长度
@@ -291,7 +291,7 @@ class TunerModelConfig(BaseModel):
 
 **TinkerConfig（LoRA 微调）**：
 
-```python
+```python showLineNumbers
 class TinkerConfig(BaseModel):
     rank: int = 16               # LoRA 秩
     seed: int | None = None      # 初始化种子
@@ -307,7 +307,7 @@ class TinkerConfig(BaseModel):
 
 `prompt_tune/` 子模块提供了不修改模型权重的提示词优化能力：
 
-```python
+```python showLineNumbers
 from agentscope.tuner import tune_prompt, PromptTuneConfig
 ```
 
@@ -327,11 +327,107 @@ from agentscope.tuner import tune_prompt, PromptTuneConfig
 
 ---
 
+### 边界情况与陷阱
+
+#### Critical: DatasetConfig 的必需参数
+
+```python showLineNumbers
+# DatasetConfig 需要正确的必需参数
+config = DatasetConfig(
+    name="my_dataset",
+    path="/path/to/data",
+    split="train"
+)
+# 如果缺少必需参数，会在 tune() 时失败
+
+# 问题：path 必须是实际存在的文件路径
+config = DatasetConfig(name="test", path="nonexistent.csv")  # FileNotFoundError
+```
+
+#### High: JudgeType 函数返回值验证
+
+```python showLineNumbers
+# 用户提供的 judge 函数必须返回特定格式
+def my_judge(result, reference) -> float:
+    return 0.95  # 必须是 0-1 之间的浮点数
+
+# 问题：如果返回无效值，会导致训练失败
+def bad_judge(result, reference):
+    return "good"  # TypeError!
+
+# 解决方案：在 JudgeType 函数中添加验证
+```
+
+#### Medium: 训练超参数配置
+
+```python showLineNumbers
+# 训练超参数需要与模型和数据集匹配
+config = TuneConfig(
+    model_config_name="gpt-4",
+    datasets=[...],
+    num_training_steps=1000,  # 过大可能导致过拟合
+    learning_rate=1.0         # 过大可能导致训练不稳定
+)
+
+# 问题：不合适的超参数会导致训练失败或效果差
+# 解决方案：使用学习率调度器和早停策略
+```
+
+#### Medium: 三阶段执行的依赖关系
+
+```python showLineNumbers
+# RLAF/PPO 工作流的三阶段有依赖关系
+# Stage 1 生成样本 → Stage 2 评估 → Stage 3 更新
+
+# 问题：Stage 2 失败会导致整个工作流失败
+# 解决方案：实现重试机制和部分失败容忍
+```
+
+---
+
+### 性能考量
+
+#### 调参延迟分析
+
+| 阶段 | 延迟 | 说明 |
+|------|------|------|
+| 数据加载 | ~10s | 取决于数据集大小 |
+| 模型推理 | ~100ms/样本 | 取决于模型大小 |
+| 评估 | ~1s/样本 | 取决于 judge 复杂度 |
+| 参数更新 | ~50ms | 取决于优化器 |
+
+#### 并行训练策略
+
+```python showLineNumbers
+# 并行度影响训练速度
+config = TuneConfig(
+    num_gpus=4,           # GPU 数量
+    per_device_batch_size=8,  # 每设备批次大小
+    gradient_accumulation_steps=4,  # 累积步数
+)
+
+# 有效批次大小 = num_gpus * per_device_batch_size * gradient_accumulation_steps
+# = 4 * 8 * 4 = 128
+```
+
+#### 早停策略
+
+```python showLineNumbers
+# 使用早停避免过拟合
+config = TuneConfig(
+    early_stopping_patience=3,  # 3 个 epoch 无改进则停止
+    early_stopping_metric="reward",  # 监控的指标
+)
+# 节省训练时间，同时避免过拟合
+```
+
+---
+
 ## 5. 代码示例
 
 ### 5.1 定义工作流和评判函数
 
-```python
+```python showLineNumbers
 from agentscope.tuner import WorkflowOutput, JudgeOutput
 
 async def customer_service_workflow(
@@ -361,7 +457,7 @@ async def quality_judge(
 
 ### 5.2 配置和启动调优
 
-```python
+```python showLineNumbers
 from agentscope.tuner import (
     tune, AlgorithmConfig, DatasetConfig, TunerModelConfig
 )
@@ -396,7 +492,7 @@ tune(
 
 ### 5.3 使用 LoRA 微调
 
-```python
+```python showLineNumbers
 from agentscope.tuner import TunerModelConfig, TinkerConfig
 
 model_config = TunerModelConfig(
@@ -421,15 +517,25 @@ model_config = TunerModelConfig(
 
 **Q2**: `AlgorithmConfig` 默认使用 `multi_step_grpo` 算法。GRPO 中的 `group_size` 参数有什么作用？
 
-### 中级题
-
 **Q3**: `tune()` 函数通过 `_to_trinity_config()` 将 AgentScope 配置转换为 Trinity-RFT 配置。为什么不在 AgentScope 内部实现训练算法？
 
 **Q4**: `JudgeType` 签名中的 `auxiliary_models` 参数有什么用途？举一个实际使用场景。
 
+**Q5**: `DatasetConfig` 支持流式预览数据。这个设计有什么实际意义？如果不使用流式预览，直接加载整个数据集会有什么风险？
+
+### 中级题
+
+**Q6**: `TinkerConfig` 中的 LoRA 配置（`r`, `lora_alpha`, `target_modules`）各自的作用是什么？调整它们会对训练结果产生什么影响？
+
+**Q7**: GRPO 相比标准的 PPO 有哪些优势和劣势？在什么场景下应该选择 GRPO 而不是 SFT（监督微调）？
+
+**Q8**: Judge 的评估结果可能有噪声（如评判模型的随机性）。如何设计一个更稳健的评估流程来减少这种噪声？
+
 ### 挑战题
 
-**Q5**: 设计一个多 Agent 协作调优方案：一个 Agent 负责生成方案，另一个 Agent 负责审查方案。如何用 WorkflowType 和 JudgeType 表达这个训练流程？
+**Q9**: 设计一个多 Agent 协作调优方案：一个 Agent 负责生成方案，另一个 Agent 负责审查方案。如何用 WorkflowType 和 JudgeType 表达这个训练流程？
+
+**Q10**: 实现一个自适应的 `GroupSizeScheduler`，在训练过程中动态调整 `group_size`。早期使用较大的 group_size 探索多样性，后期逐渐减小 group_size 聚焦优质样本。描述你的设计思路和关键实现细节。
 
 ---
 
@@ -443,7 +549,17 @@ model_config = TunerModelConfig(
 
 **A4**: `auxiliary_models` 用于 LLM-as-Judge 模式。实际场景：评估客户服务回答的"同理心"指标时，使用一个专门的评判模型（如 GPT-4）来评估回答是否体现了同理心。这个评判模型通过 `auxiliary_models` 传入，避免在 Judge 函数中硬编码 API 调用。
 
-**A5**: 工作流中同时管理两个 Agent：生成 Agent 产生方案，审查 Agent 审查并给出反馈。WorkflowOutput 的 response 包含完整的多轮交互记录。Judge 评估最终方案的质量和审查反馈的有效性。关键是 `auxiliary_models` 可以传入审查 Agent 使用的模型，使其成为可调优的一部分。
+**A5**: 流式预览允许用户在正式训练前检查数据质量（如标签分布、文本长度）。对于大规模数据集，直接加载可能导致内存溢出或浪费时间在错误的数据格式上。流式预览通过采样显示，让用户快速发现并修复问题。
+
+**A6**: `r` 控制 LoRA 矩阵的秩，影响模型的表达能力；`lora_alpha` 是缩放因子，通常设为 `2*r`；`target_modules` 指定哪些层应用 LoRA。较大的 `r` 提供更强的拟合能力但增加计算成本；较小的 `r` 有正则化效果，适合数据较少的场景。
+
+**A7**: GRPO 优势：无需 value network，计算效率高，适合生成类任务。劣势：对奖励信号质量敏感，如果 group 内样本质量差异不大则效果有限。场景选择：SFT 适合有明确正确答案的任务，GRPO 适合开放式生成任务（如对话、代码生成）且有明确评估标准的场景。
+
+**A8**: 关键方法：(1) 多次采样——对同一解决方案多次调用 Judge，取平均值或中位数；(2) 温度采样——Judge 模型使用较低温度减少随机性；(3) 集成评判——使用多个 Judge 模型进行投票；(4) 置信度过滤——只接受高置信度的评判结果。
+
+**A9**: 工作流中同时管理两个 Agent：生成 Agent 产生方案，审查 Agent 审查并给出反馈。WorkflowOutput 的 response 包含完整的多轮交互记录。Judge 评估最终方案的质量和审查反馈的有效性。关键是 `auxiliary_models` 可以传入审查 Agent 使用的模型，使其成为可调优的一部分。
+
+**A10**: 关键设计：(1) 在训练循环中记录每个 step 的奖励方差，方差大说明样本质量差异大，保持大 group_size；方差小说明样本趋同，减小 group_size；(2) 使用 `StepwiseGroupSizeDecay` 策略，每 N 步减半 group_size，直到达到最小值；(3) 实现 `on_step_end` 回调，在每个 step 结束时评估是否需要调整；(4) 注意 group_size 不能小于 2（否则无法比较）。
 
 ---
 
@@ -459,16 +575,15 @@ model_config = TunerModelConfig(
 | TunerModelConfig | 被调优模型的完整配置 |
 | TinkerConfig | LoRA 低秩适应配置 |
 
-## 章节关联
+| 关联模块 | 关联点 | 参考位置 |
+|----------|--------|----------|
+| [评估模块](module_evaluate_deep.md#5-代码示例) | 评估发现问题，调优解决问题 | 第 5.1 节 |
+| [模型模块](module_model_deep.md#2-chatmodelbase-基类分析) | 被调优的模型通过 Model 层提供服务 | 第 2.1 节 |
+| [智能体模块](module_agent_deep.md#4-reactagent-实现类分析) | Agent 行为是调优的目标 | 第 4.1 节 |
+| [配置模块](module_config_deep.md#3-核心功能源码解读) | 模型和训练配置管理 | 第 3.1 节 |
 
-| 相关模块 | 关联点 |
-|----------|--------|
-| [Evaluate 模块](module_evaluate_deep.md) | 评估发现问题，调优解决问题 |
-| [Model 模块](module_model_deep.md) | 被调优的模型通过 Model 层提供服务 |
-| [Agent 模块](module_agent_deep.md) | Agent 行为是调优的目标 |
-| [Config 模块](module_config_deep.md) | 模型和训练配置管理 |
 
-**版本参考**: AgentScope >= 1.0.0 | 源码 `tuner/`
+---
 
 ## 本章小结
 

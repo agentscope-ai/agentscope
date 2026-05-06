@@ -34,7 +34,7 @@ AgentScope 有四个核心概念，理解它们就掌握了框架的精髓：
 
 **Agent = LLM + 推理引擎 + 工具 + 记忆**
 
-```python
+```python showLineNumbers
 # Agent 的简化结构 (伪代码)
 class Agent:
     def __init__(self, name, model, tools, memory):
@@ -69,7 +69,7 @@ class Agent:
 
 ReAct = **Re**asoning + **Act**ing
 
-```python
+```python showLineNumbers
 from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
 from agentscope.tool import Toolkit
@@ -125,7 +125,7 @@ my_agent = ReActAgent(
 
 **关键方法解析：**
 
-```python
+```python showLineNumbers
 # _agent_base.py 核心方法
 
 async def reply(self, *args, **kwargs) -> Msg:
@@ -149,7 +149,7 @@ async def print(self, msg: Msg, last: bool = True,
 
 Hook系统允许在Agent执行关键方法前后插入自定义逻辑：
 
-```python
+```python showLineNumbers
 # Hook 类型
 supported_hook_types = [
     "pre_reply",    # reply()调用前
@@ -183,7 +183,7 @@ AgentBase.register_class_hook(
 
 #### 消息订阅广播机制
 
-```python
+```python showLineNumbers
 # Agent A 注册订阅 Agent B
 agent_b.reset_subscribers("msghub_name", [agent_a])
 
@@ -217,7 +217,7 @@ await agent_b.reply(msg)  # 触发 agent_a.observe(result)
 
 **源码核心流程 (`_react_agent.py`):**
 
-```python
+```python showLineNumbers
 async def reply(self, msg: Msg | list[Msg] | None = None,
                 structured_model: Type[BaseModel] | None = None) -> Msg:
     # 1. 记录输入消息到记忆
@@ -262,7 +262,7 @@ async def reply(self, msg: Msg | list[Msg] | None = None,
 
 当对话历史超过阈值时，自动压缩旧记忆：
 
-```python
+```python showLineNumbers
 # 压缩配置
 compression_config = CompressionConfig(
     enable=True,
@@ -298,7 +298,7 @@ async def _compress_memory_if_needed(self):
 
 ReActAgent 支持通过 `generate_response` 工具生成结构化输出：
 
-```python
+```python showLineNumbers
 from pydantic import BaseModel
 
 class SearchResult(BaseModel):
@@ -366,7 +366,7 @@ AgentScope 定义了三个核心数据结构，用于统一各模型的响应格
 
 #### ChatResponse - 模型响应
 
-```python
+```python showLineNumbers
 @dataclass
 class ChatResponse(DictMixin):
     """统一的聊天响应格式"""
@@ -382,7 +382,7 @@ class ChatResponse(DictMixin):
 
 #### ChatUsage - Token 使用统计
 
-```python
+```python showLineNumbers
 @dataclass
 class ChatUsage(DictMixin):
     """API 调用统计信息"""
@@ -404,7 +404,7 @@ class ChatUsage(DictMixin):
 
 ### 4.3.3 ChatModelBase 抽象基类设计
 
-```python
+```python showLineNumbers
 # src/agentscope/model/_model_base.py
 
 class ChatModelBase:
@@ -443,7 +443,7 @@ class ChatModelBase:
 
 #### OpenAIChatModel
 
-```python
+```python showLineNumbers
 # 初始化配置
 model = OpenAIChatModel(
     model_name="gpt-4o",           # 模型名称
@@ -468,7 +468,7 @@ model = OpenAIChatModel(
 
 #### AnthropicChatModel
 
-```python
+```python showLineNumbers
 model = AnthropicChatModel(
     model_name="claude-3-5-sonnet-20241022",
     api_key="sk-ant-xxxxx",
@@ -486,7 +486,7 @@ model = AnthropicChatModel(
 
 #### DashScopeChatModel (阿里云通义千问)
 
-```python
+```python showLineNumbers
 model = DashScopeChatModel(
     model_name="qwen-plus",        # 或 "qvq-max", "qwen2.5-72b-instruct"
     api_key="sk-xxxxx",           # 阿里云 API Key
@@ -506,7 +506,7 @@ model = DashScopeChatModel(
 
 #### GeminiChatModel
 
-```python
+```python showLineNumbers
 model = GeminiChatModel(
     model_name="gemini-2.5-flash",
     api_key="xxxxx",
@@ -524,7 +524,7 @@ model = GeminiChatModel(
 
 #### OllamaChatModel (本地模型)
 
-```python
+```python showLineNumbers
 model = OllamaChatModel(
     model_name="qwen2.5:7b",      # 本地模型名
     stream=True,
@@ -544,7 +544,7 @@ model = OllamaChatModel(
 
 所有模型统一支持工具调用，格式略有不同：
 
-```python
+```python showLineNumbers
 # 定义工具
 tools = [
     {
@@ -586,7 +586,7 @@ for block in response.content:
 
 使用 Pydantic 模型强制约束模型输出格式：
 
-```python
+```python showLineNumbers
 from pydantic import BaseModel
 
 class WeatherResponse(BaseModel):
@@ -612,7 +612,7 @@ print(f"{weather.city}: {weather.temperature}°C")
 
 ### 4.3.7 流式响应处理
 
-```python
+```python showLineNumbers
 # 基础流式处理
 async for chunk in model(messages):
     # 每个 chunk 都是一个 ChatResponse
@@ -636,7 +636,7 @@ async for chunk in model(messages, tools=tools):
 
 ### 4.3.8 错误处理与重试机制
 
-```python
+```python showLineNumbers
 from agentscope._logging import logger
 
 try:
@@ -666,7 +666,7 @@ except RuntimeError as e:
 
 #### 1. 选择合适的模型
 
-```python
+```python showLineNumbers
 # 简单任务用小模型
 fast_model = OpenAIChatModel(model_name="gpt-4o-mini")
 
@@ -676,7 +676,7 @@ capable_model = OpenAIChatModel(model_name="gpt-4o")
 
 #### 2. 控制 Token 数量
 
-```python
+```python showLineNumbers
 # 限制最大输出
 model = OpenAIChatModel(
     model_name="gpt-4o",
@@ -686,7 +686,7 @@ model = OpenAIChatModel(
 
 #### 3. 使用缓存
 
-```python
+```python showLineNumbers
 # Ollama 本地运行零 API 成本
 model = OllamaChatModel(model_name="llama3:8b")
 
@@ -699,7 +699,7 @@ model = DashScopeChatModel(
 
 #### 4. 批量处理
 
-```python
+```python showLineNumbers
 import asyncio
 
 async def batch_process(queries: list[str]):
@@ -712,7 +712,7 @@ results = await batch_process(["问题1", "问题2", "问题3"])
 
 ### 4.3.10 完整使用示例
 
-```python
+```python showLineNumbers
 import asyncio
 from agentscope.model import OpenAIChatModel, ChatResponse
 from agentscope.message import TextBlock, ToolUseBlock
@@ -817,7 +817,7 @@ asyncio.run(main())
 
 ### 4.4.3 工具核心类型
 
-```python
+```python showLineNumbers
 # ToolResponse - 工具执行结果
 @dataclass
 class ToolResponse:
@@ -842,7 +842,7 @@ class RegisteredToolFunction:
 
 ### 4.4.4 内置工具
 
-```python
+```python showLineNumbers
 from agentscope.tool import (
     Toolkit,
     execute_python_code, execute_shell_command,
@@ -868,7 +868,7 @@ my_agent = ReActAgent(
 
 AgentScope 通过 **自动签名解析** 实现工具注册，无需装饰器：
 
-```python
+```python showLineNumbers
 from agentscope.tool import Toolkit, ToolResponse
 from agentscope.message import TextBlock
 
@@ -890,7 +890,7 @@ toolkit.register_tool_function(tool_func=search_database, group_name="basic")
 
 `register_tool_function()` 核心参数：
 
-```python
+```python showLineNumbers
 toolkit.register_tool_function(
     tool_func=my_function,           # 工具函数
     group_name="basic",              # 所属组
@@ -906,7 +906,7 @@ toolkit.register_tool_function(
 
 AgentScope 自动从函数签名和 docstring 生成 JSON Schema：
 
-```python
+```python showLineNumbers
 def complex_tool(user_id: int, name: str = "default",
                  tags: list[str] = None) -> ToolResponse:
     """复杂参数示例工具
@@ -939,7 +939,7 @@ def complex_tool(user_id: int, name: str = "default",
 
 ### 4.4.8 工具组管理
 
-```python
+```python showLineNumbers
 toolkit.create_tool_group(group_name="database", description="数据库操作", active=False)
 toolkit.update_tool_groups(["database"], active=True)
 toolkit.reset_equipped_tools(database=True, web_search=False)
@@ -947,7 +947,7 @@ toolkit.reset_equipped_tools(database=True, web_search=False)
 
 ### 4.4.9 流式工具执行
 
-```python
+```python showLineNumbers
 async def streaming_tool() -> AsyncGenerator[ToolResponse, None]:
     for i in range(5):
         yield ToolResponse(content=[TextBlock(type="text", text=f"Step {i}")], stream=True)
@@ -956,7 +956,7 @@ async def streaming_tool() -> AsyncGenerator[ToolResponse, None]:
 
 ### 4.4.10 MCP 协议工具
 
-```python
+```python showLineNumbers
 from agentscope.mcp import HttpStatefulClient
 
 mcp_client = HttpStatefulClient(name="filesystem", transport="streamable_http",
@@ -969,7 +969,7 @@ await mcp_client.close()
 
 ### 4.4.11 中间件机制
 
-```python
+```python showLineNumbers
 async def logging_middleware(kwargs, next_handler):
     tool_call = kwargs["tool_call"]
     print(f"Calling tool: {tool_call['name']}")
@@ -1059,7 +1059,7 @@ def search_database(query: str, table: str = "users") -> ToolResponse:
 
 所有记忆实现都继承自 `MemoryBase` 抽象基类，定义统一的接口：
 
-```python
+```python showLineNumbers
 # 核心抽象方法
 class MemoryBase(StateModule):
     async def add(
@@ -1091,7 +1091,7 @@ class MemoryBase(StateModule):
 
 Marks 是消息的标签系统，支持灵活的消息分类和过滤：
 
-```python
+```python showLineNumbers
 # 添加带标记的消息
 await memory.add(Msg("user", "我喜欢喝茶", "user"), marks=["偏好", "饮食"])
 
@@ -1115,7 +1115,7 @@ await memory.update_messages_mark(
 
 基于 Python 列表的内存实现，适合开发和测试：
 
-```python
+```python showLineNumbers
 from agentscope.memory import InMemoryMemory
 
 memory = InMemoryMemory()
@@ -1132,7 +1132,7 @@ msgs = await memory.get_memory()  # 获取所有消息
 
 基于 Redis 的分布式记忆实现：
 
-```python
+```python showLineNumbers
 from agentscope.memory import RedisMemory
 
 memory = RedisMemory(
@@ -1174,7 +1174,7 @@ Redis Key 结构:
 
 支持 SQLite、PostgreSQL、MySQL 等关系数据库：
 
-```python
+```python showLineNumbers
 from sqlalchemy.ext.asyncio import create_async_engine
 from agentscope.memory import AsyncSQLAlchemyMemory
 
@@ -1228,7 +1228,7 @@ CREATE TABLE message_mark (
 
 基于 Mem0 AI 的长期记忆实现，支持语义搜索：
 
-```python
+```python showLineNumbers
 from agentscope.memory import Mem0LongTermMemory
 from agentscope.embedding import OpenAITextEmbedding
 from agentscope.model import OpenAIChatModel
@@ -1260,7 +1260,7 @@ result = await memory.retrieve_from_memory(keywords=["工作", "北京"])
 
 ReMe (Reasoning on Memory) 是模型Scope开源的记忆框架：
 
-```python
+```python showLineNumbers
 from agentscope.memory import (
     ReMePersonalLongTermMemory,    # 个人偏好记忆
     ReMeToolLongTermMemory,       # 工具使用记忆
@@ -1324,7 +1324,7 @@ async with personal_memory:
 
 #### 2. 记忆容量管理
 
-```python
+```python showLineNumbers
 class MemoryManager:
     """记忆容量管理器"""
 
@@ -1359,7 +1359,7 @@ class MemoryManager:
 
 #### 3. 消息去重策略
 
-```python
+```python showLineNumbers
 # InMemoryMemory
 await memory.add(msg, allow_duplicates=False)  # 默认去重
 
@@ -1372,7 +1372,7 @@ await memory.add(msg, skip_duplicated=True)   # 默认跳过重复
 
 #### 4. 记忆序列化与恢复
 
-```python
+```python showLineNumbers
 # 保存记忆状态
 state = memory.state_dict()
 # {"content": [[msg.to_dict(), ["mark1"]], ...], "_compressed_summary": "..."}
@@ -1456,7 +1456,7 @@ class DocMetadata:
 
 Reader 负责读取原始文件并切分成 chunks：
 
-```python
+```python showLineNumbers
 from agentscope.rag import PDFReader, TextReader, WordReader
 
 # PDF 读取器
@@ -1480,7 +1480,7 @@ docs = await text_reader("Some text content...")
 
 向量存储后端，支持多种向量数据库：
 
-```python
+```python showLineNumbers
 from agentscope.rag import (
     MilvusLiteStore,      # Milvus Lite (轻量级)
     QdrantStore,          # Qdrant
@@ -1506,7 +1506,7 @@ store = QdrantStore(
 
 ### 4.6.3 KnowledgeBase 使用
 
-```python
+```python showLineNumbers
 from agentscope.rag import KnowledgeBase, SimpleKnowledgeBase
 from agentscope.rag import PDFReader, TextReader
 from agentscope.embedding import OpenAITextEmbedding
@@ -1540,7 +1540,7 @@ for doc in docs:
 
 #### 2. 混合检索策略
 
-```python
+```python showLineNumbers
 class HybridKnowledgeBase(KnowledgeBase):
     """结合向量检索和关键词检索"""
 
@@ -1577,7 +1577,7 @@ results = await kb.retrieve("我的问题", limit=20)
 
 #### 4. 增量更新策略
 
-```python
+```python showLineNumbers
 class IncrementalKnowledgeBase:
     """支持增量更新的知识库"""
 
@@ -1606,7 +1606,7 @@ class IncrementalKnowledgeBase:
 
 MsgHub 用于多个 Agent 之间的消息传递和协调。
 
-```python
+```python showLineNumbers
 from agentscope.pipeline import MsgHub
 from agentscope.agent import ReActAgent
 from agentscope.tool import Toolkit
@@ -1690,7 +1690,7 @@ public class OrderEventListener {
 ### 适用场景指南
 
 #### ReActAgent - 通用推理任务
-```python
+```python showLineNumbers
 # 最佳场景：需要工具调用、多轮对话、复杂推理的任务
 from agentscope.tool import Toolkit
 from agentscope.formatter import OpenAIChatFormatter
@@ -1767,7 +1767,7 @@ while True:
 ### 最佳实践
 
 #### 1. 合理配置 max_iters
-```python
+```python showLineNumbers
 # 简单任务：减少迭代次数提高响应速度
 agent = ReActAgent(..., max_iters=3, sys_prompt="...", formatter=OpenAIChatFormatter())
 
@@ -1776,7 +1776,7 @@ agent = ReActAgent(..., max_iters=15, sys_prompt="...", formatter=OpenAIChatForm
 ```
 
 #### 2. 使用记忆压缩处理长对话
-```python
+```python showLineNumbers
 compression_config = CompressionConfig(
     enable=True,
     agent_token_counter=token_counter,
@@ -1788,7 +1788,7 @@ agent = ReActAgent(..., compression_config=compression_config,
 ```
 
 #### 3. 并行工具调用加速
-```python
+```python showLineNumbers
 # 多个独立工具调用时启用并行
 agent = ReActAgent(
     ...,
@@ -1799,7 +1799,7 @@ agent = ReActAgent(
 ```
 
 #### 4. 结构化输出的正确用法
-```python
+```python showLineNumbers
 from pydantic import BaseModel
 
 class TaskResult(BaseModel):
@@ -1815,7 +1815,7 @@ data = result.metadata  # dict 格式的 TaskResult
 ### 常见陷阱
 
 #### 陷阱1: 忘记工具函数返回格式
-```python
+```python showLineNumbers
 # 错误示例：工具函数返回普通 dict（应该返回 ToolResponse 或 str）
 def bad_tool() -> dict:
     return {"result": "value"}
@@ -1834,7 +1834,7 @@ toolkit.register_tool_function(tool_func=good_tool, group_name="basic")
 ```
 
 #### 陷阱2: 阻塞事件循环
-```python
+```python showLineNumbers
 # 错误示例：同步阻塞调用
 def sync_search(query):
     time.sleep(10)  # 阻塞整个事件循环！
@@ -1846,7 +1846,7 @@ async def async_search(query):
 ```
 
 #### 陷阱3: 忽视 Token 限制
-```python
+```python showLineNumbers
 # 错误示例：无限制的记忆积累
 memory = InMemoryMemory()  # 无压缩，会话过长时LLM调用失败
 
@@ -1893,7 +1893,356 @@ result = await agent.reply(
 - Agent 调用必须使用 `await`（异步）
 - 记忆压缩通过 `CompressionConfig` 配置
 
+## 练习题
+
+### 练习 4.1: ReAct 推理循环理解 [基础]
+
+**题目**：
+请简述 ReActAgent 的推理循环过程，并说明 Reasoning 和 Acting 两个阶段的区别。
+
+**验证方式**：
+检查是否正确描述了 ReAct 循环的三个阶段及其作用。
+
+<details>
+<summary>参考答案</summary>
+
+**答案/解题思路**：
+
+**ReAct 推理循环**：
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    ReActAgent 推理循环                             │
+│                                                                 │
+│  ┌──────────┐      ┌──────────┐      ┌──────────┐              │
+│  │ Reasoning │ ───▶ │  Acting  │ ───▶ │ Observe  │              │
+│  │  (思考)   │      │  (行动)  │      │  (观察)  │              │
+│  └────┬─────┘      └────┬─────┘      └────┬─────┘              │
+│       │                  │                  │                    │
+│       ▼                  ▼                  │                    │
+│  ┌──────────┐      ┌──────────┐           │                    │
+│  │  LLM     │      │ 执行工具  │           │                    │
+│  │  调用    │      │ 或回复    │           │                    │
+│  └──────────┘      └──────────┘           │                    │
+│                                            │                    │
+│       ◀────────────────────────────────────┘                    │
+│                      (循环直到完成)                               │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+** Reasoning（思考）阶段**：
+- 调用 LLM，决定下一步动作
+- 分析用户意图，决定是否需要调用工具
+- 输出：推理结果 + 可能的工具调用指令
+
+** Acting（行动）阶段**：
+- 根据 Reasoning 的决定执行工具
+- 如果没有工具调用，直接生成回复
+- 如果有工具调用，执行工具并获取结果
+- 将结果加入记忆，进入下一轮推理
+
+**区别**：
+- Reasoning 是"想"，Acting 是"做"
+- Reasoning 决定是否需要工具，Acting 执行具体工具
+- 两者循环交替，直到 Agent 认为任务完成
+</details>
+
 ---
+
+### 练习 4.2: 工具注册机制 [中级]
+
+**题目**：
+AgentScope 的工具注册机制与常见的装饰器模式（如 LangChain 的 `@tool`）有什么不同？请分析两种方案的优缺点。
+
+**验证方式**：
+对比两种工具注册方式的代码结构。
+
+<details>
+<summary>参考答案</summary>
+
+**答案/解题思路**：
+
+**两种方案的对比**：
+
+| 方面 | AgentScope (Toolkit) | LangChain (@tool 装饰器) |
+|------|---------------------|-------------------------|
+| 注册方式 | `toolkit.register_tool_function(func)` | `@tool` 装饰器 |
+| 函数要求 | 普通 Python 函数 | 需要装饰器标记 |
+| 参数解析 | 自动从签名和 docstring 提取 | 自动从类型注解提取 |
+| 灵活性 | 高（运行时注册） | 中（编译时绑定） |
+
+**AgentScope 方案优点**：
+1. **无侵入性**：不需要修改原函数，适合接入现有代码库
+2. **运行时控制**：可以动态添加/删除工具
+3. **分组管理**：通过 `group_name` 组织工具组
+4. **中间件支持**：支持工具执行前后添加逻辑
+
+**AgentScope 方案缺点**：
+1. 注册代码与函数定义分离
+2. 需要显式调用注册方法
+
+**代码对比**：
+
+```python showLineNumbers
+# AgentScope 方式（注册与定义分离）
+def my_tool(input: str) -> ToolResponse:
+    """工具描述"""
+    return ToolResponse(content=[TextBlock(type="text", text="result")])
+
+toolkit = Toolkit()
+toolkit.register_tool_function(my_tool, group_name="basic")
+
+# LangChain 方式（装饰器直接绑定）
+@tool
+def my_tool(input: str) -> str:
+    """工具描述"""
+    return "result"
+```
+
+**结论**：AgentScope 的方式更适合大型项目和对工具生命周期有精细控制需求的场景。
+</details>
+
+---
+
+### 练习 4.3: 记忆系统设计 [中级]
+
+**题目**：
+某电商平台需要构建一个客服 Agent，需要记住：
+1. 用户的历史订单
+2. 用户的偏好（如 shipping_address）
+3. 当前对话的上下文
+
+请设计一个记忆方案，说明需要使用哪些记忆组件以及为什么。
+
+**验证方式**：
+检查是否正确选择不同类型的记忆组件。
+
+<details>
+<summary>参考答案</summary>
+
+**答案/解题思路**：
+
+**推荐方案：混合记忆架构**
+
+| 记忆类型 | 存储内容 | 推荐组件 |
+|----------|----------|----------|
+| 短期记忆 | 当前对话上下文 | `InMemoryMemory` |
+| 用户偏好 | 长期保存的偏好信息 | `Mem0LongTermMemory` 或 `ReMePersonalLongTermMemory` |
+| 历史订单 | 跨会话的订单数据 | 外部数据库（不通过 AgentScope 记忆系统） |
+
+**代码示例**：
+
+```python showLineNumbers
+from agentscope.agent import ReActAgent
+from agentscope.memory import InMemoryMemory, Mem0LongTermMemory
+from agentscope.model import OpenAIChatModel
+from agentscope.formatter import OpenAIChatFormatter
+
+# 短期记忆：当前会话
+working_memory = InMemoryMemory()
+
+# 长期记忆：用户偏好（使用 Mem0）
+long_term_memory = Mem0LongTermMemory(
+    agent_name="customer_service",
+    user_name="user_123",
+    model=OpenAIChatModel(model_name="gpt-4"),
+)
+
+agent = ReActAgent(
+    name="客服助手",
+    model=OpenAIChatModel(model_name="gpt-4o"),
+    sys_prompt="你是一个客服助手，记住用户的偏好和历史订单。",
+    formatter=OpenAIChatFormatter(),
+    memory=working_memory,
+    long_term_memory=long_term_memory,
+)
+
+# 对于历史订单，应该通过工具访问外部数据库
+# 而不是存储在 AgentScope 记忆中
+toolkit = Toolkit()
+toolkit.register_tool_function(get_order_history, group_name="ecommerce")
+toolkit.register_tool_function(update_preference, group_name="ecommerce")
+```
+
+**为什么不把所有数据放记忆**：
+1. **历史订单数据量大**：不适合放在 LLM 上下文中
+2. **需要事务支持**：订单操作需要强一致性
+3. **外部系统是 Source of Truth**：数据库才是权威数据源
+
+**记忆系统的正确用法**：
+- 短期记忆：当前会话的上下文
+- 长期记忆：用户的简单偏好和摘要
+- 复杂数据：通过工具访问外部系统
+</details>
+
+---
+
+### 练习 4.4: Model 层抽象设计 [挑战]
+
+**题目**：
+阅读 AgentScope 的 Model 抽象层设计，分析：
+1. 为什么需要 `ChatModelBase` 这个抽象基类？
+2. 为什么每个模型需要对应的 Formatter？
+3. 如果要新增一个自定义模型（如本地部署的 LLaMA），需要实现哪些核心方法？
+
+**验证方式**：
+结合文档中的模型继承体系进行分析。
+
+<details>
+<summary>参考答案</summary>
+
+**答案/解题思路**：
+
+**1. 为什么需要 ChatModelBase 抽象基类**：
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    ChatModelBase (抽象基类)                     │
+├─────────────────────────────────────────────────────────────┤
+│  - 统一定义所有模型的接口（__call__ 方法签名）                   │
+│  - 统一错误处理和重试逻辑                                      │
+│  - 统一工具调用验证（_validate_tool_choice）                    │
+│  - 抽象出流式/非流式响应的统一处理                              │
+└─────────────────────────────────────────────────────────────┘
+                              │
+         ┌─────────────────────┼─────────────────────┐
+         ▼                     ▼                     ▼
+┌─────────────┐       ┌─────────────┐       ┌─────────────┐
+│   OpenAI    │       │  Anthropic  │       │   Gemini   │
+│  ChatModel  │       │  ChatModel  │       │  ChatModel │
+└─────────────┘       └─────────────┘       └─────────────┘
+```
+
+**好处**：
+- 上层代码（如 ReActAgent）无需关心底层是 OpenAI 还是 Anthropic
+- 新增模型只需实现抽象方法，无需修改已有代码（开闭原则）
+- 统一添加日志、监控、重试等横切关注点
+
+**2. 为什么需要对应的 Formatter**：
+
+不同模型提供商的 API 消息格式不同：
+
+```python
+# OpenAI 格式
+{"role": "user", "content": "Hello"}
+
+# Anthropic 格式
+{"role": "user", "content": [{"type": "text", "text": "Hello"}]}
+
+# Anthropic 还要求 messages 必须以 assistant 或 user 结尾
+```
+
+Formatter 的职责是将 AgentScope 内部的 `Msg` 对象转换为特定模型的格式。
+
+**3. 自定义模型需要实现的核心方法**：
+
+```python
+from agentscope.model import ChatModelBase, ChatResponse
+
+class MyLocalModel(ChatModelBase):
+    """自定义本地模型"""
+    
+    def __init__(self, model_name: str, **kwargs):
+        super().__init__(**kwargs)
+        self.model_name = model_name
+    
+    async def __call__(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        tool_choice: str | None = None,
+        **kwargs
+    ) -> ChatResponse:
+        """核心调用方法，必须实现"""
+        # 1. 调用本地模型
+        # 2. 解析响应
+        # 3. 返回 ChatResponse 对象
+        ...
+    
+    def _validate_tool_choice(self, tool_choice: str, tools: list[dict] | None) -> None:
+        """验证工具调用参数（可选覆盖）"""
+        ...
+```
+
+**最小实现清单**：
+| 方法 | 必须实现 | 说明 |
+|------|----------|------|
+| `__call__` | 是 | 核心调用逻辑 |
+| `_validate_tool_choice` | 否 | 大多数模型可复用基类实现 |
+</details>
+
+---
+
+### 练习 4.5: Hook 机制应用 [中级]
+
+**题目**：
+某团队需要在每个 Agent 回复前后记录日志，用于分析 Agent 的响应质量。请使用 AgentScope 的 Hook 机制实现这个功能。
+
+**验证方式**：
+检查代码是否正确使用 Hook API。
+
+<details>
+<summary>参考答案</summary>
+
+**答案/解题思路**：
+
+**Hook 机制实现日志记录**：
+
+```python showLineNumbers
+import agentscope
+from agentscope.agent import AgentBase, ReActAgent
+from agentscope.message import Msg
+
+# 方法1：类级别 Hook（所有 Agent 实例共享）
+def log_all_replies(self, kwargs: dict, output: Msg) -> Msg:
+    """记录所有 Agent 的回复"""
+    print(f"[LOG] Agent {getattr(self, 'name', 'unknown')} 回复: {output.content[:50]}...")
+    return output
+
+# 注册类级别 Hook
+AgentBase.register_class_hook(
+    hook_type="post_reply",
+    hook_name="reply_logger",
+    hook=log_all_replies,
+)
+
+# 方法2：实例级别 Hook（单个 Agent 独有）
+def log_sensitive_agent(self, kwargs: dict, output: Msg) -> Msg:
+    """记录特定 Agent 的行为"""
+    print(f"[AUDIT] Sensitive Agent 输出: {output.content}")
+    return output
+
+agent = ReActAgent(
+    name="敏感操作助手",
+    model=OpenAIChatModel(model_name="gpt-4o"),
+    sys_prompt="你是一个敏感操作助手。",
+    formatter=OpenAIChatFormatter(),
+)
+
+# 注册实例级别 Hook
+agent.register_instance_hook(
+    hook_type="post_reply",
+    hook_name="audit_logger",
+    hook=log_sensitive_agent,
+)
+```
+
+**Hook 类型对照表**：
+
+| Hook 类型 | 触发时机 | 参数 |
+|-----------|----------|------|
+| `pre_reply` | `reply()` 调用前 | `(self, kwargs)` |
+| `post_reply` | `reply()` 调用后 | `(self, kwargs, output)` |
+| `pre_observe` | `observe()` 调用前 | `(self, kwargs)` |
+| `post_observe` | `observe()` 调用后 | `(self, kwargs, output)` |
+| `pre_print` | `print()` 调用前 | `(self, kwargs)` |
+| `post_print` | `print()` 调用后 | `(self, kwargs, output)` |
+
+**应用场景扩展**：
+1. **性能监控**：记录 `pre_reply` 和 `post_reply` 的时间差
+2. **内容审核**：在 `post_reply` 检查输出是否合规
+3. **成本控制**：在 `post_reply` 统计 token 使用量
+</details>
 
 ## 4.11 下一步
 

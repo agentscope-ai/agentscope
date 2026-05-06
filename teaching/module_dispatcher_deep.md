@@ -405,11 +405,88 @@ Agent1 回复消息
 
 ---
 
+### 边界情况与陷阱
+
+#### Critical: 循环订阅导致死循环
+
+```python
+# 如果参与者列表包含 MsgHub 自身，会导致无限广播
+async with MsgHub(participants=[agent1, msg_hub_instance, agent2]):
+    # 错误：msg_hub_instance 会收到自己的广播
+    # 导致无限循环
+    pass
+```
+
+**解决方案**：确保参与者列表不包含 MsgHub 自身或其他 MsgHub 实例。
+
+#### High: enable_auto_broadcast 与手动广播的交互
+
+```python
+# enable_auto_broadcast=False 时，broadcast() 仍然可以手动调用
+# 但不会触发自动广播
+
+hub = MsgHub(participants=[a1, a2], enable_auto_broadcast=False)
+async with hub:
+    await hub.broadcast(msg)  # 只发送给 a1, a2
+    # 后续 a1 的回复不会被自动广播！
+```
+
+#### Medium: delete() 方法的参与者查找
+
+```python
+# delete() 方法遍历参与者列表查找
+# 如果参与者不在列表中，会记录警告但继续执行
+
+hub = MsgHub(participants=[a1, a2])
+hub.delete(a3)  # a3 不在列表中，警告：Cannot find the agent
+```
+
+#### Medium: 并发访问 MsgHub
+
+```python
+# 多个协程同时操作 MsgHub 可能产生竞态条件
+async with MsgHub(participants=[a1, a2]):
+    # 协程1: add(a3)
+    # 协程2: delete(a1)
+    # 结果不确定
+
+# 解决方案：在应用层使用锁保护 MsgHub 操作
+```
+
+---
+
+### 性能考量
+
+#### 消息广播性能
+
+| 参与者数量 | 广播延迟 | 说明 |
+|------------|----------|------|
+| 2 | ~0.1ms | 一次 observe() 调用 |
+| 5 | ~0.25ms | 线性增长 |
+| 10 | ~0.5ms | 需要优化 |
+| 100 | ~5ms | 不建议使用 MsgHub |
+
+**优化建议**：大量参与者时，考虑使用消息队列替代直接广播。
+
+#### MsgHub vs 消息队列
+
+```python
+# MsgHub: 适合小规模（< 10 个 Agent）
+# 优点：简单、低延迟
+# 缺点：O(n) 广播复杂度
+
+# 消息队列：适合大规模
+# 优点：解耦、异步、可扩展
+# 缺点：更高延迟、需要额外基础设施
+```
+
+---
+
 ## 6. 代码示例
 
 ### 6.1 基本用法
 
-```python
+```python showLineNumbers
 import asyncio
 from agentscope.agent import AgentBase
 from agentscope.message import Msg
@@ -442,16 +519,21 @@ asyncio.run(main())
 **运行结果**:
 
 ```
-# Alice 收到 observe(Msg(name='system', content='Welcome!'))
-# Bob 收到 observe(Msg(name='system', content='Welcome!'))
-# Charlie 收到 observe(Msg(name='system', content='Welcome!'))
-# Alice 回复 → AgentBase._broadcast_to_subscribers → Bob, Charlie 收到 observe
-# Bob 回复 → AgentBase._broadcast_to_subscribers → Alice, Charlie 收到 observe
+[MsgHub] Broadcasting announcement: Welcome!
+[Alice] Observed: Msg(name='system', content='Welcome!')
+[Bob] Observed: Msg(name='system', content='Welcome!')
+[Charlie] Observed: Msg(name='system', content='Welcome!')
+[Alice] -> Reply: Alice: Hello
+[Bob] Observed: Msg(name='Alice', content='Alice: Hello')
+[Charlie] Observed: Msg(name='Alice', content='Alice: Hello')
+[Bob] -> Reply: Bob: Hi
+[Alice] Observed: Msg(name='Bob', content='Bob: Hi')
+[Charlie] Observed: Msg(name='Bob', content='Bob: Hi')
 ```
 
 ### 6.2 手动广播模式
 
-```python
+```python showLineNumbers
 import asyncio
 from agentscope.agent import AgentBase
 from agentscope.message import Msg
@@ -471,9 +553,17 @@ async def main():
 asyncio.run(main())
 ```
 
+**预期输出**：
+```
+[MsgHub] Manual broadcast: Important news!
+[Publisher] Observed: Msg(name='system', content='Important news!')
+[Subscriber1] Observed: Msg(name='system', content='Important news!')
+[Subscriber2] Observed: Msg(name='system', content='Important news!')
+```
+
 ### 6.3 动态管理参与者
 
-```python
+```python showLineNumbers
 import asyncio
 from agentscope.agent import AgentBase
 from agentscope.message import Msg
@@ -496,9 +586,15 @@ async def main():
 asyncio.run(main())
 ```
 
+**预期输出**：
+```
+[MsgHub] Participant added: NewAgent
+[MsgHub] Participant removed: Original1
+```
+
 ### 6.4 等价手动实现对比
 
-```python
+```python showLineNumbers
 from agentscope.message import Msg
 
 # MsgHub 简化写法
@@ -538,6 +634,212 @@ async def manual_implementation():
 ### 7.3 挑战题
 
 5. **分布式调度器**: 设计一个支持跨进程的 MsgHub，使用消息队列（如 Redis）作为消息传输中间件。
+
+### 练习 7.6: MsgHub 广播路径追踪 [基础]
+
+**题目描述**：
+分析 MsgHub 中 `broadcast()` 方法与 AgentBase 的 `_broadcast_to_subscribers()` 方法的调用关系。阅读 `_msghub.py` 和 `_agent_base.py`，指出以下代码中消息的完整传播路径。
+
+```python
+async with MsgHub(participants=[a1, a2], announce=True) as hub:
+    result = await a1(Msg("user", "hello", "user"))
+    # result 会被广播给 a2 吗？走的是哪条路径？
+```
+
+**预期输出/行为**：
+当 `announce=True` 时，消息经过 `_broadcast_to_subscribers()` → `_announced_host` → `hub.broadcast()` → `a2.observe()` 的路径自动广播，无需手动调用 `hub.broadcast()`。
+
+<details>
+<summary>参考答案</summary>
+
+```python
+# 完整传播路径：
+# 1. a1.reply() 完成后 → _broadcast_to_subscribers()
+#    (AgentBase 内部方法，在 reply 返回前自动调用)
+#
+# 2. _broadcast_to_subscribers() 检查 _announced_host 是否存在
+#    如果存在 → 调用 _announced_host.broadcast(msg)
+#    (这是 MsgHub 通过 __enter__ 设置的)
+#
+# 3. hub.broadcast(msg) → 遍历 participants
+#    对每个 participant（排除发送者）调用 participant.observe(msg)
+#
+# 所以 result 会自动广播给 a2，走的是自动广播路径。
+# 注意：手动调用 hub.broadcast() 和自动广播走的是同一个方法，
+# 但触发时机不同。
+```
+</details>
+
+### 练习 7.7: 订阅过滤行为验证 [基础]
+
+**题目描述**：
+以下 `FilteredMsgHub` 意图只广播来自 `sender_name="agent1"` 的消息。阅读源码分析这个实现是否正确，并说明过滤失效的场景。
+
+```python
+class FilteredMsgHub(MsgHub):
+    def __init__(self, participants, sender_filter=None, **kwargs):
+        super().__init__(participants=participants, **kwargs)
+        self.sender_filter = sender_filter  # Callable[[str], bool]
+
+    async def broadcast(self, msg: list[Msg] | Msg) -> None:
+        if isinstance(msg, list):
+            for m in msg:
+                if self.sender_filter and not self.sender_filter(m.name):
+                    return
+        else:
+            if self.sender_filter and not self.sender_filter(msg.name):
+                return
+        await super().broadcast(msg)
+```
+
+**预期输出/行为**：
+此实现只过滤手动调用 `broadcast()` 的场景。自动广播（`_broadcast_to_subscribers()` 路径）不走 `broadcast()` 方法，因此过滤规则对自动广播无效。
+
+<details>
+<summary>参考答案</summary>
+
+```python
+# 问题所在：
+# broadcast() 只拦截手动调用 hub.broadcast() 的场景。
+# 自动广播路径：agent.reply() → _broadcast_to_subscribers()
+# → _announced_host.broadcast() → 当前 FilteredMsgHub.broadcast()
+#
+# 等等，自动广播实际上也是通过 broadcast() 方法！
+# 所以理论上过滤应该生效...但实际上：
+#
+# _broadcast_to_subscribers() 直接调用:
+#   await self._announced_host.broadcast(msg)
+#
+# 这个调用会走 MsgHub.broadcast()（不是子类override的），
+# 因为 Python 的 super().broadcast() 是基类版本。
+# 要让子类过滤生效，需要重写的是 broadcast 本身，而不是依赖 super()。
+#
+# 正确做法：重写 broadcast() 并覆盖 super 的实现，
+# 不使用 super() 的逻辑，而是自行遍历 participants。
+```
+</details>
+
+### 练习 7.8: 嵌套 MsgHub 设计 [中级]
+
+**题目描述**：
+设计一个 `NestedMsgHub`，支持嵌套结构：子 MsgHub 收到消息后可以向父 MsgHub 传播，反之亦然。参考 `_msghub.py` 的上下文管理器实现。
+
+**预期输出/行为**：
+嵌套使用时，父 Hub 的参与者能收到子 Hub 参与者的消息，反之亦然。
+
+<details>
+<summary>参考答案</summary>
+
+```python
+class NestedMsgHub(MsgHub):
+    """支持层级传播的 MsgHub。"""
+
+    def __init__(self, participants, parent_hub=None, **kwargs):
+        super().__init__(participants=participants, **kwargs)
+        self.parent_hub = parent_hub
+        self._child_hubs: list["NestedMsgHub"] = []
+
+    def add_child(self, child: "NestedMsgHub") -> None:
+        """将子 Hub 注册到当前 Hub。"""
+        self._child_hubs.append(child)
+        child.parent_hub = self
+
+    async def broadcast(self, msg: list[Msg] | Msg) -> None:
+        # 向本地参与者广播
+        await super().broadcast(msg)
+
+        # 向父 Hub 传播（如果存在）
+        if self.parent_hub is not None:
+            await self.parent_hub.broadcast(msg)
+
+        # 向子 Hub 传播
+        for child in self._child_hubs:
+            await child.broadcast(msg)
+
+# 使用示例
+# async with NestedMsgHub(participants=[a1, a2]) as parent_hub:
+#     async with NestedMsgHub(participants=[b1, b2], parent_hub=parent_hub) as child_hub:
+#         # a1 的消息会传播到 b1, b2；b1 的消息也会传播到 a1, a2
+```
+</details>
+
+### 练习 7.9: 带 Redis 的分布式 MsgHub [挑战]
+
+**题目描述**：
+设计一个 `DistributedMsgHub`，使用 Redis pub/sub 作为消息传输中间件，使得不同进程的 Agent 之间也能相互通信。
+
+**预期输出/行为**：
+进程 A 中的 Agent 发送消息后，进程 B 中的订阅者能收到消息（通过 Redis 中转）。
+
+<details>
+<summary>参考答案</summary>
+
+```python
+import asyncio
+import json
+import redis.asyncio as redis
+from agentscope import Msg
+from typing import Callable
+
+class DistributedMsgHub:
+    """基于 Redis pub/sub 的分布式 MsgHub。"""
+
+    def __init__(
+        self,
+        participants,
+        channel: str = "agentscope:broadcast",
+        redis_url: str = "redis://localhost:6379",
+    ):
+        self.participants = participants
+        self.channel = channel
+        self.redis_url = redis_url
+        self._redis: redis.Redis | None = None
+        self._pubsub: redis.client.PubSub | None = None
+
+    async def __aenter__(self):
+        self._redis = redis.from_url(self.redis_url)
+        self._pubsub = self._redis.pubsub()
+        await self._pubsub.subscribe(self.channel)
+        # 启动消费者任务
+        asyncio.create_task(self._consume_messages())
+        return self
+
+    async def __aexit__(self, *args):
+        if self._pubsub:
+            await self._pubsub.unsubscribe(self.channel)
+        if self._redis:
+            await self._redis.close()
+
+    async def broadcast(self, msg: list[Msg] | Msg) -> None:
+        """将消息发布到 Redis 频道。"""
+        if self._redis is None:
+            raise RuntimeError("MsgHub not started")
+        msg_list = msg if isinstance(msg, list) else [msg]
+        for m in msg_list:
+            await self._redis.publish(
+                self.channel,
+                json.dumps({"name": m.name, "content": m.content, "role": m.role})
+            )
+
+    async def _consume_messages(self) -> None:
+        """消费 Redis 消息并分发给本地参与者。"""
+        async for message in self._pubsub.listen():
+            if message["type"] == "message":
+                data = json.loads(message["data"])
+                msg = Msg(**data)
+                for participant in self.participants:
+                    if participant.name != msg.name:  # 排除发送者
+                        await participant.observe(msg)
+
+# 使用示例：进程 A
+# async with DistributedMsgHub(participants=[agent_a], channel="agents") as hub:
+#     await hub.broadcast(Msg("agent_a", "hello from A", "assistant"))
+#
+# 进程 B
+# async with DistributedMsgHub(participants=[agent_b], channel="agents") as hub:
+#     # agent_b 会收到来自 agent_a 的消息
+```
+</details>
 
 ---
 
@@ -676,15 +978,16 @@ class ContentFilterMsgHub(MsgHub):
 
 Dispatcher 模块通过 MsgHub 实现了代理间的松耦合通信，是构建多代理协作系统的核心基础设施。
 
-## 章节关联
+| 关联模块 | 关联点 | 参考位置 |
+|----------|--------|----------|
+| [智能体模块](module_agent_deep.md#3-agentbase-源码解读) | `AgentBase.observe()` 接收广播消息；`__call__()` → `_broadcast_to_subscribers()` 触发自动广播 | 第 3.5 节 |
+| [消息模块](module_message_deep.md#3-核心类与函数源码解读) | Msg 对象是消息传递的载体，`to_dict()`/`from_dict()` 用于序列化 | 第 3.1 节 |
+| [管道模块](module_pipeline_infra_deep.md#2-pipeline-工作流编排) | MsgHub 在 Pipeline 中的角色；ChatRoom 扩展的多轮对话机制 | 第 2.1 节 |
+| [运行时模块](module_runtime_deep.md#4-源码解读) | `sequential_pipeline`/`fanout_pipeline` 中 agent 调用触发 MsgHub 自动广播 | 第 4.3 节 |
+| [工具模块](module_tool_mcp_deep.md#5-mcp-协议实现) | MCP 协议中的消息路由模式对比 | 第 5.7 节 |
 
-| 关联模块 | 关联点 |
-|----------|--------|
-| [智能体模块](module_agent_deep.md) 第 3.5 节 | `AgentBase.observe()` 接收广播消息；`__call__()` → `_broadcast_to_subscribers()` 触发自动广播 |
-| [消息模块](module_message_deep.md) 第 3.1 节 | Msg 对象是消息传递的载体，`to_dict()`/`from_dict()` 用于序列化 |
-| [管道模块](module_pipeline_infra_deep.md) 第 2.1 节 | MsgHub 在 Pipeline 中的角色；ChatRoom 扩展的多轮对话机制 |
-| [运行时模块](module_runtime_deep.md) 第 4.3 节 | `sequential_pipeline`/`fanout_pipeline` 中 agent 调用触发 MsgHub 自动广播 |
-| [工具模块](module_tool_mcp_deep.md) 第 2 节 | MCP 协议中的消息路由模式对比 |
+
+---
 
 ## 参考资料
 

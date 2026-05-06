@@ -376,11 +376,134 @@ ContentBlockTypes = Literal[
 
 ---
 
+### 边界情况与陷阱
+
+#### Critical: Msg 字段直接修改的风险
+
+```python
+# Msg 是普通类（非 dataclass），字段可以直接修改
+# 但这可能导致不可预期的副作用
+msg = Msg(name="user", content="Hello", role="user")
+msg.content = "Modified"  # 直接修改
+
+# 问题：如果 msg 被多个引用共享，修改会传播
+# 在 Pipeline 中，消息通常被多个 Agent 共享引用
+```
+
+**解决方案**：使用 `Msg(name=msg.name, content="New", role=msg.role)` 创建新实例。
+
+#### High: TypedDict 的运行时类型检查
+
+```python
+# TypedDict 只在静态类型检查时生效，运行时不检查
+from typing import TypedDict
+
+class UserMsg(TypedDict):
+    name: str
+    content: str
+
+# 静态分析时会报错，但运行时可以这样：
+data = {"name": "user", "content": 123}  # 类型错误但运行时OK
+user_msg = UserMsg(**data)  # 不会报错！
+```
+
+**解决方案**：使用 Pydantic 或在关键路径添加运行时验证。
+
+#### High: Msg 的 id 和 timestamp 自动生成
+
+```python
+# id 和 timestamp 在创建时自动生成
+msg1 = Msg(name="user", content="Hello", role="user")
+msg2 = Msg(name="user", content="Hello", role="user")
+
+print(msg1.id == msg2.id)  # False - 每次创建都是新 ID
+print(msg1.timestamp == msg2.timestamp)  # 可能是 False - 时间戳不同
+```
+
+**陷阱**：如果序列化后反序列化，id 会丢失或变化。
+
+#### Medium: ImageBlock 的 URLSource 必须提供 url
+
+```python
+# ImageBlock 支持多种图片来源，但 URLSource 必须有 url
+from agentscope.message import Msg, ImageBlock, URLSource
+
+# 错误：URLSource 没有 url 字段
+block = ImageBlock(type="image", source=URLSource())  # 错误
+
+# 正确：
+block = ImageBlock(type="image", source=URLSource(url="https://..."))
+```
+
+#### Medium: AudioBlock 的 base64 数据格式
+
+```python
+# AudioBlock 的 audio 字段需要是 base64 编码的字符串
+# 不是原始字节，也不是其他编码
+import base64
+
+raw_audio = b"audio data..."
+audio_b64 = base64.b64encode(raw_audio).decode("ascii")
+
+# 如果使用错误的格式，API 会返回 400 错误
+```
+
+#### Medium: 消息的 role 字段枚举
+
+```python
+# Msg 的 role 字段接受字符串，但某些 API 对格式有要求
+# OpenAI: "system", "user", "assistant", "tool"
+# Anthropic: "user", "assistant", "system"
+
+# 如果使用错误的 role，某些 API 会静默失败或返回意外结果
+msg = Msg(name="bot", content="Hello", role="invalid_role")  # 问题！
+```
+
+---
+
+### 性能考量
+
+#### Msg 创建开销
+
+| 操作 | 开销 | 说明 |
+|------|------|------|
+| 创建空 Msg | ~0.01ms | 最快 |
+| 创建带内容块 | ~0.05ms | 取决于块数量 |
+| deepcopy(Msg) | ~0.1-1ms | 取决于内容大小 |
+| 序列化 to_dict() | ~0.05ms | 取决于字段数量 |
+
+#### 内容块性能
+
+```python
+# TextBlock: 最快，直接存储字符串
+# ImageBlock: 需要存储完整 URL 或 base64，内存开销大
+# AudioBlock: base64 编码增加 33% 大小
+
+# 大量消息时的优化建议：
+# - 避免在消息中存储大型多媒体数据
+# - 使用 URL 引用而非 base64 内联
+# - 考虑压缩大型 base64 音频数据
+```
+
+#### 消息队列中的 Msg 序列化
+
+```python
+# 如果消息需要通过网络传输或存储，需要序列化
+# Msg.to_dict() 性能约为 ~0.05ms/消息
+# 对于高频场景（如流式输出），这可能成为瓶颈
+
+# 优化建议：
+# - 批量序列化时使用 list comprehension
+# - 考虑使用 msgpack 而非 JSON 序列化
+```
+
+---
+
 ## 5. 代码示例
 
 ### 5.1 创建基本消息
 
-```python
+```python showLineNumbers
 from agentscope.message import Msg
 
 # 创建用户消息
@@ -407,7 +530,7 @@ Msg(id='aBcDeFgHiJkL', name='user', content='你好，请帮我查询天气', ro
 
 ### 5.2 使用内容块创建消息
 
-```python
+```python showLineNumbers
 from agentscope.message import Msg, TextBlock, ImageBlock, Base64Source
 
 # 创建包含多种内容块的消息
@@ -430,7 +553,7 @@ msg = Msg(
 
 ### 5.3 序列化与反序列化
 
-```python
+```python showLineNumbers
 # 序列化为字典
 msg_dict = user_msg.to_dict()
 print(msg_dict)
@@ -440,9 +563,15 @@ restored_msg = Msg.from_dict(msg_dict)
 print(restored_msg)
 ```
 
+**预期输出**：
+```
+{'id': 'aBcDeFgHiJkL', 'name': 'user', 'content': '你好，请帮我查询天气', 'role': 'user', 'metadata': {}, 'timestamp': '2026-04-29 10:30:00.123'}
+Msg(id='aBcDeFgHiJkL', name='user', content='你好，请帮我查询天气', role='user', metadata={}, timestamp='2026-04-29 10:30:00.123', invocation_id='None')
+```
+
 ### 5.4 内容块操作
 
-```python
+```python showLineNumbers
 # 获取所有文本内容
 text = msg.get_text_content()
 
@@ -453,9 +582,16 @@ has_tool_call = msg.has_content_blocks("tool_use")
 tool_calls = msg.get_content_blocks("tool_use")
 ```
 
+**预期输出**：
+```
+text = '这是文本内容'
+has_tool_call = False
+tool_calls = []
+```
+
 ### 5.5 工具调用示例
 
-```python
+```python showLineNumbers
 from agentscope.message import Msg, ToolUseBlock, ToolResultBlock, TextBlock
 
 # 模拟工具调用消息
@@ -485,6 +621,12 @@ result_msg = Msg(
     ],
     role="assistant"  # 注意: Msg 只支持 user/assistant/system, tool 结果用 assistant
 )
+```
+
+**预期输出**：
+```
+tool_msg.has_content_blocks("tool_use") = True
+tool_calls = [{'type': 'tool_use', 'id': 'call_123', 'name': 'get_weather', 'input': {'city': '北京'}}]
 ```
 
 ---
@@ -654,14 +796,16 @@ Message 模块是 AgentScope 的通信基础，所有代理间交互都通过 Ms
 | **Strategy** | `get_content_blocks(block_type)` | 按类型过滤内容块 |
 | **Adapter** | Msg → 各 API 格式 | 由 Formatter 模块适配不同厂商 |
 
-## 章节关联
+| 关联模块 | 关联点 | 参考位置 |
+|----------|--------|----------|
+| [智能体模块](module_agent_deep.md#3-agentbase-源码解读) | AgentBase 的 `reply()` 返回 Msg 对象 | 第 3.2 节 |
+| [调度器模块](module_dispatcher_deep.md#4-源码解读) | MsgHub 广播和路由 Msg 消息 | 第 4.1 节 |
+| [模型模块](module_model_deep.md#2-chatmodelbase-基类分析) | Model 接收和返回 Msg 对象 | 第 2.2 节 |
+| [记忆模块](module_memory_rag_deep.md#2-memory-基类和实现) | Memory 存储和检索 Msg 对象 | 第 2.1 节 |
+| [格式化器模块](module_formatter_deep.md#3-源码解读) | Formatter 将 Msg 转换为 API 格式 | 第 3.1-3.4 节 |
 
-| 关联模块 | 关联点 |
-|----------|--------|
-| [智能体模块](module_agent_deep.md) | AgentBase 的 `reply()` 返回 Msg 对象 |
-| [调度器模块](module_dispatcher_deep.md) | MsgHub 广播和路由 Msg 消息 |
-| [模型模块](module_model_deep.md) | Model 接收和返回 Msg 对象 |
-| [记忆模块](module_memory_rag_deep.md) | Memory 存储和检索 Msg 对象 |
+
+---
 
 ## 参考资料
 

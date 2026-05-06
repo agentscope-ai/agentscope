@@ -87,7 +87,7 @@ tool/_text_file/
 
 #### 3.1.1 本地文件检测
 
-```python
+```python showLineNumbers
 def _is_accessible_local_file(url: str) -> bool:
     """Check if the given URL is a local URL."""
     # First identify if it's an uri with 'file://' schema,
@@ -110,7 +110,7 @@ def _is_accessible_local_file(url: str) -> bool:
 
 #### 3.2.1 保存 Base64 数据到临时文件
 
-```python
+```python showLineNumbers
 def _save_base64_data(
     media_type: str,
     base64_data: str,
@@ -138,7 +138,7 @@ def _save_base64_data(
 
 #### 3.2.2 从 Web URL 获取字节数据
 
-```python
+```python showLineNumbers
 def _get_bytes_from_web_url(
     url: str,
     max_retries: int = 3,
@@ -173,7 +173,7 @@ def _get_bytes_from_web_url(
 
 #### 3.3.1 查看工具主函数
 
-```python
+```python showLineNumbers
 async def view_text_file(
     file_path: str,
     ranges: list[int] | None = None,
@@ -215,7 +215,7 @@ async def view_text_file(
 
 #### 3.3.2 低级查看实现
 
-```python
+```python showLineNumbers
 def _view_text_file(
     file_path: str,
     ranges: list[int] | None = None,
@@ -251,7 +251,7 @@ def _view_text_file(
 
 #### 3.4.1 写入文件
 
-```python
+```python showLineNumbers
 async def write_text_file(
     file_path: str,
     content: str,
@@ -309,7 +309,7 @@ async def write_text_file(
 
 #### 3.4.2 插入文本
 
-```python
+```python showLineNumbers
 async def insert_text_file(
     file_path: str,
     content: str,
@@ -348,7 +348,7 @@ async def insert_text_file(
 
 #### 3.5.1 范围计算
 
-```python
+```python showLineNumbers
 def _calculate_view_ranges(
     old_n_lines: int,
     new_n_lines: int,
@@ -367,7 +367,7 @@ def _calculate_view_ranges(
 
 #### 3.5.2 范围验证
 
-```python
+```python showLineNumbers
 def _assert_ranges(ranges: list[int]) -> None:
     """Check if the ranges are valid."""
     if (
@@ -392,7 +392,7 @@ def _assert_ranges(ranges: list[int]) -> None:
 
 ### 4.2 防御式编程
 
-```python
+```python showLineNumbers
 # 多重检查
 if not os.path.exists(file_path):
     return error_response
@@ -402,7 +402,7 @@ if not os.path.isfile(file_path):
 
 ### 4.3 错误即返回值
 
-```python
+```python showLineNumbers
 if error_condition:
     return ToolResponse(content=[TextBlock(type="text", text=f"Error: ...")])
 ```
@@ -411,7 +411,7 @@ if error_condition:
 
 ### 4.4 异步设计
 
-```python
+```python showLineNumbers
 async def view_text_file(...) -> ToolResponse:
 ```
 
@@ -419,7 +419,7 @@ async def view_text_file(...) -> ToolResponse:
 
 ### 4.5 临时文件管理
 
-```python
+```python showLineNumbers
 with tempfile.NamedTemporaryFile(suffix=extension, delete=False) as temp_file:
     ...
     return temp_file.name
@@ -445,7 +445,7 @@ with tempfile.NamedTemporaryFile(suffix=extension, delete=False) as temp_file:
 
 ### 5.1 本地文件检测
 
-```python
+```python showLineNumbers
 from agentscope._utils._common import _is_accessible_local_file
 
 # 检测普通路径
@@ -457,7 +457,7 @@ print(_is_accessible_local_file("file:///home/user/doc.txt"))
 
 ### 5.2 Base64 数据处理
 
-```python
+```python showLineNumbers
 from agentscope._utils._common import _save_base64_data
 
 # 保存 Base64 图片数据到临时文件
@@ -470,7 +470,7 @@ print(f"临时文件路径: {temp_path}")
 
 ### 5.3 查看文本文件
 
-```python
+```python showLineNumbers
 import asyncio
 from agentscope.tool._text_file import view_text_file
 
@@ -487,7 +487,7 @@ asyncio.run(main())
 
 ### 5.4 写入文本文件
 
-```python
+```python showLineNumbers
 import asyncio
 from agentscope.tool._text_file import write_text_file
 
@@ -506,7 +506,7 @@ asyncio.run(main())
 
 ### 5.5 插入文本
 
-```python
+```python showLineNumbers
 import asyncio
 from agentscope.tool._text_file import insert_text_file
 
@@ -563,7 +563,7 @@ asyncio.run(main())
 
 **第1题：文件检测**
 
-```python
+```python showLineNumbers
 from agentscope._utils._common import _is_accessible_local_file
 
 exists = _is_accessible_local_file("/etc/hosts")
@@ -572,7 +572,7 @@ print(f"文件存在: {exists}")
 
 **第2题：查看文件前 20 行**
 
-```python
+```python showLineNumbers
 from agentscope.tool._text_file import view_text_file
 
 content = await view_text_file(file_path="/path/to/file.txt", ranges=[1, 20])
@@ -581,7 +581,7 @@ print(content)
 
 **第3题：创建文件并写入**
 
-```python
+```python showLineNumbers
 from agentscope.tool._text_file import write_text_file
 
 result = await write_text_file(
@@ -594,7 +594,7 @@ result = await write_text_file(
 
 **第4题：read_file_safely**
 
-```python
+```python showLineNumbers
 def read_file_safely(file_path: str) -> str:
     try:
         with open(file_path, "r") as f:
@@ -607,7 +607,7 @@ def read_file_safely(file_path: str) -> str:
 
 **第5题：copy_file_content**
 
-```python
+```python showLineNumbers
 def copy_file_content(src: str, dst: str) -> None:
     with open(src, "r") as f:
         content = f.read()
@@ -617,7 +617,7 @@ def copy_file_content(src: str, dst: str) -> None:
 
 **第6题：count_lines**
 
-```python
+```python showLineNumbers
 def count_lines(file_path: str) -> int:
     with open(file_path, "r") as f:
         return sum(1 for _ in f)
@@ -627,7 +627,7 @@ def count_lines(file_path: str) -> int:
 
 **第7题：replace_in_file**
 
-```python
+```python showLineNumbers
 def replace_in_file(file_path: str, old_text: str, new_text: str) -> int:
     with open(file_path, "r") as f:
         content = f.read()
@@ -640,7 +640,7 @@ def replace_in_file(file_path: str, old_text: str, new_text: str) -> int:
 
 **第8题：create_file_with_line_numbers**
 
-```python
+```python showLineNumbers
 def create_file_with_line_numbers(file_path: str, content: str) -> None:
     lines = content.split("\n")
     numbered = [f"{i+1}: {line}" for i, line in enumerate(lines)]
@@ -650,7 +650,7 @@ def create_file_with_line_numbers(file_path: str, content: str) -> None:
 
 **第9题：batch_view_files**
 
-```python
+```python showLineNumbers
 async def batch_view_files(file_paths: list[str], ranges: list[tuple[int,int]]) -> dict:
     results = {}
     for path, (start, end) in zip(file_paths, ranges):
@@ -712,13 +712,14 @@ async def batch_view_files(file_paths: list[str], ranges: list[tuple[int,int]]) 
 | **Strategy** | Base64 vs URL 源 | 根据来源类型选择不同处理策略 |
 | **Guard（守卫）** | `_is_accessible_local_file()` | 校验 URL 是否指向本地文件（注意：当前实现仅检查文件是否存在，未防范路径遍历，生产环境建议增加 `os.path.realpath()` 校验） |
 
-## 章节关联
+| 关联模块 | 关联点 | 参考位置 |
+|----------|--------|----------|
+| [工具模块](module_tool_mcp_deep.md#3-toolkit-工具包核心) | 文件工具通过 MCP 协议暴露给 Agent | 第 3.2 节、第 4 节 |
+| [工具箱模块](module_utils_deep.md#3-源码解读) | Base64 编解码、`_get_bytes_from_web_url` 等共享工具函数 | 第 3.3-3.4 节 |
+| [智能体模块](module_agent_deep.md#4-reactagent-实现类分析) | Agent 通过 Toolkit 调用文件操作工具 | 第 4.4 节 |
 
-| 关联模块 | 关联点 |
-|----------|--------|
-| [工具模块](module_tool_mcp_deep.md) 第 3 节 | 文件工具通过 MCP 协议暴露给 Agent |
-| [Utils 模块](module_utils_deep.md) 第 3.4 节 | Base64 编解码、`_get_bytes_from_web_url` 等共享工具函数 |
-| [智能体模块](module_agent_deep.md) 第 4 节 | Agent 通过 Toolkit 调用文件操作工具 |
+
+---
 
 ## 参考资料
 

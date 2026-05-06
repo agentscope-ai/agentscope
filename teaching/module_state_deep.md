@@ -84,7 +84,7 @@ module/
 
 ### 3.1 StateModule 核心类
 
-```python
+```python showLineNumbers
 class StateModule:
     """支持嵌套状态序列化和反序列化的基础模块。"""
 
@@ -104,7 +104,7 @@ class StateModule:
 
 ### 3.2 自动追踪机制
 
-```python
+```python showLineNumbers
 def __setattr__(self, key: str, value: Any) -> None:
     if isinstance(value, StateModule):
         if not hasattr(self, "_module_dict"):
@@ -134,7 +134,7 @@ def __delattr__(self, key: str) -> None:
 
 **重要的初始化顺序约束**：
 
-```python
+```python showLineNumbers
 class MyModule(StateModule):
     def __init__(self):
         # 错误！此时 _module_dict 还不存在
@@ -147,7 +147,7 @@ class MyModule(StateModule):
 
 ### 3.3 state_dict 递归序列化
 
-```python
+```python showLineNumbers
 def state_dict(self) -> dict:
     state = {}
     # 第一步：递归收集嵌套子模块
@@ -187,7 +187,7 @@ Agent.state_dict()
 
 ### 3.4 load_state_dict 反序列化
 
-```python
+```python showLineNumbers
 def load_state_dict(self, state_dict: dict, strict: bool = True) -> None:
     # 第一步：恢复嵌套子模块
     for key in self._module_dict:
@@ -219,7 +219,7 @@ def load_state_dict(self, state_dict: dict, strict: bool = True) -> None:
 
 ### 3.5 register_state 自定义序列化钩子
 
-```python
+```python showLineNumbers
 def register_state(
     self,
     attr_name: str,
@@ -234,7 +234,7 @@ def register_state(
 
 **内部实现**：
 
-```python
+```python showLineNumbers
 @dataclass
 class _JSONSerializeFunction:
     to_json: Optional[Callable[[Any], Any]] = None
@@ -294,7 +294,7 @@ StateModule
 
 ### 6.1 基本状态保存与恢复
 
-```python
+```python showLineNumbers
 from agentscope.module import StateModule
 
 class SimpleAgent(StateModule):
@@ -322,7 +322,7 @@ assistant
 
 ### 6.2 嵌套模块的状态管理
 
-```python
+```python showLineNumbers
 from agentscope.module import StateModule
 from agentscope.memory import InMemoryMemory
 
@@ -348,7 +348,7 @@ print(len(agent2.memory.get_memory()))  # 1（消息已恢复）
 
 ### 6.3 自定义序列化（处理非 JSON 类型）
 
-```python
+```python showLineNumbers
 import json
 from datetime import datetime
 from agentscope.module import StateModule
@@ -388,7 +388,7 @@ print(type(agent2.created_at))  # <class 'datetime.datetime'>
 
 **Q2**: 以下代码会发生什么？为什么？
 
-```python
+```python showLineNumbers
 class BadModule(StateModule):
     def __init__(self):
         self.child = StateModule()  # 在 super().__init__() 之前
@@ -414,7 +414,7 @@ class BadModule(StateModule):
 **A2**: 抛出 `AttributeError: Call the super().__init__() method within the constructor of BadModule before setting any attributes.`。因为 `self.child = StateModule()` 触发 `__setattr__`，此时 `_module_dict` 还不存在。
 
 **A3**:
-```python
+```python showLineNumbers
 class ConversationSession(StateModule):
     def __init__(self):
         super().__init__()
@@ -436,7 +436,7 @@ new_session.load_state_dict(state)
 
 **A5**: 使用 `strict=False` 模式加载旧版本状态，然后手动设置新字段的默认值：
 
-```python
+```python showLineNumbers
 old_state = {"name": "agent"}  # 旧版本没有 enabled 字段
 agent.load_state_dict(old_state, strict=False)
 if not hasattr(agent, '_new_field_initialized'):
@@ -456,14 +456,13 @@ if not hasattr(agent, '_new_field_initialized'):
 | `load_state_dict()` | 递归恢复状态，支持 strict/宽松模式 |
 | `register_state()` | 注册非自动追踪属性，支持自定义序列化钩子 |
 
-## 章节关联
+| 关联模块 | 关联点 | 参考位置 |
+|----------|--------|----------|
+| [智能体模块](module_agent_deep.md#2-核心类继承体系) | AgentBase 继承 StateModule | 第 2.1 节 |
+| [记忆模块](module_memory_rag_deep.md#2-memory-基类和实现) | MemoryBase 继承 StateModule | 第 2.1 节 |
+| [计划模块](module_plan_deep.md#3-源码解读) | PlanNotebook 继承 StateModule | 第 3.1 节 |
+| [会话模块](module_session_deep.md#5-代码示例) | Session 通过 state_dict 持久化 StateModule | 第 5.1 节 |
+| [工具模块](module_tool_mcp_deep.md#3-toolkit-工具包核心) | Toolkit 继承 StateModule | 第 3.1 节 |
 
-| 相关模块 | 关联点 |
-|----------|--------|
-| [Agent 模块](module_agent_deep.md) | AgentBase 继承 StateModule |
-| [Memory 模块](module_memory_rag_deep.md) | MemoryBase 继承 StateModule |
-| [Plan 模块](module_plan_deep.md) | PlanNotebook 继承 StateModule |
-| [Session 模块](module_session_deep.md) | Session 通过 state_dict 持久化 StateModule |
-| [Tool 模块](module_tool_mcp_deep.md) | Toolkit 继承 StateModule |
 
-**版本参考**: AgentScope >= 1.0.0 | 源码 `module/_state_module.py`
+---

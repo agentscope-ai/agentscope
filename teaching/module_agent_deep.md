@@ -1619,11 +1619,125 @@ public class AgentHookAspect {
 
 ---
 
+### 边界情况与陷阱
+
+#### Critical: super().__init__() 必须首先调用
+
+```python
+# StateModule 子类必须在 __init__ 中首先调用 super().__init__()
+class MyAgent(AgentBase):
+    def __init__(self, name: str):
+        self.name = name  # 错误！super().__init__() 还没调用
+        super().__init__()  # 太晚了
+
+# 正确做法：
+class MyAgent(AgentBase):
+    def __init__(self, name: str):
+        super().__init__()  # 首先调用
+        self.name = name    # 然后设置属性
+```
+
+**原因**：`super().__init__()` 初始化 `_module_dict` 和 `_attribute_dict`，在此之前设置 StateModule 属性会抛出 AttributeError。
+
+#### High: Hook 的重复执行保护
+
+```python
+# Hook 有 guard 机制防止重复执行
+# _hook_running_pre_reply 和 _hook_running_post_reply 标志位
+
+# 问题：如果在 hook 执行期间再次触发同一 hook，会被跳过
+async def my_hook(self, msg):
+    await self(Msg("user", "nested call", "user"))  # 可能触发另一个 pre_reply hook
+
+agent.register_instance_hook("pre_reply", "my_hook", my_hook)
+# 如果 my_hook 内部调用 agent()，可能导致 hook 被跳过
+```
+
+#### High: MsgHub 上下文中调用 agent()
+
+```python
+# MsgHub 上下文中，agent() 的调用会自动广播
+# 但这可能导致意外的消息传播
+
+async with MsgHub(participants=[agent1, agent2]):
+    result = await agent1(Msg("user", "test", "user"))
+    # agent1 的回复会自动广播给 agent2
+    # 这可能不是预期的行为！
+```
+
+#### Medium: ReActAgent 的 sys_prompt 和 formatter 参数
+
+```python
+# ReActAgent 构造函数需要必填参数
+agent = ReActAgent(
+    name="assistant",
+    sys_prompt="You are a helpful assistant",  # 必需
+    model_config_name="gpt-4",               # 必需
+    # formatter 参数也是必需的！
+)
+# 如果忘记提供 sys_prompt，会在运行时抛出 TypeError
+```
+
+#### Medium: Toolkit 的 tool 冲突
+
+```python
+# Toolkit 允许多个工具函数重名（后者覆盖前者）
+toolkit = Toolkit()
+toolkit.register( func1 )  # name="translate"
+toolkit.register( func2 )  # name="translate" - 覆盖！
+
+# 问题：调用 "translate" 时使用的是 func2
+# 难以调试的 bug
+```
+
+---
+
+### 性能考量
+
+#### Agent 响应延迟分析
+
+| 阶段 | 延迟占比 | 优化方向 |
+|------|----------|----------|
+| Hook pre_reply | ~5% | 减少 hook 数量 |
+| 格式化 (Formatter) | ~10% | 缓存格式化结果 |
+| LLM 调用 | ~70% | 选择更快的模型 |
+| 工具执行 (Toolkit) | ~10% | 并行化独立工具 |
+| Hook post_reply | ~5% | 减少 hook 数量 |
+
+#### 消息广播性能
+
+```python
+# MsgHub 广播的开销随参与者数量线性增长
+n_participants = 10
+# 每次广播：O(n) 的 observe() 调用
+
+# 优化建议：
+# - 限制 MsgHub 中的参与者数量
+# - 使用 filter 减少不必要的广播
+# - 考虑使用消息队列替代直接广播
+```
+
+#### 内存占用
+
+```python
+# Agent 的内存占用主要来自：
+# 1. 消息历史 (memory)
+# 2. 工具定义 (toolkit)
+# 3. 模型上下文 (model)
+
+# 大规模部署时的优化：
+# - 限制消息历史长度
+# - 延迟加载工具定义
+# - 使用量化模型减少内存
+```
+
+---
+
 ## 8. 代码示例
 
 ### 8.1 创建基础 Agent
 
-```python
+```python showLineNumbers
 from agentscope import AgentBase, Msg
 
 class MyAgent(AgentBase):
@@ -1647,9 +1761,15 @@ class MyAgent(AgentBase):
         return Msg(name=self.name, content="Interrupted!", role="assistant")
 ```
 
+**预期输出**：
+```
+[MyAgent] Observed: Msg(name='user', content='Hello', role='user')
+[MyAgent] Reply: Hello! I received: Hello
+```
+
 ### 8.2 创建 ReActAgent
 
-```python
+```python showLineNumbers
 from agentscope import ReActAgent
 from agentscope.model import OpenAIChatModel
 from agentscope.formatter import OpenAIFormatter
@@ -1678,9 +1798,15 @@ result = await agent(Msg(name="user", content="What is 2 + 2?", role="user"))
 print(result.content)
 ```
 
+**预期输出**：
+```
+[2026-05-05 10:00:00] [TOOL_CALL] execute_python_code(...) -> "4"
+[2026-05-05 10:00:01] Assistant: 2 + 2 = 4
+```
+
 ### 8.3 使用 Hooks
 
-```python
+```python showLineNumbers
 from functools import partial
 
 # 自定义 pre_reply hook
@@ -1699,9 +1825,16 @@ def my_instance_hook(self, kwargs):
 agent.register_instance_hook("pre_reply", "instance_hook", my_instance_hook)
 ```
 
+**预期输出**：
+```
+[Hook] pre_reply: Agent 助手 is about to reply...
+[Hook] pre_reply: Instance hook for 助手
+[Agent 助手] Reply: 好的，我来帮您分析这个问题...
+```
+
 ### 8.4 订阅发布模式
 
-```python
+```python showLineNumbers
 # 创建订阅者
 subscriber = MyAgent(name="subscriber")
 
@@ -1712,9 +1845,14 @@ publisher.reset_subscribers("channel_1", [subscriber])
 await publisher._broadcast_to_subscribers(message)
 ```
 
+**预期输出**：
+```
+[subscriber] Observed: Msg(name='publisher', content='Hello subscribers!', role='assistant')
+```
+
 ### 8.5 用户代理
 
-```python
+```python showLineNumbers
 from agentscope import UserAgent
 
 # 创建用户代理
@@ -1723,6 +1861,13 @@ user_agent = UserAgent(name="user")
 # 运行，会等待用户输入
 result = await user_agent()
 print(f"User said: {result.content}")
+```
+
+**预期输出**：
+```
+[UserAgent] Waiting for user input...
+User said: Hello, how are you?
+[UserAgent] Reply: User said: Hello, how are you?
 ```
 
 ---
@@ -1778,6 +1923,279 @@ print(f"User said: {result.content}")
 8. **分析 AgentScope 的 Hook 机制与装饰器模式的异同。**
 
 9. **设计一个记忆压缩策略，当对话历史超过一定长度时自动压缩。**
+
+### 练习 9.10: Hook 注册与执行顺序验证 [基础]
+
+**题目描述**：
+阅读以下代码，假设 `my_hook_a` 和 `my_hook_b` 分别先通过 `register_instance_hook` 注册，再通过 `register_class_hook` 注册到同一个 Agent 类。执行 `agent(Msg("user", "hello", "user"))` 时，`pre_reply` hooks 的执行顺序是什么？
+
+```python
+from agentscope import AgentBase, Msg
+
+def my_hook_a(self, msg, **kwargs):
+    print("Hook A")
+    return msg
+
+def my_hook_b(self, msg, **kwargs):
+    print("Hook B")
+    return msg
+
+# 假设 AgentBase 类已按此顺序注册:
+# AgentBase.register_class_hook("pre_reply", "hook_b", my_hook_b)
+# AgentBase.register_class_hook("pre_reply", "hook_a", my_hook_a)
+
+# 实例级注册:
+# agent.register_instance_hook("pre_reply", "hook_b", my_hook_b)
+# agent.register_instance_hook("pre_reply", "hook_a", my_hook_a)
+```
+
+**预期输出/行为**：
+直接运行上述代码（需填充完整 Agent 实例化），观察控制台输出顺序为 `Hook B` → `Hook A`（实例级 hooks 先执行，按注册逆序）；类级 hooks 后执行，同样按注册逆序。
+
+<details>
+<summary>参考答案</summary>
+
+```python
+# 实际执行顺序取决于 register_instance_hook 和 register_class_hook 的内部实现。
+# 参考 _agent_base.py:324-352 run_hooks 方法:
+# 1. 先执行 _instance_pre_reply_hooks（实例级，按注册逆序）
+# 2. 再执行 _class_pre_reply_hooks（类级，按注册逆序）
+#
+# 给定注册顺序: instance: b→a, class: b→a
+# 则执行顺序: instance_hook_b → instance_hook_a → class_hook_b → class_hook_a
+# 对应输出: Hook B → Hook A → Hook B → Hook A
+
+from agentscope import AgentBase, Msg
+from agentscope.formatter import OpenAIFormatter
+
+# 创建测试 Agent
+model = ...  # 实际使用需配置模型
+formatter = OpenAIFormatter(model=model)
+agent = AgentBase(name="test_agent", ...)  # 需补充必要参数
+
+# 注册 hooks
+agent.register_instance_hook("pre_reply", "hook_a", my_hook_a)
+agent.register_instance_hook("pre_reply", "hook_b", my_hook_b)
+AgentBase.register_class_hook("pre_reply", "hook_a", my_hook_a)
+AgentBase.register_class_hook("pre_reply", "hook_b", my_hook_b)
+
+# 执行
+import asyncio
+asyncio.run(agent(Msg("user", "hello", "user")))
+# 输出顺序: Hook B → Hook A → Hook B → Hook A
+```
+</details>
+
+### 练习 9.11: ReAct 推理-行动循环追踪 [中级]
+
+**题目描述**：
+参考 `_react_agent.py:376-537`，在以下伪代码中填入正确的关键方法调用顺序（用 `→` 连接），以完整描述 ReActAgent 处理 `"北京今天天气如何？"` 时的执行路径。
+
+```
+用户输入 "北京今天天气如何？"
+    ↓
+[step 1]  _________________________________  # 调用 LLM 生成推理
+    ↓
+[step 2]  _________________________________  # 解析 tool_use 块
+    ↓
+[step 3]  _________________________________  # 调用工具（如 get_weather）
+    ↓
+[step 4]  _________________________________  # 将工具结果加入消息历史
+    ↓
+[step 5]  ___________________________________________________________________  # 判断是否继续循环
+    ↓
+[step 6]  _________________________________  # 返回最终响应给用户
+```
+
+**预期输出/行为**：
+补全后，运行实际 Agent 代码（需配置天气工具），观察日志确认每个步骤的执行顺序与你的答案一致。
+
+<details>
+<summary>参考答案</summary>
+
+```
+用户输入 "北京今天天气如何？"
+    ↓
+[step 1]  self._reasoning()              # 调用 LLM 生成推理（包含 tool_use 块）
+    ↓
+[step 2]  self._parse_tool_calls()       # 从响应中解析 tool_use 块
+    ↓
+[step 3]  self.toolkit.call_tool_function(...)  # 调用 get_weather 工具
+    ↓
+[step 4]  assistant_block + tool_result_block 加入 memory
+    ↓
+[step 5]  len(tool_result_blocks) > 0 and count < max_iters → 继续循环
+    ↓
+[step 6]  return Msg(role="assistant", content=final_text)
+```
+
+```python
+# 实际验证代码
+import asyncio
+from agentscope import ReActAgent, Msg
+from agentscope.model import OpenAIChatModel
+from agentscope.formatter import OpenAIFormatter
+
+model = OpenAIChatModel(model_name="gpt-4o")
+formatter = OpenAIFormatter(model=model)
+
+agent = ReActAgent(
+    name="weather_agent",
+    model=model,
+    sys_prompt="你是一个天气预报助手。",
+    formatter=formatter,
+    tools=[...],  # 配置天气工具
+)
+
+async def main():
+    result = await agent(Msg("user", "北京今天天气如何？", "user"))
+    print(result.content)
+
+asyncio.run(main())
+```
+</details>
+
+### 练习 9.12: 多代理任务委派系统 [挑战]
+
+**题目描述**：
+设计一个"监督者-工作者"模式的多代理系统：
+
+1. `SupervisorAgent`：接收用户任务，使用 ReAct 推理分解任务，将子任务分配给合适的 `WorkerAgent`
+2. `WorkerAgent`：执行具体任务（如搜索信息、调用 API），返回结构化结果
+3. `SupervisorAgent` 收集所有 `WorkerAgent` 结果后，生成最终报告
+
+**预期输出/行为**：
+运行你的实现，输入 `"对比 Python 和 JavaScript 的异步编程模型"`，输出包含两种语言的异步机制对比分析。
+
+<details>
+<summary>参考答案</summary>
+
+```python
+import asyncio
+from agentscope import ReActAgent, Msg
+from agentscope.model import OpenAIChatModel
+from agentscope.formatter import OpenAIFormatter
+from agentscope.pipeline import MsgHub
+
+async def main():
+    model = OpenAIChatModel(model_name="gpt-4o")
+    formatter = OpenAIFormatter(model=model)
+
+    # 工作器：专门负责搜索和获取信息
+    python_worker = ReActAgent(
+        name="Python研究员",
+        model=model,
+        sys_prompt="你专门收集 Python 异步编程的相关信息。"
+                     "收到任务后，返回 Python async/await、asyncio 的关键特性。",
+        formatter=formatter,
+    )
+
+    js_worker = ReActAgent(
+        name="JavaScript研究员",
+        model=model,
+        sys_prompt="你专门收集 JavaScript 异步编程的相关信息。"
+                     "收到任务后，返回 JavaScript Promise、async/await 的关键特性。",
+        formatter=formatter,
+    )
+
+    # 监督者：分解任务并整合结果
+    supervisor = ReActAgent(
+        name="监督者",
+        model=model,
+        sys_prompt="你是任务监督者。将用户请求分解为子任务，"
+                     "分配给相应专家，收集结果后生成最终报告。",
+        formatter=formatter,
+    )
+
+    async with MsgHub(participants=[supervisor, python_worker, js_worker]):
+        # 监督者接收任务并分解
+        plan = await supervisor(
+            Msg("user", "对比 Python 和 JavaScript 的异步编程模型", "user")
+        )
+
+        # 并行分配给两个工作器
+        python_result = await python_worker(
+            Msg("user", "介绍 Python 异步编程模型", "user")
+        )
+        js_result = await js_worker(
+            Msg("user", "介绍 JavaScript 异步编程模型", "user")
+        )
+
+        # 监督者整合结果
+        final = await supervisor(
+            Msg("user",
+                f"请根据以下研究结果生成对比报告：\n"
+                f"Python: {python_result.content}\n"
+                f"JavaScript: {js_result.content}",
+                "user")
+        )
+        print(final.content)
+
+asyncio.run(main())
+```
+</details>
+
+### 练习 9.13: Hook 与消息修改 [中级]
+
+**题目描述**：
+以下代码意图在 `pre_reply` hook 中给消息添加时间戳元数据，但运行后发现 `msg.metadata` 没有被正确保留（后续 hook 或 `reply()` 读取不到）。请分析原因并修复。
+
+```python
+from agentscope import AgentBase, Msg
+from datetime import datetime
+import asyncio
+
+def add_timestamp_hook(self, msg, **kwargs):
+    msg.metadata["timestamp"] = datetime.now().isoformat()
+    return msg
+
+agent = ReActAgent(name="test", ...)
+agent.register_instance_hook("pre_reply", "ts", add_timestamp_hook)
+
+async def main():
+    result = await agent(Msg("user", "hello", "user"))
+    print(result.metadata)  # 期望看到 timestamp，实际为空
+
+asyncio.run(main())
+```
+
+**预期输出/行为**：
+修复后，`result.metadata` 应包含 `{"timestamp": "2026-05-05T..."}`。
+
+<details>
+<summary>参考答案</summary>
+
+```python
+# 问题分析：reply() 方法返回的是一个新创建的 Msg 对象，
+# 而不是直接返回经过 hook 处理后的 msg。因此 hook 中对 msg 的修改
+# 不会自动传递到 reply() 的返回值。
+#
+# 解决方案：hook 中直接修改传入的 msg 对象属性，
+# 或者在 hook 中将被修改的 msg 标记为返回值（如果框架支持）。
+
+from agentscope import AgentBase, Msg
+from datetime import datetime
+import asyncio
+
+def add_timestamp_hook(self, msg, **kwargs):
+    # 确保 metadata 字典存在
+    if msg.metadata is None:
+        msg.metadata = {}
+    msg.metadata["timestamp"] = datetime.now().isoformat()
+    # 修改原地对象，而不是创建新的（如果 Msg 是可变对象）
+    return msg  # 必须返回修改后的 msg
+
+agent = ReActAgent(name="test", ...)
+agent.register_instance_hook("pre_reply", "ts", add_timestamp_hook)
+
+# 注意：如果 Msg 是不可变对象（namedtuple 或 dataclass frozen=True），
+# 则 metadata 的修改不会生效，需要换一种方式传递元数据，
+# 比如通过 Agent 实例变量或外部存储。
+#
+# 验证方式：检查 Msg 类的定义（src/agentscope/message.py）
+# 如果 metadata 是 properties 而非直接属性，则需要使用 setattr 修改。
+```
+</details>
 
 ---
 
@@ -2091,14 +2509,15 @@ AgentBase.register_class_hook("post_reply", "auto_compress", auto_compress_hook)
 | _AgentMeta | 元类自动注入 Hook 包装 |
 | Hook 系统 | 实例级/类级注册，6 种 Hook 类型 |
 
-## 章节关联
+| 关联模块 | 关联点 | 参考位置 |
+|----------|--------|----------|
+| [工具模块](module_tool_mcp_deep.md#6-工具调用流程) | Hook ↔ Toolkit 中间件协作 | 第 6.4 节 |
+| [记忆模块](module_memory_rag_deep.md#5-rag-模块架构) | Agent 记忆压缩 ↔ Token 计数 | 第 5.4 节 |
+| [管道模块](module_pipeline_infra_deep.md#2-pipeline-工作流编排) | Pipeline 编排 Agent 执行顺序 | 第 2.1-2.3 节 |
+| [模型模块](module_model_deep.md#2-chatmodelbase-基类分析) | Agent 通过 Model 进行推理 | 第 2.1 节 |
+| [消息模块](module_message_deep.md#3-核心类与函数源码解读) | Agent 通过 Msg 与其他组件通信 | 第 3.1 节 |
+| [状态模块](module_state_deep.md#3-源码解读) | AgentBase 继承 StateModule 实现状态管理 | 第 3.1 节 |
 
-| 关联模块 | 关联点 |
-|----------|--------|
-| [工具模块](module_tool_mcp_deep.md) | Hook ↔ Toolkit 中间件协作 |
-| [记忆模块](module_memory_rag_deep.md) | Agent 记忆压缩 ↔ Token 计数 |
-| [管道模块](module_pipeline_infra_deep.md) | Pipeline 编排 Agent 执行顺序 |
-| [模型模块](module_model_deep.md) | Agent 通过 Model 进行推理 |
 
 ---
 

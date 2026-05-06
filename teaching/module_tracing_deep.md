@@ -100,7 +100,7 @@ tracing/
 
 ### 3.1 setup_tracing 初始化
 
-```python
+```python showLineNumbers
 def setup_tracing(endpoint: str) -> None:
     # 1. 创建 OTLP HTTP 导出器
     exporter = OTLPSpanExporter(endpoint=endpoint)
@@ -173,7 +173,7 @@ OTLPSpanExporter → BatchSpanProcessor → TracerProvider
 
 ### 3.3 通用 trace 装饰器
 
-```python
+```python showLineNumbers
 def trace(name: str | None = None) -> Callable:
     """通用追踪装饰器，支持同步和异步函数"""
     def decorator(func):
@@ -214,7 +214,7 @@ def trace(name: str | None = None) -> Callable:
 
 ### 3.4 trace_llm LLM 调用追踪
 
-```python
+```python showLineNumbers
 def trace_llm(func) -> Callable:
     """装饰 ChatModelBase.__call__"""
     async def wrapper(self, *args, **kwargs):
@@ -237,7 +237,7 @@ def trace_llm(func) -> Callable:
 
 ### 3.5 trace_reply Agent 回复追踪
 
-```python
+```python showLineNumbers
 def trace_reply(func) -> Callable:
     """装饰 AgentBase.reply"""
     async def wrapper(self, *args, **kwargs):
@@ -255,7 +255,7 @@ def trace_reply(func) -> Callable:
 
 ### 3.6 trace_toolkit 工具调用追踪
 
-```python
+```python showLineNumbers
 def trace_toolkit(func) -> Callable:
     """装饰 Toolkit.call_tool_function"""
     # 工具调用返回 AsyncGenerator[ToolResponse, None]
@@ -270,7 +270,7 @@ def trace_toolkit(func) -> Callable:
 
 ### 3.7 trace_embedding 嵌入调用追踪
 
-```python
+```python showLineNumbers
 def trace_embedding(func) -> Callable:
     """装饰 EmbeddingModelBase.__call__"""
 ```
@@ -284,7 +284,7 @@ def trace_embedding(func) -> Callable:
 
 ### 3.8 trace_format 格式化追踪
 
-```python
+```python showLineNumbers
 def trace_format(func) -> Callable:
     """装饰 FormatterBase.format"""
     # 返回 list[dict]（非生成器）
@@ -301,7 +301,7 @@ def trace_format(func) -> Callable:
 
 框架需要同时追踪同步生成器和异步生成器（流式响应）：
 
-```python
+```python showLineNumbers
 def _trace_sync_generator_wrapper(res, span):
     """包装同步生成器"""
     last_chunk = None
@@ -349,11 +349,112 @@ async def _trace_async_generator_wrapper(res, span):
 
 ---
 
+### 边界情况与陷阱
+
+#### Critical: trace_enabled 默认关闭
+
+```python showLineNumbers
+# 追踪默认是关闭的
+# 如果不在 init() 中启用，追踪装饰器不会记录任何数据
+
+agentscope.init(project="my-project")
+# 没有 tracing_url，追踪不生效
+
+# 问题：生产环境排查问题时缺少链路数据
+# 解决方案：确保配置正确的 tracing_url
+```
+
+#### High: OpenTelemetry SDK 未安装
+
+```python showLineNumbers
+# tracing 模块依赖 opentelemetry 包
+# 如果未安装，追踪会静默失败
+
+try:
+    from opentelemetry import trace
+except ImportError:
+    # 追踪功能不可用
+    pass
+
+# 问题：缺少依赖时没有明确错误
+# 解决方案：确保安装所有必需的包
+```
+
+#### Medium: Span 属性中的敏感信息
+
+```python showLineNumbers
+# 追踪可能记录敏感信息
+@trace_reply
+async def my_agent_func(self, messages):
+    # messages 可能包含用户隐私
+    # 如果直接记录，会泄露到追踪后端
+    pass
+
+# 解决方案：属性提取器应该过滤敏感字段
+```
+
+#### Medium: 追踪的性能开销
+
+```python showLineNumbers
+# 追踪有额外的性能开销
+# 每个 Span 创建和销毁都有成本
+
+# 测量开销（大约）：
+# - 无追踪：基准
+# - 有追踪：+5-10% 延迟
+# - 详细属性：+20% 延迟
+
+# 优化建议：
+# - 使用采样而非全量追踪
+# - 减少属性数量
+```
+
+---
+
+### 性能考量
+
+#### 追踪开销分析
+
+| 操作 | 开销 | 说明 |
+|------|------|------|
+| Span 创建 | ~0.1ms | 基本开销 |
+| Span 属性 | ~0.01ms/属性 | 取决于属性复杂度 |
+| Span 完成 | ~0.05ms | 序列化开销 |
+| 属性提取 | ~0.1ms | JSON 序列化 |
+
+#### 采样策略
+
+```python showLineNumbers
+# 全量采样：所有请求都追踪
+# 适用：小规模、调试环境
+
+# 概率采样：按百分比追踪
+# 适用：大规模生产环境
+
+# 头部采样：只追踪特定请求
+# 适用：问题排查
+
+# 推荐：头部 + 尾部采样
+# 先根据请求特征决定是否追踪
+# 然后对追踪的请求记录完整数据
+```
+
+#### 追踪后端选择
+
+| 后端 | 延迟 | 存储成本 | 适用场景 |
+|------|------|----------|----------|
+| Jaeger | 中 | 中 | 小规模 |
+| Zipkin | 中 | 中 | 小规模 |
+| OTLP | 低 | 高 | 大规模 |
+| Console | 最低 | 无 | 调试 |
+
+---
+
 ## 5. 代码示例
 
 ### 5.1 基本追踪配置
 
-```python
+```python showLineNumbers
 from agentscope.tracing import setup_tracing
 
 # 配置 OTLP 端点（如 Jaeger、Grafana Tempo）
@@ -380,7 +481,7 @@ setup_tracing(endpoint="http://localhost:4318/v1/traces")
 
 ### 5.3 使用通用 trace 装饰器
 
-```python
+```python showLineNumbers
 from agentscope.tracing import trace
 
 @trace(name="custom_analysis")
@@ -401,15 +502,25 @@ async def analyze_data(data: dict) -> dict:
 
 **Q2**: `_trace_async_generator_wrapper` 为什么在最后一个 chunk 消费后才结束 Span？
 
-### 中级题
-
 **Q3**: 对比 `trace_llm` 和 `trace_reply` 的装饰目标。它们各自的 `self` 类型验证有什么意义？
 
-**Q4**: 分析 `SpanAttributes` 中哪些属性遵循 OpenTelemetry GenAI 语义约定，哪些是 AgentScope 扩展。为什么需要扩展属性？
+**Q4**: `trace_embedding()` 装饰器和 `trace_llm()` 装饰器在追踪维度上有何不同？为什么嵌入调用需要特殊的处理方式？
+
+**Q5**: 分析 `_trace_async_generator_wrapper` 的实现。如果生成器在消费过程中抛出异常，Span 的状态会是怎样？
+
+### 中级题
+
+**Q6**: 分析 `SpanAttributes` 中哪些属性遵循 OpenTelemetry GenAI 语义约定，哪些是 AgentScope 扩展。为什么需要扩展属性？
+
+**Q7**: 设计一个追踪过滤器，只记录耗时超过阈值的 LLM 调用，或只记录包含工具调用的 Agent 回复。如何实现这种可配置的过滤逻辑？
+
+**Q8**: 如果需要将追踪数据同时发送到多个后端（如 Jaeger 和自定义日志系统），如何修改 `setup_tracing()` 的实现？
 
 ### 挑战题
 
-**Q5**: 设计一个追踪数据聚合器，定期从 Span 属性中提取 Token 用量，计算每个 Agent 的累计成本。需要考虑哪些设计问题？
+**Q9**: 设计一个追踪数据聚合器，定期从 Span 属性中提取 Token 用量，计算每个 Agent 的累计成本。需要考虑哪些设计问题？
+
+**Q10**: 设计一个实时告警系统，当某个 Agent 的平均响应时间超过阈值时发送通知。追踪系统需要提供哪些接口？告警判断逻辑应该放在哪里（SpanProcessor vs 独立消费者）？
 
 ---
 
@@ -421,9 +532,19 @@ async def analyze_data(data: dict) -> dict:
 
 **A3**: `trace_llm` 装饰 `ChatModelBase.__call__`，验证 `self` 是 `ChatModelBase` 实例确保能正确提取 LLM 特定属性（model_name, temperature 等）。`trace_reply` 装饰 `AgentBase.reply`，验证 `self` 是 `AgentBase` 实例确保能提取 Agent 属性（name, description）。类型验证防止装饰器被意外应用到错误的方法上。
 
-**A4**: 标准属性（如 `gen_ai.request.model`, `gen_ai.usage.input_tokens`）遵循 OpenTelemetry GenAI 语义约定，确保跨框架兼容——任何支持 OpenTelemetry 的后端都能正确解析。扩展属性（`agentscope.format.target` 等）覆盖 AgentScope 特有的概念（格式化、通用函数），这些在标准语义约定中不存在。扩展属性使用 `agentscope.` 前缀避免命名冲突。
+**A4**: `trace_embedding()` 需要追踪嵌入向量的维度、模型名称和文本长度（而非 Token 数）。嵌入调用的响应时间通常较长，适合作为独立的性能分析点。特殊处理是因为嵌入结果（向量）是高维数据，不适合放在 Span 属性中（通常有大小限制）。
 
-**A5**: 关键设计问题：(1) 采集方式——通过 SpanProcessor 拦截还是定期查询后端 API；(2) 聚合粒度——按 Agent、按会话、按时间窗口；(3) 成本模型——不同模型的价格不同，需要按 model_name 区分；(4) 持久化——聚合数据存储在哪里（Redis/数据库）；(5) 实时性——流式响应的 Token 计数可能延迟。
+**A5**: 如果生成器抛出异常，`_trace_async_generator_wrapper` 中的 `finally` 块仍会执行，确保 Span 被正确结束（状态标记为错误）。异常信息会作为 Span 的 events 记录。但需要注意，如果异常发生在 yield 返回后、finally 执行前，异常信息可能已经部分丢失。
+
+**A6**: 标准属性（如 `gen_ai.request.model`, `gen_ai.usage.input_tokens`）遵循 OpenTelemetry GenAI 语义约定，确保跨框架兼容——任何支持 OpenTelemetry 的后端都能正确解析。扩展属性（`agentscope.format.target` 等）覆盖 AgentScope 特有的概念（格式化、通用函数），这些在标准语义约定中不存在。扩展属性使用 `agentscope.` 前缀避免命名冲突。
+
+**A7**: 关键设计：在装饰器中添加可选的 `filter_func` 参数，接收一个函数判断是否记录。例如 `filter_func=lambda span: span.duration > 1.0`。过滤逻辑在装饰器内部执行，早于 Span 创建，减少不必要的性能开销。
+
+**A8**: 使用 `compositeSpanProcessor` 组合多个 `SpanProcessor`，每个负责发送到不同后端。OpenTelemetry SDK 支持这种组合模式。或者通过 `add_span_processor()` 多次调用添加多个处理器。
+
+**A9**: 关键设计问题：(1) 采集方式——通过 SpanProcessor 拦截还是定期查询后端 API；(2) 聚合粒度——按 Agent、按会话、按时间窗口；(3) 成本模型——不同模型的价格不同，需要按 model_name 区分；(4) 持久化——聚合数据存储在哪里（Redis/数据库）；(5) 实时性——流式响应的 Token 计数可能延迟。
+
+**A10**: 关键设计：(1) SpanProcessor 提供 `on_end(span)` 回调，在每个 Span 结束时被调用；(2) 告警逻辑应放在独立消费者中，通过消息队列接收 Span 数据，避免阻塞主流程；(3) 使用滑动窗口计算平均响应时间；(4) 告警阈值应可配置，支持按 Agent 类型设置不同阈值。
 
 ---
 
@@ -440,18 +561,17 @@ async def analyze_data(data: dict) -> dict:
 | 生成器追踪 | 包装生成器，最后一个 chunk 后结束 Span |
 | Span 属性 | GenAI 语义约定 + AgentScope 扩展 |
 
-## 章节关联
+| 关联模块 | 关联点 | 参考位置 |
+|----------|--------|----------|
+| [模型模块](module_model_deep.md#7-工具调用机制详解) | trace_llm 追踪 Model 调用 | 第 7.1 节 |
+| [智能体模块](module_agent_deep.md#3-agentbase-源码解读) | trace_reply 追踪 Agent 回复 | 第 3.2 节 |
+| [工具模块](module_tool_mcp_deep.md#6-工具调用流程) | trace_toolkit 追踪工具执行 | 第 6.1 节 |
+| [嵌入模块](module_embedding_token_deep.md#9-embedding-模块) | trace_embedding 追踪嵌入调用 | 第 9.1 节 |
+| [格式化器模块](module_formatter_deep.md#3-源码解读) | trace_format 追踪格式化 | 第 3.6 节 |
+| [配置模块](module_config_deep.md#3-核心功能源码解读) | trace_enabled 配置项控制追踪开关 | 第 3.1 节 |
 
-| 相关模块 | 关联点 |
-|----------|--------|
-| [Model 模块](module_model_deep.md) | trace_llm 追踪 Model 调用 |
-| [Agent 模块](module_agent_deep.md) | trace_reply 追踪 Agent 回复 |
-| [Tool 模块](module_tool_mcp_deep.md) | trace_toolkit 追踪工具执行 |
-| [Embedding 模块](module_embedding_token_deep.md) | trace_embedding 追踪嵌入调用 |
-| [Formatter 模块](module_formatter_deep.md) | trace_format 追踪格式化 |
-| [Config 模块](module_config_deep.md) | trace_enabled 配置项控制追踪开关 |
 
-**版本参考**: AgentScope >= 1.0.0 | 源码 `tracing/`
+---
 
 ## 本章小结
 

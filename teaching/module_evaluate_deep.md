@@ -94,7 +94,7 @@ evaluate/
 
 ### 3.1 BenchmarkBase 基准抽象
 
-```python
+```python showLineNumbers
 class BenchmarkBase(ABC):
     name: str
     description: str
@@ -111,7 +111,7 @@ class BenchmarkBase(ABC):
 
 **设计简洁**：实现了 Python 的迭代协议，使得 `BenchmarkBase` 实例可以像列表一样被遍历、索引和获取长度。
 
-```python
+```python showLineNumbers
 benchmark = ACEBenchmark(data_dir="./data")
 for task in benchmark:       # __iter__
     print(task.id)
@@ -121,7 +121,7 @@ task = benchmark[0]          # __getitem__
 
 ### 3.2 Task 评估任务
 
-```python
+```python showLineNumbers
 @dataclass
 class Task:
     id: str                                # 唯一标识
@@ -146,7 +146,7 @@ class Task:
 
 #### MetricType 枚举
 
-```python
+```python showLineNumbers
 class MetricType(str, Enum):
     CATEGORY = "category"    # 分类指标（如正确/错误）
     NUMERICAL = "numerical"  # 数值指标（如分数、BLEU 值）
@@ -154,7 +154,7 @@ class MetricType(str, Enum):
 
 #### MetricBase 数据类
 
-```python
+```python showLineNumbers
 @dataclass
 class MetricBase(ABC):
     name: str                          # 指标名称
@@ -179,7 +179,7 @@ class MetricBase(ABC):
 
 #### MetricResult 数据类
 
-```python
+```python showLineNumbers
 @dataclass
 class MetricResult(DictMixin):
     name: str                                        # 指标名称
@@ -198,7 +198,7 @@ class MetricResult(DictMixin):
 
 ### 3.4 EvaluatorBase 评估器
 
-```python
+```python showLineNumbers
 class EvaluatorBase:
     def __init__(self, name: str, benchmark: BenchmarkBase,
                  n_repeat: int, storage: EvaluatorStorageBase):
@@ -254,7 +254,7 @@ meta_info
 
 ### 3.5 ACEBenchmark 评估基准
 
-```python
+```python showLineNumbers
 class ACEBenchmark(BenchmarkBase):
     data_dir_url = "https://raw.githubusercontent.com/ACEBench/ACEBench/main/data_all"
     data_subdir = ["data_zh"]
@@ -297,11 +297,127 @@ ACE 使用模拟手机环境评估 Agent 的多步操作能力。Agent 需要通
 
 ---
 
+### 边界情况与陷阱
+
+#### Critical: MetricResult 的 result 字段类型
+
+```python showLineNumbers
+# MetricResult 的 result 字段是 Any 类型
+# 不同的 metric 返回不同类型的 result
+class ExactMatchMetric(MetricBase):
+    def evaluate(self, solution: SolutionOutput) -> MetricResult:
+        return MetricResult(
+            name=self.name,
+            result=True,  # 布尔值
+            ...
+        )
+
+class LLMMatchMetric(MetricBase):
+    def evaluate(self, solution: SolutionOutput) -> MetricResult:
+        return MetricResult(
+            name=self.name,
+            result=0.95,  # 浮点数
+            ...
+        )
+```
+
+**陷阱**：代码中错误地将 `result` 写成 `value`，导致 AttributeError。
+
+#### High: ACEBenchmark 的 data_dir_url
+
+```python showLineNumbers
+# ACEBenchmark 需要正确的数据目录
+# data_dir 参数应该是本地路径
+benchmark = ACEBenchmark(data_dir="./data/ace")
+# 不是 URL！
+
+# 数据需要预先下载到本地目录
+# url: https://raw.githubusercontent.com/ACEBench/ACEBench/main/data_all
+```
+
+#### High: SolutionOutput 的必需字段
+
+```python showLineNumbers
+# SolutionOutput 是 dataclass，必需字段必须提供
+@dataclass
+class SolutionOutput:
+    output: str           # 必需
+    success: bool         # 必需
+    trajectory: list[Msg]  # 必需
+
+# 如果忘记提供某个字段，会抛出 DataclassMissingFieldError
+solution = SolutionOutput(output="...", success=True)  # 缺少 trajectory
+```
+
+#### Medium: GeneralEvaluator 的并行度
+
+```python showLineNumbers
+# GeneralEvaluator 使用 n_workers 参数控制并行度
+evaluator = GeneralEvaluator(
+    n_workers=8,  # 8个并行 worker
+    storage=FileEvaluatorStorage(),
+)
+
+# 如果 n_workers 过大，会耗尽系统资源
+# 如果 n_workers=0 或 1，会退化为串行执行
+```
+
+#### Medium: FileEvaluatorStorage 的路径
+
+```python showLineNumbers
+# FileEvaluatorStorage 需要有效的目录路径
+storage = FileEvaluatorStorage(save_dir="./evaluation_results")
+
+# 如果目录不存在，会尝试创建
+# 如果路径无效（如包含非法字符），会抛出异常
+```
+
+---
+
+### 性能考量
+
+#### 评估并行度选择
+
+| 场景 | 推荐 n_workers | 原因 |
+|------|----------------|------|
+| CPU 密集型 metric | CPU 核数 | 充分利用 CPU |
+| I/O 密集型 metric | 2-4x CPU 核数 | I/O 等待时可以切换 |
+| API 调用 metric | 取决于 API 限流 | 避免触发限流 |
+| 调试模式 | 1 | 便于调试 |
+
+#### 数据加载性能
+
+```python showLineNumbers
+# ACEBenchmark 首次加载时需要下载和解析数据
+# 可以预先缓存数据以加速后续运行
+
+# 大数据集的性能影响：
+# - 1000 个 task：~1-5 秒加载
+# - 10000 个 task：~10-50 秒加载
+# - 建议使用流式加载处理超大数据集
+```
+
+#### 评估结果序列化
+
+```python showLineNumbers
+# 评估结果会自动保存到 storage
+# 序列化格式影响存储空间和加载速度
+
+# JSON 格式：人类可读，但体积大
+# msgpack 格式：二进制，更小更快
+
+# 大量评估结果时的优化：
+results = evaluator.run(benchmark)
+# 考虑使用数据库存储而非文件存储
+```
+
+---
+
 ## 5. 代码示例
 
 ### 5.1 使用 ACEBenchmark 评估 Agent
 
-```python
+```python showLineNumbers
 from agentscope.evaluate import ACEBenchmark, GeneralEvaluator, SolutionOutput, FileEvaluatorStorage
 
 # 创建基准和评估器
@@ -334,7 +450,7 @@ await evaluator.aggregate()
 
 ### 5.2 自定义评估指标
 
-```python
+```python showLineNumbers
 from agentscope.evaluate import MetricBase, MetricResult, MetricType
 
 class ExactMatchMetric(MetricBase):
@@ -371,15 +487,25 @@ print(result.result)  # "correct"
 
 **Q2**: `MetricType.CATEGORY` 和 `MetricType.NUMERICAL` 的聚合方式有什么不同？
 
-### 中级题
-
 **Q3**: `Task.evaluate()` 中的指标是异步执行的（`await metric(solution)`）。为什么指标计算需要异步？
 
 **Q4**: `EvaluatorBase.aggregate()` 跟踪了五个维度的统计（llm/agent/tool/embedding/chat_usage）。这些统计数据对评估 Agent 有什么意义？
 
+**Q5**: `ACEBenchmark` 包含多个任务（推理、工具调用、编程等）。如果要添加一个新的"创意写作"任务域，需要实现哪些接口？评估指标如何设计？
+
+### 中级题
+
+**Q6**: `Task` 类中的 `ground_truth` 字段在什么场景下可以为空？如果为空，`Task.evaluate()` 如何处理？
+
+**Q7**: 设计一个分布式评估框架，将评估任务分发到多台机器上并行执行。需要解决哪些问题（任务分配、结果汇总、故障恢复）？
+
+**Q8**: `EvaluatorBase` 支持多轮重复评估（`num_repeats`）。多轮评估的意义是什么？聚合时如何处理多次运行的结果波动？
+
 ### 挑战题
 
-**Q5**: 设计一个 `HumanEvalBenchmark`，基于 HumanEval 编程基准评估 Agent 的代码生成能力。需要考虑哪些指标和聚合策略？
+**Q9**: 设计一个 `HumanEvalBenchmark`，基于 HumanEval 编程基准评估 Agent 的代码生成能力。需要考虑哪些指标和聚合策略？
+
+**Q10**: 实现一个基于 LLM-as-Judge 的自动评估器。关键挑战是：(1) 如何设计 Prompt 让 Judge 输出稳定？(2) 如何处理 Judge 的偏见（如偏好长回答）？(3) 如何验证 Judge 的可靠性？
 
 ---
 
@@ -393,7 +519,17 @@ print(result.result)  # "correct"
 
 **A4**: 这五个维度提供了 Agent 执行效率的全面画像：LLM 调用次数反映推理开销，Agent 调用次数反映多 Agent 协作复杂度，工具调用次数反映工具使用频率，嵌入调用次数反映检索开销，Token 用量直接关联成本。这些数据帮助优化 Agent 的效率和经济性。
 
-**A5**: 关键设计：(1) 数据：加载 HumanEval 的 164 个编程问题；(2) 指标：`Pass@k`（k=1,10,100）作为 NUMERICAL 指标，需要多次采样计算；(3) 执行环境：沙箱中运行生成的代码，捕获异常和输出；(4) 聚合：按难度级别分组统计 Pass@k 值。
+**A5**: 需要实现 `Task` 接口，定义 `input`（写作任务描述）、`ground_truth`（参考范文，可选）、`metrics`（相关性、流畅性、原创性等）。创意写作适合用 LLM-as-Judge 作为主要指标，辅以BLEU/ROUGE 等文本相似度指标。
+
+**A6**: `ground_truth` 为空时适用于开放式任务（如聊天、创意写作），无法定义标准答案。此时评估完全依赖指标计算（如 LLM-as-Judge），`Task.evaluate()` 会跳过与 ground_truth 比较的逻辑，仅执行指标评估。
+
+**A7**: 关键问题：(1) 任务分配——使用任务队列，按难度/预计耗时均匀分配；(2) 结果汇总——使用分布式协调服务（如 etcd）汇总结果，主节点负责聚合；(3) 故障恢复——任务执行超时应重新入队，节点失效应将其任务转移到其他节点；(4) 数据一致性——使用乐观锁或版本号防止结果覆盖。
+
+**A8**: 多轮评估用于衡量 Agent 输出的稳定性（方差）。聚合时通常计算均值和标准差，报告结果时应同时报告 "均值 ± 标准差" 格式。对于 CATEGORY 指标，多次运行的结果是百分比分布，聚合方式可以是投票或计算百分比均值。
+
+**A9**: 关键设计：(1) 数据：加载 HumanEval 的 164 个编程问题；(2) 指标：`Pass@k`（k=1,10,100）作为 NUMERICAL 指标，需要多次采样计算；(3) 执行环境：沙箱中运行生成的代码，捕获异常和输出；(4) 聚合：按难度级别分组统计 Pass@k 值。
+
+**A10**: 关键设计：(1) Prompt 工程——使用 Chain-of-Thought 引导 Judge 给出理由，设置输出格式（如 JSON）便于解析；(2) 偏见校正——在 Prompt 中加入长度归一化项，或使用对比评估（比较同一问题多个回答的相对质量）；(3) 可靠性验证——使用对抗性样本测试 Judge 稳定性，定期人工抽样复核 Judge 结果。
 
 ---
 
@@ -407,13 +543,12 @@ print(result.result)  # "correct"
 | EvaluatorBase | 评估编排器，多轮重复 + 五维统计聚合 |
 | ACEBenchmark | 内置的 Agent 能力评估基准 |
 
-## 章节关联
+| 关联模块 | 关联点 | 参考位置 |
+|----------|--------|----------|
+| [调优模块](module_tuner_deep.md#5-代码示例) | 评估结果指导 Agent 调优 | 第 5.1 节 |
+| [智能体模块](module_agent_deep.md#4-reactagent-实现类分析) | Agent 作为被评估的解决方案 | 第 4.1 节 |
+| [工具模块](module_tool_mcp_deep.md#6-工具调用流程) | ACE 中 Agent 需要调用工具完成任务 | 第 6.1 节 |
+| [追踪模块](module_tracing_deep.md#3-追踪装饰器) | 评估中的调用统计可结合 Tracing 数据 | 第 3.1-3.6 节 |
 
-| 相关模块 | 关联点 |
-|----------|--------|
-| [Tuner 模块](module_tuner_deep.md) | 评估结果指导 Agent 调优 |
-| [Agent 模块](module_agent_deep.md) | Agent 作为被评估的解决方案 |
-| [Tool 模块](module_tool_mcp_deep.md) | ACE 中 Agent 需要调用工具完成任务 |
-| [Tracing 模块](module_tracing_deep.md) | 评估中的调用统计可结合 Tracing 数据 |
 
-**版本参考**: AgentScope >= 1.0.0 | 源码 `evaluate/`
+---

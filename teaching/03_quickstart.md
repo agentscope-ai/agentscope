@@ -47,7 +47,7 @@
 
 ### Step 1: 创建项目文件
 
-```python
+```python showLineNumbers
 # quickstart.py
 
 import asyncio
@@ -157,7 +157,7 @@ Java 对比分析:
 
 如果你不想付费使用 OpenAI，可以使用 Ollama 运行本地模型：
 
-```python
+```python showLineNumbers
 import asyncio
 import agentscope
 from agentscope.agent import ReActAgent
@@ -199,11 +199,19 @@ ollama pull llama3.2
 ollama serve
 ```
 
+**预期输出**：
+
+```
+[2026-05-05 10:00:00] Agent 本地助手 created with id: local456
+[2026-05-05 10:00:01] User: 你好，请介绍一下你自己
+[2026-05-05 10:00:05] Assistant: 你好！我是 LLaMA3.2，一个由 Meta 开发的开源大语言模型...
+```
+
 ## 3.5 添加自定义工具
 
 AgentScope 的真正威力在于让 Agent 调用工具。
 
-```python
+```python showLineNumbers
 import asyncio
 import agentscope
 from agentscope.agent import ReActAgent
@@ -262,6 +270,16 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
+**预期输出**：
+
+```
+[2026-05-05 10:00:00] Agent 天气助手 created with id: tool789
+[2026-05-05 10:00:01] User: 北京今天天气怎么样？顺便帮我算一下 123 乘以 456
+[2026-05-05 10:00:02] [TOOL_CALL] get_weather(city="北京") -> "晴，25°C"
+[2026-05-05 10:00:03] [TOOL_CALL] calculate(a=123, b=456) -> "56088"
+[2026-05-05 10:00:06] Assistant: 北京今天天气晴，气温25°C。另外，123乘以456等于56088。
+```
+
 **关键变化**：
 
 | 旧写法 (错误) | 新写法 (正确) | 原因 |
@@ -302,7 +320,7 @@ if __name__ == "__main__":
 
 如果只需要简单的对话，不需要工具调用：
 
-```python
+```python showLineNumbers
 import asyncio
 import agentscope
 from agentscope.agent import ReActAgent
@@ -332,11 +350,22 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
+**对话示例**：
+
+```
+你: 你好
+[2026-05-05 10:00:02] Assistant: 你好！有什么我可以帮助你的吗？
+你: 北京天气如何
+[2026-05-05 10:00:05] Assistant: 抱歉，我没有天气查询功能。
+你: 退出
+[2026-05-05 10:00:08] 会话结束
+```
+
 ## 3.8 多 Agent 协作
 
 AgentScope 支持多种多 Agent 协作模式：
 
-```python
+```python showLineNumbers
 import asyncio
 import agentscope
 from agentscope.agent import ReActAgent
@@ -376,6 +405,29 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
+**预期输出**：
+
+```
+# SequentialPipeline 示例（顺序执行）
+[2026-05-05 10:00:00] Agent 研究员 created with id: res001
+[2026-05-05 10:00:00] Agent 作家 created with id: writer002
+[2026-05-05 10:00:01] Pipeline SequentialPipeline initialized with [研究员, 作家]
+[2026-05-05 10:00:02] User: 研究 AI Agent 的最新发展趋势
+[2026-05-05 10:00:03] [研究员] 正在研究...
+[2026-05-05 10:00:05] [研究员] -> [作家]: 研究完成，开始写作
+[2026-05-05 10:00:06] [作家] 正在整理文章...
+[2026-05-05 10:00:10] Assistant (作家): 以下是关于 AI Agent 最新发展趋势的研究报告...
+
+# FanoutPipeline 示例（并行执行）
+[2026-05-05 10:00:00] Agent 研究员 created with id: res001
+[2026-05-05 10:00:00] Agent 作家 created with id: writer002
+[2026-05-05 10:00:01] Pipeline FanoutPipeline initialized with [研究员, 作家]
+[2026-05-05 10:00:02] User: 研究 AI Agent 的最新发展趋势
+[2026-05-05 10:00:03] [研究员] 正在并行研究...
+[2026-05-05 10:00:03] [作家] 正在并行分析...
+[2026-05-05 10:00:06] Results: [<Msg from=研究员>, <Msg from=作家>]
+```
+
 **Pipeline 对比**：
 
 | Pipeline 类型 | 执行方式 | 输入 | 输出 | 适用场景 |
@@ -410,6 +462,309 @@ if __name__ == "__main__":
    <details><summary>查看答案</summary>
    创建 <code>Toolkit</code> 实例，调用 <code>toolkit.register_tool_function(func)</code> 注册函数，然后将 toolkit 传给 <code>ReActAgent(toolkit=toolkit)</code>。
    </details>
+
+## 练习题
+
+### 练习 3.1: ReActAgent 构造 [基础]
+
+**题目**：
+以下代码尝试创建一个 ReActAgent，请检查是否有错误：
+
+```python showLineNumbers
+from agentscope.agent import ReActAgent
+from agentscope.model import OpenAIChatModel
+
+agent = ReActAgent(
+    name="助手",
+    model=OpenAIChatModel(model_name="gpt-4o"),
+    sys_prompt="你是一个有帮助的助手。",
+    # 缺少 formatter
+    toolkit=Toolkit(),
+)
+```
+
+**验证方式**：
+运行代码，检查是否报错，并说明原因。
+
+<details>
+<summary>参考答案</summary>
+
+**答案/解题思路**：
+
+**错误**：缺少 `formatter` 参数
+
+**原因**：ReActAgent 的四个必填参数是 `name`、`sys_prompt`、`model`、`formatter`。`formatter` 负责将消息转换为特定模型的格式，不能省略。
+
+**修正后的代码**：
+```python showLineNumbers
+from agentscope.agent import ReActAgent
+from agentscope.model import OpenAIChatModel
+from agentscope.formatter import OpenAIChatFormatter  # 需要添加导入
+
+agent = ReActAgent(
+    name="助手",
+    model=OpenAIChatModel(model_name="gpt-4o"),
+    sys_prompt="你是一个有帮助的助手。",
+    formatter=OpenAIChatFormatter(),  # 必须提供
+    toolkit=Toolkit(),
+)
+```
+
+**Formatter 与 Model 的匹配关系**：
+| Model | Formatter |
+|-------|-----------|
+| `OpenAIChatModel` | `OpenAIChatFormatter` |
+| `AnthropicChatModel` | `AnthropicChatFormatter` |
+| `DashScopeChatModel` | `DashScopeChatFormatter` |
+| `OllamaChatModel` | `OllamaChatFormatter` |
+</details>
+
+---
+
+### 练习 3.2: 工具注册 [中级]
+
+**题目**：
+小张编写了一个计算器工具函数，但 Agent 无法正确调用它。请检查以下代码的问题：
+
+```python showLineNumbers
+from agentscope.tool import Toolkit
+
+def calculate(a: float, b: float) -> float:
+    """计算两个数的乘积"""
+    return a * b
+
+toolkit = Toolkit()
+# 小张不确定这里应该怎么写
+toolkit.register_tool_function(calculate)  # 这样对吗？
+```
+
+**验证方式**：
+对比文档中的工具注册示例进行验证。
+
+<details>
+<summary>参考答案</summary>
+
+**答案/解题思路**：
+
+**问题 1**：缺少 `group_name` 参数
+
+虽然 `register_tool_function()` 的 `group_name` 参数有默认值（`"basic"`），但最好显式指定。
+
+**问题 2**：函数返回类型错误
+
+工具函数应返回 `ToolResponse`，而非直接返回值。
+
+**修正后的代码**：
+```python showLineNumbers
+from agentscope.tool import Toolkit, ToolResponse
+from agentscope.message import TextBlock
+
+def calculate(a: float, b: float) -> ToolResponse:
+    """计算两个数的乘积
+
+    Args:
+        a: 第一个数
+        b: 第二个数
+    """
+    result = a * b
+    # 必须返回 ToolResponse
+    return ToolResponse(content=[TextBlock(type="text", text=str(result))])
+
+toolkit = Toolkit()
+toolkit.register_tool_function(calculate, group_name="basic")
+```
+
+**关键点**：
+1. 工具函数应返回 `ToolResponse(content=[TextBlock(...)])`
+2. 需要 `group_name` 来组织工具组
+3. docstring 中的 Args 描述会被 AgentScope 用于生成工具的 JSON Schema
+</details>
+
+---
+
+### 练习 3.3: Pipeline 选择 [基础]
+
+**题目**：
+某公司需要构建一个投票系统，用户输入一个议题后，需要同时让 3 个专家 Agent 给出意见，然后汇总。请选择合适的 Pipeline 类型并说明理由。
+
+**验证方式**：
+检查答案是否正确识别场景需求和对应的 Pipeline。
+
+<details>
+<summary>参考答案</summary>
+
+**答案/解题思路**：
+
+**推荐选择**：FanoutPipeline（并行管道）
+
+**理由**：
+- 用户希望 3 个专家**同时**给出意见
+- FanoutPipeline 将同一消息广播给所有 Agent，所有 Agent 并行处理
+- 最后汇总所有 Agent 的输出
+
+**代码示例**：
+```python showLineNumbers
+from agentscope.pipeline import FanoutPipeline
+
+# 创建专家 Agent
+expert1 = ReActAgent(name="专家1", ...)
+expert2 = ReActAgent(name="专家2", ...)
+expert3 = ReActAgent(name="专家3", ...)
+
+# 构建广播管道
+voting_pipeline = FanoutPipeline(agents=[expert1, expert2, expert3])
+
+# 并行收集意见
+results = await voting_pipeline("我们应该推广远程办公吗？")
+
+# results 是一个列表，包含三个专家的意见
+for result in results:
+    print(f"{result.name}: {result.content}")
+```
+
+**Pipeline 对比**：
+| Pipeline 类型 | 执行方式 | 适用场景 |
+|---------------|----------|----------|
+| `SequentialPipeline` | 顺序链式 | 研究→写作→审核 |
+| `FanoutPipeline` | 并行广播 | 投票、意见收集、多视角分析 |
+</details>
+
+---
+
+### 练习 3.4: 异步调用 [中级]
+
+**题目**：
+以下代码运行时没有任何输出，也没有任何错误，请分析原因：
+
+```python showLineNumbers
+import agentscope
+from agentscope.agent import ReActAgent
+
+agentscope.init(project="test")
+
+agent = ReActAgent(
+    name="助手",
+    model=OpenAIChatModel(model_name="gpt-4o"),
+    sys_prompt="你是一个有帮助的助手。",
+    formatter=OpenAIChatFormatter(),
+)
+
+# 调用 Agent
+response = agent("你好，请介绍一下你自己")
+print(response)
+```
+
+**验证方式**：
+分析代码，找出异步调用的问题。
+
+<details>
+<summary>参考答案</summary>
+
+**答案/解题思路**：
+
+**问题**：缺少 `await` 和 `asyncio.run()`
+
+**原因分析**：
+1. `ReActAgent` 的调用是**异步**的，必须使用 `await`
+2. 异步函数必须在 `async` 函数中运行
+3. 最外层需要 `asyncio.run()` 包装
+
+**修正后的代码**：
+```python showLineNumbers
+import asyncio
+import agentscope
+from agentscope.agent import ReActAgent
+
+agentscope.init(project="test")
+
+agent = ReActAgent(
+    name="助手",
+    model=OpenAIChatModel(model_name="gpt-4o"),
+    sys_prompt="你是一个有帮助的助手。",
+    formatter=OpenAIChatFormatter(),
+)
+
+async def main():
+    # 使用 await 调用
+    response = await agent("你好，请介绍一下你自己")
+    print(response)
+
+# 使用 asyncio.run 包装
+asyncio.run(main())
+```
+
+**常见错误**：
+| 错误写法 | 正确写法 |
+|----------|----------|
+| `agent("msg")` | `await agent("msg")` |
+| `asyncio.run(agent("msg"))` | `asyncio.run(main())` 其中 `main()` 内使用 `await` |
+| `RuntimeWarning: coroutine was never awaited` | 检查是否缺少 `await` |
+</details>
+
+---
+
+### 练习 3.5: Ollama 本地模型配置 [挑战]
+
+**题目**：
+某开发者想使用 Ollama 本地模型，但 Agent 返回了连接错误。请检查以下配置是否正确：
+
+```python showLineNumbers
+from agentscope.model import OllamaChatModel
+
+model = OllamaChatModel(
+    model_name="llama3.2",
+    base_url="http://localhost:11434",  # 第4行
+    stream=True,
+)
+```
+
+如果有问题，请指出并修正。
+
+**验证方式**：
+对比文档中 Ollama 模型配置参数。
+
+<details>
+<summary>参考答案</summary>
+
+**答案/解题思路**：
+
+**错误**：参数名错误
+
+**问题**：第 4 行使用了 `base_url`，但 Ollama 模型的实际参数名是 `host`
+
+**修正后的代码**：
+```python showLineNumbers
+from agentscope.model import OllamaChatModel
+
+model = OllamaChatModel(
+    model_name="llama3.2",
+    host="http://localhost:11434",  # 参数名是 host，不是 base_url
+    stream=True,
+)
+```
+
+**常见模型参数对比**：
+
+| 模型 | URL 参数名 |
+|------|-----------|
+| `OllamaChatModel` | `host` |
+| `OpenAIChatModel` | `base_url`（可选，用于代理） |
+| `DashScopeChatModel` | `base_http_api_url`（可选） |
+
+**其他 Ollama 配置参数**：
+```python showLineNumbers
+model = OllamaChatModel(
+    model_name="llama3.2",
+    host="http://localhost:11434",
+    stream=True,
+    options={
+        "temperature": 0.7,
+        "num_ctx": 4096,  # 上下文窗口大小
+    },
+    keep_alive="5m",  # 模型在内存中保持时间
+)
+```
+</details>
 
 ## 总结
 

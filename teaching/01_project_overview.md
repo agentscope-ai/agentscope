@@ -174,7 +174,7 @@ agentscope/
 
 AgentScope 的核心使用模式：
 
-```python
+```python showLineNumbers
 # Step 1: 初始化 (类似 Spring @PostConstruct)
 import agentscope
 
@@ -204,7 +204,7 @@ print(response)
 
 ### 多智能体协作示例
 
-```python
+```python showLineNumbers
 from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
 from agentscope.formatter import OpenAIChatFormatter
@@ -272,6 +272,193 @@ Phase 3: Real-time Multimodal Models
 - 核心 Agent 类型：ReActAgent（通用）、UserAgent（用户交互）、A2AAgent（跨服务）、RealtimeAgent（语音）
 - ReActAgent 构造需要四个必填参数：name, sys_prompt, model, formatter
 - 工具通过 Toolkit 注册，不是通过 tools 列表
+
+## 练习题
+
+### 练习 1.1: 核心特性认知 [基础]
+
+**题目**：
+请列举 AgentScope 的三个核心特性，并说明每个特性解决什么问题。
+
+**验证方式**：
+对比文档中的核心特性表格，检查是否包含：多智能体编排、多模型支持、工具调用、记忆系统中的任意三个。
+
+<details>
+<summary>参考答案</summary>
+
+**答案/解题思路**：
+
+AgentScope 核心特性举例：
+
+1. **多智能体编排** - 解决多个 Agent 协同工作的问题，支持 SequentialPipeline（顺序）、FanoutPipeline（并行）等多种模式
+2. **多模型支持** - 解决统一调用不同 LLM API 的问题，支持 OpenAI、Anthropic、Gemini、DashScope、Ollama、DeepSeek 等
+3. **工具调用** - 解决 Agent 无法执行外部操作的问题，支持 Python 执行、Shell 命令、MCP 协议、Function Calling
+4. **记忆系统** - 解决 Agent 无法记住对话历史的问题，支持短期记忆（InMemory/Redis/SQL）和长期记忆（Mem0/ReMe）
+5. **RAG** - 解决知识库问答问题，支持 PDF/Word/Excel 文档解析和向量存储（Qdrant/Milvus）
+6. **可观测性** - 解决调试困难的问题，AgentScope Studio 提供可视化调试和 OpenTelemetry 链路追踪
+
+任选其三作答即可。
+</details>
+
+---
+
+### 练习 1.2: Agent 类型选择 [基础]
+
+**题目**：
+某公司需要构建一个智能客服系统，系统需要：
+- 根据用户问题自动选择不同领域的专家 Agent
+- 支持用户通过语音进行咨询
+- 需要与其他公司的 AI 系统对接
+
+请选择合适的 Agent 类型并说明理由。
+
+**验证方式**：
+检查答案是否正确识别每种场景对应的 Agent 类型。
+
+<details>
+<summary>参考答案</summary>
+
+**答案/解题思路**：
+
+| 场景 | 推荐 Agent 类型 | 理由 |
+|------|----------------|------|
+| 自动选择专家 Agent | `ReActAgent` | 通用推理 Agent，可通过 Pipeline 实现路由 |
+| 语音咨询 | `RealtimeAgent` | 专为实时语音交互设计，支持 TTS |
+| 与其他公司 AI 系统对接 | `A2AAgent` | 实现 Agent-to-Agent 协议，支持跨服务通信 |
+
+**补充说明**：
+- 智能客服通常用 `ReActAgent` + `Toolkit`（挂载知识库检索工具）实现
+- 多 Agent 路由可用 `SequentialPipeline` 或 `FanoutPipeline` + 聚合逻辑
+</details>
+
+---
+
+### 练习 1.3: Java 概念映射 [中级]
+
+**题目**：
+作为 Java 开发者，小王需要将 Spring Boot 项目迁移到 AgentScope。请帮他将以下 Java 概念翻译成 AgentScope 中的对应实现：
+
+| Java 概念 | AgentScope 对应 |
+|-----------|----------------|
+| `@SpringBootApplication` | ? |
+| `@Service` + 业务逻辑 | ? |
+| `@Repository` | ? |
+| `@Bean` / Utility | ? |
+| `EventBus` / Kafka | ? |
+| `Cache` (Redis/Caffeine) | ? |
+
+**验证方式**：
+对照文档中的 Java 生态对比表进行验证。
+
+<details>
+<summary>参考答案</summary>
+
+**答案/解题思路**：
+
+| Java 概念 | AgentScope 对应 |
+|-----------|----------------|
+| `@SpringBootApplication` | `agentscope.init()` |
+| `@Service` + 业务逻辑 | `ReActAgent` |
+| `@Repository` | `Model` (如 `OpenAIChatModel`) |
+| `@Bean` / Utility | `Toolkit.register_tool_function()` |
+| `EventBus` / Kafka | `MsgHub` |
+| `Cache` (Redis/Caffeine) | `Memory` (InMemory/Redis/SQLAlchemy) |
+
+**关键映射关系**：
+- `agentscope.init()` 是框架入口，类似 Spring Boot 启动类
+- ReActAgent 是带 LLM 能力的 Service，每个 Agent 封装了业务逻辑
+- Model 封装了 LLM API 调用，类似 Repository 封装数据访问
+- 工具通过 Toolkit 统一管理，类似 @Bean 管理可复用组件
+</details>
+
+---
+
+### 练习 1.4: 多智能体架构设计 [挑战]
+
+**题目**：
+某企业需要构建一个"AI 研究团队"系统，包含：研究员（负责搜索和阅读文献）、分析师（负责数据处理和统计）、作家（负责撰写报告）。用户输入一个研究主题，系统自动输出完整报告。
+
+**请设计**：
+1. 选择合适的 Pipeline 类型实现这个工作流
+2. 画出简单的数据流图（文字描述即可）
+3. 给出核心代码结构
+
+**验证方式**：
+检查是否正确选择 SequentialPipeline 并能描述基本的数据流动。
+
+<details>
+<summary>参考答案</summary>
+
+**答案/解题思路**：
+
+**1. Pipeline 选择：SequentialPipeline（顺序管道）**
+
+原因：研究员 → 分析师 → 作家是典型的流水线模式，上一个 Agent 的输出作为下一个 Agent 的输入。
+
+**2. 数据流图**：
+```
+用户输入研究主题
+       ↓
+[研究员 Agent] → 搜索文献、提取关键信息
+       ↓
+[分析师 Agent] → 数据处理、统计分析
+       ↓
+[作家 Agent] → 整合信息、生成报告
+       ↓
+返回最终报告给用户
+```
+
+**3. 核心代码结构**：
+
+```python showLineNumbers
+from agentscope.agent import ReActAgent
+from agentscope.model import OpenAIChatModel
+from agentscope.formatter import OpenAIChatFormatter
+from agentscope.pipeline import SequentialPipeline
+from agentscope.tool import Toolkit
+
+# 创建 Toolkit 并注册工具
+toolkit = Toolkit()
+toolkit.register_tool_function(web_search_tool)
+toolkit.register_tool_function(data_analysis_tool)
+
+# 创建三个 Agent
+researcher = ReActAgent(
+    name="研究员",
+    sys_prompt="你是一个研究助手，负责搜索和阅读文献。",
+    model=OpenAIChatModel(model_name="gpt-4o"),
+    formatter=OpenAIChatFormatter(),
+    toolkit=toolkit,
+)
+
+analyst = ReActAgent(
+    name="分析师",
+    sys_prompt="你是一个数据分析师，负责处理和统计分析。",
+    model=OpenAIChatModel(model_name="gpt-4o"),
+    formatter=OpenAIChatFormatter(),
+    toolkit=toolkit,
+)
+
+writer = ReActAgent(
+    name="作家",
+    sys_prompt="你是一个技术写作助手，负责撰写报告。",
+    model=OpenAIChatModel(model_name="gpt-4o-mini"),
+    formatter=OpenAIChatFormatter(),
+    toolkit=Toolkit(),
+)
+
+# 构建流水线
+research_pipeline = SequentialPipeline(agents=[researcher, analyst, writer])
+
+# 执行
+result = await research_pipeline("研究 AI 在医疗领域的应用")
+```
+
+**关键点**：
+- SequentialPipeline 将三个 Agent 串联起来
+- 每个 Agent 的输出自动传递给下一个 Agent
+- 可以使用不同规模的模型（如作家用 gpt-4o-mini 节省成本）
+</details>
 
 ## 下一章
 

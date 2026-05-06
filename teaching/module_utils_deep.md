@@ -76,7 +76,7 @@ agentscope/
 
 #### 3.1.1 日志格式定义
 
-```python
+```python showLineNumbers
 _DEFAULT_FORMAT = (
     "%(asctime)s | %(levelname)-7s | "
     "%(module)s:%(funcName)s:%(lineno)s - %(message)s"
@@ -87,7 +87,7 @@ _DEFAULT_FORMAT = (
 
 #### 3.1.2 Logger 单例
 
-```python
+```python showLineNumbers
 logger = logging.getLogger("as")  # "as" = agentscope 缩写
 ```
 
@@ -95,7 +95,7 @@ logger = logging.getLogger("as")  # "as" = agentscope 缩写
 
 #### 3.1.3 setup_logger 函数
 
-```python
+```python showLineNumbers
 def setup_logger(
     level: str,
     filepath: str | None = None,
@@ -127,7 +127,7 @@ def setup_logger(
 
 #### 3.1.4 默认初始化
 
-```python
+```python showLineNumbers
 setup_logger("INFO")  # 模块加载时自动初始化为 INFO 级别
 ```
 
@@ -135,7 +135,7 @@ setup_logger("INFO")  # 模块加载时自动初始化为 INFO 级别
 
 ### 3.2 DictMixin 混入类
 
-```python
+```python showLineNumbers
 # _utils/_mixin.py
 class DictMixin(dict):
     """The dictionary mixin that allows attribute-style access."""
@@ -146,7 +146,7 @@ class DictMixin(dict):
 
 **作用**：让子类同时支持字典操作和属性访问。
 
-```python
+```python showLineNumbers
 class Config(DictMixin):
     pass
 
@@ -163,7 +163,7 @@ print(config.age)             # 25
 
 #### 3.3.1 JSON 修复与解析
 
-```python
+```python showLineNumbers
 def _json_loads_with_repair(json_str: str) -> dict:
     """解析可能不完整的 JSON 字符串"""
     try:
@@ -179,7 +179,7 @@ def _json_loads_with_repair(json_str: str) -> dict:
 
 **应用场景**：解析 LLM 流式输出中的不完整 JSON。
 
-```python
+```python showLineNumbers
 def _parse_streaming_json_dict(
     json_str: str,
     last_input: dict | None = None,
@@ -205,7 +205,7 @@ def _parse_streaming_json_dict(
 
 #### 3.3.2 时间戳生成
 
-```python
+```python showLineNumbers
 def _get_timestamp(add_random_suffix: bool = False) -> str:
     """获取当前时间戳，格式：YYYY-MM-DD HH:MM:SS.sss"""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
@@ -218,7 +218,7 @@ def _get_timestamp(add_random_suffix: bool = False) -> str:
 
 #### 3.3.3 异步函数检测与执行
 
-```python
+```python showLineNumbers
 async def _is_async_func(func: Callable) -> bool:
     """检测函数是否为异步函数"""
     return (
@@ -242,7 +242,7 @@ async def _execute_async_or_sync_func(func: Callable, *args, **kwargs) -> Any:
 
 #### 3.3.4 HTTP 资源获取
 
-```python
+```python showLineNumbers
 def _get_bytes_from_web_url(url: str, max_retries: int = 3) -> str:
     """从 URL 获取内容，支持重试"""
     for _ in range(max_retries):
@@ -260,7 +260,7 @@ def _get_bytes_from_web_url(url: str, max_retries: int = 3) -> str:
 
 #### 3.3.5 Base64 媒体数据保存
 
-```python
+```python showLineNumbers
 def _save_base64_data(media_type: str, base64_data: str) -> str:
     """将 base64 数据保存到临时文件"""
     extension = "." + media_type.split("/")[-1]  # 从 MIME 类型推断扩展名
@@ -273,7 +273,7 @@ def _save_base64_data(media_type: str, base64_data: str) -> str:
 
 #### 3.3.6 工具函数 Schema 提取
 
-```python
+```python showLineNumbers
 def _extract_json_schema_from_mcp_tool(tool: Tool) -> dict:
     """从 MCP 工具提取 JSON Schema"""
     return {
@@ -292,7 +292,7 @@ def _extract_json_schema_from_mcp_tool(tool: Tool) -> dict:
 
 #### 3.3.7 Pydantic 模型转工具定义
 
-```python
+```python showLineNumbers
 def _create_tool_from_base_model(
     structured_model: Type[BaseModel],
     tool_name: str = "generate_structured_output",
@@ -313,7 +313,7 @@ def _create_tool_from_base_model(
 
 #### 3.3.8 工具函数 Docstring 解析
 
-```python
+```python showLineNumbers
 def _parse_tool_function(
     tool_func: ToolFunction,
     include_long_description: bool,
@@ -352,7 +352,7 @@ def _parse_tool_function(
 
 #### 3.3.9 音频重采样
 
-```python
+```python showLineNumbers
 def _resample_pcm_delta(
     pcm_base64: str,
     sample_rate: int,
@@ -380,13 +380,13 @@ def _resample_pcm_delta(
 
 ### 4.1 单例模式（日志）
 
-```python
+```python showLineNumbers
 logger = logging.getLogger("as")  # 全局唯一 logger 实例
 ```
 
 ### 4.2 混入模式（Mixin）
 
-```python
+```python showLineNumbers
 class DictMixin(dict):
     __setattr__ = dict.__setitem__
     __getattr__ = dict.__getitem__
@@ -396,7 +396,7 @@ class DictMixin(dict):
 
 ### 4.3 适配器模式（HTTP 获取）
 
-```python
+```python showLineNumbers
 def _get_bytes_from_web_url(url: str, max_retries: int = 3) -> str:
     # UnicodeDecodeError -> base64 fallback
 ```
@@ -405,7 +405,7 @@ def _get_bytes_from_web_url(url: str, max_retries: int = 3) -> str:
 
 ### 4.4 动态模型创建
 
-```python
+```python showLineNumbers
 base_model = create_model("_StructuredOutputDynamicClass", **fields)
 ```
 
@@ -413,7 +413,7 @@ base_model = create_model("_StructuredOutputDynamicClass", **fields)
 
 ### 4.5 建造者模式（工具定义构建）
 
-```python
+```python showLineNumbers
 tool_definition = {
     "type": "function",
     "function": {
@@ -432,7 +432,7 @@ tool_definition = {
 
 ### DictMixin 的 AttributeError 陷阱
 
-```python
+```python showLineNumbers
 from agentscope._utils._mixin import DictMixin
 
 class Config(DictMixin):
@@ -448,7 +448,7 @@ cfg = Config()
 
 ### _parse_streaming_json_dict 的长度比较
 
-```python
+```python showLineNumbers
 # 该函数用 len(json.dumps(candidate)) 比较候选 JSON 的大小
 # 但字符串长度不等同于字段完整性：
 # {"a": "x" * 1000}  # 长度 1011，但只有 1 个字段
@@ -458,7 +458,7 @@ cfg = Config()
 
 ### _is_async_func 对生成器的误判
 
-```python
+```python showLineNumbers
 import asyncio
 import types
 
@@ -480,7 +480,7 @@ def gen_func():
 
 ### 5.1 使用日志系统
 
-```python
+```python showLineNumbers
 from agentscope._logging import logger, setup_logger
 
 # 自定义日志配置
@@ -494,7 +494,7 @@ logger.error("错误信息")
 
 ### 5.2 使用 DictMixin
 
-```python
+```python showLineNumbers
 from agentscope._utils._mixin import DictMixin
 
 class MyConfig(DictMixin):
@@ -511,7 +511,7 @@ print(config["db_port"])        # 5432
 
 ### 5.3 解析流式 JSON
 
-```python
+```python showLineNumbers
 from agentscope._utils._common import _parse_streaming_json_dict
 
 # 模拟 LLM 流式输出
@@ -524,7 +524,7 @@ print(result)  # {"name": "Alice", "age": 25}
 
 ### 5.4 从 Pydantic 模型创建工具
 
-```python
+```python showLineNumbers
 from pydantic import BaseModel
 from agentscope._utils._common import _create_tool_from_base_model
 
@@ -539,7 +539,7 @@ tool = _create_tool_from_base_model(Person, "extract_person")
 
 ### 5.5 异步函数统一执行
 
-```python
+```python showLineNumbers
 import asyncio
 from agentscope._utils._common import _execute_async_or_sync_func
 
@@ -568,7 +568,7 @@ asyncio.run(main())
 
 **参考答案**：
 
-```python
+```python showLineNumbers
 import requests
 from requests.exceptions import ConnectTimeout, ReadTimeout
 
@@ -621,7 +621,7 @@ def _get_bytes_from_web_url(
 
 **参考答案**：
 
-```python
+```python showLineNumbers
 from agentscope._utils._mixin import DictMixin
 
 class ExtendedDictMixin(DictMixin):
@@ -654,7 +654,7 @@ class ExtendedDictMixin(DictMixin):
 
 **参考答案**：
 
-```python
+```python showLineNumbers
 import jsonschema
 from agentscope._utils._common import _parse_tool_function
 
@@ -700,7 +700,7 @@ def validate_tool_call(tool_func: ToolFunction, **kwargs) -> tuple[bool, str]:
 
 **参考答案**：
 
-```python
+```python showLineNumbers
 import logging
 from agentscope._logging import _DEFAULT_FORMAT, setup_logger
 
@@ -783,22 +783,15 @@ if __name__ == "__main__":
 
 工具模块体现了 AgentScope 对 LLM 应用常见需求的抽象：处理不完整 JSON、提取函数 schema、媒体数据处理等，都是构建 AI 应用时频繁遇到的问题。
 
-## 章节关联
+| 关联模块 | 关联点 | 参考位置 |
+|----------|--------|----------|
+| [工具模块](module_tool_mcp_deep.md#3-toolkit-工具包核心) | `_parse_tool_function` 生成工具 Schema（位于 `_common.py:339`） | 第 3.3 节 |
+| [模型模块](module_model_deep.md#7-工具调用机制详解) | `_parse_streaming_json_dict` 解析 LLM 流式 JSON 输出 | 第 7.2 节 |
+| [文件模块](module_file_deep.md#3-源码解读) | 共享 `_common.py` 中的 Base64 编解码和文件工具函数 | 第 3.1-3.3 节 |
+| [格式化器模块](module_formatter_deep.md#3-源码解读) | JSON 修复用于格式化器异常处理 | 第 3.1 节 |
 
-| 关联模块 | 关联点 |
-|----------|--------|
-| [工具模块](module_tool_mcp_deep.md) 第 3.2 节 | `_parse_tool_function` 生成工具 Schema（位于 `_common.py:339`） |
-| [模型模块](module_model_deep.md) 第 4 节 | `_parse_streaming_json_dict` 解析 LLM 流式 JSON 输出 |
-| [文件模块](module_file_deep.md) 第 3 节 | 共享 `_common.py` 中的 Base64 编解码和文件工具函数 |
 
-### Java 开发者对照
-
-| Python 概念 | Java 等价物 | 说明 |
-|-------------|------------|------|
-| `_json_loads_with_repair` | Jackson 自定义 Deserializer | 容错 JSON 解析 |
-| `DictMixin` | `Map` + `AbstractMap` | 属性与 Map 双接口 |
-| `inspect.signature()` | Java Reflection API | 运行时函数签名提取 |
-| `logging` 模块 | SLF4J + Logback | 日志门面 + 实现 |
+---
 
 ## 练习题
 

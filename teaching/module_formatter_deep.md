@@ -120,7 +120,7 @@ FormatterBase                    # 格式化器抽象基类
 
 ### 3.1 FormatterBase 抽象基类
 
-```python
+```python showLineNumbers
 class FormatterBase:
     @abstractmethod
     async def format(self, *args, **kwargs) -> list[dict[str, Any]]:
@@ -160,7 +160,7 @@ class FormatterBase:
 
 这是 Formatter 体系的核心中间层，实现了 **format-count-truncate 循环**。
 
-```python
+```python showLineNumbers
 class TruncatedFormatterBase(FormatterBase, ABC):
     def __init__(self, token_counter: TokenCounterBase | None = None,
                  max_tokens: int | None = None) -> None:
@@ -197,7 +197,7 @@ Token 数量
 
 **`_truncate()` 截断策略**：
 
-```python
+```python showLineNumbers
 async def _truncate(self, msgs: list[Msg]) -> list[Msg]:
     # 1. 分离系统消息和普通消息
     # 2. 从最早的普通消息开始删除
@@ -211,7 +211,7 @@ async def _truncate(self, msgs: list[Msg]) -> list[Msg]:
 
 `_group_messages` 是理解多代理格式化的关键：
 
-```python
+```python showLineNumbers
 @staticmethod
 async def _group_messages(msgs):
     """将消息列表分组为 tool_sequence 或 agent_message"""
@@ -274,7 +274,7 @@ promote_tool_result_images=True 时：
 
 将多代理对话历史包装在 `<history>` 标签中：
 
-```python
+```python showLineNumbers
 # 构造函数
 def __init__(self, conversation_history_prompt="# Conversation History\n...", ...)
 ```
@@ -285,7 +285,7 @@ def __init__(self, conversation_history_prompt="# Conversation History\n...", ..
 - 工具调用序列：委托给 `OpenAIChatFormatter` 处理
 - 最终合并为一条 user 消息
 
-```python
+```python showLineNumbers
 # 多代理输出示例
 {
     "role": "user",
@@ -319,7 +319,7 @@ def __init__(self, conversation_history_prompt="# Conversation History\n...", ..
 
 **系统消息重映射**：
 
-```python
+```python showLineNumbers
 # Anthropic API 只允许第一条消息为 system
 # 如果后续出现 system 消息，自动重映射为 user
 if msg.role == "system" and not is_first:
@@ -348,7 +348,7 @@ if msg.role == "system" and not is_first:
 3. **`_reformat_messages` 后处理**：如果消息内容全为文本，合并为单个字符串（兼容 HuggingFaceTokenCounter）
 4. **API 缺陷兼容**：处理 DashScope API 的多个已知问题
 
-```python
+```python showLineNumbers
 def __init__(self,
              promote_tool_result_images: bool = False,
              promote_tool_result_audios: bool = False,
@@ -399,11 +399,106 @@ TruncatedFormatterBase.format()     # 具体：format-count-truncate 循环
 
 ---
 
+### 边界情况与陷阱
+
+#### Critical: 不同模型 API 的 tool_call 格式差异
+
+```python showLineNumbers
+# OpenAI: tool_call 是独立字段
+{"role": "assistant", "tool_calls": [...]}
+
+# Anthropic: tool_use 是 content 内的块
+{"role": "assistant", "content": [{"type": "tool_use", "id": "...", "name": "...", "input": {...}}]}
+
+# Gemini: function_call 是独立字段
+{"role": "model", "function_call": {"name": "...", "args": {...}}}
+
+# 问题：混用格式化器会导致 API 返回 400 错误
+formatter = OpenAIChatFormatter()  # 用于 OpenAI API
+# 如果误用 Anthropic 格式，会报错
+```
+
+#### High: TruncatedFormatter 的截断位置
+
+```python showLineNumbers
+# TruncatedFormatter 截断消息时，可能截断在句子中间
+# 导致 LLM 收到不完整的句子
+
+messages = [
+    Msg(name="user", content="Please buy 100 shares of AAPL, 50 shares of MSFT...", role="user")
+]
+# 如果 token 限制为 50，可能截断为：
+# "Please buy 100 shares of AAPL, 50 shares of"
+# LLM 无法理解完整的交易意图
+```
+
+#### Medium: system_message 位置差异
+
+```python showLineNumbers
+# OpenAI: system message 在最前面
+# Anthropic: system message 可以在任何位置
+
+# 问题：如果 formatter 实现错误，system message 可能被截断
+# 导致 Agent 丢失关键指令
+```
+
+#### Medium: 消息角色映射
+
+```python showLineNumbers
+# 不同 API 对角色名称有不同的要求
+# OpenAI: "system", "user", "assistant", "tool"
+# Anthropic: "user", "assistant", "system"（无 "tool"）
+
+# 问题：错误的角色名称会导致 API 报错
+msg = Msg(name="bot", content="...", role="invalid_role")
+```
+
+---
+
+### 性能考量
+
+#### 格式化延迟分析
+
+| 格式化器 | 延迟 | 说明 |
+|----------|------|------|
+| SimpleFormatter | ~0.1ms | 最快，直接字典转换 |
+| OpenAIChatFormatter | ~0.5ms | 需要处理 tool_calls |
+| TruncatedFormatterBase | ~1-5ms | 需要计算和截断 token |
+
+#### Token 计算影响
+
+```python showLineNumbers
+# Token 计算是主要开销来源
+# tiktoken 计算 ~0.01ms/调用
+
+# 大量消息时的累积延迟：
+# 100 条消息：~1ms
+# 1000 条消息：~10ms
+
+# 优化建议：
+# - 避免重复格式化
+# - 缓存格式化结果
+```
+
+#### 消息截断优化
+
+```python showLineNumbers
+# 截断策略影响输出质量
+# 简单截断：快速但可能丢失关键信息
+
+# 更好的策略：
+# 1. 语义截断：优先在句子边界截断
+# 2. 摘要优先：先摘要再截断
+# 3. 重要性排序：保留重要消息，截断历史消息
+```
+
+---
+
 ## 5. 代码示例
 
 ### 5.1 基本格式化
 
-```python
+```python showLineNumbers
 from agentscope.formatter import OpenAIChatFormatter
 from agentscope.message import Msg
 
@@ -427,7 +522,7 @@ for msg in formatted:
 
 ### 5.2 带 Token 截断的格式化
 
-```python
+```python showLineNumbers
 from agentscope.formatter import OpenAIChatFormatter
 from agentscope.token import OpenAITokenCounter
 
@@ -458,7 +553,7 @@ print(f"格式化后消息数: {len(formatted)}")
 
 ### 5.3 多模态消息格式化
 
-```python
+```python showLineNumbers
 from agentscope.formatter import OpenAIChatFormatter
 from agentscope.message import Msg, TextBlock, ImageBlock, URLSource
 
@@ -489,7 +584,7 @@ print(json.dumps(formatted[0], indent=2, ensure_ascii=False))
 
 ### 5.4 多代理对话格式化
 
-```python
+```python showLineNumbers
 from agentscope.formatter import OpenAIMultiAgentFormatter
 from agentscope.message import Msg
 
@@ -524,15 +619,25 @@ The content between <history></history> tags contains your conversation history
 
 **Q2**: `_truncate()` 方法为什么要使用 `tool_call_ids` 集合追踪工具调用 ID？
 
-### 中级题
-
 **Q3**: 对比 `OpenAIChatFormatter` 和 `AnthropicChatFormatter` 对工具结果（ToolResultBlock）的不同处理方式。为什么 Anthropic 需要将工具结果包装在 user 消息中？
 
 **Q4**: `_group_messages` 返回的是异步生成器（`AsyncGenerator`）。为什么不用普通生成器？什么场景下消息分组可能涉及异步操作？
 
+**Q5**: `OpenAIChatFormatter` 和 `AnthropicChatFormatter` 对系统消息的处理方式有何不同？为什么 Anthropic 需要将系统消息重映射为人类消息？
+
+### 中级题
+
+**Q6**: 分析 `MultiAgentChatFormatter` 如何处理多代理对话。它的 `<history>` 标签解析逻辑在什么情况下会失效？
+
+**Q7**: 假设你需要支持一个新的 LLM 厂商，该厂商要求消息格式为 XML 标签包裹（如 `<role>user</role><content>...</content>`）。如何设计一个通用的消息序列化框架？
+
+**Q8**: `DashScopeChatFormatter` 中有一段"API 缺陷兼容"代码。如果阿里云修复了这个缺陷，代码需要如何重构？有哪些向后兼容的考虑？
+
 ### 挑战题
 
-**Q5**: 设计一个 `PriorityTruncateMixin`，修改截断策略为"按消息优先级截断"而非"按时间顺序截断"。优先级规则：system 消息 > 最近的 3 轮对话 > 工具调用 > 早期对话。
+**Q9**: 设计一个 `PriorityTruncateMixin`，修改截断策略为"按消息优先级截断"而非"按时间顺序截断"。优先级规则：system 消息 > 最近的 3 轮对话 > 工具调用 > 早期对话。
+
+**Q10**: 设计一个支持流式和非流式两种模式的 `StreamingFormatterMixin`。关键挑战是：流式模式下需要边格式化边发送，无法预知最终 Token 数量。如何设计一个自适应的截断策略？
 
 ---
 
@@ -546,7 +651,17 @@ The content between <history></history> tags contains your conversation history
 
 **A4**: 当前实现中 `_group_messages` 本身不需要异步操作，使用 `AsyncGenerator` 主要是保持接口一致性——`_format` 是异步方法，通过 `async for` 消费分组结果。如果未来分组逻辑需要异步判断（如查询外部服务获取消息元数据），异步接口已经预留了扩展空间。
 
-**A5**: 关键实现思路：重写 `_truncate()` 方法，为每条消息计算优先级分数（system=100, 最近3轮=80, tool_use/result=60, 早期=20），然后按优先级从低到高删除，直到 Token 数在预算内。注意仍需维护 `tool_call_ids` 确保工具调用配对。
+**A5**: OpenAI 直接保留原始 system prompt 作为独立消息，而 Anthropic 会将其包装在首条 user 消息中。这是因为 Anthropic API 对 system 消息有长度限制（只能放在首轮对话），超出部分会被静默截断。重映射确保系统指令的完整性。
+
+**A6**: `<history>` 标签解析依赖正则匹配，如果对话内容中包含类似的 XML 标签（如 `<history>` 作为用户输入内容），会导致错误的分割。当前实现没有处理标签嵌套或转义情况。在实际使用中应避免让用户输入包含这些特殊标签。
+
+**A7**: 关键设计：(1) 定义 `MessageSerializer` 抽象接口，包含 `serialize_role()` 和 `serialize_content()` 方法；(2) 各厂商实现该接口，如 `OpenAISerializer`、`AnthropicSerializer`；(3) `FormatterBase` 持有 `MessageSerializer` 实例，可在运行时替换；(4) 通过依赖注入保持框架的灵活性。
+
+**A8**: 阿里云的缺陷是 tool_call ID 格式与 OpenAI 不兼容（包含特殊字符）。修复后应移除兼容代码，改为直接使用标准格式。同时通过版本检测保持向后兼容——如果厂商 API 版本低于某阈值，保留兼容逻辑；高于阈值则使用新格式。
+
+**A9**: 关键实现思路：重写 `_truncate()` 方法，为每条消息计算优先级分数（system=100, 最近3轮=80, tool_use/result=60, 早期=20），然后按优先级从低到高删除，直到 Token 数在预算内。注意仍需维护 `tool_call_ids` 确保工具调用配对。
+
+**A10**: 关键设计：(1) 流式模式下使用"预估-检查-调整"循环：先按预估 Token 预算发送，达到阈值后暂停；(2) 服务端流式响应时，通过 `ServerSideEvent` 实时更新 Token 计数；(3) 非流式模式保持原有 `format-count-truncate` 循环；(4) 设计 `TruncateStrategy` 抽象，允许运行时切换策略。
 
 ---
 
@@ -562,18 +677,17 @@ The content between <history></history> tags contains your conversation history
 | DashScopeChatFormatter | DashScope 单代理，支持 video，API 缺陷兼容 |
 | MultiAgent 格式化器 | `<history>` 标签包装，合并为一条 user 消息 |
 
-## 章节关联
+| 关联模块 | 关联点 | 参考位置 |
+|----------|--------|----------|
+| [消息模块](module_message_deep.md#3-核心类与函数源码解读) | 格式化器处理 Msg 和 ContentBlock | 第 3.1-3.2 节 |
+| [模型模块](module_model_deep.md#2-chatmodelbase-基类分析) | Model 调用 Formatter 进行 API 请求格式化 | 第 2.2 节 |
+| [嵌入与 Token 模块](module_embedding_token_deep.md#8-token-计数机制) | TokenCounterBase 用于格式化器的 Token 计算 | 第 8.1-8.4 节 |
+| [智能体模块](module_agent_deep.md#3-agentbase-源码解读) | Agent 的 reply 消息通过 Formatter 发送给 Model | 第 3.2 节 |
+| [追踪模块](module_tracing_deep.md#3-追踪装饰器) | trace_format() 追踪格式化调用 | 第 3.6 节 |
+| [管道模块](module_pipeline_infra_deep.md#3-formatter-消息格式化) | Pipeline 负责消息在 Agent 间的流转 | 第 3.1-3.3 节 |
 
-| 相关模块 | 关联点 |
-|----------|--------|
-| [Message 模块](module_message_deep.md) | 格式化器处理 Msg 和 ContentBlock |
-| [Model 模块](module_model_deep.md) | Model 调用 Formatter 进行 API 请求格式化 |
-| [Embedding 与 Token](module_embedding_token_deep.md) | TokenCounterBase 用于格式化器的 Token 计算 |
-| [Agent 模块](module_agent_deep.md) | Agent 的 reply 消息通过 Formatter 发送给 Model |
-| [Tracing 模块](module_tracing_deep.md) | `trace_format()` 装饰器追踪格式化调用 |
-| [Pipeline 与基础设施](module_pipeline_infra_deep.md) | Pipeline 负责消息在 Agent 间的流转 |
 
-**版本参考**: AgentScope >= 1.0.0 | 源码 `formatter/`
+---
 
 ## 本章小结
 

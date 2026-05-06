@@ -1875,7 +1875,7 @@ class OpenAITextEmbedding(EmbeddingModelBase):
 
 **方式一：环境变量（推荐）**
 
-```python
+```python showLineNumbers
 import os
 os.environ["OPENAI_API_KEY"] = "sk-..."      # OpenAI
 os.environ["DASHSCOPE_API_KEY"] = "sk-..."   # 阿里云 DashScope
@@ -1884,7 +1884,7 @@ os.environ["ANTHROPIC_API_KEY"] = "sk-..."  # Anthropic
 
 **方式二：直接传入参数**
 
-```python
+```python showLineNumbers
 model = OpenAIChatModel(
     model_name="gpt-4",
     api_key="sk-...",  # 直接传入 API key
@@ -1893,7 +1893,7 @@ model = OpenAIChatModel(
 
 **方式三：Azure OpenAI**
 
-```python
+```python showLineNumbers
 model = OpenAIChatModel(
     model_name="gpt-4",
     api_key="your-azure-key",
@@ -1907,7 +1907,7 @@ model = OpenAIChatModel(
 
 ### 10.1 使用 OpenAI 模型
 
-```python
+```python showLineNumbers
 from agentscope.model import OpenAIChatModel
 from agentscope.formatter import OpenAIChatFormatter
 
@@ -1935,9 +1935,14 @@ response = await model(messages)
 print(f"Response: {response.content}")
 ```
 
+**预期输出**：
+```
+Response: The capital of France is Paris.
+```
+
 ### 10.2 流式输出处理
 
-```python
+```python showLineNumbers
 import os
 
 async def stream_chat():
@@ -1959,9 +1964,14 @@ async def stream_chat():
                 print(block["text"], end="", flush=True)
 ```
 
+**预期输出**：
+```
+Once upon a time, in a distant galaxy...
+```
+
 ### 10.3 工具调用
 
-```python
+```python showLineNumbers
 from agentscope.model import OpenAIChatModel
 
 # 创建模型实例 (api_key 可从环境变量 OPENAI_API_KEY 读取)
@@ -2009,9 +2019,15 @@ for block in response.content:
         print(f"Args: {block['input']}")
 ```
 
+**预期输出**：
+```
+Tool: get_weather
+Args: {'location': 'Paris'}
+```
+
 ### 10.4 结构化输出
 
-```python
+```python showLineNumbers
 from pydantic import BaseModel
 from typing import Literal
 
@@ -2043,9 +2059,14 @@ if response.metadata:
     print(f"{weather.location}: {weather.temperature}{weather.unit}")
 ```
 
+**预期输出**：
+```
+Tokyo: 22.5celsius
+```
+
 ### 10.5 DashScope 多模态模型
 
-```python
+```python showLineNumbers
 from agentscope.model import DashScopeChatModel
 
 # 强制使用多模态模式
@@ -2070,6 +2091,11 @@ messages = [
 ]
 
 response = await model(messages)
+```
+
+**预期输出**：
+```
+The image shows a beautiful sunset over the ocean.
 ```
 
 ---
@@ -2100,6 +2126,124 @@ response = await model(messages)
 
 ---
 
+### 边界情况与陷阱
+
+#### Critical: 模型配置的必填参数
+
+```python
+# 不同模型适配器有不同的必填参数
+# DashScope 需要 api_key
+config = DashScopeConfig(api_key="sk-...")
+
+# Ollama 需要 host
+config = OllamaConfig(host="http://localhost:11434")
+
+# 问题：遗漏参数会导致运行时错误
+config = DashScopeConfig()  # Missing api_key
+```
+
+#### High: 流式输出的异常处理
+
+```python
+# 流式输出可能在中间中断
+stream = await model.chat(messages, stream=True)
+
+try:
+    async for chunk in stream:
+        yield chunk
+except Exception as e:
+    # 网络中断或 API 错误
+    # 此时已经 yield 了部分内容
+    # 调用方可能收到不完整的响应
+```
+
+**解决方案**：始终检查最终响应的完整性。
+
+#### High: API 限流处理
+
+```python
+# 模型 API 有速率限制
+# DashScope: 限制并发数
+# OpenAI: 限制 RPM/TPM
+
+# 问题：超出限制会返回 429 错误
+# 解决方案：实现指数退避重试
+for attempt in range(3):
+    try:
+        return await model.chat(messages)
+    except RateLimitError:
+        await asyncio.sleep(2 ** attempt)
+```
+
+#### Medium: Token 计数的近似性
+
+```python
+# Token 计数器与实际 API 返回的数量可能不同
+# tiktoken vs OpenAI tokenizer
+
+token_count = count_tokens("Hello world")  # tiktoken: 2
+# 但 API 返回可能是 3（取决于模型的分词器）
+
+# 问题：可能导致上下文窗口计算不准确
+```
+
+#### Medium: 多模态模型的消息格式
+
+```python
+# 多模态输入需要特定格式
+message = {
+    "role": "user",
+    "content": [
+        {"type": "text", "text": "描述这张图片"},
+        {"type": "image_url", "image_url": {"url": "https://..."}}
+    ]
+}
+
+# 问题：格式错误会导致 API 返回 400 错误
+# 不同模型有不同的多模态格式要求
+```
+
+---
+
+### 性能考量
+
+#### 模型延迟对比
+
+| 模型 | 延迟 | 吞吐量 | 适用场景 |
+|------|------|--------|----------|
+| GPT-4o | ~2s | 低 | 复杂推理 |
+| GPT-4o-mini | ~1s | 中 | 通用任务 |
+| Claude 3.5 | ~1.5s | 中 | 长上下文 |
+| Ollama (本地) | ~100ms | 高 | 快速迭代 |
+
+#### 流式 vs 非流式
+
+```python
+# 流式输出有额外的协议开销
+# 首字节延迟更高
+
+# 非流式：等待完整响应后返回
+result = await model.chat(messages)  # 2s 延迟
+
+# 流式：首字节更快，但总时间相同
+async for chunk in model.chat(messages, stream=True):
+    print(chunk)  # 更快看到开始
+```
+
+#### Token 计算性能
+
+```python
+# Token 计数有计算成本
+# tiktoken: ~0.01ms/调用
+# 但批量计算可以使用 C 优化版本
+
+# 优化建议：
+# - 仅在必要时计算（如接近上下文限制）
+# - 缓存重复计算的 token 数
+```
+
+---
+
 ## 11. 练习题
 
 ### 11.1 基础题
@@ -2125,6 +2269,249 @@ response = await model(messages)
 8. **分析 AgentScope 的模型适配器与 LangChain 的 Model IO 有何异同。**
 
 9. **设计一个模型代理，实现请求重试、负载均衡和故障转移。**
+
+### 练习 11.10: 流式响应逐块解析 [基础]
+
+**题目描述**：
+使用 OpenAI 模型适配器发起流式请求，预测并验证以下代码的输出内容。
+
+```python
+import asyncio
+from agentscope.model import OpenAIChatModel
+
+model = OpenAIChatModel(model_name="gpt-4o-mini")
+
+async def main():
+    response = await model([{"role": "user", "content": "Say hello in one word"}])
+    async for chunk in response:
+        print(f"chunk: {chunk}")
+
+asyncio.run(main())
+```
+
+**预期输出/行为**：
+`chunk.content` 的累积结果为 `"Hello"`（或类似单词）。每个 chunk 是 `ChatResponse` 对象，`chunk.delta` 或 `chunk.content` 包含增量文本。
+
+<details>
+<summary>参考答案</summary>
+
+```python
+import asyncio
+from agentscope.model import OpenAIChatModel
+
+model = OpenAIChatModel(model_name="gpt-4o-mini")
+
+async def main():
+    response = await model([{"role": "user", "content": "Say hello in one word"}])
+    accumulated = ""
+    async for chunk in response:
+        if hasattr(chunk, "delta") and chunk.delta:
+            accumulated += chunk.delta
+            print(f"delta: '{chunk.delta}', accumulated: '{accumulated}'")
+        elif hasattr(chunk, "content") and chunk.content:
+            accumulated += chunk.content
+            print(f"content: '{chunk.content}', accumulated: '{accumulated}'")
+
+asyncio.run(main())
+# 输出示例:
+# delta: 'Hel', accumulated: 'Hel'
+# delta: 'lo', accumulated: 'Hello'
+```
+</details>
+
+### 练习 11.11: 结构化输出字段验证 [基础]
+
+**题目描述**：
+使用 `structured_model` 参数请求 Pydantic 模型输出，验证返回的对象类型和字段访问方式。
+
+```python
+from pydantic import BaseModel
+from agentscope.model import OpenAIChatModel
+import asyncio
+
+class WeatherInfo(BaseModel):
+    city: str
+    temperature: float
+    unit: str = "celsius"
+
+model = OpenAIChatModel(model_name="gpt-4o")
+
+async def main():
+    response = await model(
+        [{"role": "user", "content": "What's the weather in Beijing?"}],
+        structured_model=WeatherInfo
+    )
+    result = response.content  # 期望是 WeatherInfo 实例
+    print(f"type: {type(result)}")
+    print(f"city: {result.city}, temp: {result.temperature}°{result.unit}")
+
+asyncio.run(main())
+```
+
+**预期输出/行为**：
+`type(result)` 为 `WeatherInfo`，可直接通过 `.city`、`.temperature`、`.unit` 访问字段。
+
+<details>
+<summary>参考答案</summary>
+
+```python
+from pydantic import BaseModel
+from agentscope.model import OpenAIChatModel
+import asyncio
+
+class WeatherInfo(BaseModel):
+    city: str
+    temperature: float
+    unit: str = "celsius"
+
+model = OpenAIChatModel(model_name="gpt-4o")
+
+async def main():
+    response = await model(
+        [{"role": "user", "content": "What's the weather in Beijing?"}],
+        structured_model=WeatherInfo
+    )
+    result = response.content  # OpenAI 适配器内部调用 response.parsed 或 model.parse() 转换
+    assert isinstance(result, WeatherInfo), f"Expected WeatherInfo, got {type(result)}"
+    print(f"type: {type(result)}")
+    print(f"city: {result.city}, temp: {result.temperature}°{result.unit}")
+
+asyncio.run(main())
+# 预期输出:
+# type: <class 'WeatherInfo'>
+# city: Beijing, temp: 22.5°celsius
+```
+</details>
+
+### 练习 11.12: 模型配置错误诊断 [中级]
+
+**题目描述**：
+以下代码运行时出现 `ValueError: model_name must be specified` 或类似错误。请阅读模型适配器源码（参考 `_openai.py`），找出所有可能导致此错误的配置问题，并修复代码。
+
+```python
+from agentscope.model import OpenAIChatModel
+import os
+
+# 尝试使用环境变量中的 API key
+api_key = os.getenv("OPENAI_API_KEY")
+
+model = OpenAIChatModel(
+    api_key=api_key,
+    # 缺少 model_name
+)
+
+import asyncio
+async def main():
+    result = await model([{"role": "user", "content": "Hi"}])
+    print(result.content)
+
+asyncio.run(main())
+```
+
+**预期输出/行为**：
+修复后代码正常运行，输出模型生成的文本。
+
+<details>
+<summary>参考答案</summary>
+
+```python
+# 错误原因：OpenAIChatModel 要求 model_name 参数，不能为空。
+# 其他常见配置错误：
+# 1. api_key 为 None（环境变量未设置）
+# 2. base_url 拼写错误（应为 base_url 而非 url）
+# 3. stream 参数类型错误（应为 bool 而非 string）
+
+from agentscope.model import OpenAIChatModel
+import os
+
+api_key = os.getenv("OPENAI_API_KEY")
+if not api_key:
+    raise ValueError("OPENAI_API_KEY environment variable not set")
+
+model = OpenAIChatModel(
+    api_key=api_key,
+    model_name="gpt-4o-mini",  # 必须指定
+    # base_url="https://api.openai.com/v1",  # 可选，默认值已填充
+)
+
+import asyncio
+async def main():
+    result = await model([{"role": "user", "content": "Hi"}])
+    print(result.content)
+
+asyncio.run(main())
+```
+</details>
+
+### 练习 11.13: 多模型自动 Fallback 策略 [挑战]
+
+**题目描述**：
+设计一个 `ModelWithFallback` 类，实现：当主模型（GPT-4o）调用失败时，自动切换到备用模型（GPT-4o-mini）；连续 3 次失败后降级到本地模型（如 Ollama）。每次切换需记录日志。
+
+**预期输出/行为**：
+运行模拟故障注入的测试用例，验证模型按预期顺序切换。
+
+<details>
+<summary>参考答案</summary>
+
+```python
+import asyncio
+import logging
+from typing import Any
+from agentscope.model import OpenAIChatModel, ChatResponse
+
+logger = logging.getLogger(__name__)
+
+class ModelWithFallback:
+    """支持自动降级的模型封装。"""
+
+    def __init__(
+        self,
+        primary_model: OpenAIChatModel,
+        fallback_model: OpenAIChatModel,
+        local_model: Any = None,
+    ):
+        self.models = [primary_model, fallback_model, local_model]
+        self.current_index = 0
+        self.max_retries_per_model = 3
+
+    async def __call__(
+        self,
+        messages: list[dict[str, Any]],
+        **kwargs: Any,
+    ) -> ChatResponse:
+        """发起请求，失败时自动降级。"""
+        attempts = 0
+        while self.current_index < len(self.models):
+            model = self.models[self.current_index]
+            try:
+                logger.info(f"尝试模型 {self.current_index}: {type(model).__name__}")
+                response = await model(messages, **kwargs)
+                logger.info(f"模型 {self.current_index} 成功")
+                return response
+            except Exception as e:
+                attempts += 1
+                logger.warning(f"模型 {self.current_index} 失败 ({attempts}/{self.max_retries_per_model}): {e}")
+                if attempts >= self.max_retries_per_model:
+                    self.current_index += 1
+                    attempts = 0
+                    logger.info(f"切换到下一个模型，当前索引: {self.current_index}")
+
+        raise RuntimeError("所有模型均不可用")
+
+# 使用示例
+primary = OpenAIChatModel(model_name="gpt-4o", api_key="sk-...")
+fallback = OpenAIChatModel(model_name="gpt-4o-mini", api_key="sk-...")
+
+model_with_fb = ModelWithFallback(primary, fallback)
+
+async def main():
+    response = await model_with_fb([{"role": "user", "content": "Hello"}])
+    print(response.content)
+
+asyncio.run(main())
+```
+</details>
 
 ---
 
@@ -2420,14 +2807,15 @@ class ResilientModelProxy(ChatModelBase):
 
 ---
 
-## 章节关联
+| 关联模块 | 关联点 | 参考位置 |
+|----------|--------|----------|
+| [消息模块](module_message_deep.md#3-核心类与函数源码解读) | Model 接收和返回 Msg 对象 | 第 3.1 节 |
+| [格式化器模块](module_formatter_deep.md#3-源码解读) | Formatter 将 Msg 转换为 API 格式 | 第 3.1-3.4 节 |
+| [工具模块](module_tool_mcp_deep.md#6-工具调用流程) | 工具调用机制与 Toolkit 协作 | 第 6.1-6.3 节 |
+| [嵌入与 Token 模块](module_embedding_token_deep.md#8-token-计数机制) | Token 计数用于成本控制和截断 | 第 8.1-8.4 节 |
+| [智能体模块](module_agent_deep.md#4-reactagent-实现类分析) | ReActAgent 通过 Model 进行推理 | 第 4.1-4.3 节 |
+| [追踪模块](module_tracing_deep.md#3-追踪装饰器) | trace_llm() 追踪模型调用 | 第 3.1 节 |
 
-| 关联模块 | 关联点 |
-|----------|--------|
-| [智能体模块](module_agent_deep.md) | Agent 通过 `model` 参数调用 LLM |
-| [记忆模块](module_memory_rag_deep.md) | Embedding 模型驱动 RAG 检索，Token 计数控制压缩 |
-| [工具模块](module_tool_mcp_deep.md) | `tool_choice` 参数控制工具调用 |
-| [管道模块](module_pipeline_infra_deep.md) | Formatter 将 Msg 转换为各模型 API 格式 |
 
 ---
 

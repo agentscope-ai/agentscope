@@ -83,7 +83,7 @@ plan/
 
 ### 3.1 SubTask 子任务模型
 
-```python
+```python showLineNumbers
 class SubTask(BaseModel):
     name: str                    # 子任务名称（不超过 10 词）
     description: str             # 约束、目标和结果描述
@@ -129,7 +129,7 @@ todo ──→ in_progress ──→ done
 
 ### 3.2 Plan 计划模型
 
-```python
+```python showLineNumbers
 class Plan(BaseModel):
     id: str                       # 自动生成
     name: str                     # 计划名称
@@ -152,7 +152,7 @@ class Plan(BaseModel):
 
 **`refresh_plan_state()` 逻辑**：
 
-```python
+```python showLineNumbers
 def refresh_plan_state(self) -> str:
     # 如果有任何子任务是 in_progress → 计划也变为 in_progress
     # 如果所有子任务都是 todo → 计划保持 todo
@@ -199,7 +199,7 @@ plan is None?
 
 `PlanNotebook` 继承自 `StateModule`，是 Plan 模块的核心编排类。
 
-```python
+```python showLineNumbers
 class PlanNotebook(StateModule):
     def __init__(self, max_subtasks=None, plan_to_hint=None, storage=None):
         super().__init__()
@@ -239,7 +239,7 @@ class PlanNotebook(StateModule):
 1. **单一进行中**：同一时刻只能有一个子任务处于 `in_progress`
 2. **顺序执行**：必须按顺序完成子任务，不能跳过未完成的前置子任务
 
-```python
+```python showLineNumbers
 # update_subtask_state 中的验证逻辑
 for i in range(subtask_idx):
     if self.current_plan.subtasks[i].state not in ("done", "abandoned"):
@@ -248,7 +248,7 @@ for i in range(subtask_idx):
 
 **Hook 系统**：
 
-```python
+```python showLineNumbers
 # 注册计划变更钩子
 notebook.register_plan_change_hook("ui_update", on_plan_change)
 notebook.remove_plan_change_hook("ui_update")
@@ -263,7 +263,7 @@ async def on_plan_change(notebook: PlanNotebook, plan: Plan | None):
 
 **`finish_subtask` 的自动激活**：
 
-```python
+```python showLineNumbers
 async def finish_subtask(self, subtask_idx, subtask_outcome):
     # 1. 标记当前子任务为 done
     self.current_plan.subtasks[subtask_idx].finish(subtask_outcome)
@@ -279,7 +279,7 @@ async def finish_subtask(self, subtask_idx, subtask_outcome):
 
 ### 3.5 存储层
 
-```python
+```python showLineNumbers
 class PlanStorageBase(ABC):
     @abstractmethod
     async def add_plan(self, plan: Plan) -> None: ...
@@ -310,11 +310,97 @@ class InMemoryPlanStorage(PlanStorageBase):
 
 ---
 
+### 边界情况与陷阱
+
+#### Critical: 计划状态的不可逆转换
+
+```python showLineNumbers
+# SubTask 的状态转换是单向的
+# todo → in_progress → done / abandoned
+# 一旦标记为 done，无法恢复到 in_progress
+
+task = SubTask(content="完成报告")
+task.state = "in_progress"  # OK
+task.state = "done"        # OK
+task.state = "in_progress"  # 无效！状态不变
+
+# 问题：如果误操作，需要重新创建任务
+```
+
+#### High: plan_to_hint 的内容生成
+
+```python showLineNumbers
+# plan_to_hint 默认使用 JSON 格式生成提示
+# 问题：JSON 中的特殊字符可能导致解析错误
+
+hint = plan_to_hint(plan)
+# hint 可能包含未转义的引号或换行符
+
+# 解决方案：使用更安全的序列化格式
+```
+
+#### Medium: 计划执行与 Agent 调用的循环依赖
+
+```python showLineNumbers
+# 计划执行通常涉及 Agent 调用
+# 如果 Agent 的 reply 触发计划更新，可能产生循环
+
+agent = ReActAgent(...)
+plan = PlanNotebook(...)
+
+# plan 的 hook 可能调用 agent
+# agent 的执行又触发 plan 更新
+# 可能导致无限递归或状态不一致
+```
+
+#### Medium: PlanStorageBase 的实现差异
+
+```python showLineNumbers
+# 不同存储后端有不同的限制
+# MemoryPlanStorage: 重启后丢失
+# JsonPlanStorage: 文件大小限制
+
+storage = MemoryPlanStorage()
+# 重启后所有计划丢失！
+
+storage = JsonPlanStorage(save_dir="./plans")
+# 大量计划时文件可能变得很大
+```
+
+---
+
+### 性能考量
+
+#### 计划执行延迟
+
+| 操作 | 延迟 | 说明 |
+|------|------|------|
+| 创建计划 | ~1ms | 内存操作 |
+| 更新状态 | ~1ms | 内存操作 |
+| 持久化 | ~10ms | 文件/数据库 |
+| 序列化 | ~5ms | 取决于计划大小 |
+
+#### 计划存储策略
+
+```python showLineNumbers
+# 大量计划时的存储策略：
+# 1. 定期归档：完成后移至归档存储
+# 2. 增量保存：只保存变化的部分
+# 3. 压缩存储：使用 gzip 压缩 JSON
+
+# 性能影响：
+# - 100 个计划：~10KB
+# - 1000 个计划：~100KB
+# - 10000 个计划：~1MB
+```
+
+---
+
 ## 5. 代码示例
 
 ### 5.1 创建和执行计划
 
-```python
+```python showLineNumbers
 from agentscope.plan import PlanNotebook, SubTask
 
 notebook = PlanNotebook(max_subtasks=10)
@@ -346,7 +432,7 @@ print(result.content)
 
 ### 5.2 逐步执行子任务
 
-```python
+```python showLineNumbers
 # 开始第一个子任务
 await notebook.update_subtask_state(0, "in_progress")
 
@@ -367,7 +453,7 @@ print(hint.content)
 
 ### 5.3 自定义提示策略
 
-```python
+```python showLineNumbers
 class ParallelPlanToHint:
     """支持并行子任务的提示策略"""
 
@@ -432,14 +518,13 @@ notebook = PlanNotebook(plan_to_hint=ParallelPlanToHint())
 | 状态不变量 | 单一进行中 + 顺序执行 |
 | register_state | Plan 的 Pydantic 序列化需要自定义钩子 |
 
-## 章节关联
+| 关联模块 | 关联点 | 参考位置 |
+|----------|--------|----------|
+| [状态模块](module_state_deep.md#3-源码解读) | PlanNotebook 继承 StateModule | 第 3.1 节 |
+| [智能体模块](module_agent_deep.md#4-reactagent-实现类分析) | ReActAgent 使用 PlanNotebook | 第 4.2 节 |
+| [会话模块](module_session_deep.md#5-代码示例) | Session 持久化 PlanNotebook 状态 | 第 5.1 节 |
+| [工具模块](module_tool_mcp_deep.md#3-toolkit-工具包核心) | Toolkit 注册 PlanNotebook 的工具函数 | 第 3.3 节 |
+| [追踪模块](module_tracing_deep.md#3-追踪装饰器) | 追踪计划变更操作 | 第 3.7 节 |
 
-| 相关模块 | 关联点 |
-|----------|--------|
-| [State 模块](module_state_deep.md) | PlanNotebook 继承 StateModule |
-| [Agent 模块](module_agent_deep.md) | ReActAgent 使用 PlanNotebook |
-| [Session 模块](module_session_deep.md) | Session 持久化 PlanNotebook 状态 |
-| [Tool 模块](module_tool_mcp_deep.md) | Toolkit 注册 PlanNotebook 的工具函数 |
-| [Tracing 模块](module_tracing_deep.md) | 追踪计划变更操作 |
 
-**版本参考**: AgentScope >= 1.0.0 | 源码 `plan/`
+---

@@ -1841,11 +1841,130 @@ class InMemoryMemory(MemoryBase):
 
 ---
 
+### 边界情况与陷阱
+
+#### Critical: MilvusLiteStore 的必需参数
+
+```python
+# MilvusLiteStore 构造函数需要多个必需参数
+from agentscope.rag import MilvusLiteStore
+
+# 错误：零参数调用
+store = MilvusLiteStore()  # TypeError: missing required arguments
+
+# 正确：
+store = MilvusLiteStore(
+    uri="http://localhost:19530",  # 或者使用默认 ":memory:"
+    collection_name="my_collection",
+    dimensions=1536,  # 必须与 embedding 模型匹配
+)
+```
+
+#### High: 知识库检索的向量维度不匹配
+
+```python
+# 文档嵌入时使用的维度必须与向量存储中的维度匹配
+kb = KnowledgeBase(
+    embedding_model=OpenAIEmbedding(dim=1536),  # 1536 维
+    vector_store=MilvusLiteStore(dimensions=1024),  # 1024 维！
+)
+# 添加文档时会报错或产生错误结果
+
+# 解决方案：确保 dimensions 一致
+```
+
+#### High: AsyncSQLAlchemyMemory 的会话管理
+
+```python
+# AsyncSQLAlchemyMemory 需要正确管理会话
+memory = AsyncSQLAlchemyMemory(...)
+
+# 问题：异步上下文中会话可能过期
+async with memory.get_session() as session:
+    results = await session.execute(...)  # session 可能已关闭
+# 需要在内存模块内部正确处理会话生命周期
+```
+
+#### Medium: 内存记忆的容量限制
+
+```python
+# InMemoryMemory 将所有消息存储在内存中
+# 问题：长时间运行的 Agent 会消耗大量内存
+
+memory = InMemoryMemory()
+while True:
+    msg = await agent(Msg("user", "hello", "user"))
+    memory.add(msg)
+    # 内存持续增长，没有自动清理机制
+
+# 解决方案：定期调用 memory.clear() 或使用容量限制
+```
+
+#### Medium: RAG 检索的上下文窗口冲突
+
+```python
+# 检索到的文档可能超出 LLM 的上下文窗口
+docs = await kb.retrieve("long query about ...", top_k=10)
+# 可能返回大量文本，总 token 数超过模型限制
+
+# 解决方案：设置 max_total_tokens 参数限制检索结果
+```
+
+---
+
+### 性能考量
+
+#### 向量存储性能对比
+
+| 向量存储 | 适用规模 | 延迟 | 内存需求 | 部署难度 |
+|----------|----------|------|----------|----------|
+| ChromaDB | < 100K | ~10ms | 中 | 低 |
+| MilvusLite | < 1M | ~5ms | 中 | 中 |
+| Qdrant | < 10M | ~1ms | 高 | 高 |
+| Weaviate | < 10M | ~2ms | 高 | 高 |
+
+#### RAG 检索延迟分解
+
+```python
+# RAG 检索的延迟来源：
+# 1. 嵌入计算：~50-200ms
+# 2. 向量相似度搜索：~5-20ms
+# 3. 文档加载：~10-50ms（取决于文档大小）
+# 4. 上下文组装：~1ms
+
+# 优化建议：
+# - 使用更快的 embedding 模型
+# - 启用向量数据库的索引
+# - 限制检索结果数量
+```
+
+#### 记忆存储策略
+
+```python
+# 不同记忆实现的性能特点：
+
+# InMemoryMemory: 最快，但受内存限制
+memory.add(msg)  # O(1)
+
+# AsyncSQLAlchemyMemory: 中等延迟，支持持久化
+await memory.add(msg)  # O(1) + 网络
+
+# RedisMemory: 高并发，低延迟
+await memory.add(msg)  # O(1) + 网络
+
+# 选择依据：
+# - 数据量 < 10000：InMemoryMemory
+# - 需要持久化：AsyncSQLAlchemyMemory
+# - 分布式场景：RedisMemory
+```
+
+---
+
 ## 9. 代码示例
 
 ### 9.1 创建工作记忆
 
-```python
+```python showLineNumbers
 from agentscope.memory import InMemoryMemory, AsyncSQLAlchemyMemory
 from agentscope.message import Msg
 
@@ -1888,7 +2007,7 @@ await memory.clear()
 
 ### 9.2 SQLAlchemy 异步记忆
 
-```python
+```python showLineNumbers
 from sqlalchemy.ext.asyncio import create_async_engine
 from agentscope.memory import AsyncSQLAlchemyMemory
 from agentscope.message import Msg
@@ -1912,7 +2031,7 @@ messages = await memory.get_memory()
 
 ### 9.3 创建知识库
 
-```python
+```python showLineNumbers
 from agentscope.rag import SimpleKnowledge, Document, DocMetadata, TextReader
 from agentscope.rag import MilvusLiteStore
 from agentscope.embedding import OpenAIEmbeddingModel
@@ -1951,9 +2070,16 @@ for doc in results:
     print(f"[Score: {doc.score:.4f}] {doc.metadata.content}")
 ```
 
+**预期输出**：
+```
+[Score: 0.8923] Python is a high-level programming language...
+[Score: 0.8456] Python supports multiple programming paradigms...
+[Score: 0.8234] The Python interpreter can be used interactively...
+```
+
 ### 9.4 在智能体中使用记忆和知识库
 
-```python
+```python showLineNumbers
 from agentscope import ReActAgent
 from agentscope.model import OpenAIChatModel
 from agentscope.formatter import OpenAIFormatter
@@ -1993,9 +2119,15 @@ agent = ReActAgent(
 result = await agent(Msg(name="user", content="What do you know?", role="user"))
 ```
 
+**预期输出**：
+```
+[2026-05-05 10:00:00] [RAG] Retrieved 3 documents from knowledge base
+[2026-05-05 10:00:01] Assistant: Based on my knowledge, Python is...
+```
+
 ### 9.5 配置 Mem0 长期记忆
 
-```python
+```python showLineNumbers
 from agentscope.memory import Mem0LongTermMemory
 from agentscope.models import OpenAIChatModel
 from agentscope.embedding import OpenAITextEmbedding
@@ -2022,7 +2154,7 @@ agent = ReActAgent(
 
 ### 9.6 配置 ReMe 长期记忆
 
-```python
+```python showLineNumbers
 from agentscope.memory import ReMeTaskLongTermMemory
 from agentscope.models import OpenAIChatModel
 from agentscope.embedding import OpenAITextEmbedding
@@ -2051,6 +2183,12 @@ async with task_memory:
         keywords=["database optimization"],
         limit=5,
     )
+```
+
+**预期输出**：
+```
+Successfully recorded 2 task memory/memories.
+Retrieved: "Add indexes on WHERE clause columns", "Use EXPLAIN ANALYZE to identify slow queries"
 ```
 
 ---
@@ -2270,13 +2408,14 @@ class MarkdownReader(DocumentReaderBase):
 | ReMeLongTermMemory | 长期记忆 | 反思记忆 + 渐进式反思 |
 | SimpleKnowledge | RAG 知识库 | 向量存储 + 文档分块 + 检索 |
 
-## 章节关联
+| 关联模块 | 关联点 | 参考位置 |
+|----------|--------|----------|
+| [状态模块](module_state_deep.md#2-核心类继承体系) | MemoryBase 继承 StateModule | 第 2.1 节 |
+| [智能体模块](module_agent_deep.md#3-agentbase-源码解读) | Agent 使用 Memory 管理对话历史 | 第 3.3 节 |
+| [会话模块](module_session_deep.md#5-代码示例) | Session 持久化 Memory 状态 | 第 5.2 节 |
+| [嵌入模块](module_embedding_token_deep.md#9-embedding-模块) | RAG 检索依赖 Embedding 进行向量化 | 第 9.1-9.5 节 |
+| [模型模块](module_model_deep.md#2-chatmodelbase-基类分析) | Token 计数用于记忆压缩策略 | 第 8.4 节 |
 
-| 关联模块 | 关联点 |
-|----------|--------|
-| [智能体模块](module_agent_deep.md) | Agent 的 `observe()` 触发记忆存储，Hook 驱动压缩 |
-| [模型模块](module_model_deep.md) | Embedding 模型生成向量，Token 计数控制压缩阈值 |
-| [工具模块](module_tool_mcp_deep.md) | RAG 检索工具注册为 MCP 工具 |
 
 ---
 

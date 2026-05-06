@@ -439,11 +439,170 @@ async def stream_printing_messages(
 
 ---
 
+### 边界情况与陷阱
+
+#### Critical: fanout_pipeline 的 deepcopy 陷阱
+
+```python
+# deepcopy 在消息包含不可拷贝对象时会失败
+from agentscope.message import Msg
+
+class UnpickleableObject:
+    def __reduce__(self):
+        raise PicklingError("Cannot pickle")
+
+msg = Msg(name="test", content="hello", role="user")
+msg.metadata = {"obj": UnpickleableObject()}  # 不可深拷贝的对象
+
+# 这会抛出异常
+await fanout_pipeline([agent1, agent2], msg)
+```
+
+**解决方案**：使用 `msg.copy()` 浅拷贝，或实现自定义的拷贝逻辑。
+
+#### High: asyncio.gather 异常传播
+
+```python
+# asyncio.gather() 默认行为：一个任务异常会立即传播
+async def failing_agent(msg):
+    raise ValueError("Agent failed")
+
+tasks = [
+    asyncio.create_task(agent(deepcopy(msg)))
+    for agent in [normal_agent, failing_agent, another_agent]
+]
+# 当 failing_agent 抛出异常时，其他任务可能被取消（取决于 Python 版本）
+try:
+    await asyncio.gather(*tasks)
+except ValueError as e:
+    print(f"Caught: {e}")  # 其他 agent 的结果丢失
+```
+
+**解决方案**：使用 `return_exceptions=True` 参数收集所有结果：
+```python
+results = await asyncio.gather(*tasks, return_exceptions=True)
+# results = [success_msg, ValueError("Agent failed"), success_msg]
+```
+
+#### High: stream_printing_messages 的队列阻塞
+
+```python
+# 如果生成器暂停消费但 agent 继续生产，队列会堆积
+# 最终可能导致内存溢出
+queue = asyncio.Queue()  # 默认无限制
+
+async for msg in stream_printing_messages([agent], main_task):
+    pass  # 快速消费
+    # 如果这里是 pass 而 agent 产生大量消息，会堆积在内存中
+```
+
+**解决方案**：设置队列大小限制并处理 Full 异常：
+```python
+queue = asyncio.Queue(maxsize=100)
+```
+
+#### Medium: SequentialPipeline 的状态累积
+
+```python
+# sequential_pipeline 直接传递消息引用，不拷贝
+# 如果中间 agent 修改了消息，会影响后续 agent
+async def modifying_agent(msg):
+    msg.content += " (modified)"  # 直接修改输入！
+    return msg
+
+# agent1 修改了 msg，agent2 会看到修改后的版本
+result = await sequential_pipeline([agent1, modifying_agent, agent3], original_msg)
+```
+
+#### Medium: 任务取消时的资源泄漏
+
+```python
+# 如果在 stream_printing_messages 期间取消任务
+# 代理的消息队列可能没有正确清理
+async def risky_usage():
+    agent = StreamingAgent()
+    try:
+        async for msg in stream_printing_messages([agent], long_task):
+            if some_condition:
+                raise KeyboardInterrupt  # 取消任务
+    finally:
+        agent.set_msg_queue_enabled(False)  # 确保清理
+```
+
+---
+
+### 性能考量
+
+#### Pipeline 执行性能对比
+
+| 模式 | 适用场景 | 延迟来源 | 内存开销 |
+|------|----------|----------|----------|
+| sequential_pipeline | 链式处理，少量 agent | 串行等待 | 低（无拷贝）|
+| fanout_pipeline (gather=True) | 并行分发，大量 agent | 并发执行 | 高（每次 deepcopy）|
+| fanout_pipeline (gather=False) | 内存敏感场景 | 串行等待 | 中（一次 deepcopy）|
+| stream_printing_messages | 流式响应 | 队列+生成 | 取决于队列大小 |
+
+#### deepcopy 性能开销
+
+```python
+import time
+from copy import deepcopy
+from agentscope.message import Msg
+
+# 测试不同大小消息的 deepcopy 开销
+small_msg = Msg(name="test", content="hello", role="user")  # ~200 bytes
+large_msg = Msg(name="test", content="x" * 100000, role="user")  # ~100KB
+
+# 小消息：~0.001ms
+start = time.perf_counter()
+for _ in range(1000):
+    deepcopy(small_msg)
+print(f"Small: {(time.perf_counter() - start) * 1000:.2f}ms / 1000 iters")
+
+# 大消息：~10-50ms
+start = time.perf_counter()
+for _ in range(100):
+    deepcopy(large_msg)
+print(f"Large: {(time.perf_counter() - start) * 1000:.2f}ms / 100 iters")
+```
+
+**经验法则**：
+- 消息 < 10KB：deepcopy 开销可忽略
+- 消息 10KB-100KB：注意并发场景下的累积延迟
+- 消息 > 100KB：考虑使用浅拷贝或自定义序列化
+
+#### 异步任务创建开销
+
+```python
+# asyncio.create_task() 有 ~0.1ms 开销
+# 对于大量短时任务，可能比直接 await 更慢
+tasks = [asyncio.create_task(quick_agent(msg)) for _ in range(1000)]
+# 创建 1000 个任务的开销 ~100ms
+
+# 改用列表推导式直接 await：
+results = [await quick_agent(msg) for _ in range(1000)]
+# 对于短时任务可能更快（取决于并发需求）
+```
+
+#### stream_printing_messages 队列开销
+
+```python
+# 队列大小影响内存和吞吐量
+queue = asyncio.Queue()  # 无限制，可能导致内存溢出
+queue = asyncio.Queue(maxsize=100)  # 限制队列大小
+
+# 队列满时的行为：
+# - put() 会阻塞直到有空间
+# - put_nowait() 会抛出 QueueFull
+```
+
+---
+
 ## 6. 代码示例
 
 ### 6.1 顺序执行示例
 
-```python
+```python showLineNumbers
 import asyncio
 from agentscope.agent import AgentBase
 from agentscope.message import Msg
@@ -481,7 +640,7 @@ Msg(name='assistant', content='Echo: Echo: Echo: Hello', role='assistant')
 
 > 三次 echo 叠加：agent1 输出 "Echo: Hello" → agent2 输出 "Echo: Echo: Hello" → agent3 输出 "Echo: Echo: Echo: Hello"
 
-```python
+```python showLineNumbers
 import asyncio
 from agentscope.agent import AgentBase
 from agentscope.message import Msg
@@ -516,9 +675,16 @@ async def main():
 asyncio.run(main())
 ```
 
+**预期输出**：
+```
+110
+1000
+95
+```
+
 ### 6.3 流式消息收集示例
 
-```python
+```python showLineNumbers
 import asyncio
 from agentscope.agent import AgentBase
 from agentscope.message import Msg
@@ -544,6 +710,13 @@ async def main():
         print(f"Received: {msg.content}, last={is_last}")
 
 asyncio.run(main())
+```
+
+**预期输出**：
+```
+Received: chunk 0, last=False
+Received: chunk 1, last=False
+Received: chunk 2, last=True
 ```
 
 ---
@@ -893,6 +1066,221 @@ class DAGPipeline:
         return results
 ```
 
+### 练习 6: Sequential 与 Fanout 执行路径对比 [基础]
+
+**题目描述**：
+分析以下代码执行后，`sequential_pipeline` 和 `fanout_pipeline` 的消息传递路径有何不同？分别指出每个 agent 收到的 `msg` 对象特征（引用还是拷贝）。
+
+```python
+import asyncio
+from agentscope.pipeline import sequential_pipeline, fanout_pipeline
+from agentscope import ReActAgent, Msg
+
+# 假设 a1, a2, a3 已初始化
+msg = Msg(name="user", content="hello", role="user")
+
+# 顺序执行
+seq_result = await sequential_pipeline([a1, a2, a3], msg)
+print(f"sequential result type: {type(seq_result)}")
+
+# 并发执行
+fanout_results = await fanout_pipeline([a1, a2, a3], msg)
+print(f"fanout results type: {type(fanout_results)}, len: {len(fanout_results)}")
+```
+
+**预期输出/行为**：
+- `seq_result` 是 `Msg` 对象（最后一个 agent 的输出）
+- `fanout_results` 是 `list[Msg]`（所有 agent 输出的列表）
+- 顺序执行中，每个 agent 收到的是上一个 agent 的**直接输出引用**；并发执行中，每个 agent 收到的是**深拷贝**的原始消息
+
+<details>
+<summary>参考答案</summary>
+
+```python
+# sequential_pipeline: 链式（前一个输出直接作为后一个输入）
+# a1 receives: msg
+# a2 receives: a1(msg) output (same object reference)
+# a3 receives: a2(a1(msg)) output (same object reference)
+# returns: a3's output
+
+# fanout_pipeline: 并发（deepcopy 保证隔离）
+# a1 receives: deepcopy(msg)
+# a2 receives: deepcopy(msg)  # 独立的副本
+# a3 receives: deepcopy(msg)  # 独立的副本
+# returns: list of all outputs
+
+# 验证消息 ID（是否同属一个对象）
+async def verify():
+    original = Msg(name="user", content="test", role="user")
+    original_id = id(original)
+
+    results = await fanout_pipeline([a1, a2], original)
+    for r in results:
+        print(f"input id: {original_id}, result id: {id(r)}, same: {id(r) == original_id}")
+
+# 输出: False（深拷贝产生不同对象）
+```
+</details>
+
+### 练习 7: 异步生成器消息泄漏分析 [中级]
+
+**题目描述**：
+`stream_printing_messages()` 是异步生成器。如果消费者只迭代部分消息就终止（如按下 Ctrl+C），分析会产生什么后果。
+
+```python
+async def consume_partial():
+    stream = stream_printing_messages([a1, a2], Msg("user", "hello", "user"))
+    count = 0
+    async for msg in stream:
+        print(msg)
+        count += 1
+        if count >= 3:  # 只取前 3 条消息
+            break  # 消费者提前退出
+    # stream 未完全消费，生成器会怎样？
+
+async def main():
+    await consume_partial()
+    # 后续代码正常执行？
+```
+
+**预期输出/行为**：
+生成器在消费者退出后会在下一个 `yield` 点挂起，不会抛出异常。如果生成器内部有 `finally` 清理逻辑，会正常执行。
+
+<details>
+<summary>参考答案</summary>
+
+```python
+# 异步生成器的行为：
+# 1. 消费者提前退出时，生成器在下次迭代尝试时挂起
+# 2. 由于没有 GC 引用，生成器最终被垃圾回收时调用 __anext__ 并触发 StopAsyncIteration
+# 3. 如果生成器有 finally 块，会在清理时执行
+#
+# 验证方法：
+async def safe_stream():
+    try:
+        async for msg in stream_printing_messages([a1, a2], initial):
+            if some_condition:
+                break
+    finally:
+        print("清理逻辑：关闭连接/释放资源")
+
+# 结论：提前退出不会导致异常传播，但未消费的消息会丢失
+# 框架应在 stream_printing_messages 内部使用 try/finally 保护
+```
+</details>
+
+### 练习 8: 带优先级的 Fanout Pipeline [挑战]
+
+**题目描述**：
+设计一个 `PriorityFanoutPipeline`，支持为每个 agent 分配优先级，高优先级 agent 先执行，结果先返回。
+
+**预期输出/行为**：
+给定 agents `[a1(priority=1), a2(priority=3), a3(priority=2)]`，执行顺序应为 `a2 → a3 → a1`，最终结果按优先级排序返回。
+
+<details>
+<summary>参考答案</summary>
+
+```python
+import asyncio
+from dataclasses import dataclass
+from typing import Any
+from agentscope.agent import AgentBase
+from agentscope.message import Msg
+
+@dataclass
+class PriorityAgent:
+    agent: AgentBase
+    priority: int  # 数值越大优先级越高
+
+class PriorityFanoutPipeline:
+    def __init__(self, agents: list[tuple[AgentBase, int]]):
+        # agents: [(agent, priority), ...]
+        self.priority_agents = sorted(
+            [PriorityAgent(a, p) for a, p in agents],
+            key=lambda x: x.priority,
+            reverse=True,  # 高优先级排前面
+        )
+
+    async def __call__(
+        self,
+        msg: Msg,
+        **kwargs: Any,
+    ) -> list[Msg]:
+        async def execute(pa: PriorityAgent) -> tuple[int, Msg]:
+            result = await pa.agent(msg, **kwargs)
+            return pa.priority, result
+
+        tasks = [execute(pa) for pa in self.priority_agents]
+        # 按优先级并发执行
+        results_with_priority = await asyncio.gather(*tasks)
+        # 按原始优先级顺序返回结果
+        return [msg for _, msg in sorted(results_with_priority, key=lambda x: x[0], reverse=True)]
+
+# 使用示例
+pipeline = PriorityFanoutPipeline([
+    (a1, 1),  # 低优先级
+    (a2, 3),  # 高优先级
+    (a3, 2),  # 中优先级
+])
+results = await pipeline(Msg("user", "hello", "user"))
+# a2 先执行，results[0] 是 a2 的输出
+```
+</details>
+
+### 练习 9: Pipeline 执行顺序追踪 [基础]
+
+**题目描述**：
+在 `sequential_pipeline` 中，为每个 agent 添加日志打印执行顺序，验证以下代码的执行顺序。
+
+```python
+import asyncio
+from agentscope.pipeline import sequential_pipeline
+from agentscope import ReActAgent, Msg
+
+# 假设 a1, a2, a3 已初始化，name 分别为 "A", "B", "C"
+# 每个 agent 的 reply() 方法内会 print(f"{self.name} executing")
+
+async def test_order():
+    result = await sequential_pipeline(
+        [a1, a2, a3],
+        Msg("user", "hello", "user")
+    )
+    # 预期打印顺序是什么？
+```
+
+**预期输出/行为**：
+执行顺序严格为 `A executing → B executing → C executing`（按列表顺序串行执行），无并发。
+
+<details>
+<summary>参考答案</summary>
+
+```python
+# sequential_pipeline 的实现原理：
+# for agent in agents:
+#     msg = await agent(msg)  # 串行等待，每个 agent 执行完才轮到下一个
+#
+# 验证：添加日志
+async def test_order():
+    execution_log = []
+
+    original_reply = ReActAgent.reply
+    async def logged_reply(self, *args, **kwargs):
+        execution_log.append(self.name)
+        return await original_reply(self, *args, **kwargs)
+
+    ReActAgent.reply = logged_reply
+
+    try:
+        result = await sequential_pipeline([a1, a2, a3], initial)
+    finally:
+        ReActAgent.reply = original_reply  # 恢复
+
+    print(execution_log)
+    # 输出: ['A', 'B', 'C'] 或 ['Agent1', 'Agent2', 'Agent3']
+    # 确认严格串行，无乱序
+```
+</details>
+
 ---
 
 ## 设计模式总结（补充）
@@ -948,14 +1336,15 @@ class DAGPipeline:
 
 **A5**: 关键设计：(1) 使用 `asyncio.wait_for(agent.reply(msg), timeout=seconds)` 设置超时；(2) 超时后重试，最多 N 次；(3) 幂等性要求 Agent 的 `reply()` 对相同输入产生相同效果——如果 Agent 有副作用（如调用外部 API），需要记录已执行的步骤并在重试时跳过；(4) 可以使用 ToolResponse 的 `id` 字段追踪已执行的工具调用。
 
-## 章节关联
+| 关联模块 | 关联点 | 参考位置 |
+|----------|--------|----------|
+| [智能体模块](module_agent_deep.md#3-agentbase-源码解读) | Pipeline 持有 AgentBase 实例进行编排 | 第 3.1 节 |
+| [调度器模块](module_dispatcher_deep.md#4-源码解读) | MsgHub 管理代理间消息路由 | 第 4.1-4.6 节 |
+| [管道模块](module_pipeline_infra_deep.md#2-pipeline-工作流编排) | 详细的管道基础设施分析 | 第 2.1-2.3 节 |
+| [消息模块](module_message_deep.md#3-核心类与函数源码解读) | Msg 对象在管道中传递和拷贝 | 第 3.1 节 |
 
-| 关联模块 | 关联点 |
-|----------|--------|
-| [智能体模块](module_agent_deep.md) | Pipeline 持有 AgentBase 实例进行编排 |
-| [调度器模块](module_dispatcher_deep.md) | MsgHub 管理代理间消息路由（参见 [Pipeline 基础设施](module_pipeline_infra_deep.md) 了解完整架构） |
-| [管道模块](module_pipeline_infra_deep.md) | 详细的管道基础设施分析 |
-| [消息模块](module_message_deep.md) | Msg 对象在管道中传递和拷贝 |
+
+---
 
 ## 参考资料
 

@@ -156,7 +156,7 @@ src/agentscope/
 
 AgentScope 使用元类(metaclass)实现AOP风格的Hook拦截：
 
-```python
+```python showLineNumbers
 # _agent_meta.py 核心元类设计
 
 class _AgentMeta(type):  # 第 159 行
@@ -209,7 +209,7 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
 
 #### ReActAgentBase 核心架构 (`_react_agent_base.py`)
 
-```python
+```python showLineNumbers
 class ReActAgentBase(AgentBase, metaclass=_ReActAgentMeta):
     """ReAct 推理模式基类"""
 
@@ -235,7 +235,7 @@ class ReActAgentBase(AgentBase, metaclass=_ReActAgentMeta):
 
 #### ReActAgent 完整实现 (`_react_agent.py`)
 
-```python
+```python showLineNumbers
 class ReActAgent(ReActAgentBase):
     """ReAct 推理 Agent 的完整实现"""
 
@@ -349,7 +349,7 @@ public class ReActAgent extends AgentBase {
 
 `agentscope.init()` 是框架的入口，类似 Spring Boot 的启动逻辑：
 
-```python
+```python showLineNumbers
 def init(
     project: str | None = None,         # 项目名称（可选，默认自动生成）
     name: str | None = None,            # 运行实例名称
@@ -916,7 +916,7 @@ _config = _ConfigCls(
 
 ### 5.14.3 AgentBase 核心架构源码分析
 
-```python
+```python showLineNumbers
 # _agent_base.py 第 30-184 行
 class AgentBase(StateModule, metaclass=_AgentMeta):
     """异步 Agent 基类"""
@@ -949,7 +949,7 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
 
 #### __call__ 方法核心流程 (第 448-467 行)
 
-```python
+```python showLineNumbers
 async def __call__(self, *args: Any, **kwargs: Any) -> Msg:
     """调用 reply 函数并处理广播"""
     self._reply_id = shortuuid.uuid()
@@ -974,7 +974,7 @@ async def __call__(self, *args: Any, **kwargs: Any) -> Msg:
 
 #### 消息广播机制 (第 469-485 行)
 
-```python
+```python showLineNumbers
 async def _broadcast_to_subscribers(
     self,
     msg: Msg | list[Msg] | None,
@@ -1016,7 +1016,7 @@ class ReActAgent(ReActAgentBase):
 
 #### reply() 方法完整调用序列
 
-```python
+```python showLineNumbers
 # _react_agent.py 第 376 行
 async def reply(
     self,
@@ -1091,7 +1091,7 @@ async def _reasoning(self, inner_memory: MemoryBase, ...) -> Msg:
 
 #### sequential_pipeline 顺序执行
 
-```python
+```python showLineNumbers
 # pipeline/_functional.py 第 10-44 行
 async def sequential_pipeline(
     agents: list[AgentBase],
@@ -1105,7 +1105,7 @@ async def sequential_pipeline(
 
 #### fanout_pipeline 并行分发
 
-```python
+```python showLineNumbers
 # pipeline/_functional.py 第 47-104 行
 async def fanout_pipeline(
     agents: list[AgentBase],
@@ -1128,7 +1128,7 @@ async def fanout_pipeline(
 
 #### MsgHub 消息中心
 
-```python
+```python showLineNumbers
 # pipeline/_msghub.py 第 14-157 行
 class MsgHub:
     """MsgHub 消息订阅与广播中心"""
@@ -1368,7 +1368,7 @@ MsgHub 是 AgentScope 多智能体协作的核心组件，负责管理 Agent 之
 
 每个 Agent 维护一个 `_subscribers` 字典，key 是 MsgHub 的 name，value 是订阅该 Agent 消息的 Agent 列表。
 
-```python
+```python showLineNumbers
 # AgentBase 中的订阅者管理 (_agent_base.py)
 self._subscribers: dict[str, list[AgentBase]] = {}
 
@@ -1383,7 +1383,7 @@ def remove_subscribers(self, msghub_name: str) -> None:
 
 #### 消息广播流程
 
-```python
+```python showLineNumbers
 # AgentBase 中的广播逻辑
 async def _broadcast_to_subscribers(self, reply_msg: Msg) -> None:
     """将回复消息广播给所有订阅者"""
@@ -1394,7 +1394,7 @@ async def _broadcast_to_subscribers(self, reply_msg: Msg) -> None:
 
 #### 基本用法
 
-```python
+```python showLineNumbers
 from agentscope.pipeline import MsgHub
 from agentscope.message import Msg
 
@@ -1449,7 +1449,7 @@ Pipeline 提供了两种核心模式：**顺序执行** 和 **并行分发**。
 
 #### SequentialPipeline 顺序管道
 
-```python
+```python showLineNumbers
 # 顺序执行: Agent1 -> Agent2 -> Agent3
 from agentscope.pipeline import sequential_pipeline, SequentialPipeline
 
@@ -1463,7 +1463,7 @@ result = await pipeline(user_msg)
 
 #### FanoutPipeline 并行管道
 
-```python
+```python showLineNumbers
 # 并行执行: 同一消息分发给所有 Agent
 from agentscope.pipeline import fanout_pipeline, FanoutPipeline
 
@@ -1484,7 +1484,7 @@ results = await pipeline(user_msg)
 
 #### 实际应用示例
 
-```python
+```python showLineNumbers
 # examples/workflows/multiagent_concurrent/main.py
 class ExampleAgent(AgentBase):
     async def reply(self, *args, **kwargs) -> Msg:
@@ -1509,7 +1509,7 @@ collected_res = await fanout_pipeline([alice, bob, chalice], enable_gather=False
 
 #### 嵌套示例：辩论赛
 
-```python
+```python showLineNumbers
 # examples/workflows/multiagent_debate/main.py
 async def run_multiagent_debate():
     while True:
@@ -1847,3 +1847,315 @@ Phase 3: Real-time Multimodal Models
 5. **Agent 类型**：ReActAgent（通用推理）、UserAgent（用户输入）、RealtimeAgent（实时语音）、A2AAgent（Agent 间通信），覆盖不同交互场景
 
 **下一步建议**：结合 `src/agentscope/` 源码，按 5.14.9 的阅读建议顺序深入理解各模块实现细节。
+
+## 练习题
+
+### 练习 5.1: 分层架构理解 [基础]
+
+**题目**：
+请根据 AgentScope 的分层架构，将以下模块放入正确的层级：
+
+**模块列表**：
+- `src/agentscope/agent/_react_agent.py`
+- `src/agentscope/model/_openai_model.py`
+- `requests` 库
+- `examples/agent/react_agent/main.py`
+- `src/agentscope/pipeline/_msghub.py`
+- `redis` 库
+
+**验证方式**：
+检查分类是否正确。
+
+<details>
+<summary>参考答案</summary>
+
+**答案/解题思路**：
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     分层架构                                  │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  应用层 (Application Layer)                                  │
+│  ├── examples/agent/react_agent/main.py                     │
+│                                                             │
+│  ─────────────────────────────────────────────────────────  │
+│                                                             │
+│  服务层 (Service Layer)                                      │
+│  ├── src/agentscope/agent/_react_agent.py                  │
+│  ├── src/agentscope/model/_openai_model.py                 │
+│  ├── src/agentscope/pipeline/_msghub.py                    │
+│                                                             │
+│  ─────────────────────────────────────────────────────────  │
+│                                                             │
+│  基础设施层 (Infrastructure Layer)                           │
+│  ├── requests 库 (HTTP Client)                             │
+│  ├── redis 库 (Redis 客户端)                                │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**层级职责**：
+| 层级 | 职责 | 特点 |
+|------|------|------|
+| 应用层 | 示例代码、使用案例 | 面向终端用户 |
+| 服务层 | 核心业务逻辑、Agent/Model/Pipeline 等 | 框架核心 |
+| 基础设施层 | HTTP、数据库、网络通信 | 可替换的外部依赖 |
+</details>
+
+---
+
+### 练习 5.2: Agent 继承体系 [中级]
+
+**题目**：
+以下是 AgentScope 的 Agent 继承体系（简化版），请在括号中填入正确的类名：
+
+```
+StateModule
+      │
+      ▼
+  AgentBase  ──使用──>  (_AgentMeta) 元类
+      │
+      ▼
+ReActAgentBase  ──使用──>  (_ReActAgentMeta) 元类
+      │
+      ▼
+    (    )  ← 这是最常用的推理 Agent
+      │
+      │
+      └───────────> RealtimeAgent
+```
+
+**验证方式**：
+对照文档中的继承体系图进行检查。
+
+<details>
+<summary>参考答案</summary>
+
+**答案/解题思路**：
+
+```
+StateModule
+      │
+      ▼
+  AgentBase  ──使用──>  _AgentMeta 元类
+      │
+      ▼
+ReActAgentBase  ──使用──>  _ReActAgentMeta 元类
+      │
+      ▼
+   ReActAgent   ← 这是最常用的推理 Agent
+      │
+      │
+      └───────────> RealtimeAgent
+```
+
+**关键说明**：
+1. **`_AgentMeta`**：包装 `reply`、`print`、`observe` 方法为 Hook 形式
+2. **`_ReActAgentMeta`**：继承自 `_AgentMeta`，额外包装 `_reasoning` 和 `_acting` 方法
+3. **`ReActAgent`**：继承 `ReActAgentBase`，实现完整的 ReAct 推理循环
+4. **`RealtimeAgent`**：独立实现，不继承自 `ReActAgentBase`，专为实时语音设计
+
+**元类机制的作用**：
+- 在类创建时自动为指定方法添加 Hook 包装器
+- 实现 AOP（面向切面编程）风格的拦截
+- 可以在方法执行前后插入日志、监控等逻辑
+</details>
+
+---
+
+### 练习 5.3: ReActAgent 调用链分析 [中级]
+
+**题目**：
+小张想了解从用户输入到 Agent 回复的完整调用链。请按顺序排列以下步骤：
+
+A. `toolkit.call_tool_function()` 执行工具
+B. `memory.add()` 保存消息到记忆
+C. `formatter.format()` 格式化消息
+D. `model()` 调用 LLM API
+E. `agent()` 或 `agent.reply()` 入口
+F. 检查 `tool_use` blocks 判断是否需要工具调用
+
+**验证方式**：
+检查步骤顺序是否正确。
+
+<details>
+<summary>参考答案</summary>
+
+**答案/解题思路**：
+
+**完整调用链（按顺序）**：
+
+```
+1.  E. agent() 或 agent.reply() 入口
+         │
+         ▼
+2.  B. memory.add() 保存消息到记忆
+         │
+         ▼
+3.  C. formatter.format() 格式化消息
+         │
+         ▼
+4.  D. model() 调用 LLM API
+         │
+         ▼
+5.  F. 检查 tool_use blocks 判断是否需要工具调用
+         │
+         ├─── 如果没有工具调用 ───▶ 返回结果给用户
+         │
+         └─── 如果有工具调用 ───┐
+                                ▼
+                         A. toolkit.call_tool_function() 执行工具
+                                │
+                                ▼
+                         返回工具结果，进入下一轮推理循环
+```
+
+**ReAct 循环内的调用顺序**：
+```
+_reasoning() 阶段：
+  memory.get_memory() → formatter.format() → model() → 解析响应
+
+_acting() 阶段：
+  检查 tool_use blocks → toolkit.call_tool_function() → 将结果加入记忆
+
+循环直到：无 tool_use blocks → 返回最终回复
+```
+
+**简化版调用链**：
+```
+用户输入 → add to memory → reasoning（LLM调用）→ acting（工具执行）
+                                              ↑                   │
+                                               └── loop back ─────┘
+ 直到完成 → 返回结果
+```
+</details>
+
+---
+
+### 练习 5.4: MsgHub vs Pipeline [挑战]
+
+**题目**：
+某团队需要构建一个"AI 辩论系统"，需求如下：
+1. 两名辩手（正方、反方）需要互相看到对方的论点
+2. 每轮辩论后，主持人需要点评
+3. 辩论最多进行 3 轮
+
+请设计这个系统，说明应该使用 MsgHub、Pipeline 还是两者的组合，并给出代码结构。
+
+**验证方式**：
+检查设计方案是否合理，是否正确使用 MsgHub 和 Pipeline。
+
+<details>
+<summary>参考答案</summary>
+
+**答案/解题思路**：
+
+**设计方案：MsgHub + Pipeline 组合**
+
+**原因**：
+- **MsgHub**：让辩手互相看到对方的论点（广播机制）
+- **Pipeline**：实现主持人的点评环节（顺序执行）
+
+**代码结构**：
+
+```python
+from agentscope.agent import ReActAgent
+from agentscope.pipeline import MsgHub, SequentialPipeline
+from agentscope.message import Msg
+
+# 创建辩手
+pro_agent = ReActAgent(name="正方", ...)
+con_agent = ReActAgent(name="反方", ...)
+judge = ReActAgent(name="主持人", ...)
+
+# 辩论循环
+for round_num in range(3):
+    # 使用 MsgHub 实现互相听到对方
+    async with MsgHub(participants=[pro_agent, con_agent]) as hub:
+        # 正方发言
+        pro_statement = await pro_agent(
+            Msg("user", f"第 {round_num + 1} 轮正方论点：{topic}", "user")
+        )
+        
+        # 反方看到正方论点后回应
+        con_statement = await con_agent(
+            Msg("user", f"第 {round_num + 1} 轮反方论点：{topic}", "user")
+        )
+
+    # 主持人点评（MsgHub 外独立执行）
+    judge_comment = await judge(
+        Msg("user", f"点评第 {round_num + 1} 轮辩论", "user")
+    )
+
+# 最终判断（使用 Pipeline）
+final_judge = SequentialPipeline(agents=[judge])
+result = await final_judge("请给出最终裁决")
+```
+
+**关键设计点**：
+1. **MsgHub 内**：正方和反方在同一上下文，互相能收到对方的发言
+2. **MsgHub 外**：主持人独立点评，不影响辩手之间的对话
+3. **循环控制**：通过 `for` 循环限制辩论轮数
+
+**替代方案对比**：
+
+| 方案 | 适用场景 |
+|------|----------|
+| 仅 MsgHub | 多人自由讨论，无固定流程 |
+| 仅 Pipeline | 固定流程，无互相听到的需求 |
+| MsgHub + Pipeline | 需要分组讨论 + 全局汇总的场景 |
+</details>
+
+---
+
+### 练习 5.5: 源码文件定位 [基础]
+
+**题目**：
+小刘想阅读 AgentScope 的源码来理解 MsgHub 的实现。请回答：
+
+1. MsgHub 的源码在哪个目录下？
+2. 文件名是什么？
+3. MsgHub 类的核心方法有哪些？
+
+**验证方式**：
+对照文档中的源码文件位置索引。
+
+<details>
+<summary>参考答案</summary>
+
+**答案/解题思路**：
+
+**1. MsgHub 源码位置**：
+```
+src/agentscope/pipeline/_msghub.py
+```
+
+**2. 目录结构**：
+```
+src/agentscope/
+├── pipeline/               # Pipeline 模块
+│   ├── _msghub.py         # MsgHub 消息中心
+│   ├── _functional.py     # 函数式管道
+│   ├── _class.py          # Pipeline 类封装
+│   └── __init__.py
+```
+
+**3. MsgHub 核心方法**：
+
+| 方法 | 作用 |
+|------|------|
+| `__init__()` | 初始化参与者列表和广播配置 |
+| `__aenter__()` | 进入上下文，重置订阅者，广播公告消息 |
+| `__aexit__()` | 退出上下文，清理订阅者 |
+| `broadcast()` | 手动广播消息给所有参与者 |
+| `add()` | 添加参与者 |
+| `delete()` | 删除参与者 |
+| `set_auto_broadcast()` | 开启/关闭自动广播 |
+
+**源码阅读建议**：
+- 阅读顺序：`__init__` → `broadcast` → `__aenter__` / `__aexit__`
+- 重点理解订阅者机制和广播逻辑
+</details>
+
+## 5.13 下一步

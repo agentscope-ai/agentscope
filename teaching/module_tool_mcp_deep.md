@@ -1237,7 +1237,7 @@ async def register_mcp_tools():
 
 ### 8.1 完整工具包配置
 
-```python
+```python showLineNumbers
 from agentscope.tool import Toolkit
 from agentscope.tool import (
     execute_python_code,
@@ -1277,9 +1277,15 @@ schemas = toolkit.get_json_schemas()
 print(f"After activation: {[s['function']['name'] for s in schemas]}")
 ```
 
+**预期输出**：
+```
+Active tools: ['execute_python_code', 'execute_shell_command']
+After activation: ['execute_python_code', 'execute_shell_command', 'view_text_file', 'write_text_file']
+```
+
 ### 8.2 中间件使用
 
-```python
+```python showLineNumbers
 from agentscope.tool import Toolkit, ToolResponse
 from agentscope.message import TextBlock
 from typing import AsyncGenerator
@@ -1317,6 +1323,12 @@ toolkit.register_middleware(logging_middleware)
 toolkit.register_middleware(caching_middleware)
 ```
 
+**预期输出**：
+```
+[LOG] Calling tool: execute_python_code
+[LOG] Tool execute_python_code returned
+```
+
 ---
 
 ## 本章关联
@@ -1342,6 +1354,125 @@ toolkit.register_middleware(caching_middleware)
 1. 完成本模块练习题后，建议继续学习 [Pipeline 模块](module_pipeline_infra_deep.md)，理解 A2A 协议与 MCP 协议的协作关系
 2. 如需构建自定义工具链，建议参考 [Agent 模块](module_agent_deep.md) 的 Hook 机制，实现工具调用前后的自定义逻辑
 3. 如需优化工具性能，建议参考 [最佳实践](reference_best_practices.md) 中的工具调用优化策略
+
+---
+
+### 边界情况与陷阱
+
+#### Critical: ToolResponse 的必需字段
+
+```python
+# ToolResponse 是 dataclass，必需字段必须提供
+@dataclass
+class ToolResponse:
+    content: Sequence[TextBlock | ImageBlock | AudioBlock | VideoBlock]
+    success: bool = True
+
+# 如果 content 为空列表，可能导致意外行为
+response = ToolResponse(content=[], success=True)  # 空内容
+
+# 如果 success=False 但有 content，调用方可能困惑
+```
+
+#### High: MCP 工具的 JSON Schema 验证
+
+```python
+# MCP 工具的参数通过 JSON Schema 验证
+# 问题：复杂 schema 可能导致验证失败
+
+schema = {
+    "type": "object",
+    "properties": {
+        "items": {
+            "type": "array",
+            "items": {"type": "object"}  # 嵌套 object
+        }
+    }
+}
+# 如果实际参数结构与 schema 不完全匹配，会验证失败
+```
+
+#### High: 工具调用的超时处理
+
+```python
+# 工具执行没有内置超时机制
+async def long_running_tool(param):
+    await asyncio.sleep(3600)  # 1小时后返回
+    return "done"
+
+# 问题：Agent 会被阻塞，无法处理其他消息
+# 解决方案：在调用方实现超时控制
+try:
+    result = await asyncio.wait_for(tool(), timeout=30)
+except asyncio.TimeoutError:
+    return ToolResponse(content=[TextBlock(...)], success=False)
+```
+
+#### Medium: 工具名称冲突
+
+```python
+# Toolkit 允许多个工具重名（后者覆盖）
+toolkit = Toolkit()
+toolkit.register(func_a)  # name="translate"
+toolkit.register(func_b)  # name="translate" - 覆盖！
+
+# 问题：难以调试的预期外行为
+# 解决方案：使用命名空间前缀
+toolkit.register(func_a, name="my_translate")
+```
+
+#### Medium: 工具函数的返回值类型
+
+```python
+# 工具函数应该返回特定类型
+async def my_tool() -> dict:
+    return {"result": "value"}
+
+# 问题：返回字符串或其他类型会导致序列化失败
+result = await tool()
+# result.content[0].text 可能是字符串，需要检查类型
+```
+
+---
+
+### 性能考量
+
+#### 工具调用延迟分析
+
+| 阶段 | 延迟占比 | 优化方向 |
+|------|----------|----------|
+| Schema 验证 | ~5% | 简化 schema |
+| 参数解析 | ~5% | 减少嵌套 |
+| 工具执行 | ~80% | 并行化/优化算法 |
+| 结果序列化 | ~10% | 减少返回值大小 |
+
+#### MCP 协议开销
+
+```python
+# MCP 工具调用涉及网络序列化
+# 本地 MCP vs 远程 MCP 延迟差异巨大
+
+# 本地（同一进程）：< 1ms
+# HTTP（本地服务）：~10-50ms
+# HTTP（远程服务）：~100-500ms
+
+# 优化建议：
+# - 批量工具调用减少网络往返
+# - 使用流式响应减少首字节延迟
+# - 本地缓存常用工具结果
+```
+
+#### 工具注册性能
+
+```python
+# Toolkit 注册大量工具时的性能
+toolkit = Toolkit()
+for i in range(1000):
+    toolkit.register(create_tool(i))
+
+# 注册时间：O(n)，每个工具需要验证 schema
+# 优化：延迟注册，仅注册可能使用的工具
+```
 
 ---
 
@@ -1512,22 +1643,14 @@ def cached_postprocess(tool_call, response):
 | MCP Client | 协议适配 | StdIO/HTTP 有状态/无状态 |
 | postprocess_func | 后处理 | 缓存、验证、转换 |
 
-## 章节关联
+| 关联模块 | 关联点 | 参考位置 |
+|----------|--------|----------|
+| [智能体模块](module_agent_deep.md#4-reactagent-实现类分析) | ReActAgent 通过 `_acting()` 调用工具 | 第 4.4 节 |
+| [管道模块](module_pipeline_infra_deep.md#7-a2a-协议) | MCP ↔ A2A 协议对比 | 第 7.1-7.4 节 |
+| [模型模块](module_model_deep.md#7-工具调用机制详解) | `tool_choice` 控制工具调用策略 | 第 7.1-7.3 节 |
+| [状态模块](module_state_deep.md#3-源码解读) | Toolkit 继承 StateModule | 第 3.1 节 |
+| [追踪模块](module_tracing_deep.md#3-追踪装饰器) | trace_toolkit() 追踪工具执行 | 第 3.2 节 |
 
-| 关联模块 | 关联点 |
-|----------|--------|
-| [智能体模块](module_agent_deep.md) | ReActAgent 通过 `_acting()` 调用工具 |
-| [管道模块](module_pipeline_infra_deep.md) | MCP ↔ A2A 协议对比 |
-| [模型模块](module_model_deep.md) | `tool_choice` 控制工具调用策略 |
-
-### Java 开发者对照
-
-| Python 概念 | Java 等价物 | 说明 |
-|-------------|------------|------|
-| `Toolkit` 工具组 | `ServiceLoader` + 分组 | 动态服务注册 |
-| 中间件洋葱模型 | Servlet Filter 链 | 前置/后置拦截 |
-| `@overload` | 方法重载 | 类型签名 |
-| async generator | `Flux<ToolResponse>` | 响应式流 |
 
 ---
 

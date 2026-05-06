@@ -91,7 +91,7 @@ SessionBase                    # 抽象基类，2 个异步方法
 
 ### 3.1 SessionBase 抽象基类
 
-```python
+```python showLineNumbers
 class SessionBase:
     @abstractmethod
     async def save_session_state(
@@ -115,7 +115,7 @@ class SessionBase:
 
 使用关键字参数映射，调用者可以传入任意数量的 StateModule：
 
-```python
+```python showLineNumbers
 await session.save_session_state(
     session_id="sess_001",
     user_id="alice",
@@ -135,7 +135,7 @@ await session.save_session_state(
 
 ### 3.2 JSONSession 文件存储
 
-```python
+```python showLineNumbers
 class JSONSession(SessionBase):
     def __init__(self, save_dir: str = "./") -> None:
         self.save_dir = save_dir
@@ -150,7 +150,7 @@ class JSONSession(SessionBase):
 
 **保存实现**：
 
-```python
+```python showLineNumbers
 async def save_session_state(self, session_id, user_id="", **state_modules_mapping):
     # 1. 收集所有模块的 state_dict
     states = {
@@ -166,7 +166,7 @@ async def save_session_state(self, session_id, user_id="", **state_modules_mappi
 
 **恢复实现**：
 
-```python
+```python showLineNumbers
 async def load_session_state(self, session_id, user_id="",
                               allow_not_exist=True, **state_modules_mapping):
     # 1. 检查文件是否存在
@@ -188,7 +188,7 @@ async def load_session_state(self, session_id, user_id="",
 
 ### 3.3 RedisSession Redis 存储
 
-```python
+```python showLineNumbers
 class RedisSession(SessionBase):
     SESSION_KEY = "user_id:{user_id}:session:{session_id}:state"
 ```
@@ -197,7 +197,7 @@ class RedisSession(SessionBase):
 
 **初始化（惰性导入）**：
 
-```python
+```python showLineNumbers
 def __init__(self, host="localhost", port=6379, db=0,
              password=None, connection_pool=None,
              key_ttl=None, key_prefix="", **kwargs):
@@ -228,7 +228,7 @@ def __init__(self, host="localhost", port=6379, db=0,
 
 **滑动 TTL（重要特性）**：
 
-```python
+```python showLineNumbers
 async def load_session_state(self, ...):
     if self.key_ttl:
         # GETEX: 原子性地获取值并刷新 TTL
@@ -251,7 +251,7 @@ async def load_session_state(self, ...):
 
 **异步上下文管理器**：
 
-```python
+```python showLineNumbers
 async with RedisSession(host="localhost") as session:
     await session.save_session_state(...)
     await session.load_session_state(...)
@@ -260,7 +260,7 @@ async with RedisSession(host="localhost") as session:
 
 ### 3.4 TablestoreSession 表格存储
 
-```python
+```python showLineNumbers
 class TablestoreSession(SessionBase):
     _SESSION_SECONDARY_INDEX_NAME = "agentscope_session_secondary_index"
     _SESSION_SEARCH_INDEX_NAME = "agentscope_session_search_index"
@@ -268,7 +268,7 @@ class TablestoreSession(SessionBase):
 
 **双重检查锁初始化**：
 
-```python
+```python showLineNumbers
 async def _ensure_initialized(self):
     if self._initialized:
         return  # 快速路径（无锁检查）
@@ -292,7 +292,7 @@ Tablestore 需要在首次使用前创建表和索引，这是一个耗时操作
 
 **状态存储结构**：
 
-```python
+```python showLineNumbers
 # 状态存储在 metadata 的 "__state__" 字段中
 session_model = TablestoreSessionModel(...)
 session_model.metadata["__state__"] = json.dumps(states)
@@ -313,11 +313,95 @@ await self._memory_store.update_session(session_model)  # upsert 语义
 
 ---
 
+### 边界情况与陷阱
+
+#### Critical: StateModule 未正确初始化
+
+```python showLineNumbers
+# Session 依赖 StateModule 的 state_dict/load_state_dict
+# 如果 Agent 未正确调用 super().__init__()，状态无法保存
+
+class BadAgent(AgentBase):
+    def __init__(self):
+        self.memory = InMemoryMemory()  # 忘记调用 super().__init__()！
+
+session = JSONSession(save_dir="./sessions")
+await session.save_session_state("s1", agent=BadAgent())
+# 状态不会被正确保存！
+```
+
+#### High: RedisSession 的 user_id 默认值
+
+```python showLineNumbers
+# RedisSession 需要 user_id 参数
+session = RedisSession(...)
+await session.save_session_state("s1", agent=my_agent)
+# 如果不提供 user_id，会使用默认值 "default_user"
+
+# 问题：不同用户的会话可能混在一起
+await session.save_session_state("s1", user_id="user_a", agent=agent_a)
+await session.save_session_state("s1", user_id="user_b", agent=agent_b)
+# 两人共享同一 session_id，但 Redis 会覆盖！
+```
+
+#### Medium: 并发保存同一会话
+
+```python showLineNumbers
+# 多个协程同时保存同一 session_id 会产生竞态条件
+await asyncio.gather(
+    session.save_session_state("s1", user_id="u1", agent=agent1),
+    session.save_session_state("s1", user_id="u1", agent=agent2),  # 覆盖！
+)
+# 最终状态取决于哪个协程最后写入
+```
+
+#### Medium: Session 加载时的版本兼容性
+
+```python showLineNumbers
+# Session 保存的状态可能与当前 Agent 结构不匹配
+# 旧版本保存的状态可能有新字段或缺少字段
+
+agent = MyAgent()
+await session.load_session_state("s1", agent=agent, strict=True)
+# 如果状态中有 Agent 没有的字段，strict=True 会抛出 KeyError
+# strict=False 会静默跳过缺失字段
+```
+
+---
+
+### 性能考量
+
+#### Session 存储后端性能对比
+
+| 后端 | 延迟 | 持久性 | 扩展性 | 适用场景 |
+|------|------|--------|--------|----------|
+| JSONSession | ~10ms | 本地磁盘 | 低 | 开发/测试 |
+| RedisSession | ~1ms | 内存+磁盘 | 中 | 小规模生产 |
+| TablestoreSession | ~10ms | 云存储 | 高 | 大规模生产 |
+
+#### 序列化开销
+
+```python showLineNumbers
+# Session 性能瓶颈主要在序列化
+# state_dict() 递归收集所有嵌套状态
+
+# 大型 Agent 的序列化时间：
+# - 100 个消息：~5ms
+# - 1000 个消息：~50ms
+# - 10000 个消息：~500ms
+
+# 优化建议：
+# - 定期清理消息历史
+# - 使用增量保存而非全量保存
+```
+
+---
+
 ## 5. 代码示例
 
 ### 5.1 JSONSession 基本用法
 
-```python
+```python showLineNumbers
 from agentscope.session import JSONSession
 from agentscope.module import StateModule
 
@@ -350,7 +434,7 @@ print(new_agent.name)  # "assistant"
 
 ### 5.2 RedisSession 带 TTL
 
-```python
+```python showLineNumbers
 from agentscope.session import RedisSession
 
 async with RedisSession(
@@ -377,7 +461,7 @@ async with RedisSession(
 
 ### 5.3 多模块状态保存
 
-```python
+```python showLineNumbers
 from agentscope.session import JSONSession
 from agentscope.agents import ReActAgent
 from agentscope.memory import InMemoryMemory
@@ -444,14 +528,13 @@ await session.save_session_state(
 | TablestoreSession | 双重检查锁初始化，metadata JSON 存储 |
 | 通用流程 | state_dict() → JSON 序列化 → 存储 → JSON 反序列化 → load_state_dict() |
 
-## 章节关联
+| 关联模块 | 关联点 | 参考位置 |
+|----------|--------|----------|
+| [状态模块](module_state_deep.md#3-源码解读) | Session 通过 state_dict/load_state_dict 持久化 StateModule | 第 3.3-3.4 节 |
+| [智能体模块](module_agent_deep.md#3-agentbase-源码解读) | Agent 的状态通过 Session 保存和恢复 | 第 3.6 节 |
+| [记忆模块](module_memory_rag_deep.md#2-memory-基类和实现) | Memory 可作为 Session 的状态模块保存 | 第 2.1 节 |
+| [计划模块](module_plan_deep.md#3-源码解读) | PlanNotebook 可作为 Session 的状态模块保存 | 第 3.1 节 |
+| [工具模块](module_tool_mcp_deep.md#3-toolkit-工具包核心) | Toolkit 可作为 Session 的状态模块保存 | 第 3.1 节 |
 
-| 相关模块 | 关联点 |
-|----------|--------|
-| [State 模块](module_state_deep.md) | Session 通过 state_dict/load_state_dict 持久化 StateModule |
-| [Agent 模块](module_agent_deep.md) | Agent 的状态通过 Session 保存和恢复 |
-| [Memory 模块](module_memory_rag_deep.md) | Memory 可作为 Session 的状态模块保存 |
-| [Plan 模块](module_plan_deep.md) | PlanNotebook 可作为 Session 的状态模块保存 |
-| [Tool 模块](module_tool_mcp_deep.md) | Toolkit 可作为 Session 的状态模块保存 |
 
-**版本参考**: AgentScope >= 1.0.0 | 源码 `session/`
+---
