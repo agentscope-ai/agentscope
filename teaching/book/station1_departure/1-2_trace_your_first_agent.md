@@ -20,14 +20,14 @@
 # 追踪"你好"的旅程
 
 import agentscope
-from agentscope import Agent
+from agentscope import ReActAgent
 from agentscope.model import OpenAIChatModel
 
 # 初始化
 agentscope.init(project="TraceDemo")
 
 # 创建Agent
-agent = Agent(
+agent = ReActAgent(
     name="Tracer",
     model=OpenAIChatModel(
         api_key="your-api-key",
@@ -42,9 +42,9 @@ import asyncio
 async def main():
     # ========== 追踪开始 ==========
     print("1. 用户输入: 你好")
-    
+
     response = await agent("你好")
-    
+
     print(f"2. Agent回复: {response.content}")
     # ========== 追踪结束 ==========
 

@@ -16,8 +16,12 @@
 ## 🚀 先跑起来
 
 ```python showLineNumbers
-import agentscope
-from agentscope.model import ChatModelBase
+from agentscope.model import (
+    ChatModelBase,
+    OpenAIChatModel,
+    AnthropicChatModel,
+    DashScopeChatModel
+)
 
 # 不管用什么模型，调用方式都一样
 async def call_model(model: ChatModelBase, prompt: str):
@@ -26,8 +30,8 @@ async def call_model(model: ChatModelBase, prompt: str):
 
 # 切换模型只需要改这个
 # model = OpenAIChatModel(api_key="...", model="gpt-4")
-model = AnthropicModel(api_key="...", model="claude-3")
-# model = DashScopeModel(api_key="...", model="qwen-max")
+model = AnthropicChatModel(api_key="...", model="claude-3")
+# model = DashScopeChatModel(api_key="...", model="qwen-max")
 
 # 调用方式完全一样
 result = await call_model(model, "你好")
@@ -106,8 +110,8 @@ class ChatModelBase(ABC):
 ```python showLineNumbers
 # 创建不同模型的实例
 openai_model = OpenAIChatModel(api_key="sk-xxx", model="gpt-4")
-claude_model = AnthropicModel(api_key="sk-ant-xxx", model="claude-3-opus")
-dashscope_model = DashScopeModel(api_key="sk-xxx", model="qwen-max")
+claude_model = AnthropicChatModel(api_key="sk-ant-xxx", model="claude-3-opus")
+dashscope_model = DashScopeChatModel(api_key="sk-xxx", model="qwen-max")
 
 # 传给Agent时，只需要是ChatModelBase类型
 agent = ReActAgent(
@@ -167,8 +171,8 @@ public class Agent {
 |------------|------|------|
 | ChatModelBase | 接口/抽象类 | 定义统一契约 |
 | OpenAIChatModel | 具体实现 | OpenAI适配器 |
-| AnthropicModel | 具体实现 | Claude适配器 |
-| DashScopeModel | 具体实现 | 阿里通义适配器 |
+| AnthropicChatModel | 具体实现 | Claude适配器 |
+| DashScopeChatModel | 具体实现 | 阿里通义适配器 |
 
 ---
 

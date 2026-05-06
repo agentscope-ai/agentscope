@@ -17,7 +17,7 @@
 
 ```python showLineNumbers
 import agentscope
-from agentscope import Agent
+from agentscope import ReActAgent
 from agentscope.pipeline import SequentialPipeline, FanoutPipeline
 from agentscope.model import OpenAIChatModel
 
@@ -25,9 +25,9 @@ from agentscope.model import OpenAIChatModel
 agentscope.init(project="PipelineDemo")
 
 # 创建多个Agent
-preprocessor = Agent(name="Preprocessor", ...)
-analyzer = Agent(name="Analyzer", ...)
-summarizer = Agent(name="Summarizer", ...)
+preprocessor = ReActAgent(name="Preprocessor", model=..., sys_prompt="...")
+analyzer = ReActAgent(name="Analyzer", model=..., sys_prompt="...")
+summarizer = ReActAgent(name="Summarizer", model=..., sys_prompt="...")
 
 # SequentialPipeline - 顺序执行
 pipeline1 = SequentialPipeline([

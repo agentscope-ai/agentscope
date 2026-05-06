@@ -82,6 +82,8 @@ print(agentscope.__version__)
 # 你的第一个Agent程序！
 
 import agentscope
+from agentscope import ReActAgent
+from agentscope.model import OpenAIChatModel
 
 # 1. 初始化 - 就像Spring的@PostConstruct
 agentscope.init(
@@ -90,10 +92,7 @@ agentscope.init(
 )
 
 # 2. 创建Agent
-from agentscope import Agent
-from agentscope.model import OpenAIChatModel
-
-agent = Agent(
+agent = ReActAgent(
     name="Alice",
     model=OpenAIChatModel(
         api_key="your-api-key",  # 替换成你的API Key
@@ -114,7 +113,7 @@ asyncio.run(main())
 
 💡 **Java开发者注意**：这个代码和Java的初始化流程类似：
 - `agentscope.init()` 类似于 Spring的 `@PostConstruct`
-- `Agent` 类似于 Spring的 `@Component`
+- `ReActAgent` 类似于 Spring的 `@Component`
 - `await agent()` 是异步调用，类似于 `CompletableFuture.supplyAsync()`
 
 ---

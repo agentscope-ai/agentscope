@@ -40,7 +40,7 @@ model = OpenAIChatModel(
 
 ---
 
-### **AnthropicModel** = **Claude模型**
+### **AnthropicChatModel** = **Claude模型**
 
 > "就是用Anthropic的Claude模型来思考"
 
@@ -50,7 +50,7 @@ model = OpenAIChatModel(
 - `claude-3-haiku` - 快速
 
 ```python showLineNumbers
-model = AnthropicModel(
+model = AnthropicChatModel(
     api_key="sk-ant-xxx",
     model="claude-3-opus"
 )
@@ -117,7 +117,7 @@ model = OpenAIChatModel(api_key="sk-xxx")
 |------------|--------|----------|------|
 | ChatModelBase | 模型基类 | 接口/抽象类 | 定义统一契约 |
 | OpenAIChatModel | GPT模型 | HTTP Client | OpenAI适配器 |
-| AnthropicModel | Claude模型 | HTTP Client | Claude适配器 |
+| AnthropicChatModel | Claude模型 | HTTP Client | Claude适配器 |
 | Formatter | 格式化器 | ObjectMapper | 格式转换 |
 | API Key | 通行证 | Token | 认证凭证 |
 | messages | 消息列表 | List<Message> | 对话历史 |

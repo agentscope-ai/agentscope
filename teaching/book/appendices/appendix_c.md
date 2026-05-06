@@ -10,30 +10,42 @@
 
 ```python showLineNumbers
 import agentscope
+from agentscope import ReActAgent
+from agentscope.model import OpenAIChatModel
 
 # 初始化
 agentscope.init(project="MyProject")
 
 # 创建Agent
-agent = agentscope.ReActAgent(
+agent = ReActAgent(
     name="Assistant",
-    model=agentscope.OpenAIChatModel(
+    model=OpenAIChatModel(
         api_key="your-api-key",
         model="gpt-4"
     ),
-    sys_prompt="你是一个友好的助手",
-    formatter=agentscope.OpenAIChatFormatter()
+    sys_prompt="你是一个友好的助手"
 )
 
 # 调用Agent
-response = await agent("你好")
-print(response)
+import asyncio
+
+async def main():
+    response = await agent("你好")
+    print(response)
+
+asyncio.run(main())
 ```
 
 ### 带工具的Agent
 
 ```python showLineNumbers
+import agentscope
+from agentscope import ReActAgent
+from agentscope.model import OpenAIChatModel
 from agentscope.tool import Tool, Toolkit
+
+# 初始化
+agentscope.init(project="MyProject")
 
 # 定义工具
 @Tool
@@ -45,9 +57,9 @@ def calculate(expression: str) -> str:
 toolkit = Toolkit([calculate])
 
 # 创建带工具的Agent
-agent = agentscope.ReActAgent(
+agent = ReActAgent(
     name="Assistant",
-    model=agentscope.OpenAIChatModel(api_key="...", model="gpt-4"),
+    model=OpenAIChatModel(api_key="...", model="gpt-4"),
     sys_prompt="你是一个得力的助手",
     tools=toolkit
 )
@@ -56,15 +68,21 @@ agent = agentscope.ReActAgent(
 ### 带记忆的Agent
 
 ```python showLineNumbers
+import agentscope
+from agentscope import ReActAgent
+from agentscope.model import OpenAIChatModel
 from agentscope.memory import InMemoryMemory
+
+# 初始化
+agentscope.init(project="MyProject")
 
 # 创建记忆
 memory = InMemoryMemory()
 
 # 创建带记忆的Agent
-agent = agentscope.ReActAgent(
+agent = ReActAgent(
     name="Assistant",
-    model=agentscope.OpenAIChatModel(api_key="...", model="gpt-4"),
+    model=OpenAIChatModel(api_key="...", model="gpt-4"),
     sys_prompt="你是一个友好的助手",
     memory=memory
 )
@@ -124,7 +142,7 @@ results = await pipeline(user_input)
 ### 发布订阅
 
 ```python showLineNumbers
-from agentscope import MsgHub
+from agentscope import Msg, MsgHub
 
 # 创建MsgHub
 msghub = MsgHub(agents=[agent_a, agent_b])
@@ -144,7 +162,9 @@ async for result in msghub.subscribe():
 ### OpenAI模型
 
 ```python showLineNumbers
-model = agentscope.OpenAIChatModel(
+from agentscope.model import OpenAIChatModel
+
+model = OpenAIChatModel(
     api_key="your-api-key",
     model="gpt-4",
     api_base="https://api.openai.com/v1"  # 可选：自定义端点
@@ -154,7 +174,9 @@ model = agentscope.OpenAIChatModel(
 ### Anthropic模型
 
 ```python showLineNumbers
-model = agentscope.AnthropicChatModel(
+from agentscope.model import AnthropicChatModel
+
+model = AnthropicChatModel(
     api_key="your-api-key",
     model="claude-3-sonnet-20240229"
 )
@@ -163,7 +185,9 @@ model = agentscope.AnthropicChatModel(
 ### DashScope模型
 
 ```python showLineNumbers
-model = agentscope.DashScopeChatModel(
+from agentscope.model import DashScopeChatModel
+
+model = DashScopeChatModel(
     api_key="your-api-key",
     model="qwen-max"
 )
@@ -176,6 +200,8 @@ model = agentscope.DashScopeChatModel(
 ### 基础工具
 
 ```python showLineNumbers
+from agentscope.tool import Tool
+
 @Tool
 def search_weather(city: str) -> str:
     """查询天气
@@ -193,6 +219,8 @@ def search_weather(city: str) -> str:
 ### 多参数工具
 
 ```python showLineNumbers
+from agentscope.tool import Tool
+
 @Tool
 def book_flight(from_city: str, to_city: str, date: str) -> str:
     """预订机票
@@ -238,10 +266,17 @@ await runtime.start_async()
 ```python showLineNumbers
 import asyncio
 import agentscope
+from agentscope import ReActAgent
+from agentscope.model import OpenAIChatModel
 
 async def main():
-    agentscope.init()
-    agent = agentscope.ReActAgent(name="test", model=..., sys_prompt="...")
+    agentscope.init(project="MyProject")
+
+    agent = ReActAgent(
+        name="test",
+        model=OpenAIChatModel(api_key="...", model="gpt-4"),
+        sys_prompt="你是一个助手"
+    )
 
     result = await agent("你好")
     print(result)
@@ -272,12 +307,12 @@ asyncio.run(main())
 ## 9. 错误处理模板
 
 ```python showLineNumbers
+from agentscope import AgentScopeError
+
 try:
     response = await agent("你好")
-except agentscope.APIKeyError:
-    print("API Key配置错误")
-except agentscope.RateLimitError:
-    print("请求过于频繁，请稍后重试")
+except AgentScopeError as e:
+    print(f"AgentScope错误: {e}")
 except Exception as e:
     print(f"发生错误: {e}")
 ```

@@ -17,13 +17,13 @@
 
 ```python showLineNumbers
 import agentscope
-from agentscope import Agent, ReActAgent
+from agentscope import ReActAgent
 from agentscope.pipeline import SequentialPipeline, FanoutPipeline
 
 # 创建多个Agent
-translator = ReActAgent(name="Translator", ...)
-reviewer = ReActAgent(name="Reviewer", ...)
-formatter = ReActAgent(name="Formatter", ...)
+translator = ReActAgent(name="Translator", model=..., sys_prompt="...")
+reviewer = ReActAgent(name="Reviewer", model=..., sys_prompt="...")
+formatter = ReActAgent(name="Formatter", model=..., sys_prompt="...")
 
 # SequentialPipeline - 翻译→校对→格式化
 translation_pipeline = SequentialPipeline([

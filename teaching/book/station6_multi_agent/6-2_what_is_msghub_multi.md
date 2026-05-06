@@ -16,15 +16,16 @@
 ## 🚀 MsgHub多Agent协作
 
 ```python showLineNumbers
+from agentscope import Msg, ReActAgent
 from agentscope.pipeline import MsgHub
 
 # 创建消息中枢
 hub = MsgHub()
 
 # Agent订阅消息
-analyst = ReActAgent(name="Analyst", ...)
-notifier = ReActAgent(name="Notifier", ...)
-logger = ReActAgent(name="Logger", ...)
+analyst = ReActAgent(name="Analyst", model=..., sys_prompt="...")
+notifier = ReActAgent(name="Notifier", model=..., sys_prompt="...")
+logger = ReActAgent(name="Logger", model=..., sys_prompt="...")
 
 hub.subscribe(analyst)
 hub.subscribe(notifier)
