@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Docker backend: runs commands inside a Docker container.
 
 Provides real process isolation via Docker. Requires the Docker daemon to
@@ -66,14 +67,20 @@ class DockerSandboxConnection(SandboxConnection):
 
     @property
     def workspace_root(self) -> Path:
+        """Logical workspace root inside the container (POSIX path string)."""
         return Path(self._workspace)
 
     # ─── factory ──────────────────────────────────────────────
 
     @classmethod
-    async def create(cls, options: SandboxCreateOptions) -> DockerSandboxConnection:
+    async def create(
+        cls,
+        options: SandboxCreateOptions,
+    ) -> DockerSandboxConnection:
         if options.backend != "docker":
-            raise ValueError(f"expected backend 'docker', got {options.backend!r}")
+            raise ValueError(
+                f"expected backend 'docker', got {options.backend!r}",
+            )
 
         image: str = options.extra.get("image", _DEFAULT_IMAGE)
         workspace: str = options.extra.get("workspace", _DEFAULT_WORKSPACE)
@@ -82,7 +89,12 @@ class DockerSandboxConnection(SandboxConnection):
 
         client = docker_sdk.from_env()
 
-        await loop.run_in_executor(_DOCKER_EXECUTOR, _ensure_image, client, image)
+        await loop.run_in_executor(
+            _DOCKER_EXECUTOR,
+            _ensure_image,
+            client,
+            image,
+        )
 
         create_kwargs: dict[str, Any] = {
             "image": image,
@@ -146,7 +158,10 @@ class DockerSandboxConnection(SandboxConnection):
         return conn
 
     @classmethod
-    async def resume(cls, state: SerializedSandboxState) -> DockerSandboxConnection:
+    async def resume(
+        cls,
+        state: SerializedSandboxState,
+    ) -> DockerSandboxConnection:
         if state.backend != "docker":
             raise ValueError("backend mismatch for resume")
 
@@ -170,7 +185,7 @@ class DockerSandboxConnection(SandboxConnection):
         except docker.errors.NotFound as e:
             client.close()
             raise UnsupportedOperation(
-                f"container {container_id} no longer exists"
+                f"container {container_id} no longer exists",
             ) from e
 
         await loop.run_in_executor(_DOCKER_EXECUTOR, container.reload)
@@ -315,7 +330,10 @@ class DockerSandboxConnection(SandboxConnection):
             return False
         loop = asyncio.get_running_loop()
         try:
-            await loop.run_in_executor(_DOCKER_EXECUTOR, self._container.reload)
+            await loop.run_in_executor(
+                _DOCKER_EXECUTOR,
+                self._container.reload,
+            )
             return self._container.status == "running"
         except docker.errors.APIError:
             return False
@@ -342,12 +360,15 @@ class DockerSandboxConnection(SandboxConnection):
         """Restore the workspace directory from a tar archive."""
         loop = asyncio.get_running_loop()
 
-        await loop.run_in_executor(
-            _DOCKER_EXECUTOR,
-            lambda: self._container.exec_run(
-                ["sh", "-c", f"rm -rf {self._workspace}/* {self._workspace}/.[!.]* 2>/dev/null; true"],
-            ),
+        rm_workspace = (
+            f"rm -rf {self._workspace}/* "
+            f"{self._workspace}/.[!.]* 2>/dev/null; true"
         )
+
+        def _clear_workspace() -> None:
+            self._container.exec_run(["sh", "-c", rm_workspace])
+
+        await loop.run_in_executor(_DOCKER_EXECUTOR, _clear_workspace)
 
         def _restore() -> None:
             self._container.put_archive("/", data)
@@ -358,7 +379,10 @@ class DockerSandboxConnection(SandboxConnection):
         host_port = self._exposed_ports.get(port)
         if host_port is None:
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(_DOCKER_EXECUTOR, self._container.reload)
+            await loop.run_in_executor(
+                _DOCKER_EXECUTOR,
+                self._container.reload,
+            )
             attrs = getattr(self._container, "attrs", {}) or {}
             ports_info = attrs.get("NetworkSettings", {}).get("Ports", {})
             bindings = ports_info.get(f"{port}/tcp", [])
@@ -387,6 +411,7 @@ class DockerSandboxConnection(SandboxConnection):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _ensure_image(client: docker_sdk.DockerClient, image: str) -> None:
     """Pull the image if not present locally."""
