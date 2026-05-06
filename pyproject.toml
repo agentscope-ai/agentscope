@@ -54,10 +54,21 @@ models = [
     "agentscope[ollama]",
     "agentscope[gemini]",
 ]
-
+# ------------ Service ------------
+service = [
+    "fastapi",
+    "uvicorn",
+    "apscheduler",
+]
+# ------------ Storage ------------
+storage = [
+    "redis",
+]
 # ------------ Full ------------
 full = [
     "agentscope[models]",
+    "agentscope[service]",
+    "agentscope[storage]",
 ]
 
 # ------------ Development ------------
