@@ -28,8 +28,6 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
     """Mixin for formatting Anthropic formatters to avoid duplication between
     AnthropicChatFormatter and AnthropicMultiAgentFormatter."""
 
-    supported_input_media_types: list[str]
-
     async def _format_messages(
         self,
         msgs: list[Msg],
@@ -244,10 +242,11 @@ class AnthropicChatFormatter(_AnthropicFormatterBase):
     entities in the conversation.
     """
 
-    supported_input_media_types: list[str] = Field(
-        default_factory=lambda: ["image/*"],
+    input_types: list[str] = Field(
+        default_factory=lambda: ["text/plain", "image/*"],
         description=(
-            'The supported input media types. Defaults to ``["image/*"]``.'
+            "The supported input types. "
+            'Defaults to ``["text/plain", "image/*"]``.'
         ),
     )
 
@@ -288,10 +287,11 @@ class AnthropicMultiAgentFormatter(_AnthropicFormatterBase):
         description="The prompt to use for the conversation history section.",
     )
 
-    supported_input_media_types: list[str] = Field(
-        default_factory=lambda: ["image/*"],
+    input_types: list[str] = Field(
+        default_factory=lambda: ["text/plain", "image/*"],
         description=(
-            'The supported input media types. Defaults to ``["image/*"]``.'
+            "The supported input types. "
+            'Defaults to ``["text/plain", "image/*"]``.'
         ),
     )
 

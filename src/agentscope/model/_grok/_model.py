@@ -6,7 +6,7 @@ from typing import Any, AsyncGenerator, List, Literal, TYPE_CHECKING
 from pydantic import BaseModel, Field, SecretStr
 
 from .. import ChatUsage, ChatModelBase
-from ...formatter._grok_formatter import GrokChatFormatter
+from ...formatter._grok_formatter import XAIChatFormatter
 from ...message import (
     TextBlock,
     ThinkingBlock,
@@ -122,8 +122,8 @@ class GrokChatModel(ChatModelBase):
     )
     """The Grok API parameters."""
 
-    formatter: GrokChatFormatter = Field(
-        default_factory=GrokChatFormatter,
+    formatter: XAIChatFormatter = Field(
+        default_factory=XAIChatFormatter,
         description="The formatter that converts Msg objects to xai_sdk "
         "protos.",
     )

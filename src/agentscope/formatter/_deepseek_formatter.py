@@ -22,10 +22,10 @@ class DeepSeekChatFormatter(FormatterBase):
     entities in the conversation.
     """
 
-    supported_input_media_types: list[str] = Field(
-        default_factory=list,
+    input_types: list[str] = Field(
+        default_factory=lambda: ["text/plain"],
         description=(
-            "The supported input media types. Defaults to ``[]`` "
+            'The supported input types. Defaults to ``["text/plain"]`` '
             "(DeepSeek does not support multimodal input)."
         ),
     )
@@ -136,10 +136,10 @@ class DeepSeekMultiAgentFormatter(FormatterBase):
         description="The prompt to use for the conversation history section.",
     )
 
-    supported_input_media_types: list[str] = Field(
-        default_factory=list,
+    input_types: list[str] = Field(
+        default_factory=lambda: ["text/plain"],
         description=(
-            "The supported input media types. Defaults to ``[]`` "
+            'The supported input types. Defaults to ``["text/plain"]`` '
             "(DeepSeek does not support multimodal input)."
         ),
     )
@@ -182,7 +182,7 @@ class DeepSeekMultiAgentFormatter(FormatterBase):
         """Given a sequence of tool call/result messages, format them into
         the required format for the DeepSeek API."""
         return await DeepSeekChatFormatter(
-            supported_input_media_types=self.supported_input_media_types,
+            input_types=self.input_types,
         ).format(msgs)
 
     async def _format_agent_message(

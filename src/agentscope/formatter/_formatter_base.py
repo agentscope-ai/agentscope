@@ -8,7 +8,7 @@ from fnmatch import fnmatch
 from typing import Any, List, AsyncGenerator
 
 import shortuuid
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..message import (
     Msg,
@@ -22,10 +22,28 @@ from ..message import (
 class FormatterBase(BaseModel):
     """The base class for formatters."""
 
-    supported_input_media_types: list[str]
-    """The supported media types for multimodal data in the input messages,
-    supporting mime types like "image/*", "image/png", "audio/*", "video/*",
-     etc."""
+    input_types: list[str] = Field(
+        default_factory=lambda: ["text/plain"],
+        description=(
+            "The supported input types, aligned with the model card's "
+            "``input_types`` field. Entries other than ``text/plain`` and "
+            "``application/x-thinking`` are treated as media-type patterns "
+            "(glob-style, e.g. ``image/*``, ``audio/mp3``) that control which "
+            "``DataBlock``\\s are forwarded to the API."
+        ),
+    )
+    """The supported input types for this formatter, aligned with the model
+    card's ``input_types`` field."""
+
+    @property
+    def supported_input_media_types(self) -> list[str]:
+        """Derive the accepted media-type patterns from :attr:`input_types` by
+        excluding ``text/plain`` and ``application/x-thinking``."""
+        return [
+            t
+            for t in self.input_types
+            if t not in ("text/plain", "application/x-thinking")
+        ]
 
     @abstractmethod
     async def format(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
@@ -108,7 +126,6 @@ class FormatterBase(BaseModel):
                             block,
                         ],
                     )
-                    multimodal_data.append(block)
 
                 # For unsupported media types, if it's a URL, include it in
                 # the textual output; if it's base64 data, save it locally

@@ -28,11 +28,11 @@ class KimiChatFormatter(_OpenAIFormatterBase):
     *Preserved Thinking* feature works correctly in multi-turn conversations.
     """
 
-    supported_input_media_types: list[str] = Field(
-        default_factory=lambda: ["image/*", "audio/*"],
+    input_types: list[str] = Field(
+        default_factory=lambda: ["text/plain", "image/*", "audio/*"],
         description=(
-            "The supported input media types. "
-            'Defaults to ``["image/*", "audio/*"]``.'
+            "The supported input types. "
+            'Defaults to ``["text/plain", "image/*", "audio/*"]``.'
         ),
     )
 
@@ -165,3 +165,143 @@ class KimiChatFormatter(_OpenAIFormatterBase):
             i += 1
 
         return messages
+
+
+class KimiMultiAgentFormatter(_OpenAIFormatterBase):
+    """Formatter for the Kimi (Moonshot AI) API in multi-agent conversations.
+
+    Kimi's API is OpenAI-compatible, so the multi-agent history collapsing
+    strategy is the same as :class:`OpenAIMultiAgentFormatter`.  Tool
+    sequences are delegated to :class:`KimiChatFormatter` so that
+    ``reasoning_content`` is preserved correctly for multi-turn
+    *Preserved Thinking* conversations.
+
+    .. note:: Telling the assistant's name in the system prompt is important
+        in multi-agent conversations so that the model knows which role it
+        is playing.
+    """
+
+    conversation_history_prompt: str = Field(
+        default=(
+            "# Conversation History\n"
+            "The content between <history></history> tags contains "
+            "your conversation history\n"
+        ),
+        description="The prompt to use for the conversation history section.",
+    )
+
+    input_types: list[str] = Field(
+        default_factory=lambda: ["text/plain", "image/*", "audio/*"],
+        description=(
+            "The supported input types. "
+            'Defaults to ``["text/plain", "image/*", "audio/*"]``.'
+        ),
+    )
+
+    async def format(self, msgs: list[Msg]) -> list[dict[str, Any]]:
+        """Format input messages into the Kimi API format for multi-agent
+        conversations.
+
+        Non-tool messages from all agents are collapsed into a single user
+        message with ``<history></history>`` tags.  Tool call / result
+        sequences are delegated to :class:`KimiChatFormatter`.
+
+        Args:
+            msgs (`list[Msg]`):
+                The list of message objects to format.
+
+        Returns:
+            `list[dict[str, Any]]`:
+                The formatted messages as a list of dictionaries.
+        """
+        self.assert_list_of_msgs(msgs)
+
+        formatted_msgs: list[dict] = []
+        start_index = 0
+        if msgs and msgs[0].role == "system":
+            formatted_msgs.append(
+                await self._format_system_message(msgs[0]),
+            )
+            start_index = 1
+
+        is_first_agent_message = True
+        async for typ, group in self._group_messages(msgs[start_index:]):
+            if typ == "tool_sequence":
+                formatted_msgs.extend(
+                    await KimiChatFormatter(
+                        input_types=self.input_types,
+                    ).format(group),
+                )
+            elif typ == "agent_message":
+                formatted_msgs.extend(
+                    await self._format_agent_message(
+                        group,
+                        is_first_agent_message,
+                    ),
+                )
+                is_first_agent_message = False
+
+        return formatted_msgs
+
+    async def _format_tool_sequence(
+        self,
+        msgs: list[Msg],
+    ) -> list[dict[str, Any]]:
+        """Format a sequence of tool-related messages using
+        KimiChatFormatter."""
+        return await KimiChatFormatter(
+            input_types=self.input_types,
+        ).format(msgs)
+
+    async def _format_agent_message(
+        self,
+        msgs: list[Msg],
+        is_first: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Collapse agent messages into a ``<history>`` user message."""
+        if is_first:
+            conversation_history_prompt = self.conversation_history_prompt
+        else:
+            conversation_history_prompt = ""
+
+        accumulated_text: list[str] = []
+        media_blocks: list[dict] = []
+
+        for msg in msgs:
+            for block in msg.get_content_blocks():
+                if isinstance(block, TextBlock):
+                    accumulated_text.append(f"{msg.name}: {block.text}")
+                elif isinstance(block, DataBlock):
+                    formatted = self._format_openai_data_block(
+                        block,
+                        role=msg.role,
+                    )
+                    if formatted is not None:
+                        media_blocks.append(formatted)
+
+        if not accumulated_text and not media_blocks:
+            return []
+
+        history_text = "\n".join(accumulated_text)
+        if history_text:
+            history_text = (
+                conversation_history_prompt
+                + "<history>\n"
+                + history_text
+                + "\n</history>"
+            )
+
+        content_list: list[dict[str, Any]] = []
+        if history_text:
+            content_list.append({"type": "text", "text": history_text})
+        content_list.extend(media_blocks)
+
+        return [{"role": "user", "content": content_list}]
+
+    @staticmethod
+    async def _format_system_message(msg: Msg) -> dict[str, Any]:
+        """Format a system message for the Kimi API."""
+        return {
+            "role": "system",
+            "content": msg.get_text_content(),
+        }

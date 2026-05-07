@@ -7,7 +7,7 @@ from abc import ABC
 
 from pydantic import Field
 
-from . import FormatterBase
+from ._formatter_base import FormatterBase
 from .._logging import logger
 from ..message import (
     Msg,
@@ -27,7 +27,38 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
     """Base class for DashScope formatters, providing shared data block
     formatting logic."""
 
-    supported_input_media_types: list[str]
+    input_types: list[str] = Field(
+        default_factory=lambda: [
+            "text/plain",
+            "image/*",
+            "audio/*",
+            "video/*",
+        ],
+        description=(
+            "The supported input types, aligned with the model card's "
+            "``input_types`` field. Media types (non ``text/plain`` / "
+            "``application/x-thinking`` entries) are used to filter "
+            "``DataBlock``\\s; ``application/x-thinking`` enables passing "
+            "``reasoning_content`` back to the API."
+        ),
+    )
+
+    @property
+    def supported_input_media_types(self) -> list[str]:
+        """Derive supported media types from :attr:`input_types`, excluding
+        ``text/plain`` and ``application/x-thinking``."""
+        return [
+            t
+            for t in self.input_types
+            if t not in ("text/plain", "application/x-thinking")
+        ]
+
+    @property
+    def supports_thinking_input(self) -> bool:
+        """Return ``True`` if ``application/x-thinking`` is listed in
+        :attr:`input_types`, meaning the model accepts ``reasoning_content``
+        in the conversation history."""
+        return "application/x-thinking" in self.input_types
 
     def _format_dashscope_data_block(
         self,
@@ -59,7 +90,7 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
         main_type = block.source.media_type.split("/")[0]
 
         if isinstance(block.source, URLSource):
-            return {main_type: block.source.url}
+            return {main_type: str(block.source.url)}
 
         if isinstance(block.source, Base64Source):
             return {
@@ -93,14 +124,6 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
         list ``[]`` for messages without valid content blocks.
     """
 
-    supported_input_media_types: list[str] = Field(
-        default_factory=lambda: ["image/*", "audio/*", "video/*"],
-        description=(
-            "The supported input media types. "
-            'Defaults to ``["image/*", "audio/*", "video/*"]``.'
-        ),
-    )
-
     async def format(
         self,
         msgs: list[Msg],
@@ -123,6 +146,7 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
             msg = msgs[i]
             content_blocks: list[dict] = []
             tool_calls = []
+            thinking_parts: list[str] = []
 
             for block in msg.get_content_blocks():
                 if isinstance(block, TextBlock):
@@ -165,9 +189,8 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                     )
 
                 elif isinstance(block, ThinkingBlock):
-                    # DashScope does not need reasoning_content passed back
-                    # in the conversation context — skip thinking blocks.
-                    pass
+                    if self.supports_thinking_input:
+                        thinking_parts.append(block.thinking)
 
                 elif isinstance(block, ToolResultBlock):
                     (
@@ -209,6 +232,9 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
 
             if tool_calls:
                 msg_dashscope["tool_calls"] = tool_calls
+
+            if thinking_parts:
+                msg_dashscope["reasoning_content"] = "\n".join(thinking_parts)
 
             if msg_dashscope["content"] or msg_dashscope.get("tool_calls"):
                 formatted_msgs.append(msg_dashscope)
@@ -329,7 +355,7 @@ class DashScopeMultiAgentFormatter(_DashScopeFormatterBase):
                 A list of dictionaries formatted for the DashScope API.
         """
         return await DashScopeChatFormatter(
-            supported_input_media_types=self.supported_input_media_types,
+            input_types=self.input_types,
         ).format(msgs)
 
     async def _format_agent_message(
@@ -366,7 +392,7 @@ class DashScopeMultiAgentFormatter(_DashScopeFormatterBase):
         for msg in msgs:
             for block in msg.get_content_blocks():
                 if isinstance(block, TextBlock):
-                    accumulated_text.append(f"{msg.name}: {block['text']}")
+                    accumulated_text.append(f"{msg.name}: {block.text}")
 
                 elif isinstance(block, DataBlock):
                     # Handle the accumulated text as a single block

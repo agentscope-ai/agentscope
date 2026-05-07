@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The xAI Grok formatter module.
+"""The xAI (Grok) formatter module.
 
 This formatter converts AgentScope ``Msg`` objects into the protobuf
 ``Message`` objects expected by the ``xai_sdk`` gRPC client.  Unlike every
@@ -11,7 +11,7 @@ from typing import Any, List
 
 from pydantic import Field
 
-from . import FormatterBase
+from ._formatter_base import FormatterBase
 from .._logging import logger
 from ..message import (
     Msg,
@@ -26,7 +26,7 @@ from ..message import (
 )
 
 
-class GrokChatFormatter(FormatterBase):
+class XAIChatFormatter(FormatterBase):
     """Formatter for the xAI Grok chat model.
 
     Converts ``Msg`` objects into ``xai_sdk`` protobuf ``Message`` objects
@@ -37,11 +37,13 @@ class GrokChatFormatter(FormatterBase):
     intentionally widened to ``list[Any]`` to accommodate this difference.
     """
 
-    supported_input_media_types: list[str] = Field(
-        default=["image/jpeg", "image/png"],
-        description="The image MIME types supported by Grok vision models.",
+    input_types: list[str] = Field(
+        default=["text/plain", "image/jpeg", "image/png"],
+        description=(
+            "The supported input types. "
+            'Defaults to ``["text/plain", "image/jpeg", "image/png"]``.'
+        ),
     )
-    """Supported image media types for multimodal inputs."""
 
     async def format(
         self,
@@ -199,3 +201,117 @@ class GrokChatFormatter(FormatterBase):
                     parts.append(str(item))
             return "\n".join(parts)
         return str(output)
+
+
+class XAIMultiAgentFormatter(FormatterBase):
+    """Formatter for the xAI Grok chat model in multi-agent conversations.
+
+    Produces ``xai_sdk`` protobuf ``Message`` objects (same as
+    :class:`XAIChatFormatter`).  Prior agent-to-agent messages are collapsed
+    into a single ``user`` message with ``<history></history>`` tags; tool
+    call / result sequences are delegated to :class:`XAIChatFormatter`.
+
+    .. note:: ``format()`` returns ``list[Any]`` (protobuf messages), not
+        ``list[dict]``.
+    """
+
+    conversation_history_prompt: str = Field(
+        default=(
+            "# Conversation History\n"
+            "The content between <history></history> tags contains "
+            "your conversation history\n"
+        ),
+        description="The prompt to use for the conversation history section.",
+    )
+
+    input_types: list[str] = Field(
+        default=["text/plain", "image/jpeg", "image/png"],
+        description=(
+            "The supported input types. "
+            'Defaults to ``["text/plain", "image/jpeg", "image/png"]``.'
+        ),
+    )
+
+    async def format(
+        self,
+        msgs: list[Msg],
+        **kwargs: Any,
+    ) -> List[Any]:
+        """Convert a list of ``Msg`` objects to ``xai_sdk`` proto messages.
+
+        Conversation history (non-tool messages) is collapsed into a single
+        ``user`` protobuf message containing ``<history></history>`` tags.
+        Tool sequences are formatted by :class:`XAIChatFormatter`.
+
+        Args:
+            msgs (`list[Msg]`):
+                A list of ``Msg`` objects representing the conversation.
+            **kwargs (`Any`):
+                Unused; retained for interface compatibility.
+
+        Returns:
+            `list[Any]`:
+                A list of ``chat_pb2.Message`` proto objects.
+        """
+        from xai_sdk.chat import system, user
+
+        self.assert_list_of_msgs(msgs)
+
+        xai_messages: List[Any] = []
+        start_index = 0
+
+        if msgs and msgs[0].role == "system":
+            text = msgs[0].get_text_content()
+            xai_messages.append(system(text))
+            start_index = 1
+
+        is_first_agent_message = True
+        async for typ, group in self._group_messages(msgs[start_index:]):
+            if typ == "tool_sequence":
+                xai_messages.extend(
+                    await XAIChatFormatter(
+                        input_types=self.input_types,
+                    ).format(group),
+                )
+            elif typ == "agent_message":
+                history_text = self._build_history_text(
+                    group,
+                    is_first=is_first_agent_message,
+                )
+                if history_text:
+                    xai_messages.append(user(history_text))
+                is_first_agent_message = False
+
+        return xai_messages
+
+    def _build_history_text(self, msgs: list[Msg], *, is_first: bool) -> str:
+        """Build a ``<history>…</history>`` text block from agent messages.
+
+        Args:
+            msgs (`list[Msg]`):
+                Non-tool messages to collapse into history.
+            is_first (`bool`):
+                When ``True``, prepend
+                :attr:`conversation_history_prompt` before the tag.
+
+        Returns:
+            `str`:
+                The formatted history string, or an empty string when there
+                is no text content.
+        """
+        lines: list[str] = []
+        for msg in msgs:
+            parts: list[str] = []
+            if msg.name:
+                parts.append(f"{msg.name}:")
+            for block in msg.get_content_blocks():
+                if isinstance(block, TextBlock):
+                    parts.append(block.text)
+            if parts:
+                lines.append(" ".join(parts))
+
+        if not lines:
+            return ""
+
+        prefix = self.conversation_history_prompt if is_first else ""
+        return prefix + "<history>\n" + "\n".join(lines) + "\n</history>"

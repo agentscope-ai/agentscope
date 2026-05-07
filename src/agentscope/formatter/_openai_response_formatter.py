@@ -22,18 +22,16 @@ from ..message import (
 class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
     """Base class for OpenAI Responses API formatters.
 
-    Provides the shared ``_format_response_data_block`` helper and the
-    ``supported_input_media_types`` field used by both
+    Provides the shared ``_format_response_data_block`` helper used by both
     :class:`OpenAIResponseFormatter` (chat) and
     :class:`OpenAIResponseMultiAgentFormatter` (multi-agent).
     """
 
-    supported_input_media_types: list[str] = Field(
-        default_factory=lambda: ["image/*", "audio/*"],
+    input_types: list[str] = Field(
+        default_factory=lambda: ["text/plain", "image/*", "audio/*"],
         description=(
-            "The supported input media types, using glob-style patterns "
-            '(e.g. ``"image/*"``, ``"audio/mp3"``). '
-            'Defaults to ``["image/*", "audio/*"]``.'
+            "The supported input types. "
+            'Defaults to ``["text/plain", "image/*", "audio/*"]``.'
         ),
     )
 
@@ -315,7 +313,7 @@ class OpenAIResponseMultiAgentFormatter(_OpenAIResponseFormatterBase):
                 A list of Responses API input items.
         """
         return await OpenAIResponseFormatter(
-            supported_input_media_types=self.supported_input_media_types,
+            input_types=self.input_types,
         ).format(msgs)
 
     async def _format_agent_message(

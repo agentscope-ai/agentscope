@@ -29,8 +29,6 @@ class _GeminiFormatterBase(FormatterBase, ABC):
     """Base class for Gemini formatters, providing shared data block
     formatting logic."""
 
-    supported_input_media_types: list[str]
-
     def _format_gemini_data_block(
         self,
         block: DataBlock,
@@ -117,11 +115,16 @@ class GeminiChatFormatter(_GeminiFormatterBase):
     entities in the conversation.
     """
 
-    supported_input_media_types: list[str] = Field(
-        default_factory=lambda: ["image/*", "audio/*", "video/*"],
+    input_types: list[str] = Field(
+        default_factory=lambda: [
+            "text/plain",
+            "image/*",
+            "audio/*",
+            "video/*",
+        ],
         description=(
-            "The supported input media types. "
-            'Defaults to ``["image/*", "audio/*", "video/*"]``.'
+            "The supported input types. "
+            'Defaults to ``["text/plain", "image/*", "audio/*", "video/*"]``.'
         ),
     )
 
@@ -258,11 +261,16 @@ class GeminiMultiAgentFormatter(_GeminiFormatterBase):
         description="The prompt to use for the conversation history section.",
     )
 
-    supported_input_media_types: list[str] = Field(
-        default_factory=lambda: ["image/*", "audio/*", "video/*"],
+    input_types: list[str] = Field(
+        default_factory=lambda: [
+            "text/plain",
+            "image/*",
+            "audio/*",
+            "video/*",
+        ],
         description=(
-            "The supported input media types. "
-            'Defaults to ``["image/*", "audio/*", "video/*"]``.'
+            "The supported input types. "
+            'Defaults to ``["text/plain", "image/*", "audio/*", "video/*"]``.'
         ),
     )
 
@@ -304,7 +312,7 @@ class GeminiMultiAgentFormatter(_GeminiFormatterBase):
         """Given a sequence of tool call/result messages, format them into
         the required format for the Gemini API."""
         return await GeminiChatFormatter(
-            supported_input_media_types=self.supported_input_media_types,
+            input_types=self.input_types,
         ).format(msgs)
 
     async def _format_agent_message(

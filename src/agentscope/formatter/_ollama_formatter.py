@@ -28,8 +28,6 @@ class _OllamaFormatterBase(FormatterBase, ABC):
     """Base class for Ollama formatters, providing shared data block
     formatting logic."""
 
-    supported_input_media_types: list[str]
-
     def _format_ollama_data_block(
         self,
         block: DataBlock,
@@ -107,10 +105,11 @@ class OllamaChatFormatter(_OllamaFormatterBase):
     participants in the conversation.
     """
 
-    supported_input_media_types: list[str] = Field(
-        default_factory=lambda: ["image/*"],
+    input_types: list[str] = Field(
+        default_factory=lambda: ["text/plain", "image/*"],
         description=(
-            'The supported input media types. Defaults to ``["image/*"]``.'
+            "The supported input types. "
+            'Defaults to ``["text/plain", "image/*"]``.'
         ),
     )
 
@@ -253,10 +252,11 @@ class OllamaMultiAgentFormatter(_OllamaFormatterBase):
         description="The prompt to use for the conversation history section.",
     )
 
-    supported_input_media_types: list[str] = Field(
-        default_factory=lambda: ["image/*"],
+    input_types: list[str] = Field(
+        default_factory=lambda: ["text/plain", "image/*"],
         description=(
-            'The supported input media types. Defaults to ``["image/*"]``.'
+            "The supported input types. "
+            'Defaults to ``["text/plain", "image/*"]``.'
         ),
     )
 
@@ -297,7 +297,7 @@ class OllamaMultiAgentFormatter(_OllamaFormatterBase):
     ) -> list[dict[str, Any]]:
         """Format a sequence of tool-related messages."""
         return await OllamaChatFormatter(
-            supported_input_media_types=self.supported_input_media_types,
+            input_types=self.input_types,
         ).format(msgs)
 
     async def _format_agent_message(

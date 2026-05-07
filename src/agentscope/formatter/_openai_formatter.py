@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 import requests
 from pydantic import Field
 
-from . import FormatterBase
+from ._formatter_base import FormatterBase
 from .._logging import logger
 from ..message import (
     Msg,
@@ -28,8 +28,6 @@ from ..message import (
 class _OpenAIFormatterBase(FormatterBase, ABC):
     """Base class for OpenAI formatters, providing shared data block
     formatting logic."""
-
-    supported_input_media_types: list[str]
 
     def _format_openai_data_block(
         self,
@@ -199,12 +197,11 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
     identify different entities in the conversation.
     """
 
-    supported_input_media_types: list[str] = Field(
-        default_factory=lambda: ["image/*", "audio/*"],
+    input_types: list[str] = Field(
+        default_factory=lambda: ["text/plain", "image/*", "audio/*"],
         description=(
-            "The supported input media types, using glob-style patterns "
-            '(e.g. ``"image/*"``, ``"audio/mp3"``). '
-            'Defaults to ``["image/*", "audio/*"]``.'
+            "The supported input types. "
+            'Defaults to ``["text/plain", "image/*", "audio/*"]``.'
         ),
     )
 
@@ -344,12 +341,11 @@ class OpenAIMultiAgentFormatter(_OpenAIFormatterBase):
         description="The prompt to use for the conversation history section.",
     )
 
-    supported_input_media_types: list[str] = Field(
-        default_factory=lambda: ["image/*", "audio/*"],
+    input_types: list[str] = Field(
+        default_factory=lambda: ["text/plain", "image/*", "audio/*"],
         description=(
-            "The supported input media types, using glob-style patterns "
-            '(e.g. ``"image/*"``, ``"audio/mp3"``). '
-            'Defaults to ``["image/*", "audio/*"]``.'
+            "The supported input types. "
+            'Defaults to ``["text/plain", "image/*", "audio/*"]``.'
         ),
     )
 
@@ -391,7 +387,7 @@ class OpenAIMultiAgentFormatter(_OpenAIFormatterBase):
         """Given a sequence of tool call/result messages, format them into
         the required format for the OpenAI API."""
         return await OpenAIChatFormatter(
-            supported_input_media_types=self.supported_input_media_types,
+            input_types=self.input_types,
         ).format(msgs)
 
     async def _format_agent_message(
