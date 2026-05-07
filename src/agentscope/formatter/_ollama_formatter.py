@@ -2,6 +2,7 @@
 """The Ollama formatter module."""
 import base64
 import fnmatch
+import json
 from abc import ABC
 from typing import Any
 
@@ -17,6 +18,7 @@ from ..message import (
     DataBlock,
     ToolCallBlock,
     ToolResultBlock,
+    ThinkingBlock,
     URLSource,
     Base64Source,
 )
@@ -145,6 +147,11 @@ class OllamaChatFormatter(_OllamaFormatterBase):
                     if formatted_image:
                         images.append(formatted_image)
 
+                elif isinstance(block, ThinkingBlock):
+                    # Ollama does not use reasoning content in the context
+                    # — skip thinking blocks silently.
+                    pass
+
                 elif isinstance(block, ToolCallBlock):
                     messages.append(
                         {
@@ -156,7 +163,11 @@ class OllamaChatFormatter(_OllamaFormatterBase):
                                 {
                                     "function": {
                                         "name": block.name,
-                                        "arguments": block.input,
+                                        # Ollama SDK expects a dict, not a
+                                        # JSON string.
+                                        "arguments": json.loads(
+                                            block.input or "{}",
+                                        ),
                                     },
                                 },
                             ],
@@ -171,7 +182,16 @@ class OllamaChatFormatter(_OllamaFormatterBase):
                         multimodal_data,
                     ) = self.convert_tool_result_to_string(block.output)
 
-                    # If there's multimodal data, insert a user message
+                    # Ollama expects tool results as a separate "tool" role
+                    # message, regardless of the containing Msg's role.
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "content": textual_output,
+                        },
+                    )
+
+                    # If there's multimodal data, append an extra user message.
                     if multimodal_data:
                         user_images = []
                         user_content_parts = []
@@ -196,9 +216,6 @@ class OllamaChatFormatter(_OllamaFormatterBase):
                         if user_images:
                             user_msg["images"] = user_images
                         messages.append(user_msg)
-                    else:
-                        # No multimodal data, just add text to content
-                        content_parts.append(textual_output)
 
                 else:
                     logger.warning(
@@ -305,8 +322,8 @@ class OllamaMultiAgentFormatter(_OllamaFormatterBase):
                     formatted_image = self._format_ollama_data_block(block)
                     if formatted_image:
                         images.append(formatted_image)
-                elif isinstance(block, HintBlock):
-                    pass  # Ollama does not support hint blocks
+                elif isinstance(block, (HintBlock, ThinkingBlock)):
+                    pass  # Ollama does not use hint/thinking blocks
                 else:
                     logger.warning(
                         "Unsupported block type %s in agent message, skipped.",

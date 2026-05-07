@@ -13,6 +13,7 @@ from ..message import (
     ToolCallBlock,
     ToolResultBlock,
     HintBlock,
+    ThinkingBlock,
     UserMsg,
 )
 
@@ -107,6 +108,11 @@ class OpenAIResponseFormatter(_OpenAIFormatterBase):
                             },
                         )
                         content_parts = []
+
+                elif isinstance(block, ThinkingBlock):
+                    # OpenAI Responses API does not accept reasoning/thinking
+                    # content in conversation history — skip silently.
+                    pass
 
                 elif isinstance(block, ToolCallBlock):
                     function_calls.append(

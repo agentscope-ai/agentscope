@@ -2,6 +2,7 @@
 """The Anthropic formatter module."""
 import base64
 import fnmatch
+import json
 from abc import ABC
 from typing import Any
 
@@ -80,7 +81,9 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                             "type": "tool_use",
                             "id": block.id,
                             "name": block.name,
-                            "input": block.input,
+                            # Anthropic API expects input as a dict, not a
+                            # JSON string.
+                            "input": json.loads(block.input or "{}"),
                         },
                     )
 
