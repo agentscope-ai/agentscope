@@ -118,17 +118,21 @@ class SandboxConnection(ABC):
             snapshot=self.supports_snapshot(),
         )
 
+    _supports_pty: bool = False
+    _supports_exposed_ports: bool = False
+    _supports_snapshot: bool = False
+
     def supports_pty(self) -> bool:
         """Whether PTY APIs are implemented."""
-        return False
+        return self._supports_pty
 
     def supports_exposed_ports(self) -> bool:
         """Whether host port mapping can be resolved."""
-        return False
+        return self._supports_exposed_ports
 
     def supports_snapshot(self) -> bool:
         """Whether workspace snapshot/restore is implemented."""
-        return False
+        return self._supports_snapshot
 
     # ─── optional: PTY ────────────────────────────────────────
 
