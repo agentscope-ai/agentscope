@@ -5,10 +5,7 @@ Lifecycle: ``start()`` → use → ``close()``.  Use as async context manager.
 ``close()`` calls ``connection.destroy()`` — full resource cleanup.
 """
 
-from __future__ import annotations
-
 import json
-import logging
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,16 +15,13 @@ import frontmatter
 import mcp.types as mtypes
 from mcp.types import Tool as McpToolSchema
 
-from agentscope.skill import Skill
-from agentscope.tool import MCPTool
-
+from ..skill import Skill
+from ..tool import MCPTool
+from .._logging import logger
 from .config import SandboxConfig, ToolDef
 from .connection import SandboxConnection, create_connection
 from .gateway import MCPGateway
 from .types import SandboxCreateOptions
-
-logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # File accessor facade — sandbox.file.read / sandbox.file.write
@@ -171,7 +165,7 @@ class Sandbox:
         self.file = None
         self._started = False
 
-    async def __aenter__(self) -> Sandbox:
+    async def __aenter__(self) -> "Sandbox":
         """Enter async context: ``await start()``."""
         await self.start()
         return self
@@ -431,6 +425,26 @@ class Sandbox:
         if hasattr(cfg.backend, "base_dir"):
             b = cfg.backend.base_dir  # type: ignore[attr-defined]
             extra["base_dir"] = b
+        if hasattr(cfg.backend, "api_key"):
+            ak = cfg.backend.api_key  # type: ignore[attr-defined]
+            if ak:
+                extra["api_key"] = ak
+        if hasattr(cfg.backend, "domain"):
+            dm = cfg.backend.domain  # type: ignore[attr-defined]
+            if dm:
+                extra["domain"] = dm
+        if hasattr(cfg.backend, "timeout"):
+            extra[
+                "timeout"
+            ] = cfg.backend.timeout  # type: ignore[attr-defined]
+        if hasattr(cfg.backend, "metadata"):
+            md = cfg.backend.metadata  # type: ignore[attr-defined]
+            if md:
+                extra["metadata"] = md
+        if hasattr(cfg.backend, "envs"):
+            ev = cfg.backend.envs  # type: ignore[attr-defined]
+            if ev:
+                extra["envs"] = ev
         if cfg.endpoint:
             extra["endpoint"] = cfg.endpoint
 
