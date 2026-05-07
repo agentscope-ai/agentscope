@@ -239,7 +239,13 @@ class GeminiChatModel(ChatModelBase):
             response = await client.aio.models.generate_content_stream(
                 **kwargs,
             )
-            return self._parse_stream_response(start_datetime, response)
+            # Pass client to the generator so the aiohttp session it owns
+            # stays alive until the stream is fully consumed.
+            return self._parse_stream_response(
+                start_datetime,
+                response,
+                client,
+            )
 
         response = await client.aio.models.generate_content(**kwargs)
         return self._parse_completion_response(start_datetime, response)
@@ -248,6 +254,7 @@ class GeminiChatModel(ChatModelBase):
         self,
         start_datetime: datetime,
         response: Any,
+        _client: Any = None,
     ) -> AsyncGenerator[ChatResponse, None]:
         """Parse the Gemini streaming response.
 
@@ -257,6 +264,10 @@ class GeminiChatModel(ChatModelBase):
             response (`Any`):
                 The Gemini async stream object from
                 ``client.aio.models.generate_content_stream``.
+            _client (`Any`, optional):
+                The ``genai.Client`` that produced the stream. Held here so
+                its aiohttp session is not garbage-collected before the
+                stream is fully consumed.
 
         Yields:
             `ChatResponse`:
