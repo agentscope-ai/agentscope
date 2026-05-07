@@ -5,8 +5,6 @@ Users write *one* ``SandboxConfig``; the Sandbox layer internally merges
 implied ports / volumes / env before handing them to the Connection.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -17,7 +15,14 @@ from typing import Any
 
 @dataclass(slots=True)
 class BackendParams:
-    """Base for all backend parameter sets."""
+    """User-facing backend config — typed fields for each vendor.
+
+    ``Sandbox._merge_infra_requirements()`` flattens these into a
+    vendor-neutral ``SandboxCreateOptions`` (with an opaque ``extra``
+    dict) before passing them to ``SandboxConnection.create()``.
+    This keeps the user config statically typed while the connection
+    layer stays backend-agnostic.
+    """
 
     type: str
     extra: dict[str, Any] = field(default_factory=dict)
@@ -33,11 +38,15 @@ class DockerBackendParams(BackendParams):
 
 @dataclass(slots=True)
 class E2BBackendParams(BackendParams):
-    """Placeholder backend params for future E2B integration."""
+    """Parameters for the E2B ``SandboxConnection`` backend."""
 
     type: str = "e2b"
     template: str = "base"
     api_key: str = ""
+    domain: str = ""
+    timeout: int = 300
+    envs: dict[str, str] = field(default_factory=dict)
+    metadata: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -83,7 +92,14 @@ class SkillConfig:
 
 @dataclass(slots=True)
 class ToolDef:
-    """Static tool definition that gets registered at sandbox start."""
+    """Static tool registered at sandbox start.
+
+    ``handler`` is a shell command executed inside the sandbox when
+    :meth:`Sandbox.call_tool` is invoked. The tool arguments are
+    serialized as JSON and appended to the command, e.g.
+    ``echo '{"msg": "hi"}'``.  When ``handler`` is ``None`` the tool
+    is metadata-only and cannot be called.
+    """
 
     name: str
     description: str = ""

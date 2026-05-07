@@ -1,11 +1,17 @@
 # -*- coding: utf-8 -*-
-"""Reference backend: real subprocess + temp directory on the host machine.
+"""Reference / development backend: host subprocess + temp directory.
 
-Not an isolation boundary suitable for untrusted code — only demonstrates
-the API and serves as a test backend.
+**Not an isolation boundary** — commands run directly on the host with
+full filesystem access inside the temp directory.  This backend exists
+to:
+
+1. **Exercise the full ``SandboxConnection`` API** without requiring
+   Docker or E2B, making it useful for unit tests and CI.
+2. **Serve as a minimal reference implementation** for new backend
+   authors: every abstract method is implemented in < 10 lines.
+3. **Support lightweight local workflows** (e.g. skill prototyping)
+   where container overhead is unnecessary.
 """
-
-from __future__ import annotations
 
 import asyncio
 import os
@@ -45,7 +51,7 @@ class LocalTempSandboxConnection(SandboxConnection):
     async def create(
         cls,
         options: SandboxCreateOptions,
-    ) -> LocalTempSandboxConnection:
+    ) -> "LocalTempSandboxConnection":
         """Allocate a temp directory and run ``startup_commands``."""
         if options.backend != "local_temp":
             msg = f"expected backend 'local_temp', got {options.backend!r}"
@@ -64,7 +70,7 @@ class LocalTempSandboxConnection(SandboxConnection):
     async def resume(
         cls,
         state: SerializedSandboxState,
-    ) -> LocalTempSandboxConnection:
+    ) -> "LocalTempSandboxConnection":
         if state.backend != "local_temp":
             raise ValueError("backend mismatch for resume")
         root_s = state.payload.get("root")

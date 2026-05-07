@@ -12,8 +12,6 @@ The subclass provides:
 registry (``register_connection_class`` / ``get_connection_class``).
 """
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
 
 from .exceptions import CapabilityError, UnsupportedOperation
@@ -42,13 +40,21 @@ class SandboxConnection(ABC):
 
     @classmethod
     @abstractmethod
-    async def create(cls, options: SandboxCreateOptions) -> SandboxConnection:
+    async def create(
+        cls,
+        options: SandboxCreateOptions,
+    ) -> "SandboxConnection":
         """Provision a new sandbox and return a connected instance."""
 
     @classmethod
-    async def resume(cls, state: SerializedSandboxState) -> SandboxConnection:
+    async def resume(
+        cls,
+        state: SerializedSandboxState,
+    ) -> "SandboxConnection":
         """Reattach to an existing sandbox from serialized state (optional)."""
-        raise UnsupportedOperation("resume not implemented for this backend")
+        raise UnsupportedOperation(
+            "resume not implemented for this backend",
+        )
 
     # ─── execution ────────────────────────────────────────────
 
@@ -94,7 +100,7 @@ class SandboxConnection(ABC):
     async def running(self) -> bool:
         """Best-effort liveness check."""
 
-    async def __aenter__(self) -> SandboxConnection:
+    async def __aenter__(self) -> "SandboxConnection":
         """Enter context manager (identity)."""
         return self
 

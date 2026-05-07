@@ -10,22 +10,20 @@ Naming convention:
     - ``list_sandboxes()`` returns info about all live sandbox instances.
 """
 
-from __future__ import annotations
-
 import asyncio
-import logging
+from dataclasses import replace
 from typing import Any
 
-from dataclasses import replace
-
+from .._logging import logger
 from .config import SandboxConfig
 from .sandbox import Sandbox
-
-logger = logging.getLogger(__name__)
 
 
 class SandboxManager:
     """Central registry for live Sandbox instances.
+
+    Optionally supports a warm pool of pre-created sandboxes for
+    low-latency acquire/release (call :meth:`enable_pool`).
 
     Usage::
 
@@ -38,7 +36,16 @@ class SandboxManager:
 
     def __init__(self) -> None:
         self._instances: dict[str, Sandbox] = {}
-        self._pool: SandboxPool | None = None
+
+        # Pool state (inline to avoid circular dependency)
+        self._pool_warm_size: int = 0
+        self._pool_free: asyncio.Queue[str] = asyncio.Queue()
+        self._pool_in_use: set[str] = set()
+        self._pool_config: SandboxConfig | None = None
+        self._pool_lock = asyncio.Lock()
+        self._pool_enabled = False
+
+    # ─── core CRUD ────────────────────────────────────────────
 
     async def create(
         self,
@@ -106,92 +113,93 @@ class SandboxManager:
             return_exceptions=True,
         )
 
-    # ─── Pool support ─────────────────────────────────────────
+    # ─── Pool (integrated to avoid circular references) ───────
 
-    def enable_pool(self, *, warm_size: int = 4) -> SandboxPool:
-        """Create and attach a ``SandboxPool`` to this manager."""
-        self._pool = SandboxPool(manager=self, warm_size=warm_size)
-        return self._pool
+    def enable_pool(self, *, warm_size: int = 4) -> "SandboxManager":
+        """Enable warm-pool mode with ``warm_size`` pre-created sandboxes.
+
+        Returns ``self`` for chaining.
+        """
+        self._pool_warm_size = warm_size
+        self._pool_enabled = True
+        return self
 
     @property
-    def pool(self) -> SandboxPool | None:
-        """Attached warm pool, if :meth:`enable_pool` was used."""
-        return self._pool
+    def pool_enabled(self) -> bool:
+        """Whether :meth:`enable_pool` has been called."""
+        return self._pool_enabled
 
+    async def pool_warm(self, config: SandboxConfig) -> None:
+        """Pre-create ``warm_size`` sandboxes and fill the free queue."""
+        if not self._pool_enabled:
+            raise RuntimeError("Call enable_pool() first")
+        async with self._pool_lock:
+            self._pool_config = config
+            for _ in range(self._pool_warm_size):
+                sid = await self.create(config)
+                await self._pool_free.put(sid)
+            logger.info(
+                "Pool: warmed %d sandboxes",
+                self._pool_warm_size,
+            )
 
-class SandboxPool:
-    """Pool of warm sandboxes for low-latency acquire/release.
-
-    Mutations use an ``asyncio.Lock`` for concurrent acquire/release safety.
-    """
-
-    def __init__(self, manager: SandboxManager, *, warm_size: int = 4) -> None:
-        """Attach to ``manager`` and configure desired warm pool size."""
-        self._manager = manager
-        self._warm_size = warm_size
-        self._free: asyncio.Queue[str] = asyncio.Queue()
-        self._in_use: set[str] = set()
-        self._base_config: SandboxConfig | None = None
-        self._lock = asyncio.Lock()
-
-    async def warm(self, config: SandboxConfig) -> None:
-        """Pre-create ``warm_size`` sandboxes and add them to the free pool."""
-        async with self._lock:
-            self._base_config = config
-            for _ in range(self._warm_size):
-                sid = await self._manager.create(config)
-                await self._free.put(sid)
-            logger.info("SandboxPool: warmed %d sandboxes", self._warm_size)
-
-    async def acquire(self, *, timeout: float | None = None) -> Sandbox:
+    async def pool_acquire(
+        self,
+        *,
+        timeout: float | None = None,
+    ) -> Sandbox:
         """Acquire a free sandbox from the pool.
 
-        Raises ``RuntimeError`` if no sandbox is available within the timeout.
+        Raises ``RuntimeError`` if no sandbox is available
+        within the timeout.
         """
         try:
-            sid = await asyncio.wait_for(self._free.get(), timeout=timeout)
+            sid = await asyncio.wait_for(
+                self._pool_free.get(),
+                timeout=timeout,
+            )
         except asyncio.TimeoutError:
             raise RuntimeError(
-                "SandboxPool.acquire timed out — no free sandbox",
+                "pool_acquire timed out — no free sandbox",
             ) from None
-        async with self._lock:
-            self._in_use.add(sid)
-        return self._manager.get(sid)
+        async with self._pool_lock:
+            self._pool_in_use.add(sid)
+        return self.get(sid)
 
-    async def release(self, sandbox: Sandbox) -> None:
-        """Return a sandbox to the pool or replace it if it's dead."""
+    async def pool_release(self, sandbox: Sandbox) -> None:
+        """Return a sandbox to the pool; replace it if dead."""
         sid = sandbox.sandbox_id
-        async with self._lock:
-            self._in_use.discard(sid)
+        async with self._pool_lock:
+            self._pool_in_use.discard(sid)
             if await sandbox.connection.running():
-                await self._free.put(sid)
+                await self._pool_free.put(sid)
             else:
-                await self._manager.destroy(sid)
-                if self._base_config:
-                    new_sid = await self._manager.create(self._base_config)
-                    await self._free.put(new_sid)
-                logger.info("SandboxPool: replaced dead sandbox %s", sid)
+                await self.destroy(sid)
+                if self._pool_config:
+                    new_sid = await self.create(self._pool_config)
+                    await self._pool_free.put(new_sid)
+                logger.info("Pool: replaced dead sandbox %s", sid)
 
-    async def resize(self, new_size: int) -> None:
+    async def pool_resize(self, new_size: int) -> None:
         """Grow or shrink the pool to ``new_size``."""
-        async with self._lock:
-            delta = new_size - self._warm_size
-            self._warm_size = new_size
-            if delta > 0 and self._base_config:
+        async with self._pool_lock:
+            delta = new_size - self._pool_warm_size
+            self._pool_warm_size = new_size
+            if delta > 0 and self._pool_config:
                 for _ in range(delta):
-                    sid = await self._manager.create(self._base_config)
-                    await self._free.put(sid)
+                    sid = await self.create(self._pool_config)
+                    await self._pool_free.put(sid)
             elif delta < 0:
                 for _ in range(-delta):
-                    if not self._free.empty():
-                        sid = await self._free.get()
-                        await self._manager.destroy(sid)
+                    if not self._pool_free.empty():
+                        sid = await self._pool_free.get()
+                        await self.destroy(sid)
 
     @property
-    def stats(self) -> dict[str, int]:
+    def pool_stats(self) -> dict[str, int]:
         """Counts for warm size, free queue, and in-use sandboxes."""
         return {
-            "warm_size": self._warm_size,
-            "free": self._free.qsize(),
-            "in_use": len(self._in_use),
+            "warm_size": self._pool_warm_size,
+            "free": self._pool_free.qsize(),
+            "in_use": len(self._pool_in_use),
         }
