@@ -156,8 +156,13 @@ class AnthropicChatModel(ChatModelBase):
         }
 
         # Anthropic extended thinking — only set when explicitly enabled.
+        # Anthropic requires max_tokens > budget_tokens strictly.
         if self.parameters.thinking_enable and "thinking" not in kwargs:
-            budget = self.parameters.thinking_budget or max_tokens
+            budget = self.parameters.thinking_budget or (max_tokens // 2)
+            if budget >= max_tokens:
+                # Auto-expand max_tokens to satisfy the strict inequality.
+                max_tokens = budget + 1024
+                kwargs["max_tokens"] = max_tokens
             kwargs["thinking"] = {
                 "type": "enabled",
                 "budget_tokens": budget,
@@ -228,8 +233,9 @@ class AnthropicChatModel(ChatModelBase):
                 ):
                     thinking_block = ThinkingBlock(
                         thinking=content_block.thinking,
+                        signature=getattr(content_block, "signature", "")
+                        or "",
                     )
-                    thinking_block["signature"] = content_block.signature
                     content_blocks.append(thinking_block)
 
                 elif (

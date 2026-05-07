@@ -1,26 +1,28 @@
 # -*- coding: utf-8 -*-
-"""The xAI Grok chat model implementation."""
-from collections import OrderedDict
+"""The xAI Grok chat model implementation using the official xai_sdk."""
 from datetime import datetime
-from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List
+from typing import Any, AsyncGenerator, List, Literal, TYPE_CHECKING
 
-from pydantic import BaseModel, SecretStr, Field
+from pydantic import BaseModel, Field, SecretStr
 
 from .. import ChatUsage, ChatModelBase
-from ...formatter import FormatterBase, OpenAIChatFormatter
-from ...message import ThinkingBlock, ToolCallBlock, TextBlock
+from ...formatter._grok_formatter import GrokChatFormatter
+from ...message import (
+    TextBlock,
+    ThinkingBlock,
+    ToolCallBlock,
+)
 from ...model import ChatResponse
 from ...tool import ToolChoice
 from ...tracing import trace_llm
 
 if TYPE_CHECKING:
-    from openai.types.chat import ChatCompletion
-    from openai import AsyncStream
+    from xai_sdk import AsyncClient
+    from xai_sdk.chat import Response, Chunk
 else:
-    ChatCompletion = Any
-    AsyncStream = Any
-
-_GROK_BASE_URL = "https://api.x.ai/v1"
+    AsyncClient = Any
+    Response = Any
+    Chunk = Any
 
 
 class GrokCredential(BaseModel):
@@ -30,19 +32,19 @@ class GrokCredential(BaseModel):
     """The credential type."""
 
     api_key: SecretStr = Field(
-        description="The xAI Grok API key.",
+        description="The xAI API key.",
     )
-    """The API key."""
-
-    base_url: str = Field(
-        default=_GROK_BASE_URL,
-        description="The base URL for the Grok API.",
-    )
-    """The base URL for the Grok API."""
+    """The xAI API key."""
 
 
 class GrokChatModel(ChatModelBase):
-    """The xAI Grok chat model."""
+    """The xAI Grok chat model using the official ``xai_sdk`` gRPC client.
+
+    This model provides native access to xAI-specific features such as
+    server-side agentic tools (web search, X search, code execution) and
+    reasoning effort control, which are not available through the
+    OpenAI-compatible REST endpoint.
+    """
 
     class Parameters(BaseModel):
         """The parameters for the Grok chat model."""
@@ -53,12 +55,20 @@ class GrokChatModel(ChatModelBase):
             description="The maximum number of tokens for the LLM output.",
             gt=0,
         )
+        """The maximum number of tokens to generate."""
 
-        thinking_enable: bool = Field(
-            default=False,
-            title="Thinking",
-            description="Whether to enable thinking mode.",
+        reasoning_effort: Literal["low", "medium", "high"] | None = Field(
+            default=None,
+            title="Reasoning Effort",
+            description=(
+                "Controls the depth of reasoning for models that support "
+                "extended thinking (e.g. ``grok-3-mini``). Set to "
+                "``'low'``, ``'medium'``, or ``'high'`` to enable reasoning "
+                "with the corresponding effort level. ``None`` disables "
+                "reasoning."
+            ),
         )
+        """Reasoning effort level for Grok reasoning models."""
 
         temperature: float | None = Field(
             default=None,
@@ -67,14 +77,16 @@ class GrokChatModel(ChatModelBase):
             ge=0,
             le=2,
         )
+        """The sampling temperature."""
 
         top_p: float | None = Field(
             default=None,
             title="Top P",
-            description="The top P value for the LLM output.",
+            description="The top-p nucleus sampling value.",
             gt=0,
             le=1,
         )
+        """The top-p sampling parameter."""
 
     type: Literal["grok_chat"] = "grok_chat"
     """The type of the chat model."""
@@ -93,24 +105,29 @@ class GrokChatModel(ChatModelBase):
         title="Enable Streaming Output",
         description="Whether to enable streaming output.",
     )
+    """Whether to enable streaming output."""
 
     max_retries: int = Field(
         default=0,
         title="Max Retries",
-        description="The maximum retries for the Grok API.",
+        description="The maximum number of retries for the Grok API.",
         ge=0,
     )
+    """The maximum number of API call retries."""
 
     parameters: Parameters = Field(
         default_factory=Parameters,
-        title="Grok API parameters",
+        title="Grok API Parameters",
         description="The Grok API parameters.",
     )
+    """The Grok API parameters."""
 
-    formatter: FormatterBase = Field(
-        default_factory=OpenAIChatFormatter,
+    formatter: GrokChatFormatter = Field(
+        default_factory=GrokChatFormatter,
+        description="The formatter that converts Msg objects to xai_sdk "
+        "protos.",
     )
-    """The formatter for Grok API (OpenAI-compatible)."""
+    """The formatter that converts Msg objects to xai_sdk proto messages."""
 
     @trace_llm
     async def _call_api(
@@ -121,13 +138,13 @@ class GrokChatModel(ChatModelBase):
         tool_choice: ToolChoice | None = None,
         **generate_kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
-        """Call the xAI Grok chat completions API (OpenAI-compatible).
+        """Call the xAI Grok API using the official ``xai_sdk`` gRPC client.
 
         Args:
             model_name (`str`):
                 The model name to use for this call.
             messages (`list`):
-                A list of message dicts with ``role`` and ``content`` keys.
+                A list of ``Msg`` objects representing the conversation.
             tools (`list[dict]`, default `None`):
                 The tools JSON schemas.
             tool_choice (`ToolChoice | None`, optional):
@@ -141,122 +158,152 @@ class GrokChatModel(ChatModelBase):
                 generator of ``ChatResponse`` objects when streaming is
                 enabled.
         """
-        import openai
+        from xai_sdk import (
+            AsyncClient as XAIAsyncClient,
+        )  # pylint: disable=import-outside-toplevel
 
-        client = openai.AsyncClient(
+        client = XAIAsyncClient(
             api_key=self.credential.api_key.get_secret_value(),
-            base_url=self.credential.base_url,
         )
 
-        formatted_messages = await self.formatter.format(messages)
+        xai_messages = await self.formatter.format(messages)
 
-        kwargs: dict[str, Any] = {
-            "model": model_name,
-            "messages": formatted_messages,
-            "stream": self.stream,
-        }
+        xai_tools = self._convert_tools(tools) if tools else None
+        xai_tool_choice = (
+            self._convert_tool_choice(tool_choice, tools)
+            if tool_choice
+            else None
+        )
 
+        create_kwargs: dict[str, Any] = {"model": model_name}
         if self.parameters.max_tokens is not None:
-            kwargs["max_tokens"] = self.parameters.max_tokens
-
+            create_kwargs["max_tokens"] = self.parameters.max_tokens
         if self.parameters.temperature is not None:
-            kwargs["temperature"] = self.parameters.temperature
-
+            create_kwargs["temperature"] = self.parameters.temperature
         if self.parameters.top_p is not None:
-            kwargs["top_p"] = self.parameters.top_p
+            create_kwargs["top_p"] = self.parameters.top_p
+        if self.parameters.reasoning_effort is not None:
+            create_kwargs[
+                "reasoning_effort"
+            ] = self.parameters.reasoning_effort
+        if xai_tools:
+            create_kwargs["tools"] = xai_tools
+        if xai_tool_choice is not None:
+            create_kwargs["tool_choice"] = xai_tool_choice
 
-        kwargs.update(generate_kwargs)
+        create_kwargs.update(generate_kwargs)
 
-        if tools:
-            kwargs["tools"] = tools
-
-        if tool_choice:
-            kwargs["tool_choice"] = self._format_tool_choice(
-                tool_choice,
-                tools,
-            )
-
-        if self.stream:
-            kwargs["stream_options"] = {"include_usage": True}
+        chat = client.chat.create(**create_kwargs)
+        for xai_msg in xai_messages:
+            chat.append(xai_msg)
 
         start_datetime = datetime.now()
-        response = await client.chat.completions.create(**kwargs)
 
         if self.stream:
-            return self._parse_stream_response(start_datetime, response)
+            return self._parse_stream_response(start_datetime, chat, client)
+
+        try:
+            response = await chat.sample()
+        finally:
+            await client.close()
 
         return self._parse_completion_response(start_datetime, response)
+
+    def _convert_tools(self, tools: list[dict]) -> list:
+        """Convert AgentScope tool schemas to ``xai_sdk`` ``Tool`` protos.
+
+        Args:
+            tools (`list[dict]`):
+                A list of tool schemas in OpenAI function-calling format.
+
+        Returns:
+            `list`:
+                A list of ``chat_pb2.Tool`` proto objects.
+        """
+        from xai_sdk.chat import tool
+
+        xai_tools = []
+        for t in tools:
+            if t.get("type") == "function" and "function" in t:
+                fn = t["function"]
+                xai_tools.append(
+                    tool(
+                        name=fn["name"],
+                        description=fn.get("description", ""),
+                        parameters=fn.get("parameters", {}),
+                    ),
+                )
+        return xai_tools
+
+    def _convert_tool_choice(
+        self,
+        tool_choice: ToolChoice | None,
+        tools: list[dict] | None,
+    ) -> Any:
+        """Convert a ``ToolChoice`` value to an ``xai_sdk`` compatible object.
+
+        Args:
+            tool_choice (`ToolChoice | None`):
+                The unified tool-choice parameter (``"auto"``, ``"none"``,
+                ``"required"``, or a specific function name).
+            tools (`list[dict] | None`):
+                The list of available tools, used for validation.
+
+        Returns:
+            `Any`:
+                The ``xai_sdk``-compatible tool-choice value, or ``None``.
+        """
+        from xai_sdk.chat import (  # pylint: disable=import-outside-toplevel
+            required_tool,
+        )
+
+        self._validate_tool_choice(tool_choice, tools)
+
+        if tool_choice is None:
+            return None
+        if tool_choice in ("auto", "none", "required"):
+            return tool_choice
+        return required_tool(tool_choice)
 
     async def _parse_stream_response(
         self,
         start_datetime: datetime,
-        response: AsyncStream,
+        chat: Any,
+        client: Any,
     ) -> AsyncGenerator[ChatResponse, None]:
-        """Parse the Grok streaming response.
+        """Parse the Grok streaming response from ``xai_sdk``.
 
         Args:
             start_datetime (`datetime`):
                 The start datetime of the response generation.
-            response (`AsyncStream`):
-                The OpenAI-compatible async stream object.
+            chat (`Any`):
+                The ``xai_sdk`` chat session object.
+            client (`Any`):
+                The ``xai_sdk.AsyncClient`` instance; closed when the
+                generator is exhausted or abandoned.
 
         Yields:
             `ChatResponse`:
                 Incremental ``ChatResponse`` objects with ``is_last=False``
                 followed by a final one with ``is_last=True``.
         """
-        usage = None
-        response_id: str | None = None
-        # All delta should have the same block identifier
         acc_text = TextBlock(text="")
         acc_thinking = ThinkingBlock(thinking="")
-        acc_tool_calls: OrderedDict = OrderedDict()
+        last_response = None
+        response_id: str | None = None
 
-        async with response as stream:
-            async for chunk in stream:
-                if chunk.usage:
-                    usage = ChatUsage(
-                        input_tokens=chunk.usage.prompt_tokens,
-                        output_tokens=chunk.usage.completion_tokens,
-                        time=(datetime.now() - start_datetime).total_seconds(),
-                        metadata=chunk.usage,
-                    )
+        try:
+            async for response, chunk in chat.stream():
+                if response_id is None:
+                    response_id = getattr(response, "id", None) or None
 
-                # Capture response_id from the first chunk that carries it
-                response_id = response_id or getattr(chunk, "id", None)
+                delta_text: str = chunk.content or ""
+                delta_thinking: str = chunk.reasoning_content or ""
 
-                if not chunk.choices:
-                    continue
+                delta_contents: List[TextBlock | ThinkingBlock] = []
 
-                choice = chunk.choices[0]
-                delta = choice.delta
-
-                delta_thinking = (
-                    getattr(delta, "reasoning_content", None) or ""
-                )
-                delta_text = getattr(delta, "content", None) or ""
-
-                acc_thinking.thinking += delta_thinking
-                acc_text.text += delta_text
-
-                for tool_call in getattr(delta, "tool_calls", None) or []:
-                    idx = tool_call.index
-                    if idx in acc_tool_calls:
-                        if tool_call.function.arguments is not None:
-                            acc_tool_calls[idx][
-                                "input"
-                            ] += tool_call.function.arguments
-                    else:
-                        acc_tool_calls[idx] = {
-                            "id": tool_call.id,
-                            "name": tool_call.function.name,
-                            "input": tool_call.function.arguments or "",
-                        }
-
-                delta_contents: List[
-                    TextBlock | ToolCallBlock | ThinkingBlock
-                ] = []
                 if delta_thinking:
+                    acc_thinking.thinking += delta_thinking
                     delta_contents.append(
                         ThinkingBlock(
                             id=acc_thinking.id,
@@ -264,6 +311,7 @@ class GrokChatModel(ChatModelBase):
                         ),
                     )
                 if delta_text:
+                    acc_text.text += delta_text
                     delta_contents.append(
                         TextBlock(id=acc_text.id, text=delta_text),
                     )
@@ -271,48 +319,64 @@ class GrokChatModel(ChatModelBase):
                 if delta_contents:
                     _kwargs: dict[str, Any] = {
                         "content": delta_contents,
-                        "usage": usage,
                         "is_last": False,
                     }
                     if response_id:
                         _kwargs["id"] = response_id
                     yield ChatResponse(**_kwargs)
 
+                last_response = response
+
+        finally:
+            await client.close()
+
         final_contents: List[TextBlock | ToolCallBlock | ThinkingBlock] = []
         if acc_thinking.thinking:
             final_contents.append(acc_thinking)
         if acc_text.text:
             final_contents.append(acc_text)
-        for tc in acc_tool_calls.values():
-            final_contents.append(
-                ToolCallBlock(
-                    id=tc["id"],
-                    name=tc["name"],
-                    input=tc["input"],
-                ),
+
+        if last_response is not None:
+            for tc in last_response.tool_calls or []:
+                final_contents.append(
+                    ToolCallBlock(
+                        id=tc.id,
+                        name=tc.function.name,
+                        input=tc.function.arguments,
+                    ),
+                )
+
+        usage = None
+        if last_response is not None and last_response.usage is not None:
+            u = last_response.usage
+            usage = ChatUsage(
+                input_tokens=u.prompt_tokens,
+                output_tokens=u.completion_tokens,
+                time=(datetime.now() - start_datetime).total_seconds(),
+                metadata=u,
             )
 
-        _final_kwargs: dict[str, Any] = {
+        final_kwargs: dict[str, Any] = {
             "content": final_contents,
             "usage": usage,
             "is_last": True,
         }
         if response_id:
-            _final_kwargs["id"] = response_id
-        yield ChatResponse(**_final_kwargs)
+            final_kwargs["id"] = response_id
+        yield ChatResponse(**final_kwargs)
 
     def _parse_completion_response(
         self,
         start_datetime: datetime,
-        response: ChatCompletion,
+        response: Any,
     ) -> ChatResponse:
-        """Parse the Grok non-streaming response.
+        """Parse the Grok non-streaming response from ``xai_sdk``.
 
         Args:
             start_datetime (`datetime`):
                 The start datetime of the response generation.
-            response (`ChatCompletion`):
-                The OpenAI-compatible chat completion object.
+            response (`Any`):
+                The ``xai_sdk`` ``Response`` object.
 
         Returns:
             `ChatResponse`:
@@ -320,31 +384,30 @@ class GrokChatModel(ChatModelBase):
         """
         content_blocks: List[TextBlock | ToolCallBlock | ThinkingBlock] = []
 
-        if response.choices:
-            choice = response.choices[0]
-            reasoning = getattr(choice.message, "reasoning_content", None)
-            if isinstance(reasoning, str) and reasoning:
-                content_blocks.append(ThinkingBlock(thinking=reasoning))
+        if response.reasoning_content:
+            content_blocks.append(
+                ThinkingBlock(thinking=response.reasoning_content),
+            )
+        if response.content:
+            content_blocks.append(TextBlock(text=response.content))
 
-            if choice.message.content:
-                content_blocks.append(TextBlock(text=choice.message.content))
-
-            for tool_call in choice.message.tool_calls or []:
-                content_blocks.append(
-                    ToolCallBlock(
-                        id=tool_call.id,
-                        name=tool_call.function.name,
-                        input=tool_call.function.arguments,
-                    ),
-                )
+        for tc in response.tool_calls or []:
+            content_blocks.append(
+                ToolCallBlock(
+                    id=tc.id,
+                    name=tc.function.name,
+                    input=tc.function.arguments,
+                ),
+            )
 
         usage = None
-        if response.usage:
+        if response.usage is not None:
+            u = response.usage
             usage = ChatUsage(
-                input_tokens=response.usage.prompt_tokens,
-                output_tokens=response.usage.completion_tokens,
+                input_tokens=u.prompt_tokens,
+                output_tokens=u.completion_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
-                metadata=response.usage,
+                metadata=u,
             )
 
         resp_kwargs: dict[str, Any] = {
@@ -357,33 +420,3 @@ class GrokChatModel(ChatModelBase):
             resp_kwargs["id"] = response_id
 
         return ChatResponse(**resp_kwargs)
-
-    def _format_tool_choice(
-        self,
-        tool_choice: ToolChoice | None,
-        tools: list[dict] | None,
-    ) -> str | dict | None:
-        """Format tool_choice parameter for the Grok API.
-
-        Args:
-            tool_choice (`ToolChoice | None`):
-                The unified tool choice parameter which can be ``"auto"``,
-                ``"none"``, ``"required"``, or a specific function name.
-            tools (`list[dict] | None`):
-                The list of available tools, used for validation when
-                ``tool_choice`` is a specific function name.
-
-        Returns:
-            `str | dict | None`:
-                The formatted tool choice string or configuration dict for
-                the Grok API, or ``None`` if ``tool_choice`` is ``None``.
-        """
-        self._validate_tool_choice(tool_choice, tools)
-
-        if tool_choice is None:
-            return None
-
-        if tool_choice in ["auto", "none", "required"]:
-            return tool_choice
-
-        return {"type": "function", "function": {"name": tool_choice}}

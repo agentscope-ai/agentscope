@@ -349,6 +349,9 @@ class DashScopeChatModel(ChatModelBase):
                 # Use the index to identify different tool calls
                 index = tool_call.get("index", 0)
 
+                # Initialize accumulator for a new tool call index
+                acc_tool_calls.setdefault(index, {})
+
                 # Avoid appending duplicate id
                 if "id" in tool_call and tool_call["id"] != acc_tool_calls[
                     index
@@ -409,7 +412,14 @@ class DashScopeChatModel(ChatModelBase):
             content.append(acc_thinking)
 
         if acc_tool_calls:
-            content.extend(acc_tool_calls.values())
+            content.extend(
+                ToolCallBlock(
+                    id=tc.get("id", uuid.uuid4().hex),
+                    name=tc.get("name", ""),
+                    input=tc.get("arguments", "{}"),
+                )
+                for tc in acc_tool_calls.values()
+            )
 
         yield ChatResponse(
             id=response_id or uuid.uuid4().hex,

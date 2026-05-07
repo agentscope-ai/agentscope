@@ -4,15 +4,14 @@ status: active
 
 input_types:
   - text/plain
-  - application/x-thinking
 
 output_types:
   - text/plain
   - application/x-thinking
 
 context_size: 131072
-output_size: 8192
+output_size: 16000
 
 parameter_overrides:
   max_tokens:
-    maximum: 8192
+    maximum: 16000

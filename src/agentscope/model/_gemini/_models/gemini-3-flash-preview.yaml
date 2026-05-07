@@ -1,7 +1,6 @@
-name: gemini-2.0-flash
-label: Gemini 2.0 Flash
-status: sunset
-deprecated_at: "2026-06-01T00:00:00"
+name: gemini-3-flash-preview
+label: Gemini 3 Flash Preview
+status: preview
 
 input_types:
   - text/plain
@@ -12,17 +11,15 @@ input_types:
   - audio/mp3
   - audio/wav
   - video/mp4
+  - application/pdf
 
 output_types:
   - text/plain
+  - application/x-thinking
 
 context_size: 1048576
-output_size: 8192
+output_size: 65536
 
 parameter_overrides:
   max_tokens:
-    maximum: 8192
-  thinking_enable:
-    hidden: true
-  thinking_budget:
-    hidden: true
+    maximum: 65536
