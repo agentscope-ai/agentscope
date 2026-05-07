@@ -55,6 +55,7 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
         messages: list[dict] = []
         for msg in msgs:
             content_blocks: list = []
+            has_tool_result = False
 
             for block in msg.get_content_blocks():
                 if isinstance(block, TextBlock):
@@ -106,52 +107,15 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                         if formatted_block:
                             tool_result_content.append(formatted_block)
 
-                    # If there's multimodal data, promote to UserMsg
-                    if multimodal_data:
-                        # Add tool result first
-                        content_blocks.append(
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": block.id,
-                                "content": tool_result_content,
-                            },
-                        )
-
-                        # Flush current message
-                        if content_blocks:
-                            messages.append(
-                                {
-                                    "role": msg.role,
-                                    "content": content_blocks,
-                                },
-                            )
-                            content_blocks = []
-
-                        # Insert UserMsg with multimodal data
-                        user_content = []
-                        for data_block in multimodal_data:
-                            formatted_block = (
-                                self._format_anthropic_data_block(data_block)
-                            )
-                            if formatted_block:
-                                user_content.append(formatted_block)
-
-                        if user_content:
-                            messages.append(
-                                {
-                                    "role": "user",
-                                    "content": user_content,
-                                },
-                            )
-                    else:
-                        # No multimodal data, just add tool result
-                        content_blocks.append(
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": block.id,
-                                "content": tool_result_content,
-                            },
-                        )
+                    content_blocks.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": tool_result_content,
+                        },
+                    )
+                    # Anthropic requires tool_result to be in a "user" message.
+                    has_tool_result = True
 
                 else:
                     logger.warning(
@@ -160,9 +124,12 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                     )
 
             if content_blocks:
+                # Anthropic requires `tool_result` blocks to be in a `user`
+                # message regardless of the containing Msg's role.
+                role = "user" if has_tool_result else msg.role
                 messages.append(
                     {
-                        "role": msg.role,
+                        "role": role,
                         "content": content_blocks,
                     },
                 )

@@ -172,12 +172,14 @@ class AnthropicChatModel(ChatModelBase):
                 tools,
             )
 
-        # Extract the system message
-        if messages and messages[0]["role"] == "system":
-            kwargs["system"] = messages[0]["content"]
-            messages = messages[1:]
+        formatted_messages = await self.formatter.format(messages)
 
-        kwargs["messages"] = messages
+        # Extract the system message
+        if formatted_messages and formatted_messages[0]["role"] == "system":
+            kwargs["system"] = formatted_messages[0]["content"]
+            formatted_messages = formatted_messages[1:]
+
+        kwargs["messages"] = formatted_messages
 
         start_datetime = datetime.now()
 
