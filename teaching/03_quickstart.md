@@ -73,7 +73,7 @@ async def main():
         name="助手",
         sys_prompt="你是一个有帮助的编程助手。",
         model=OpenAIChatModel(
-            model_name="gpt-4o"
+            model_name="gpt-4o",
             # api_key 通过环境变量 OPENAI_API_KEY 设置
         ),
         formatter=OpenAIChatFormatter(),

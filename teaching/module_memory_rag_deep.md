@@ -2282,7 +2282,11 @@ Retrieved: "Add indexes on WHERE clause columns", "Use EXPLAIN ANALYZE to identi
 
 **第2题：Document 数据结构**
 
-Document 包含 `content`（文本内容）和 `metadata`（DocMetadata 实例）。DocMetadata 存储 `doc_id`、`chunk_id`、`source`、`created_at` 等。检索时 `score`（相似度分数）和 `chunk_id` 会被填充返回。
+Document 包含 `metadata`（DocMetadata 实例）和 `id`、`embedding`、`score` 等字段。注意 Document 本身**没有**直接的 `content` 属性，内容存储在 `metadata.content` 中（DocMetadata 的属性）。
+
+DocMetadata 存储 `content`（文本内容）、`doc_id`、`chunk_id`、`source`、`created_at` 等。检索时 `score`（相似度分数）和 `chunk_id` 会被填充返回。
+
+访问方式：`document.metadata.content` 而非 `document.content`
 
 **第3题：TextReader 分词策略**
 

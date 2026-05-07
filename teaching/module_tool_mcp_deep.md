@@ -543,7 +543,7 @@ def write_text_file(
         append: If True, append to existing file
 
     Returns:
-        ToolResponse indicating success/failure
+        ToolResponse (空 content 表示失败，有 content 表示成功)
     """
 ```
 
@@ -1104,8 +1104,8 @@ def greet(name: str) -> ToolResponse:
         content=[TextBlock(type="text", text=f"Hello, {name}!")],
     )
 
-# 注册到工具包
-toolkit.register_tool_function(greet)
+# 注册到工具包（默认 group_name="basic"）
+toolkit.register_tool_function(greet)  # 等同于 group_name="basic"
 ```
 
 ### 7.2 带参数验证的工具（使用 Pydantic）
@@ -1366,12 +1366,12 @@ toolkit.register_middleware(caching_middleware)
 @dataclass
 class ToolResponse:
     content: Sequence[TextBlock | ImageBlock | AudioBlock | VideoBlock]
-    success: bool = True
+    # 注意：没有 success 字段！用 content 是否为空来判断成功/失败
 
 # 如果 content 为空列表，可能导致意外行为
-response = ToolResponse(content=[], success=True)  # 空内容
+response = ToolResponse(content=[])  # 空内容表示失败
 
-# 如果 success=False 但有 content，调用方可能困惑
+# ToolResponse 实际字段：content, metadata, stream, is_last, is_interrupted, id
 ```
 
 #### High: MCP 工具的 JSON Schema 验证
@@ -1405,7 +1405,7 @@ async def long_running_tool(param):
 try:
     result = await asyncio.wait_for(tool(), timeout=30)
 except asyncio.TimeoutError:
-    return ToolResponse(content=[TextBlock(...)], success=False)
+    return ToolResponse(content=[])  # 超时时返回空内容
 ```
 
 #### Medium: 工具名称冲突

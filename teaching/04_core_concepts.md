@@ -80,12 +80,12 @@ toolkit = Toolkit()
 toolkit.register_tool_function(tool_func=my_tool_func, group_name="basic")
 
 my_agent = ReActAgent(
-    name="助手",           # Agent 名称 (类似 Bean name)
-    model=OpenAIChatModel(model_name="gpt-4o"),
-    toolkit=toolkit,       # 工具箱（通过 Toolkit 注册）
-    memory=...,            # 记忆模块
+    name="助手",           # Agent 名称 (必填)
     sys_prompt="你是一个有帮助的助手",  # 系统提示词（必填）
+    model=OpenAIChatModel(model_name="gpt-4o"),  # 模型（必填）
     formatter=OpenAIChatFormatter(),  # 消息格式化器（必填）
+    toolkit=toolkit,       # 工具箱（可选）
+    memory=None,            # 记忆模块（可选）
 )
 ```
 
@@ -1701,11 +1701,11 @@ toolkit.register_tool_function(tool_func=code_executor, group_name="basic")
 
 agent = ReActAgent(
     name="研究助手",
+    sys_prompt="你是一个研究助手",
     model=OpenAIChatModel(model_name="gpt-4o"),
+    formatter=OpenAIChatFormatter(),
     toolkit=toolkit,
     memory=InMemoryMemory(),
-    sys_prompt="你是一个研究助手",
-    formatter=OpenAIChatFormatter(),
 )
 
 # 支持的高级功能

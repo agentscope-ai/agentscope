@@ -10,7 +10,7 @@ from agentscope.formatter import DashScopeChatFormatter
 from agentscope.memory import InMemoryMemory
 from agentscope.message import TextBlock, ToolUseBlock, Msg
 from agentscope.model import ChatModelBase, ChatResponse
-from agentscope.tool import Toolkit
+from agentscope.tool import Toolkit, ToolResponse
 
 
 class MyModel(ChatModelBase):
@@ -189,3 +189,85 @@ class ReActAgentTest(IsolatedAsyncioTestCase):
             agent.finish_function_name in agent.toolkit.tools,
             "generate_response should be removed when no structured_model",
         )
+
+    async def test_react_agent_with_tool_functions(self) -> None:
+        """Test ReActAgent with registered tool functions.
+
+        This test verifies that:
+        1. Tool functions can be registered to Toolkit
+        2. ReActAgent can use the registered tools
+        3. Agent can call multiple tools in a single request
+        """
+
+        # Define tool functions (regular Python functions, no decorator needed)
+        def get_weather(city: str) -> ToolResponse:
+            """Get city weather.
+
+            Args:
+                city: City name
+            """
+            weather_data = {
+                "北京": "晴，25°C",
+                "上海": "阴，22°C",
+                "广州": "雨，28°C"
+            }
+            result = weather_data.get(city, "未知城市")
+            return ToolResponse(content=[TextBlock(type="text", text=result)])
+
+        def calculate(a: float, b: float) -> ToolResponse:
+            """Calculate the product of two numbers.
+
+            Args:
+                a: First number
+                b: Second number
+            """
+            result = a * b
+            return ToolResponse(content=[TextBlock(type="text", text=str(result))])
+
+        # Register tools to Toolkit
+        toolkit = Toolkit()
+        toolkit.register_tool_function(get_weather)
+        toolkit.register_tool_function(calculate)
+
+        # Verify tools are registered
+        schemas = toolkit.get_json_schemas()
+        self.assertEqual(len(schemas), 2)
+        tool_names = [s["function"]["name"] for s in schemas]
+        self.assertIn("get_weather", tool_names)
+        self.assertIn("calculate", tool_names)
+
+        # Create agent with tools
+        model = MyModel()
+        agent = ReActAgent(
+            name="天气助手",
+            sys_prompt="你是一个天气查询助手，可以查询天气和进行数学计算。",
+            model=model,
+            formatter=DashScopeChatFormatter(),
+            memory=InMemoryMemory(),
+            toolkit=toolkit,
+        )
+
+        # Verify tools are available to agent
+        self.assertIn("get_weather", agent.toolkit.tools)
+        self.assertIn("calculate", agent.toolkit.tools)
+
+        # Test calling tool functions directly through toolkit
+        tool_use_get_weather = ToolUseBlock(
+            type="tool_use",
+            id="call_1",
+            name="get_weather",
+            input={"city": "北京"},
+        )
+        res = await agent.toolkit.call_tool_function(tool_use_get_weather)
+        async for chunk in res:
+            self.assertEqual(chunk.content[0]["text"], "晴，25°C")
+
+        tool_use_calculate = ToolUseBlock(
+            type="tool_use",
+            id="call_2",
+            name="calculate",
+            input={"a": 123.0, "b": 456.0},
+        )
+        res = await agent.toolkit.call_tool_function(tool_use_calculate)
+        async for chunk in res:
+            self.assertEqual(chunk.content[0]["text"], "56088.0")

@@ -1898,6 +1898,18 @@ class ConditionalPipeline:
 
 Formatter 根据模型类型（OpenAI/DashScope/Anthropic）将统一的 Msg 格式转换为各 API 所需的消息格式，主要差异在于：content 字段结构、tool_call 格式、system message 位置等。
 
+具体差异示例：
+```python
+# OpenAI Chat API - tool_calls 格式
+{"role": "assistant", "tool_calls": [{"id": "xxx", "type": "function", "function": {"name": "func", "arguments": "{}"}}]}
+
+# Anthropic API - tool_use 格式
+{"role": "assistant", "tool_use": {"id": "xxx", "name": "func", "input": {}}}
+
+# OpenAI Function Calling - function_call 格式（旧版）
+{"role": "assistant", "function_call": {"name": "func", "arguments": "{}"}}
+```
+
 **第9题：消息过滤 MsgHub**
 
 ```python
