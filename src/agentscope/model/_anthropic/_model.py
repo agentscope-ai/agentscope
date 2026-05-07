@@ -387,7 +387,7 @@ class AnthropicChatModel(ChatModelBase):
         # Build final accumulated content
         final_content: list = []
         if acc_thinking.thinking:
-            acc_thinking["signature"] = thinking_signature
+            acc_thinking.signature = thinking_signature
             final_content.append(acc_thinking)
         if acc_text.text:
             final_content.append(acc_text)
