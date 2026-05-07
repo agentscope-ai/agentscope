@@ -619,11 +619,11 @@ class Toolkit:
         """Register tools from an MCP client.
 
         .. note:: When registering tools from an MCP client, the tool will
-         be renamed by template `mcp__{server_name}__{tool_name}` to avoid
+         be renamed by template `mcp__{mcp_name}__{tool_name}` to avoid
          name conflicts.
 
         Args:
-            mcp_client (`MCPClientBase`):
+            mcp_client (`MCPClient`):
                 The MCP client instance to connect to the MCP server.
             group_name (`str`, defaults to `"basic"`):
                 The group name that the tool functions will be added to.

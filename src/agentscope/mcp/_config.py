@@ -60,5 +60,5 @@ class HttpMCPConfig(BaseModel):
     timeout: float | None = Field(
         title="Timeout",
         description="The HTTP request timeout in seconds.",
-        default=None,
+        default=30.0,
     )

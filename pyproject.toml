@@ -28,6 +28,7 @@ dependencies = [
     "json5",
     "json_repair",
     "mcp",
+    "httpx",
     "numpy",
     "openai",
     "python-datauri",

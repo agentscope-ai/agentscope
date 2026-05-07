@@ -36,13 +36,14 @@ class MCPClient(BaseModel):
     - _cached_tools: Cached list of tools
 
     Example:
-        ```python
+
+    .. code-block:: python
+
         # Stateful connection (STDIO or HTTP)
         client = MCPClient(
+            name="file_system",
             is_stateful=True,
             mcp_config=StdioMCPConfig(
-                type="stdio_mcp",
-                name="file_system",
                 command="mcp-server-filesystem"
             )
         )
@@ -52,16 +53,15 @@ class MCPClient(BaseModel):
 
         # Stateless connection (HTTP only)
         client = MCPClient(
+            name="weather_search",
             is_stateful=False,
             mcp_config=HttpMCPConfig(
-                type="http_mcp",
-                name="weather_api",
                 url="https://api.weather.com/mcp"
             )
         )
         # No connect() needed
         tools = await client.list_tools()
-        ```
+
     """
 
     name: str = Field(
@@ -133,28 +133,24 @@ class MCPClient(BaseModel):
         config = self.mcp_config
 
         # Determine transport from URL
-        if config.url.endswith("/sse"):
-            transport = "sse"
-        else:
-            transport = "streamable_http"
-
-        if transport == "sse":
+        if config.url.endswith("/sse") or config.url.endswith("/messages/"):
             return sse_client(
                 url=config.url,
                 headers=config.headers,
                 timeout=config.timeout,
             )
-        else:
-            http_client = None
-            if config.headers or config.timeout:
-                http_client = httpx.AsyncClient(
-                    headers=config.headers,
-                    timeout=config.timeout,
-                )
-            return streamable_http_client(
-                url=config.url,
-                http_client=http_client,
+
+        # StreamableHTTP transport
+        http_client = None
+        if config.headers or config.timeout:
+            http_client = httpx.AsyncClient(
+                headers=config.headers,
+                timeout=config.timeout,
             )
+        return streamable_http_client(
+            url=config.url,
+            http_client=http_client,
+        )
 
     async def connect(self) -> None:
         """Connect to the MCP server (for stateful connections only).
