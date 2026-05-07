@@ -237,6 +237,10 @@ class OpenAIResponseModel(ChatModelBase):
             ] = []
 
             if event_type == "response.reasoning_summary_text.delta":
+                # Reasoning summary text is NOT emitted by all models.
+                # As of 2026-05, o1 and o4-mini do not stream reasoning
+                # summary deltas.  This handler exists for forward
+                # compatibility with models that do expose it.
                 delta = event.delta
                 acc_thinking.thinking += delta
                 delta_contents.append(
@@ -251,13 +255,13 @@ class OpenAIResponseModel(ChatModelBase):
             elif event_type == "response.output_item.added":
                 item = event.item
                 if getattr(item, "type", None) == "function_call":
-                    call_id = getattr(item, "call_id", None) or getattr(
-                        item,
-                        "id",
-                        "",
-                    )
+                    # item.id  → fc_xxx  (item identifier, needed for
+                    #             function_call.id in multi-turn history)
+                    # item.call_id → call_xxx (needed for
+                    #             function_call_output.call_id)
                     tool_calls[item.id] = {
-                        "id": call_id,
+                        "id": item.id,
+                        "call_id": getattr(item, "call_id", None),
                         "name": getattr(item, "name", ""),
                         "input": "",
                     }
@@ -278,11 +282,31 @@ class OpenAIResponseModel(ChatModelBase):
                         time=(datetime.now() - start_datetime).total_seconds(),
                         metadata=resp.usage,
                     )
+                # Attach reasoning item IDs from the completed response so the
+                # formatter can echo them back in multi-turn history.
+                # The Responses API requires every function_call item to be
+                # accompanied by its preceding reasoning item (see the
+                # function-calling guide).  The reasoning item may have an
+                # empty summary when the model does not expose it (e.g.
+                # o1/o4-mini as of 2026-05).
+                for output_item in getattr(resp, "output", []):
+                    if getattr(output_item, "type", None) == "reasoning":
+                        reasoning_item_id = getattr(output_item, "id", None)
+                        if reasoning_item_id:
+                            acc_thinking = ThinkingBlock(
+                                id=acc_thinking.id,
+                                thinking=acc_thinking.thinking,
+                                reasoning_item_id=reasoning_item_id,
+                            )
                 # Emit the full accumulated state as the final response
                 final_contents: List[
                     TextBlock | ToolCallBlock | ThinkingBlock
                 ] = []
-                if acc_thinking.thinking:
+                if acc_thinking.thinking or getattr(
+                    acc_thinking,
+                    "reasoning_item_id",
+                    None,
+                ):
                     final_contents.append(acc_thinking)
                 if acc_text.text:
                     final_contents.append(acc_text)
@@ -290,6 +314,7 @@ class OpenAIResponseModel(ChatModelBase):
                     final_contents.append(
                         ToolCallBlock(
                             id=tc["id"],
+                            call_id=tc.get("call_id"),
                             name=tc["name"],
                             input=tc["input"] or "{}",
                         ),
@@ -338,15 +363,20 @@ class OpenAIResponseModel(ChatModelBase):
             item_type = getattr(item, "type", None)
 
             if item_type == "reasoning":
-                for summary in getattr(item, "summary", []):
-                    summary_text = getattr(summary, "text", "")
-                    if summary_text:
-                        content_blocks.append(
-                            ThinkingBlock(
-                                type="thinking",
-                                thinking=summary_text,
-                            ),
-                        )
+                reasoning_item_id = getattr(item, "id", None)
+                combined_summary = " ".join(
+                    getattr(s, "text", "")
+                    for s in getattr(item, "summary", [])
+                    if getattr(s, "text", "")
+                )
+                if combined_summary:
+                    content_blocks.append(
+                        ThinkingBlock(
+                            type="thinking",
+                            thinking=combined_summary,
+                            reasoning_item_id=reasoning_item_id,
+                        ),
+                    )
 
             elif item_type == "message":
                 for part in getattr(item, "content", []):
@@ -356,14 +386,10 @@ class OpenAIResponseModel(ChatModelBase):
                         )
 
             elif item_type == "function_call":
-                call_id = getattr(item, "call_id", None) or getattr(
-                    item,
-                    "id",
-                    "",
-                )
                 content_blocks.append(
                     ToolCallBlock(
-                        id=call_id,
+                        id=getattr(item, "id", ""),
+                        call_id=getattr(item, "call_id", None),
                         name=item.name,
                         input=getattr(item, "arguments", "") or "{}",
                     ),

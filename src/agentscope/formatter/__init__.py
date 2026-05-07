@@ -27,6 +27,7 @@ from ._deepseek_formatter import (
     DeepSeekMultiAgentFormatter,
 )
 from ._openai_response_formatter import OpenAIResponseFormatter
+from ._openai_response_formatter import OpenAIResponseMultiAgentFormatter
 from ._kimi_formatter import KimiChatFormatter
 from ._grok_formatter import GrokChatFormatter
 
@@ -45,6 +46,7 @@ __all__ = [
     "DeepSeekChatFormatter",
     "DeepSeekMultiAgentFormatter",
     "OpenAIResponseFormatter",
+    "OpenAIResponseMultiAgentFormatter",
     "KimiChatFormatter",
     "GrokChatFormatter",
 ]
