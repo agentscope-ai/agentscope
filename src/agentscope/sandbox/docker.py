@@ -384,12 +384,6 @@ class DockerSandboxConnection(SandboxConnection):
 
     # ─── capabilities ─────────────────────────────────────────
 
-    def supports_exposed_ports(self) -> bool:
-        return self._supports_exposed_ports
-
-    def supports_snapshot(self) -> bool:
-        return self._supports_snapshot
-
     async def snapshot_workspace(self) -> bytes:
         """Export the workspace directory as a tar archive."""
         loop = asyncio.get_running_loop()
