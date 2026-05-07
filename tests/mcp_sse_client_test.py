@@ -7,7 +7,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from mcp.server import FastMCP
 
-from agentscope.mcp import HttpStatelessClient, HttpStatefulClient
+from agentscope.mcp import MCPClient, HttpMCPConfig
 from agentscope.message import ToolCallBlock
 from agentscope.tool import ToolResponse, ToolChunk, Toolkit
 from agentscope.state import AgentState
@@ -81,10 +81,14 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
 
     async def test_stateless_client(self) -> None:
         """Test the stateless sse MCP client."""
-        stateless_client = HttpStatelessClient(
+        # Create stateless client (is_stateful=False)
+        stateless_client = MCPClient(
             name="test_sse_client",
-            transport="sse",
-            url=f"http://127.0.0.1:{self.port}/sse",
+            is_stateful=False,
+            mcp_config=HttpMCPConfig(
+                type="http_mcp",
+                url=f"http://127.0.0.1:{self.port}/sse",
+            ),
         )
 
         mcp_tool_1 = await stateless_client.get_tool("tool_1")
@@ -159,11 +163,14 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
     async def test_stateful_client(self) -> None:
         """Test the stateful sse MCP client."""
 
-        # Test stateful client
-        stateful_client = HttpStatefulClient(
+        # Test stateful client (is_stateful=True)
+        stateful_client = MCPClient(
             name="test_sse_client",
-            transport="sse",
-            url=f"http://127.0.0.1:{self.port}/sse",
+            is_stateful=True,
+            mcp_config=HttpMCPConfig(
+                type="http_mcp",
+                url=f"http://127.0.0.1:{self.port}/sse",
+            ),
         )
 
         self.assertFalse(stateful_client.is_connected)

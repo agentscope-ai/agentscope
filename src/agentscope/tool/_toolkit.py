@@ -34,10 +34,7 @@ from ..exception import (
     ToolNotFoundError,
     ToolGroupInactiveError,
 )
-from ..mcp import (
-    MCPClientBase,
-    StatefulClientBase,
-)
+from ..mcp import MCPClient
 from ..message import (
     ToolCallBlock,
     TextBlock,
@@ -614,7 +611,7 @@ class Toolkit:
 
     async def register_mcp(
         self,
-        mcp_client: MCPClientBase,
+        mcp_client: MCPClient,
         group_name: str = "basic",
         enable_funcs: list[str] | None = None,
         disable_funcs: list[str] | None = None,
@@ -637,10 +634,13 @@ class Toolkit:
                 The functions that will be filtered out. If `None`, no
                 tool functions will be filtered out.
         """
-        if (
-            isinstance(mcp_client, StatefulClientBase)
-            and not mcp_client.is_connected
-        ):
+        if not isinstance(mcp_client, MCPClient):
+            raise ValueError(
+                f"The 'mcp_client' should be an instance of "
+                f"'MCPClient' but got {type(mcp_client)}.",
+            )
+
+        if mcp_client.is_stateful and not mcp_client.is_connected:
             raise RuntimeError(
                 "The MCP client is not connected to the server. Use the "
                 "`connect()` method first.",

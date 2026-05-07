@@ -7,7 +7,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from mcp.server import FastMCP
 from mcp.types import EmbeddedResource, TextResourceContents
 
-from agentscope.mcp import HttpStatelessClient, HttpStatefulClient
+from agentscope.mcp import MCPClient, HttpMCPConfig
 from agentscope.tool import ToolChunk
 
 
@@ -68,10 +68,14 @@ class StreamableHttpMCPClientTest(IsolatedAsyncioTestCase):
     async def test_streamable_http_stateless_client(self) -> None:
         """Test the MCP server connection functionality."""
 
-        client = HttpStatelessClient(
+        # Test stateless client (is_stateful=False)
+        client = MCPClient(
             name="test_streamable_http_stateless_client",
-            transport="streamable_http",
-            url=f"http://127.0.0.1:{self.port}/mcp",
+            is_stateful=False,
+            mcp_config=HttpMCPConfig(
+                type="http_mcp",
+                url=f"http://127.0.0.1:{self.port}/mcp",
+            ),
         )
 
         my_tool_1 = await client.get_tool("tool_1")
@@ -87,11 +91,14 @@ class StreamableHttpMCPClientTest(IsolatedAsyncioTestCase):
             "arg1: 345, arg2: [4, 5, 6]",
         )
 
-        # Test stateful client connection
-        client = HttpStatefulClient(
-            name="test_streamable_http_stateless_client",
-            transport="streamable_http",
-            url=f"http://127.0.0.1:{self.port}/mcp",
+        # Test stateful client (is_stateful=True)
+        client = MCPClient(
+            name="test_streamable_http_stateful_client",
+            is_stateful=True,
+            mcp_config=HttpMCPConfig(
+                type="http_mcp",
+                url=f"http://127.0.0.1:{self.port}/mcp",
+            ),
         )
 
         self.assertFalse(client.is_connected)
@@ -117,10 +124,14 @@ class StreamableHttpMCPClientTest(IsolatedAsyncioTestCase):
 
     async def test_embedded_content(self) -> None:
         """Test the EmbeddedContent functionality."""
-        client = HttpStatelessClient(
+        # Test with stateless client (is_stateful=False)
+        client = MCPClient(
             name="test_embedded_content",
-            transport="streamable_http",
-            url=f"http://127.0.0.1:{self.port}/mcp",
+            is_stateful=False,
+            mcp_config=HttpMCPConfig(
+                type="http_mcp",
+                url=f"http://127.0.0.1:{self.port}/mcp",
+            ),
         )
 
         my_tool_2 = await client.get_tool("tool_2")
