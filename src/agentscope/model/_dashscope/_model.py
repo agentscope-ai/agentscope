@@ -403,13 +403,14 @@ class DashScopeChatModel(ChatModelBase):
             )
 
         # Yield a final complete response with the accumulated content and
-        # final usage
+        # final usage.  Thinking comes before text to preserve the natural
+        # generation order (reasoning first, then answer).
         content = []
-        if acc_text.text:
-            content.append(acc_text)
-
         if acc_thinking.thinking:
             content.append(acc_thinking)
+
+        if acc_text.text:
+            content.append(acc_text)
 
         if acc_tool_calls:
             content.extend(

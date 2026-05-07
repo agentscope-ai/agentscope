@@ -64,8 +64,16 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                     )
 
                 elif isinstance(block, ThinkingBlock):
+                    # Anthropic requires the signature to be passed back in
+                    # subsequent requests so the API can verify the thinking
+                    # block.  signature is stored as an extra field and may be
+                    # absent on blocks from other providers.
                     content_blocks.append(
-                        {"type": "thinking", "thinking": block.thinking},
+                        {
+                            "type": "thinking",
+                            "thinking": block.thinking,
+                            "signature": getattr(block, "signature", "") or "",
+                        },
                     )
 
                 elif isinstance(block, HintBlock):
