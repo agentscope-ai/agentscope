@@ -4,10 +4,6 @@
 import os
 from unittest.async_case import IsolatedAsyncioTestCase
 
-# Remove environment variable that interferes with API key
-if "ANTHROPIC_AUTH_TOKEN" in os.environ:
-    del os.environ["ANTHROPIC_AUTH_TOKEN"]
-
 import agentscope
 from agentscope.agent import ReActAgent
 from agentscope.formatter import AnthropicChatFormatter
@@ -21,6 +17,11 @@ from agentscope.tool._response import ToolResponse
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "sk-a792be7e2f0e4fe586fb1ceac312cf29")
 DEEPSEEK_BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/anthropic")
 DEEPSEEK_MODEL_NAME = os.environ.get("DEEPSEEK_MODEL_NAME", "deepseek-v4-pro")
+
+
+MINIMAX_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "sk-cp-Spitxq5Tkho8wE-td5ostrWUt-WywEARyjoQBjO1wD0AbSCrVP2-h9d5GgSQYzY2KcfuAgvkdh7rIYj8XmndZSAoFvA6a6vet3C0jHaVD5s7jDl7ckbwsCE")
+MINIMAX_BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.minimaxi.com/anthropic")
+MINIMAX_MODEL_NAME = os.environ.get("DEEPSEEK_MODEL_NAME", "MiniMax-M2.7-highspeed")
 
 
 class TestMiniMaxModel(IsolatedAsyncioTestCase):
@@ -107,7 +108,7 @@ class TestMiniMaxModel(IsolatedAsyncioTestCase):
             result = a * b
             return ToolResponse(content=[TextBlock(type="text", text=str(result))])
 
-        model = self._create_model(thinking={"type": "disabled"})
+        model = self._create_model()
 
         toolkit = Toolkit()
         toolkit.register_tool_function(get_weather)
@@ -122,7 +123,7 @@ class TestMiniMaxModel(IsolatedAsyncioTestCase):
 
         # DeepSeek Anthropic endpoint 对并行工具调用有 message 顺序限制，
         # 因此分两次请求来规避问题
-        msg1 = Msg(name="user", content="北京今天天气怎么样？", role="user")
+        msg1 = Msg(name="user", content="北京今天天气怎么样？帮我算一下 123 乘以 456", role="user")
         response = await agent(msg1)
         self.assertIsNotNone(response)
         print(f"Weather Agent Response: {response}")
@@ -130,7 +131,7 @@ class TestMiniMaxModel(IsolatedAsyncioTestCase):
         msg2 = Msg(name="user", content="帮我算一下 123 乘以 456", role="user")
         response = await agent(msg2)
         self.assertIsNotNone(response)
-        print(f"Calculate Agent Response: {response}")
+        print(f"Weather Agent Response: {response}")
 
     async def test_sequential_pipeline(self) -> None:
         """Test SequentialPipeline - sequential execution of agents."""
