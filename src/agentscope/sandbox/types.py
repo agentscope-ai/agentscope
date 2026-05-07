@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 """Shared value types for sandbox connection + factory layers."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import Any
 

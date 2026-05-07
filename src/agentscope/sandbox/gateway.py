@@ -12,18 +12,14 @@ Tool naming conflict resolution:
   - Unique names are kept as-is.
 """
 
-from __future__ import annotations
-
-import logging
 from dataclasses import dataclass
 from typing import Any
 
 import mcp.types as mtypes
-from agentscope.mcp import StdIOStatefulClient
 
+from ..mcp import StdIOStatefulClient
+from .._logging import logger
 from .config import McpGatewayConfig, McpServerConfig
-
-logger = logging.getLogger(__name__)
 
 SEPARATOR = "___"
 
