@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """Extract attributes from AgentScope components for OpenTelemetry tracing."""
+from __future__ import annotations
+
 import inspect
 from typing import Any, Dict, Tuple, TYPE_CHECKING
 
-from ..embedding import EmbeddingModelBase
 from ..message import Msg, ToolCallBlock
-from ..model import ChatModelBase
 
 from ._attributes import (
     SpanAttributes,
@@ -17,7 +17,9 @@ from ._utils import _serialize_to_str
 
 if TYPE_CHECKING:
     from ..agent import Agent
+    from ..embedding import EmbeddingModelBase
     from ..formatter import FormatterBase
+    from ..model import ChatModelBase
     from ..tool import Toolkit
 
 _CLASS_NAME_MAP = {

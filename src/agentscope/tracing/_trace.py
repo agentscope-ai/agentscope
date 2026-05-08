@@ -17,10 +17,8 @@ from contextvars import ContextVar
 
 import aioitertools
 
-from ..embedding import EmbeddingModelBase, EmbeddingResponse
 from .._logging import logger
 from ..message import Msg, ToolCallBlock
-from ..model import ChatModelBase, ChatResponse
 
 from ._attributes import SpanAttributes, OperationNameValues
 from ._extractor import (
@@ -393,96 +391,17 @@ def trace_toolkit(
     return wrapper
 
 
-def trace_reply(
-    func: Callable[..., Coroutine[Any, Any, Msg]],
-) -> Callable[..., Coroutine[Any, Any, Msg]]:
-    """Trace the agent reply call with OpenTelemetry.
-
-    Args:
-        func (`Callable[..., Coroutine[Any, Any, Msg]]`):
-            The agent async reply function to be traced.
-
-    Returns:
-        `Callable[..., Coroutine[Any, Any, Msg]]`:
-            A wrapper function that traces the agent reply call and handles
-            input/output and exceptions.
-    """
-
-    @wraps(func)
-    async def wrapper(
-        self: "Agent",
-        *args: Any,
-        **kwargs: Any,
-    ) -> Msg:
-        """The wrapper function for tracing the agent reply function call."""
-        if not _check_tracing_enabled():
-            return await func(self, *args, **kwargs)
-
-        from ..agent import Agent
-
-        if not isinstance(self, Agent):
-            logger.warning(
-                "Skipping tracing for %s as the first argument"
-                "is not an instance of Agent, but %s",
-                func.__name__,
-                type(self),
-            )
-            return await func(self, *args, **kwargs)
-
-        # Propagate the agent's session_id to all inner tracing spans
-        session_id = getattr(
-            getattr(self, "state", None),
-            "session_id",
-            "",
-        )
-        token = _current_session_id.set(session_id or "")
-
-        try:
-            tracer = _get_tracer()
-            # Prepare the attributes for the span
-            request_attributes = _get_agent_request_attributes(
-                self,
-                args,
-                kwargs,
-            )
-            span_name = _get_agent_span_name(request_attributes)
-            function_name = f"{self.__class__.__name__}.{func.__name__}"
-            # Begin the agent span
-            with tracer.start_as_current_span(
-                name=span_name,
-                attributes={
-                    **request_attributes,
-                    **_get_common_attributes(),
-                    SpanAttributes.AGENTSCOPE_FUNCTION_NAME: function_name,
-                },
-                end_on_exit=False,
-            ) as span:
-                try:
-                    # Call the agent reply function
-                    res = await func(self, *args, **kwargs)
-
-                    # Set the output attribute
-                    span.set_attributes(_get_agent_response_attributes(res))
-                    _set_span_success_status(span)
-                    return res
-
-                except BaseException as e:
-                    _set_span_error_status(span, e)
-                    raise
-        finally:
-            _current_session_id.reset(token)
-
-    return wrapper
-
-
 def trace_reply_stream(
     func: Callable[..., AsyncGenerator[Any, None]],
 ) -> Callable[..., AsyncGenerator[Any, None]]:
-    """Trace the agent reply_stream call with OpenTelemetry.
+    """Trace the agent's internal async-generator reply with OpenTelemetry.
 
-    Works like :func:`trace_reply` but for async-generator variants of the
-    reply method. The ``invoke_agent`` span is opened before the first item
-    is yielded and closed after the generator is exhausted (or on error).
+    Designed for :meth:`Agent._reply`, which yields a mix of
+    ``AgentEvent`` and a final ``Msg``.  The ``invoke_agent`` span is
+    opened before the first item is yielded and closed after the generator
+    is exhausted (or on error).  If a ``Msg`` object is observed among the
+    yielded items, the *last* such ``Msg`` is used to populate response
+    attributes on the span.
 
     Args:
         func (`Callable[..., AsyncGenerator[Any, None]]`):
@@ -546,8 +465,13 @@ def trace_reply_stream(
                 end_on_exit=False,
             ) as span:
                 has_error = False
+                last_msg: Msg | None = None
                 try:
                     async for item in func(self, *args, **kwargs):
+                        # _reply yields both AgentEvent and Msg objects.
+                        # Track the last Msg to populate response attributes.
+                        if isinstance(item, Msg):
+                            last_msg = item
                         yield item
                 except BaseException as e:
                     has_error = True
@@ -555,9 +479,10 @@ def trace_reply_stream(
                     raise
                 finally:
                     if not has_error:
-                        # reply_stream yields AgentEvent objects, not Msg.
-                        # Response attributes cannot be extracted from events,
-                        # so only the success status is set here.
+                        if last_msg is not None:
+                            span.set_attributes(
+                                _get_agent_response_attributes(last_msg),
+                            )
                         _set_span_success_status(span)
         finally:
             _current_session_id.reset(token)
@@ -566,19 +491,21 @@ def trace_reply_stream(
 
 
 def trace_embedding(
-    func: Callable[..., Coroutine[Any, Any, EmbeddingResponse]],
-) -> Callable[..., Coroutine[Any, Any, EmbeddingResponse]]:
+    func: Callable[..., Coroutine[Any, Any, Any]],
+) -> Callable[..., Coroutine[Any, Any, Any]]:
     """Trace the embedding call with OpenTelemetry."""
 
     @wraps(func)
     async def wrapper(
-        self: EmbeddingModelBase,
+        self: Any,
         *args: Any,
         **kwargs: Any,
-    ) -> EmbeddingResponse:
+    ) -> Any:
         """The wrapper function for tracing the embedding call."""
         if not _check_tracing_enabled():
             return await func(self, *args, **kwargs)
+
+        from ..embedding import EmbeddingModelBase
 
         if not isinstance(self, EmbeddingModelBase):
             logger.warning(
@@ -697,18 +624,8 @@ def trace_format(
 
 
 def trace_llm(
-    func: Callable[
-        ...,
-        Coroutine[
-            Any,
-            Any,
-            ChatResponse | AsyncGenerator[ChatResponse, None],
-        ],
-    ],
-) -> Callable[
-    ...,
-    Coroutine[Any, Any, ChatResponse | AsyncGenerator[ChatResponse, None]],
-]:
+    func: Callable[..., Coroutine[Any, Any, Any]],
+) -> Callable[..., Coroutine[Any, Any, Any]]:
     """Trace the LLM call with OpenTelemetry.
 
     Args:
@@ -725,13 +642,15 @@ def trace_llm(
 
     @wraps(func)
     async def async_wrapper(
-        self: ChatModelBase,
+        self: Any,
         *args: Any,
         **kwargs: Any,
-    ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
+    ) -> Any:
         """The wrapper function for tracing the LLM call."""
         if not _check_tracing_enabled():
             return await func(self, *args, **kwargs)
+
+        from ..model import ChatModelBase
 
         if not isinstance(self, ChatModelBase):
             logger.warning(

@@ -19,7 +19,7 @@ from ._config import CompressionConfig, ReActConfig, ModelConfig
 from ..state import AgentState
 from ._utils import _ToolCallBatch
 from .._logging import logger
-from ..tracing import trace_reply, trace_reply_stream
+from ..tracing import trace_reply_stream
 from .._utils._common import _json_loads_with_repair
 from ..event import (
     AgentEvent,
@@ -136,7 +136,6 @@ class Agent:
     # Agent public methods
     # =======================================================================
 
-    @trace_reply_stream
     async def reply_stream(
         self,
         msgs: Msg | list[Msg] | None = None,
@@ -161,7 +160,6 @@ class Agent:
         finally:
             pass
 
-    @trace_reply
     async def reply(
         self,
         msgs: Msg | list[Msg] | None = None,
@@ -386,6 +384,7 @@ class Agent:
     # Agent core methods, including _reply, _reasoning, _acting, etc.
     # ======================================================================
 
+    @trace_reply_stream
     async def _reply(
         self,
         msgs: Msg | list[Msg] | None = None,
