@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The dashscope formatter module."""
 
+import base64
 from typing import Any
 from fnmatch import fnmatch
 from abc import ABC
@@ -90,7 +91,17 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
         main_type = block.source.media_type.split("/")[0]
 
         if isinstance(block.source, URLSource):
-            return {main_type: str(block.source.url)}
+            url_str = str(block.source.url)
+            if url_str.startswith("file://"):
+                # Local file — read and encode as base64 data URI
+                local_path = url_str.removeprefix("file://")
+                with open(local_path, "rb") as f:
+                    encoded = base64.b64encode(f.read()).decode("utf-8")
+                return {
+                    main_type: f"data:{block.source.media_type};"
+                    f"base64,{encoded}",
+                }
+            return {main_type: url_str}
 
         if isinstance(block.source, Base64Source):
             return {

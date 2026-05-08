@@ -82,7 +82,7 @@ class _GeminiFormatterBase(FormatterBase, ABC):
                 },
             }
         elif isinstance(source, URLSource):
-            url = source.url
+            url = str(source.url)
             if url.startswith("file://"):
                 # Local file - read and convert to base64
                 file_path = url.removeprefix("file://")

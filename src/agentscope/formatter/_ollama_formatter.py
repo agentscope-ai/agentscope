@@ -82,7 +82,7 @@ class _OllamaFormatterBase(FormatterBase, ABC):
         if isinstance(source, Base64Source):
             return source.data
         elif isinstance(source, URLSource):
-            url = source.url
+            url = str(source.url)
             if url.startswith("file://"):
                 # Local file - read and convert to base64
                 file_path = url.removeprefix("file://")

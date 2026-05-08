@@ -7,6 +7,7 @@ other formatter, the ``format()`` method returns a list of
 ``chat_pb2.Message`` proto objects rather than plain dicts, because the
 ``xai_sdk`` chat API accepts proto messages directly.
 """
+import base64
 from typing import Any, List
 
 from pydantic import Field
@@ -102,7 +103,24 @@ class XAIChatFormatter(FormatterBase):
                     elif isinstance(block, DataBlock):
                         if block.source.media_type.startswith("image/"):
                             if isinstance(block.source, URLSource):
-                                content_args.append(image(block.source.url))
+                                url_str = str(block.source.url)
+                                if url_str.startswith("file://"):
+                                    # Local file — read and encode as data URI
+                                    local_path = url_str.removeprefix(
+                                        "file://",
+                                    )
+                                    with open(local_path, "rb") as f:
+                                        encoded = base64.b64encode(
+                                            f.read(),
+                                        ).decode("utf-8")
+                                    content_args.append(
+                                        image(
+                                            f"data:{block.source.media_type};"
+                                            f"base64,{encoded}",
+                                        ),
+                                    )
+                                else:
+                                    content_args.append(image(url_str))
                             elif isinstance(block.source, Base64Source):
                                 content_args.append(
                                     image(
