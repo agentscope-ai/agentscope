@@ -107,6 +107,8 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                         )
 
                     for data_block in multimodal_data:
+                        if not isinstance(data_block, DataBlock):
+                            continue
                         formatted_block = self._format_anthropic_data_block(
                             data_block,
                         )

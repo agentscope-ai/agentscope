@@ -1,14 +1,15 @@
-name: llama3.3
-label: Llama 3.3
+name: llama4
+label: Llama 4 Scout
 status: active
 
 input_types:
   - text/plain
+  - image/*
 
 output_types:
   - text/plain
 
-context_size: 131072
+context_size: 10485760
 output_size: 8192
 
 parameter_overrides:
