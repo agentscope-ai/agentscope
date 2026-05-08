@@ -40,7 +40,7 @@ asyncio.run(main())
 
 ```python showLineNumbers
 import agentscope
-from agentscope import ReActAgent
+from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
 from agentscope.tool import Toolkit, ToolResponse
 import ast
@@ -72,7 +72,7 @@ agent = ReActAgent(
 
 ```python showLineNumbers
 import agentscope
-from agentscope import ReActAgent
+from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
 from agentscope.memory import InMemoryMemory
 
@@ -268,7 +268,7 @@ await runtime.start_async()
 ```python showLineNumbers
 import asyncio
 import agentscope
-from agentscope import ReActAgent
+from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
 
 async def main():
@@ -309,14 +309,10 @@ asyncio.run(main())
 ## 9. 错误处理模板
 
 ```python showLineNumbers
-from agentscope import AgentScopeError
-
 try:
     response = await agent("你好")
-except AgentScopeError as e:
-    print(f"AgentScope错误: {e}")
 except Exception as e:
-    print(f"发生错误: {e}")
+    print(f"Agent运行错误: {e}")
 ```
 
 ---

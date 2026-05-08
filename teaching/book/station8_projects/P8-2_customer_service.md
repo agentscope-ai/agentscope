@@ -35,7 +35,7 @@
 ```python showLineNumbers
 # P8-2_customer_service.py
 import agentscope
-from agentscope import ReActAgent
+from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
 from agentscope.rag import KnowledgeBase, SimpleKnowledge
 

@@ -63,7 +63,7 @@ Msg (统一格式)
 
 ```python showLineNumbers
 from abc import ABC, abstractmethod
-from agentscope import Msg
+from agentscope.message import Msg
 
 class FormatterBase(ABC):
     """Formatter基类"""

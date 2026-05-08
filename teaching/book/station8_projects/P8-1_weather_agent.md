@@ -35,7 +35,7 @@
 ```python showLineNumbers
 # P8-1_weather_agent.py
 import agentscope
-from agentscope import ReActAgent
+from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
 from agentscope.tool import Toolkit, ToolResponse
 

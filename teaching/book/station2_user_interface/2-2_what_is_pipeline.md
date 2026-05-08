@@ -17,7 +17,7 @@
 
 ```python showLineNumbers
 import agentscope
-from agentscope import ReActAgent
+from agentscope.agent import ReActAgent
 from agentscope.pipeline import SequentialPipeline, FanoutPipeline
 from agentscope.model import OpenAIChatModel
 

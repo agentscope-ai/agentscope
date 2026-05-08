@@ -82,7 +82,7 @@ print(agentscope.__version__)
 # 你的第一个Agent程序！
 
 import agentscope
-from agentscope import ReActAgent
+from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
 
 # 1. 初始化 - 就像Spring的@PostConstruct

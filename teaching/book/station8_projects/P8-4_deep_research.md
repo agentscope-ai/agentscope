@@ -34,7 +34,7 @@
 ```python showLineNumbers
 # P8-4_deep_research.py
 import agentscope
-from agentscope import ReActAgent
+from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
 from agentscope.tool import Toolkit, ToolResponse
 

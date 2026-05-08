@@ -17,7 +17,7 @@
 
 ```python showLineNumbers
 import agentscope
-from agentscope import ReActAgent
+from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
 
 # 初始化

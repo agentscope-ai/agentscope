@@ -20,7 +20,7 @@
 # 追踪"你好"的旅程
 
 import agentscope
-from agentscope import ReActAgent
+from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
 
 # 初始化
