@@ -107,10 +107,20 @@ class CompressionConfig(BaseModel):
 class ReActConfig(BaseModel):
     """The reasoning related configuration"""
 
-    max_iters: int = 20
+    max_iters: int = Field(
+        title="Max Iterations",
+        default=20,
+        description="The maximum number of reasoning-acting iterations in "
+                    "one reply",
+    )
     """The maximum number of iterations for the reasoning-acting loop."""
 
-    stop_on_reject: bool = False
+    stop_on_reject: bool = Field(
+        title="Rejection Handling",
+        default=False,
+        description="Whether to stop replying when being rejected to "
+                    "execute tools."
+    )
     """If stop reasoning when tool call(s) are rejected. If `True`, the agent
     won't continue reasoning and wait for outside interaction from the user.
     """
