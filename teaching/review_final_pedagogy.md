@@ -574,7 +574,8 @@ Toolkit 是 AgentScope 工具系统的核心，理解其设计对于开发复杂
 │ Step 2: 初始化组件                       │
 │   model = OpenAIChatModel(...)          │
 │   formatter = OpenAIFormatter()         │
-│   toolkit = Toolkit([get_weather])      │
+│   toolkit = Toolkit()                   │
+│   toolkit.register_tool_function(get_weather, group_name="weather")
 │   memory = InMemoryMemory()             │
 │                                         │
 │ Step 3: 创建 Agent                      │
@@ -1174,7 +1175,7 @@ System.out.println(response.getContent());
 |------|------------|----------|
 | 异步支持 | 原生 async/await | CompletableFuture |
 | 流式输出 | AsyncGenerator | Publisher/Flux |
-| 工具注册 | @tool 装饰器 | @Tool 注解 |
+| 工具注册 | register_tool_function() | 方法注册 |
 | 记忆管理 | InMemoryMemory 等 | Memory 接口实现 |
 
 详细文档: https://java.agentscope.io/

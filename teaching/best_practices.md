@@ -911,10 +911,9 @@ def make_model():
 agent = ReActAgent(
     name="RAGAssistant",
     model=make_model(),
-    toolkit=Toolkit([
-        # RetrieverTool(kb),  # 检索工具
-        # 其他业务工具...
-    ]),
+    toolkit=Toolkit(),  # 先创建空工具箱
+    # RetrieverTool(kb),  # 检索工具
+    # 其他业务工具通过 toolkit.register_tool_function() 注册
 )
 ```
 

@@ -52,10 +52,9 @@ model = OpenAIChatModel(api_key="...", model="gpt-4")
 
 **Toolkit能做什么**：
 ```python
-toolkit = Toolkit([
-    execute_python_code,  # 执行Python代码
-    calculate,             # 计算器
-])
+toolkit = Toolkit()
+toolkit.register_tool_function(execute_python_code, group_name="code")
+toolkit.register_tool_function(calculate, group_name="basic")
 ```
 
 ---

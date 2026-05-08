@@ -42,7 +42,7 @@
 |----------------|-----------|------|
 | `SubTask` | JPA `@Entity` | Pydantic BaseModel ≈ JPA 实体 |
 | `SubTask.state` | Spring StateMachine `State` | todo/in_progress/done/abandoned |
-| `PlanNotebook` | `@Service` + `@Tool` | 业务逻辑 + 工具注册 |
+| `PlanNotebook` | `@Service` + 方法注册 | 业务逻辑 + 工具注册 |
 | `DefaultPlanToHint` | 策略模式实现类 | 根据状态生成提示 |
 | `PlanStorageBase` | `Repository` 接口 | 计划持久化抽象 |
 | `register_state` | `@JsonSerialize` | 自定义序列化钩子 |

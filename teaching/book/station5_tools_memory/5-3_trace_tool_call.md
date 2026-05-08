@@ -21,16 +21,15 @@
 ┌─────────────────────────────────────────────────────────────┐
 │  创建Agent时注册Tool                                        │
 │                                                             │
-│  toolkit = Toolkit([                                        │
-│      calculate,     # Tool 1                               │
-│      search_weather, # Tool 2                               │
-│      send_email      # Tool 3                               │
-│  ])                                                          │
+│  toolkit = Toolkit()                                        │
+│  toolkit.register_tool_function(calculate, group_name="basic")
+│  toolkit.register_tool_function(search_weather, group_name="weather")
+│  toolkit.register_tool_function(send_email, group_name="email")
 │                                                             │
 │  agent = ReActAgent(                                        │
 │      name="Assistant",                                      │
 │      model=model,                                           │
-│      tools=toolkit                                          │
+│      toolkit=toolkit                                        │
 │  )                                                          │
 └─────────────────────────────────────────────────────────────┘
 ```

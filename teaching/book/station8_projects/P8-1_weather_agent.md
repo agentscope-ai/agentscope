@@ -37,18 +37,17 @@
 import agentscope
 from agentscope import ReActAgent
 from agentscope.model import OpenAIChatModel
-from agentscope.tool import Tool
+from agentscope.tool import Toolkit, ToolResponse
 
-# 1. 定义天气查询工具（模拟API）
-@Tool
-def get_weather(city: str) -> str:
+# 1. 定义天气查询工具函数（无需装饰器）
+def get_weather(city: str) -> ToolResponse:
     """查询城市天气
-    
+
     Args:
         city: 城市名称，如"北京"、"上海"
-    
+
     Returns:
-        天气信息字符串
+        ToolResponse: 包含天气信息的响应
     """
     # 模拟天气数据（实际项目中调用真实API）
     weather_data = {
@@ -56,12 +55,17 @@ def get_weather(city: str) -> str:
         "上海": "多云，28°C，略有闷热",
         "广州": "大雨，26°C，建议带伞",
     }
-    return weather_data.get(city, "抱歉，暂不支持该城市")
+    result = weather_data.get(city, "抱歉，暂不支持该城市")
+    return ToolResponse(result=result)
 
 # 2. 初始化
 agentscope.init(project="WeatherAgent")
 
-# 3. 创建Agent
+# 3. 创建工具箱并注册工具
+toolkit = Toolkit()
+toolkit.register_tool_function(get_weather, group_name="weather")
+
+# 4. 创建Agent
 agent = ReActAgent(
     name="WeatherAssistant",
     model=OpenAIChatModel(
@@ -69,10 +73,10 @@ agent = ReActAgent(
         model="gpt-4"
     ),
     sys_prompt="你是一个友好的天气预报助手。请根据用户询问的城市，使用天气查询工具获取信息并回答。",
-    tools=[get_weather]
+    toolkit=toolkit
 )
 
-# 4. 运行
+# 5. 运行
 import asyncio
 
 async def main():
@@ -86,28 +90,36 @@ asyncio.run(main())
 
 ## 🔍 代码解读
 
-### 1. @Tool装饰器
+### 1. 工具函数定义
 ```python
-@Tool
-def get_weather(city: str) -> str:
+def get_weather(city: str) -> ToolResponse:
     ...
+    return ToolResponse(result=result)
 ```
-- 把普通函数标记为Tool
+- 普通函数，返回 `ToolResponse` 对象
 - Agent可以调用它
 
-### 2. ReActAgent
+### 2. Toolkit注册
+```python
+toolkit = Toolkit()
+toolkit.register_tool_function(get_weather, group_name="weather")
+```
+- 创建工具箱并注册工具函数
+- `group_name` 控制工具的分组
+
+### 3. ReActAgent
 ```python
 agent = ReActAgent(
     name="WeatherAssistant",
     model=...,
     sys_prompt="...",
-    tools=[get_weather]
+    toolkit=toolkit
 )
 ```
 - 创建带工具的Agent
 - Agent会自动决定何时调用工具
 
-### 3. 异步调用
+### 4. 异步调用
 ```python
 response = await agent("北京今天天气怎么样？")
 ```

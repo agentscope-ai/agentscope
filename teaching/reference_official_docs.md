@@ -71,12 +71,13 @@ AgentScope 中的"工具"指的是可调用的 Python 对象，包括：
 可调用对象可以是异步或同步调用的，流式或非流式返回结果的。
 
 ```python
-from agentscope.tool import Toolkit
+from agentscope.tool import Toolkit, ToolResponse
 
-def get_weather(location: str) -> str:
-    return f"{location}今日天气：晴，25-32℃"
+def get_weather(location: str) -> ToolResponse:
+    return ToolResponse(result=f"{location}今日天气：晴，25-32℃")
 
-toolkit = Toolkit([get_weather])
+toolkit = Toolkit()
+toolkit.register_tool_function(get_weather, group_name="weather")
 ```
 
 #### 1.2.4 智能体（Agent）

@@ -61,9 +61,9 @@
 |------|-----------|
 | 安装 | `pip install agentscope` |
 | 初始化 | `agentscope.init(project="MyProject")` |
-| 创建Agent | `ReActAgent(name="...", model=..., tools=[...])` |
+| 创建Agent | `ReActAgent(name="...", model=..., toolkit=toolkit)` |
 | 调用 | `await agent("你好")` |
-| 创建Tool | `@Tool def my_tool(...): ...` |
+| 注册工具 | `toolkit.register_tool_function(my_tool, group_name="basic")` |
 | 创建Pipeline | `SequentialPipeline([a, b, c])` |
 | 使用MsgHub | `MsgHub([agent1, agent2])` |
 | 部署Runtime | `AgentScopeRuntime(agents=[...]).start()` |

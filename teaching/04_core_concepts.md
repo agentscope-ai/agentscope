@@ -769,7 +769,7 @@ asyncio.run(main())
 | `ChatResponse` | `CompletableFuture<ChatResult>` |
 | `structured_model` | Jackson @JsonSchema |
 | 流式响应 | Reactive Streams `Publisher` |
-| `tools` | `@Tool` 注解 |
+| `toolkit.register_tool_function()` | 动态注册方法 |
 | `stream_tool_parsing` | 手动 JSON 解析 |
 | `reasoning_effort` | 无直接对应 |
 

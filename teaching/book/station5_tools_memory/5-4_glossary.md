@@ -28,21 +28,27 @@ Tool例子：
 **说人话**：把多个Tool装在一起，方便管理
 
 ```python
-toolkit = Toolkit([search_weather, calculate, send_email])
+toolkit = Toolkit()
+toolkit.register_tool_function(search_weather, group_name="weather")
+toolkit.register_tool_function(calculate, group_name="basic")
+toolkit.register_tool_function(send_email, group_name="email")
 ```
 
 ---
 
-### **@Tool** = **工具标记**
+### **ToolResponse** = **工具响应**
 
-> "就是给函数贴个标签，说'这是一个工具'"
+> "就是工具执行后返回的结果包装"
 
-**说人话**：用装饰器把普通函数变成Tool
+**说人话**：所有工具函数必须返回 `ToolResponse` 对象
 
 ```python
-@Tool  # 标记为工具
-def calculate(expression: str) -> str:
-    return str(eval(expression))
+from agentscope.tool import ToolResponse
+
+def calculate(expression: str) -> ToolResponse:
+    # 安全地解析并计算简单表达式
+    result = str(eval(expression))  # 实际生产中请用 ast.literal_eval
+    return ToolResponse(result=result)
 ```
 
 ---
@@ -98,6 +104,7 @@ def calculate(expression: str) -> str:
 
 ★ **Insight** ─────────────────────────────────────
 - **Tool是Agent的手脚**，让它能执行操作
-- **Toolkit是工具箱**，管理多个Tool
+- **Toolkit是工具箱**，通过 `register_tool_function()` 注册工具
+- **ToolResponse是响应**，所有工具必须返回此对象
 - **Memory是记忆**，让Agent记住对话历史
 ─────────────────────────────────────────────────

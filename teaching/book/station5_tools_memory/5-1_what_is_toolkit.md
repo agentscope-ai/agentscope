@@ -16,32 +16,37 @@
 ## 🚀 先跑起来
 
 ```python showLineNumbers
-from agentscope.tool import Tool, Toolkit
+from agentscope.tool import Toolkit, ToolResponse
+import ast
 
-# 创建自定义Tool
-@Tool
-def calculate(expression: str) -> str:
-    """计算数学表达式
-    
+# 创建自定义工具函数（无需装饰器）
+def safe_calculate(expression: str) -> ToolResponse:
+    """计算数学表达式（安全版本，仅支持基本运算）
+
     Args:
         expression: 数学表达式，如 "2+3*4"
-    
+
     Returns:
-        计算结果
+        ToolResponse: 包含计算结果的响应
     """
-    return str(eval(expression))
+    # 使用 ast.literal_eval 避免安全风险
+    result = str(ast.literal_eval(expression))
+    return ToolResponse(result=result)
 
 # 使用Toolkit注册工具
-toolkit = Toolkit([calculate])
+toolkit = Toolkit()
+toolkit.register_tool_function(safe_calculate, group_name="basic")
 
-# 或者链式添加
-toolkit = Toolkit().add(search_weather).add(send_email)
+# 链式注册多个工具
+toolkit = Toolkit()
+toolkit.register_tool_function(search_weather, group_name="weather") \
+       .register_tool_function(send_email, group_name="email")
 
 # 传给Agent
 agent = ReActAgent(
     name="Assistant",
     model=model,
-    tools=toolkit  # 绑定工具
+    toolkit=toolkit  # 注意是 toolkit= 不是 tools=
 )
 ```
 
@@ -74,9 +79,9 @@ Toolkit类似Java的**工具类集合**：
 
 | Python | Java | 说明 |
 |--------|------|------|
-| `@Tool` 装饰器 | 注解 | 标记为工具 |
+| `register_tool_function()` | 注册方法 | 将函数注册为工具 |
 | `Toolkit` | Utils类 | 工具集合 |
-| `func` | static方法 | 实际执行 |
+| `ToolResponse` | 返回对象 | 工具执行结果 |
 
 ---
 
@@ -99,6 +104,7 @@ Toolkit类似Java的**工具类集合**：
 
 ★ **Insight** ─────────────────────────────────────
 - **Toolkit = 工具箱**，管理Agent可用的所有工具
-- **@Tool = 标记**，把函数标记为可调用的工具
-- **description = 使用说明**，帮助模型决定何时调用
+- **register_tool_function() = 注册**，将函数注册为可调用的工具
+- **ToolResponse = 响应对象**，包含工具执行结果
+- **group_name = 分组**，控制工具在何时暴露给Agent
 ─────────────────────────────────────────────────

@@ -809,8 +809,11 @@ async def test_multi_agent_workflow():
 def test_tool_integration_with_agent():
     """测试智能体与工具集成"""
     # 创建带工具的智能体
+    toolkit = Toolkit()
+    toolkit.register_tool_function(weather_tool, group_name="weather")
+    toolkit.register_tool_function(news_tool, group_name="news")
     agent = ReActAgent(
-        toolkit=Toolkit([weather_tool, news_tool])
+        toolkit=toolkit
     )
 
     # 测试工具调用

@@ -36,19 +36,23 @@
 import agentscope
 from agentscope import ReActAgent
 from agentscope.model import OpenAIChatModel
-from agentscope.tool import Tool
+from agentscope.tool import Toolkit, ToolResponse
 
-# 1. 定义搜索工具
-@Tool
-def web_search(query: str) -> str:
+# 1. 定义搜索工具函数
+def web_search(query: str) -> ToolResponse:
     """搜索网络获取相关信息"""
     # 实际项目中调用搜索API
-    return f"关于'{query}'的搜索结果..."
+    result = f"关于'{query}'的搜索结果..."
+    return ToolResponse(result=result)
 
 # 2. 初始化
 agentscope.init(project="DeepResearch")
 
-# 3. 创建研究Agent
+# 3. 创建工具箱并注册
+toolkit = Toolkit()
+toolkit.register_tool_function(web_search, group_name="search")
+
+# 4. 创建研究Agent
 agent = ReActAgent(
     name="Researcher",
     model=OpenAIChatModel(api_key="your-key", model="gpt-4"),
@@ -57,10 +61,10 @@ agent = ReActAgent(
     1. 搜索相关信息
     2. 分析整理
     3. 输出结构化报告""",
-    tools=[web_search]
+    toolkit=toolkit
 )
 
-# 4. 运行
+# 5. 运行
 import asyncio
 
 async def main():

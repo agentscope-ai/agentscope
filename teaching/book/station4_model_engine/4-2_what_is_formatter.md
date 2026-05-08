@@ -16,7 +16,7 @@
 ## 🚀 先跑起来
 
 ```python showLineNumbers
-from agentscope import Msg
+from agentscope.message import Msg
 from agentscope.formatter import FormatterBase, JsonFormatter
 
 # 使用内置Formatter
