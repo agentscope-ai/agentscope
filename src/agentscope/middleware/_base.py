@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Base middleware class for AgentScope middleware system."""
-from typing import AsyncGenerator, Callable, Union, TYPE_CHECKING
+from typing import AsyncGenerator, Awaitable, Callable, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..agent import Agent
@@ -64,7 +64,7 @@ class MiddlewareBase:
         self,
         agent: "Agent",
         input_kwargs: dict,
-        next_handler: Callable[[], AsyncGenerator],
+        next_handler: Callable[..., AsyncGenerator],
     ) -> AsyncGenerator:
         """Hook for intercepting the reply process.
 
@@ -88,7 +88,7 @@ class MiddlewareBase:
         self,
         agent: "Agent",
         input_kwargs: dict,
-        next_handler: Callable[[], AsyncGenerator],
+        next_handler: Callable[..., AsyncGenerator],
     ) -> AsyncGenerator:
         """Hook for intercepting the reasoning process.
 
@@ -110,7 +110,7 @@ class MiddlewareBase:
         self,
         agent: "Agent",
         input_kwargs: dict,
-        next_handler: Callable[[], AsyncGenerator],
+        next_handler: Callable[..., AsyncGenerator],
     ) -> AsyncGenerator:
         """Hook for intercepting tool call execution.
 
@@ -132,7 +132,10 @@ class MiddlewareBase:
         self,
         agent: "Agent",
         input_kwargs: dict,
-        next_handler: Callable,
+        next_handler: Callable[
+            ...,
+            Awaitable["ChatResponse" | AsyncGenerator["ChatResponse", None]],
+        ],
     ) -> Union["ChatResponse", AsyncGenerator["ChatResponse", None]]:
         """Hook for intercepting the model API call.
 

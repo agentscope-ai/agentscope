@@ -397,6 +397,10 @@ class Agent:
 
             async def execute_chain(
                 index: int = 0,
+                msgs: Msg | list[Msg] | None = msgs,
+                event: UserConfirmResultEvent
+                | ExternalExecutionResultEvent
+                | None = event,
             ) -> AsyncGenerator[AgentEvent | Msg, None]:
                 if index >= len(self._reply_middlewares):
                     async for item in self._reply_impl(msgs=msgs, event=event):
@@ -405,11 +409,10 @@ class Agent:
                     mw = self._reply_middlewares[index]
                     input_kwargs = {"msgs": msgs, "event": event}
 
-                    async def next_handler() -> AsyncGenerator[
-                        AgentEvent | Msg,
-                        None,
-                    ]:
-                        async for item in execute_chain(index + 1):
+                    async def next_handler(
+                        **kwargs: Any,
+                    ) -> AsyncGenerator[AgentEvent | Msg, None]:
+                        async for item in execute_chain(index + 1, **kwargs):
                             yield item
 
                     async for item in mw.on_reply(
@@ -580,7 +583,10 @@ class Agent:
                 yield item
         else:
 
-            async def execute_chain(index: int = 0) -> AsyncGenerator:
+            async def execute_chain(
+                index: int = 0,
+                tool_choice: ToolChoice = tool_choice,
+            ) -> AsyncGenerator:
                 if index >= len(self._reasoning_middlewares):
                     async for item in self._reasoning_impl(
                         tool_choice=tool_choice,
@@ -590,8 +596,8 @@ class Agent:
                     mw = self._reasoning_middlewares[index]
                     input_kwargs = {"tool_choice": tool_choice}
 
-                    async def next_handler() -> AsyncGenerator:
-                        async for item in execute_chain(index + 1):
+                    async def next_handler(**kwargs: Any) -> AsyncGenerator:
+                        async for item in execute_chain(index + 1, **kwargs):
                             yield item
 
                     async for item in mw.on_reasoning(
@@ -1143,7 +1149,10 @@ class Agent:
                 yield item
         else:
 
-            async def execute_chain(index: int = 0) -> AsyncGenerator:
+            async def execute_chain(
+                index: int = 0,
+                tool_call: ToolCallBlock = tool_call,
+            ) -> AsyncGenerator:
                 if index >= len(self._acting_middlewares):
                     async for item in self._execute_tool_call_impl(tool_call):
                         yield item
@@ -1151,8 +1160,8 @@ class Agent:
                     mw = self._acting_middlewares[index]
                     input_kwargs = {"tool_call": tool_call}
 
-                    async def next_handler() -> AsyncGenerator:
-                        async for item in execute_chain(index + 1):
+                    async def next_handler(**kwargs: Any) -> AsyncGenerator:
+                        async for item in execute_chain(index + 1, **kwargs):
                             yield item
 
                     async for item in mw.on_acting(
@@ -1625,6 +1634,9 @@ class Agent:
                         async def execute_chain(
                             index: int = 0,
                             current_model: ChatModelBase = model,
+                            messages: list[Msg] = messages,
+                            tools: list[dict] = tools,
+                            tool_choice: ToolChoice = tool_choice,
                         ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
                             """Execute the model chain."""
                             if index >= len(self._model_call_middlewares):
@@ -1636,19 +1648,22 @@ class Agent:
                             else:
                                 mw = self._model_call_middlewares[index]
                                 input_kwargs = {
+                                    "current_model": current_model,
                                     "messages": messages,
                                     "tools": tools,
                                     "tool_choice": tool_choice,
                                 }
 
-                                async def next_handler() -> (
+                                async def next_handler(
+                                    **kwargs: Any,
+                                ) -> (
                                     ChatResponse
                                     | AsyncGenerator[ChatResponse, None]
                                 ):
                                     # pylint: disable=cell-var-from-loop
                                     return await execute_chain(
                                         index + 1,
-                                        current_model,
+                                        **kwargs,
                                     )
 
                                 return await mw.on_model_call(
