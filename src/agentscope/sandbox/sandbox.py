@@ -92,7 +92,7 @@ class Sandbox:
         self._started = False
 
         self._tools: dict[str, _ToolEntry] = {}
-        self._mcp_servers: dict[str, _MCPServerHandle] = {}
+        self._exec_mcp_servers: dict[str, _MCPServerHandle] = {}
         self._skills: dict[str, _SkillEntry] = {}
 
         self._gateway: MCPGateway | None = None
@@ -346,7 +346,7 @@ class Sandbox:
             return self._gateway.list_servers()
         return [
             {"name": h.name, "command": h.command, "pid": h.pid}
-            for h in self._mcp_servers.values()
+            for h in self._exec_mcp_servers.values()
         ]
 
     async def add_mcp(
@@ -372,7 +372,7 @@ class Sandbox:
                 "Dynamic remove_mcp is not supported when MCPGateway "
                 "is enabled (one-period limitation)",
             )
-        handle = self._mcp_servers.pop(name, None)
+        handle = self._exec_mcp_servers.pop(name, None)
         if handle and handle.pid:
             kill_cmd = f"kill {handle.pid} 2>/dev/null || true"
             await self.connection.exec(kill_cmd, timeout=5)
@@ -487,7 +487,16 @@ class Sandbox:
                 handle.pid = int(pid_line)
             except ValueError:
                 pass
-        self._mcp_servers[name] = handle
+        else:
+            logger.warning(
+                "MCP server %r failed to start in sandbox %s "
+                "(exit_code=%s, stderr=%s)",
+                name,
+                self._id,
+                r.exit_code,
+                r.stderr.decode(errors="replace").strip()[:200],
+            )
+        self._exec_mcp_servers[name] = handle
         logger.info(
             "Started MCP server %r in sandbox %s (pid=%s)",
             name,
