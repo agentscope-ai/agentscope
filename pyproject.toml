@@ -59,6 +59,7 @@ service = [
     "fastapi",
     "uvicorn",
     "apscheduler",
+    "ag-ui-protocol>=0.1.10",
 ]
 # ------------ Storage ------------
 storage = [
