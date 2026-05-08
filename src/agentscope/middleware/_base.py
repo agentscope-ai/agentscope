@@ -40,9 +40,9 @@ class MiddlewareBase:
                 print(f"After reasoning for agent {agent.name}")
 
         agent = Agent(
-            name="my_agent",
-            model=model,
+            ...
             middlewares=[LoggingMiddleware()],
+            ...
         )
         ```
     """
@@ -145,6 +145,7 @@ class MiddlewareBase:
                 - messages: list[Msg]
                 - tools: list[dict]
                 - tool_choice: ToolChoice
+                - current_model: The model instance used for this call
             next_handler: Callable that executes the next middleware or
             original method
 

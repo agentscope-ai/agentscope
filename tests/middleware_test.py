@@ -309,6 +309,8 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             "mw1_chunk",
             "mw2_chunk",
             "mw1_chunk",
+            "mw2_post",
+            "mw1_post",
         ]
         self.assertListEqual(self.execution_log, expected)
 

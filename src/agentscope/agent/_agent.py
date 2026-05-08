@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The unified agent class in AgentScope library."""
 import asyncio
+import inspect
 import uuid
 from asyncio import Queue
 from copy import deepcopy
@@ -632,7 +633,6 @@ class Agent:
         None,
     ]:
         """Core reasoning logic. Yields chunks with is_last flag."""
-        # TODO: Pass tool schemas from toolkit when toolkit is implemented
 
         yield ModelCallStartEvent(
             reply_id=self.state.reply_id,
@@ -652,19 +652,20 @@ class Agent:
         block_ids: dict = {"text": None, "thinking": None, "tools": []}
         completed_response: ChatResponse | None = None
 
-        if self.model.stream:
+        # Check if res is an async generator (streaming response)
+        if inspect.isasyncgen(res):
             async for chunk in res:
-                # Break if it's the last chunk with completed response
+                # Save the last chunk with completed response
                 if chunk.is_last:
                     completed_response = chunk
-                    break
 
-                # Convert the chunk into events
-                async for evt in self._convert_chat_response_to_event(
-                    block_ids,
-                    chunk,
-                ):
-                    yield evt
+                else:
+                    # Convert the chunk into events
+                    async for evt in self._convert_chat_response_to_event(
+                        block_ids,
+                        chunk,
+                    ):
+                        yield evt
 
         elif isinstance(res, ChatResponse):
             completed_response = res
