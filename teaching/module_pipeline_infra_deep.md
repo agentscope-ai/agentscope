@@ -1416,7 +1416,8 @@ class StateModule:
 
 ```python showLineNumbers
 from agentscope.pipeline import SequentialPipeline
-from agentscope import AgentBase, Msg
+from agentscope.agent import AgentBase
+from agentscope.message import Msg
 
 # 创建代理
 agent1 = MyAgent(name="agent1")
@@ -1474,7 +1475,8 @@ results = await pipeline(initial)  # 返回 list[Msg]
 
 ```python showLineNumbers
 from agentscope.pipeline import MsgHub
-from agentscope import AgentBase, Msg
+from agentscope.agent import AgentBase
+from agentscope.message import Msg
 
 # 使用 MsgHub 自动管理多代理消息传递
 async with MsgHub(
@@ -1651,7 +1653,8 @@ agentscope.init(
 ```python
 import asyncio
 from agentscope.pipeline import sequential_pipeline, fanout_pipeline
-from agentscope import ReActAgent, Msg
+from agentscope.agent import ReActAgent
+from agentscope.message import Msg
 
 # 假设 a1, a2, a3 是已初始化的 ReActAgent
 async def test_sequential():
@@ -1704,7 +1707,8 @@ async def fanout_with_log(agents, msg):
 
 ```python
 from typing import Callable
-from agentscope import AgentBase, Msg
+from agentscope.agent import AgentBase
+from agentscope.message import Msg
 
 async def transform_pipeline(
     agents: list[AgentBase],
@@ -1724,7 +1728,8 @@ async def transform_pipeline(
 
 ```python
 from typing import Callable
-from agentscope import AgentBase, Msg
+from agentscope.agent import AgentBase
+from agentscope.message import Msg
 
 async def transform_pipeline(
     agents: list[AgentBase],
@@ -1803,7 +1808,8 @@ a2.observe = lambda msg: logging_observe(a2, msg)
 ```python
 import asyncio
 from typing import Any
-from agentscope import AgentBase, Msg
+from agentscope.agent import AgentBase
+from agentscope.message import Msg
 
 class ResumablePipeline:
     """支持断点恢复的 Pipeline。"""

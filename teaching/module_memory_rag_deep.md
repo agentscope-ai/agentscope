@@ -2080,7 +2080,7 @@ for doc in results:
 ### 9.4 在智能体中使用记忆和知识库
 
 ```python showLineNumbers
-from agentscope import ReActAgent
+from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
 from agentscope.formatter import OpenAIFormatter
 from agentscope.memory import InMemoryMemory

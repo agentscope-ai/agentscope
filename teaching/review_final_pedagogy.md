@@ -611,7 +611,8 @@ Toolkit 是 AgentScope 工具系统的核心，理解其设计对于开发复杂
 ### 8.1 创建 ReActAgent
 
 ```python
-from agentscope import ReActAgent, Msg
+from agentscope.agent import ReActAgent
+from agentscope.message import Msg
 from agentscope.model import OpenAIChatModel
 from agentscope.formatter import OpenAIFormatter
 from agentscope.tool import Toolkit, execute_python_code

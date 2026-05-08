@@ -1076,7 +1076,8 @@ class DAGPipeline:
 ```python
 import asyncio
 from agentscope.pipeline import sequential_pipeline, fanout_pipeline
-from agentscope import ReActAgent, Msg
+from agentscope.agent import ReActAgent
+from agentscope.message import Msg
 
 # 假设 a1, a2, a3 已初始化
 msg = Msg(name="user", content="hello", role="user")
@@ -1237,7 +1238,8 @@ results = await pipeline(Msg("user", "hello", "user"))
 ```python
 import asyncio
 from agentscope.pipeline import sequential_pipeline
-from agentscope import ReActAgent, Msg
+from agentscope.agent import ReActAgent
+from agentscope.message import Msg
 
 # 假设 a1, a2, a3 已初始化，name 分别为 "A", "B", "C"
 # 每个 agent 的 reply() 方法内会 print(f"{self.name} executing")

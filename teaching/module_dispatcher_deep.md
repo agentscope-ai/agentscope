@@ -781,7 +781,7 @@ class NestedMsgHub(MsgHub):
 import asyncio
 import json
 import redis.asyncio as redis
-from agentscope import Msg
+from agentscope.message import Msg
 from typing import Callable
 
 class DistributedMsgHub:
