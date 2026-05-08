@@ -53,74 +53,169 @@ AgentScope 采用**分层模块化架构**，设计原则类似 Java 的 Spring 
 
 ## 5.2 目录结构详解
 
+> **注意**：`skills` 不是 `src/agentscope/` 下的模块。AgentScope 的 skill 功能位于 `examples/functionality/agent_skill/` 和 `examples/agent/a2ui_agent/samples/general_agent/skills/`，属于示例代码。
+
 ```
 src/agentscope/
 ├── __init__.py              # 包入口，定义 init() 函数
-│
 ├── _version.py              # 版本信息
-├── _logging.py              # 日志配置 (类似 logback.xml)
+├── _logging.py              # 日志配置
 ├── _run_config.py           # 运行时配置
+├── _utils/                  # 工具函数集
 │
-├── agent/                   # ════════════════════════════════
-│   ├── _agent_base.py       # Agent 基类 (抽象类)
-│   ├── _react_agent.py      # ReAct Agent 实现
-│   ├── _user_agent.py       # 用户交互 Agent
+├── agent/                   # Agent 模块
+│   ├── _agent_base.py       # AgentBase 基类 (元类: _AgentMeta)
+│   ├── _agent_meta.py       # 元类实现 (Hook 机制)
+│   ├── _react_agent_base.py # ReActAgentBase 基类 (元类: _ReActAgentMeta)
+│   ├── _react_agent.py      # ReActAgent 主实现
+│   ├── _user_agent.py       # UserAgent 实现
 │   ├── _realtime_agent.py   # 实时语音 Agent
 │   ├── _a2a_agent.py        # A2A 协议 Agent
-│   └── __init__.py          # 导出 ReActAgent, UserAgent 等
+│   ├── _user_input.py       # 用户输入处理
+│   ├── _utils.py            # Agent 工具函数
+│   └── __init__.py
 │
-├── model/                   # ════════════════════════════════
-│   ├── _model_base.py       # 模型基类 (抽象类)
-│   ├── _openai_model.py     # OpenAI 实现
+├── model/                   # 模型模块
+│   ├── _model_base.py        # ChatModelBase 抽象基类
+│   ├── _model_response.py   # 模型响应结构 (ChatResponse)
+│   ├── _model_usage.py      # Token 用量统计
+│   ├── _openai_model.py     # OpenAI GPT 系列实现
 │   ├── _anthropic_model.py  # Anthropic Claude 实现
-│   ├── _dashscope_model.py  # 阿里通义实现
+│   ├── _dashscope_model.py  # 阿里通义千问实现
 │   ├── _gemini_model.py     # Google Gemini 实现
 │   ├── _ollama_model.py     # Ollama 本地模型
+│   ├── _trinity_model.py    # Trinity 模型实现
 │   └── __init__.py
 │
-├── tool/                    # ════════════════════════════════
+├── tool/                    # 工具模块
 │   ├── _toolkit.py          # 核心管理类 Toolkit
-│   ├── _types.py            # 类型定义
 │   ├── _response.py         # ToolResponse 结果类
-│   ├── _async_wrapper.py    # 流式响应包装器
-│   ├── _coding/             # 代码执行工具 (Python, Shell)
-│   ├── _text_file/          # 文件操作工具
-│   ├── _multi_modality/     # 多模态工具
-│   └── __init__.py
+│   ├── _types.py            # 工具类型定义
+│   ├── _async_wrapper.py    # 异步工具调用包装器
+│   ├── _coding/            # 代码执行工具 (Python, Shell)
+│   ├── _text_file/         # 文件操作工具 (读/写/插入)
+│   └── _multi_modality/     # 多模态工具 (文生图、语音、图像识别)
 │
-├── memory/                  # ════════════════════════════════
-│   ├── _memory_base.py      # 记忆基类
+├── memory/                  # 记忆模块
 │   ├── _working_memory/     # 短期记忆
-│   │   ├── _in_memory.py
-│   │   ├── _redis.py
-│   │   └── _sqlalchemy.py
-│   ├── _long_term_memory/   # 长期记忆
-│   │   ├── _mem0.py
-│   │   └── _reme.py
-│   └── __init__.py
+│   │   ├── _base.py        # MemoryBase 抽象基类
+│   │   ├── _in_memory_memory.py  # 内存存储
+│   │   ├── _redis_memory.py      # Redis 存储
+│   │   ├── _sqlalchemy_memory.py # SQLAlchemy 异步存储
+│   │   └── _tablestore_memory.py  # 阿里云表格存储
+│   └── _long_term_memory/  # 长期记忆
+│       ├── _long_term_memory_base.py
+│       ├── _mem0/          # Mem0 实现
+│       └── _reme/          # ReMe 实现
 │
-├── pipeline/                # ════════════════════════════════
-│   ├── _msghub.py           # 消息中心
-│   ├── _functional.py       # 函数式管道
-│   └── __init__.py
+├── pipeline/                # 管道模块
+│   ├── _msghub.py          # MsgHub 消息中心
+│   ├── _functional.py       # 函数式管道 (sequential/fanout)
+│   ├── _class.py           # Pipeline 类封装
+│   └── _chat_room.py       # 聊天室实现
 │
-├── formatter/               # 消息格式化器 (适配不同 API)
+├── message/                 # 消息模块
+│   ├── _message_base.py     # Msg 消息类
+│   └── _message_block.py   # ContentBlock 体系
 │
-├── rag/                     # RAG 相关
-│   ├── _reader/             # 文档读取器
-│   └── _store/             # 向量存储
+├── formatter/               # 格式化器模块
+│   ├── _formatter_base.py   # FormatterBase 抽象基类
+│   ├── _openai_formatter.py      # OpenAI 格式化
+│   ├── _anthropic_formatter.py   # Claude 格式化
+│   ├── _dashscope_formatter.py   # 通义千问格式化
+│   ├── _gemini_formatter.py      # Gemini 格式化
+│   ├── _deepseek_formatter.py    # DeepSeek 格式化
+│   ├── _ollama_formatter.py      # Ollama 格式化
+│   └── _a2a_formatter.py        # A2A 协议格式化
 │
-├── session/                 # 会话管理
-├── embedding/               # Embedding 模型
-├── token/                   # Token 计数
-├── evaluate/                # 评估基准
-├── tracing/                 # 链路追踪
-├── realtime/                # 实时通信
-├── tts/                     # 语音合成
-├── tuner/                   # 模型调优
-├── mcp/                     # MCP 协议
-├── a2a/                     # A2A 协议
-└── _utils/                  # 工具函数
+├── rag/                     # RAG 模块
+│   ├── _document.py         # Document 文档类
+│   ├── _knowledge_base.py   # KnowledgeBase 知识库基类
+│   ├── _simple_knowledge.py # SimpleKnowledge 实现
+│   ├── _reader/            # 文档读取器 (Text/PDF/Word/Excel/PPT/Image)
+│   └── _store/             # 向量存储 (Qdrant/Milvus/MongoDB/OceanBase/AlibabaCloud)
+│
+├── session/                # 会话管理
+│   ├── _session_base.py    # SessionBase 抽象基类
+│   ├── _json_session.py   # JSON 文件存储
+│   ├── _redis_session.py  # Redis 存储
+│   └── _tablestore_session.py  # 阿里云表格存储
+│
+├── tracing/                # 链路追踪
+│   ├── _setup.py          # setup_tracing 初始化
+│   ├── _trace.py         # trace 装饰器及追踪函数
+│   └── _attributes.py     # 追踪属性定义
+│
+├── hooks/                  # Hook 系统
+│   └── _studio_hooks.py  # AgentScope Studio 集成
+│
+├── a2a/                   # A2A 协议模块
+│   ├── _base.py          # AgentCard 解析器基类
+│   ├── _file_resolver.py # 本地文件解析
+│   └── _nacos_resolver.py # Nacos 服务发现
+│
+├── mcp/                   # MCP 协议模块
+│   ├── _client_base.py   # MCP 客户端基类
+│   ├── _stdio_stateful_client.py   # STDIO 有状态客户端
+│   ├── _http_stateful_client.py    # HTTP 有状态客户端
+│   ├── _http_stateless_client.py  # HTTP 无状态客户端
+│   └── _mcp_function.py  # MCP 工具函数包装器
+│
+├── module/                # 状态模块基类
+│   └── _state_module.py  # StateModule
+│
+├── plan/                  # 任务计划模块
+│   ├── _plan_notebook.py # 计划笔记本
+│   ├── _plan_model.py   # 计划数据模型
+│   └── _storage_base.py  # 存储基类
+│
+├── embedding/             # Embedding 模型
+│   ├── _embedding_base.py # EmbeddingModelBase 抽象基类
+│   ├── _openai_embedding.py      # OpenAI
+│   ├── _dashscope_embedding.py   # 通义千问
+│   └── _gemini_embedding.py      # Gemini
+│
+├── evaluate/              # 评估基准
+│   ├── _benchmark_base.py # BenchmarkBase 基类
+│   ├── _task.py          # 评估任务
+│   ├── _metric_base.py   # 指标基类
+│   └── _evaluator/       # 评估器 (Ray/通用)
+│
+├── exception/             # 异常类型
+│   ├── _exception_base.py
+│   └── _tool.py          # 工具相关异常
+│
+├── realtime/              # 实时语音
+│   ├── _base.py          # RealtimeModelBase
+│   ├── _dashscope_realtime_model.py  # 通义实时
+│   ├── _openai_realtime_model.py     # OpenAI Realtime
+│   └── _events/          # 事件定义
+│
+├── token/                 # Token 计数
+│   ├── _token_base.py    # TokenCounterBase
+│   ├── _openai_token_counter.py
+│   ├── _anthropic_token_counter.py
+│   └── _gemini_token_counter.py
+│
+├── tts/                  # 语音合成
+│   ├── _tts_base.py      # TTSModelBase
+│   ├── _dashscope_tts_model.py    # 通义 TTS
+│   ├── _openai_tts_model.py      # OpenAI TTS
+│   └── _gemini_tts_model.py      # Gemini TTS
+│
+├── tuner/                # 模型调优
+│   ├── _tune.py         # tune() 入口
+│   ├── _config.py       # 调优配置
+│   ├── model_selection/  # 模型选择
+│   └── prompt_tune/     # Prompt 调优
+│
+├── types/                # 公共类型
+│   ├── _hook.py        # Hook 类型枚举
+│   ├── _json.py        # JSON 序列化类型
+│   ├── _object.py      # 对象类型
+│   └── _tool.py        # 工具类型
+│
+└── tune/                 # ⚠️ 已废弃，请使用 tuner/
 ```
 
 ## 5.3 核心类设计
@@ -707,6 +802,10 @@ public class MyConfig {
 
 ### 源码文件位置索引
 
+> ⚠️ **最后更新**：本索引基于 v1.0.19 源码验证。如发现与实际源码不符，请提交 Issue。
+>
+> **注意**：`skills` 不是 `src/agentscope/` 下的模块。AgentScope 的 skill 功能是用户级使用模式，位于 `examples/functionality/agent_skill/` 和 `examples/agent/a2ui_agent/samples/general_agent/skills/`，属于示例代码，不在核心 API 范围内。
+
 ```
 src/agentscope/
 ├── __init__.py                          # 入口文件 (init 函数)
@@ -715,56 +814,293 @@ src/agentscope/
 ├── _run_config.py                       # 运行时配置
 ├── _utils/                              # 工具函数集
 │
-├── agent/                               # Agent 模块
-│   ├── _agent_base.py                   # AgentBase 基类 (774行)
-│   ├── _agent_meta.py                   # 元类实现 (Hook机制)
-│   ├── _react_agent.py                  # ReActAgent 实现 (主Agent)
-│   ├── _react_agent_base.py             # ReActAgentBase 基类
+├── agent/                               # ════════════════════════════════
+│   ├── _agent_base.py                   # AgentBase 基类 (元类: _AgentMeta)
+│   ├── _agent_meta.py                   # 元类实现 (Hook 机制)
+│   ├── _react_agent_base.py             # ReActAgentBase 基类 (元类: _ReActAgentMeta)
+│   ├── _react_agent.py                  # ReActAgent 主实现
 │   ├── _user_agent.py                   # UserAgent 实现
-│   ├── _realtime_agent.py               # 实时语音Agent
-│   ├── _a2a_agent.py                    # A2A协议Agent
+│   ├── _realtime_agent.py               # 实时语音 Agent
+│   ├── _a2a_agent.py                    # A2A 协议 Agent
 │   ├── _user_input.py                   # 用户输入处理
-│   └── _chat_room.py                    # 聊天室实现
+│   ├── _utils.py                       # Agent 工具函数
+│   └── __init__.py                      # 导出 ReActAgent, UserAgent 等
 │
-├── model/                               # 模型模块
-│   ├── _model_base.py                    # 模型基类
-│   ├── _model_response.py               # 模型响应结构
-│   ├── _openai_model.py                 # OpenAI 模型实现
-│   ├── _anthropic_model.py              # Claude 模型实现
-│   ├── _dashscope_model.py              # 通义模型实现
-│   ├── _gemini_model.py                 # Gemini 模型实现
-│   ├── _ollama_model.py                 # Ollama 本地模型
-│   └── _trinity_model.py                # Trinity 模型实现
+├── model/                               # ════════════════════════════════
+│   ├── _model_base.py                   # ChatModelBase 抽象基类
+│   ├── _model_response.py               # 模型响应结构 (ChatResponse)
+│   ├── _model_usage.py                  # Token 用量统计
+│   ├── _openai_model.py                 # OpenAI GPT 系列实现
+│   ├── _anthropic_model.py              # Anthropic Claude 实现
+│   ├── _dashscope_model.py              # 阿里通义千问实现
+│   ├── _gemini_model.py                 # Google Gemini 实现
+│   ├── _ollama_model.py                 # Ollama 本地模型实现
+│   ├── _trinity_model.py                # Trinity 模型实现
+│   └── __init__.py
 │
-├── pipeline/                            # 管道模块
+├── tool/                                # ════════════════════════════════
+│   ├── _toolkit.py                      # 核心管理类 Toolkit
+│   ├── _response.py                     # ToolResponse 结果类
+│   ├── _types.py                        # 工具类型定义
+│   ├── _async_wrapper.py                # 异步工具调用包装器
+│   ├── _coding/                         # 代码执行工具 (Python, Shell)
+│   ├── _text_file/                      # 文件操作工具 (读/写/插入)
+│   ├── _multi_modality/                 # 多模态工具 (文生图、语音、图像识别)
+│   └── __init__.py
+│
+├── pipeline/                            # ════════════════════════════════
 │   ├── _msghub.py                       # MsgHub 消息中心
 │   ├── _functional.py                   # 函数式管道 (sequential/fanout)
-│   └── _class.py                        # Pipeline 类封装
+│   ├── _class.py                        # Pipeline 类封装
+│   ├── _chat_room.py                    # 聊天室实现
+│   └── __init__.py
 │
-├── memory/                              # 记忆模块
-│   ├── _memory_base.py                  # 记忆基类
+├── memory/                              # ════════════════════════════════
 │   ├── _working_memory/                 # 短期记忆
-│   └── _long_term_memory/               # 长期记忆
+│   │   ├── _base.py                     # MemoryBase 抽象基类
+│   │   ├── _in_memory_memory.py        # 内存存储
+│   │   ├── _redis_memory.py            # Redis 存储
+│   │   ├── _sqlalchemy_memory.py       # SQLAlchemy 异步存储
+│   │   └── _tablestore_memory.py        # 阿里云表格存储
+│   ├── _long_term_memory/               # 长期记忆
+│   │   ├── _long_term_memory_base.py   # LongTermMemoryBase 抽象基类
+│   │   ├── _mem0/                      # Mem0 长期记忆
+│   │   │   ├── _mem0_long_term_memory.py
+│   │   │   └── _mem0_utils.py
+│   │   └── _reme/                      # ReMe 长期记忆
+│   │       ├── _reme_long_term_memory_base.py
+│   │       ├── _reme_personal_long_term_memory.py
+│   │       ├── _reme_task_long_term_memory.py
+│   │       └── _reme_tool_long_term_memory.py
+│   └── __init__.py
 │
-├── tool/                                # 工具模块
-│   ├── _tool_base.py                    # 工具基类
-│   ├── _coding.py                       # 代码执行工具
-│   ├── _text_file.py                    # 文件操作工具
-│   └── _mcp.py                          # MCP 协议工具
+├── message/                             # ════════════════════════════════
+│   ├── _message_base.py                # Msg 消息类定义 (name, content, role, metadata)
+│   ├── _message_block.py               # ContentBlock 体系 (Text/Thinking/ToolUse/ToolResult/Image/Audio/Video)
+│   └── __init__.py                     # 导出 Msg, TextBlock, ThinkingBlock 等
 │
-├── message/                             # 消息模块
-│   └── Msg.py                           # 消息结构定义
+├── formatter/                           # ════════════════════════════════
+│   ├── _formatter_base.py              # FormatterBase 抽象基类
+│   ├── _truncated_formatter_base.py    # 截断格式化基类
+│   ├── _openai_formatter.py            # OpenAI 消息格式化
+│   ├── _anthropic_formatter.py         # Claude 消息格式化
+│   ├── _dashscope_formatter.py         # 通义千问格式化
+│   ├── _gemini_formatter.py            # Gemini 格式化
+│   ├── _deepseek_formatter.py          # DeepSeek 格式化
+│   ├── _ollama_formatter.py            # Ollama 格式化
+│   ├── _a2a_formatter.py               # A2A 协议格式化
+│   └── __init__.py
 │
-├── formatter/                           # 格式化器模块
+├── rag/                                 # ════════════════════════════════
+│   ├── _document.py                    # Document 文档类
+│   ├── _knowledge_base.py              # KnowledgeBase 知识库基类
+│   ├── _simple_knowledge.py            # SimpleKnowledge 简单知识库实现
+│   ├── _reader/                        # 文档读取器
+│   │   ├── _reader_base.py            # ReaderBase 抽象基类
+│   │   ├── _text_reader.py            # 文本读取
+│   │   ├── _pdf_reader.py             # PDF 读取
+│   │   ├── _image_reader.py           # 图像读取 (OCR)
+│   │   ├── _word_reader.py            # Word 文档读取
+│   │   ├── _excel_reader.py           # Excel 读取
+│   │   ├── _ppt_reader.py             # PPT 读取
+│   │   └── _utils.py                  # 读取器工具函数
+│   ├── _store/                         # 向量存储
+│   │   ├── _store_base.py             # VDBStoreBase 抽象基类
+│   │   ├── _qdrant_store.py           # Qdrant 向量数据库
+│   │   ├── _milvuslite_store.py      # Milvus Lite
+│   │   ├── _oceanbase_store.py        # OceanBase 向量存储
+│   │   ├── _mongodb_store.py          # MongoDB 向量存储
+│   │   └── _alibabacloud_mysql_store.py  # 阿里云 MySQL 向量存储
+│   └── __init__.py
 │
-├── rag/                                 # RAG 模块
+├── session/                             # ════════════════════════════════
+│   ├── _session_base.py               # SessionBase 抽象基类
+│   ├── _json_session.py               # JSON 文件会话存储
+│   ├── _redis_session.py              # Redis 会话存储
+│   ├── _tablestore_session.py         # 阿里云表格存储会话
+│   └── __init__.py
 │
-├── session/                             # 会话管理
+├── tracing/                             # ════════════════════════════════
+│   ├── _setup.py                    # setup_tracing 追踪初始化
+│   ├── _trace.py                    # trace 装饰器及追踪函数
+│   ├── _attributes.py                # 追踪属性定义
+│   ├── _converter.py                 # 事件转换器
+│   ├── _extractor.py                # 追踪数据提取器
+│   ├── _utils.py                    # 追踪工具函数
+│   └── __init__.py                  # 导出 setup_tracing, trace 等
 │
-├── tracing/                             # 链路追踪
+├── hooks/                              # ════════════════════════════════
+│   ├── _studio_hooks.py               # AgentScope Studio 集成 Hook
+│   └── __init__.py
 │
-└── hooks/                               # Hook 系统
-    └── _hooks.py                        # Hook 实现
+├── a2a/                                # ════════════════════════════════
+│   ├── _base.py                       # AgentCard 解析器基类
+│   ├── _file_resolver.py              # 本地文件 AgentCard 解析
+│   ├── _well_known_resolver.py        # Well-Known URL 解析
+│   ├── _nacos_resolver.py             # Nacos 服务发现解析
+│   └── __init__.py
+│
+├── mcp/                                # ════════════════════════════════
+│   ├── _client_base.py                # MCP 客户端基类
+│   ├── _stateful_client_base.py       # 有状态 MCP 客户端基类
+│   ├── _stdio_stateful_client.py      # STDIO 有状态客户端
+│   ├── _http_stateful_client.py       # HTTP 有状态客户端
+│   ├── _http_stateless_client.py      # HTTP 无状态客户端
+│   ├── _mcp_function.py               # MCP 工具函数包装器
+│   └── __init__.py
+│
+├── module/                             # ════════════════════════════════
+│   ├── _state_module.py               # StateModule 状态模块基类
+│   └── __init__.py
+│
+├── plan/                               # ════════════════════════════════
+│   ├── _plan_notebook.py              # 计划笔记本 (子任务分解)
+│   ├── _plan_model.py                 # 计划数据模型
+│   ├── _storage_base.py               # 存储基类
+│   ├── _in_memory_storage.py          # 内存存储实现
+│   └── __init__.py
+│
+├── embedding/                          # ════════════════════════════════
+│   ├── _embedding_base.py             # EmbeddingModelBase 抽象基类
+│   ├── _embedding_response.py         # Embedding 响应结构
+│   ├── _embedding_usage.py            # Embedding Token 用量
+│   ├── _cache_base.py                 # Embedding 缓存基类
+│   ├── _file_cache.py                 # 文件缓存实现
+│   ├── _openai_embedding.py          # OpenAI Embedding
+│   ├── _dashscope_embedding.py       # 通义千问 Embedding
+│   ├── _dashscope_multimodal_embedding.py  # 通义多模态 Embedding
+│   ├── _gemini_embedding.py          # Gemini Embedding
+│   ├── _ollama_embedding.py          # Ollama Embedding
+│   ├── _utils.py                     # Embedding 工具函数
+│   └── __init__.py
+│
+├── evaluate/                           # ════════════════════════════════
+│   ├── _benchmark_base.py             # BenchmarkBase 评估基类
+│   ├── _task.py                      # 评估任务定义
+│   ├── _solution.py                   # 解决方案输出
+│   ├── _metric_base.py                # 指标基类
+│   ├── _evaluator/                    # 评估器实现
+│   │   ├── _evaluator_base.py       # 评估器基类
+│   │   ├── _ray_evaluator.py         # Ray 分布式评估器
+│   │   ├── _general_evaluator.py     # 通用评估器
+│   │   └── _in_memory_exporter.py   # 内存导出器
+│   ├── _evaluator_storage/            # 评估结果存储
+│   │   ├── _evaluator_storage_base.py  # 存储基类
+│   │   └── _file_evaluator_storage.py  # 文件存储实现
+│   └── _ace_benchmark/                # ACE 评估基准
+│       ├── _ace_benchmark.py         # ACE 基准主类
+│       ├── _ace_metric.py            # ACE 指标定义
+│       ├── _ace_tools_api/           # API 实现
+│       │   ├── _food_platform_api.py  # 食物平台 API
+│       │   ├── _travel_api.py        # 旅行 API
+│       │   ├── _message_api.py       # 消息 API
+│       │   ├── _reminder_api.py      # 提醒 API
+│       │   └── _shared_state.py      # 共享状态
+│       └── _ace_tools_zh.py          # 中文工具封装
+│
+├── exception/                          # ════════════════════════════════
+│   ├── _exception_base.py             # 异常基类
+│   ├── _tool.py                       # 工具相关异常
+│   └── __init__.py                    # 导出异常类
+│
+├── realtime/                           # ════════════════════════════════
+│   ├── _base.py                       # RealtimeModelBase 抽象基类
+│   ├── _dashscope_realtime_model.py  # 通义实时语音模型
+│   ├── _openai_realtime_model.py     # OpenAI Realtime API
+│   ├── _gemini_realtime_model.py     # Gemini Realtime
+│   ├── _events/                       # 事件定义
+│   │   ├── _client_event.py         # 客户端事件
+│   │   ├── _server_event.py        # 服务端事件
+│   │   ├── _model_event.py          # 模型事件
+│   │   └── _utils.py                # 事件工具函数
+│   └── __init__.py
+│
+├── token/                              # ════════════════════════════════
+│   ├── _token_base.py                 # TokenCounterBase 抽象基类
+│   ├── _openai_token_counter.py       # OpenAI Token 计数
+│   ├── _anthropic_token_counter.py   # Claude Token 计数
+│   ├── _gemini_token_counter.py     # Gemini Token 计数
+│   ├── _huggingface_token_counter.py # HuggingFace Token 计数
+│   ├── _char_token_counter.py        # 字符 Token 计数 (备用)
+│   └── __init__.py
+│
+├── tts/                                # ════════════════════════════════
+│   ├── _tts_base.py                   # TTSModelBase 抽象基类
+│   ├── _dashscope_tts_model.py       # 通义千问 TTS
+│   ├── _dashscope_realtime_tts_model.py  # 通义实时 TTS
+│   ├── _dashscope_cosyvoice_tts_model.py  # 通义 CosyVoice 语音
+│   ├── _dashscope_cosyvoice_realtime_tts_model.py  # 通义实时 CosyVoice
+│   ├── _openai_tts_model.py          # OpenAI TTS
+│   ├── _gemini_tts_model.py          # Gemini TTS
+│   ├── _tts_response.py              # TTS 响应结构
+│   ├── _utils.py                     # TTS 工具函数
+│   └── __init__.py
+│
+├── tuner/                              # ════════════════════════════════
+│   ├── _tune.py                       # 模型调优入口 (tune 函数)
+│   ├── _config.py                     # 调优配置
+│   ├── _algorithm.py                  # 调优算法
+│   ├── _dataset.py                    # 数据集配置
+│   ├── _model.py                      # 调优模型配置
+│   ├── _judge.py                      # 评判器
+│   ├── _workflow.py                   # 调优工作流
+│   ├── model_selection/               # 模型选择
+│   │   └── ...                        # 内置评判器
+│   └── prompt_tune/                  # Prompt 调优
+│       └── ...                        # Prompt 优化配置
+│
+├── tune/                               # ⚠️ 已废弃，请使用 tuner/
+│   └── __init__.py
+│
+├── types/                              # ════════════════════════════════
+│   ├── _hook.py                       # Hook 类型枚举
+│   ├── _json.py                       # JSON 序列化类型
+│   ├── _object.py                     # 对象类型
+│   ├── _tool.py                       # 工具类型
+│   └── __init__.py
+│
+└── _utils/                             # 工具函数集
+    └── ...                            # 通用工具函数
+```
+
+### 模块分层总览
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        AgentScope Service Layer                          │
+├─────────────────────────────────────────────────────────────────────────┤
+│  核心模块                                                               │
+│  ├── agent/      Agent 实现 (ReAct/A2A/Realtime/User)                  │
+│  ├── model/      模型抽象 + 多厂商实现 (OpenAI/Claude/通义/Gemini/Ollama)│
+│  ├── tool/       工具注册与执行 (代码/文件/多模态)                       │
+│  ├── memory/     短期记忆 + 长期记忆 (Mem0/ReMe)                        │
+│  ├── pipeline/   多 Agent 编排 (MsgHub/Sequential/Fanout)               │
+│  └── formatter/  API 消息格式化                                         │
+│                                                                          │
+│  通信协议                                                               │
+│  ├── a2a/        Agent-to-Agent 协议 (AgentCard 解析)                   │
+│  └── mcp/        Model Context Protocol 客户端                         │
+│                                                                          │
+│  能力扩展                                                               │
+│  ├── rag/        检索增强生成 (文档读取 + 向量存储)                       │
+│  ├── embedding/  文本/多模态 Embedding 模型                            │
+│  ├── realtime/   WebSocket 实时语音模型                                 │
+│  ├── tts/        语音合成模型                                           │
+│  └── token/      Token 计数                                            │
+│                                                                          │
+│  应用支撑                                                               │
+│  ├── session/    会话持久化 (JSON/Redis/表格存储)                        │
+│  ├── tracing/    OpenTelemetry 链路追踪                                 │
+│  ├── evaluate/   评估基准框架 (ACE Benchmark)                            │
+│  ├── tuner/      模型调优 / Prompt 调优                                 │
+│  └── hooks/      AgentScope Studio 集成                                 │
+│                                                                          │
+│  基础设施                                                               │
+│  ├── exception/  异常类型定义                                           │
+│  ├── types/      公共类型定义 (Hook/JSON/Tool)                         │
+│  ├── message/    消息 ContentBlock 定义                                │
+│  └── _utils/    通用工具函数                                           │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### 5.14.1 init() 函数源码分析
