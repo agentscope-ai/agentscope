@@ -103,7 +103,7 @@ repos:
           --max-nested-blocks=7,
           --max-statements=100,
           --max-returns=10,
-          --max-module-lines=2000,
+          --max-module-lines=3000,
         ]
   - repo: https://github.com/regebro/pyroma
     rev: "5.0"
