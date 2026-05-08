@@ -16,9 +16,9 @@
 ## 🚀 先跑起来
 
 ```python showLineNumbers
-from agentscope import Msg
+from agentscope.message import Msg
 from agentscope.pipeline import MsgHub
-from agentscope import ReActAgent
+from agentscope.agent import ReActAgent
 
 # 创建消息中心
 hub = MsgHub()

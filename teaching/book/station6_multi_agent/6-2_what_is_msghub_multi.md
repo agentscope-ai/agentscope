@@ -16,7 +16,8 @@
 ## 🚀 MsgHub多Agent协作
 
 ```python showLineNumbers
-from agentscope import Msg, ReActAgent
+from agentscope.message import Msg
+from agentscope.agent import ReActAgent
 from agentscope.pipeline import MsgHub
 
 # 创建消息中枢

@@ -56,7 +56,7 @@
 ```python showLineNumbers
 # P8-3_multi_agent_debate.py
 import agentscope
-from agentscope import Msg
+from agentscope.message import Msg
 from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
 from agentscope.pipeline import MsgHub

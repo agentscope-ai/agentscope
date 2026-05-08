@@ -10,7 +10,7 @@
 
 ```python showLineNumbers
 import agentscope
-from agentscope import ReActAgent
+from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
 
 # 初始化
@@ -98,7 +98,7 @@ agent = ReActAgent(
 ### 创建不同角色的Msg
 
 ```python showLineNumbers
-from agentscope import Msg
+from agentscope.message import Msg
 
 # 用户消息
 user_msg = Msg(name="user", content="你好", role="user")
@@ -145,7 +145,8 @@ results = await pipeline(user_input)
 ### 发布订阅
 
 ```python showLineNumbers
-from agentscope import Msg, MsgHub
+from agentscope.message import Msg
+from agentscope.pipeline import MsgHub
 
 # 创建MsgHub
 msghub = MsgHub(agents=[agent_a, agent_b])

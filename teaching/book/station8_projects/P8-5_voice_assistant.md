@@ -52,7 +52,7 @@
 # P8-5_voice_assistant.py
 import asyncio
 import agentscope
-from agentscope import Msg
+from agentscope.message import Msg
 from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
 
