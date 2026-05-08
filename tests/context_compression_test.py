@@ -24,7 +24,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             name="Friday",
             system_prompt="".join(["0" for _ in range(60 * 4)]),
             model=MockModel(),
-            compression=CompressionConfig(
+            compression_config=CompressionConfig(
                 trigger_ratio=0.8,
                 reserve_ratio=0.1,
             ),
@@ -474,7 +474,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             name="Friday",
             system_prompt="".join(["0" for _ in range(20 * 4)]),
             model=model,
-            compression=CompressionConfig(
+            compression_config=CompressionConfig(
                 trigger_ratio=0.7,
                 reserve_ratio=0.4,
             ),
