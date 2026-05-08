@@ -51,7 +51,7 @@ con_agent = ReActAgent(
 
 # 创建MsgHub协调多Agent
 msghub = MsgHub(
-    agents=[pro_agent, con_agent],
+    participants=[pro_agent, con_agent],
     announcement=None  # 可选：广播消息
 )
 
@@ -94,7 +94,7 @@ async def debate(topic: str, rounds: int = 3):
 ┌─────────────────────────────────────────────────────────────┐
 │  MsgHub初始化                                              │
 │                                                             │
-│  msghub = MsgHub(agents=[pro_agent, con_agent])           │
+│  msghub = MsgHub(participants=[pro_agent, con_agent])     │
 │                                                             │
 │  ┌─────────────────────────────────────────────────────┐   │
 │  │ MsgHub内部状态：                                     │   │
@@ -215,7 +215,7 @@ MsgHub类似Java的**消息队列（Message Queue）**：
 
 ```python
 # Python MsgHub - 发布订阅
-msghub = MsgHub(agents=[agent_a, agent_b])
+msghub = MsgHub(participants=[agent_a, agent_b])
 await msghub.publish(Msg(name="system", content="通知"))
 
 # Java Kafka - 发布订阅
@@ -241,7 +241,7 @@ kafkaTemplate.send("topic", "message");
 
 3. **如果增加一个"裁判Agent"，MsgHub需要怎么改？**
    - 只需要在创建MsgHub时加入裁判Agent：
-   - `msghub = MsgHub(agents=[pro_agent, con_agent, judge_agent])`
+   - `msghub = MsgHub(participants=[pro_agent, con_agent, judge_agent])`
    - 裁判会和其他Agent一样收到所有消息
 
 4. **MsgHub的announcement参数有什么用？**

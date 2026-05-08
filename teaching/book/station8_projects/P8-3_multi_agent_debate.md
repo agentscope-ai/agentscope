@@ -97,7 +97,7 @@ con_agent = ReActAgent(
 )
 
 # 6. 创建MsgHub
-msghub = MsgHub(agents=[pro_agent, con_agent])
+msghub = MsgHub(participants=[pro_agent, con_agent])
 
 # 7. 辩论函数
 import asyncio
@@ -177,7 +177,7 @@ if __name__ == "__main__":
 ### 1. MsgHub创建
 
 ```python
-msghub = MsgHub(agents=[pro_agent, con_agent])
+msghub = MsgHub(participants=[pro_agent, con_agent])
 ```
 
 MsgHub将正方和反方Agent注册为订阅者，它们会自动收到发布的消息。

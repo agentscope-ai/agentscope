@@ -149,7 +149,7 @@ from agentscope.message import Msg
 from agentscope.pipeline import MsgHub
 
 # 创建MsgHub
-msghub = MsgHub(agents=[agent_a, agent_b])
+msghub = MsgHub(participants=[agent_a, agent_b])
 
 # 发布消息
 await msghub.publish(Msg(name="user", content="开场"))
