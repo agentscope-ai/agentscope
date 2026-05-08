@@ -26,8 +26,10 @@ from ._deepseek_formatter import (
     DeepSeekChatFormatter,
     DeepSeekMultiAgentFormatter,
 )
-from ._openai_response_formatter import OpenAIResponseFormatter
-from ._openai_response_formatter import OpenAIResponseMultiAgentFormatter
+from ._openai_response_formatter import (
+    OpenAIResponseFormatter,
+    OpenAIResponseMultiAgentFormatter,
+)
 from ._kimi_formatter import KimiChatFormatter, KimiMultiAgentFormatter
 from ._xai_formatter import (
     XAIChatFormatter,
