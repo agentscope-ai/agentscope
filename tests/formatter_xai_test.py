@@ -103,7 +103,7 @@ _build_xai_sdk_stub()
 
 
 class TestXAIFormatter(IsolatedAsyncioTestCase):
-    """Comprehensive tests for XAI (Grok) Chat and MultiAgent formatters.
+    """Comprehensive tests for XAI Chat and MultiAgent formatters.
 
     The formatter returns proto/mock objects rather than dicts, so assertions
     inspect mock attributes (role, args, kwargs, tool_calls, etc.).
@@ -240,7 +240,7 @@ class TestXAIFormatter(IsolatedAsyncioTestCase):
         )
 
     async def test_chat_formatter_thinking_dropped(self) -> None:
-        """ThinkingBlock is silently ignored in user/assistant Grok
+        """ThinkingBlock is silently ignored in user/assistant xAI
         messages."""
         fmt = XAIChatFormatter()
         msgs = [

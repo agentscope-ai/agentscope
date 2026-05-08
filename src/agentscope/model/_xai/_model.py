@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""The xAI Grok chat model implementation using the official xai_sdk."""
+"""The xAI chat model implementation using the official xai_sdk."""
 from datetime import datetime
 from typing import Any, AsyncGenerator, List, Literal, TYPE_CHECKING
 
 from pydantic import BaseModel, Field, SecretStr
 
 from .. import ChatUsage, ChatModelBase
-from ...formatter._grok_formatter import XAIChatFormatter
+from ...formatter._xai_formatter import XAIChatFormatter
 from ...message import (
     TextBlock,
     ThinkingBlock,
@@ -25,10 +25,10 @@ else:
     Chunk = Any
 
 
-class GrokCredential(BaseModel):
-    """The xAI Grok credential model."""
+class XAICredential(BaseModel):
+    """The xAI credential model."""
 
-    type: Literal["grok_credential"] = "grok_credential"
+    type: Literal["xai_credential"] = "xai_credential"
     """The credential type."""
 
     api_key: SecretStr = Field(
@@ -37,8 +37,8 @@ class GrokCredential(BaseModel):
     """The xAI API key."""
 
 
-class GrokChatModel(ChatModelBase):
-    """The xAI Grok chat model using the official ``xai_sdk`` gRPC client.
+class XAIChatModel(ChatModelBase):
+    """The xAI chat model using the official ``xai_sdk`` gRPC client.
 
     This model provides native access to xAI-specific features such as
     server-side agentic tools (web search, X search, code execution) and
@@ -47,7 +47,7 @@ class GrokChatModel(ChatModelBase):
     """
 
     class Parameters(BaseModel):
-        """The parameters for the Grok chat model."""
+        """The parameters for the xAI chat model."""
 
         max_tokens: int | None = Field(
             default=None,
@@ -68,7 +68,7 @@ class GrokChatModel(ChatModelBase):
                 "reasoning."
             ),
         )
-        """Reasoning effort level for Grok reasoning models."""
+        """Reasoning effort level for xAI reasoning models."""
 
         temperature: float | None = Field(
             default=None,
@@ -88,17 +88,17 @@ class GrokChatModel(ChatModelBase):
         )
         """The top-p sampling parameter."""
 
-    type: Literal["grok_chat"] = "grok_chat"
+    type: Literal["xai_chat"] = "xai_chat"
     """The type of the chat model."""
 
-    credential: GrokCredential
-    """The xAI Grok credential."""
+    credential: XAICredential
+    """The xAI credential."""
 
     model: str = Field(
         title="Model",
-        description="The Grok model name.",
+        description="The xAI model name.",
     )
-    """The Grok model name."""
+    """The xAI model name."""
 
     stream: bool = Field(
         default=True,
@@ -110,17 +110,17 @@ class GrokChatModel(ChatModelBase):
     max_retries: int = Field(
         default=0,
         title="Max Retries",
-        description="The maximum number of retries for the Grok API.",
+        description="The maximum number of retries for the xAI API.",
         ge=0,
     )
     """The maximum number of API call retries."""
 
     parameters: Parameters = Field(
         default_factory=Parameters,
-        title="Grok API Parameters",
-        description="The Grok API parameters.",
+        title="XAI API Parameters",
+        description="The xAI API parameters.",
     )
-    """The Grok API parameters."""
+    """The xAI API parameters."""
 
     formatter: XAIChatFormatter = Field(
         default_factory=XAIChatFormatter,
@@ -138,7 +138,7 @@ class GrokChatModel(ChatModelBase):
         tool_choice: ToolChoice | None = None,
         **generate_kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
-        """Call the xAI Grok API using the official ``xai_sdk`` gRPC client.
+        """Call the xAI API using the official ``xai_sdk`` gRPC client.
 
         Args:
             model_name (`str`):
@@ -271,7 +271,7 @@ class GrokChatModel(ChatModelBase):
         chat: Any,
         client: Any,
     ) -> AsyncGenerator[ChatResponse, None]:
-        """Parse the Grok streaming response from ``xai_sdk``.
+        """Parse the xAI streaming response from ``xai_sdk``.
 
         Args:
             start_datetime (`datetime`):
@@ -370,7 +370,7 @@ class GrokChatModel(ChatModelBase):
         start_datetime: datetime,
         response: Any,
     ) -> ChatResponse:
-        """Parse the Grok non-streaming response from ``xai_sdk``.
+        """Parse the xAI non-streaming response from ``xai_sdk``.
 
         Args:
             start_datetime (`datetime`):

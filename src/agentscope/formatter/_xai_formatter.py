@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The xAI (Grok) formatter module.
+"""The xAI formatter module.
 
 This formatter converts AgentScope ``Msg`` objects into the protobuf
 ``Message`` objects expected by the ``xai_sdk`` gRPC client.  Unlike every
@@ -28,7 +28,7 @@ from ..message import (
 
 
 class XAIChatFormatter(FormatterBase):
-    """Formatter for the xAI Grok chat model.
+    """Formatter for the xAI chat model.
 
     Converts ``Msg`` objects into ``xai_sdk`` protobuf ``Message`` objects
     that can be appended directly to a ``xai_sdk`` chat session.
@@ -130,7 +130,7 @@ class XAIChatFormatter(FormatterBase):
                                 )
                         else:
                             logger.warning(
-                                "Unsupported media type %s for Grok API. "
+                                "Unsupported media type %s for xAI API. "
                                 "Only image/jpeg and image/png are supported. "
                                 "This block will be skipped.",
                                 block.source.media_type,
@@ -222,7 +222,7 @@ class XAIChatFormatter(FormatterBase):
 
 
 class XAIMultiAgentFormatter(FormatterBase):
-    """Formatter for the xAI Grok chat model in multi-agent conversations.
+    """Formatter for the xAI chat model in multi-agent conversations.
 
     Produces ``xai_sdk`` protobuf ``Message`` objects (same as
     :class:`XAIChatFormatter`).  Prior agent-to-agent messages are collapsed

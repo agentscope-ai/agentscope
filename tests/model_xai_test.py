@@ -17,7 +17,7 @@ from agentscope.message import (
     ToolCallBlock,
     ThinkingBlock,
 )
-from agentscope.model import GrokChatModel, GrokCredential
+from agentscope.model import XAIChatModel, XAICredential
 
 
 # ---------------------------------------------------------------------------
@@ -112,8 +112,8 @@ _build_xai_sdk_stub()
 
 
 def _make_model() -> Any:
-    return GrokChatModel(
-        credential=GrokCredential(api_key="test"),
+    return XAIChatModel(
+        credential=XAICredential(api_key="test"),
         model="grok-3",
         stream=False,
         context_size=131_072,
@@ -127,7 +127,7 @@ def _make_model() -> Any:
 
 
 class TestXAIModelParsing(IsolatedAsyncioTestCase):
-    """Unit tests for GrokChatModel response parsing."""
+    """Unit tests for XAIChatModel response parsing."""
 
     def setUp(self) -> None:
         """Set up a fresh model instance and start time."""
@@ -140,9 +140,9 @@ class TestXAIModelParsing(IsolatedAsyncioTestCase):
         tool_calls: Any = None,
         reasoning: Any = None,
     ) -> "MagicMock":
-        """Build a mock Grok API response object."""
+        """Build a mock xAI API response object."""
         resp = MagicMock()
-        resp.id = "grok-resp-1"
+        resp.id = "xai-resp-1"
         resp.content = text or ""
         resp.reasoning_content = reasoning or ""
         resp.tool_calls = None
@@ -198,4 +198,4 @@ class TestXAIModelParsing(IsolatedAsyncioTestCase):
         """The response ID from the API is stored in the ChatResponse."""
         resp = self._mock_response(text="Hi")
         result = self.model._parse_completion_response(self.start, resp)
-        self.assertEqual(result.id, "grok-resp-1")
+        self.assertEqual(result.id, "xai-resp-1")

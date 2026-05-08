@@ -11,7 +11,7 @@ from ._deepseek import DeepSeekCredential, DeepSeekChatModel
 from ._gemini import GeminiCredential, GeminiChatModel
 from ._ollama import OllamaCredential, OllamaChatModel
 from ._openai_chat import OpenAIChatCredential, OpenAIChatModel
-from ._grok import GrokCredential, GrokChatModel
+from ._xai import XAICredential, XAIChatModel
 from ._kimi import KimiCredential, KimiChatModel
 from ._openai_response import OpenAIResponseCredential, OpenAIResponseModel
 
@@ -33,8 +33,8 @@ __all__ = [
     "OllamaChatModel",
     "OpenAIChatCredential",
     "OpenAIChatModel",
-    "GrokCredential",
-    "GrokChatModel",
+    "XAICredential",
+    "XAIChatModel",
     "KimiCredential",
     "KimiChatModel",
     "OpenAIResponseCredential",
