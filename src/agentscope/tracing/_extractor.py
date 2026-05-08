@@ -55,8 +55,8 @@ def _get_common_attributes() -> Dict[str, str]:
 
     session_id = _current_session_id.get()
     return {
-        SpanAttributes.GEN_AI_CONVERSATION_ID: _serialize_to_str(
-            session_id if session_id else "[no_session_id]",
+        SpanAttributes.GEN_AI_CONVERSATION_ID: (
+            session_id if session_id else "[no_session_id]"
         ),
     }
 
@@ -590,9 +590,9 @@ def _get_tool_request_attributes(
         tool_name = tool_call.name
         attributes[SpanAttributes.GEN_AI_TOOL_CALL_ID] = tool_call.id
         attributes[SpanAttributes.GEN_AI_TOOL_NAME] = tool_name
-        attributes[
-            SpanAttributes.GEN_AI_TOOL_CALL_ARGUMENTS
-        ] = _serialize_to_str(tool_call.input)
+        # tool_call.input is already a JSON string; pass it directly to avoid
+        # double-encoding (e.g. '{"city": "Beijing"}' → '"{\\"city\\"...}"')
+        attributes[SpanAttributes.GEN_AI_TOOL_CALL_ARGUMENTS] = tool_call.input
 
         if tool_name:
             registered = getattr(instance, "tools", {}).get(tool_name)
