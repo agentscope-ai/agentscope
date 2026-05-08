@@ -64,7 +64,7 @@ class SandboxManager:
         )
         return sandbox
 
-    def get(self, sandbox_id: str) -> Sandbox:
+    def get_sandbox(self, sandbox_id: str) -> Sandbox:
         """Look up a live sandbox by its unique sandbox_id."""
         try:
             return self._instances[sandbox_id]
@@ -77,7 +77,7 @@ class SandboxManager:
     async def destroy(self, sandbox_id: str) -> None:
         """Destroy a sandbox and remove it from the registry."""
         sandbox = self._instances.pop(sandbox_id, None)
-        if sandbox is None:
+        if not sandbox:
             logger.warning(
                 "SandboxManager: destroy called for unknown id %s",
                 sandbox_id,
@@ -162,7 +162,7 @@ class SandboxManager:
                     "acquire_from_pool timed out — no free sandbox",
                 ) from None
             self._pool_in_use.add(sid)
-        return self.get(sid)
+        return self.get_sandbox(sid)
 
     async def release_to_pool(self, sandbox: Sandbox) -> None:
         """Return a sandbox to the pool; replace it if dead."""

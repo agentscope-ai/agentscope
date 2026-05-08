@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 import mcp.types as mtypes
 
-from ..mcp._stdio_stateful_client import StdIOStatefulClient
+from ..mcp import StdIOStatefulClient
 from .._logging import logger
 
 if TYPE_CHECKING:
@@ -148,7 +148,7 @@ class MCPGateway:
     ) -> mtypes.CallToolResult:
         """Route a tool call to the owning MCP server."""
         route = self._tool_routes.get(name)
-        if route is None:
+        if not route:
             available = list(self._tool_routes.keys())
             raise KeyError(
                 f"Tool {name!r} not found in gateway. Available: {available}",
