@@ -810,10 +810,13 @@ asyncio.run(main())
 | `tool/_types.py` | 类型定义 `RegisteredToolFunction`, `ToolGroup` |
 | `tool/_response.py` | `ToolResponse` 结果类 |
 | `tool/_async_wrapper.py` | 流式响应包装器 |
-| `tool/_utils/_common.py` | `_parse_tool_function()` 签名解析 |
+| `_utils/_common.py` | `_parse_tool_function()` 签名解析 |
 | `mcp/_mcp_function.py` | `MCPToolFunction` MCP工具包装类 |
 | `mcp/_client_base.py` | `MCPClientBase` 抽象基类 |
 | `mcp/_stateful_client_base.py` | 有状态 MCP 客户端基类 |
+| `mcp/_http_stateful_client.py` | HTTP 有状态 MCP 客户端 |
+| `mcp/_http_stateless_client.py` | HTTP 无状态 MCP 客户端 |
+| `mcp/_stdio_stateful_client.py` | STDIO 有状态 MCP 客户端 |
 
 ### 4.4.3 工具核心类型
 
@@ -1041,9 +1044,9 @@ def search_database(query: str, table: str = "users") -> ToolResponse:
 │                                                         │
 │  ┌─────────────────────────────────────────────────┐   │
 │  │              Working Memory (短期记忆)            │   │
-│  │  ┌─────────┐ ┌─────────┐ ┌─────────┐           │   │
-│  │  │InMemory │ │  Redis  │ │SQLAlchemy│           │   │
-│  │  └─────────┘ └─────────┘ └─────────┘           │   │
+│  │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌───────┐ │   │
+│  │  │InMemory │ │  Redis  │ │SQLAlchemy│ │Tablestore│ │   │
+│  │  └─────────┘ └─────────┘ └─────────┘ └───────┘ │   │
 │  └─────────────────────────────────────────────────┘   │
 │                         ↕                               │
 │  ┌─────────────────────────────────────────────────┐   │
