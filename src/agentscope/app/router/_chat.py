@@ -10,7 +10,7 @@ chat_router = APIRouter(
     prefix="/chat",
     tags=["chat"],
     responses={404: {"description": "Not found"}},
-
+)
 
 
 class ChatRequest(BaseModel):

@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 """Agent router for managing agent configurations."""
 import uuid
-from typing import Any
 
-from fastapi import APIRouter, HTTPException  # noqa: F401
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from agentscope.agent import CompressionConfig, ReActConfig
+from ...agent import CompressionConfig, ReActConfig
 
 
 class AgentInfo(AgentConfig):
@@ -15,7 +14,7 @@ class AgentInfo(AgentConfig):
     agent_id: str = Field(description="Unique identifier of the agent.")
     created_at: float = Field(description="Creation timestamp (Unix epoch).")
     updated_at: float = Field(
-        description="Last-updated timestamp (Unix epoch)."
+        description="Last-updated timestamp (Unix epoch).",
     )
 
 

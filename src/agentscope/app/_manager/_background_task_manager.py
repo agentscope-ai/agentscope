@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-""""""
+"""The background task manager."""
 import asyncio
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -94,8 +94,8 @@ class TaskStop(ToolBase):
             return ToolChunk(
                 content=[
                     TextBlock(
-                        text=f"TaskNotFoundError: The task {task_id} does not exist."
-                    )
+                        text=f"TaskNotFoundError: The task {task_id} does not exist.",
+                    ),
                 ],
                 state=ToolResultState.ERROR,
             )
@@ -156,6 +156,6 @@ class BackgroundTaskManager:
 
         return task.id
 
-    def list_tools(self) -> list[ToolBase]:
+    async def list_tools(self) -> list[ToolBase]:
         """List the background tasks related tools."""
         return [TaskStop(self._tasks)]

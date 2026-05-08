@@ -226,3 +226,29 @@ class RedisStorage(StorageBase):
                 The Redis client instance.
         """
         return self._client
+
+    async def save_mcp_config(self, mcp_name: str, config: dict) -> str:
+        """Save the mcp configuration data.
+
+        Args:
+            mcp_name (`str`):
+                The name of the mcp configuration.
+            config (`dict`):
+                The mcp configuration data.
+
+        Returns:
+            `str`:
+                The saved MCP name, which maybe renamed to avoid name conflict.
+        """
+        # If the mcp_name already exists
+
+
+        value = json.dumps(config, ensure_ascii=False)
+
+        key = f"agentscope:mcp:config:{mcp_name}"
+        await self._client.set(key, value, ex=self.key_ttl)
+
+        return mcp_name
+
+    async def delete_mcp_config(self, name: str) -> None:
+        """Delete the mcp configuration data."""
