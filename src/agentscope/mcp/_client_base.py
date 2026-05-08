@@ -33,6 +33,7 @@ class MCPClientBase:
         self,
         func_name: str,
         wrap_tool_result: bool = True,
+        execution_timeout: float | None = None,
     ) -> Callable:
         """Get a tool function by its name."""
 
