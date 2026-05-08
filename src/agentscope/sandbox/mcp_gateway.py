@@ -169,8 +169,8 @@ class MCPGateway:
     def has_tool(self, name: str) -> bool:
         """Return whether ``name`` exists in the routing table.
 
-        The name may be a conflict-disambiguated form like
-        ``server___tool_name``.
+        When two servers expose the same tool name, both are namespaced
+        as ``{server_name}___{tool_name}`` to avoid collisions.
         """
         return name in self._tool_routes
 
