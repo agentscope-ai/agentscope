@@ -4,11 +4,11 @@ import os
 import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.tool import (
-    ToolChunk,
+from agentscope.tool import ToolChunk, Read
+from agentscope.permission import (
     PermissionContext,
     PermissionBehavior,
-    Read,
+    PermissionRule,
 )
 from agentscope.message import TextBlock
 
@@ -167,7 +167,6 @@ class ReadToolTest(IsolatedAsyncioTestCase):
 
     async def test_generate_suggestions(self) -> None:
         """Test generate_suggestions for file operations."""
-        from agentscope.tool import PermissionRule
 
         # Test suggestion for file in subdirectory
         suggestions = self.read_tool.generate_suggestions(

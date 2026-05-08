@@ -2,12 +2,12 @@
 """The edit tool in agentscope."""
 import fnmatch
 import os
-from typing import Any, List, TYPE_CHECKING
+from typing import Any, List
 
 import aiofiles
 
 from .._base import ToolBase
-from .._permission import (
+from ...permission import (
     PermissionContext,
     PermissionDecision,
     PermissionBehavior,
@@ -15,12 +15,8 @@ from .._permission import (
     PermissionRule,
 )
 from .._response import ToolChunk
-from ...message import TextBlock
-
-if TYPE_CHECKING:
-    from ...agent import AgentState
-else:
-    AgentState = Any
+from ...message import TextBlock, ToolResultState
+from ...state import AgentState
 
 
 class Edit(ToolBase):
@@ -83,6 +79,7 @@ Usage:
     is_read_only: bool = False
     is_concurrency_safe: bool = False
     is_external_tool: bool = False
+    is_state_injected: bool = True
 
     def __init__(
         self,
@@ -297,7 +294,7 @@ Usage:
                         ),
                     ),
                 ],
-                state="error",
+                state=ToolResultState.ERROR,
                 is_last=True,
             )
 
@@ -307,7 +304,7 @@ Usage:
                 content=[
                     TextBlock(text=f"Error: File not found: {file_path}"),
                 ],
-                state="error",
+                state=ToolResultState.ERROR,
                 is_last=True,
             )
 
@@ -322,7 +319,7 @@ Usage:
                         ),
                     ),
                 ],
-                state="error",
+                state=ToolResultState.ERROR,
                 is_last=True,
             )
 
@@ -338,7 +335,7 @@ Usage:
                             "it using the Read tool.",
                         ),
                     ],
-                    state="error",
+                    state=ToolResultState.ERROR,
                     is_last=True,
                 )
             content = "".join(cache.lines)
@@ -354,7 +351,7 @@ Usage:
             except Exception as e:
                 return ToolChunk(
                     content=[TextBlock(text=f"Error reading file: {str(e)}")],
-                    state="error",
+                    state=ToolResultState.ERROR,
                     is_last=True,
                 )
 
@@ -369,7 +366,7 @@ Usage:
                         text=f"Error: old_string not found in {file_path}",
                     ),
                 ],
-                state="error",
+                state=ToolResultState.ERROR,
                 is_last=True,
             )
 
@@ -386,7 +383,7 @@ Usage:
                         ),
                     ),
                 ],
-                state="error",
+                state=ToolResultState.ERROR,
                 is_last=True,
             )
 
@@ -411,7 +408,7 @@ Usage:
         except Exception as e:
             return ToolChunk(
                 content=[TextBlock(text=f"Error writing file: {str(e)}")],
-                state="error",
+                state=ToolResultState.ERROR,
                 is_last=True,
             )
 
@@ -426,6 +423,6 @@ Usage:
                     f"in {file_path}",
                 ),
             ],
-            state="running",
+            state=ToolResultState.RUNNING,
             is_last=True,
         )

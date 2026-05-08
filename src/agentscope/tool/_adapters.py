@@ -10,14 +10,20 @@ import mcp
 
 from ._types import Function
 from ._base import ToolBase
-from ._permission import (
+from ..permission import (
     PermissionBehavior,
     PermissionDecision,
 )
 from ._response import ToolChunk
 from ._utils import _extract_func_description, _extract_input_schema
 from .._logging import logger
-from ..message import TextBlock, DataBlock, Base64Source, URLSource
+from ..message import (
+    TextBlock,
+    DataBlock,
+    Base64Source,
+    URLSource,
+    ToolResultState,
+)
 
 
 class _FunctionTool(ToolBase):
@@ -29,6 +35,15 @@ class _FunctionTool(ToolBase):
     AsyncGenerator[ToolChunk, None].
     """
 
+    is_external_tool: bool = False
+    """If this tool is an external tool, which doesn't need to implement the
+    __call__ method and the agent will yield the external tool call event."""
+    is_mcp: bool = False
+    """If this tool is an MCP tool, which will be used in the permission"""
+    mcp_name: str | None = None
+    """The name of the MCP server this tool belongs to, which is required if
+    this tool is an MCP tool."""
+
     def __init__(
         self,
         func: Function,
@@ -36,7 +51,8 @@ class _FunctionTool(ToolBase):
         description: str | None = None,
         is_concurrency_safe: bool = True,
         is_read_only: bool = False,
-    ):
+        is_state_injected: bool = False,
+    ) -> None:
         """Initialize the FunctionTool.
 
         Args:
@@ -50,6 +66,8 @@ class _FunctionTool(ToolBase):
                 Whether this tool is safe to call concurrently.
             is_read_only (`bool`, optional):
                 Whether this tool only reads data without side effects.
+            is_state_injected (`bool`, optional):
+                Whether this tool requires agent state injection.
         """
         self.name = name or func.__name__
         self.description = description or _extract_func_description(
@@ -58,6 +76,7 @@ class _FunctionTool(ToolBase):
         self.input_schema = _extract_input_schema(func)
         self.is_concurrency_safe = is_concurrency_safe
         self.is_read_only = is_read_only
+        self.is_state_injected = is_state_injected
         self.is_external_tool = False
         self.is_mcp = False
         self._func = func
@@ -109,11 +128,13 @@ class MCPTool(ToolBase):
 
     is_mcp: bool = True
     """Whether this tool is an MCP tool."""
+    is_state_injected: bool = False
+    """The mcp tools is prohibited state injection for safety reason."""
 
     def __init__(
         self,
         mcp_name: str,
-        tool: Any,
+        tool: mcp.types.Tool,
         client_gen: Callable[..., _AsyncGeneratorContextManager[Any]]
         | None = None,
         session: Any | None = None,
@@ -137,7 +158,7 @@ class MCPTool(ToolBase):
                 The timeout in seconds for tool execution.
         """
         self.mcp_name = mcp_name
-        self.name = tool.name
+        self.name = f"mcp__{self.mcp_name}__{tool.name}"
         self.description = tool.description or ""
 
         # Extract input schema
@@ -147,6 +168,7 @@ class MCPTool(ToolBase):
             "required": tool.inputSchema.get("required", []),
         }
 
+        # By default
         self.is_concurrency_safe = False
         self.is_external_tool = False
 
@@ -217,14 +239,14 @@ class MCPTool(ToolBase):
                 async with ClientSession(read_stream, write_stream) as session:
                     await session.initialize()
                     result = await session.call_tool(
-                        self.name,
+                        self._tool.name,
                         arguments=kwargs,
                         read_timeout_seconds=self._timeout,
                     )
         else:
             # Stateful client: use existing session
             result = await self._session.call_tool(
-                self.name,
+                self._tool.name,
                 arguments=kwargs,
                 read_timeout_seconds=self._timeout,
             )
@@ -232,7 +254,9 @@ class MCPTool(ToolBase):
         # Convert MCP result to AgentScope blocks
         return ToolChunk(
             content=self._convert_mcp_content_to_blocks(result.content),
-            state="error" if result.isError else "running",
+            state=ToolResultState.ERROR
+            if result.isError
+            else ToolResultState.RUNNING,
         )
 
     @staticmethod

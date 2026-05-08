@@ -104,7 +104,7 @@ toolkit = Toolkit()
 async def example_register_stateless_mcp() -> None:
     """注册无状态客户端 MCP 工具的示例。"""
     # 从 MCP 服务器注册所有工具
-    await toolkit.register_mcp_client(
+    await toolkit.register_mcp(
         stateless_client,
         # group_name="map_services",  # 可选的组名
     )

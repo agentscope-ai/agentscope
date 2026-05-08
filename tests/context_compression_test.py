@@ -6,7 +6,8 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from utils import MockModel, AnyString
 
 from agentscope.model import StructuredResponse
-from agentscope.agent import Agent, CompressionConfig, AgentState
+from agentscope.agent import Agent, CompressionConfig
+from agentscope.state import AgentState
 from agentscope.message import UserMsg, AssistantMsg, TextBlock
 from agentscope.tool import Toolkit
 

@@ -7,7 +7,7 @@ import shutil
 from typing import Any, List, Literal
 
 from .._base import ToolBase
-from .._permission import (
+from ...permission import (
     PermissionContext,
     PermissionDecision,
     PermissionBehavior,
@@ -155,6 +155,7 @@ class Grep(ToolBase):
     is_read_only: bool = True
     is_concurrency_safe: bool = True
     is_external_tool: bool = False
+    is_state_injected: bool = False
 
     def __init__(self) -> None:
         """Initialize the grep tool."""

@@ -7,7 +7,7 @@ from docstring_parser import parse
 from pydantic import Field, create_model, ConfigDict
 
 
-def _remove_title_field(schema: dict) -> None:
+def _remove_title_field(schema: dict) -> dict:
     """Remove the title field from the JSON schema to avoid
     misleading the LLM."""
     # The top level title field
@@ -32,6 +32,8 @@ def _remove_title_field(schema: dict) -> None:
         _remove_title_field(
             schema["additionalProperties"],
         )
+
+    return schema
 
 
 def _extract_func_description(docstring: str) -> str:

@@ -5,7 +5,6 @@ import inspect
 import warnings
 from collections import OrderedDict
 from copy import deepcopy
-from functools import wraps
 from typing import (
     AsyncGenerator,
     Any,
@@ -13,7 +12,6 @@ from typing import (
     Generator,
     Callable,
     Coroutine,
-    TYPE_CHECKING,
 )
 
 import mcp
@@ -24,93 +22,26 @@ from pydantic import (
     create_model,
 )
 
-from ._builtin import ResetTools, Edit, Write, Read, SkillViewer
+from ._builtin import ResetTools, SkillViewer
 from ._base import ToolBase
 from ._adapters import _FunctionTool
 from ._response import ToolResponse, ToolChunk
-from ._skill import SkillLoaderBase, LocalSkillLoader
-from ._types import ToolGroup, Skill, RegisteredTool
+from ..skill import SkillLoaderBase, LocalSkillLoader, Skill
+from ._types import ToolGroup, RegisteredTool
 from .._utils._common import _json_loads_with_repair
 from ..exception import (
     DeveloperOrientedException,
     ToolNotFoundError,
     ToolGroupInactiveError,
 )
-from ..mcp import (
-    MCPClientBase,
-    StatefulClientBase,
-)
+from ..mcp import MCPClient
 from ..message import (
     ToolCallBlock,
     TextBlock,
     ToolResultState,
 )
 from .._logging import logger
-
-if TYPE_CHECKING:
-    from ..agent import AgentState
-else:
-    AgentState = "AgentState"
-
-
-def _apply_middlewares(
-    func: Callable[
-        ...,
-        Coroutine[Any, Any, AsyncGenerator[ToolResponse, None]],
-    ],
-) -> Callable[..., AsyncGenerator[ToolResponse, None]]:
-    """Decorator that applies registered middlewares at runtime.
-
-    This decorator reads the middleware list from the instance and constructs
-    the middleware chain dynamically during each invocation.
-
-    .. note:: Middlewares must be async generator functions that yield
-     `ToolResponse` objects.
-    """
-
-    @wraps(func)
-    async def wrapper(
-        self: "Toolkit",
-        tool_call: ToolCallBlock,
-    ) -> AsyncGenerator[ToolResponse, None]:
-        """Wrapper that applies middleware chain."""
-        middlewares = getattr(self, "_middlewares", [])
-
-        if not middlewares:
-            # No middlewares, call the original function directly
-            async for chunk in await func(self, tool_call):
-                yield chunk
-            return
-
-        # Build the middleware chain from innermost to outermost
-        async def base_handler(
-            **kwargs: Any,
-        ) -> AsyncGenerator[ToolResponse, None]:
-            """Base handler that calls the original function."""
-            return await func(self, **kwargs)
-
-        # Wrap with each middleware in reverse order
-        current_handler = base_handler
-        for middleware in reversed(middlewares):
-
-            def make_handler(mw: Callable, handler: Callable) -> Callable:
-                """Create wrapped handler for middleware."""
-
-                async def wrapped(
-                    **kwargs: Any,
-                ) -> AsyncGenerator[ToolResponse, None]:
-                    """Handler that applies middleware."""
-                    return mw(kwargs, handler)
-
-                return wrapped
-
-            current_handler = make_handler(middleware, current_handler)
-
-        # Execute the middleware chain
-        async for chunk in await current_handler(tool_call=tool_call):
-            yield chunk
-
-    return wrapper
+from ..state import AgentState
 
 
 # pylint: disable=line-too-long
@@ -178,7 +109,6 @@ class Toolkit:
         tools: list[ToolBase] | None = None,
         skills: list[str | SkillLoaderBase] | None = None,
         meta_tool_response_template: str = DEFAULT_META_TOOL_RESPONSE_TEMPLATE,
-        mcp_tool_name: str = "mcp__{server}__{tool}",
         skill_viewer_enabled: bool = True,
         skill_instruction_template: str = DEFAULT_SKILL_INSTRUCTION,
     ) -> None:
@@ -191,8 +121,6 @@ class Toolkit:
                 The agent skill directories to be registered.
             meta_tool_response_template (`str`, optional):
                 The template for meta tool responses.
-            mcp_tool_name (`str`, optional):
-                The naming pattern for MCP tools.
             skill_viewer_enabled (`bool`, defaults to `True`):
                 Whether enable the built-in skill viewer tool function.
             skill_instruction_template (`str`):
@@ -231,7 +159,6 @@ class Toolkit:
                     )
 
         self.meta_tool_response_template = meta_tool_response_template
-        self.mcp_tool_name = mcp_tool_name
 
         self.skill_instruction_template = skill_instruction_template
         self.skill_viewer_enabled = skill_viewer_enabled
@@ -520,7 +447,6 @@ class Toolkit:
         )
 
     # @trace_toolkit
-    # @_apply_middlewares
     async def call_tool(
         self,
         tool_call: ToolCallBlock,
@@ -535,7 +461,7 @@ class Toolkit:
         Args:
             tool_call (`ToolCallBlock`):
                 A tool call block.
-            state: AgentState:
+            state (`AgentState`):
                 The current agent state, used to state injection.
 
         Yields:
@@ -566,7 +492,7 @@ class Toolkit:
                             ),
                         ),
                     ],
-                    state="error",
+                    state=ToolResultState.ERROR,
                 )
                 yield chunk
                 yield tool_response.append_chunk(chunk)
@@ -580,7 +506,7 @@ class Toolkit:
                         f"'{tool_call.name}' doesn't exist.",
                     ),
                 ],
-                state="error",
+                state=ToolResultState.ERROR,
             )
             yield chunk
             yield tool_response.append_chunk(chunk)
@@ -594,9 +520,12 @@ class Toolkit:
             # Prepare keyword arguments
             kwargs = _json_loads_with_repair(tool_call.input)
 
-            # TODO: we should be build a mechanism to support state injection
-            #  in the future instead of hard coding here.
-            if isinstance(tool_func, (ResetTools, Read, Write, Edit)):
+            # State injection
+            if (
+                tool_func.is_state_injected
+                and not tool_func.is_mcp
+                and not tool_func.is_external_tool
+            ):
                 kwargs["_agent_state"] = state
 
             if inspect.iscoroutinefunction(tool_func.__call__):
@@ -680,17 +609,21 @@ class Toolkit:
             # Finally, yield the complete tool response
             yield tool_response
 
-    async def register_mcp_client(
+    async def register_mcp(
         self,
-        mcp_client: MCPClientBase,
+        mcp_client: MCPClient,
         group_name: str = "basic",
         enable_funcs: list[str] | None = None,
         disable_funcs: list[str] | None = None,
     ) -> None:
-        """Register tool functions from an MCP client.
+        """Register tools from an MCP client.
+
+        .. note:: When registering tools from an MCP client, the tool will
+         be renamed by template `mcp__{mcp_name}__{tool_name}` to avoid
+         name conflicts.
 
         Args:
-            mcp_client (`MCPClientBase`):
+            mcp_client (`MCPClient`):
                 The MCP client instance to connect to the MCP server.
             group_name (`str`, defaults to `"basic"`):
                 The group name that the tool functions will be added to.
@@ -701,17 +634,20 @@ class Toolkit:
                 The functions that will be filtered out. If `None`, no
                 tool functions will be filtered out.
         """
-        if (
-            isinstance(mcp_client, StatefulClientBase)
-            and not mcp_client.is_connected
-        ):
+        if not isinstance(mcp_client, MCPClient):
+            raise ValueError(
+                f"The 'mcp_client' should be an instance of "
+                f"'MCPClient' but got {type(mcp_client)}.",
+            )
+
+        if mcp_client.is_stateful and not mcp_client.is_connected:
             raise RuntimeError(
                 "The MCP client is not connected to the server. Use the "
                 "`connect()` method first.",
             )
 
-        # Check arguments for enable_funcs and disabled_funcs
-        if enable_funcs is not None and disable_funcs is not None:
+        # Check arguments for enable_funcs and disable_funcs
+        if enable_funcs is not None:
             assert isinstance(enable_funcs, list) and all(
                 isinstance(_, str) for _ in enable_funcs
             ), (
@@ -719,12 +655,15 @@ class Toolkit:
                 f"{enable_funcs}."
             )
 
+        if disable_funcs is not None:
             assert isinstance(disable_funcs, list) and all(
                 isinstance(_, str) for _ in disable_funcs
             ), (
                 "Disable functions should be a list of strings, but got "
                 f"{disable_funcs}."
             )
+
+        if enable_funcs is not None and disable_funcs is not None:
             intersection = set(enable_funcs).intersection(
                 set(disable_funcs),
             )
@@ -755,6 +694,7 @@ class Toolkit:
             registered = RegisteredTool(
                 tool=tool_obj,
                 group=group_name,
+                original_name=mcp_tool.name,
             )
 
             self.tools[tool_obj.name] = registered

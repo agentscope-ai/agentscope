@@ -12,6 +12,9 @@ from agentscope.tool import (
     ToolBase,
     Toolkit,
     ToolChunk,
+    RegisteredTool,
+)
+from agentscope.permission import (
     PermissionDecision,
     PermissionBehavior,
     PermissionContext,
@@ -23,7 +26,6 @@ from agentscope.message import (
     UserMsg,
     ToolResultState,
 )
-from agentscope.tool._types import RegisteredTool
 from agentscope.event import ExternalExecutionResultEvent
 
 

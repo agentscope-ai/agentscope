@@ -1,24 +1,11 @@
 # -*- coding: utf-8 -*-
 """The tool module in agentscope."""
 
-from ._types import ToolChoice, Function, Skill
+from ._types import ToolChoice, Function, RegisteredTool
 from ._response import ToolResponse, ToolChunk
 from ._toolkit import Toolkit
 from ._base import ToolBase
 from ._adapters import MCPTool
-from ._permission import (
-    PermissionContext,
-    AdditionalWorkingDirectory,
-    PermissionDecision,
-    PermissionEngine,
-    PermissionRule,
-    PermissionMode,
-    PermissionBehavior,
-)
-from ._skill import (
-    SkillLoaderBase,
-    LocalSkillLoader,
-)
 from ._builtin import (
     ResetTools,
     Bash,
@@ -27,6 +14,12 @@ from ._builtin import (
     Grep,
     Read,
     Write,
+)
+from ._task import (
+    TaskUpdate,
+    TaskGet,
+    TaskList,
+    TaskCreate,
 )
 
 __all__ = [
@@ -38,14 +31,7 @@ __all__ = [
     "Toolkit",
     "ToolChunk",
     "ToolResponse",
-    # Permission related types and functions
-    "PermissionContext",
-    "AdditionalWorkingDirectory",
-    "PermissionDecision",
-    "PermissionEngine",
-    "PermissionRule",
-    "PermissionMode",
-    "PermissionBehavior",
+    "RegisteredTool",
     # Builtin tools
     "ResetTools",
     "Bash",
@@ -54,8 +40,8 @@ __all__ = [
     "Grep",
     "Read",
     "Write",
-    # Skill related types and functions
-    "Skill",
-    "SkillLoaderBase",
-    "LocalSkillLoader",
+    "TaskUpdate",
+    "TaskGet",
+    "TaskList",
+    "TaskCreate",
 ]
