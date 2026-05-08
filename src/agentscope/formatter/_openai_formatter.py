@@ -105,15 +105,16 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
             url = f"data:{source.media_type};base64,{source.data}"
 
         elif isinstance(source, URLSource):
-            if source.url.startswith("file://"):
+            url_str = str(source.url)
+            if url_str.startswith("file://"):
                 # Local file — read and encode as base64 data URI
-                local_path = source.url.removeprefix("file://")
+                local_path = url_str.removeprefix("file://")
                 with open(local_path, "rb") as f:
                     encoded = base64.b64encode(f.read()).decode("utf-8")
                 url = f"data:{source.media_type};base64,{encoded}"
             else:
                 # Remote URL — pass through as-is
-                url = source.url
+                url = url_str
 
         else:
             raise ValueError(f"Unsupported image source type: {type(source)}")
@@ -156,9 +157,10 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
             }
 
         if isinstance(source, URLSource):
-            if source.url.startswith("file://"):
+            url_str = str(source.url)
+            if url_str.startswith("file://"):
                 # Local file
-                local_path = source.url.removeprefix("file://")
+                local_path = url_str.removeprefix("file://")
                 extension = local_path.rsplit(".", 1)[-1].lower()
                 if extension not in ["wav", "mp3"]:
                     raise TypeError(
@@ -169,14 +171,14 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
                     data = base64.b64encode(f.read()).decode("utf-8")
             else:
                 # Remote URL — download and encode
-                parsed = urlparse(source.url)
+                parsed = urlparse(url_str)
                 extension = parsed.path.rsplit(".", 1)[-1].lower()
                 if extension not in ["wav", "mp3"]:
                     raise TypeError(
                         f"Unsupported audio file extension: {extension}, "
                         "wav and mp3 are supported.",
                     )
-                response = requests.get(source.url)
+                response = requests.get(url_str)
                 response.raise_for_status()
                 data = base64.b64encode(response.content).decode("utf-8")
 
