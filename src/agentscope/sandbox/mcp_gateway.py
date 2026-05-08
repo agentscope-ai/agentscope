@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 import mcp.types as mtypes
 
-from ..mcp import StdIOStatefulClient
+from ..mcp._stdio_stateful_client import StdIOStatefulClient
 from .._logging import logger
 
 if TYPE_CHECKING:
