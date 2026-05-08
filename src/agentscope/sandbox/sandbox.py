@@ -96,7 +96,6 @@ class Sandbox:
         self._skills: dict[str, _SkillEntry] = {}
 
         self._gateway: MCPGateway | None = None
-        self.file: FileAccessor | None = None
 
     @property
     def sandbox_id(self) -> str:
@@ -116,9 +115,14 @@ class Sandbox:
     @property
     def connection(self) -> SandboxConnection:
         """Low-level backend connection (must call ``start()`` first)."""
-        if self._conn is None:
+        if not self._conn:
             raise RuntimeError("Sandbox not started — call start() first")
         return self._conn
+
+    @property
+    def file(self) -> FileAccessor | None:
+        """Path-oriented read/write facade (available after ``start()``)."""
+        return FileAccessor(self._conn) if self._conn else None
 
     @property
     def gateway(self) -> MCPGateway | None:
@@ -133,13 +137,12 @@ class Sandbox:
             return
 
         self._conn = await self._create_connection()
-        self.file = FileAccessor(self._conn)
 
         for td in self._config.tools:
             self._tools[td.name] = _ToolEntry(definition=td, source="static")
 
         if self._config.skills:
-            await self._scan_and_register_skills()
+            await self._register_skills()
 
         if self._config.mcp_gateway.enabled and self._config.mcp_servers:
             await self._start_gateway()
@@ -162,7 +165,6 @@ class Sandbox:
         if self._conn:
             await self._conn.destroy()
             self._conn = None
-        self.file = None
         self._started = False
 
     async def __aenter__(self) -> "Sandbox":
@@ -232,7 +234,7 @@ class Sandbox:
             return await self._gateway.call_tool(name, args)
 
         entry = self._tools.get(name)
-        if entry is None:
+        if not entry:
             raise KeyError(
                 f"Tool {name!r} not found. Available: {list(self._tools)}",
             )
@@ -251,15 +253,15 @@ class Sandbox:
             await self._skill_entry_to_skill(s) for s in self._skills.values()
         ]
 
-    def _skill_dir_resolved(self, entry: _SkillEntry) -> str:
+    def _resolve_skill_dir(self, entry: _SkillEntry) -> str:
         """Host path to the skill dir when ``workspace_root`` is available."""
         root = getattr(self._conn, "workspace_root", None)
-        if root is not None:
+        if root:
             return str((Path(root) / entry.path).resolve())
         return entry.path
 
     async def _skill_entry_to_skill(self, entry: _SkillEntry) -> Skill:
-        skill_dir = self._skill_dir_resolved(entry)
+        skill_dir = self._resolve_skill_dir(entry)
         rel_md = f"{entry.path.rstrip('/')}/SKILL.md"
         fallback_desc = (
             str(entry.metadata.get("description", "") or "").strip()
@@ -286,14 +288,14 @@ class Sandbox:
         name = doc.get("name")
         name_str = str(name).strip() if name else entry.name
         desc_raw = doc.get("description")
-        if desc_raw is not None and str(desc_raw).strip():
+        if desc_raw and str(desc_raw).strip():
             desc_str = str(desc_raw)
         else:
             desc_str = fallback_desc
         body = doc.content
         if isinstance(body, str):
             markdown = body
-        elif body is not None:
+        elif body:
             markdown = str(body)
         else:
             markdown = ""
@@ -493,7 +495,7 @@ class Sandbox:
             handle.pid,
         )
 
-    async def _scan_and_register_skills(self) -> None:
+    async def _register_skills(self) -> None:
         """Fill ``_skills`` by listing the configured skills directory."""
         if not self._config.skills:
             return
@@ -516,7 +518,7 @@ class Sandbox:
         args: dict[str, Any],
     ) -> Any:
         shell_cmd = entry.definition.shell_cmd
-        if shell_cmd is None:
+        if not shell_cmd:
             raise RuntimeError(
                 f"Tool {entry.definition.name!r} has no shell_cmd configured",
             )
