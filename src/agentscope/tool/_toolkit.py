@@ -42,6 +42,7 @@ from ..message import (
 )
 from .._logging import logger
 from ..state import AgentState
+from ..tracing import trace_toolkit
 
 
 # pylint: disable=line-too-long
@@ -446,7 +447,7 @@ class Toolkit:
             ", ".join(to_removed),
         )
 
-    # @trace_toolkit
+    @trace_toolkit
     async def call_tool(
         self,
         tool_call: ToolCallBlock,

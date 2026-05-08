@@ -16,15 +16,9 @@ from ._converter import _convert_block_to_part
 from ._utils import _serialize_to_str
 
 if TYPE_CHECKING:
-    from ..agent import AgentBase
+    from ..agent import Agent
     from ..formatter import FormatterBase
-    from ..tool import (
-        Toolkit,
-    )
-else:
-    AgentBase = "AgentBase"
-    FormatterBase = "FormatterBase"
-    Toolkit = "Toolkit"
+    from ..tool import Toolkit
 
 _CLASS_NAME_MAP = {
     "dashscope": ProviderNameValues.DASHSCOPE,
@@ -55,10 +49,12 @@ def _get_common_attributes() -> Dict[str, str]:
         `Dict[str, str]`:
         Common span attributes including conversation ID
     """
+    from ._trace import _current_session_id
+
+    session_id = _current_session_id.get()
     return {
         SpanAttributes.GEN_AI_CONVERSATION_ID: _serialize_to_str(
-            # TODO: deprecate the id here
-            "[conversation_id_placeholder]",
+            session_id if session_id else "[no_session_id]",
         ),
     }
 
@@ -429,23 +425,32 @@ def _get_agent_messages(
 
         return formatted_msgs
     except Exception:
-        return [
-            {
-                "role": msg.role,
-                "parts": [
-                    {
-                        "type": "text",
-                        "content": str(msg.content) if msg.content else "",
-                    },
-                ],
-                "name": msg.name,
-                "finish_reason": "stop",
-            },
-        ]
+        # Fallback: try simple attribute access on the original object.
+        # If msg was already converted to a list or lacks role/name, return
+        # an empty list rather than raising a secondary exception.
+        try:
+            single = msg[0] if isinstance(msg, list) else msg
+            return [
+                {
+                    "role": single.role,
+                    "parts": [
+                        {
+                            "type": "text",
+                            "content": (
+                                str(single.content) if single.content else ""
+                            ),
+                        },
+                    ],
+                    "name": single.name,
+                    "finish_reason": "stop",
+                },
+            ]
+        except Exception:
+            return []
 
 
 def _get_agent_request_attributes(
-    instance: "AgentBase",
+    instance: "Agent",
     args: Tuple[Any, ...],
     kwargs: Dict[str, Any],
 ) -> Dict[str, str]:
@@ -454,7 +459,7 @@ def _get_agent_request_attributes(
     Extracts agent metadata and input data into GenAI attributes.
 
     Args:
-        instance (`AgentBase`):
+        instance (`Agent`):
             The agent instance making the request.
         args (`Tuple[Any, ...]`):
             Positional arguments passed to the agent's reply method.
@@ -486,6 +491,8 @@ def _get_agent_request_attributes(
     msg = None
     if args and len(args) > 0:
         msg = args[0]
+    elif "msgs" in kwargs:
+        msg = kwargs["msgs"]
     elif "msg" in kwargs:
         msg = kwargs["msg"]
     if msg:
@@ -578,22 +585,22 @@ def _get_tool_request_attributes(
     }
 
     if tool_call:
-        tool_name = tool_call.get("name")
-        attributes[SpanAttributes.GEN_AI_TOOL_CALL_ID] = tool_call.get("id")
+        tool_name = tool_call.name
+        attributes[SpanAttributes.GEN_AI_TOOL_CALL_ID] = tool_call.id
         attributes[SpanAttributes.GEN_AI_TOOL_NAME] = tool_name
         attributes[
             SpanAttributes.GEN_AI_TOOL_CALL_ARGUMENTS
-        ] = _serialize_to_str(tool_call.get("input"))
+        ] = _serialize_to_str(tool_call.input)
 
         if tool_name:
-            if tool := getattr(instance, "tools", {}).get(tool_name):
-                if tool_func := getattr(tool, "json_schema", {}).get(
-                    "function",
-                    {},
-                ):
+            registered = getattr(instance, "tools", {}).get(tool_name)
+            if registered is not None:
+                tool_obj = getattr(registered, "tool", None)
+                description = getattr(tool_obj, "description", None)
+                if description:
                     attributes[
                         SpanAttributes.GEN_AI_TOOL_DESCRIPTION
-                    ] = tool_func.get("description", "unknown_description")
+                    ] = description
 
         # custom attributes
         attributes[

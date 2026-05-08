@@ -13,6 +13,8 @@ from typing import (
     TYPE_CHECKING,
 )
 
+from contextvars import ContextVar
+
 import aioitertools
 
 from ..embedding import EmbeddingModelBase, EmbeddingResponse
@@ -47,36 +49,48 @@ from ._setup import _get_tracer
 if TYPE_CHECKING:
     from opentelemetry.trace import Span
 
-    from ..agent import AgentBase
+    from ..agent import Agent
     from ..formatter import FormatterBase
+    from ..state import AgentState
     from ..tool import (
         Toolkit,
+        ToolChunk,
         ToolResponse,
     )
 
-else:
-    AgentBase = "AgentBase"
-    FormatterBase = "FormatterBase"
-    Span = "Span"
-    Toolkit = "Toolkit"
-    ToolResponse = "ToolResponse"
-
 
 T = TypeVar("T")
+
+# Context variable to propagate the session ID from agent reply through
+# all inner tracing spans (LLM calls, tool calls, formatter calls, etc.)
+_current_session_id: ContextVar[str] = ContextVar(
+    "_current_session_id",
+    default="",
+)
 
 
 def _check_tracing_enabled() -> bool:
     """Check if the OpenTelemetry tracer is initialized in AgentScope with an
     endpoint.
 
-    TODO: We expect an OpenTelemetry official interface to check if the
-     tracer is initialized. Leaving this function here as a temporary
-     solution.
+    Checks whether a real SDK TracerProvider has been configured via
+    `setup_tracing`. Returns False when only the default no-op proxy provider
+    is active so that tracing decorators incur no overhead.
+
+    Also returns False if the OpenTelemetry SDK is not installed (only the
+    API package is present), so that tracing decorators remain no-ops without
+    raising ImportError.
     """
-    return True
+    try:
+        from opentelemetry import trace as otel_trace
+        from opentelemetry.sdk.trace import TracerProvider
+    except ImportError:
+        return False
+
+    return isinstance(otel_trace.get_tracer_provider(), TracerProvider)
 
 
-def _set_span_success_status(span: Span) -> None:
+def _set_span_success_status(span: "Span") -> None:
     """Set the status of the span.
     Args:
         span (`Span`):
@@ -88,12 +102,12 @@ def _set_span_success_status(span: Span) -> None:
     span.end()
 
 
-def _set_span_error_status(span: Span, e: Exception) -> None:
+def _set_span_error_status(span: "Span", e: BaseException) -> None:
     """Set the status of the span.
     Args:
         span (`Span`):
             The OpenTelemetry span to be used for tracing.
-        e (`Exception`):
+        e (`BaseException`):
             The exception to be recorded.
     """
     from opentelemetry import trace as trace_api
@@ -105,7 +119,7 @@ def _set_span_error_status(span: Span, e: Exception) -> None:
 
 def _trace_sync_generator_wrapper(
     res: Generator[T, None, None],
-    span: Span,
+    span: "Span",
 ) -> Generator[T, None, None]:
     """Trace the sync generator output with OpenTelemetry."""
 
@@ -132,7 +146,7 @@ def _trace_sync_generator_wrapper(
 
 async def _trace_async_generator_wrapper(
     res: AsyncGenerator[T, None],
-    span: Span,
+    span: "Span",
 ) -> AsyncGenerator[T, None]:
     """Trace the async generator output with OpenTelemetry.
 
@@ -319,19 +333,29 @@ def trace(
 
 
 def trace_toolkit(
-    func: Callable[..., AsyncGenerator[ToolResponse, None]],
-) -> Callable[..., Coroutine[Any, Any, AsyncGenerator[ToolResponse, None]]]:
-    """Trace the toolkit `call_tool_function` method with OpenTelemetry."""
+    func: Callable[
+        ...,
+        AsyncGenerator["ToolChunk | ToolResponse", None],
+    ],
+) -> Callable[..., AsyncGenerator["ToolChunk | ToolResponse", None]]:
+    """Trace the toolkit `call_tool` method with OpenTelemetry.
+
+    The wrapper is an async generator so that the caller can iterate over it
+    directly without an intermediate ``await``, matching the original
+    ``call_tool`` interface.
+    """
 
     @wraps(func)
     async def wrapper(
-        self: Toolkit,
+        self: "Toolkit",
         tool_call: ToolCallBlock,
-    ) -> AsyncGenerator[ToolResponse, None]:
-        """The wrapper function for tracing the toolkit call_tool_function
-        method."""
+        state: "AgentState",
+    ) -> AsyncGenerator["ToolChunk | ToolResponse", None]:
+        """The wrapper function for tracing the toolkit call_tool method."""
         if not _check_tracing_enabled():
-            return func(self, tool_call=tool_call)
+            async for item in func(self, tool_call=tool_call, state=state):
+                yield item
+            return
 
         tracer = _get_tracer()
 
@@ -347,18 +371,24 @@ def trace_toolkit(
             },
             end_on_exit=False,
         ) as span:
+            has_error = False
+            last_item = None
             try:
-                # Call the toolkit function (returns AsyncGenerator)
-                res = func(self, tool_call=tool_call)
-
-                # The result must be an AsyncGenerator
-                # Return the wrapped generator
-                return _trace_async_generator_wrapper(res, span)
-
-            except Exception as e:
+                async for item in func(self, tool_call=tool_call, state=state):
+                    last_item = item
+                    yield item
+            except BaseException as e:
+                has_error = True
                 _set_span_error_status(span, e)
-                span.end()
-                raise e from None
+                raise
+            finally:
+                if not has_error:
+                    if last_item is not None:
+                        response_attributes = _get_tool_response_attributes(
+                            last_item,
+                        )
+                        span.set_attributes(response_attributes)
+                    _set_span_success_status(span)
 
     return wrapper
 
@@ -380,7 +410,7 @@ def trace_reply(
 
     @wraps(func)
     async def wrapper(
-        self: "AgentBase",
+        self: "Agent",
         *args: Any,
         **kwargs: Any,
     ) -> Msg:
@@ -388,46 +418,149 @@ def trace_reply(
         if not _check_tracing_enabled():
             return await func(self, *args, **kwargs)
 
-        # from ..agent import AgentBase
-        #
-        # if not isinstance(self, AgentBase):
-        #     logger.warning(
-        #         "Skipping tracing for %s as the first argument"
-        #         "is not an instance of AgentBase, but %s",
-        #         func.__name__,
-        #         type(self),
-        #     )
-        #     return await func(self, *args, **kwargs)
+        from ..agent import Agent
 
-        tracer = _get_tracer()
+        if not isinstance(self, Agent):
+            logger.warning(
+                "Skipping tracing for %s as the first argument"
+                "is not an instance of Agent, but %s",
+                func.__name__,
+                type(self),
+            )
+            return await func(self, *args, **kwargs)
 
-        # Prepare the attributes for the span
+        # Propagate the agent's session_id to all inner tracing spans
+        session_id = getattr(
+            getattr(self, "state", None),
+            "session_id",
+            "",
+        )
+        token = _current_session_id.set(session_id or "")
 
-        request_attributes = _get_agent_request_attributes(self, args, kwargs)
-        span_name = _get_agent_span_name(request_attributes)
-        function_name = f"{self.__class__.__name__}.{func.__name__}"
-        # Begin the llm call span
-        with tracer.start_as_current_span(
-            name=span_name,
-            attributes={
-                **request_attributes,
-                **_get_common_attributes(),
-                SpanAttributes.AGENTSCOPE_FUNCTION_NAME: function_name,
-            },
-            end_on_exit=False,
-        ) as span:
-            try:
-                # Call the agent reply function
-                res = await func(self, *args, **kwargs)
+        try:
+            tracer = _get_tracer()
+            # Prepare the attributes for the span
+            request_attributes = _get_agent_request_attributes(
+                self,
+                args,
+                kwargs,
+            )
+            span_name = _get_agent_span_name(request_attributes)
+            function_name = f"{self.__class__.__name__}.{func.__name__}"
+            # Begin the agent span
+            with tracer.start_as_current_span(
+                name=span_name,
+                attributes={
+                    **request_attributes,
+                    **_get_common_attributes(),
+                    SpanAttributes.AGENTSCOPE_FUNCTION_NAME: function_name,
+                },
+                end_on_exit=False,
+            ) as span:
+                try:
+                    # Call the agent reply function
+                    res = await func(self, *args, **kwargs)
 
-                # Set the output attribute
-                span.set_attributes(_get_agent_response_attributes(res))
-                _set_span_success_status(span)
-                return res
+                    # Set the output attribute
+                    span.set_attributes(_get_agent_response_attributes(res))
+                    _set_span_success_status(span)
+                    return res
 
-            except Exception as e:
-                _set_span_error_status(span, e)
-                raise e from None
+                except BaseException as e:
+                    _set_span_error_status(span, e)
+                    raise
+        finally:
+            _current_session_id.reset(token)
+
+    return wrapper
+
+
+def trace_reply_stream(
+    func: Callable[..., AsyncGenerator[Any, None]],
+) -> Callable[..., AsyncGenerator[Any, None]]:
+    """Trace the agent reply_stream call with OpenTelemetry.
+
+    Works like :func:`trace_reply` but for async-generator variants of the
+    reply method. The ``invoke_agent`` span is opened before the first item
+    is yielded and closed after the generator is exhausted (or on error).
+
+    Args:
+        func (`Callable[..., AsyncGenerator[Any, None]]`):
+            The async-generator reply function to be traced.
+
+    Returns:
+        `Callable[..., AsyncGenerator[Any, None]]`:
+            An async-generator wrapper that traces the agent reply stream.
+    """
+
+    @wraps(func)
+    async def wrapper(
+        self: "Agent",
+        *args: Any,
+        **kwargs: Any,
+    ) -> AsyncGenerator[Any, None]:
+        """Wrap the async-generator reply with an OpenTelemetry span."""
+        if not _check_tracing_enabled():
+            async for item in func(self, *args, **kwargs):
+                yield item
+            return
+
+        from ..agent import Agent
+
+        if not isinstance(self, Agent):
+            logger.warning(
+                "Skipping tracing for %s as the first argument"
+                "is not an instance of Agent, but %s",
+                func.__name__,
+                type(self),
+            )
+            async for item in func(self, *args, **kwargs):
+                yield item
+            return
+
+        # Propagate the agent's session_id to all inner tracing spans
+        session_id = getattr(
+            getattr(self, "state", None),
+            "session_id",
+            "",
+        )
+        token = _current_session_id.set(session_id or "")
+
+        try:
+            tracer = _get_tracer()
+            request_attributes = _get_agent_request_attributes(
+                self,
+                args,
+                kwargs,
+            )
+            span_name = _get_agent_span_name(request_attributes)
+            function_name = f"{self.__class__.__name__}.{func.__name__}"
+
+            with tracer.start_as_current_span(
+                name=span_name,
+                attributes={
+                    **request_attributes,
+                    **_get_common_attributes(),
+                    SpanAttributes.AGENTSCOPE_FUNCTION_NAME: function_name,
+                },
+                end_on_exit=False,
+            ) as span:
+                has_error = False
+                try:
+                    async for item in func(self, *args, **kwargs):
+                        yield item
+                except BaseException as e:
+                    has_error = True
+                    _set_span_error_status(span, e)
+                    raise
+                finally:
+                    if not has_error:
+                        # reply_stream yields AgentEvent objects, not Msg.
+                        # Response attributes cannot be extracted from events,
+                        # so only the success status is set here.
+                        _set_span_success_status(span)
+        finally:
+            _current_session_id.reset(token)
 
     return wrapper
 

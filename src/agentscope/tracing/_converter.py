@@ -3,51 +3,60 @@
 
 from typing import Any, Dict
 
-from ..message import ContentBlock
+from ..message import (
+    ContentBlock,
+    TextBlock,
+    ThinkingBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+    DataBlock,
+    Base64Source,
+    URLSource,
+)
 
 from ._utils import _serialize_to_str
 
+# Map MIME type prefix to OTel modality name
+_MEDIA_TYPE_TO_MODALITY: Dict[str, str] = {
+    "image": "image",
+    "audio": "audio",
+    "video": "video",
+}
+
+
+def _get_modality(media_type: str) -> str:
+    """Derive OTel modality from a MIME type string (e.g. 'image/png')."""
+    prefix = media_type.split("/")[0] if media_type else ""
+    return _MEDIA_TYPE_TO_MODALITY.get(prefix, "unknown")
+
 
 def _convert_media_block(
-    source: Dict[str, Any],
-    modality: str,
+    source: Base64Source | URLSource,
 ) -> Dict[str, Any] | None:
-    """Convert media block (image/audio/video) to OpenTelemetry format.
+    """Convert a DataBlock source to OpenTelemetry GenAI part format.
 
     Args:
-        source (`Dict[str, Any]`):
-            Source Dictionary with type, url/data, and media_type.
-        modality (`str`):
-            Media modality: "image", "audio", or "video".
+        source (`Base64Source | URLSource`):
+            The data source of the DataBlock.
 
     Returns:
         `Dict[str, Any] | None`:
-            Converted part Dictionary or None if source type is invalid.
+            Converted part Dictionary or None if the source type is invalid.
     """
-    source_type = source.get("type")
+    modality = _get_modality(source.media_type)
 
-    if source_type == "url":
-        url = source.get("url", "")
+    if isinstance(source, URLSource):
         return {
             "type": "uri",
-            "uri": url,
+            "uri": str(source.url),
             "modality": modality,
         }
 
-    if source_type == "base64":
-        data = source.get("data", "")
-        media_type = source.get("media_type")
-        if not media_type:
-            default_media_types = {
-                "image": "image/jpeg",
-                "audio": "audio/wav",
-                "video": "video/mp4",
-            }
-            media_type = default_media_types.get(modality, "unknown")
+    if isinstance(source, Base64Source):
         return {
             "type": "blob",
-            "content": data,
-            "media_type": media_type,
+            "content": source.data,
+            "media_type": source.media_type,
             "modality": modality,
         }
 
@@ -57,69 +66,55 @@ def _convert_media_block(
 def _convert_block_to_part(block: ContentBlock) -> Dict[str, Any] | None:
     """Convert content block to OpenTelemetry GenAI part format.
 
-    Converts text, thinking, tool_use, tool_result, image, audio, video
-    blocks to standardized parts.
+    Converts text, thinking, tool_call, tool_result and data (media) blocks
+    to standardized parts.
 
     Args:
         block (`ContentBlock`):
             The content block object to convert. Supported block types:
             - text: Text content block
             - thinking: Reasoning/thinking content block
-            - tool_use: Tool call block with id, name, and input
+            - tool_call: Tool call block with id, name, and input
             - tool_result: Tool result block with id and output
-            - image: Image block with source (url or base64)
-            - audio: Audio block with source (url or base64)
-            - video: Video block with source (url or base64)
+            - data: Binary data block (image, audio, video, etc.)
 
     Returns:
         `Dict[str, Any] | None`:
             Standardized part Dictionary in OpenTelemetry GenAI format,
-            or None if the block type is invalid or cannot be converted.
+            or None if the block type is unsupported or cannot be converted.
     """
-    block_type = block.get("type")
     part: Dict[str, Any] | None = None
 
-    # Handle simple text-based blocks
-    if block_type == "text":
+    if isinstance(block, TextBlock):
         part = {
             "type": "text",
-            "content": block.get("text", ""),
+            "content": block.text,
         }
-    elif block_type == "thinking":
+    elif isinstance(block, ThinkingBlock):
         part = {
             "type": "reasoning",
-            "content": block.get("thinking", ""),
+            "content": block.thinking,
         }
-    # Handle tool blocks
-    elif block_type == "tool_use":
+    elif isinstance(block, ToolCallBlock):
         part = {
             "type": "tool_call",
-            "id": block.get("id", ""),
-            "name": block.get("name", ""),
-            "arguments": block.get("input", {}),
+            "id": block.id,
+            "name": block.name,
+            "arguments": block.input,
         }
-    elif block_type == "tool_result":
-        output = block.get("output", "")
-        if isinstance(output, (list, Dict)):
+    elif isinstance(block, ToolResultBlock):
+        output = block.output
+        if isinstance(output, (list, dict)):
             result = _serialize_to_str(output)
         else:
             result = str(output)
 
         part = {
             "type": "tool_call_response",
-            "id": block.get("id", ""),
+            "id": block.id,
             "response": result,
         }
-    # Handle media blocks (image, audio, video)
-    elif block_type in ("image", "audio", "video"):
-        source = block.get("source", {})
-        # Type assertion for mypy
-        if isinstance(source, dict):
-            source_dict: Dict[str, Any] = source
-
-            part = _convert_media_block(
-                source_dict,
-                modality=block_type,
-            )
+    elif isinstance(block, DataBlock):
+        part = _convert_media_block(block.source)
 
     return part
