@@ -19,11 +19,11 @@ import shutil
 import uuid
 from pathlib import Path
 
-from .connection import SandboxConnection, register_connection_class
+from .connection import SandboxConnection, register_sandbox_connection_type
 from .exceptions import UnsupportedOperation
 from .types import (
-    ExecResult,
-    SandboxCreateOptions,
+    SandboxExecutionResult,
+    SandboxInitializationConfig,
     SerializedSandboxState,
 )
 
@@ -50,11 +50,11 @@ class LocalTempSandboxConnection(SandboxConnection):
     @classmethod
     async def create(
         cls,
-        options: SandboxCreateOptions,
+        options: SandboxInitializationConfig,
     ) -> "LocalTempSandboxConnection":
         """Allocate a temp directory and run ``startup_commands``."""
-        if options.backend != "local_temp":
-            msg = f"expected backend 'local_temp', got {options.backend!r}"
+        if options.backend_id != "local_temp":
+            msg = f"expected backend 'local_temp', got {options.backend_id!r}"
             raise ValueError(msg)
         base = Path(options.extra.get("base_dir", "/tmp"))
         base.mkdir(parents=True, exist_ok=True)
@@ -71,7 +71,7 @@ class LocalTempSandboxConnection(SandboxConnection):
         cls,
         state: SerializedSandboxState,
     ) -> "LocalTempSandboxConnection":
-        if state.backend != "local_temp":
+        if state.backend_id != "local_temp":
             raise ValueError("backend mismatch for resume")
         root_s = state.payload.get("root")
         if not isinstance(root_s, str):
@@ -109,8 +109,8 @@ class LocalTempSandboxConnection(SandboxConnection):
         timeout: float | None = None,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
-    ) -> ExecResult:
-        workdir = self._root if cwd is None else self._resolve(cwd)
+    ) -> SandboxExecutionResult:
+        workdir = self._resolve(cwd) if cwd else self._root
         merged_env = {**dict(os.environ), **(env or {})}
         proc = await asyncio.create_subprocess_shell(
             command,
@@ -132,7 +132,7 @@ class LocalTempSandboxConnection(SandboxConnection):
             await proc.wait()
             raise
         code = proc.returncode if proc.returncode is not None else -1
-        return ExecResult(
+        return SandboxExecutionResult(
             exit_code=code,
             stdout=out_b or b"",
             stderr=err_b or b"",
@@ -161,14 +161,14 @@ class LocalTempSandboxConnection(SandboxConnection):
         """Soft close: mark closed without deleting the workspace."""
         self._destroyed = True
 
-    async def running(self) -> bool:
+    async def is_running(self) -> bool:
         return not self._destroyed and self._root.exists()
 
     # ─── optional: export_state ───────────────────────────────
 
     async def export_state(self) -> SerializedSandboxState:
         return SerializedSandboxState(
-            backend=self.backend_id,
+            backend_id=self.backend_id,
             payload={
                 "root": str(self._root),
                 "instance_id": self._instance_id,
@@ -176,4 +176,4 @@ class LocalTempSandboxConnection(SandboxConnection):
         )
 
 
-register_connection_class(LocalTempSandboxConnection)
+register_sandbox_connection_type(LocalTempSandboxConnection)

@@ -5,21 +5,23 @@ Each backend (E2B, Docker, local_temp, ...) subclasses this **once**.
 The subclass provides:
 
   - ``@classmethod create(options) -> Self``  (factory)
-  - instance methods: exec / read / write / destroy / close / running
+  - instance methods: exec / read / write / destroy / close /
+    is_running
   - optional: resume / PTY / ports / snapshot
 
-``create_connection(options)`` dispatches via ``options.backend`` through the
-registry (``register_connection_class`` / ``get_connection_class``).
+``create_sandbox_connection(options)`` dispatches via
+``options.backend_id`` through the registry
+(``register_sandbox_connection_type`` / ``get_sandbox_connection_type``).
 """
 
 from abc import ABC, abstractmethod
 
 from .exceptions import CapabilityError, UnsupportedOperation
 from .types import (
-    ExecResult,
-    ExposedPortEndpoint,
+    SandboxExecutionResult,
+    SandboxInternalEndpoint,
     SandboxConnectionCapabilities,
-    SandboxCreateOptions,
+    SandboxInitializationConfig,
     SerializedSandboxState,
 )
 
@@ -27,8 +29,8 @@ from .types import (
 class SandboxConnection(ABC):
     """Handle to one running sandbox instance.
 
-    Required: exec + read/write + destroy + close + running.
-    Optional: PTY, ports, snapshot, resume (gate on ``capabilities()``).
+    Required: exec + read/write + destroy + close + is_running.
+    Optional: PTY, ports, snapshot, resume (gate on ``get_capabilities()``).
     """
 
     @property
@@ -42,7 +44,7 @@ class SandboxConnection(ABC):
     @abstractmethod
     async def create(
         cls,
-        options: SandboxCreateOptions,
+        options: SandboxInitializationConfig,
     ) -> "SandboxConnection":
         """Provision a new sandbox and return a connected instance."""
 
@@ -66,7 +68,7 @@ class SandboxConnection(ABC):
         timeout: float | None = None,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
-    ) -> ExecResult:
+    ) -> SandboxExecutionResult:
         """Run a shell command string inside the sandbox."""
 
     # ─── filesystem ───────────────────────────────────────────
@@ -97,7 +99,7 @@ class SandboxConnection(ABC):
         await self.destroy()
 
     @abstractmethod
-    async def running(self) -> bool:
+    async def is_running(self) -> bool:
         """Best-effort liveness check."""
 
     async def __aenter__(self) -> "SandboxConnection":
@@ -110,12 +112,12 @@ class SandboxConnection(ABC):
 
     # ─── capabilities ─────────────────────────────────────────
 
-    def capabilities(self) -> SandboxConnectionCapabilities:
+    def get_capabilities(self) -> SandboxConnectionCapabilities:
         """Return capability flags for optional features."""
         return SandboxConnectionCapabilities(
-            pty=self.supports_pty(),
-            exposed_ports=self.supports_exposed_ports(),
-            snapshot=self.supports_snapshot(),
+            has_pty=self.supports_pty(),
+            has_exposed_ports=self.supports_exposed_ports(),
+            has_snapshot=self.supports_snapshot(),
         )
 
     _supports_pty: bool = False
@@ -146,7 +148,10 @@ class SandboxConnection(ABC):
 
     # ─── optional: networking ─────────────────────────────────
 
-    async def resolve_exposed_port(self, port: int) -> ExposedPortEndpoint:
+    async def resolve_exposed_port(
+        self,
+        port: int,
+    ) -> SandboxInternalEndpoint:
         """Map logical container port to host endpoint."""
         raise CapabilityError("exposed_ports", backend=self.backend_id)
 
@@ -172,9 +177,10 @@ class SandboxConnection(ABC):
 _registry: dict[str, type[SandboxConnection]] = {}
 
 
-def register_connection_class(cls: type[SandboxConnection]) -> None:
+def register_sandbox_connection_type(
+    cls: type[SandboxConnection],
+) -> None:
     """Register a ``SandboxConnection`` subclass by its ``backend_id``."""
-    # Read backend_id from the class's property (unbound descriptor).
     bid = cls.backend_id.fget(cls)  # type: ignore[attr-defined]
     if isinstance(bid, property):
         raise TypeError(
@@ -186,7 +192,9 @@ def register_connection_class(cls: type[SandboxConnection]) -> None:
     _registry[bid] = cls
 
 
-def get_connection_class(backend_id: str) -> type[SandboxConnection]:
+def get_sandbox_connection_type(
+    backend_id: str,
+) -> type[SandboxConnection]:
     """Look up a registered ``SandboxConnection`` class by backend id."""
     try:
         return _registry[backend_id]
@@ -198,12 +206,12 @@ def get_connection_class(backend_id: str) -> type[SandboxConnection]:
         ) from e
 
 
-async def create_connection(
-    options: SandboxCreateOptions,
+async def create_sandbox_connection(
+    options: SandboxInitializationConfig,
 ) -> SandboxConnection:
-    """Create a connection using the registry for ``options.backend``.
+    """Create a connection using the registry for ``options.backend_id``.
 
     Dispatches to the registered ``SandboxConnection`` subclass.
     """
-    cls = get_connection_class(options.backend)
+    cls = get_sandbox_connection_type(options.backend_id)
     return await cls.create(options)

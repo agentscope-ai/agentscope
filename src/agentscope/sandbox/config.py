@@ -1,69 +1,18 @@
 # -*- coding: utf-8 -*-
-"""Single-source-of-truth configuration for one Sandbox instance.
+"""Configuration for the logical Sandbox layer.
 
-Users write *one* ``SandboxConfig``; the Sandbox layer internally merges
-implied ports / volumes / env before handing them to the Connection.
+Backend-specific parameters live in :mod:`.backend_config`.
 """
 
 from dataclasses import dataclass, field
 from typing import Any
 
-# ---------------------------------------------------------------------------
-# Backend parameter sets
-# ---------------------------------------------------------------------------
+from .backend_config import BackendParams
+from .mcp_gateway import MCPGatewayConfig
 
 
 @dataclass(slots=True)
-class BackendParams:
-    """User-facing backend config — typed fields for each vendor.
-
-    ``Sandbox._merge_infra_requirements()`` flattens these into a
-    vendor-neutral ``SandboxCreateOptions`` (with an opaque ``extra``
-    dict) before passing them to ``SandboxConnection.create()``.
-    This keeps the user config statically typed while the connection
-    layer stays backend-agnostic.
-    """
-
-    type: str
-    extra: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(slots=True)
-class DockerBackendParams(BackendParams):
-    """Parameters for the Docker ``SandboxConnection`` backend."""
-
-    type: str = "docker"
-    image: str = "ubuntu:22.04"
-
-
-@dataclass(slots=True)
-class E2BBackendParams(BackendParams):
-    """Parameters for the E2B ``SandboxConnection`` backend."""
-
-    type: str = "e2b"
-    template: str = "base"
-    api_key: str = ""
-    domain: str = ""
-    timeout: int = 300
-    envs: dict[str, str] = field(default_factory=dict)
-    metadata: dict[str, str] = field(default_factory=dict)
-
-
-@dataclass(slots=True)
-class LocalBackendParams(BackendParams):
-    """Parameters for the local temp-dir ``SandboxConnection`` backend."""
-
-    type: str = "local_temp"
-    base_dir: str = "/tmp"
-
-
-# ---------------------------------------------------------------------------
-# MCP / Skills / Tools
-# ---------------------------------------------------------------------------
-
-
-@dataclass(slots=True)
-class McpServerConfig:
+class MCPServerConfig:
     """One MCP server to start inside the sandbox."""
 
     name: str
@@ -73,16 +22,7 @@ class McpServerConfig:
 
 
 @dataclass(slots=True)
-class McpGatewayConfig:
-    """Gateway settings (listen port merged into ``exposed_ports``)."""
-
-    enabled: bool = False
-    port: int = 5600
-    mcp_name: str = "sandbox"
-
-
-@dataclass(slots=True)
-class SkillConfig:
+class SkillsConfig:
     """Where skills live in the sandbox and optional host bind-mount."""
 
     skills_dir: str = "/root/skills"
@@ -91,25 +31,25 @@ class SkillConfig:
 
 
 @dataclass(slots=True)
-class ToolDef:
+class ToolDefinition:
     """Static tool registered at sandbox start.
 
-    ``handler`` is a shell command executed inside the sandbox when
-    :meth:`Sandbox.call_tool` is invoked. The tool arguments are
-    serialized as JSON and appended to the command, e.g.
-    ``echo '{"msg": "hi"}'``.  When ``handler`` is ``None`` the tool
-    is metadata-only and cannot be called.
+    Attributes:
+        name: Unique tool name.
+        description: Human-readable description of what the tool does.
+        parameters: JSON Schema describing the tool's input arguments,
+            used for validation and for exposing the tool via MCP.
+        shell_cmd: Shell command executed inside the sandbox when
+            :meth:`Sandbox.call_tool` is invoked. The tool arguments are
+            serialized as JSON and appended to the command, e.g.
+            ``echo '{"msg": "hi"}'``.  When ``shell_cmd`` is ``None``
+            the tool is metadata-only and cannot be called.
     """
 
     name: str
     description: str = ""
     parameters: dict[str, Any] = field(default_factory=dict)
-    handler: str | None = None
-
-
-# ---------------------------------------------------------------------------
-# Top-level config
-# ---------------------------------------------------------------------------
+    shell_cmd: str | None = None
 
 
 @dataclass(slots=True)
@@ -121,7 +61,7 @@ class SandboxConfig:
     merged automatically in ``Sandbox.start()``.
 
     ``endpoint`` is optional (remote tunnel / control-plane URL); merged into
-    ``SandboxCreateOptions.extra`` for providers that need it.
+    ``SandboxInitializationConfig.extra`` for providers that need it.
     """
 
     backend: BackendParams
@@ -133,8 +73,8 @@ class SandboxConfig:
     env: dict[str, str] = field(default_factory=dict)
     startup_commands: list[str] = field(default_factory=list)
 
-    mcp_servers: list[McpServerConfig] = field(default_factory=list)
-    mcp_gateway: McpGatewayConfig = field(default_factory=McpGatewayConfig)
+    mcp_servers: list[MCPServerConfig] = field(default_factory=list)
+    mcp_gateway: MCPGatewayConfig = field(default_factory=MCPGatewayConfig)
 
-    skills: SkillConfig | None = None
-    tools: list[ToolDef] = field(default_factory=list)
+    skills: SkillsConfig | None = None
+    tools: list[ToolDefinition] = field(default_factory=list)

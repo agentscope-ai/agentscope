@@ -12,16 +12,27 @@ Tool naming conflict resolution:
   - Unique names are kept as-is.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import mcp.types as mtypes
 
 from ..mcp import StdIOStatefulClient
 from .._logging import logger
-from .config import McpGatewayConfig, McpServerConfig
 
-SEPARATOR = "___"
+if TYPE_CHECKING:
+    from .config import MCPServerConfig
+
+
+@dataclass(slots=True)
+class MCPGatewayConfig:
+    """Gateway settings (listen port merged into ``exposed_ports``)."""
+
+    enabled: bool = False
+    port: int = 5600
+    mcp_name: str = "sandbox"
 
 
 @dataclass(slots=True)
@@ -46,27 +57,29 @@ class MCPGateway:
         await gw.close()
     """
 
-    def __init__(self, config: McpGatewayConfig) -> None:
+    TOOL_NAME_SEPARATOR = "___"
+
+    def __init__(self, config: MCPGatewayConfig) -> None:
         self._config = config
         self._clients: list[StdIOStatefulClient] = []
-        self._routes: dict[str, _ToolRoute] = {}
-        self._started = False
+        self._tool_routes: dict[str, _ToolRoute] = {}
+        self._is_started = False
 
     @property
-    def started(self) -> bool:
+    def is_started(self) -> bool:
         """True after :meth:`start` finishes successfully."""
-        return self._started
+        return self._is_started
 
     # ─── lifecycle ────────────────────────────────────────────
 
     async def start(
         self,
-        mcp_configs: list[McpServerConfig],
+        mcp_configs: list[MCPServerConfig],
         *,
         cwd: str | None = None,
     ) -> None:
         """Connect MCP servers and build the routing table."""
-        if self._started:
+        if self._is_started:
             return
 
         raw: list[tuple[str, StdIOStatefulClient, list[mtypes.Tool]]] = []
@@ -88,11 +101,11 @@ class MCPGateway:
                 len(tools),
             )
 
-        self._routes = _build_routes(raw)
-        self._started = True
+        self._tool_routes = self._build_tool_routes(raw)
+        self._is_started = True
         logger.info(
             "MCPGateway: started with %d aggregated tools from %d servers",
-            len(self._routes),
+            len(self._tool_routes),
             len(self._clients),
         )
 
@@ -108,8 +121,8 @@ class MCPGateway:
                     client.name,
                     e,
                 )
-        self._routes.clear()
-        self._started = False
+        self._tool_routes.clear()
+        self._is_started = False
 
     # ─── tool surface ─────────────────────────────────────────
 
@@ -120,10 +133,12 @@ class MCPGateway:
     ) -> list[mtypes.Tool]:
         """Return tools; filter by ``mcp_names`` when given."""
         if mcp_names is None:
-            return [r.tool for r in self._routes.values()]
+            return [r.tool for r in self._tool_routes.values()]
         name_set = set(mcp_names)
         return [
-            r.tool for r in self._routes.values() if r.mcp_name in name_set
+            r.tool
+            for r in self._tool_routes.values()
+            if r.mcp_name in name_set
         ]
 
     async def call_tool(
@@ -132,9 +147,9 @@ class MCPGateway:
         args: dict[str, Any] | None = None,
     ) -> mtypes.CallToolResult:
         """Route a tool call to the owning MCP server."""
-        route = self._routes.get(name)
+        route = self._tool_routes.get(name)
         if route is None:
-            available = list(self._routes.keys())
+            available = list(self._tool_routes.keys())
             raise KeyError(
                 f"Tool {name!r} not found in gateway. Available: {available}",
             )
@@ -144,8 +159,12 @@ class MCPGateway:
         )
 
     def has_tool(self, name: str) -> bool:
-        """Return whether ``name`` is a routed (possibly prefixed) tool."""
-        return name in self._routes
+        """Return whether ``name`` exists in the routing table.
+
+        The name may be a conflict-disambiguated form like
+        ``server___tool_name``.
+        """
+        return name in self._tool_routes
 
     # ─── info ─────────────────────────────────────────────────
 
@@ -156,47 +175,46 @@ class MCPGateway:
             for c in self._clients
         ]
 
-    def tool_origin(self, exposed_name: str) -> str | None:
+    def get_mcp_name(self, exposed_tool_name: str) -> str | None:
         """Return the ``mcp_name`` that owns a tool, or ``None``."""
-        route = self._routes.get(exposed_name)
+        route = self._tool_routes.get(exposed_tool_name)
         return route.mcp_name if route else None
 
+    # ─── route builder ────────────────────────────────────────
 
-# ---------------------------------------------------------------------------
-# Route builder (module-level for testability)
-# ---------------------------------------------------------------------------
+    @staticmethod
+    def _build_tool_routes(
+        raw: list[tuple[str, StdIOStatefulClient, list[mtypes.Tool]]],
+    ) -> dict[str, _ToolRoute]:
+        """Build the routing table with automatic conflict resolution.
 
+        If two servers expose the same tool name, both are prefixed with
+        ``{mcp_name}___`` to disambiguate.
+        """
+        sep = MCPGateway.TOOL_NAME_SEPARATOR
 
-def _build_routes(
-    raw: list[tuple[str, StdIOStatefulClient, list[mtypes.Tool]]],
-) -> dict[str, _ToolRoute]:
-    """Build the routing table with automatic conflict resolution.
+        name_count: dict[str, int] = {}
+        for _mcp_name, _client, tools in raw:
+            for tool in tools:
+                name_count[tool.name] = name_count.get(tool.name, 0) + 1
 
-    If two servers expose the same tool name, both are prefixed with
-    ``{mcp_name}___`` to disambiguate.
-    """
-    name_count: dict[str, int] = {}
-    for _mcp_name, _client, tools in raw:
-        for tool in tools:
-            name_count[tool.name] = name_count.get(tool.name, 0) + 1
+        routes: dict[str, _ToolRoute] = {}
+        for mcp_name, client, tools in raw:
+            for tool in tools:
+                if name_count[tool.name] > 1:
+                    exposed = f"{mcp_name}{sep}{tool.name}"
+                else:
+                    exposed = tool.name
 
-    routes: dict[str, _ToolRoute] = {}
-    for mcp_name, client, tools in raw:
-        for tool in tools:
-            if name_count[tool.name] > 1:
-                exposed = f"{mcp_name}{SEPARATOR}{tool.name}"
-            else:
-                exposed = tool.name
-
-            exposed_tool = mtypes.Tool(
-                name=exposed,
-                description=tool.description,
-                inputSchema=tool.inputSchema,
-            )
-            routes[exposed] = _ToolRoute(
-                client=client,
-                mcp_name=mcp_name,
-                original_name=tool.name,
-                tool=exposed_tool,
-            )
-    return routes
+                exposed_tool = mtypes.Tool(
+                    name=exposed,
+                    description=tool.description,
+                    inputSchema=tool.inputSchema,
+                )
+                routes[exposed] = _ToolRoute(
+                    client=client,
+                    mcp_name=mcp_name,
+                    original_name=tool.name,
+                    tool=exposed_tool,
+                )
+        return routes

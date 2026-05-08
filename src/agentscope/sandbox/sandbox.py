@@ -13,15 +13,15 @@ from typing import Any
 
 import frontmatter
 import mcp.types as mtypes
-from mcp.types import Tool as McpToolSchema
+from mcp.types import Tool as MCPToolSchema
 
 from ..skill import Skill
 from ..tool import MCPTool
 from .._logging import logger
-from .config import SandboxConfig, ToolDef
-from .connection import SandboxConnection, create_connection
-from .gateway import MCPGateway
-from .types import SandboxCreateOptions
+from .config import SandboxConfig, ToolDefinition
+from .connection import SandboxConnection, create_sandbox_connection
+from .mcp_gateway import MCPGateway
+from .types import SandboxInitializationConfig
 
 # ---------------------------------------------------------------------------
 # File accessor facade — sandbox.file.read / sandbox.file.write
@@ -51,12 +51,12 @@ class FileAccessor:
 
 @dataclass(slots=True)
 class _ToolEntry:
-    definition: ToolDef
+    definition: ToolDefinition
     source: str = "static"  # "static" | "mcp" | "skill"
 
 
 @dataclass(slots=True)
-class _McpServerHandle:
+class _MCPServerHandle:
     name: str
     command: str
     pid: int | None = None
@@ -78,7 +78,7 @@ class Sandbox:
     """Agent-side proxy to one running sandbox.
 
     **Construction:** pass ``SandboxConfig``; ``config.backend.type`` is used
-    by ``create_connection(options)`` to dispatch to the correct
+    by ``create_sandbox_connection(options)`` to dispatch to the correct
     ``SandboxConnection`` subclass.
 
     Lifecycle: ``start()`` → use → ``close()``.  Use as async context manager.
@@ -92,7 +92,7 @@ class Sandbox:
         self._started = False
 
         self._tools: dict[str, _ToolEntry] = {}
-        self._mcp_servers: dict[str, _McpServerHandle] = {}
+        self._mcp_servers: dict[str, _MCPServerHandle] = {}
         self._skills: dict[str, _SkillEntry] = {}
 
         self._gateway: MCPGateway | None = None
@@ -179,8 +179,8 @@ class Sandbox:
     async def list_tools(self) -> list[MCPTool]:
         """Return ``MCPTool`` instances for all registered tools.
 
-        Includes both static ``ToolDef`` entries and tools aggregated by the
-        ``MCPGateway`` (if enabled).
+        Includes both static ``ToolDefinition`` entries and tools aggregated
+        by the ``MCPGateway`` (if enabled).
         """
         mcp_name = self._config.mcp_gateway.mcp_name
         session = _SandboxSession(self)
@@ -191,7 +191,7 @@ class Sandbox:
             schema = dict(td.parameters) if td.parameters else {}
             if not schema or "type" not in schema:
                 schema = {"type": "object", "properties": schema}
-            mcp_tool = McpToolSchema(
+            mcp_tool = MCPToolSchema(
                 name=td.name,
                 description=td.description or "",
                 inputSchema=schema,
@@ -224,7 +224,7 @@ class Sandbox:
 
         Resolution order:
         1. MCPGateway (if enabled and tool is known to the gateway).
-        2. Local tool registry (static ToolDef with handler).
+        2. Local tool registry (static ToolDefinition with shell_cmd).
         """
         args = args or {}
 
@@ -377,7 +377,7 @@ class Sandbox:
         self._tools = {
             k: v
             for k, v in self._tools.items()
-            if not (v.source == "mcp" and v.definition.handler == name)
+            if not (v.source == "mcp" and v.definition.shell_cmd == name)
         }
 
     # ─── run (general request dispatch) ───────────────────────
@@ -385,7 +385,7 @@ class Sandbox:
     async def run(self, request: str | dict[str, Any]) -> Any:
         """High-level entry point for agents.
 
-        ``str`` → exec command; ``dict`` with ``tool`` key → call_tool.
+        ``str`` → exec; ``dict`` with ``tool`` key → call_tool.
         """
         if isinstance(request, str):
             return await self.connection.exec(request)
@@ -400,9 +400,9 @@ class Sandbox:
 
     async def _create_connection(self) -> SandboxConnection:
         opts = self._merge_infra_requirements()
-        return await create_connection(opts)
+        return await create_sandbox_connection(opts)
 
-    def _merge_infra_requirements(self) -> SandboxCreateOptions:
+    def _merge_infra_requirements(self) -> SandboxInitializationConfig:
         """Merge implied ports, volumes, and env into create options."""
         cfg = self._config
         ports = list(cfg.exposed_ports)
@@ -441,15 +441,15 @@ class Sandbox:
             md = cfg.backend.metadata  # type: ignore[attr-defined]
             if md:
                 extra["metadata"] = md
-        if hasattr(cfg.backend, "envs"):
-            ev = cfg.backend.envs  # type: ignore[attr-defined]
+        if hasattr(cfg.backend, "env"):
+            ev = cfg.backend.env  # type: ignore[attr-defined]
             if ev:
-                extra["envs"] = ev
+                extra["env"] = ev
         if cfg.endpoint:
             extra["endpoint"] = cfg.endpoint
 
-        return SandboxCreateOptions(
-            backend=cfg.backend.type,
+        return SandboxInitializationConfig(
+            backend_id=cfg.backend.type,
             env=env,
             exposed_ports=ports,
             volumes=volumes,
@@ -476,8 +476,8 @@ class Sandbox:
         args_str = " ".join(args)
         full_cmd = f"{env_prefix} nohup {command} {args_str} &".strip()
         r = await self.connection.exec(full_cmd, timeout=30)
-        handle = _McpServerHandle(name=name, command=command)
-        if r.ok():
+        handle = _MCPServerHandle(name=name, command=command)
+        if r.is_ok():
             pid_line = (
                 r.stdout.decode(errors="replace").strip().split("\n")[-1]
             )
@@ -500,7 +500,7 @@ class Sandbox:
         skills_dir = self._config.skills.skills_dir
         ls_cmd = f"ls {skills_dir} 2>/dev/null || true"
         r = await self.connection.exec(ls_cmd, timeout=10)
-        if not r.ok():
+        if not r.is_ok():
             return
         for name in r.stdout.decode(errors="replace").strip().split("\n"):
             name = name.strip()
@@ -515,13 +515,16 @@ class Sandbox:
         entry: _ToolEntry,
         args: dict[str, Any],
     ) -> Any:
-        handler = entry.definition.handler
-        if handler is None:
+        shell_cmd = entry.definition.shell_cmd
+        if shell_cmd is None:
             raise RuntimeError(
-                f"Tool {entry.definition.name!r} has no handler configured",
+                f"Tool {entry.definition.name!r} has no shell_cmd configured",
             )
         args_json = json.dumps(args)
-        r = await self.connection.exec(f"{handler} '{args_json}'", timeout=120)
+        r = await self.connection.exec(
+            f"{shell_cmd} '{args_json}'",
+            timeout=120,
+        )
         return {
             "exit_code": r.exit_code,
             "stdout": r.stdout.decode(errors="replace"),

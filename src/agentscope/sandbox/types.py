@@ -6,27 +6,27 @@ from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
-class ExecResult:
+class SandboxExecutionResult:
     """Result of executing a command inside a sandbox."""
 
     exit_code: int
     stdout: bytes
     stderr: bytes
 
-    def ok(self) -> bool:
+    def is_ok(self) -> bool:
         """Return ``True`` if ``exit_code == 0``."""
         return self.exit_code == 0
 
 
 @dataclass(slots=True)
-class SandboxCreateOptions:
+class SandboxInitializationConfig:
     """Normalized inputs for ``SandboxConnection.create``.
 
     ``extra`` holds backend-specific flags (E2B template, Docker image, etc.)
     without forcing the core layer to know each vendor's schema.
     """
 
-    backend: str
+    backend_id: str
     env: dict[str, str] = field(default_factory=dict)
     exposed_ports: list[int] = field(default_factory=list)
     volumes: dict[str, str] = field(default_factory=dict)
@@ -38,14 +38,18 @@ class SandboxCreateOptions:
 class SerializedSandboxState:
     """Serializable snapshot for resume / reconnect.
 
+    Produced by :meth:`SandboxConnection.export_state` to capture the
+    minimal state needed to re-attach to an existing sandbox.
+
     Attributes:
-        backend: Must match the connection class's ``backend_id`` so
+        backend_id: Must match the connection class's ``backend_id`` so
             ``resume(state)`` can dispatch to the right factory.
-        payload: Opaque to the core layer; typically holds vendor ids
-            (e.g. E2B ``sandbox_id``), workspace root path, tokens, etc.
+        payload: Transparent to anyone outside of a sandbox instance.
+            Typically holds vendor ids (e.g. E2B ``sandbox_id``),
+            workspace root path, tokens, etc.
     """
 
-    backend: str
+    backend_id: str
     payload: dict[str, Any]
 
 
@@ -56,15 +60,22 @@ class SandboxConnectionCapabilities:
     Check before calling PTY / networking / snapshot APIs.
     """
 
-    pty: bool = False
-    exposed_ports: bool = False
-    snapshot: bool = False
+    has_pty: bool = False
+    has_exposed_ports: bool = False
+    has_snapshot: bool = False
 
 
 @dataclass(frozen=True, slots=True)
-class ExposedPortEndpoint:
-    """Host endpoint for a logical container port when port mapping exists."""
+class SandboxInternalEndpoint:
+    """Endpoint for a service inside the sandbox, resolved to a
+    host-accessible address when port mapping is available.
+
+    Attributes:
+        host: Hostname or IP address.
+        port: Port number.
+        is_tls_enabled: Whether TLS is active on this endpoint.
+    """
 
     host: str
     port: int
-    tls: bool = False
+    is_tls_enabled: bool = False
