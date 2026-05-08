@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 import mcp.types as mtypes
 
-from ..mcp import StdIOStatefulClient
+from ..mcp import MCPClient, StdioMCPConfig
 from .._logging import logger
 
 if TYPE_CHECKING:
@@ -39,7 +39,7 @@ class MCPGatewayConfig:
 class _ToolRoute:
     """Maps an exposed tool name to the owning client and original name."""
 
-    client: StdIOStatefulClient
+    client: MCPClient
     mcp_name: str
     original_name: str
     tool: mtypes.Tool
@@ -61,7 +61,7 @@ class MCPGateway:
 
     def __init__(self, config: MCPGatewayConfig) -> None:
         self._config = config
-        self._clients: list[StdIOStatefulClient] = []
+        self._clients: list[MCPClient] = []
         self._tool_routes: dict[str, _ToolRoute] = {}
         self._is_started = False
 
@@ -82,14 +82,17 @@ class MCPGateway:
         if self._is_started:
             return
 
-        raw: list[tuple[str, StdIOStatefulClient, list[mtypes.Tool]]] = []
+        raw: list[tuple[str, MCPClient, list[mtypes.Tool]]] = []
         for cfg in mcp_configs:
-            client = StdIOStatefulClient(
+            client = MCPClient(
                 name=cfg.name,
-                command=cfg.command,
-                args=cfg.args or [],
-                env=cfg.env or None,
-                cwd=cwd,
+                is_stateful=True,
+                mcp_config=StdioMCPConfig(
+                    command=cfg.command,
+                    args=cfg.args or None,
+                    env=cfg.env or None,
+                    cwd=cwd,
+                ),
             )
             await client.connect()
             self._clients.append(client)
@@ -153,7 +156,12 @@ class MCPGateway:
             raise KeyError(
                 f"Tool {name!r} not found in gateway. Available: {available}",
             )
-        return await route.client.session.call_tool(
+        session = getattr(route.client, "_session", None)
+        if not session:
+            raise RuntimeError(
+                f"MCP client {route.client.name!r} is not connected",
+            )
+        return await session.call_tool(
             route.original_name,
             arguments=args or {},
         )
@@ -184,7 +192,7 @@ class MCPGateway:
 
     @staticmethod
     def _build_tool_routes(
-        raw: list[tuple[str, StdIOStatefulClient, list[mtypes.Tool]]],
+        raw: list[tuple[str, MCPClient, list[mtypes.Tool]]],
     ) -> dict[str, _ToolRoute]:
         """Build the routing table with automatic conflict resolution.
 
