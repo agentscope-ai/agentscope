@@ -7,6 +7,7 @@ input_types:
 
 output_types:
   - text/plain
+  - application/x-thinking
 
 context_size: 1000000
 output_size: 16384

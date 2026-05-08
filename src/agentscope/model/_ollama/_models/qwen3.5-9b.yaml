@@ -4,8 +4,6 @@ status: active
 
 input_types:
   - text/plain
-  - image/*
-  - application/x-thinking
 
 output_types:
   - text/plain

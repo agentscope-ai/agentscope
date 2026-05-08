@@ -4,7 +4,10 @@ status: active
 
 input_types:
   - text/plain
-  - image/*
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
 
 output_types:
   - text/plain
