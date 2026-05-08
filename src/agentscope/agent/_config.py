@@ -111,7 +111,7 @@ class ReActConfig(BaseModel):
         title="Max Iterations",
         default=20,
         description="The maximum number of reasoning-acting iterations in "
-                    "one reply",
+        "one reply",
     )
     """The maximum number of iterations for the reasoning-acting loop."""
 
@@ -119,7 +119,7 @@ class ReActConfig(BaseModel):
         title="Rejection Handling",
         default=False,
         description="Whether to stop replying when being rejected to "
-                    "execute tools."
+        "execute tools.",
     )
     """If stop reasoning when tool call(s) are rejected. If `True`, the agent
     won't continue reasoning and wait for outside interaction from the user.
@@ -128,6 +128,10 @@ class ReActConfig(BaseModel):
 
 class ModelConfig(BaseModel):
     """The model related configuration."""
+
+    # TODO: remove this line after PR #1564 is merged, where the ChatModel
+    #  will be child class of BaseModel
+    model_config = {"arbitrary_types_allowed": True}
 
     max_retries: int = Field(
         default=3,

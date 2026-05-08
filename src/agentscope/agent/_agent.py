@@ -461,7 +461,7 @@ class Agent:
         # Step 3: Enter the reasoning-acting loop until reaching max_iters or
         #  no more tool calls to execute
         # ===================================================================
-        while self.state.cur_iter < self.reasoning.max_iters:
+        while self.state.cur_iter < self.react_config.max_iters:
             # ===============================================================
             # Step 3.1:
             # ===============================================================
@@ -1533,10 +1533,9 @@ class Agent:
     # ======================================================================
     # Agent internal utility methods
     # ======================================================================
-
     async def _get_system_prompt(self) -> str:
         """Get the system prompt of the agent."""
-        prompt = [self.system_prompt]
+        prompt = [self._system_prompt]
 
         # Skill related instructions
         skill_instructions = await self.toolkit.get_skill_instructions()
@@ -1607,12 +1606,12 @@ class Agent:
 
         # Fallback to the secondary model if the primary model fails after
         # retries
-        if self.fallback_model:
-            models.append(self.fallback_model)
+        if self.model_config.fallback_model:
+            models.append(self.model_config.fallback_model)
 
         last_exception = None
         for model in models:
-            for _ in range(self.max_retries):
+            for _ in range(self.model_config.max_retries):
                 try:
                     # Apply middleware to wrap the actual model() call
                     if not self._model_call_middlewares:
@@ -1666,7 +1665,7 @@ class Agent:
                         model.model_name,
                         self.name,
                         _ + 1,
-                        self.max_retries,
+                        self.model_config.max_retries,
                     )
                     last_exception = e
 
