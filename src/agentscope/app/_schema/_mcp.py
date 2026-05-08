@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
-"""MCP configuration for the agent service."""
-import time
+"""MCP schemas for API requests and responses."""
 from enum import Enum
 
 from pydantic import BaseModel, Field
@@ -36,24 +35,8 @@ class ConnectionScope(str, Enum):
     """
 
 
-class MCPServiceConfig(BaseModel):
-    """MCP configuration for the agent service.
-
-    This extends the base MCP config with service-layer settings like
-    connection scope and name.
-
-    Example:
-        ```python
-        config = MCPServiceConfig(
-            name="weather_api",
-            connection_scope=ConnectionScope.SHARED,
-            mcp_config=HttpMCPConfig(
-                type="http_mcp",
-                url="https://api.weather.com/mcp"
-            )
-        )
-        ```
-    """
+class MCPBase(BaseModel):
+    """Base MCP fields shared across request/response schemas."""
 
     name: str = Field(
         title="MCP Name",
@@ -69,18 +52,6 @@ class MCPServiceConfig(BaseModel):
         discriminator="type",
         title="MCP Config",
         description="The base MCP server configuration.",
-    )
-
-    created_at: float = Field(
-        default_factory=time.time,
-        init=False,
-        description="Creation timestamp (Unix epoch).",
-    )
-
-    updated_at: float = Field(
-        default_factory=time.time,
-        init=False,
-        description="Last-updated timestamp (Unix epoch).",
     )
 
     def validate_config(self) -> None:
@@ -100,25 +71,20 @@ class MCPServiceConfig(BaseModel):
             )
 
 
-class MCPListResponse(BaseModel):
-    """Response model for listing MCP configurations."""
+class MCPCreateRequest(MCPBase):
+    """Request body for creating a new MCP configuration.
 
-    mcps: list[MCPServiceConfig] = Field(description="List of MCP records.")
-    total: int = Field(description="Total number of MCP configurations.")
+    Used in POST /mcp endpoint. Does not include server-generated fields
+    like creator_id, created_at, updated_at.
+    """
 
-
-class CreateMCPResponse(BaseModel):
-    """Response model after creating an MCP configuration."""
-
-    name: str = Field(
-        description="Unique name of the newly created MCP configuration.",
-    )
+    pass
 
 
-class UpdateMCPRequest(BaseModel):
+class MCPUpdateRequest(BaseModel):
     """Request body for partially updating an MCP configuration.
 
-    All fields are optional; omit any field to keep its current value.
+    Used in PATCH /mcp/{name} endpoint. All fields are optional.
     """
 
     connection_scope: ConnectionScope | None = Field(
@@ -129,4 +95,35 @@ class UpdateMCPRequest(BaseModel):
         default=None,
         discriminator="type",
         description="New MCP server configuration.",
+    )
+
+
+class MCPResponse(MCPBase):
+    """Response model for MCP configuration with server-generated metadata.
+
+    Used in GET /mcp/{name}, GET /mcp (list), and POST /mcp responses.
+    Includes all fields from MCPBase plus server-assigned metadata.
+    """
+
+    creator_id: str = Field(
+        description="User ID of the creator.",
+    )
+
+    created_at: float = Field(
+        description="Creation timestamp (Unix epoch).",
+    )
+
+    updated_at: float = Field(
+        description="Last-updated timestamp (Unix epoch).",
+    )
+
+
+class MCPListResponse(BaseModel):
+    """Response model for listing MCP configurations."""
+
+    mcps: list[MCPResponse] = Field(
+        description="List of MCP configurations.",
+    )
+    total: int = Field(
+        description="Total number of MCP configurations.",
     )

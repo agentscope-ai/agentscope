@@ -4,7 +4,8 @@ import asyncio
 from typing import Optional
 
 from ...mcp import MCPClient
-from .._config import MCPServiceConfig, ConnectionScope
+from .._schema import ConnectionScope
+from ...storage.models import MCPModel
 from ..._logging import logger
 
 
@@ -48,7 +49,7 @@ class MCPClientManager:
         @app.post("/chat")
         async def chat(
             agent_id: str,
-            mcp_config: MCPServiceConfig,  # From database
+            mcp_config: MCPModel,  # From database
             mcp_manager: MCPClientManager = Depends(get_mcp_manager)
         ):
             # Get or create MCP client for this agent

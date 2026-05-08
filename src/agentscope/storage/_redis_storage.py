@@ -4,7 +4,9 @@ import json
 from typing import Any, TYPE_CHECKING, Self
 
 from ._base import StorageBase
+from .models import MCPModel
 from .. import logger
+from ..app._schema._mcp import MCPBase
 from ..state import AgentState
 
 if TYPE_CHECKING:
@@ -102,6 +104,28 @@ class RedisStorage(StorageBase):
             session_id=session_id,
             agent_id=agent_id,
         )
+
+    def _get_mcp_names_key(self) -> str:
+        """Generate the Redis key for storing all MCP names.
+
+        Returns:
+            `str`:
+                Redis key for MCP names Set.
+        """
+        return "agentscope:mcps"
+
+    def _get_mcp_config_key(self, name: str) -> str:
+        """Generate the Redis key for a specific MCP configuration.
+
+        Args:
+            name (`str`):
+                The MCP name.
+
+        Returns:
+            `str`:
+                Redis key for the MCP configuration.
+        """
+        return f"agentscope:mcp:{name}"
 
     async def get_agent_state(
         self,
@@ -227,28 +251,82 @@ class RedisStorage(StorageBase):
         """
         return self._client
 
-    async def save_mcp_config(self, mcp_name: str, config: dict) -> str:
-        """Save the mcp configuration data.
+    async def upsert_mcp(self, mcp_data: MCPBase) -> None:
+        """Create or update an MCP configuration (upsert).
 
         Args:
-            mcp_name (`str`):
-                The name of the mcp configuration.
-            config (`dict`):
-                The mcp configuration data.
+            mcp_data (`MCPModel`):
+                The MCP configuration data to be saved.
+        """
+        name = mcp_data.name
+        names_key = self._get_mcp_names_key()
+        config_key = self._get_mcp_config_key(name)
+
+        # Add name to the Set
+        await self._client.sadd(names_key, name)
+
+        # Save the configuration (no TTL for persistent config)
+        value = json.dumps(mcp_data.model_dump(), ensure_ascii=False)
+        await self._client.set(config_key, value)
+
+        logger.info("Upserted MCP config '%s' successfully.", name)
+
+    async def list_mcps(self) -> list[MCPModel]:
+        """Get all MCP configurations.
 
         Returns:
-            `str`:
-                The saved MCP name, which maybe renamed to avoid name conflict.
+            `list[MCPModel]`:
+                List of all MCP configurations.
         """
-        # If the mcp_name already exists
+        names_key = self._get_mcp_names_key()
 
+        # Get all MCP names from the Set
+        names = await self._client.smembers(names_key)
 
-        value = json.dumps(config, ensure_ascii=False)
+        if not names:
+            return []
 
-        key = f"agentscope:mcp:config:{mcp_name}"
-        await self._client.set(key, value, ex=self.key_ttl)
+        # Batch get all configurations using MGET
+        config_keys = [self._get_mcp_config_key(name) for name in names]
+        values = await self._client.mget(config_keys)
 
-        return mcp_name
+        # Parse and return MCPModel instances
+        mcps = []
+        for value in values:
+            if value:
+                if isinstance(value, (bytes, bytearray)):
+                    value = value.decode("utf-8")
+                mcps.append(MCPModel.model_validate(json.loads(value)))
 
-    async def delete_mcp_config(self, name: str) -> None:
-        """Delete the mcp configuration data."""
+        logger.info("Retrieved %d MCP configurations.", len(mcps))
+        return mcps
+
+    async def delete_mcp(self, name: str) -> bool:
+        """Delete an MCP configuration.
+
+        Args:
+            name (`str`):
+                The MCP name to delete.
+
+        Returns:
+            `bool`:
+                True if deleted, False if not found.
+        """
+        names_key = self._get_mcp_names_key()
+        config_key = self._get_mcp_config_key(name)
+
+        # Remove name from the Set
+        removed = await self._client.srem(names_key, name)
+
+        # Delete the configuration
+        await self._client.delete(config_key)
+
+        if removed:
+            logger.info("Deleted MCP config '%s' successfully.", name)
+            return True
+        else:
+            logger.warning("MCP config '%s' not found.", name)
+            return False
+
+    async def upsert_session_config(self) -> None:
+        """"""

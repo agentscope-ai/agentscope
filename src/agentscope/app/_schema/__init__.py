@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
-"""Configuration models for the agent service."""
+"""Schema models for the agent service."""
 
 from ._mcp import (
-    MCPServiceConfig,
     ConnectionScope,
+    MCPCreateRequest,
+    MCPUpdateRequest,
+    MCPResponse,
     MCPListResponse,
-    CreateMCPResponse,
-    UpdateMCPRequest,
 )
 
 __all__ = [
-    "MCPServiceConfig",
     "ConnectionScope",
+    "MCPCreateRequest",
+    "MCPUpdateRequest",
+    "MCPResponse",
     "MCPListResponse",
-    "CreateMCPResponse",
-    "UpdateMCPRequest",
 ]
