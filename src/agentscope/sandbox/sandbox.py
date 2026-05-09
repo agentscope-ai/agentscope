@@ -226,12 +226,16 @@ class Sandbox:
 
         Resolution order:
         1. MCPGateway (if enabled and tool is known to the gateway).
+           Accepts both the gateway exposed name (e.g. ``greet``) and
+           the ``MCPTool.name`` form (e.g. ``mcp__sandbox__greet``).
         2. Local tool registry (static ToolDefinition with shell_cmd).
         """
         args = args or {}
 
-        if self._gateway and self._gateway.has_tool(name):
-            return await self._gateway.call_tool(name, args)
+        if self._gateway:
+            gw_name = self._resolve_gateway_tool_name(name)
+            if gw_name is not None:
+                return await self._gateway.call_tool(gw_name, args)
 
         entry = self._tools.get(name)
         if not entry:
@@ -239,6 +243,22 @@ class Sandbox:
                 f"Tool {name!r} not found. Available: {list(self._tools)}",
             )
         return await self._run_tool_handler(entry, args)
+
+    def _resolve_gateway_tool_name(self, name: str) -> str | None:
+        """Map *name* to a gateway exposed name, or ``None`` if not found.
+
+        Handles both bare exposed names (``greet``) and the prefixed
+        ``MCPTool.name`` form (``mcp__{mcp_name}__greet``).
+        """
+        assert self._gateway is not None
+        if self._gateway.has_tool(name):
+            return name
+        prefix = f"mcp__{self._config.mcp_gateway.mcp_name}__"
+        if name.startswith(prefix):
+            stripped = name[len(prefix) :]
+            if self._gateway.has_tool(stripped):
+                return stripped
+        return None
 
     # ─── skill surface ────────────────────────────────────────
 
