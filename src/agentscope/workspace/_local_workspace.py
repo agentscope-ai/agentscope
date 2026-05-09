@@ -15,9 +15,9 @@ import aiofiles.ospath
 import frontmatter
 from pydantic import AnyUrl
 
-from .._base import WorkspaceBase
-from ...mcp import MCPClient
-from ...message import (
+from agentscope.workspace._base import WorkspaceBase
+from agentscope.mcp import MCPClient
+from agentscope.message import (
     TextBlock,
     DataBlock,
     ToolResultBlock,
@@ -25,9 +25,9 @@ from ...message import (
     URLSource,
     Base64Source,
 )
-from ...skill import Skill
-from ...tool import ToolBase
-from ._tools import (
+from agentscope.skill import Skill
+from agentscope.tool import (
+    ToolBase,
     Bash,
     Edit,
     Glob,
@@ -35,7 +35,7 @@ from ._tools import (
     Read,
     Write,
 )
-from ..._logging import logger
+from agentscope._logging import logger
 
 
 _DEFAULT_WORKSPACE_INSTRUCTIONS = """<workspace>

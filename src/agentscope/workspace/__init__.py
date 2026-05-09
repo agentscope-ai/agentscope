@@ -2,7 +2,7 @@
 """The offload module in agentscope."""
 
 from ._base import WorkspaceBase
-from ._local import LocalWorkspace
+from ._local_workspace import LocalWorkspace
 
 __all__ = [
     "WorkspaceBase",
