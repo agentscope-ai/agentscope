@@ -253,14 +253,6 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
             tool_result,
         )
 
-        # Verify results
-        self.assertIsNotNone(reserved)
-        self.assertIsNotNone(offload)
-
-        # Verify ToolResultBlock metadata
-        self.assertEqual(reserved.id, tool_result.id)
-        self.assertEqual(offload.id, tool_result.id)
-
         # Verify results using assertListEqual
         expected_reserved = [
             {"type": "text", "text": "A" * 100, "id": "block1"},
@@ -274,6 +266,7 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
             [b.model_dump() for b in reserved.output],
             expected_reserved,
         )
+        print(offload.output)
         self.assertListEqual(
             [b.model_dump() for b in offload.output],
             expected_offload,

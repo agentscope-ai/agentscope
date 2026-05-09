@@ -202,18 +202,18 @@ class Agent:
 
     async def compress_context(
         self,
-        compression_config: ContextConfig | None = None,
+        context_config: ContextConfig | None = None,
     ) -> None:
         """Compress the agent's context if the token count exceeds the
         threshold.
 
         Args:
-            compression_config (`CompressionConfig | None`, optional):
-                If provided, compress the context with the given compression
-                config. Otherwise, use the default compression config in the
+            context_config (`ContextConfig | None`, optional):
+                If provided, compress the context with the given context
+                config. Otherwise, use the default context config in the
                 agent.
         """
-        cfg: ContextConfig = compression_config or self.context_config
+        cfg: ContextConfig = context_config or self.context_config
 
         # Count the current tokens
         kwargs = await self._prepare_model_input()
@@ -1361,11 +1361,11 @@ class Agent:
                         elif len(
                             reserved_tool_result_block.output,
                         ) > 0 and isinstance(
-                            reserved_tool_result_block.output[0],
+                            reserved_tool_result_block.output[-1],
                             TextBlock,
                         ):
                             reserved_tool_result_block.output[
-                                0
+                                -1
                             ].text += reminder
 
                         else:
@@ -1606,6 +1606,12 @@ class Agent:
         # Use a copied block for token counting
         copied_tool_result = deepcopy(tool_result)
 
+        # Normalized into content blocks
+        if isinstance(copied_tool_result.output, str):
+            copied_tool_result.output = [
+                TextBlock(text=copied_tool_result.output),
+            ]
+
         # Find the index of the block that will exceed the limit
         boundary_index = 0
         for i in range(len(copied_tool_result.output) - 1, 0, -1):
@@ -1651,10 +1657,21 @@ class Agent:
                 None,
             )
             # Truncate the text by proportion of tokens
-            reserved_tokens = int(
-                (self.context_config.tool_result_limit - cur_tokens)
-                / (cur_tokens_plus - cur_tokens)
-                * len(truncated_text),
+            token_delta = cur_tokens_plus - cur_tokens
+            remaining_token_budget = (
+                self.context_config.tool_result_limit - cur_tokens
+            )
+            if token_delta <= 0:
+                reserved_tokens = (
+                    len(truncated_text) if remaining_token_budget > 0 else 0
+                )
+            else:
+                reserved_tokens = int(
+                    remaining_token_budget / token_delta * len(truncated_text),
+                )
+            reserved_tokens = max(
+                0,
+                min(len(truncated_text), reserved_tokens),
             )
 
             reserved_text = truncated_text[:reserved_tokens]

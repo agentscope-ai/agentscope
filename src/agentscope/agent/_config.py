@@ -52,7 +52,7 @@ class SummarySchema(BaseModel):
 
 
 class ContextConfig(BaseModel):
-    """The compression related configuration in AgentScope"""
+    """The context related configuration in AgentScope"""
 
     model_config = {"arbitrary_types_allowed": True}
     """Allow arbitrary types in the pydantic model."""
