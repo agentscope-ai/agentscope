@@ -11,7 +11,6 @@ from typing import (
 )
 from collections import OrderedDict
 
-from openai.types import ReasoningEffort
 from pydantic import BaseModel
 
 from . import ChatResponse
@@ -30,9 +29,11 @@ from ..tracing import trace_llm
 from ..types import JSONSerializableObject
 
 if TYPE_CHECKING:
+    from openai.types import ReasoningEffort
     from openai.types.chat import ChatCompletion
     from openai import AsyncStream
 else:
+    ReasoningEffort = "openai.types.ReasoningEffort"
     ChatCompletion = "openai.types.chat.ChatCompletion"
     AsyncStream = "openai.types.chat.AsyncStream"
 
