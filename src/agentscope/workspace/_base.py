@@ -3,8 +3,7 @@
 from abc import abstractmethod, ABC
 from typing import Any
 
-from openai.types import Skill
-
+from ..skill import Skill
 from ..message import Msg, ToolResultBlock
 from ..tool import ToolBase
 

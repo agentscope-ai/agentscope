@@ -7,6 +7,8 @@ import base64
 import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
 from dataclasses import asdict
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 import aiofiles
 
@@ -75,6 +77,53 @@ class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
         expected_lines = [msg.model_dump_json() for msg in msgs]
         self.assertListEqual(lines, expected_lines)
 
+    async def test_offload_context_multiple_calls(self) -> None:
+        """Test multiple calls to offload_context for the same session.
+
+        This test verifies that:
+        1. Multiple calls to offload_context append correctly to the file
+        2. Each message is on its own line (proper JSONL format)
+        3. No lines are concatenated together
+        """
+        session_id = "test_session_multiple"
+
+        # First batch of messages
+        msgs1 = [
+            UserMsg(name="user", content="First message"),
+            AssistantMsg(name="assistant", content="First response"),
+        ]
+
+        # Second batch of messages
+        msgs2 = [
+            UserMsg(name="user", content="Second message"),
+            AssistantMsg(name="assistant", content="Second response"),
+        ]
+
+        # Offload first batch
+        file_path = await self.workspace.offload_context(session_id, msgs1)
+
+        # Offload second batch
+        file_path2 = await self.workspace.offload_context(session_id, msgs2)
+
+        # Verify both calls return the same path
+        self.assertEqual(file_path, file_path2)
+
+        # Read and verify the offloaded messages
+        async with aiofiles.open(file_path, "r") as f:
+            content = await f.read()
+
+        lines = content.strip().split("\n")
+        self.assertEqual(len(lines), 4)
+
+        # Compare with expected JSON strings
+        expected_lines = [msg.model_dump_json() for msg in msgs1 + msgs2]
+        self.assertListEqual(lines, expected_lines)
+
+        # Verify each line is valid JSON
+        for line in lines:
+            msg = Msg.model_validate_json(line)
+            self.assertIsNotNone(msg)
+
     async def test_offload_context_with_datablock(self) -> None:
         """Test offloading messages with DataBlock content.
 
@@ -121,7 +170,8 @@ class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
         self.assertEqual(len(loaded_msg.content), 2)
         data_url = str(loaded_msg.content[1].source.url)
         self.assertTrue(data_url.startswith("file://"))
-        data_file_path = data_url.replace("file://", "")
+        # Convert file URL to local path (works on both Windows and Unix)
+        data_file_path = url2pathname(urlparse(data_url).path)
         self.assertTrue(os.path.exists(data_file_path))
 
         # Verify the data file contains the correct content
@@ -181,7 +231,8 @@ class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
 
         # Verify the file exists
         data_url = str(result1.source.url)
-        data_file_path = data_url.replace("file://", "")
+        # Convert file URL to local path (works on both Windows and Unix)
+        data_file_path = url2pathname(urlparse(data_url).path)
         self.assertTrue(os.path.exists(data_file_path))
 
         # Verify only one file was created in the data directory
@@ -298,19 +349,23 @@ class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
         async with aiofiles.open(file_path, "r") as f:
             content = await f.read()
 
-        # Extract the data file path from the offloaded DataBlock
-        # to build the expected content
-        data_dir = os.path.join(self.temp_dir.name, "data")
-        data_files = os.listdir(data_dir)
-        self.assertEqual(len(data_files), 1)
-        data_file_path = os.path.join(data_dir, data_files[0])
+        # Verify the content structure (URL format varies by platform)
+        self.assertTrue(content.startswith("File created successfully: "))
+        self.assertIn("<data url='file://", content)
+        self.assertIn("name='output.txt'", content)
+        self.assertIn("media_type='text/plain'", content)
+        self.assertTrue(content.endswith("/>"))
 
-        expected_content = (
-            f"File created successfully: "
-            f"<data url='file://{data_file_path}' "
-            f"name='output.txt' media_type='text/plain'/>"
-        )
-        self.assertEqual(content, expected_content)
+        # Extract and verify the data file exists
+        # Parse the URL from the content
+        import re
+
+        url_match = re.search(r"url='([^']+)'", content)
+        self.assertIsNotNone(url_match)
+        data_url = url_match.group(1)
+        # Convert file URL to local path (works on both Windows and Unix)
+        data_file_path = url2pathname(urlparse(data_url).path)
+        self.assertTrue(os.path.exists(data_file_path))
 
 
 class TestLocalWorkspaceSkills(IsolatedAsyncioTestCase):
@@ -494,6 +549,45 @@ description: {description}
         # Verify skill directory was not modified
         mtime_second = os.path.getmtime(skill_target)
         self.assertEqual(mtime_first, mtime_second)
+
+    async def test_initialize_deduplicate_skills(self) -> None:
+        """Test that duplicate skills in skill_paths are deduplicated.
+
+        This test verifies that:
+        1. When skill_paths contains duplicates (same hash), only one is copied
+        2. No concurrent copy conflicts occur
+        3. The .skills file contains only one entry for the duplicated skill
+        """
+        # Create a test skill
+        skill_dir = self._create_test_skill(
+            "test_skill_dedup",
+            "A test skill for deduplication testing",
+        )
+
+        # Create workspace with the same skill path listed multiple times
+        workspace = LocalWorkspace(
+            workdir=self.temp_dir.name,
+            skill_paths=[skill_dir, skill_dir, skill_dir],  # Same path 3 times
+        )
+
+        # Initialize the workspace
+        await workspace.initialize()
+
+        # Verify only one skill was copied
+        skills_dir = os.path.join(self.temp_dir.name, "skills")
+        skill_target = os.path.join(skills_dir, "test_skill_dedup")
+        self.assertTrue(os.path.exists(skill_target))
+
+        # Verify .skills file contains only one entry
+        skills_hash_file = os.path.join(skills_dir, ".skills")
+        self.assertTrue(os.path.exists(skills_hash_file))
+
+        async with aiofiles.open(skills_hash_file, "r") as f:
+            hash_data = json.loads(await f.read())
+
+        # Should have exactly one entry
+        self.assertEqual(len(hash_data), 1)
+        self.assertIn("test_skill_dedup", hash_data.values())
 
     async def test_initialize_invalid_skill(self) -> None:
         """Test handling of invalid skills.

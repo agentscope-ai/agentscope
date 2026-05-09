@@ -8,6 +8,7 @@ import mimetypes
 import os
 import shutil
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 import aiofiles
@@ -15,9 +16,9 @@ import aiofiles.ospath
 import frontmatter
 from pydantic import AnyUrl
 
-from agentscope.workspace._base import WorkspaceBase
-from agentscope.mcp import MCPClient
-from agentscope.message import (
+from ._base import WorkspaceBase
+from ..mcp import MCPClient
+from ..message import (
     TextBlock,
     DataBlock,
     ToolResultBlock,
@@ -25,8 +26,8 @@ from agentscope.message import (
     URLSource,
     Base64Source,
 )
-from agentscope.skill import Skill
-from agentscope.tool import (
+from ..skill import Skill
+from ..tool import (
     ToolBase,
     Bash,
     Edit,
@@ -35,7 +36,7 @@ from agentscope.tool import (
     Read,
     Write,
 )
-from agentscope._logging import logger
+from .._logging import logger
 
 
 _DEFAULT_WORKSPACE_INSTRUCTIONS = """<workspace>
@@ -115,20 +116,19 @@ class LocalWorkspace(WorkspaceBase):
                 The workspace instructions to guide the agent how to use it.
         """
         self._workdir = os.path.abspath(workdir)
-        self._skill_paths = skill_paths or []
+        # Deduplicate skill paths by absolute path
+        self._skill_paths = list(
+            dict.fromkeys(os.path.abspath(p) for p in (skill_paths or [])),
+        )
         self._instructions = instructions
 
     async def initialize(self) -> None:
         """Initialize the local workspace by copying skills to the target
         directory.
 
-        This method will:
-        1. Validate each skill path (check SKILL.md exists with valid
-           frontmatter)
-        2. Compute hash for each skill based on SKILL.md content
-        3. Check if skill already exists in target directory (by hash)
-        4. Copy new skills to target directory concurrently
-        5. Update the .skills file with hash mappings
+        This method uses a two-phase approach to avoid race conditions:
+        1. Phase 1: Validate and compute hashes for all skills concurrently
+        2. Phase 2: Deduplicate by hash, then copy unique skills concurrently
         """
         skills_dir = os.path.join(self._workdir, "skills")
 
@@ -138,29 +138,80 @@ class LocalWorkspace(WorkspaceBase):
         # Load existing skill hashes
         existing_hashes = await self._load_skill_hashes(skills_dir)
 
-        # Process all skills concurrently
-        tasks = [
-            self._process_single_skill(skill_path, skills_dir, existing_hashes)
+        # Phase 1: Validate all skills and compute hashes concurrently
+        validation_tasks = [
+            self._validate_and_hash_skill(skill_path)
             for skill_path in self._skill_paths
         ]
-        results: list = await asyncio.gather(*tasks, return_exceptions=True)
+        validation_results: list = await asyncio.gather(
+            *validation_tasks,
+            return_exceptions=True,
+        )
 
-        # Update hash mappings with newly copied skills
-        updated = False
-        for i, result in enumerate(results):
+        # Collect valid skills and deduplicate by hash
+        # Keep only the first occurrence of each hash
+        skill_by_hash: dict[str, tuple[str, str]] = {}  # hash -> (path, name)
+        for i, result in enumerate(validation_results):
             if isinstance(result, Exception):
                 logger.warning(
-                    "Failed to process skill at %s: %s",
+                    "Failed to validate skill at %s: %s",
                     self._skill_paths[i],
                     str(result),
                 )
                 continue
 
-            success, skill_hash, skill_name = result
-            if success and skill_hash and skill_name:
-                if skill_hash not in existing_hashes:
-                    existing_hashes[skill_hash] = skill_name
-                    updated = True
+            if result is None:
+                # Invalid skill, already logged in _validate_and_hash_skill
+                continue
+
+            skill_path, skill_name, skill_hash = result
+
+            # Skip if hash already exists in workspace
+            if skill_hash in existing_hashes:
+                logger.info(
+                    "Skill '%s' (hash: %s...) already exists, skipping",
+                    skill_name,
+                    skill_hash[:8],
+                )
+                continue
+
+            # Deduplicate: keep only the first occurrence of each hash
+            if skill_hash not in skill_by_hash:
+                skill_by_hash[skill_hash] = (skill_path, skill_name)
+            else:
+                logger.info(
+                    "Skipping duplicate skill at %s (same hash as %s)",
+                    skill_path,
+                    skill_by_hash[skill_hash][0],
+                )
+
+        # Phase 2: Copy unique skills concurrently
+        copy_tasks = [
+            self._copy_skill(skill_path, skill_name, skills_dir)
+            for skill_hash, (skill_path, skill_name) in skill_by_hash.items()
+        ]
+        copy_results = await asyncio.gather(
+            *copy_tasks,
+            return_exceptions=True,
+        )
+
+        # Update hash mappings with successfully copied skills
+        updated = False
+        for i, result in enumerate(copy_results):
+            skill_hash = list(skill_by_hash.keys())[i]
+            skill_path, skill_name = skill_by_hash[skill_hash]
+
+            if isinstance(result, Exception):
+                logger.warning(
+                    "Failed to copy skill at %s: %s",
+                    skill_path,
+                    str(result),
+                )
+                continue
+
+            if result:  # Successfully copied
+                existing_hashes[skill_hash] = skill_name
+                updated = True
 
         # Save updated hash mappings if any new skills were added
         if updated:
@@ -279,6 +330,89 @@ class LocalWorkspace(WorkspaceBase):
             )
             return None
 
+    async def _validate_and_hash_skill(
+        self,
+        skill_path: str,
+    ) -> tuple[str, str, str] | None:
+        """Validate a skill and compute its hash.
+
+        Args:
+            skill_path (`str`):
+                The path to the skill directory.
+
+        Returns:
+            `tuple[str, str, str] | None`:
+                A tuple of (skill_path, skill_name, skill_hash) if valid,
+                None otherwise.
+        """
+        validation_result = await self._validate_skill(skill_path)
+        if validation_result is None:
+            return None
+
+        skill_name, _, skill_md_content = validation_result
+
+        # Compute hash
+        skill_hash = hashlib.sha256(
+            skill_md_content.encode("utf-8"),
+        ).hexdigest()
+
+        return skill_path, skill_name, skill_hash
+
+    async def _copy_skill(
+        self,
+        skill_path: str,
+        skill_name: str,
+        skills_dir: str,
+    ) -> bool:
+        """Copy a skill directory to the target skills directory.
+
+        Args:
+            skill_path (`str`):
+                The source skill directory path.
+            skill_name (`str`):
+                The skill name.
+            skills_dir (`str`):
+                The target skills directory.
+
+        Returns:
+            `bool`:
+                True if successfully copied, False otherwise.
+        """
+        try:
+            dest_path = os.path.join(skills_dir, skill_name)
+
+            # Check if destination already exists
+            if await aiofiles.ospath.exists(dest_path):
+                logger.warning(
+                    "Destination path %s already exists, skipping skill '%s'",
+                    dest_path,
+                    skill_name,
+                )
+                return False
+
+            def _sync_copy() -> None:
+                """Synchronous copy operation to be run in thread."""
+                shutil.copytree(skill_path, dest_path, dirs_exist_ok=False)
+
+            await asyncio.to_thread(_sync_copy)
+
+            logger.info(
+                "Copied skill '%s' from %s to %s",
+                skill_name,
+                skill_path,
+                dest_path,
+            )
+
+            return True
+
+        except Exception as e:
+            logger.warning(
+                "Failed to copy skill at %s: %s",
+                skill_path,
+                str(e),
+            )
+            return False
+
     async def _process_single_skill(
         self,
         skill_path: str,
@@ -381,8 +515,8 @@ class LocalWorkspace(WorkspaceBase):
         # file with the same name is guaranteed to have identical content —
         # no need to read and compare bytes.
         hash_str = hashlib.sha256(data_block.source.data.encode()).hexdigest()
-        ext = mimetypes.guess_extension(data_block.source.media_type) or "bin"
-        path = os.path.join(self._workdir, "data", f"{hash_str}.{ext}")
+        ext = mimetypes.guess_extension(data_block.source.media_type) or ".bin"
+        path = os.path.join(self._workdir, "data", f"{hash_str}{ext}")
 
         # Reuse the existing file directly — same hash ⟹ same content.
         if not await aiofiles.ospath.exists(path):
@@ -395,7 +529,7 @@ class LocalWorkspace(WorkspaceBase):
             id=data_block.id,
             name=data_block.name,
             source=URLSource(
-                url=AnyUrl("file://" + path),
+                url=AnyUrl(Path(path).as_uri()),
                 media_type=data_block.source.media_type,
             ),
         )
@@ -425,7 +559,7 @@ class LocalWorkspace(WorkspaceBase):
             session_id,
             "context.jsonl",
         )
-        # TODO: handle the multimodal files
+
         copied_msgs = deepcopy(msgs)
         msgs_strs = []
         for msg in copied_msgs:
@@ -446,8 +580,14 @@ class LocalWorkspace(WorkspaceBase):
         # Create parent directory if it doesn't exist
         os.makedirs(os.path.dirname(path), exist_ok=True)
         # Offload the context into the local file
-        async with aiofiles.open(path, mode="a") as file:
-            await file.write(msgs_str)
+        # Always end with a newline to ensure proper JSONL format when
+        # appending
+        async with aiofiles.open(
+            path,
+            mode="a",
+            encoding="utf-8",
+        ) as file:
+            await file.write(msgs_str + "\n")
         return path
 
     async def offload_tool_result(
