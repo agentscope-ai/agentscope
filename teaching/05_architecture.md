@@ -1750,16 +1750,15 @@ async with MsgHub(participants=[agent1, agent2, agent3]) as hub:
 #### 动态管理参与者
 
 ```python
-hub = MsgHub(participants=[alice, bob, charlie])
+async with MsgHub(participants=[alice, bob, charlie]) as hub:
+    # 添加参与者
+    hub.add(new_agent)
 
-# 添加参与者
-hub.add(new_agent)
+    # 删除参与者
+    hub.delete(bob)
 
-# 删除参与者
-hub.delete(bob)
-
-# 动态开启/关闭自动广播
-hub.set_auto_broadcast(False)  # 关闭后只支持手动 broadcast()
+    # 动态开启/关闭自动广播
+    hub.set_auto_broadcast(False)  # 关闭后只支持手动 broadcast()
 ```
 
 #### 带初始公告的多参与者对话

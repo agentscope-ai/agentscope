@@ -20,29 +20,26 @@ from agentscope.message import Msg
 from agentscope.pipeline import MsgHub
 from agentscope.agent import ReActAgent
 
-# 创建消息中心
-hub = MsgHub()
-
-# Agent订阅消息
+# 创建Agent
 analyst = ReActAgent(name="Analyst", model=..., sys_prompt="...")
 reporter = ReActAgent(name="Reporter", model=..., sys_prompt="...")
 critic = ReActAgent(name="Critic", model=..., sys_prompt="...")
 
-# Agent订阅
-hub.subscribe(analyst)
-hub.subscribe(reporter)
-hub.subscribe(critic)
+# 使用async with语法创建消息中心 - participants参数是必填的
+async with MsgHub(participants=[analyst, reporter, critic]) as hub:
+    # 广播消息 - 所有订阅者都会收到
+    await hub.broadcast(Msg(
+        name="publisher",
+        content="开始分析这个项目",
+        role="system"
+    ))
 
-# 发布消息 - 所有订阅者都会收到
-hub.publish(Msg(
-    name="publisher",
-    content="开始分析这个项目",
-    role="system"
-))
+# 也可以使用async with进行异步广播
+import asyncio
 
-# 或者用with语法
-with MsgHub([analyst, reporter, critic]) as hub:
-    hub.publish(Msg(name="user", content="启动分析", role="user"))
+async def broadcast_message():
+    async with MsgHub(participants=[analyst, reporter, critic]) as hub:
+        await hub.broadcast(Msg(name="user", content="启动分析", role="user"))
 ```
 
 ---
@@ -91,18 +88,17 @@ sequenceDiagram
     participant A as Agent A
     participant B as Agent B
     participant C as Agent C
-    
-    Note over A,B,C: 订阅消息
-    A->>Hub: subscribe(A)
-    B->>Hub: subscribe(B)
-    C->>Hub: subscribe(C)
-    
-    P->>Hub: publish(Msg)
-    
-    Note over Hub: 广播消息
-    Hub->>A: 推送Msg
-    Hub->>B: 推送Msg
-    Hub->>C: 推送Msg
+
+    Note over A,B,C: 进入MsgHub时自动订阅
+    P->>Hub: async with MsgHub(participants=[A, B, C])
+    Hub->>A: _reset_subscriber() 设置订阅关系
+    Hub->>B: _reset_subscriber() 设置订阅关系
+    Hub->>C: _reset_subscriber() 设置订阅关系
+
+    P->>Hub: broadcast(Msg)
+    Hub->>A: observe(Msg) 推送消息
+    Hub->>B: observe(Msg) 推送消息
+    Hub->>C: observe(Msg) 推送消息
 ```
 
 ---
@@ -112,20 +108,16 @@ sequenceDiagram
 ### 代码段1：为什么需要MsgHub？
 
 ```python showLineNumbers
-# 这是第24-46行
-hub = MsgHub()
-
-# Agent订阅消息
+# 创建Agent
 analyst = ReActAgent(name="Analyst", ...)
 reporter = ReActAgent(name="Reporter", ...)
 critic = ReActAgent(name="Critic", ...)
 
-hub.subscribe(analyst)
-hub.subscribe(reporter)
-hub.subscribe(critic)
-
-# 发布消息 - 所有订阅者都会收到
-hub.publish(Msg(name="publisher", content="开始分析", role="system"))
+# 使用with语法，participants参数是必填的
+# 进入with时自动订阅，退出时自动取消订阅
+async with MsgHub(participants=[analyst, reporter, critic]) as hub:
+    # 广播消息 - 所有订阅者都会收到
+    await hub.broadcast(Msg(name="publisher", content="开始分析", role="system"))
 ```
 
 **思路说明**：
@@ -133,8 +125,8 @@ hub.publish(Msg(name="publisher", content="开始分析", role="system"))
 | 问题 | 答案 |
 |------|------|
 | 为什么需要发布-订阅？ | 发布者和订阅者解耦，不需要知道彼此 |
-| `subscribe`做了什么？ | 把Agent注册到订阅者列表 |
-| `publish`后发生什么？ | 所有订阅者同时收到消息 |
+| `participants`是什么？ | 在MsgHub初始化时传入参与者列表 |
+| `broadcast`后发生什么？ | 所有参与者同时收到消息 |
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -146,7 +138,7 @@ hub.publish(Msg(name="publisher", content="开始分析", role="system"))
 │   critic.receive(msg)                                      │
 │                                                             │
 │   发布-订阅（松耦合）：                                   │
-│   hub.publish(msg)  ──► 广播给所有订阅者                  │
+│   await hub.broadcast(msg)  ──► 广播给所有订阅者                  │
 │                    ↑                                       │
 │                    │                                       │
 │            发布者不需要知道谁在听                         │
@@ -161,8 +153,8 @@ hub.publish(Msg(name="publisher", content="开始分析", role="system"))
 
 ```python showLineNumbers
 # with语法，自动管理订阅生命周期
-with MsgHub([analyst, reporter, critic]) as hub:
-    hub.publish(Msg(name="user", content="启动分析", role="user"))
+async with MsgHub(participants=[analyst, reporter, critic]) as hub:
+    await hub.broadcast(Msg(name="user", content="启动分析", role="user"))
 ```
 
 **思路说明**：
@@ -171,17 +163,17 @@ with MsgHub([analyst, reporter, critic]) as hub:
 |------|------|
 | `with`语法有什么好处？ | 自动订阅和取消订阅 |
 | 什么时候用with？ | 临时性的广播任务 |
-| 什么时候用subscribe？ | 长期订阅，需要手动管理 |
+| 什么时候用`add()`？ | 需要动态添加参与者时 |
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                 with语法的生命周期                          │
 │                                                             │
-│   with MsgHub([A, B, C]) as hub:                          │
+│   async with MsgHub([A, B, C]) as hub:                          │
 │       │                                                    │
 │       ├──► 进入with：自动订阅 A, B, C                     │
 │       │                                                    │
-│       ├──► 执行 hub.publish()                             │
+│       ├──► 执行 await hub.broadcast()                             │
 │       │                                                    │
 │       └──► 退出with：自动取消订阅 A, B, C                │
 │                                                             │
@@ -202,8 +194,8 @@ result = await pipeline(input)
 # A的结果自动传给B，B的结果自动传给C
 
 # 场景2：事件通知，用MsgHub
-hub = MsgHub([A, B, C])
-hub.publish(Msg(content="任务完成"))
+async with MsgHub([A, B, C]) as hub:
+    await hub.broadcast(Msg(content="任务完成"))
 # 所有订阅者同时收到通知
 ```
 

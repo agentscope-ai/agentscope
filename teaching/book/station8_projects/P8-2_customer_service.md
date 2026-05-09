@@ -63,7 +63,8 @@ agent = ReActAgent(
         model="gpt-4"
     ),
     sys_prompt="你是一个智能客服。请根据知识库中的信息回答用户问题。",
-    knowledgebases=[kb]
+    formatter=OpenAIChatFormatter(),
+    knowledge=kb  # 注意是 knowledge= 不是 knowledgebases=
 )
 
 # 4. 运行

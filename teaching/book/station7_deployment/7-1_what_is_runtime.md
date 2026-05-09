@@ -204,13 +204,16 @@ from agentscope.message import Msg
 app = Quart(__name__)
 
 # 在模块级别创建Agent（只创建一次）
+from agentscope.formatter import OpenAIChatFormatter
+
 agent = ReActAgent(
     name="Assistant",
     model=OpenAIChatModel(
         api_key=os.environ.get("OPENAI_API_KEY"),
         model="gpt-4"
     ),
-    sys_prompt="你是一个友好的AI助手。"
+    sys_prompt="你是一个友好的AI助手。",
+    formatter=OpenAIChatFormatter()  # 必须提供formatter
 )
 
 @app.route("/chat", methods=["POST"])

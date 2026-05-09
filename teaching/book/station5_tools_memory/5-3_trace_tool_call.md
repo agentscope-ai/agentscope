@@ -217,14 +217,22 @@ async def think():
 
 ```python showLineNumbers
 # 工具执行可能失败的场景
+from agentscope.message import TextBlock
+
 def search_weather(city: str) -> ToolResponse:
     try:
         result = weather_api(city)
-        return ToolResponse(result=result)
+        return ToolResponse(content=[TextBlock(type="text", text=str(result))])
     except NetworkError as e:
-        return ToolResponse(error=f"网络错误: {e}")
+        return ToolResponse(
+            content=[TextBlock(type="text", text=f"网络错误: {e}")],
+            metadata={"error": str(e)}
+        )
     except NotFoundError as e:
-        return ToolResponse(error=f"城市不存在: {e}")
+        return ToolResponse(
+            content=[TextBlock(type="text", text=f"城市不存在: {e}")],
+            metadata={"error": str(e)}
+        )
 ```
 
 **思路说明**：
@@ -232,8 +240,8 @@ def search_weather(city: str) -> ToolResponse:
 | 阶段 | 失败情况 | Agent如何处理 |
 |------|----------|---------------|
 | 查找Tool | 工具不存在 | 抛出异常，可能尝试其他 |
-| 执行Tool | 网络超时 | 返回错误，Agent可能重试 |
-| 执行Tool | 业务错误 | 返回错误，Agent告知用户 |
+| 执行Tool | 网络超时 | 通过metadata返回错误，Agent可能重试 |
+| 执行Tool | 业务错误 | 通过metadata返回错误，Agent告知用户 |
 
 ```
 ┌─────────────────────────────────────────────────────────────┐

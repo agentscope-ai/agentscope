@@ -122,7 +122,7 @@ content = [
 |------------|--------|----------|------|
 | Msg | 消息 | POJO/DTO | `Msg(name="user", content="hi")` |
 | Pipeline | 流水线 | Chain of Responsibility | `SequentialPipeline([a, b])` |
-| MsgHub | 邮局/广播站 | EventBus | `hub.publish(msg)` |
+| MsgHub | 邮局/广播站 | EventBus | `await hub.broadcast(msg)` |
 | ContentBlock | 内容块 | MediaType | `TextBlock(text="hi")` |
 | role | 角色 | MessageType | `"user"`, `"assistant"` |
 

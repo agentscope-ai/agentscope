@@ -101,6 +101,7 @@ from quart import Quart, Response, request
 
 from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
+from agentscope.formatter import OpenAIChatFormatter
 
 app = Quart(__name__)
 
@@ -111,7 +112,8 @@ agent = ReActAgent(
         api_key=os.environ.get("OPENAI_API_KEY"),
         model="gpt-4"
     ),
-    sys_prompt="你是一个友好的AI助手。"
+    sys_prompt="你是一个友好的AI助手。",
+    formatter=OpenAIChatFormatter()
 )
 
 @app.route("/chat", methods=["POST"])

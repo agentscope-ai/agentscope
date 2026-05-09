@@ -19,16 +19,34 @@
 import agentscope
 from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
+from agentscope.formatter import OpenAIChatFormatter
+from agentscope.tool import Toolkit
 
 # 初始化
 agentscope.init(project="ReActDemo")
+
+# 定义工具函数
+def get_weather(city: str) -> str:
+    """获取城市天气"""
+    weather_data = {"北京": "晴，25°C", "上海": "阴，22°C"}
+    return weather_data.get(city, "未知城市")
+
+def calculate(a: float, b: float) -> str:
+    """计算两个数的乘积"""
+    return str(a * b)
+
+# 创建Toolkit并注册工具
+toolkit = Toolkit()
+toolkit.register_tool_function(get_weather)
+toolkit.register_tool_function(calculate)
 
 # 创建ReActAgent
 agent = ReActAgent(
     name="Assistant",
     model=OpenAIChatModel(api_key="...", model="gpt-4"),
     sys_prompt="你是一个有帮助的AI助手，可以使用工具来完成任务。",
-    tools=[search_weather, calculate]  # 绑定工具
+    formatter=OpenAIChatFormatter(),
+    toolkit=toolkit,  # 使用toolkit参数，不是tools列表
 )
 
 # 运行 - Agent会自动决定是否调用工具
@@ -135,15 +153,21 @@ flowchart TD
 
 ## 🔬 关键代码段解析
 
-### 代码段1：ReActAgent的创建 —— 为什么需要tools参数？
+### 代码段1：ReActAgent的创建 —— 为什么需要toolkit参数？
 
 ```python showLineNumbers
-# 这是第27-32行
+# 创建Toolkit并注册工具
+toolkit = Toolkit()
+toolkit.register_tool_function(get_weather)
+toolkit.register_tool_function(calculate)
+
+# 这是第33-40行
 agent = ReActAgent(
     name="Assistant",
     model=OpenAIChatModel(api_key="...", model="gpt-4"),
     sys_prompt="你是一个有帮助的AI助手，可以使用工具来完成任务。",
-    tools=[search_weather, calculate]  # 关键：绑定工具列表
+    formatter=OpenAIChatFormatter(),
+    toolkit=toolkit,  # 关键：传入toolkit对象
 )
 ```
 
@@ -151,9 +175,9 @@ agent = ReActAgent(
 
 | 问题 | 答案 |
 |------|------|
-| 为什么要传`tools`？ | 告诉Agent它可以使用哪些工具 |
+| 为什么要传`toolkit`？ | 告诉Agent它可以使用哪些工具 |
 | 不传会怎样？ | Agent只能回复知识，无法获取实时信息或执行操作 |
-| `tools=[...]`是什么？ | 是一个函数列表，每个函数代表一个可用工具 |
+| `Toolkit`是什么？ | 是一个工具容器，通过register_tool_function()注册工具函数 |
 
 **工具 = Agent的手和脚**：
 

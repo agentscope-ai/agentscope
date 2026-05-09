@@ -44,11 +44,12 @@ toolkit.register_tool_function(send_email, group_name="email")
 
 ```python
 from agentscope.tool import ToolResponse
+from agentscope.message import TextBlock
 
 def calculate(expression: str) -> ToolResponse:
     # 安全地解析并计算简单表达式
-    result = str(eval(expression))  # 实际生产中请用 ast.literal_eval
-    return ToolResponse(result=result)
+    result = str(ast.literal_eval(expression))
+    return ToolResponse(content=[TextBlock(type="text", text=result)])
 ```
 
 ---

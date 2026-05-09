@@ -59,6 +59,7 @@ import agentscope
 from agentscope.message import Msg
 from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
+from agentscope.formatter import OpenAIChatFormatter
 from agentscope.pipeline import MsgHub
 
 # 1. 初始化
@@ -77,7 +78,8 @@ host = ReActAgent(
     sys_prompt="""你是一个辩论主持人。你的任务是：
 1. 公平地对待正反双方
 2. 总结双方的核心观点
-3. 给出客观的结论"""
+3. 给出客观的结论""",
+    formatter=OpenAIChatFormatter()
 )
 
 # 4. 创建正方Agent
@@ -85,7 +87,8 @@ pro_agent = ReActAgent(
     name="ProSide",
     model=model,
     sys_prompt="""你是一个正方辩手，坚持以下立场：人工智能的发展利大于弊。
-请针对辩题发表有利观点，并用逻辑和证据支持你的立场。"""
+请针对辩题发表有利观点，并用逻辑和证据支持你的立场。""",
+    formatter=OpenAIChatFormatter()
 )
 
 # 5. 创建反方Agent
@@ -93,13 +96,11 @@ con_agent = ReActAgent(
     name="ConSide",
     model=model,
     sys_prompt="""你是一个反方辩手，坚持以下立场：人工智能的发展需要更多限制。
-请针对辩题发表有利观点，并用逻辑和证据支持你的立场。"""
+请针对辩题发表有利观点，并用逻辑和证据支持你的立场。""",
+    formatter=OpenAIChatFormatter()
 )
 
-# 6. 创建MsgHub
-msghub = MsgHub(participants=[pro_agent, con_agent])
-
-# 7. 辩论函数
+# 6. 辩论函数
 import asyncio
 
 async def run_debate(topic: str, rounds: int = 3):
@@ -111,6 +112,15 @@ async def run_debate(topic: str, rounds: int = 3):
     """
     print(f"开始辩论：{topic}")
     print("=" * 50)
+
+    # 使用MsgHub协调多Agent
+    async with MsgHub(participants=[pro_agent, con_agent]) as msghub:
+        # 广播辩题给所有参与者
+        await msghub.broadcast(Msg(
+            name="Host",
+            content=f"辩题：{topic}",
+            role="system"
+        ))
 
     # 第一轮：开场陈述
     print("\n【第一轮：开场陈述】")
@@ -177,7 +187,12 @@ if __name__ == "__main__":
 ### 1. MsgHub创建
 
 ```python showLineNumbers
-msghub = MsgHub(participants=[pro_agent, con_agent])
+async with MsgHub(participants=[pro_agent, con_agent]) as msghub:
+    await msghub.broadcast(Msg(
+        name="Host",
+        content=f"辩题：{topic}",
+        role="system"
+    ))
 ```
 
 **设计要点**：

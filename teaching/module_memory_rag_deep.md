@@ -2082,14 +2082,14 @@ for doc in results:
 ```python showLineNumbers
 from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
-from agentscope.formatter import OpenAIFormatter
+from agentscope.formatter import OpenAIChatFormatter
 from agentscope.memory import InMemoryMemory
 from agentscope.rag import SimpleKnowledge, Document, MilvusLiteStore
 from agentscope.embedding import OpenAIEmbeddingModel
 
 # 初始化组件
 model = OpenAIChatModel(model_name="gpt-4")
-formatter = OpenAIFormatter()
+formatter = OpenAIChatFormatter()
 memory = InMemoryMemory()
 
 embedding_model = OpenAIEmbeddingModel(model_name="text-embedding-3-small")

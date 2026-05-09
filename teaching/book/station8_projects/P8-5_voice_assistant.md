@@ -55,6 +55,7 @@ import agentscope
 from agentscope.message import Msg
 from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
+from agentscope.formatter import OpenAIChatFormatter
 
 # 注意：RealtimeAgent是AgentScope的实时语音组件
 # 本示例展示其工作原理，实际使用需要完整的语音配置
@@ -78,7 +79,8 @@ voice_assistant = ReActAgent(
 2. 语气亲切友好
 3. 遇到不懂的问题会承认并建议用户查阅资料
 
-请用口语化的方式回复，不要使用列表或复杂格式。"""
+请用口语化的方式回复，不要使用列表或复杂格式。""",
+    formatter=OpenAIChatFormatter()
 )
 
 # 4. 模拟语音对话函数
@@ -134,7 +136,8 @@ async def real_voice_assistant():
         name="VoiceAssistant",
         model=model,
         voice=voice_model,  # 绑定语音模型
-        sys_prompt="你是一个友好的语音助手..."
+        sys_prompt="你是一个友好的语音助手...",
+        formatter=OpenAIChatFormatter()
     )
 
     # 启动语音对话

@@ -37,7 +37,9 @@
 import agentscope
 from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
+from agentscope.formatter import OpenAIChatFormatter
 from agentscope.tool import Toolkit, ToolResponse
+from agentscope.message import TextBlock
 
 # 1. 定义天气查询工具函数（无需装饰器）
 def get_weather(city: str) -> ToolResponse:
@@ -56,7 +58,7 @@ def get_weather(city: str) -> ToolResponse:
         "广州": "大雨，26°C，建议带伞",
     }
     result = weather_data.get(city, "抱歉，暂不支持该城市")
-    return ToolResponse(result=result)
+    return ToolResponse(content=[TextBlock(type="text", text=result)])
 
 # 2. 初始化
 agentscope.init(project="WeatherAgent")
@@ -73,6 +75,7 @@ agent = ReActAgent(
         model="gpt-4"
     ),
     sys_prompt="你是一个友好的天气预报助手。请根据用户询问的城市，使用天气查询工具获取信息并回答。",
+    formatter=OpenAIChatFormatter(),
     toolkit=toolkit
 )
 
@@ -101,7 +104,7 @@ def get_weather(city: str) -> ToolResponse:
         "广州": "大雨，26°C，建议带伞",
     }
     result = weather_data.get(city, "抱歉，暂不支持该城市")
-    return ToolResponse(result=result)
+    return ToolResponse(content=[TextBlock(type="text", text=result)])
 ```
 
 **设计要点**：

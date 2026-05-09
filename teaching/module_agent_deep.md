@@ -1673,7 +1673,7 @@ agent = ReActAgent(
     name="assistant",
     sys_prompt="You are a helpful assistant",  # 必需
     model_config_name="gpt-4",               # 必需
-    # formatter 参数也是必需的！
+    formatter=OpenAIChatFormatter()          # 必需
 )
 # 如果忘记提供 sys_prompt，会在运行时抛出 TypeError
 ```
@@ -1773,12 +1773,12 @@ class MyAgent(AgentBase):
 ```python showLineNumbers
 from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
-from agentscope.formatter import OpenAIFormatter
+from agentscope.formatter import OpenAIChatFormatter
 from agentscope.tool import Toolkit, execute_python_code
 
 # 初始化模型和格式化器
 model = OpenAIChatModel(model_name="gpt-4")
-formatter = OpenAIFormatter()
+formatter = OpenAIChatFormatter()
 
 # 创建工具包
 toolkit = Toolkit()
@@ -1969,11 +1969,11 @@ def my_hook_b(self, msg, **kwargs):
 
 from agentscope.agent import AgentBase
 from agentscope.message import Msg
-from agentscope.formatter import OpenAIFormatter
+from agentscope.formatter import OpenAIChatFormatter
 
 # 创建测试 Agent
 model = ...  # 实际使用需配置模型
-formatter = OpenAIFormatter(model=model)
+formatter = OpenAIChatFormatter()
 agent = AgentBase(name="test_agent", ...)  # 需补充必要参数
 
 # 注册 hooks
@@ -2038,10 +2038,10 @@ import asyncio
 from agentscope.agent import ReActAgent
 from agentscope.message import Msg
 from agentscope.model import OpenAIChatModel
-from agentscope.formatter import OpenAIFormatter
+from agentscope.formatter import OpenAIChatFormatter
 
 model = OpenAIChatModel(model_name="gpt-4o")
-formatter = OpenAIFormatter(model=model)
+formatter = OpenAIChatFormatter()
 
 agent = ReActAgent(
     name="weather_agent",
@@ -2079,12 +2079,12 @@ import asyncio
 from agentscope.agent import ReActAgent
 from agentscope.message import Msg
 from agentscope.model import OpenAIChatModel
-from agentscope.formatter import OpenAIFormatter
+from agentscope.formatter import OpenAIChatFormatter
 from agentscope.pipeline import MsgHub
 
 async def main():
     model = OpenAIChatModel(model_name="gpt-4o")
-    formatter = OpenAIFormatter(model=model)
+    formatter = OpenAIChatFormatter()
 
     # 工作器：专门负责搜索和获取信息
     python_worker = ReActAgent(
@@ -2318,8 +2318,8 @@ def log_pre_reply_hook(
 AgentBase.register_class_hook("pre_reply", "log_hook", log_pre_reply_hook)
 
 # 或注册到单个实例（ReActAgent 需要 name, sys_prompt, model, formatter 参数）
-from agentscope.formatter import OpenAIFormatter
-formatter = OpenAIFormatter(model=model)
+from agentscope.formatter import OpenAIChatFormatter
+formatter = OpenAIChatFormatter()
 agent = ReActAgent(name="助手", sys_prompt="你是助手", model=model, formatter=formatter)
 agent.register_instance_hook("pre_reply", "log_hook", log_pre_reply_hook)
 ```
@@ -2368,8 +2368,8 @@ from agentscope.pipeline import MsgHub
 
 async def main():
     model = OpenAIChatModel(model_name="gpt-4o")
-    from agentscope.formatter import OpenAIFormatter
-    formatter = OpenAIFormatter(model=model)
+    from agentscope.formatter import OpenAIChatFormatter
+    formatter = OpenAIChatFormatter()
 
     # 指挥官代理: 负责分解任务并下达指令
     commander = ReActAgent(

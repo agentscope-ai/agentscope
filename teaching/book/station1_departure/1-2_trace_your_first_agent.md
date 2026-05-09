@@ -22,6 +22,7 @@
 import agentscope
 from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
+from agentscope.formatter import OpenAIChatFormatter
 
 # 初始化
 agentscope.init(project="TraceDemo")
@@ -33,7 +34,8 @@ agent = ReActAgent(
         api_key="your-api-key",
         model="gpt-4"
     ),
-    sys_prompt="你是一个友好的AI助手。"
+    sys_prompt="你是一个友好的AI助手。",
+    formatter=OpenAIChatFormatter()
 )
 
 # 运行 - 追踪这个过程！

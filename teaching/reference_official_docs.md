@@ -72,9 +72,10 @@ AgentScope 中的"工具"指的是可调用的 Python 对象，包括：
 
 ```python
 from agentscope.tool import Toolkit, ToolResponse
+from agentscope.message import TextBlock
 
 def get_weather(location: str) -> ToolResponse:
-    return ToolResponse(result=f"{location}今日天气：晴，25-32℃")
+    return ToolResponse(content=[TextBlock(type="text", text=f"{location}今日天气：晴，25-32℃")])
 
 toolkit = Toolkit()
 toolkit.register_tool_function(get_weather, group_name="weather")

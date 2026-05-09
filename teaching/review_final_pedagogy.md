@@ -573,7 +573,7 @@ Toolkit 是 AgentScope 工具系统的核心，理解其设计对于开发复杂
 │                                         │
 │ Step 2: 初始化组件                       │
 │   model = OpenAIChatModel(...)          │
-│   formatter = OpenAIFormatter()         │
+│   formatter = OpenAIChatFormatter()         │
 │   toolkit = Toolkit()                   │
 │   toolkit.register_tool_function(get_weather, group_name="weather")
 │   memory = InMemoryMemory()             │
@@ -614,7 +614,7 @@ Toolkit 是 AgentScope 工具系统的核心，理解其设计对于开发复杂
 from agentscope.agent import ReActAgent
 from agentscope.message import Msg
 from agentscope.model import OpenAIChatModel
-from agentscope.formatter import OpenAIFormatter
+from agentscope.formatter import OpenAIChatFormatter
 from agentscope.tool import Toolkit, execute_python_code
 
 # Step 1: 初始化组件
@@ -623,7 +623,7 @@ model = OpenAIChatModel(
     api_key="your-api-key",  # 替换为您的 API Key
 )
 
-formatter = OpenAIFormatter()
+formatter = OpenAIChatFormatter()
 
 toolkit = Toolkit()
 toolkit.register_tool_function(

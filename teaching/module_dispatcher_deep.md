@@ -440,8 +440,8 @@ async with hub:
 # delete() 方法遍历参与者列表查找
 # 如果参与者不在列表中，会记录警告但继续执行
 
-hub = MsgHub(participants=[a1, a2])
-hub.delete(a3)  # a3 不在列表中，警告：Cannot find the agent
+async with MsgHub(participants=[a1, a2]) as hub:
+    hub.delete(a3)  # a3 不在列表中，警告：Cannot find the agent
 ```
 
 #### Medium: 并发访问 MsgHub

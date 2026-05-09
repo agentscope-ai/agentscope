@@ -79,7 +79,7 @@
 ┌─────────────────────────────────────────────────────────────┐
 │  MsgHub广播                                                │
 │                                                             │
-│  hub.publish(Msg(name="assistant", content="北京今天..."))   │
+│  await hub.broadcast(Msg(name="assistant", content="北京今天..."))   │
 │                                                             │
 │         ├──► Subscriber A 收到
 │         ├──► Subscriber B 收到

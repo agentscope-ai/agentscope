@@ -49,17 +49,16 @@ con_agent = ReActAgent(
     sys_prompt="你是一个反方辩手，坚持以下立场：AI应用需要更多限制"
 )
 
-# 创建MsgHub协调多Agent
-msghub = MsgHub(
-    participants=[pro_agent, con_agent],
-    announcement=None  # 可选：广播消息
-)
-
 # 辩论流程
 async def debate(topic: str, rounds: int = 3):
-    # 第一轮：发布辩题
-    initial_msg = Msg(name="Host", content=f"辩题：{topic}", role="system")
-    await msghub.publish(initial_msg)
+    # 创建MsgHub协调多Agent
+    async with MsgHub(
+        participants=[pro_agent, con_agent],
+        announcement=None  # 可选：广播消息
+    ) as msghub:
+        # 第一轮：发布辩题
+        initial_msg = Msg(name="Host", content=f"辩题：{topic}", role="system")
+        await msghub.broadcast(initial_msg)
 
     # 收集各方回应
     pro_result = await pro_agent(f"请就辩题'{topic}'发表正方观点")
@@ -94,7 +93,7 @@ async def debate(topic: str, rounds: int = 3):
 ┌─────────────────────────────────────────────────────────────┐
 │  MsgHub初始化                                              │
 │                                                             │
-│  msghub = MsgHub(participants=[pro_agent, con_agent])     │
+│  async with MsgHub(participants=[pro_agent, con_agent]) as msghub:  │
 │                                                             │
 │  ┌─────────────────────────────────────────────────────┐   │
 │  │ MsgHub内部状态：                                     │   │
@@ -119,7 +118,7 @@ async def debate(topic: str, rounds: int = 3):
 │      role="system"                                          │
 │  )                                                         │
 │                                                             │
-│  msghub.publish(initial_msg)                               │
+│  await msghub.broadcast(initial_msg)                               │
 └─────────────────────────────────────────────────────────────┘
                               │
               ┌───────────────┴───────────────┐
@@ -231,10 +230,10 @@ con_agent = ReActAgent(
 )
 
 # 创建MsgHub协调多Agent
-msghub = MsgHub(
+async with MsgHub(
     participants=[pro_agent, con_agent],
     announcement=None
-)
+) as msghub:
 ```
 
 **思路说明**：
@@ -253,9 +252,9 @@ msghub = MsgHub(
 │   pro_agent = ReActAgent("ProSide", sys_prompt="正方...")  │
 │   con_agent = ReActAgent("ConSide", sys_prompt="反方...")  │
 │                                                             │
-│   msghub = MsgHub(                                        │
+│   async with MsgHub(                                        │
 │       participants=[pro_agent, con_agent]  ← 参与者列表   │
-│   )                                                       │
+│   ) as msghub:                                            │
 │                                                             │
 │   注意：host不在participants中，因为host是裁判            │
 └─────────────────────────────────────────────────────────────┘
@@ -272,7 +271,7 @@ msghub = MsgHub(
 async def debate(topic: str, rounds: int = 3):
     # 发布辩题给所有参与者
     initial_msg = Msg(name="Host", content=f"辩题：{topic}", role="system")
-    await msghub.publish(initial_msg)
+    await msghub.broadcast(initial_msg)
 
     # 收集各方第一轮观点（并行）
     pro_result = await pro_agent(f"请就辩题'{topic}'发表正方观点")
@@ -295,7 +294,7 @@ async def debate(topic: str, rounds: int = 3):
 
 | 阶段 | 操作 | 说明 |
 |------|------|------|
-| 初始化 | msghub.publish() | 发布辩题给参与者 |
+| 初始化 | await msghub.broadcast() | 发布辩题给参与者 |
 | 第一轮 | pro_agent() + con_agent() 并行 | 各自发表观点 |
 | 多轮 | for循环 | 交替反驳 |
 | 总结 | host() | 主持人总结 |
@@ -329,26 +328,25 @@ async def debate(topic: str, rounds: int = 3):
 
 ```python showLineNumbers
 # MsgHub协调多Agent的核心机制
-msghub = MsgHub(participants=[pro_agent, con_agent])
+async with MsgHub(participants=[pro_agent, con_agent]) as msghub:
+    # 广播消息
+    await msghub.broadcast(Msg(
+        name="Host",
+        content="辩题：AI应该广泛应用吗？",
+        role="system"
+    ))
 
-# 发布消息
-await msghub.publish(Msg(
-    name="Host",
-    content="辩题：AI应该广泛应用吗？",
-    role="system"
-))
-
-# 内部实现
-# 1. 遍历participants列表
-# 2. 依次调用每个Agent的receive方法
-# 3. Agent处理消息（可能是异步）
+    # 内部实现
+    # 1. 遍历participants列表
+    # 2. 依次调用每个Agent的receive方法
+    # 3. Agent处理消息（可能是异步）
 ```
 
 **思路说明**：
 
 | 问题 | 答案 |
 |------|------|
-| publish做了什么？ | 遍历participants，调用receive |
+| broadcast做了什么？ | 遍历participants，调用await agent.observe() |
 | Agent收到消息后？ | 根据自己的sys_prompt处理 |
 | 为什么用MsgHub不用Pipeline？ | 需要同时通知所有辩手 |
 
@@ -356,12 +354,12 @@ await msghub.publish(Msg(
 ┌─────────────────────────────────────────────────────────────┐
 │              MsgHub广播消息                           │
 │                                                             │
-│   msghub.publish(msg)                                     │
+│   await msghub.broadcast(msg)                           │
 │        │                                                 │
 │        ▼                                                 │
 │   ┌─────────────────────────────────────────────────────┐  │
 │   │  for agent in [pro_agent, con_agent]:               │  │
-│   │      agent.receive(msg)                            │  │
+│   │      await agent.observe(msg)                       │  │
 │   └─────────────────────────────────────────────────────┘  │
 │        │                    │                              │
 │        ▼                    ▼                              │
@@ -432,14 +430,14 @@ MsgHub类似Java的**消息队列（Message Queue）**：
 
 | MsgHub概念 | Java对应 | 说明 |
 |------------|----------|------|
-| publish() | queue.send() | 发送消息 |
-| subscribe() | @KafkaListener | 订阅消息 |
-| announcement | Topic广播 | 广播消息 |
+| broadcast() | topic.send() | 广播消息 |
+| participants | @KafkaListener | 参与者列表 |
+| observe() | onMessage() | 接收消息 |
 
 ```python
 # Python MsgHub - 发布订阅
-msghub = MsgHub(participants=[agent_a, agent_b])
-await msghub.publish(Msg(name="system", content="通知"))
+async with MsgHub(participants=[agent_a, agent_b]) as msghub:
+    await msghub.broadcast(Msg(name="system", content="通知"))
 
 # Java Kafka - 发布订阅
 kafkaTemplate.send("topic", "message");
@@ -454,7 +452,7 @@ kafkaTemplate.send("topic", "message");
 <summary>点击查看答案</summary>
 
 1. **MsgHub和Pipeline的核心区别是什么？**
-   - MsgHub：发布订阅模式，一个消息可以同时发给所有订阅者
+   - MsgHub：发布订阅模式，通过broadcast广播消息给所有参与者
    - Pipeline：顺序执行模式，消息像流水线一样依次经过每个处理者
    - MsgHub适合"通知"场景，Pipeline适合"流程处理"场景
 
@@ -464,11 +462,11 @@ kafkaTemplate.send("topic", "message");
 
 3. **如果增加一个"裁判Agent"，MsgHub需要怎么改？**
    - 只需要在创建MsgHub时加入裁判Agent：
-   - `msghub = MsgHub(participants=[pro_agent, con_agent, judge_agent])`
-   - 裁判会和其他Agent一样收到所有消息
+   - `async with MsgHub(participants=[pro_agent, con_agent, judge_agent]) as msghub:`
+   - 或者动态添加：`hub.add(judge_agent)`
 
 4. **MsgHub的announcement参数有什么用？**
-   - 用于广播消息给所有订阅者
+   - 进入MsgHub时自动广播给所有参与者
    - 比如系统公告、全场通知等
 
 </details>

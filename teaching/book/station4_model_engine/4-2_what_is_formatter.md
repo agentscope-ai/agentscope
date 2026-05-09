@@ -16,20 +16,22 @@
 ## 🚀 先跑起来
 
 ```python showLineNumbers
+import asyncio
 from agentscope.message import Msg
-from agentscope.formatter import FormatterBase, JsonFormatter
+from agentscope.formatter import OpenAIChatFormatter
 
-# 使用内置Formatter
-formatter = JsonFormatter()
+# 使用内置Formatter（注意：format是异步方法）
+formatter = OpenAIChatFormatter()
 
-# 转换Msg列表为API格式
+# 准备Msg列表
 messages = [
     Msg(name="system", content="你是助手", role="system"),
     Msg(name="user", content="你好", role="user"),
 ]
 
-api_format = formatter.format(messages)
-# 输出适合API的JSON格式
+# 异步调用format方法，转换为API格式
+api_format = await formatter.format(messages)
+# 输出: [{"role": "system", "name": "system", "content": [{"type": "text", "text": "你是助手"}]}, ...]
 ```
 
 ---
@@ -69,32 +71,29 @@ class FormatterBase(ABC):
     """Formatter基类"""
 
     @abstractmethod
-    def format(self, messages: list[Msg]) -> dict:
-        """将Msg列表转换为API格式"""
-        pass
-
-    @abstractmethod
-    def parse(self, response: dict) -> Msg:
-        """将API响应转换为Msg"""
+    async def format(self, msgs: list[Msg]) -> list[dict]:
+        """将Msg列表转换为API格式的字典列表"""
         pass
 
 # 具体实现
-class OpenAIFormatter(FormatterBase):
-    def format(self, messages):
-        return {
-            "model": "gpt-4",
-            "messages": [
-                {"role": msg.role, "content": msg.content}
-                for msg in messages
-            ]
-        }
+class OpenAIChatFormatter(FormatterBase):
+    """OpenAI格式转换器"""
 
-    def parse(self, response):
-        return Msg(
-            name="assistant",
-            content=response["choices"][0]["message"]["content"],
-            role="assistant"
-        )
+    async def format(self, msgs: list[Msg]) -> list[dict]:
+        """将Msg列表转换为OpenAI API格式"""
+        formatted = []
+        for msg in msgs:
+            # 处理消息内容
+            content = []
+            for block in msg.get_content_blocks():
+                if block.get("type") == "text":
+                    content.append({"type": "text", "text": block.get("text", "")})
+            formatted.append({
+                "role": msg.role,
+                "name": msg.name,
+                "content": content
+            })
+        return formatted
 ```
 
 ---
@@ -108,13 +107,8 @@ class FormatterBase(ABC):
     """Formatter基类"""
 
     @abstractmethod
-    def format(self, messages: list[Msg]) -> dict:
+    async def format(self, msgs: list[Msg]) -> list[dict]:
         """将Msg列表转换为API格式"""
-        pass
-
-    @abstractmethod
-    def parse(self, response: dict) -> Msg:
-        """将API响应转换为Msg"""
         pass
 ```
 
@@ -133,8 +127,7 @@ class FormatterBase(ABC):
 │   ┌─────────────────────────────────────────────────────┐  │
 │   │              FormatterBase (抽象)                   │  │
 │   │                                                  │  │
-│   │  + format(messages) -> dict  {abstract}          │  │
-│   │  + parse(response) -> Msg     {abstract}         │  │
+│   │  + format(msgs) -> list[dict]  {abstract}       │  │
 │   └─────────────────────────────────────────────────────┘  │
 │                          ▲                                 │
 │         ┌──────────────┼──────────────┐                │
@@ -152,33 +145,33 @@ class FormatterBase(ABC):
 
 ---
 
-### 代码段2：OpenAIFormatter的实现
+### 代码段2：OpenAIChatFormatter的实现
 
 ```python showLineNumbers
-class OpenAIFormatter(FormatterBase):
-    def format(self, messages):
-        return {
-            "model": "gpt-4",
-            "messages": [
-                {"role": msg.role, "content": msg.content}
-                for msg in messages
-            ]
-        }
+class OpenAIChatFormatter(FormatterBase):
+    """OpenAI格式转换器"""
 
-    def parse(self, response):
-        return Msg(
-            name="assistant",
-            content=response["choices"][0]["message"]["content"],
-            role="assistant"
-        )
+    async def format(self, msgs: list[Msg]) -> list[dict]:
+        """将Msg列表转换为OpenAI API格式"""
+        formatted = []
+        for msg in msgs:
+            content = []
+            for block in msg.get_content_blocks():
+                if block.get("type") == "text":
+                    content.append({"type": "text", "text": block.get("text", "")})
+            formatted.append({
+                "role": msg.role,
+                "name": msg.name,
+                "content": content
+            })
+        return formatted
 ```
 
 **思路说明**：
 
 | 方法 | 输入 | 输出 |
 |------|------|------|
-| format | `Msg(name, content, role)` | `{"messages": [{...}]}` |
-| parse | `{"choices": [{...}]}` | `Msg(name, content, role)` |
+| format | `Msg(name, content, role)` | `[{"role": ..., "name": ..., "content": [...]}]` |
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -191,26 +184,17 @@ class OpenAIFormatter(FormatterBase):
 │   └─────────────────────────────────────────────────────┘  │
 │                           ▼                               │
 │   ┌─────────────────────────────────────────────────────┐  │
-│   │  {"model": "gpt-4",                              │  │
-│   │   "messages": [                                    │  │
-│   │     {"role": "user", "content": "你好"},          │  │
-│   │     {"role": "assistant", "content": "你好！"}    │  │
-│   │   ]}                                              │  │
-│   └─────────────────────────────────────────────────────┘  │
-│                                                             │
-│   parse:                                                   │
-│   ┌─────────────────────────────────────────────────────┐  │
-│   │  {"choices": [{"message": {"content": "你好！"}}]} │  │
-│   └─────────────────────────────────────────────────────┘  │
-│                           ▼                               │
-│   ┌─────────────────────────────────────────────────────┐  │
-│   │  Msg(name="assistant", content="你好！",           │  │
-│   │      role="assistant")                             │  │
+│   │  [                                                    │  │
+│   │    {"role": "user", "name": "user",                │  │
+│   │     "content": [{"type": "text", "text": "你好"}]},│  │
+│   │    {"role": "assistant", "name": "assistant",       │  │
+│   │     "content": [{"type": "text", "text": "你好！"}]} │  │
+│   │  ]                                                    │  │
 │   └─────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**💡 设计思想**：每个模型的Formatter负责**格式化请求**和**解析响应**，把API差异封装在Formatter内部。
+**💡 设计思想**：Formatter负责**格式化请求**，把API差异封装在Formatter内部。响应由Model处理后直接返回Msg。
 
 ---
 
@@ -222,14 +206,14 @@ async def agent_call(agent, user_input):
     # 1. 创建Msg
     msg = Msg(name="user", content=user_input, role="user")
 
-    # 2. 格式化（Formatter）
-    api_request = agent.formatter.format([msg])
+    # 2. 格式化（Formatter）- 注意是async方法
+    api_request = await agent.formatter.format([msg])
 
-    # 3. 调用API（Model）
-    api_response = await agent.model.call(api_request)
+    # 3. 调用API（Model）- Model返回ChatResponse
+    api_response = await agent.model(api_request, tools=agent.toolkit.get_json_schemas())
 
-    # 4. 解析响应（Formatter）
-    response = agent.formatter.parse(api_response)
+    # 4. Model自动解析响应为Msg
+    response = api_response  # 已经是Msg对象
 
     return response
 ```
@@ -248,7 +232,7 @@ async def agent_call(agent, user_input):
 │   │                            ▼                        │  │
 │   │                        Formatter                   │  │
 │   │                                                     │  │
-│   │   response ◄── parse() ◄── API响应              │  │
+│   │   response ◄────────── Msg ◄─── Model返回         │  │
 │   │                            ▲                        │  │
 │   │                            │                        │  │
 │   │                        Formatter                   │  │
@@ -259,7 +243,7 @@ async def agent_call(agent, user_input):
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**💡 设计思想**：Formatter在Agent和Model之间充当**翻译官**，让两者都能用统一格式（Msg）交流。
+**💡 设计思想**：Formatter在Agent和Model之间充当**翻译官**，让两者都能用统一格式（Msg）交流。响应由Model内部解析后直接返回Msg。
 
 ---
 
@@ -278,16 +262,16 @@ String json = mapper.writeValueAsString(msgList);
 Msg msg = mapper.readValue(json, Msg.class);
 
 // AgentScope Formatter
-formatter = OpenAIFormatter();
-apiRequest = formatter.format(messages);  // Msg → API JSON
-msg = formatter.parse(response);  // API JSON → Msg
+formatter = OpenAIChatFormatter();
+apiRequest = await formatter.format(messages);  // Msg → API JSON列表
+// 响应由Model直接返回Msg，无需parse
 ```
 
 | AgentScope | Java | 说明 |
 |------------|------|------|
 | Formatter | ObjectMapper | 格式转换 |
 | format() | writeValueAsString() | 对象转JSON |
-| parse() | readValue() | JSON转对象 |
+| parse() | readValue() | 无（Model内部处理） |
 
 ---
 

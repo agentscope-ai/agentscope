@@ -12,6 +12,7 @@
 import agentscope
 from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
+from agentscope.formatter import OpenAIChatFormatter
 
 # 初始化
 agentscope.init(project="MyProject")
@@ -23,7 +24,8 @@ agent = ReActAgent(
         api_key="your-api-key",
         model="gpt-4"
     ),
-    sys_prompt="你是一个友好的助手"
+    sys_prompt="你是一个友好的助手",
+    formatter=OpenAIChatFormatter()
 )
 
 # 调用Agent
@@ -42,6 +44,8 @@ asyncio.run(main())
 import agentscope
 from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
+from agentscope.formatter import OpenAIChatFormatter
+from agentscope.message import TextBlock
 from agentscope.tool import Toolkit, ToolResponse
 import ast
 
@@ -53,7 +57,7 @@ def calculate(expression: str) -> ToolResponse:
     """计算数学表达式（安全版本）"""
     # 使用 ast.literal_eval 避免安全风险
     result = str(ast.literal_eval(expression))
-    return ToolResponse(result=result)
+    return ToolResponse(content=[TextBlock(type="text", text=result)])
 
 # 创建工具箱并注册
 toolkit = Toolkit()
@@ -64,6 +68,7 @@ agent = ReActAgent(
     name="Assistant",
     model=OpenAIChatModel(api_key="...", model="gpt-4"),
     sys_prompt="你是一个得力的助手",
+    formatter=OpenAIChatFormatter(),
     toolkit=toolkit
 )
 ```
@@ -74,6 +79,7 @@ agent = ReActAgent(
 import agentscope
 from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
+from agentscope.formatter import OpenAIChatFormatter
 from agentscope.memory import InMemoryMemory
 
 # 初始化
@@ -87,6 +93,7 @@ agent = ReActAgent(
     name="Assistant",
     model=OpenAIChatModel(api_key="...", model="gpt-4"),
     sys_prompt="你是一个友好的助手",
+    formatter=OpenAIChatFormatter(),
     memory=memory
 )
 ```
@@ -148,18 +155,13 @@ results = await pipeline(user_input)
 from agentscope.message import Msg
 from agentscope.pipeline import MsgHub
 
-# 创建MsgHub
-msghub = MsgHub(participants=[agent_a, agent_b])
+# 使用with语法管理订阅生命周期
+async with MsgHub(participants=[agent_a, agent_b]) as hub:
+    # 广播消息给所有订阅者
+    await hub.broadcast(Msg(name="user", content="开场"))
 
-# 发布消息
-await msghub.publish(Msg(name="user", content="开场"))
-
-# 订阅结果
-async for result in msghub.subscribe():
-    print(result)
+# 订阅者在with块内会自动收到消息
 ```
-
----
 
 ## 5. 模型配置模板
 
@@ -205,6 +207,7 @@ model = DashScopeChatModel(
 
 ```python showLineNumbers
 from agentscope.tool import ToolResponse
+from agentscope.message import TextBlock
 
 def search_weather(city: str) -> ToolResponse:
     """查询天气
@@ -216,13 +219,15 @@ def search_weather(city: str) -> ToolResponse:
         ToolResponse: 包含天气信息
     """
     # 实际实现中应该调用天气API
-    return ToolResponse(result=f"{city}今天晴，温度25度")
+    result = f"{city}今天晴，温度25度"
+    return ToolResponse(content=[TextBlock(type="text", text=result)])
 ```
 
 ### 多参数工具
 
 ```python showLineNumbers
 from agentscope.tool import ToolResponse
+from agentscope.message import TextBlock
 
 def book_flight(from_city: str, to_city: str, date: str) -> ToolResponse:
     """预订机票
@@ -235,7 +240,8 @@ def book_flight(from_city: str, to_city: str, date: str) -> ToolResponse:
     Returns:
         ToolResponse: 包含预订结果
     """
-    return ToolResponse(result=f"已预订{from_city}到{to_city}的机票，日期{date}")
+    result = f"已预订{from_city}到{to_city}的机票，日期{date}"
+    return ToolResponse(content=[TextBlock(type="text", text=result)])
 ```
 
 ---
@@ -248,6 +254,7 @@ import os
 
 from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
+from agentscope.formatter import OpenAIChatFormatter
 
 app = Quart(__name__)
 
@@ -258,7 +265,8 @@ agent = ReActAgent(
         api_key=os.environ.get("OPENAI_API_KEY"),
         model="gpt-4"
     ),
-    sys_prompt="你是一个友好的AI助手。"
+    sys_prompt="你是一个友好的AI助手。",
+    formatter=OpenAIChatFormatter()
 )
 
 @app.route("/chat", methods=["POST"])
@@ -283,6 +291,7 @@ import asyncio
 import agentscope
 from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
+from agentscope.formatter import OpenAIChatFormatter
 
 async def main():
     agentscope.init(project="MyProject")
@@ -290,7 +299,8 @@ async def main():
     agent = ReActAgent(
         name="test",
         model=OpenAIChatModel(api_key="...", model="gpt-4"),
-        sys_prompt="你是一个助手"
+        sys_prompt="你是一个助手",
+        formatter=OpenAIChatFormatter()
     )
 
     result = await agent("你好")

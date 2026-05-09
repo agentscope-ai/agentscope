@@ -12,7 +12,7 @@ Example:
 
     .. code-block:: python
 
-        with MsgHub(participant=[agent1, agent2, agent3]):
+        async with MsgHub(participants=[agent1, agent2, agent3]):
             agent1()
             agent2()
 

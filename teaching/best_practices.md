@@ -29,7 +29,7 @@ ReActAgent 是官方推荐的构建代理应用的主要类，它实现了 Reaso
 ```python
 import os
 from agentscope.agent import ReActAgent
-from agentscope.formatter import DashScopeChatFormatter
+from agentscope.formatter import DashScopeChatFormatter, OpenAIChatFormatter
 from agentscope.model import DashScopeChatModel
 from agentscope.memory import InMemoryMemory
 from agentscope.tool import Toolkit
@@ -757,7 +757,7 @@ async with MsgHub(participants=[agent1, agent2]) as hub:
 ```python
 import asyncio
 from agentscope.agent import ReActAgent
-from agentscope.formatter import OpenAIMultiAgentFormatter
+from agentscope.formatter import OpenAIMultiAgentFormatter, OpenAIChatFormatter
 from agentscope.message import Msg
 from agentscope.pipeline import MsgHub
 
@@ -809,7 +809,7 @@ async def concurrent_analysis(topic: str):
         return OpenAIChatModel(model_name="gpt-4", api_key="your-api-key")
 
     agents = [
-        ReActAgent(name=name, sys_prompt=prompt, model=make_model())
+        ReActAgent(name=name, sys_prompt=prompt, model=make_model(), formatter=OpenAIChatFormatter())
         for name, prompt in specialists.items()
     ]
 
@@ -822,7 +822,8 @@ async def concurrent_analysis(topic: str):
     synthesizer = ReActAgent(
         name="Synthesiser",
         sys_prompt="Combine perspectives into a coherent summary...",
-        model=make_model()
+        model=make_model(),
+        formatter=OpenAIChatFormatter()
     )
     combined_text = "\n\n".join(
         f"[{agent.name}]: {r.get_text_content()}" for agent, r in zip(agents, results)
@@ -879,7 +880,8 @@ async def query_augmentation(original_query: str) -> list[str]:
     agent = ReActAgent(
         name="QueryAugmenter",
         sys_prompt="Generate 3 alternative queries for the same intent.",
-        model=make_model()
+        model=make_model(),
+        formatter=OpenAIChatFormatter()
     )
     # 返回多个查询变体以提高召回率
 ```
@@ -912,6 +914,7 @@ agent = ReActAgent(
     name="RAGAssistant",
     model=make_model(),
     toolkit=Toolkit(),  # 先创建空工具箱
+    formatter=OpenAIChatFormatter(),
     # RetrieverTool(kb),  # 检索工具
     # 其他业务工具通过 toolkit.register_tool_function() 注册
 )

@@ -162,27 +162,25 @@ sequenceDiagram
 ### 代码段1：Agent是如何调用Model的？
 
 ```python showLineNumbers
-# Agent调用Model的完整流程
+# Agent调用Model的完整流程（简化版）
 async def _call_model(self, messages: list[Msg]) -> Msg:
-    # 1.Formatter格式化消息
-    formatted = self.formatter.format(messages)
+    # 1.Formatter格式化消息（异步）
+    formatted = await self.formatter.format(messages)
 
-    # 2.调用Model API
+    # 2.调用Model API（内部处理响应）
     response = await self.model(formatted)
 
-    # 3.Formatter解析响应
-    parsed = self.formatter.parse(response)
-
-    return parsed
+    # 3.Model返回的已经是Msg对象
+    return response
 ```
 
 **思路说明**：
 
 | 步骤 | 代码 | 输入 | 输出 |
 |------|------|------|------|
-| 格式化 | `self.formatter.format(messages)` | `[Msg(...), ...]` | `{"model": "gpt-4", "messages": [...]}` |
-| 调用 | `await self.model(formatted)` | API请求格式 | API响应格式 |
-| 解析 | `self.formatter.parse(response)` | API响应 | `Msg(...)` |
+| 格式化 | `await self.formatter.format(messages)` | `[Msg(...), ...]` | `list[dict]` (API请求格式) |
+| 调用 | `await self.model(formatted)` | list[dict] | `Msg` (已解析的响应) |
+| 无需解析 | Model内部处理 | API响应 | 直接返回Msg |
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -190,18 +188,16 @@ async def _call_model(self, messages: list[Msg]) -> Msg:
 │                                                             │
 │   messages = [Msg("system", ...), Msg("user", "你好")]    │
 │        │                                                   │
-│        ▼ formatter.format()                               │
-│   api_request = {"model": "gpt-4", "messages": [...]}    │
+│        ▼ await formatter.format() (异步)                  │
+│   api_request = [{"role": "system", ...}, {...}]          │
 │        │                                                   │
-│        ▼ await model()                                   │
-│   api_response = {"choices": [{"message": {...}}]}        │
-│        │                                                   │
-│        ▼ formatter.parse()                                │
-│   response_msg = Msg(name="assistant", content="你好！")   │
+│        ▼ await model()                                    │
+│   response = Msg(name="assistant", content="你好！")       │
+│   （Model内部已解析，直接返回Msg）                          │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**💡 设计思想**：Formatter负责**格式转换**，Model负责**网络通信**，两者各司其职。
+**💡 设计思想**：Formatter负责**格式转换**（Msg → API格式），Model负责**网络通信和解析**（API响应 → Msg）。两者各司其职。
 
 ---
 
@@ -270,57 +266,46 @@ class OpenAIChatModel:
 ```python showLineNumbers
 # OpenAIFormatter的实现
 class OpenAIFormatter(FormatterBase):
-    def format(self, messages: list[Msg]) -> dict:
-        """Msg列表 → API请求格式"""
-        return {
-            "model": "gpt-4",
-            "messages": [
-                {
-                    "role": msg.role,
-                    "content": msg.content
-                }
-                for msg in messages
-            ]
-        }
-
-    def parse(self, response: dict) -> Msg:
-        """API响应格式 → Msg"""
-        choice = response["choices"][0]
-        return Msg(
-            name="assistant",
-            content=choice["message"]["content"],
-            role="assistant"
-        )
+    async def format(self, messages: list[Msg]) -> list[dict]:
+        """Msg列表 → API请求格式（异步）"""
+        formatted = []
+        for msg in messages:
+            # 处理消息内容（支持多模态）
+            content = []
+            for block in msg.get_content_blocks():
+                if block.get("type") == "text":
+                    content.append({"type": "text", "text": block.get("text", "")})
+            formatted.append({
+                "role": msg.role,
+                "name": msg.name,
+                "content": content
+            })
+        return formatted
 ```
 
 **思路说明**：
 
 | 方法 | 输入 | 输出 | 关键操作 |
 |------|------|------|----------|
-| format | `[Msg(...)]` | `{"messages": [...]}` | 提取role和content |
-| parse | `{"choices": [...]}` | `Msg(...)` | 提取content |
+| format | `[Msg(...)]` | `list[dict]` | 提取role、name、content |
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │              Formatter格式转换示例                         │
 │                                                             │
-│   format:                                                   │
+│   format (异步):                                           │
 │   ┌─────────────────────────────────────────────────────┐  │
 │   │  [Msg(role="user", content="你好")]                │  │
-│   │       ↓ list comprehension                        │  │
-│   │  {"messages": [{"role": "user", "content": "你好"}]} │
+│   │       ↓ await formatter.format()                    │  │
+│   │  [{"role": "user", "name": "user",               │  │
+│   │    "content": [{"type": "text", "text": "你好"}]}] │  │
 │   └─────────────────────────────────────────────────────┘  │
 │                                                             │
-│   parse:                                                   │
-│   ┌─────────────────────────────────────────────────────┐  │
-│   │  {"choices": [{"message": {"content": "你好！"}}]} │  │
-│   │       ↓ extract first choice                       │  │
-│   │  Msg(name="assistant", content="你好！")           │  │
-│   └─────────────────────────────────────────────────────┘  │
+│   响应由Model内部解析，直接返回Msg，无需Formatter处理      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**💡 设计思想**：Formatter是**转换器**——把统一格式转成API格式，再把API响应转回统一格式。
+**💡 设计思想**：Formatter是**转换器**——把统一格式Msg转成API请求格式。响应由Model内部解析后返回Msg。
 
 ---
 
@@ -334,7 +319,7 @@ async def debug_model_call():
     print(f"原始消息: {messages}")
 
     # 2. 打印格式化后的请求
-    formatter = OpenAIFormatter()
+    formatter = OpenAIChatFormatter()
     formatted = formatter.format(messages)
     print(f"格式化请求: {formatted}")
 

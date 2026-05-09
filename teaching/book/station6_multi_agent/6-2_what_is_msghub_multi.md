@@ -20,24 +20,19 @@ from agentscope.message import Msg
 from agentscope.agent import ReActAgent
 from agentscope.pipeline import MsgHub
 
-# 创建消息中枢
-hub = MsgHub()
-
-# Agent订阅消息
+# 创建多个Agent
 analyst = ReActAgent(name="Analyst", model=..., sys_prompt="...")
 notifier = ReActAgent(name="Notifier", model=..., sys_prompt="...")
 logger = ReActAgent(name="Logger", model=..., sys_prompt="...")
 
-hub.subscribe(analyst)
-hub.subscribe(notifier)
-hub.subscribe(logger)
-
-# 发布消息 - 所有订阅者都会收到
-await hub.publish(Msg(
-    name="system",
-    content="任务完成",
-    role="system"
-))
+# 使用with语法创建消息中枢 - participants参数是必填的
+async with MsgHub(participants=[analyst, notifier, logger]) as hub:
+    # 广播消息 - 所有参与者都会收到
+    await hub.broadcast(Msg(
+        name="system",
+        content="任务完成",
+        role="system"
+    ))
 ```
 
 ---
@@ -70,49 +65,34 @@ await hub.publish(Msg(
 ### 代码段1：MsgHub的订阅机制是怎么工作的？
 
 ```python showLineNumbers
-# 创建MsgHub并订阅Agent
-hub = MsgHub()
-
-analyst = ReActAgent(name="Analyst", model=..., sys_prompt="...")
-notifier = ReActAgent(name="Notifier", model=..., sys_prompt="...")
-logger = ReActAgent(name="Logger", model=..., sys_prompt="...")
-
-# 订阅Agent
-hub.subscribe(analyst)
-hub.subscribe(notifier)
-hub.subscribe(logger)
+# 使用with语法 - participants参数是必填的
+async with MsgHub(participants=[analyst, notifier, logger]) as hub:
+    # 参与者自动订阅
+    pass  # 进入with时自动设置订阅关系
 ```
 
 **思路说明**：
 
 | 问题 | 答案 |
 |------|------|
-| subscribe做了什么？ | 把Agent加入内部列表 |
-| 订阅后会发生什么？ | Agent会收到所有发布的消息 |
-| 可以动态添加吗？ | 可以，随时调用subscribe |
+| `participants`是什么？ | 在MsgHub初始化时传入参与者列表 |
+| `broadcast`后发生什么？ | 所有参与者通过`observe()`收到消息 |
+| 可以动态添加吗？ | 可以，使用`hub.add(agent)`方法 |
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │              MsgHub订阅机制                              │
 │                                                             │
-│   hub = MsgHub()                                          │
+│   async with MsgHub(participants=[analyst, notifier, logger]) as hub:    │
 │   ┌─────────────────────────────────────────────────────┐  │
-│   │  self.subscribed_agents = []                       │  │
+│   │  self.participants = [analyst, notifier, logger]    │  │
+│   │  _reset_subscriber() 为每个Agent设置订阅关系        │  │
 │   └─────────────────────────────────────────────────────┘  │
 │                                                             │
-│   hub.subscribe(analyst)                                   │
+│   动态添加：hub.add(new_agent)                             │
 │   ┌─────────────────────────────────────────────────────┐  │
-│   │  self.subscribed_agents = [analyst]                  │  │
-│   └─────────────────────────────────────────────────────┘  │
-│                                                             │
-│   hub.subscribe(notifier)                                  │
-│   ┌─────────────────────────────────────────────────────┐  │
-│   │  self.subscribed_agents = [analyst, notifier]        │  │
-│   └─────────────────────────────────────────────────────┘  │
-│                                                             │
-│   hub.subscribe(logger)                                    │
-│   ┌─────────────────────────────────────────────────────┐  │
-│   │  self.subscribed_agents = [analyst, notifier, logger]│  │
+│   │  self.participants = [A, B, C, new_agent]           │  │
+│   │  _reset_subscriber() 更新订阅关系                   │  │
 │   └─────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -124,41 +104,41 @@ hub.subscribe(logger)
 ### 代码段2：MsgHub发布消息的完整流程
 
 ```python showLineNumbers
-# 发布消息
+# 广播消息
 msg = Msg(name="system", content="任务完成", role="system")
-await hub.publish(msg)
+await hub.broadcast(msg)
 
-# 发布后的内部流程
-# 1. 遍历所有订阅者
-# 2. 给每个订阅者发送消息
-# 3. 订阅者处理消息
+# 广播后的内部流程
+# 1. 遍历所有参与者
+# 2. 调用每个参与者的observe方法
+# 3. 参与者处理消息
 ```
 
 **思路说明**：
 
 | 步骤 | 操作 | 说明 |
 |------|------|------|
-| 1 | 获取订阅者列表 | `self.subscribed_agents` |
-| 2 | 遍历列表 | 对每个订阅者执行 |
-| 3 | 调用订阅者的receive方法 | `agent.receive(msg)` |
+| 1 | 获取参与者列表 | `self.participants` |
+| 2 | 遍历列表 | 对每个参与者执行 |
+| 3 | 调用参与者的observe方法 | `await agent.observe(msg)` |
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│              消息发布流程                                │
+│              消息广播流程                                │
 │                                                             │
-│   hub.publish(msg)                                       │
+│   await hub.broadcast(msg)                               │
 │        │                                                 │
 │        ▼                                                 │
 │   ┌─────────────────────────────────────────────────────┐  │
-│   │  for agent in self.subscribed_agents:              │  │
-│   │      agent.receive(msg)                            │  │
+│   │  for agent in self.participants:                   │  │
+│   │      await agent.observe(msg)                      │  │
 │   └─────────────────────────────────────────────────────┘  │
 │        │                                                 │
-│        ├──► analyst.receive(msg) ──► Analyst处理      │
-│        ├──► notifier.receive(msg) ──► Notifier处理    │
-│        └──► logger.receive(msg) ──► Logger处理        │
+│        ├──► await analyst.observe(msg) ──► Analyst处理 │
+│        ├──► await notifier.observe(msg) ──► Notifier处理│
+│        └──► await logger.observe(msg) ──► Logger处理    │
 │                                                             │
-│   所有订阅者同时收到消息，互不干扰                     │
+│   所有参与者同时收到消息，互不干扰                     │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -170,21 +150,14 @@ await hub.publish(msg)
 
 ```python showLineNumbers
 # 使用with语法，自动管理订阅生命周期
-with MsgHub([analyst, notifier, logger]) as hub:
-    hub.publish(Msg(name="system", content="启动任务"))
+async with MsgHub(participants=[analyst, notifier, logger]) as hub:
+    await hub.broadcast(Msg(name="system", content="启动任务"))
     # 退出with时自动取消订阅
 
-# 等价于
-hub = MsgHub()
-hub.subscribe(analyst)
-hub.subscribe(notifier)
-hub.subscribe(logger)
-try:
-    hub.publish(Msg(name="system", content="启动任务"))
-finally:
-    hub.unsubscribe(analyst)
-    hub.unsubscribe(notifier)
-    hub.unsubscribe(logger)
+# 动态添加参与者
+async with MsgHub(participants=[analyst, notifier]) as hub:
+    hub.add(logger)  # 动态添加
+    await hub.broadcast(Msg(name="system", content="启动任务"))
 ```
 
 **思路说明**：
@@ -198,11 +171,11 @@ finally:
 ┌─────────────────────────────────────────────────────────────┐
 │              with语法的生命周期管理                        │
 │                                                             │
-│   with MsgHub([A, B, C]) as hub:                         │
+│   async with MsgHub([A, B, C]) as hub:                         │
 │       │                                                   │
 │       ├──► __enter__: 自动订阅 A, B, C                   │
 │       │                                                   │
-│       ├──► hub.publish(msg) ──► 广播消息                 │
+│       ├──► await hub.broadcast(msg) ──► 广播消息                 │
 │       │                                                   │
 │       └──► __exit__: 自动取消订阅 A, B, C                │
 │                                                             │
@@ -223,9 +196,9 @@ pipeline = SequentialPipeline([analyzer, summarizer, formatter])
 result = await pipeline(input)
 
 # 场景2：需要广播通知，用MsgHub
-# 一个消息同时通知所有订阅者
-hub = MsgHub([email_notifier, sms_notifier, logger])
-await hub.publish(Msg(content="任务完成"))
+# 一个消息同时通知所有参与者
+async with MsgHub(participants=[email_notifier, sms_notifier, logger]) as hub:
+    await hub.broadcast(Msg(content="任务完成"))
 ```
 
 **思路说明**：

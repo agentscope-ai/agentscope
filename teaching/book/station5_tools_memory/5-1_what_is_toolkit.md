@@ -17,7 +17,7 @@
 
 ```python showLineNumbers
 from agentscope.tool import Toolkit, ToolResponse
-import ast
+from agentscope.message import TextBlock
 
 # 创建自定义工具函数（无需装饰器）
 def safe_calculate(expression: str) -> ToolResponse:
@@ -30,8 +30,9 @@ def safe_calculate(expression: str) -> ToolResponse:
         ToolResponse: 包含计算结果的响应
     """
     # 使用 ast.literal_eval 避免安全风险
+    import ast
     result = str(ast.literal_eval(expression))
-    return ToolResponse(result=result)
+    return ToolResponse(content=[TextBlock(type="text", text=result)])
 
 # 使用Toolkit注册工具
 toolkit = Toolkit()
@@ -82,7 +83,7 @@ agent = ReActAgent(
 def safe_calculate(expression: str) -> ToolResponse:
     """计算数学表达式（安全版本）"""
     result = str(ast.literal_eval(expression))
-    return ToolResponse(result=result)  # 为什么不是直接返回result？
+    return ToolResponse(content=[TextBlock(type="text", text=result)])  # 为什么不是直接返回result？
 ```
 
 **思路说明**：
@@ -90,8 +91,8 @@ def safe_calculate(expression: str) -> ToolResponse:
 | 问题 | 答案 |
 |------|------|
 | 为什么返回`ToolResponse`而不是`str`？ | AgentScope统一接口，便于解析 |
-| `ToolResponse`里面有什么？ | `result`（执行结果）、`error`（错误信息）等 |
-| 如果计算出错怎么办？ | `ToolResponse(error="除数不能为零")` |
+| `ToolResponse`里面有什么？ | `content`（内容列表）等 |
+| 如果计算出错怎么办？ | `ToolResponse(content=[TextBlock(type="text", text="除数不能为零")])` |
 
 **💡 设计思想**：`ToolResponse`是Agent和工具之间的**契约**。无论什么工具，返回格式都一样，Agent就能统一处理。
 

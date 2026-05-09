@@ -36,6 +36,8 @@
 import agentscope
 from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
+from agentscope.formatter import OpenAIChatFormatter
+from agentscope.message import TextBlock
 from agentscope.tool import Toolkit, ToolResponse
 
 # 1. 定义搜索工具函数
@@ -43,7 +45,7 @@ def web_search(query: str) -> ToolResponse:
     """搜索网络获取相关信息"""
     # 实际项目中调用搜索API
     result = f"关于'{query}'的搜索结果..."
-    return ToolResponse(result=result)
+    return ToolResponse(content=[TextBlock(type="text", text=result)])
 
 # 2. 初始化
 agentscope.init(project="DeepResearch")
@@ -61,6 +63,7 @@ agent = ReActAgent(
     1. 搜索相关信息
     2. 分析整理
     3. 输出结构化报告""",
+    formatter=OpenAIChatFormatter(),
     toolkit=toolkit
 )
 
@@ -86,7 +89,7 @@ asyncio.run(main())
 def web_search(query: str) -> ToolResponse:
     """搜索网络获取相关信息"""
     result = f"关于'{query}'的搜索结果..."
-    return ToolResponse(result=result)
+    return ToolResponse(content=[TextBlock(type="text", text=result)])
 ```
 
 **设计要点**：

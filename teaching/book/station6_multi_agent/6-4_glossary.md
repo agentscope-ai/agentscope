@@ -55,20 +55,21 @@
 **说人话**：告诉MsgHub"有消息记得发给我"
 
 ```python
-hub.subscribe(my_agent)  # 订阅
-hub.unsubscribe(my_agent)  # 取消订阅
+# 使用with语法自动管理订阅
+async with MsgHub(participants=[agent_a, agent_b]) as hub:
+    await hub.broadcast(Msg(content="有新消息"))
 ```
 
 ---
 
-### **publish** = **发布**
+### **broadcast** = **广播**
 
-> "就是**广播**"
+> "就是**发布**消息给所有订阅者"
 
 **说人话**：把消息投进MsgHub，所有订阅者都会收到
 
 ```python
-hub.publish(Msg(content="有新消息"))
+await hub.broadcast(Msg(content="有新消息"))
 ```
 
 ---

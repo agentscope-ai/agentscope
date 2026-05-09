@@ -24,18 +24,21 @@ class MyHook(Hook):
         """回复前拦截 - 打印日志"""
         print(f"Agent {agent.name} 即将回复: {message.content[:50]}...")
         return message  # 返回原始消息，或者修改后的消息
-    
+
     def post_reply(self, agent, response, message):
         """回复后拦截 - 记录度量"""
         print(f"Agent {agent.name} 已回复: {message.content[:50]}...")
         return response
 
-# 使用Hook
+# 创建Agent后，通过register_instance_hook注册Hook
 agent = ReActAgent(
     name="MyAgent",
     model=model,
-    hooks=[MyHook()]  # 注入Hook
+    sys_prompt="你是一个有帮助的助手",
+    formatter=formatter,
 )
+agent.register_instance_hook("pre_reply", "my_pre_hook", MyHook().pre_reply)
+agent.register_instance_hook("post_reply", "my_post_hook", MyHook().post_reply)
 ```
 
 ---
@@ -152,21 +155,29 @@ class MyHook(Hook):
 ### 代码段2：Hook的使用方式
 
 ```python showLineNumbers
-# 创建Agent并注入Hook
+# 创建Agent后注册Hook
 agent = ReActAgent(
     name="MyAgent",
     model=model,
-    hooks=[MyHook()]  # 注意：是hooks= 不是hook=
+    sys_prompt="你是一个有帮助的助手",
+    formatter=formatter,
 )
+
+# 注册实例级Hook（仅对当前Agent实例生效）
+agent.register_instance_hook("pre_reply", "my_pre_hook", MyHook().pre_reply)
+agent.register_instance_hook("post_reply", "my_post_hook", MyHook().post_reply)
+
+# 或者注册类级别Hook（对所有该类的Agent实例生效）
+# ReActAgent.register_class_hook("pre_reply", "global_hook", global_pre_hook)
 ```
 
 **思路说明**：
 
 | 问题 | 答案 |
 |------|------|
-| 为什么用`hooks=[MyHook()]`？ | 可以注入多个Hook |
-| `hooks=`和`hook=`有区别吗？ | AgentScope使用`hooks=`参数 |
-| 可以同时用多个Hook吗？ | 可以，按顺序执行 |
+| 如何注册Hook？ | 使用`register_instance_hook()`方法 |
+| 实例级和类级Hook区别？ | 实例级只对当前Agent，类级对所有该类Agent |
+| 可以同时用多个Hook吗？ | 可以，按注册顺序执行 |
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -177,7 +188,7 @@ agent = ReActAgent(
 │       ▼                                                    │
 │   post_reply_Hook1 ◄── post_reply_Hook2 ◄──             │
 │                                                             │
-│   先进后出（类似栈）                                      │
+│   按注册顺序执行（先进先出）                              │
 └─────────────────────────────────────────────────────────────┘
 ```
 

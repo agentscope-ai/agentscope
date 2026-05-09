@@ -88,20 +88,10 @@ from abc import ABC, abstractmethod
 
 class ChatModelBase(ABC):
     """所有模型的基类"""
-    
+
     @abstractmethod
-    def __call__(self, messages: list[Msg]) -> Msg:
-        """统一的调用接口"""
-        pass
-    
-    @abstractmethod
-    def format(self, messages: list[Msg]) -> dict:
-        """将Msg转换为API格式"""
-        pass
-    
-    @abstractmethod
-    def parse(self, response: dict) -> Msg:
-        """将API响应转换为Msg"""
+    async def __call__(self, prompt: list[dict], ...) -> ChatResponse:
+        """统一的调用接口，返回ChatResponse"""
         pass
 ```
 
@@ -114,14 +104,17 @@ claude_model = AnthropicChatModel(api_key="sk-ant-xxx", model="claude-3-opus")
 dashscope_model = DashScopeChatModel(api_key="sk-xxx", model="qwen-max")
 
 # 传给Agent时，只需要是ChatModelBase类型
+# 注意：Agent还需要一个Formatter来转换消息格式
 agent = ReActAgent(
     model=openai_model,  # 或者 claude_model, dashscope_model
+    formatter=OpenAIChatFormatter(),
     ...
 )
 
-# 切换模型？只需要改这一行
+# 切换模型？只需要改model参数，同时可能需要换Formatter
 agent = ReActAgent(
-    model=claude_model,  # 改这一行就够了！
+    model=claude_model,  # 改这一行
+    formatter=AnthropicChatFormatter(),  # 可能需要换Formatter
     ...
 )
 ```
@@ -158,19 +151,14 @@ result = await call_model(model, "你好")
 
 ---
 
-### 代码段2：为什么需要format和parse？
+### 代码段2：为什么需要Formatter？
 
 ```python showLineNumbers
-# ChatModelBase 的两个关键方法
-class ChatModelBase(ABC):
+# FormatterBase 的关键方法
+class FormatterBase(ABC):
     @abstractmethod
-    def format(self, messages: list[Msg]) -> dict:
-        """将Msg转换为API格式"""
-        pass
-
-    @abstractmethod
-    def parse(self, response: dict) -> Msg:
-        """将API响应转换为Msg"""
+    async def format(self, messages: list[Msg]) -> list[dict]:
+        """将Msg列表转换为API格式（异步）"""
         pass
 ```
 
@@ -178,30 +166,30 @@ class ChatModelBase(ABC):
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│              format 和 parse 的分工                        │
+│              format 的分工                                  │
 │                                                             │
 │   format（格式化）                                          │
 │   ┌─────────────────────────────────────────────────────┐ │
-│   │ Msg ──────────────────────────► API请求JSON         │ │
+│   │ [Msg(...), Msg(...)] ──────────────────────────────► │ │
+│   │   list[dict] (API请求格式)                          │ │
 │   │                                                     │ │
-│   │ 统一格式              →        各API专属格式         │ │
+│   │ 统一格式Msg列表    →        各API专属JSON格式        │ │
 │   └─────────────────────────────────────────────────────┘ │
 │                                                             │
-│   parse（解析）                                            │
+│   Model内部处理                                            │
 │   ┌─────────────────────────────────────────────────────┐ │
-│   │ API响应JSON ──────────────────────────────────► Msg │ │
-│   │                                                     │ │
-│   │ 各API专属格式         →        统一格式              │ │
+│   │ API响应JSON ──► Model内部parse ──► ChatResponse    │ │
+│   │   （Model自动将响应转换为内部格式）                  │ │
 │   └─────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-| 方法 | 方向 | 目的 |
+| 组件 | 职责 | 说明 |
 |------|------|------|
-| `format` | Msg → API格式 | 让Agent的输出能被各API接受 |
-| `parse` | API格式 → Msg | 让各API的响应被Agent统一处理 |
+| Formatter | format | 将Msg列表转为API请求格式（异步） |
+| Model | __call__ | 调用API并返回ChatResponse（内部已解析） |
 
-**💡 设计思想**：这是**适配器模式**的应用。format负责"输出适配"，parse负责"输入适配"。两边都面向统一格式Msg进行转换。
+**💡 设计思想**：Formatter负责"输出适配"，Model负责网络通信和"输入适配"。响应由Model内部处理后直接返回Msg，无需单独parse步骤。
 
 ---
 

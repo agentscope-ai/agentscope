@@ -51,8 +51,8 @@
 **位置**: 第323-334行
 
 ```python
-# 文档中的代码
-with MsgHub(participants=[agent1, agent2, agent3],
+# 文档中的代码（已更正）
+async with MsgHub(participants=[agent1, agent2, agent3],
             announcement=Msg("system", "开始协作", "system")):
 ```
 
