@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
 """Extract attributes from AgentScope components for OpenTelemetry tracing."""
-from __future__ import annotations
-
 import inspect
 from typing import Any, Dict, Tuple, TYPE_CHECKING
 
@@ -83,7 +81,7 @@ def _get_format_target(instance: Any) -> str:
     return _CLASS_NAME_MAP.get(prefix_key, "unknown")
 
 
-def _get_provider_name(instance: ChatModelBase) -> str:
+def _get_provider_name(instance: "ChatModelBase") -> str:
     """Get provider name from ChatModelBase instance.
 
     Maps ChatModelBase class names to provider names, with special handling
@@ -194,7 +192,7 @@ def _get_tool_definitions(
 
 
 def _get_llm_request_attributes(
-    instance: ChatModelBase,
+    instance: "ChatModelBase",
     args: Tuple[Any, ...],
     kwargs: Dict[str, Any],
 ) -> Dict[str, Any]:
