@@ -104,12 +104,29 @@ class SandboxManager:
         ]
 
     async def close_all(self) -> None:
-        """Destroy all tracked sandboxes."""
+        """Destroy all tracked sandboxes.
+
+        MCP gateway shutdown may leak a cancel-scope ``CancelledError``
+        into the gather; we absorb it so callers see a clean exit.
+        """
         ids = list(self._instances.keys())
-        await asyncio.gather(
-            *(self.destroy(sid) for sid in ids),
-            return_exceptions=True,
-        )
+        try:
+            results = await asyncio.gather(
+                *(self.destroy(sid) for sid in ids),
+                return_exceptions=True,
+            )
+        except asyncio.CancelledError:
+            results = []
+        for sid, result in zip(ids, results):
+            if isinstance(result, BaseException) and not isinstance(
+                result,
+                asyncio.CancelledError,
+            ):
+                logger.warning(
+                    "SandboxManager: error destroying %s: %s",
+                    sid,
+                    result,
+                )
 
     # ─── Pool (integrated to avoid circular references) ───────
 
