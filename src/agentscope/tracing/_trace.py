@@ -2,6 +2,7 @@
 """The tracing decorators for agent, formatter, toolkit, chat and embedding
 models."""
 import inspect
+import json
 from functools import wraps
 from typing import (
     Generator,
@@ -43,6 +44,7 @@ from ._extractor import (
     _get_embedding_response_attributes,
 )
 from ._setup import _get_tracer
+from ._utils import _serialize_to_str
 
 if TYPE_CHECKING:
     from opentelemetry.trace import Span
@@ -128,10 +130,10 @@ def _trace_sync_generator_wrapper(
         for chunk in res:
             last_chunk = chunk
             yield chunk
-    except Exception as e:
+    except BaseException as e:
         has_error = True
         _set_span_error_status(span, e)
-        raise e from None
+        raise
 
     finally:
         if not has_error:
@@ -166,10 +168,10 @@ async def _trace_async_generator_wrapper(
             last_chunk = chunk
             yield chunk
 
-    except Exception as e:
+    except BaseException as e:
         has_error = True
         _set_span_error_status(span, e)
-        raise e from None
+        raise
 
     finally:
         if not has_error:
@@ -274,9 +276,9 @@ def trace(
                         _set_span_success_status(span)
                         return res
 
-                    except Exception as e:
+                    except BaseException as e:
                         _set_span_error_status(span, e)
-                        raise e from None
+                        raise
 
             return wrapper
 
@@ -321,9 +323,9 @@ def trace(
                     _set_span_success_status(span)
                     return res
 
-                except Exception as e:
+                except BaseException as e:
                     _set_span_error_status(span, e)
-                    raise e from None
+                    raise
 
         return sync_wrapper
 
@@ -399,9 +401,38 @@ def trace_reply_stream(
     Designed for :meth:`Agent._reply`, which yields a mix of
     ``AgentEvent`` and a final ``Msg``.  The ``invoke_agent`` span is
     opened before the first item is yielded and closed after the generator
-    is exhausted (or on error).  If a ``Msg`` object is observed among the
-    yielded items, the *last* such ``Msg`` is used to populate response
-    attributes on the span.
+    is exhausted (or on error).
+
+    **Delegation assumption**
+
+    This decorator is applied to :meth:`Agent._reply`.  Both the public
+    :meth:`Agent.reply` and :meth:`Agent.reply_stream` methods delegate to
+    ``_reply``, so all tracing goes through this single decorator.  If a
+    future refactor bypasses ``_reply``, tracing must be re-wired
+    accordingly.
+
+    **HITL and external-execution support**
+
+    A "logical reply" may be split into two separate ``_reply`` calls:
+
+    1. First call yields ``RequireUserConfirmEvent`` or
+       ``RequireExternalExecutionEvent`` and then returns.  Both calls share
+       the same ``self.state.reply_id`` (reset only on the first call).
+    2. Second call receives ``UserConfirmResultEvent`` or
+       ``ExternalExecutionResultEvent`` via kwargs.
+
+    This decorator handles both calls transparently:
+
+    - ``agentscope.agent.reply_id``:  set on every span so that observers
+      can correlate the two ``invoke_agent`` spans of a single logical reply.
+    - ``agentscope.agent.hitl_pending_tools`` /
+      ``agentscope.agent.external_execution_pending_tools``:  set on the first
+      span to signal why the reply was suspended.
+    - ``agentscope.agent.incoming_event_type``:  set on the second span to
+      indicate it is a HITL or external-execution continuation.
+    - Synthetic ``execute_tool`` spans:  emitted when the second call brings
+      an ``ExternalExecutionResultEvent`` so that externally executed tools
+      appear in the trace alongside internally executed ones.
 
     Args:
         func (`Callable[..., AsyncGenerator[Any, None]]`):
@@ -428,7 +459,7 @@ def trace_reply_stream(
 
         if not isinstance(self, Agent):
             logger.warning(
-                "Skipping tracing for %s as the first argument"
+                "Skipping tracing for %s as the first argument "
                 "is not an instance of Agent, but %s",
                 func.__name__,
                 type(self),
@@ -464,10 +495,85 @@ def trace_reply_stream(
                 },
                 end_on_exit=False,
             ) as span:
+                # Emit synthetic execute_tool spans for externally executed
+                # tools as children of the invoke_agent span so that they
+                # appear in the same subtree as internally executed tools.
+                #
+                # Note: GEN_AI_TOOL_CALL_ARGUMENTS is intentionally omitted
+                # here.  ExternalExecutionResultEvent only carries the tool
+                # result; the original call arguments were in the preceding
+                # RequireExternalExecutionEvent (first call).  Observers can
+                # correlate the two calls via the shared reply_id.
+                from ..event import ExternalExecutionResultEvent
+
+                event_arg = kwargs.get("event")
+                if isinstance(event_arg, ExternalExecutionResultEvent):
+                    # Evaluate once outside the loop; it contains a local
+                    # import that Python caches, but calling it per-iteration
+                    # is still unnecessary overhead when results are many.
+                    common_attrs = _get_common_attributes()
+                    for result in event_arg.execution_results:
+                        tool_attrs: dict[str, Any] = {
+                            SpanAttributes.GEN_AI_OPERATION_NAME: (
+                                OperationNameValues.EXECUTE_TOOL
+                            ),
+                            SpanAttributes.GEN_AI_TOOL_CALL_ID: result.id,
+                            SpanAttributes.GEN_AI_TOOL_NAME: result.name,
+                            SpanAttributes.AGENTSCOPE_IS_EXTERNAL_EXECUTION: (
+                                True
+                            ),
+                            **common_attrs,
+                        }
+                        # Only record the result when the tool succeeded and
+                        # output is available.  A None/absent output (e.g.
+                        # state=FAIL) would serialize to the string "null",
+                        # which is misleading, so we omit it in that case.
+                        if result.output is not None:
+                            tool_attrs[
+                                SpanAttributes.GEN_AI_TOOL_CALL_RESULT
+                            ] = _serialize_to_str(result.output)
+                        # end_on_exit defaults to True here: this is a
+                        # synchronous, instantaneous record-only span with no
+                        # body, so it is safe (and correct) to let the context
+                        # manager close it immediately on exit.
+                        with tracer.start_as_current_span(
+                            name=(
+                                f"{OperationNameValues.EXECUTE_TOOL}"
+                                f" {result.name}"
+                            ),
+                            attributes=tool_attrs,
+                        ):
+                            pass
+
                 has_error = False
+                error_exc: BaseException | None = None
                 last_msg: Msg | None = None
+                # Track pending tools requiring external intervention
+                hitl_pending: list[str] = []
+                external_pending: list[str] = []
+                # Capture reply_id from ReplyStartEvent; the first call emits
+                # one, the second (continuation) call does not.
+                observed_reply_id: str | None = None
+
                 try:
+                    from ..event import (
+                        RequireExternalExecutionEvent as _RequireExtExec,
+                        RequireUserConfirmEvent as _RequireUserConfirm,
+                        ReplyStartEvent as _ReplyStart,
+                    )
+
                     async for item in func(self, *args, **kwargs):
+                        if isinstance(item, _ReplyStart):
+                            # Emitted only on the first call of a logical reply
+                            observed_reply_id = item.reply_id
+                        elif isinstance(item, _RequireUserConfirm):
+                            hitl_pending.extend(
+                                t.name for t in item.tool_calls
+                            )
+                        elif isinstance(item, _RequireExtExec):
+                            external_pending.extend(
+                                t.name for t in item.tool_calls
+                            )
                         # _reply yields both AgentEvent and Msg objects.
                         # Track the last Msg to populate response attributes.
                         if isinstance(item, Msg):
@@ -475,10 +581,38 @@ def trace_reply_stream(
                         yield item
                 except BaseException as e:
                     has_error = True
-                    _set_span_error_status(span, e)
+                    error_exc = e
                     raise
                 finally:
-                    if not has_error:
+                    # reply_id: prefer value from ReplyStartEvent; fall back to
+                    # state (set before yield, safe to read here for
+                    # continuation calls that don't emit ReplyStartEvent).
+                    reply_id = observed_reply_id or getattr(
+                        getattr(self, "state", None),
+                        "reply_id",
+                        None,
+                    )
+                    if reply_id:
+                        span.set_attribute(
+                            SpanAttributes.AGENTSCOPE_REPLY_ID,
+                            reply_id,
+                        )
+
+                    if hitl_pending:
+                        span.set_attribute(
+                            SpanAttributes.AGENTSCOPE_HITL_PENDING_TOOLS,
+                            json.dumps(hitl_pending),
+                        )
+                    if external_pending:
+                        span.set_attribute(
+                            SpanAttributes.AGENTSCOPE_EXTERNAL_EXECUTION_PENDING_TOOLS,  # noqa
+                            json.dumps(external_pending),
+                        )
+
+                    # End the span last, after all attributes are set
+                    if has_error and error_exc is not None:
+                        _set_span_error_status(span, error_exc)
+                    else:
                         if last_msg is not None:
                             span.set_attributes(
                                 _get_agent_response_attributes(last_msg),
@@ -509,7 +643,7 @@ def trace_embedding(
 
         if not isinstance(self, EmbeddingModelBase):
             logger.warning(
-                "Skipping tracing for %s as the first argument"
+                "Skipping tracing for %s as the first argument "
                 "is not an instance of EmbeddingModelBase, but %s",
                 func.__name__,
                 type(self),
@@ -545,9 +679,9 @@ def trace_embedding(
                 _set_span_success_status(span)
                 return res
 
-            except Exception as e:
+            except BaseException as e:
                 _set_span_error_status(span, e)
-                raise e from None
+                raise
 
     return wrapper
 
@@ -581,7 +715,7 @@ def trace_format(
 
         if not isinstance(self, FormatterBase):
             logger.warning(
-                "Skipping tracing for %s as the first argument"
+                "Skipping tracing for %s as the first argument "
                 "is not an instance of FormatterBase, but %s",
                 func.__name__,
                 type(self),
@@ -616,9 +750,9 @@ def trace_format(
                 _set_span_success_status(span)
                 return res
 
-            except Exception as e:
+            except BaseException as e:
                 _set_span_error_status(span, e)
-                raise e from None
+                raise
 
     return wrapper
 
@@ -654,7 +788,7 @@ def trace_llm(
 
         if not isinstance(self, ChatModelBase):
             logger.warning(
-                "Skipping tracing for %s as the first argument"
+                "Skipping tracing for %s as the first argument "
                 "is not an instance of ChatModelBase, but %s",
                 func.__name__,
                 type(self),
@@ -690,8 +824,8 @@ def trace_llm(
                 _set_span_success_status(span)
                 return res
 
-            except Exception as e:
+            except BaseException as e:
                 _set_span_error_status(span, e)
-                raise e from None
+                raise
 
     return async_wrapper

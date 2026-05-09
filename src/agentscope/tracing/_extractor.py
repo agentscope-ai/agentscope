@@ -503,6 +503,23 @@ def _get_agent_request_attributes(
             input_messages,
         )
 
+    # Record the incoming continuation event type for HITL/external execution
+    event = kwargs.get("event")
+    if event is not None:
+        from ..event import (
+            ExternalExecutionResultEvent,
+            UserConfirmResultEvent,
+        )
+
+        if isinstance(event, UserConfirmResultEvent):
+            attributes[
+                SpanAttributes.AGENTSCOPE_INCOMING_EVENT_TYPE
+            ] = "user_confirm_result"
+        elif isinstance(event, ExternalExecutionResultEvent):
+            attributes[
+                SpanAttributes.AGENTSCOPE_INCOMING_EVENT_TYPE
+            ] = "external_execution_result"
+
     # custom attributes
     attributes[SpanAttributes.AGENTSCOPE_FUNCTION_INPUT] = _serialize_to_str(
         {

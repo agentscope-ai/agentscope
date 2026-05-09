@@ -98,17 +98,19 @@ class SpanAttributes:
     GEN_AI_TOOL_DESCRIPTION = GenAIAttributes.GEN_AI_TOOL_DESCRIPTION
     """The gen ai tool description."""
 
-    GEN_AI_TOOL_CALL_ARGUMENTS = "gen_ai.tool.call.arguments"
+    GEN_AI_TOOL_CALL_ARGUMENTS = GenAIAttributes.GEN_AI_TOOL_CALL_ARGUMENTS
     """The gen ai tool call arguments."""
 
-    GEN_AI_TOOL_CALL_RESULT = "gen_ai.tool.call.result"
+    GEN_AI_TOOL_CALL_RESULT = GenAIAttributes.GEN_AI_TOOL_CALL_RESULT
     """The gen ai tool call result."""
 
-    GEN_AI_TOOL_DEFINITIONS = "gen_ai.tool.definitions"
+    GEN_AI_TOOL_DEFINITIONS = GenAIAttributes.GEN_AI_TOOL_DEFINITIONS
     """The gen ai tool definitions."""
 
     # GenAI Embedding Attributes
-    GEN_AI_EMBEDDINGS_DIMENSION_COUNT = "gen_ai.embeddings.dimension.count"
+    GEN_AI_EMBEDDINGS_DIMENSION_COUNT = (
+        GenAIAttributes.GEN_AI_EMBEDDINGS_DIMENSION_COUNT
+    )
     """The gen ai embeddings dimension count."""
 
     # AgentScope Extended Attributes
@@ -126,6 +128,45 @@ class SpanAttributes:
 
     AGENTSCOPE_FUNCTION_OUTPUT = "agentscope.function.output"
     """The agentscope function output."""
+
+    AGENTSCOPE_REPLY_ID = "agentscope.agent.reply_id"
+    """The reply ID of the current agent reply.
+
+    Shared by both calls in a HITL or external-execution chain, allowing
+    observers to group the two ``invoke_agent`` spans that belong to the
+    same logical reply.
+    """
+
+    AGENTSCOPE_HITL_PENDING_TOOLS = "agentscope.agent.hitl_pending_tools"
+    """JSON list of tool names that are waiting for human confirmation.
+
+    Set on the first ``invoke_agent`` span when the agent pauses due to a
+    ``RequireUserConfirmEvent``.
+    """
+
+    AGENTSCOPE_EXTERNAL_EXECUTION_PENDING_TOOLS = (
+        "agentscope.agent.external_execution_pending_tools"
+    )
+    """JSON list of tool names submitted for external execution.
+
+    Set on the first ``invoke_agent`` span when the agent pauses due to a
+    ``RequireExternalExecutionEvent``.
+    """
+
+    AGENTSCOPE_INCOMING_EVENT_TYPE = "agentscope.agent.incoming_event_type"
+    """Type of the continuation event passed to the second reply call.
+
+    Possible values: ``"user_confirm_result"``,
+    ``"external_execution_result"``.
+    """
+
+    AGENTSCOPE_IS_EXTERNAL_EXECUTION = "agentscope.agent.is_external_execution"
+    """Marks a synthetic ``execute_tool`` span that represents a tool executed
+    externally (i.e. via ``ExternalExecutionResultEvent``).
+
+    The timestamp reflects when the result was received, not when the tool
+    actually ran on the external system.
+    """
 
 
 class OperationNameValues:
