@@ -176,25 +176,41 @@ if __name__ == "__main__":
 
 ### 1. MsgHub创建
 
-```python
+```python showLineNumbers
 msghub = MsgHub(participants=[pro_agent, con_agent])
 ```
 
-MsgHub将正方和反方Agent注册为订阅者，它们会自动收到发布的消息。
+**设计要点**：
+- `MsgHub` 是消息中枢
+- `participants` 参数注册参与辩论的Agent
+- 发布消息时，所有订阅者都会收到
+
+---
 
 ### 2. 异步辩论循环
 
-```python
+```python showLineNumbers
 for i in range(2, rounds + 1):
-    pro_rebuttal = await pro_agent(f"反方观点：{con_view}...")
-    con_rebuttal = await con_agent(f"正方观点：{pro_view}...")
+    pro_rebuttal = await pro_agent(
+        f"反方观点：{con_view}\n\n"
+        f"请针对反方观点进行反驳，坚持正方立场。"
+    )
+    con_rebuttal = await con_agent(
+        f"正方观点：{pro_view}\n\n"
+        f"请针对正方观点进行反驳，坚持反方立场。"
+    )
 ```
 
-多轮辩论通过异步循环实现，每轮双方互换角色进行回应。
+**设计要点**：
+- 异步循环实现多轮辩论
+- 每轮双方互换角色
+- 上一轮的观点作为下一轮的输入
+
+---
 
 ### 3. 主持人总结
 
-```python
+```python showLineNumbers
 summary = await host(
     f"请总结以下辩论，客观分析双方观点：\n\n"
     f"正方观点：{pro_view}\n\n"
@@ -202,7 +218,70 @@ summary = await host(
 )
 ```
 
-主持人Agent接收双方所有观点，生成客观总结。
+**设计要点**：
+- 主持人Agent专门负责总结
+- 输入是双方的最终观点
+- 输出是客观的总结分析
+
+---
+
+## 🔬 项目实战思路分析
+
+### 项目结构
+
+```
+multi_agent_debate/
+├── P8-3_multi_agent_debate.py    # 主程序
+├── agents.py                      # Agent定义
+└── README.md                    # 说明文档
+```
+
+### 开发步骤
+
+```
+Step 1: 创建主持人Agent
+        ↓
+Step 2: 创建正方和反方Agent
+        ↓
+Step 3: 设计辩论流程
+        ↓
+Step 4: 测试运行
+```
+
+### 多Agent协作模式
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                 多Agent协作模式                              │
+│                                                             │
+│   模式1：顺序协作（SequentialPipeline）                     │
+│   A ──► B ──► C ──► 结果                                 │
+│                                                             │
+│   模式2：并行协作（FanoutPipeline）                         │
+│          ┌─► B ──►                                       │
+│   A ────┼─► C ──► [汇总] ──► 结果                       │
+│          └─► D ──►                                       │
+│                                                             │
+│   模式3：发布-订阅（MsgHub）                               │
+│   发布者 ──► MsgHub ──► [订阅者A, 订阅者B, ...]          │
+│                                                             │
+│   本项目使用：模式1 + 模式3的组合                          │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 调试技巧
+
+```python
+# 查看Agent的思考过程
+import logging
+logging.basicConfig(level=logging.DEBUG)
+
+# 或者在prompt中要求Agent展示思考过程
+pro_agent = ReActAgent(
+    ...,
+    sys_prompt="""请在回复中包含你的思考过程。"""
+)
+```
 
 ---
 

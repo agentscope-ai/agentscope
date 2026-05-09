@@ -54,6 +54,7 @@ python3 auto_teaching_builder.py
 | [06 - 上下文管理器](06_context_manager.md) | with、__enter__、async with | try-with-resources | 30分钟 |
 | [07 - 继承与多态](07_inheritance.md) | 继承、方法覆盖、super() | extends/implements | 35分钟 |
 | [08 - 元类](08_metaclass.md) | type()、__new__、metaclass | 注解处理器 | 40分钟 |
+| [09 - 模块系统](09_module_system.md) | 模块、包、导入、__init__.py、循环导入 | Java package | 45分钟 |
 
 ## 🛠️ 工具
 

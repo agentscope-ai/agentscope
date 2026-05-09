@@ -157,6 +157,233 @@ sequenceDiagram
 
 ---
 
+## 🔬 关键代码段解析
+
+### 代码段1：Agent是如何调用Model的？
+
+```python showLineNumbers
+# Agent调用Model的完整流程
+async def _call_model(self, messages: list[Msg]) -> Msg:
+    # 1.Formatter格式化消息
+    formatted = self.formatter.format(messages)
+
+    # 2.调用Model API
+    response = await self.model(formatted)
+
+    # 3.Formatter解析响应
+    parsed = self.formatter.parse(response)
+
+    return parsed
+```
+
+**思路说明**：
+
+| 步骤 | 代码 | 输入 | 输出 |
+|------|------|------|------|
+| 格式化 | `self.formatter.format(messages)` | `[Msg(...), ...]` | `{"model": "gpt-4", "messages": [...]}` |
+| 调用 | `await self.model(formatted)` | API请求格式 | API响应格式 |
+| 解析 | `self.formatter.parse(response)` | API响应 | `Msg(...)` |
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│              Agent调用Model的完整流程                      │
+│                                                             │
+│   messages = [Msg("system", ...), Msg("user", "你好")]    │
+│        │                                                   │
+│        ▼ formatter.format()                               │
+│   api_request = {"model": "gpt-4", "messages": [...]}    │
+│        │                                                   │
+│        ▼ await model()                                   │
+│   api_response = {"choices": [{"message": {...}}]}        │
+│        │                                                   │
+│        ▼ formatter.parse()                                │
+│   response_msg = Msg(name="assistant", content="你好！")   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**💡 设计思想**：Formatter负责**格式转换**，Model负责**网络通信**，两者各司其职。
+
+---
+
+### 代码段2：ChatModel是怎么调用API的？
+
+```python showLineNumbers
+# OpenAIChatModel的实现（简化版）
+class OpenAIChatModel:
+    def __init__(self, api_key: str, model: str):
+        self.api_key = api_key
+        self.model = model
+        self.client = OpenAI(api_key=api_key)
+
+    async def __call__(self, request: dict) -> dict:
+        # 从request中提取参数
+        model = request.get("model", self.model)
+        messages = request["messages"]
+
+        # 调用OpenAI API
+        response = self.client.chat.completions.create(
+            model=model,
+            messages=messages
+        )
+
+        # 返回原始响应
+        return response.model_dump()
+```
+
+**思路说明**：
+
+| 步骤 | 代码 | 说明 |
+|------|------|------|
+| 提取参数 | `request["messages"]` | 从格式化后的请求中获取 |
+| 构造请求 | `client.chat.completions.create()` | 调用OpenAI SDK |
+| 返回响应 | `response.model_dump()` | 返回字典格式 |
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│              OpenAIChatModel调用流程                       │
+│                                                             │
+│   request = {                                              │
+│       "model": "gpt-4",                                   │
+│       "messages": [{"role": "user", "content": "你好"}]  │
+│   }                                                        │
+│        │                                                   │
+│        ▼                                                   │
+│   client.chat.completions.create(                         │
+│       model="gpt-4",                                     │
+│       messages=[...]                                       │
+│   )                                                        │
+│        │                                                   │
+│        ▼                                                   │
+│   response = {                                             │
+│       "id": "chatcmpl-xxx",                               │
+│       "choices": [{"message": {"content": "你好！"}}]     │
+│   }                                                        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**💡 设计思想**：ChatModel是**适配器模式**——封装了不同API的调用细节，提供统一的`__call__`接口。
+
+---
+
+### 代码段3：Formatter是怎么实现格式转换的？
+
+```python showLineNumbers
+# OpenAIFormatter的实现
+class OpenAIFormatter(FormatterBase):
+    def format(self, messages: list[Msg]) -> dict:
+        """Msg列表 → API请求格式"""
+        return {
+            "model": "gpt-4",
+            "messages": [
+                {
+                    "role": msg.role,
+                    "content": msg.content
+                }
+                for msg in messages
+            ]
+        }
+
+    def parse(self, response: dict) -> Msg:
+        """API响应格式 → Msg"""
+        choice = response["choices"][0]
+        return Msg(
+            name="assistant",
+            content=choice["message"]["content"],
+            role="assistant"
+        )
+```
+
+**思路说明**：
+
+| 方法 | 输入 | 输出 | 关键操作 |
+|------|------|------|----------|
+| format | `[Msg(...)]` | `{"messages": [...]}` | 提取role和content |
+| parse | `{"choices": [...]}` | `Msg(...)` | 提取content |
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│              Formatter格式转换示例                         │
+│                                                             │
+│   format:                                                   │
+│   ┌─────────────────────────────────────────────────────┐  │
+│   │  [Msg(role="user", content="你好")]                │  │
+│   │       ↓ list comprehension                        │  │
+│   │  {"messages": [{"role": "user", "content": "你好"}]} │
+│   └─────────────────────────────────────────────────────┘  │
+│                                                             │
+│   parse:                                                   │
+│   ┌─────────────────────────────────────────────────────┐  │
+│   │  {"choices": [{"message": {"content": "你好！"}}]} │  │
+│   │       ↓ extract first choice                       │  │
+│   │  Msg(name="assistant", content="你好！")           │  │
+│   └─────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**💡 设计思想**：Formatter是**转换器**——把统一格式转成API格式，再把API响应转回统一格式。
+
+---
+
+### 代码段4：如何调试模型调用问题？
+
+```python showLineNumbers
+# 调试模型调用的方法
+async def debug_model_call():
+    # 1. 打印格式化前的消息
+    messages = [Msg(name="user", content="你好")]
+    print(f"原始消息: {messages}")
+
+    # 2. 打印格式化后的请求
+    formatter = OpenAIFormatter()
+    formatted = formatter.format(messages)
+    print(f"格式化请求: {formatted}")
+
+    # 3. 打印API响应
+    model = OpenAIChatModel(api_key="sk-xxx", model="gpt-4")
+    response = await model(formatted)
+    print(f"API响应: {response}")
+
+    # 4. 打印解析后的消息
+    parsed = formatter.parse(response)
+    print(f"解析结果: {parsed}")
+```
+
+**思路说明**：
+
+| 调试点 | 打印内容 | 可以发现的问题 |
+|--------|----------|---------------|
+| format前 | `messages` | 消息内容是否正确 |
+| format后 | `formatted` | 格式是否匹配API |
+| response | API原始响应 | 是否有错误码 |
+| parse后 | `Msg` | 解析是否正确 |
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│              模型调用调试检查点                            │
+│                                                             │
+│   messages ──► formatter.format() ──► formatted          │
+│                                     │                      │
+│                                     ▼                      │
+│                              检查格式是否正确               │
+│                                     │                      │
+│                                     ▼                      │
+│                              await model()                  │
+│                                     │                      │
+│                                     ▼                      │
+│                              检查API响应                   │
+│                                     │                      │
+│                                     ▼                      │
+│                              formatter.parse()              │
+│                                     │                      │
+│                                     ▼                      │
+│                              检查解析结果                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**💡 设计思想**：调试模型调用要**逐层检查**——每一步的输入输出都打印出来，快速定位问题在哪一层。
+
+---
+
 ## 💡 Java开发者注意
 
 模型调用链路类似Java的**HTTP客户端调用**：

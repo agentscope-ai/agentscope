@@ -91,40 +91,115 @@ asyncio.run(main())
 ## 🔍 代码解读
 
 ### 1. 工具函数定义
-```python
+
+```python showLineNumbers
 def get_weather(city: str) -> ToolResponse:
-    ...
+    """查询城市天气"""
+    weather_data = {
+        "北京": "晴，25°C，适宜外出",
+        "上海": "多云，28°C，略有闷热",
+        "广州": "大雨，26°C，建议带伞",
+    }
+    result = weather_data.get(city, "抱歉，暂不支持该城市")
     return ToolResponse(result=result)
 ```
-- 普通函数，返回 `ToolResponse` 对象
-- Agent可以调用它
+
+**设计要点**：
+- 函数签名：`city: str` 是输入参数
+- 返回类型：`-> ToolResponse` 是统一的工具返回值类型
+- 模拟数据：用字典存储天气信息演示用
+
+---
 
 ### 2. Toolkit注册
-```python
+
+```python showLineNumbers
 toolkit = Toolkit()
 toolkit.register_tool_function(get_weather, group_name="weather")
 ```
-- 创建工具箱并注册工具函数
-- `group_name` 控制工具的分组
+
+**设计要点**：
+- `Toolkit()` 创建工具箱实例
+- `register_tool_function()` 注册工具函数
+- `group_name="weather"` 给工具分组
+
+---
 
 ### 3. ReActAgent
-```python
+
+```python showLineNumbers
 agent = ReActAgent(
     name="WeatherAssistant",
-    model=...,
-    sys_prompt="...",
+    model=OpenAIChatModel(api_key="your-api-key", model="gpt-4"),
+    sys_prompt="你是一个友好的天气预报助手...",
     toolkit=toolkit
 )
 ```
-- 创建带工具的Agent
-- Agent会自动决定何时调用工具
+
+**设计要点**：
+- `name` 是Agent的名字，用于日志和追踪
+- `model` 是AI大脑
+- `sys_prompt` 定义Agent角色和行为
+- `toolkit` 是Agent可以使用的工具集合
+
+---
 
 ### 4. 异步调用
-```python
-response = await agent("北京今天天气怎么样？")
+
+```python showLineNumbers
+async def main():
+    response = await agent("北京今天天气怎么样？")
+    print(f"Agent回复: {response.content}")
+
+asyncio.run(main())
 ```
-- Agent调用是异步的
-- 需要`await`等待结果
+
+**设计要点**：
+- `async def` 定义异步函数
+- `await agent()` 等待异步结果
+- `asyncio.run()` 运行异步主函数
+
+---
+
+## 🔬 项目实战思路分析
+
+### 项目结构
+
+```
+weather_agent/
+├── P8-1_weather_agent.py    # 主程序
+├── requirements.txt          # 依赖
+└── README.md                # 说明文档
+```
+
+### 开发步骤
+
+```
+Step 1: 定义工具函数
+        ↓
+Step 2: 创建工具箱并注册
+        ↓
+Step 3: 创建Agent
+        ↓
+Step 4: 测试运行
+```
+
+### 调试技巧
+
+```python
+# 开启调试模式，查看Agent的思考过程
+agentscope.init(
+    project="WeatherAgent",
+    logging_level="DEBUG"  # 设置为DEBUG可以看到详细日志
+)
+```
+
+**日志输出示例**：
+```
+DEBUG: Agent思考: 用户问天气，我需要调用get_weather工具
+DEBUG: Agent行动: get_weather(city="北京")
+DEBUG: Agent观察: "晴，25°C，适宜外出"
+```
 
 ---
 

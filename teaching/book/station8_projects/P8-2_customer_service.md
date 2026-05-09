@@ -81,21 +81,106 @@ asyncio.run(main())
 ## 🔍 代码解读
 
 ### KnowledgeBase
-```python
-kb = KnowledgeBase([...])
+
+```python showLineNumbers
+kb = KnowledgeBase([
+    SimpleKnowledge(content="我们的产品支持Python 3.8+..."),
+    SimpleKnowledge(content="技术支持邮箱：support@example.com"),
+    SimpleKnowledge(content="产品版本：v2.1.0，发布日期：2024-01-15"),
+])
 ```
-- 管理知识库内容
-- 支持检索功能
+
+**设计要点**：
+- `KnowledgeBase` 是知识库的容器
+- `SimpleKnowledge` 是单条知识
+- 支持任意多条知识
+
+---
 
 ### Agent使用知识库
-```python
+
+```python showLineNumbers
 agent = ReActAgent(
-    ...,
+    name="CustomerService",
+    model=OpenAIChatModel(...),
+    sys_prompt="你是一个智能客服...",
     knowledgebases=[kb]  # 绑定知识库
 )
 ```
-- Agent自动检索知识库
-- 结合检索结果回答
+
+**设计要点**：
+- `knowledgebases=[kb]` 参数传入知识库
+- Agent会自动检索相关知识
+- 结合检索结果生成回答
+
+---
+
+## 🔬 项目实战思路分析
+
+### 项目结构
+
+```
+customer_service/
+├── P8-2_customer_service.py    # 主程序
+├── knowledge.txt               # 知识库文件
+└── README.md                 # 说明文档
+```
+
+### 开发步骤
+
+```
+Step 1: 准备知识库数据
+        ↓
+Step 2: 创建KnowledgeBase
+        ↓
+Step 3: 创建带知识库的Agent
+        ↓
+Step 4: 测试运行
+```
+
+### RAG工作流程
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    RAG（检索增强生成）                      │
+│                                                             │
+│  用户问题                                                    │
+│  "支持Python吗？"                                           │
+│       │                                                    │
+│       ▼                                                    │
+│  ┌─────────────────────────────────────────────────────┐  │
+│  │              检索（Retrieval）                        │  │
+│  │   在知识库中搜索与问题相关的内容                      │  │
+│  │   找到："我们的产品支持Python 3.8+..."               │  │
+│  └─────────────────────────────────────────────────────┘  │
+│       │                                                    │
+│       ▼                                                    │
+│  ┌─────────────────────────────────────────────────────┐  │
+│  │              增强（Augmentation）                    │  │
+│  │   把检索到的内容加入Prompt                           │  │
+│  └─────────────────────────────────────────────────────┘  │
+│       │                                                    │
+│       ▼                                                    │
+│  ┌─────────────────────────────────────────────────────┐  │
+│  │              生成（Generation）                       │  │
+│  │   LLM根据增强后的Prompt生成回答                       │  │
+│  └─────────────────────────────────────────────────────┘  │
+│       │                                                    │
+│       ▼                                                    │
+│  "是的，我们的产品支持Python 3.8及以上版本"                 │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 调试技巧
+
+```python
+# 开启调试模式，查看检索过程
+import logging
+logging.basicConfig(level=logging.DEBUG)
+
+# 查看Agent检索了哪些知识
+agent = ReActAgent(..., verbose=True)
+```
 
 ---
 

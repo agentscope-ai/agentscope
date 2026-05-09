@@ -237,6 +237,112 @@ sequenceDiagram
 
 ---
 
+## 🔬 关键代码段解析
+
+### 代码段1：初始化 —— 为什么需要init？
+
+```python showLineNumbers
+# 这是第22-27行
+import agentscope
+from agentscope.agent import ReActAgent
+from agentscope.model import OpenAIChatModel
+
+# 初始化
+agentscope.init(project="TraceDemo")
+```
+
+**思路说明**：
+
+| 问题 | 答案 |
+|------|------|
+| 为什么要`init`？ | `init`是全局初始化，设置项目名称、日志、追踪系统 |
+| 为什么用`project="TraceDemo"`？ | 类似Java的Spring Boot项目名，用于在AgentScope Studio中区分不同项目 |
+| 不写会怎样？ | 会用默认值"UnnamedProject"，日志和追踪会混在一起 |
+
+**💡 设计思想**：AgentScope采用"先初始化，后使用"的模式，类似Spring Boot的启动流程。`init`确保所有组件（日志、追踪、配置）在使用前都已就绪。
+
+---
+
+### 代码段2：Agent创建 —— 为什么这样组织？
+
+```python showLineNumbers
+# 这是第30-37行
+agent = ReActAgent(
+    name="Tracer",                    # ① Agent的名字
+    model=OpenAIChatModel(            # ② 使用的模型
+        api_key="your-api-key",       # API密钥（生产环境用环境变量）
+        model="gpt-4"                 # 模型名称
+    ),
+    sys_prompt="你是一个友好的AI助手。"  # ③ 系统提示词
+)
+```
+
+**思路说明**：
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                  ReActAgent 的三要素                        │
+│                                                             │
+│   ① name（名字）    ② model（大脑）    ③ sys_prompt（性格）  │
+│        │                  │                  │              │
+│        ▼                  ▼                  ▼              │
+│   "Tracer"         OpenAI gpt-4      "你是一个友好的..."    │
+│                                                             │
+│   就像给一个员工分配：工号 + 大脑（AI模型）+ 工作职责         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+| 参数 | 思考 | 为什么这样设计 |
+|------|------|----------------|
+| `name` | Agent叫什么？ | 用于日志和追踪中标识 |
+| `model` | 用什么AI？ | 决定Agent的"聪明程度" |
+| `sys_prompt` | Agent是什么角色？ | 决定Agent的行为风格 |
+
+**💡 设计思想**：这三个要素（名字、模型、提示词）构成了Agent的基本配置。分离这些参数让Agent可以灵活配置，就像Java的依赖注入。
+
+---
+
+### 代码段3：异步调用 —— 为什么需要async/await？
+
+```python showLineNumbers
+# 这是第42-51行
+async def main():
+    print("1. 用户输入: 你好")
+    response = await agent("你好")  # 关键：await等待异步结果
+    print(f"2. Agent回复: {response.content}")
+
+asyncio.run(main())
+```
+
+**思路说明**：
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│              同步 vs 异步：为什么需要await？                │
+│                                                             │
+│  同步方式（会卡住）：              异步方式（不卡）：          │
+│  ─────────────────              ──────────────              │
+│  result = agent("你好")          response = await agent()   │
+│  print(result)    ← 等API返回才执行  print(response)        │
+│                                                             │
+│  时间线：                          时间线：                   │
+│  ├─发请求─├─等API─├─返回─┤       ├─发请求─┤               │
+│  (用户看到卡顿)                       ├─等API─┤            │
+│                                       ├─返回─┤              │
+│                                       (用户可以干别的)        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+| 问题 | 答案 |
+|------|------|
+| 为什么要`async def`？ | Python的`async`用于声明异步函数 |
+| 为什么要`await`？ | `await`等待异步操作完成，类似Java的`Future.get()` |
+| 为什么要`asyncio.run()`？ | 运行异步函数的入口，类似Java的`main`方法 |
+
+**💡 设计思想**：Agent调用LLM API是网络IO操作，可能耗时几百毫秒到几秒。异步让程序在等待时可以干别的，提高整体效率。
+
+---
+
 ## 📋 核心关系图
 
 ```

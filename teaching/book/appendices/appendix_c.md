@@ -240,23 +240,36 @@ def book_flight(from_city: str, to_city: str, date: str) -> ToolResponse:
 
 ---
 
-## 7. Runtime部署模板
+## 7. HTTP服务部署模板
 
 ```python showLineNumbers
-from agentscope.runtime import AgentScopeRuntime
+from quart import Quart, Response, request
+import os
 
-# 创建Runtime
-runtime = AgentScopeRuntime(
-    agents=[agent],
-    host="0.0.0.0",
-    port=5000
+from agentscope.agent import ReActAgent
+from agentscope.model import OpenAIChatModel
+
+app = Quart(__name__)
+
+# 模块级Agent
+agent = ReActAgent(
+    name="Assistant",
+    model=OpenAIChatModel(
+        api_key=os.environ.get("OPENAI_API_KEY"),
+        model="gpt-4"
+    ),
+    sys_prompt="你是一个友好的AI助手。"
 )
 
-# 启动服务
-runtime.start()
+@app.route("/chat", methods=["POST"])
+async def chat():
+    data = await request.get_json()
+    user_input = data.get("user_input", "")
+    response = await agent(user_input)
+    return {"content": response.content}
 
-# 或异步启动
-await runtime.start_async()
+if __name__ == "__main__":
+    app.run(port=5000, debug=True)
 ```
 
 ---

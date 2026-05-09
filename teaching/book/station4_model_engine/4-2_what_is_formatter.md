@@ -99,6 +99,170 @@ class OpenAIFormatter(FormatterBase):
 
 ---
 
+## 🔬 关键代码段解析
+
+### 代码段1：Formatter为什么需要抽象基类？
+
+```python showLineNumbers
+class FormatterBase(ABC):
+    """Formatter基类"""
+
+    @abstractmethod
+    def format(self, messages: list[Msg]) -> dict:
+        """将Msg列表转换为API格式"""
+        pass
+
+    @abstractmethod
+    def parse(self, response: dict) -> Msg:
+        """将API响应转换为Msg"""
+        pass
+```
+
+**思路说明**：
+
+| 问题 | 答案 |
+|------|------|
+| 为什么需要抽象基类？ | 定义统一接口，让切换Formatter不影响上层代码 |
+| 抽象方法是什么？ | 用`@abstractmethod`装饰的方法，子类必须实现 |
+| 有什么用？ | 可以随时切换Formatter，不用改Agent代码 |
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                 Formatter抽象基类设计                       │
+│                                                             │
+│   ┌─────────────────────────────────────────────────────┐  │
+│   │              FormatterBase (抽象)                   │  │
+│   │                                                  │  │
+│   │  + format(messages) -> dict  {abstract}          │  │
+│   │  + parse(response) -> Msg     {abstract}         │  │
+│   └─────────────────────────────────────────────────────┘  │
+│                          ▲                                 │
+│         ┌──────────────┼──────────────┐                │
+│         ▼              ▼              ▼                  │
+│  ┌────────────┐ ┌────────────┐ ┌────────────┐       │
+│  │ OpenAI     │ │ Anthropic  │ │ DashScope  │       │
+│  │ Formatter  │ │ Formatter  │ │ Formatter  │       │
+│  └────────────┘ └────────────┘ └────────────┘       │
+│                                                             │
+│   切换模型时，只需要换Formatter，不改Agent代码            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**💡 设计思想**：**依赖倒置**原则——上层模块（Agent）依赖抽象（FormatterBase），不依赖具体实现。
+
+---
+
+### 代码段2：OpenAIFormatter的实现
+
+```python showLineNumbers
+class OpenAIFormatter(FormatterBase):
+    def format(self, messages):
+        return {
+            "model": "gpt-4",
+            "messages": [
+                {"role": msg.role, "content": msg.content}
+                for msg in messages
+            ]
+        }
+
+    def parse(self, response):
+        return Msg(
+            name="assistant",
+            content=response["choices"][0]["message"]["content"],
+            role="assistant"
+        )
+```
+
+**思路说明**：
+
+| 方法 | 输入 | 输出 |
+|------|------|------|
+| format | `Msg(name, content, role)` | `{"messages": [{...}]}` |
+| parse | `{"choices": [{...}]}` | `Msg(name, content, role)` |
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│              OpenAI Formatter 转换示例                      │
+│                                                             │
+│   format:                                                   │
+│   ┌─────────────────────────────────────────────────────┐  │
+│   │  [Msg("user", "你好", "user"),                    │  │
+│   │   Msg("assistant", "你好！", "assistant")]          │  │
+│   └─────────────────────────────────────────────────────┘  │
+│                           ▼                               │
+│   ┌─────────────────────────────────────────────────────┐  │
+│   │  {"model": "gpt-4",                              │  │
+│   │   "messages": [                                    │  │
+│   │     {"role": "user", "content": "你好"},          │  │
+│   │     {"role": "assistant", "content": "你好！"}    │  │
+│   │   ]}                                              │  │
+│   └─────────────────────────────────────────────────────┘  │
+│                                                             │
+│   parse:                                                   │
+│   ┌─────────────────────────────────────────────────────┐  │
+│   │  {"choices": [{"message": {"content": "你好！"}}]} │  │
+│   └─────────────────────────────────────────────────────┘  │
+│                           ▼                               │
+│   ┌─────────────────────────────────────────────────────┐  │
+│   │  Msg(name="assistant", content="你好！",           │  │
+│   │      role="assistant")                             │  │
+│   └─────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**💡 设计思想**：每个模型的Formatter负责**格式化请求**和**解析响应**，把API差异封装在Formatter内部。
+
+---
+
+### 代码段3：Formatter在Agent中的作用位置
+
+```python showLineNumbers
+# Agent调用Model的完整流程
+async def agent_call(agent, user_input):
+    # 1. 创建Msg
+    msg = Msg(name="user", content=user_input, role="user")
+
+    # 2. 格式化（Formatter）
+    api_request = agent.formatter.format([msg])
+
+    # 3. 调用API（Model）
+    api_response = await agent.model.call(api_request)
+
+    # 4. 解析响应（Formatter）
+    response = agent.formatter.parse(api_response)
+
+    return response
+```
+
+**思路说明**：
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│              Agent调用Model的完整流程                      │
+│                                                             │
+│   Agent                                                     │
+│   ┌─────────────────────────────────────────────────────┐  │
+│   │                                                     │  │
+│   │   user_input ──► Msg ──► format() ──► API请求   │  │
+│   │                            │                        │  │
+│   │                            ▼                        │  │
+│   │                        Formatter                   │  │
+│   │                                                     │  │
+│   │   response ◄── parse() ◄── API响应              │  │
+│   │                            ▲                        │  │
+│   │                            │                        │  │
+│   │                        Formatter                   │  │
+│   │                                                     │  │
+│   └─────────────────────────────────────────────────────┘  │
+│                                                             │
+│   Formatter = Msg ↔ API JSON 的翻译官                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**💡 设计思想**：Formatter在Agent和Model之间充当**翻译官**，让两者都能用统一格式（Msg）交流。
+
+---
+
 ## 💡 Java开发者注意
 
 Formatter类似Java的**ObjectMapper**（Jackson/Fastjson）：

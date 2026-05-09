@@ -107,6 +107,139 @@ sequenceDiagram
 
 ---
 
+## 🔬 关键代码段解析
+
+### 代码段1：为什么需要MsgHub？
+
+```python showLineNumbers
+# 这是第24-46行
+hub = MsgHub()
+
+# Agent订阅消息
+analyst = ReActAgent(name="Analyst", ...)
+reporter = ReActAgent(name="Reporter", ...)
+critic = ReActAgent(name="Critic", ...)
+
+hub.subscribe(analyst)
+hub.subscribe(reporter)
+hub.subscribe(critic)
+
+# 发布消息 - 所有订阅者都会收到
+hub.publish(Msg(name="publisher", content="开始分析", role="system"))
+```
+
+**思路说明**：
+
+| 问题 | 答案 |
+|------|------|
+| 为什么需要发布-订阅？ | 发布者和订阅者解耦，不需要知道彼此 |
+| `subscribe`做了什么？ | 把Agent注册到订阅者列表 |
+| `publish`后发生什么？ | 所有订阅者同时收到消息 |
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│            发布-订阅 vs 直接调用                           │
+│                                                             │
+│   直接调用（紧耦合）：                                     │
+│   analyst.receive(msg)                                     │
+│   reporter.receive(msg)    ← 需要知道所有接收者           │
+│   critic.receive(msg)                                      │
+│                                                             │
+│   发布-订阅（松耦合）：                                   │
+│   hub.publish(msg)  ──► 广播给所有订阅者                  │
+│                    ↑                                       │
+│                    │                                       │
+│            发布者不需要知道谁在听                         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**💡 设计思想**：发布-订阅模式的核心是**松耦合**。发布者只管发消息，不关心谁会收到；订阅者只管收消息，不关心谁发的。
+
+---
+
+### 代码段2：MsgHub的with语法
+
+```python showLineNumbers
+# with语法，自动管理订阅生命周期
+with MsgHub([analyst, reporter, critic]) as hub:
+    hub.publish(Msg(name="user", content="启动分析", role="user"))
+```
+
+**思路说明**：
+
+| 问题 | 答案 |
+|------|------|
+| `with`语法有什么好处？ | 自动订阅和取消订阅 |
+| 什么时候用with？ | 临时性的广播任务 |
+| 什么时候用subscribe？ | 长期订阅，需要手动管理 |
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                 with语法的生命周期                          │
+│                                                             │
+│   with MsgHub([A, B, C]) as hub:                          │
+│       │                                                    │
+│       ├──► 进入with：自动订阅 A, B, C                     │
+│       │                                                    │
+│       ├──► 执行 hub.publish()                             │
+│       │                                                    │
+│       └──► 退出with：自动取消订阅 A, B, C                │
+│                                                             │
+│   适合：临时任务、一次性广播                               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**💡 设计思想**：`with`语法简化了资源管理，确保订阅和取消订阅成对出现，避免资源泄漏。
+
+---
+
+### 代码段3：MsgHub vs Pipeline 选型
+
+```python showLineNumbers
+# 场景1：固定流程，用Pipeline
+pipeline = SequentialPipeline([A, B, C])
+result = await pipeline(input)
+# A的结果自动传给B，B的结果自动传给C
+
+# 场景2：事件通知，用MsgHub
+hub = MsgHub([A, B, C])
+hub.publish(Msg(content="任务完成"))
+# 所有订阅者同时收到通知
+```
+
+**思路说明**：
+
+| 场景 | 选择 | 原因 |
+|------|------|------|
+| 翻译→校对→格式化 | SequentialPipeline | 有顺序依赖 |
+| 任务完成通知多人 | MsgHub | 广播通知 |
+| 头脑风暴（多专家意见） | FanoutPipeline | 并行收集 |
+| 监控系统报警 | MsgHub | 事件驱动 |
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                 组件选择决策树                              │
+│                                                             │
+│   有顺序依赖吗？                                          │
+│        │                                                  │
+│        ├──► Yes ──► 固定顺序？                         │
+│        │                      │                            │
+│        │                      ├──► Yes ──► SequentialPipeline│
+│        │                      │                            │
+│        │                      └──► No ──► FanoutPipeline   │
+│        │                                                  │
+│        └──► No ──► 需要广播？                         │
+│                             │                            │
+│                             ├──► Yes ──► MsgHub          │
+│                             │                            │
+│                             └──► No ──► 直接调用        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**💡 设计思想**：不同场景用不同组件。Pipeline适合有依赖的顺序任务，MsgHub适合无依赖的广播通知。
+
+---
+
 ## 💡 Java开发者注意
 
 MsgHub类似Java的**EventBus**或者**Message Broker**：
