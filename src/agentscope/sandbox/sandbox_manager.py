@@ -55,7 +55,7 @@ class SandboxManager:
         if endpoint:
             config = replace(config, endpoint=endpoint)
         sandbox = Sandbox(config)
-        await sandbox.start()
+        await sandbox.initialize()
         self._instances[sandbox.sandbox_id] = sandbox
         logger.info(
             "SandboxManager: created sandbox %s (backend=%s)",

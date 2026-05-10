@@ -1,12 +1,19 @@
 # -*- coding: utf-8 -*-
 """Sandbox — the single agent-facing proxy class.
 
-Lifecycle: ``start()`` → use → ``close()``.  Use as async context manager.
-``close()`` calls ``connection.destroy()`` — full resource cleanup.
+Inherits :class:`~agentscope.workspace.WorkspaceBase` so it can be used
+anywhere an agent workspace is expected.
+
+Lifecycle: ``initialize()`` → use → ``close()``.  Use as async context
+manager. ``close()`` calls ``connection.destroy()`` — full resource cleanup.
 """
 
+import base64
+import hashlib
 import json
+import mimetypes
 import uuid
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -14,9 +21,19 @@ from typing import Any
 import frontmatter
 import mcp.types as mtypes
 from mcp.types import Tool as MCPToolSchema
+from pydantic import AnyUrl
 
+from ..message import (
+    Msg,
+    ToolResultBlock,
+    TextBlock,
+    DataBlock,
+    Base64Source,
+    URLSource,
+)
 from ..skill import Skill
-from ..tool import MCPTool
+from ..tool import ToolBase, MCPTool
+from ..workspace import WorkspaceBase
 from .._logging import logger
 from .config import SandboxConfig, ToolDefinition
 from .connection import SandboxConnection, create_sandbox_connection
@@ -74,15 +91,21 @@ class _SkillEntry:
 # ---------------------------------------------------------------------------
 
 
-class Sandbox:
+class Sandbox(WorkspaceBase):
     """Agent-side proxy to one running sandbox.
+
+    Inherits :class:`~agentscope.workspace.WorkspaceBase` so it satisfies the
+    workspace protocol (``initialize``, ``close``, ``list_tools``,
+    ``list_skills``, ``get_instructions``, ``offload_context``,
+    ``offload_tool_result``).
 
     **Construction:** pass ``SandboxConfig``; ``config.backend.type`` is used
     by ``create_sandbox_connection(options)`` to dispatch to the correct
     ``SandboxConnection`` subclass.
 
-    Lifecycle: ``start()`` → use → ``close()``.  Use as async context manager.
-    ``close()`` calls ``connection.destroy()`` — full resource cleanup.
+    Lifecycle: ``initialize()`` → use → ``close()``.  Use as async context
+    manager.  ``close()`` calls ``connection.destroy()`` — full resource
+    cleanup.
     """
 
     def __init__(self, config: SandboxConfig) -> None:
@@ -109,19 +132,25 @@ class Sandbox:
 
     @property
     def started(self) -> bool:
-        """Whether ``start()`` has completed successfully."""
+        """Whether ``initialize()`` has completed successfully."""
         return self._started
 
     @property
     def connection(self) -> SandboxConnection:
-        """Low-level backend connection (must call ``start()`` first)."""
+        """Low-level backend connection
+        (must call ``initialize()`` first)."""
         if not self._conn:
-            raise RuntimeError("Sandbox not started — call start() first")
+            raise RuntimeError(
+                "Sandbox not started — call initialize() first",
+            )
         return self._conn
 
     @property
     def file(self) -> FileAccessor | None:
-        """Path-oriented read/write facade (available after ``start()``)."""
+        """Path-oriented read/write facade.
+
+        Available after ``initialize()`` completes.
+        """
         return FileAccessor(self._conn) if self._conn else None
 
     @property
@@ -129,9 +158,9 @@ class Sandbox:
         """MCP gateway instance when gateway mode is enabled."""
         return self._gateway
 
-    # ─── lifecycle ─────────────────────────────────────────────
+    # ─── lifecycle (WorkspaceBase) ─────────────────────────────
 
-    async def start(self) -> None:
+    async def initialize(self) -> None:
         """Provision backend, tools/skills scan, and MCP servers."""
         if self._started:
             return
@@ -168,25 +197,33 @@ class Sandbox:
         self._started = False
 
     async def __aenter__(self) -> "Sandbox":
-        """Enter async context: ``await start()``."""
-        await self.start()
+        """Enter async context: ``await initialize()``."""
+        await self.initialize()
         return self
 
     async def __aexit__(self, *exc: object) -> None:
         """Exit async context: ``await close()``."""
         await self.close()
 
-    # ─── tool surface ─────────────────────────────────────────
+    # ─── instructions (WorkspaceBase) ──────────────────────────
 
-    async def list_tools(self) -> list[MCPTool]:
-        """Return ``MCPTool`` instances for all registered tools.
+    async def get_instructions(self) -> str:
+        """Return sandbox-specific workspace instructions."""
+        return self._config.instructions.format(
+            backend_type=self._config.backend.type,
+        )
+
+    # ─── tool surface (WorkspaceBase) ──────────────────────────
+
+    async def list_tools(self) -> list[ToolBase]:
+        """Return tool instances for all registered tools.
 
         Includes both static ``ToolDefinition`` entries and tools aggregated
         by the ``MCPGateway`` (if enabled).
         """
         mcp_name = self._config.mcp_gateway.mcp_name
         session = _SandboxSession(self)
-        tools: list[MCPTool] = []
+        tools: list[ToolBase] = []
 
         for entry in self._tools.values():
             td = entry.definition
@@ -260,7 +297,7 @@ class Sandbox:
                 return stripped
         return None
 
-    # ─── skill surface ────────────────────────────────────────
+    # ─── skill surface (WorkspaceBase) ─────────────────────────
 
     async def list_skills(self) -> list[Skill]:
         """Return :class:`agentscope.skill.Skill` for each registered skill.
@@ -357,6 +394,125 @@ class Sandbox:
                 path=f"{skills_dir}/{name}",
             )
             logger.info("Imported skill %r into sandbox %s", name, self._id)
+
+    # ─── offload (WorkspaceBase) ───────────────────────────────
+
+    async def offload_context(
+        self,  # pylint: disable=unused-argument
+        session_id: str,
+        msgs: list[Msg],
+        **kwargs: Any,
+    ) -> str:
+        """Offload compressed context into the sandbox filesystem.
+
+        Writes JSONL to ``sessions/{session_id}/context.jsonl``.  DataBlocks
+        with base64 payloads are persisted as binary files under ``data/``
+        and replaced with sandbox-local path references.
+        """
+        base_path = f"sessions/{session_id}"
+        context_path = f"{base_path}/context.jsonl"
+
+        copied_msgs = deepcopy(msgs)
+        lines: list[str] = []
+        for msg in copied_msgs:
+            if not isinstance(msg.content, str):
+                content = []
+                for block in msg.content:
+                    if isinstance(block, DataBlock) and isinstance(
+                        block.source,
+                        Base64Source,
+                    ):
+                        block = await self._offload_data_block(block)
+                    content.append(block)
+                msg.content = content
+            lines.append(msg.model_dump_json())
+
+        payload = "\n".join(lines) + "\n"
+
+        await self.connection.exec(
+            f"mkdir -p {base_path}",
+            timeout=10,
+        )
+
+        existing = b""
+        try:
+            existing = await self.connection.read(context_path)
+        except (FileNotFoundError, OSError):
+            pass
+        await self.connection.write(
+            context_path,
+            existing + payload.encode("utf-8"),
+        )
+        return context_path
+
+    async def offload_tool_result(
+        self,  # pylint: disable=unused-argument
+        session_id: str,
+        tool_result: ToolResultBlock,
+        **kwargs: Any,
+    ) -> str:
+        """Offload tool results into the sandbox filesystem.
+
+        Writes to ``sessions/{session_id}/tool_result-{id}.txt``.
+        """
+        base_path = f"sessions/{session_id}"
+        result_path = f"{base_path}/tool_result-{tool_result.id}.txt"
+
+        parts: list[str] = []
+        if isinstance(tool_result.output, str):
+            parts.append(tool_result.output)
+        else:
+            for block in tool_result.output:
+                if isinstance(block, TextBlock):
+                    parts.append(block.text)
+                elif isinstance(block, DataBlock):
+                    if isinstance(block.source, Base64Source):
+                        offloaded = await self._offload_data_block(block)
+                        url = str(offloaded.source.url)
+                    else:
+                        url = str(block.source.url)
+                    parts.append(
+                        f"<data url='{url}' name='{block.name}' "
+                        f"media_type='{block.source.media_type}'/>",
+                    )
+
+        await self.connection.exec(
+            f"mkdir -p {base_path}",
+            timeout=10,
+        )
+        await self.connection.write(
+            result_path,
+            "".join(parts).encode("utf-8"),
+        )
+        return result_path
+
+    async def _offload_data_block(self, data_block: DataBlock) -> DataBlock:
+        """Persist a base64 DataBlock as a binary file inside the sandbox.
+
+        Returns a new DataBlock whose source points to the sandbox-local
+        file path (as a ``file://`` URL is not meaningful inside a
+        container, we use a plain path string in the URL field).
+        """
+        hash_str = hashlib.sha256(
+            data_block.source.data.encode(),
+        ).hexdigest()
+        ext = mimetypes.guess_extension(data_block.source.media_type) or ".bin"
+        sandbox_path = f"data/{hash_str}{ext}"
+
+        await self.connection.exec("mkdir -p data", timeout=10)
+        await self.connection.write(
+            sandbox_path,
+            base64.b64decode(data_block.source.data),
+        )
+
+        return DataBlock(
+            id=data_block.id,
+            name=data_block.name,
+            source=URLSource(
+                url=AnyUrl(f"file:///{sandbox_path}"),
+                media_type=data_block.source.media_type,
+            ),
+        )
 
     # ─── MCP surface ──────────────────────────────────────────
 
