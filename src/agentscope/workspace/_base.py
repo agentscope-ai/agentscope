@@ -25,7 +25,7 @@ class WorkspaceBase(ABC):
 
     @abstractmethod
     async def close(self) -> None:
-        """Close the workspace and clean the resource."""
+        """Close the workspace and clean up resource."""
 
     @abstractmethod
     async def get_instructions(self) -> str:

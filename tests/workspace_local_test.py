@@ -489,16 +489,27 @@ description: {description}
             os.path.exists(os.path.join(skill2_target, "helper.py")),
         )
 
-        # Verify .skills file was created
+        # Verify .skills file was created with correct new structure
         skills_hash_file = os.path.join(skills_dir, ".skills")
         self.assertTrue(os.path.exists(skills_hash_file))
 
-        # Verify .skills file contains correct hash mappings
         async with aiofiles.open(skills_hash_file, "r") as f:
-            hash_data = json.loads(await f.read())
-        self.assertEqual(len(hash_data), 2)
-        self.assertIn("test_skill_1", hash_data.values())
-        self.assertIn("test_skill_2", hash_data.values())
+            skills_data = json.loads(await f.read())
+
+        # Verify top-level structure
+        self.assertIn("skills_dir_mtime", skills_data)
+        self.assertIn("skills", skills_data)
+
+        skills_index = skills_data["skills"]
+        self.assertEqual(len(skills_index), 2)
+
+        # Verify each entry has the correct structure
+        self.assertIn("test_skill_1", skills_index)
+        self.assertIn("test_skill_2", skills_index)
+        self.assertDictEqual(
+            {k: v["skill_name"] for k, v in skills_index.items()},
+            {"test_skill_1": "test_skill_1", "test_skill_2": "test_skill_2"},
+        )
 
     async def test_initialize_skip_duplicate_skills(self) -> None:
         """Test that duplicate skills are not copied again.
@@ -583,11 +594,16 @@ description: {description}
         self.assertTrue(os.path.exists(skills_hash_file))
 
         async with aiofiles.open(skills_hash_file, "r") as f:
-            hash_data = json.loads(await f.read())
+            skills_data = json.loads(await f.read())
 
-        # Should have exactly one entry
-        self.assertEqual(len(hash_data), 1)
-        self.assertIn("test_skill_dedup", hash_data.values())
+        # Should have exactly one entry in the skills index
+        skills_index = skills_data["skills"]
+        self.assertEqual(len(skills_index), 1)
+        self.assertIn("test_skill_dedup", skills_index)
+        self.assertEqual(
+            skills_index["test_skill_dedup"]["skill_name"],
+            "test_skill_dedup",
+        )
 
     async def test_initialize_invalid_skill(self) -> None:
         """Test handling of invalid skills.
