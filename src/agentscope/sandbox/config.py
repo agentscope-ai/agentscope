@@ -52,13 +52,34 @@ class ToolDefinition:
     shell_cmd: str | None = None
 
 
+_DEFAULT_SANDBOX_INSTRUCTIONS = """<workspace>
+You have access to a sandboxed execution environment (backend: {backend_type}).
+
+All commands run **inside the sandbox** — not on the host. Use the tools
+and ``exec`` interface to interact with the sandbox filesystem and processes.
+
+### Filesystem layout
+```
+/root/
+├── skills/      # reusable skills (when configured)
+└── sessions/    # offloaded context and tool results
+```
+
+### Key capabilities
+- Execute shell commands via ``exec``.
+- Read / write files via ``sandbox.file.read`` / ``sandbox.file.write``.
+- Tools registered at sandbox start are callable via ``call_tool``.
+- MCP servers (if configured) are aggregated by the gateway.
+</workspace>"""
+
+
 @dataclass(slots=True)
 class SandboxConfig:
     """One config drives everything: backend + tool/skill/MCP + env.
 
     ``backend.type`` selects the registered ``SandboxConnection`` subclass.
     Ports, volumes, and env that are *implied* by MCP gateway / skills are
-    merged automatically in ``Sandbox.start()``.
+    merged automatically in ``Sandbox.initialize()``.
 
     ``endpoint`` is optional (remote tunnel / control-plane URL); merged into
     ``SandboxInitializationConfig.extra`` for providers that need it.
@@ -67,6 +88,7 @@ class SandboxConfig:
     backend: BackendParams
 
     endpoint: str | None = None
+    instructions: str = _DEFAULT_SANDBOX_INSTRUCTIONS
 
     exposed_ports: list[int] = field(default_factory=list)
     volumes: dict[str, str] = field(default_factory=dict)
