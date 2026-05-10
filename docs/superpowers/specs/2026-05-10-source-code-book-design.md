@@ -1,6 +1,6 @@
 # AgentScope 源码分析书：设计规格
 
-> **状态**: 已批准（含专家检视修订）
+> **状态**: 已批准（含专家检视修订 + 新手友好化修订）
 > **日期**: 2026-05-10
 > **风格参考**: 《网络是怎么连接的》
 > **写作语言**: 中文为主，源码引用保留英文，关键术语附英文原文
@@ -13,16 +13,17 @@
 
 | 卷 | 读者能力 | 核心 |
 |----|---------|------|
-| 卷一 | 能追踪请求流程、定位 bug、修小问题 | 跟随一次 agent() 调用走完全程 |
+| 卷零 | 理解 LLM 和 Agent 是什么，能跑通第一个 Agent | 基础概念 + 动手实验 |
+| 卷一 | 能追踪请求流程、定位 bug、**能修改源码验证理解** | 跟随一次 agent() 调用走完全程 |
 | 卷二 | 能理解设计模式、读懂任意模块的代码组织 | 拆开每个模块看设计模式 |
-| 卷三 | 能独立添加新功能模块 | 手把手扩展实战 |
+| 卷三 | 能独立添加新功能模块、提交 PR | 手把手扩展实战 |
 | 卷四 | 能参与架构讨论、理解设计权衡 | 设计决策的前因后果 |
 
 ---
 
 ## 读者画像
 
-广泛的开发者读者。会 Python 基础，不要求熟悉 Agent 框架。Python 进阶知识（async、TypedDict、元类等）作为侧边栏在正文中补充。
+广泛的开发者读者。会 Python 基础（函数、类、列表/字典），不要求熟悉 Agent 框架或 LLM API。所有需要的进阶知识（LLM 概念、Agent 模式、async、TypedDict、设计模式等）都在书中逐步引入。
 
 ---
 
@@ -70,55 +71,79 @@ result = await agent(Msg("user", "北京今天天气怎么样？", "user"))
 
 ## 全书结构
 
+### 卷零：出发前的地图
+
+不需要任何前置知识。读完这两章，你就能理解全书追踪的那个"天气查询 Agent"到底在做什么。
+
+| 章 | 标题 | 内容 | 知识补全 |
+|----|------|------|---------|
+| 1 | 什么是大模型（LLM） | 大模型是什么、Chat API 怎么工作（发消息→收回复）、Tool Calling 让模型调用函数；Token 和流式响应提到但不展开（标注"ch08/ch09 详解"） | HTTP 请求基础（发请求→收 JSON 响应）、JSON 数据结构 |
+| 2 | 什么是 Agent | Agent = 大模型 + 记忆 + 工具 + 循环；ReAct 模式（先想再做，反复循环）；Memory（记住对话）、Tool（动手做事）、RAG（查阅资料）；用天气 Agent 的例子串起来 | 无（用天气 Agent 的流程自然展示循环和分层） |
+
+每章内部结构（统一）：
+1. **生活类比** — 用日常场景解释概念（如"LLM 像一个超级预测下一个字的输入法"）
+2. **动手试试** — 用 curl 或 Python 几行代码调用 OpenAI API，亲眼看到效果（如果没有 API key，提供模拟响应示例，跟随阅读即可）
+3. **核心概念** — 用图解（Mermaid）展示概念之间的关系
+4. **试一试** — 分两级：基础级（pip install agentscope，3 行脚本验证安装）、完整级（clone + pip install -e，为后续改源码做准备）。ch02 增加纯本地动手环节（用 input + if/else 模拟最简 Agent 循环，不依赖 API key）。需要 API key 的试一试都提供无 key 替代方案
+5. **检查点** — "你现在已经理解了：什么是 LLM / Agent / Tool / Memory"
+
 ### 卷一：一次 agent() 调用的旅程
 
-跟随请求走，逐站读源码。每章 = 一个"站"。
+跟随请求走，逐站读源码。每章 = 一个"站"。Python 进阶知识在遇到时自然引入。**每章都有"试一试"环节：改一行源码、加一个 print、观察输出变化**，让读者从第一天就开始动手修改。
 
-| 章 | 标题 | 内容 | 核心文件 |
-|----|------|------|---------|
-| 1 | 出发前：准备你的工具箱 | init / install / 第一个 agent 跑起来 | `__init__.py` |
-| 2 | 第 1 站：消息诞生 | Msg 创建与内部结构、ContentBlock 7 种类型 | `message/_message_base.py`, `message/_message_block.py` |
-| 3 | 第 2 站：Agent 收信 | `__call__()` → `reply()` 入口、Hook 初见、广播 | `agent/_agent_base.py`, `agent/_agent_meta.py` |
-| 4 | 第 3 站：记忆存入 | 工作记忆的 add/get_memory/delete 机制 | `memory/_working_memory/_base.py`, `memory/_working_memory/_in_memory_memory.py` |
-| 5 | 第 4 站：检索与知识 | 长期记忆检索（Mem0/ReMe）、RAG 知识库查询、embedding 流程 | `memory/_long_term_memory/`, `rag/`, `embedding/` |
-| 6 | 第 5 站：格式转换 | Msg 列表 → API messages 格式、Token 截断 | `formatter/_openai_formatter.py`, `token/` |
-| 7 | 第 6 站：调用模型 | HTTP 请求、流式响应解析、ThinkingBlock 处理 | `model/_openai_model.py` |
-| 8 | 第 7 站：执行工具 | ToolUseBlock → tool function → ToolResultBlock、中间件链 | `tool/_toolkit.py`, `_utils/_common.py` |
-| 9 | 第 8 站：循环与返回 | ReAct 循环终止条件、规划子系统（PlanNotebook）、Token 压缩、TTS 输出、结构化输出 | `agent/_react_agent.py`, `plan/`, `tts/` |
-| 10 | 旅程复盘 | 回顾完整调用链的全景图、各站串联、从追踪到理解 | 全部 |
+| 章 | 标题 | 内容 | 核心文件 | 知识补全 |
+|----|------|------|---------|---------|
+| 3 | 准备工具箱 | init / install / 第一个 agent 跑起来 / 开发环境搭建 | `__init__.py`, `_run_config.py` | async/await 基础（`await agent(...)` 中的 await 是什么意思；事件循环在 ch07 详解） |
+| 4 | 第 1 站：消息诞生 | Msg 创建与内部结构、ContentBlock 7 种类型、DictMixin | `message/_message_base.py`, `message/_message_block.py`, `_utils/_mixin.py` | TypedDict（为什么不用普通 dict 或 dataclass） |
+| 5 | 第 2 站：Agent 收信 | `__call__()` → `reply()` 入口、Hook 初见、广播 | `agent/_agent_base.py`, `agent/_agent_meta.py` | 元类（只需知道"它可以自动包装方法"） |
+| 6 | 第 3 站：工作记忆 | 工作记忆的 add/get_memory/delete 机制、mark 系统 | `memory/_working_memory/_base.py`, `memory/_working_memory/_in_memory_memory.py` | 无 |
+| 7 | 第 4 站：检索与知识 | 长期记忆检索（Mem0/ReMe）、RAG 知识库查询、embedding 流程 | `memory/_long_term_memory/`, `rag/`, `embedding/` | 事件循环（为什么 async 代码需要事件循环） |
+| 8 | 第 5 站：格式转换 | Msg 列表 → API messages 格式、Token 截断 | `formatter/_openai_formatter.py`, `token/` | JSON Schema（工具参数的描述格式） |
+| 9 | 第 6 站：调用模型 | HTTP 请求、流式响应解析、ThinkingBlock 处理 | `model/_openai_model.py`, `model/_model_response.py`, `model/_model_usage.py` | AsyncGenerator（流式返回） |
+| 10 | 第 7 站：执行工具 | ToolUseBlock → tool function → ToolResultBlock、同步/异步包装、中间件链 | `tool/_toolkit.py`, `tool/_async_wrapper.py`, `tool/_types.py`, `_utils/_common.py` | 装饰器模式（洋葱模型的本质） |
+| 11 | 第 8 站：循环与返回 | ReAct 循环终止条件、ReActAgentBase 中间层、规划子系统、Token 压缩、TTS | `agent/_react_agent.py`, `agent/_react_agent_base.py`, `plan/`, `tts/` | 结构化输出（让 LLM 返回特定格式的 JSON） |
+| 12 | 旅程复盘 | 完整调用链全景图、各站串联、从追踪到理解 | 全部 | 无 |
 
 每章内部结构（统一）：
 
 1. **路线图** — 流程图高亮当前站，我们的请求走到哪了
-2. **源码入口** — 文件路径、类名、关键方法行号
-3. **逐行阅读** — 按真实调用链读源码，关键代码段 + 行间注释
-4. **设计一瞥** — 侧边栏，简短的设计对比（如"为什么用 TypedDict 而不是 dataclass"），嵌入设计推理
-5. **补充知识** — 必要的 Python 前置（TypedDict、ContextVar 等）侧边栏
-6. **调试实践** — 断点位置、日志方法、定位问题的技巧
+2. **知识补全**（按需）— 本章会遇到的 Python 进阶概念，用简单例子讲清楚（如"async 就是让程序等 IO 时不闲着"）
+3. **源码入口** — 文件路径、类名、关键方法行号
+4. **逐行阅读** — 按真实调用链读源码，关键代码段 + 行间注释
+5. **调试实践** — 断点位置、日志方法、定位问题的技巧
+6. **试一试** — 实际修改源码验证理解（如"在 `_agent_base.py` 的 `__call__` 方法中加一行 print，观察调用链"）。每章至少 1 个可执行的修改任务
 7. **检查点** — "你现在已经理解了 X"、1-2 道自检练习题
 8. **下一站预告** — 一句话引向下一章
 
 ### 过渡桥：从追踪到拆解
 
-第 10 章兼作卷一→卷二的过渡。内容：
+第 12 章兼作卷一→卷二的过渡。内容：
 - 完整调用链的全景图（一页 Mermaid 序列图）
 - "你已经走完了全程，现在回来拆开每一个齿轮" 的叙事转折
 - 卷一各站 → 卷二各章的对应映射表
 
 ### 卷二：拆开每个齿轮
 
-回到卷一经过的每一站，拆开看设计模式。每章独立可跳读。每章以具体场景开头。
+回到卷一经过的每一站，拆开看设计模式。每章独立可跳读。每章以具体场景开头。设计模式知识在每章开头自然引入。
 
-| 章 | 标题 | 开场场景 | 设计模式 | 核心文件 |
-|----|------|---------|---------|---------|
-| 11 | 模块系统：文件的命名与导入 | "你 clone 了仓库，打开 src/ 看到一堆 _ 开头的文件" | _前缀约定、re-export、lazy import | 各 `__init__.py` |
-| 12 | 继承体系：从 StateModule 到 AgentBase | "你收到一个 bug：Agent 序列化失败" | PyTorch 式状态管理 | `module/_state_module.py`, `agent/_agent_base.py` |
-| 13 | 元类与 Hook：方法调用的拦截 | "你加了一行日志到 reply() 但没生效——因为 Hook 先执行了" | _AgentMeta 编译期包装、AgentHookTypes/ReActAgentHookTypes 类型约束 | `agent/_agent_meta.py`, `types/` |
-| 14 | 策略模式：Formatter 的多态分发 | "你接了一个 bug：Gemini 模型的工具调用格式不对" | FormatterBase → TruncatedFormatterBase → 各 Provider | `formatter/_formatter_base.py` 及子类 |
-| 15 | 工厂与 Schema：从函数到 JSON Schema | "你的工具函数有嵌套的 Pydantic 参数，Schema 生成报错了" | _parse_tool_function + pydantic.create_model | `_utils/_common.py`, `tool/_toolkit.py` |
-| 16 | 中间件与洋葱模型 | "你的工具被并发调用，需要加限流" | _apply_middlewares 装饰器链、AsyncGenerator 统一接口 | `tool/_toolkit.py` |
-| 17 | 发布-订阅：多 Agent 通信 | "两个 Agent 在 MsgHub 里收到重复消息" | MsgHub add/delete、广播机制 | `pipeline/_msghub.py`, `pipeline/_class.py`, `pipeline/_functional.py` |
-| 18 | 可观测性与持久化 | "Agent 跑了 10 分钟，你需要知道它卡在哪" | OpenTelemetry 装饰器、state_dict 持久化、Session 管理 | `tracing/_trace.py`, `session/` |
+| 章 | 标题 | 开场场景 | 设计模式 | 核心文件 | 知识补全 |
+|----|------|---------|---------|---------|---------|
+| 13 | 模块系统：文件的命名与导入 | "你 clone 了仓库，打开 src/ 看到一堆 _ 开头的文件" | _前缀约定、re-export、lazy import | 各 `__init__.py` | Python 模块与包导入机制 |
+| 14 | 继承体系：从 StateModule 到 AgentBase | "你收到一个 bug：Agent 序列化后恢复，但记忆丢失了" | PyTorch 式状态管理 | `module/_state_module.py`, `agent/_agent_base.py` | 继承与多态 |
+| 15 | 元类与 Hook：方法调用的拦截 | "你加了一行日志到 reply() 但没生效——因为 Hook 先执行了" | _AgentMeta 编译期包装、AgentHookTypes/ReActAgentHookTypes 类型约束 | `agent/_agent_meta.py`, `types/`, `hooks/` | 无（卷一 ch05 已讲过元类基础） |
+| 16 | 策略模式：Formatter 的多态分发 | "你接了一个 bug：Gemini 模型的工具调用格式不对" | FormatterBase → TruncatedFormatterBase → 各 Provider | `formatter/_formatter_base.py` 及子类 | 策略模式（用同一接口做不同事） |
+| 17 | 工厂与 Schema：从函数到 JSON Schema | "你的工具函数有嵌套的 Pydantic 参数，Schema 生成报错了" | _parse_tool_function + pydantic.create_model | `_utils/_common.py`, `tool/_toolkit.py`, `types/_tool.py` | Pydantic 基础（只需理解 BaseModel 自动生成 JSON Schema 这一功能，5 行最小示例） |
+| 18 | 中间件与洋葱模型 | "你的工具被并发调用，需要加限流" | _apply_middlewares 装饰器链、AsyncGenerator 统一接口 | `tool/_toolkit.py` | 装饰器链（函数包装函数） |
+| 19 | 发布-订阅：多 Agent 通信 | "两个 Agent 在 MsgHub 里收到重复消息" | MsgHub add/delete、广播机制 | `pipeline/_msghub.py`, `pipeline/_class.py`, `pipeline/_functional.py` | 发布-订阅模式 |
+| 20 | 可观测性与持久化 | "Agent 跑了 10 分钟，你需要知道它卡在哪" | OpenTelemetry 装饰器、state_dict 持久化、Session 管理 | `tracing/_trace.py`, `session/` | 无 |
+
+每章内部结构（统一）：
+1. **开场场景** — 一个具体的 bug 或任务场景
+2. **知识补全**（按需）— 本章涉及的设计模式或 Python 概念
+3. **源码分析** — 按设计模式拆解相关模块的代码
+4. **对比与反思** — 与其他实现方式的对比（简要预告卷四详细讨论）
+5. **试一试** — 修改源码验证理解（如"给 Formatter 加一个新的格式化策略"）。难度标注：入门 / 中等 / 进阶
+6. **检查点 + 练习题** — 1-2 道自检练习
 
 ### 卷三：造一个新齿轮
 
@@ -126,38 +151,39 @@ result = await agent(Msg("user", "北京今天天气怎么样？", "user"))
 
 | 章 | 标题 | 实战项目 | 核心文件 |
 |----|------|---------|---------|
-| 19 | 扩展准备 | 开发环境、测试策略、pre-commit | `tests/`, `.github/` |
-| 20 | 造一个新 Tool | 数据库查询工具（同步 + 流式） | `tool/_toolkit.py` |
-| 21 | 造一个新 Model Provider | 接入 FastLLM API（非流式→流式→结构化输出三步走） | `model/`, `formatter/` |
-| 22 | 造一个新 Memory Backend | SQLite Memory | `memory/_working_memory/` |
-| 23 | 造一个新 Agent 类型 | Plan-Execute Agent | `agent/_agent_base.py` |
-| 24 | 集成 MCP Server | 对接本地 MCP Server | `mcp/_client_base.py` |
-| 25 | 高级扩展：中间件与分组 | 限流中间件 + 场景分组 + Agent Skill | `tool/_toolkit.py` |
-| 26 | 终章：集成实战 | 把 ch20-ch23 造的 Tool/Model/Memory/Agent 集成为完整系统，跑通端到端测试 | 综合 |
+| 21 | 扩展准备 | 开发环境、测试策略、pre-commit | `tests/`, `.github/`, `pyproject.toml` |
+| 22 | 造一个新 Tool | 数据库查询工具（同步 + 流式） | `tool/_toolkit.py` |
+| 23 | 造一个新 Model Provider | 接入 FastLLM API（非流式→流式→结构化输出三步走） | `model/`, `formatter/` |
+| 24 | 造一个新 Memory Backend | SQLite Memory | `memory/_working_memory/` |
+| 25 | 造一个新 Agent 类型 | Plan-Execute Agent | `agent/_agent_base.py` |
+| 26 | 集成 MCP Server | 对接本地 MCP Server | `mcp/_client_base.py` |
+| 27 | 高级扩展：中间件与分组 | 限流中间件 + 场景分组 + Agent Skill | `tool/_toolkit.py` |
+| 28 | 终章：集成实战 | 把 ch22-ch25 造的 Tool/Model/Memory/Agent 集成为完整系统，跑通端到端测试 | 综合 |
 
-每章末尾统一"PR 检查清单"：
-- 测试覆盖正常路径和错误路径
-- 更新 `__init__.py` 导出
-- Docstring 符合项目规范
-- pre-commit 通过
+每章内部结构（统一）：
+1. **任务目标** — 要造什么，为什么需要它
+2. **设计方案** — 先画架构图，再写代码
+3. **逐步实现** — 分步写代码，每步可运行可验证
+4. **测试验证** — 写测试、跑测试
+5. **试一试** — 在此基础上做扩展（如"给你的 Tool 加一个缓存中间件"）
+6. **PR 检查清单** — 测试覆盖、__init__.py 导出、Docstring 规范、pre-commit 通过
 
 ### 卷四：为什么要这样设计
 
 每章围绕一个设计决策，呈现选择、被否方案、后果。
 
-| 章 | 标题 | 设计决策 |
-|----|------|---------|
-| 27 | 消息为什么是唯一接口 | Agent/Model/Tool 全部通过 Msg 通信 |
-| 28 | 为什么不用装饰器注册工具 | 显式 register_tool_function vs @tool |
-| 29 | 上帝类 vs 模块拆分 | Toolkit 单文件的权衡 |
-| 30 | 编译期 Hook vs 运行时 Hook | 元类注入 vs 装饰器链 |
-| 31 | 为什么 ContentBlock 是 Union | TypedDict 数据优先 vs OOP 行为优先 |
-| 32 | 为什么用 ContextVar | 并发安全的配置传递 |
-| 33 | 为什么 Formatter 独立于 Model | 关注点分离 vs 简单性 |
-| 34 | 架构的全景与边界 | 依赖图复盘、边界模糊处（_utils/_common.py）、演进方向 |
+| 章 | 标题 | 设计决策 | 核心文件 |
+|----|------|---------|---------|
+| 29 | 消息为什么是唯一接口 | Agent/Model/Tool 全部通过 Msg 通信 | `message/_message_base.py`, `agent/_agent_base.py`, `model/_model_base.py`, `tool/_toolkit.py` |
+| 30 | 为什么不用装饰器注册工具 | 显式 register_tool_function vs @tool | `tool/_toolkit.py`, `_utils/_common.py` |
+| 31 | 上帝类 vs 模块拆分 | Toolkit 单文件的权衡 | `tool/_toolkit.py` |
+| 32 | 编译期 Hook vs 运行时 Hook | 元类注入 vs 装饰器链 | `agent/_agent_meta.py`, `agent/_agent_base.py` |
+| 33 | 为什么 ContentBlock 是 Union | TypedDict 数据优先 vs OOP 行为优先 | `message/_message_block.py` |
+| 34 | 为什么用 ContextVar | 并发安全的配置传递 | `_run_config.py` |
+| 35 | 为什么 Formatter 独立于 Model | 关注点分离 vs 简单性 | `formatter/_formatter_base.py`, `model/_model_base.py` |
+| 36 | 架构的全景与边界 | 依赖图复盘、边界模糊处（_utils/_common.py）、evaluate/realtime/a2a/tune（空壳）/tuner（实际模块）等模块的存在与范围 | 全部 |
 
 每章内部结构（统一）：
-
 1. **决策回顾** — 源码中的证据（文件 + 行号）
 2. **被否方案** — 另一种设计的伪代码
 3. **后果分析** — 今天的好处和麻烦
@@ -187,15 +213,38 @@ result = await agent(Msg("user", "北京今天天气怎么样？", "user"))
 
 ### 设计推理嵌入
 
-在卷一和卷二的正文中，用侧边栏嵌入小型设计对比（"方案 A vs 方案 B"）。不把所有设计讨论都堆到卷四。格式：
+在卷一和卷二的正文中，用侧边栏嵌入小型设计对比（"方案 A vs 方案 B"）。不把所有设计讨论都堆到卷四。**卷一和卷二每章至少 1 个"设计一瞥"侧边栏。** 格式：
 
 ```
 > **设计一瞥**：为什么用 TypedDict 而不是 dataclass？
 > TypedDict 直接对应 JSON dict 结构，与 OpenAI API 天然兼容。
 > 如果用 dataclass，每个 Block 都需要 `.to_dict()` 转换。
 > 代价：没有共享基类，无法统一添加行为。
-> 详见卷四第 31 章。
+> 详见卷四第 33 章。
 ```
+
+### 结构模板预告
+
+每卷的第一章（ch01/ch03/ch13/ch21/ch29）开头加一个灰底框，列出本卷的章节内部结构模板，让读者知道接下来的节奏。例如卷一 ch03 开头：
+
+> **卷一每章的结构**：路线图 → 知识补全 → 源码入口 → 逐行阅读 → 调试实践 → 试一试 → 检查点 → 下一站预告
+
+### 无 API key 友好
+
+所有需要 API key 的"试一试"环节都必须提供无 key 替代方案（手动追踪源码变量、使用模拟数据、修改不依赖 LLM 的代码路径）。
+
+### 试一试（贯穿全书）
+
+每章至少 1 个"试一试"环节。核心原则：
+- 读者在本地改源码，观察变化
+- 改动量小（1-5 行），效果可观察（print 输出、行为变化、测试通过/失败）
+- 提供具体的文件路径和修改位置
+- 修改后能跑通（不破坏现有功能）
+
+示例：
+- 卷一："在 `_agent_base.py` 的 `__call__` 方法中加一行 `print(f"收到消息: {msg.name}")`，观察调用链"
+- 卷二："给 `InMemoryMemory.add()` 加一行日志，观察消息何时被存入"
+- 卷三："写一个新的 Tool 函数，注册到 Toolkit，用 ReActAgent 调用"
 
 ### 术语
 
@@ -208,14 +257,55 @@ result = await agent(Msg("user", "北京今天天气怎么样？", "user"))
 ### 章节篇幅
 
 灵活控制，不强制统一：
-- 卷一：400-600 行/章（含源码走读，内容密度高）
-- 卷二：300-500 行/章（含设计分析和练习题）
+- 卷零：300-500 行/章
+- 卷一：400-600 行/章（含源码走读和试一试，内容密度高）
+- 卷二：300-500 行/章（含设计分析和试一试）
 - 卷三：400-500 行/章（含实战代码和 PR 清单）
 - 卷四：200-400 行/章（论述为主，代码少）
 
 ### 难度标注
 
 卷二每章标注难度（入门 / 中等 / 进阶），帮助读者管理预期和跳读。
+
+### 官方文档融入
+
+每章融入 AgentScope 官方文档内容，增加"官方文档对照"侧边栏。格式：
+
+```
+> **官方文档对照**：本文对应 [AgentScope 文档 - <主题>](<url>)
+> 官方文档侧重 API 使用方法，本章侧重源码实现原理。两者互补：
+> - 文档告诉你"怎么用" → 本章告诉你"为什么这样用"
+> - 文档的代码示例可以直接运行 → 本章的代码片段来自真实源码
+```
+
+**文档来源**（按优先级）：
+1. `docs.agentscope.io`（Mintlify 新文档）— Basic Concepts + Building Blocks
+2. `doc.agentscope.io`（Sphinx 旧文档）— API Reference（autodoc 生成）
+3. 仓库内 `docs/tutorial/` — 教程源码和示例脚本
+
+**融入规则**：
+- 每章至少 1 个"官方文档对照"侧边栏
+- 侧边栏放在首次提到该章核心主题的位置
+- 不直接复制文档内容，而是**对比视角差异**：文档讲用法 vs 本书讲实现
+- 代码示例优先用源码片段；如果官方文档有更好的完整示例，标注链接
+- 建筑块（Building Blocks）页面特别有价值：Hook、Middleware、Memory、Tool Capabilities
+
+**已确认的官方文档页面与章节对应**：
+
+| 官方文档页面 | 对应章节 |
+|-------------|---------|
+| Basic Concepts > Message | ch04（消息诞生）|
+| Basic Concepts > Agent | ch05（Agent 收信）|
+| Basic Concepts > Model | ch09（调用模型）|
+| Basic Concepts > Context and Memory | ch06-ch07（记忆 + 检索）|
+| Basic Concepts > Tool | ch10（执行工具）|
+| Building Blocks > Agent | ch14（继承体系）|
+| Building Blocks > Models | ch09（调用模型）|
+| Building Blocks > Memory | ch06-ch07 + ch24（新 Memory）|
+| Building Blocks > RAG | ch07（检索与知识）|
+| Building Blocks > Tool Capabilities | ch10 + ch22（新 Tool）|
+| Building Blocks > Hooking Functions | ch15（元类与 Hook）|
+| Building Blocks > Orchestration | ch19（发布-订阅）|
 
 ---
 
@@ -224,46 +314,49 @@ result = await agent(Msg("user", "北京今天天气怎么样？", "user"))
 ```
 teaching/book/
 ├── README.md                          # 书籍入口
+├── volume-0-basics/                   # 卷零：基础知识
+│   ├── ch01-what-is-llm.md
+│   └── ch02-what-is-agent.md
 ├── volume-1-journey/                  # 卷一
-│   ├── ch01-toolbox.md
-│   ├── ch02-message-born.md
-│   ├── ch03-agent-receives.md
-│   ├── ch04-memory-store.md
-│   ├── ch05-retrieval-knowledge.md
-│   ├── ch06-formatter.md
-│   ├── ch07-model.md
-│   ├── ch08-toolkit.md
-│   ├── ch09-loop-return.md
-│   └── ch10-journey-review.md
+│   ├── ch03-toolbox.md
+│   ├── ch04-message-born.md
+│   ├── ch05-agent-receives.md
+│   ├── ch06-memory-store.md
+│   ├── ch07-retrieval-knowledge.md
+│   ├── ch08-formatter.md
+│   ├── ch09-model.md
+│   ├── ch10-toolkit.md
+│   ├── ch11-loop-return.md
+│   └── ch12-journey-review.md
 ├── volume-2-patterns/                 # 卷二
-│   ├── ch11-module-system.md
-│   ├── ch12-inheritance.md
-│   ├── ch13-metaclass-hooks.md
-│   ├── ch14-formatter-strategy.md
-│   ├── ch15-schema-factory.md
-│   ├── ch16-middleware.md
-│   ├── ch17-pubsub.md
-│   └── ch18-observability.md
+│   ├── ch13-module-system.md
+│   ├── ch14-inheritance.md
+│   ├── ch15-metaclass-hooks.md
+│   ├── ch16-formatter-strategy.md
+│   ├── ch17-schema-factory.md
+│   ├── ch18-middleware.md
+│   ├── ch19-pubsub.md
+│   └── ch20-observability.md
 ├── volume-3-building/                 # 卷三
-│   ├── ch19-dev-setup.md
-│   ├── ch20-new-tool.md
-│   ├── ch21-new-model.md
-│   ├── ch22-new-memory.md
-│   ├── ch23-new-agent.md
-│   ├── ch24-mcp-server.md
-│   ├── ch25-advanced-extension.md
-│   └── ch26-integration-capstone.md
+│   ├── ch21-dev-setup.md
+│   ├── ch22-new-tool.md
+│   ├── ch23-new-model.md
+│   ├── ch24-new-memory.md
+│   ├── ch25-new-agent.md
+│   ├── ch26-mcp-server.md
+│   ├── ch27-advanced-extension.md
+│   └── ch28-integration-capstone.md
 ├── volume-4-why/                      # 卷四
-│   ├── ch27-msg-interface.md
-│   ├── ch28-no-decorator.md
-│   ├── ch29-god-class.md
-│   ├── ch30-compile-time-hooks.md
-│   ├── ch31-typedict-union.md
-│   ├── ch32-contextvar.md
-│   ├── ch33-formatter-separate.md
-│   └── ch34-panorama.md
+│   ├── ch29-msg-interface.md
+│   ├── ch30-no-decorator.md
+│   ├── ch31-god-class.md
+│   ├── ch32-compile-time-hooks.md
+│   ├── ch33-typedict-union.md
+│   ├── ch34-contextvar.md
+│   ├── ch35-formatter-separate.md
+│   └── ch36-panorama.md
 └── appendix/                          # 附录
-    ├── python-primer.md               # Python 进阶知识（async、TypedDict、元类等）
+    ├── python-primer.md               # Python 进阶知识速查（补充卷中未展开的细节）
     ├── glossary.md                    # 术语表
     └── source-map.md                  # 源码文件速查表
 ```
@@ -280,19 +373,78 @@ teaching/book/
 
 ---
 
-## 专家检视修订记录
+## 修订记录
+
+### 新手友好化 + 动手实践修订（2026-05-10）
+- 新增卷零（ch01-ch02）：LLM 基础 + Agent 概念，无需任何前置知识
+- 每章增加"知识补全"列：Python 进阶和软件工程基础知识在遇到时自然引入
+- 卷零每章增加"生活类比""动手试试"环节
+- async/await 提前到 ch03（准备工具箱），因为读者从第一行代码就看到 await
+- 卷一 ch06 拆为两章：ch06（工作记忆）+ ch07（长期记忆/RAG/embedding）
+- 每章增加"试一试"环节（贯穿全书）：改一行源码、加一个 print、观察输出变化
+- 卷二、卷三补充明确的章节内部结构（开场场景/知识补全/源码分析/试一试/检查点）
+- 卷四每章补充核心文件列和目标篇幅
+- ch01 动手试试加"无 API key 也可跟随阅读"的替代方案
+- ch09 补充 `_model_response.py` 和 `_model_usage.py`
+- ch11 补充"结构化输出"知识补全
+- ch15 Hook 章节补充 `hooks/` 模块
+- ch36 全景章提及 evaluate/realtime/a2a/tuner 等模块
+- 全书从 34 章扩展到 36 章 + 3 附录 + 1 README = 40 个文件
+- 总目标不变：新手入门 → 能改源码 → 高级贡献者
+
+### 三专家评审修订（2026-05-11）
+- ch01 精简：Token 和流式响应降至"提及但不展开"，标注后移到 ch08/ch09
+- ch01/ch02 试一试分两级（基础级 pip install + 完整级 clone），增加纯本地无 API key 动手环节
+- ch03 知识补全去掉 pip install -e（已移至 ch01），聚焦 async/await + 事件循环预告
+- ch04 补充 `_utils/_mixin.py`（DictMixin 被 Msg 继承）
+- ch10 补充 `tool/_async_wrapper.py`（同步/异步包装）和 `tool/_types.py`（RegisteredToolFunction/ToolGroup）
+- ch11 补充 `agent/_react_agent_base.py`（ReActAgentBase 中间层）
+- ch14 开场场景统一为"Agent 序列化后恢复，但记忆丢失了"
+- ch17 知识补全明确 Pydantic 范围 + 补充 `types/_tool.py`
+- ch29/ch35 核心文件从目录级改为具体文件
+- ch36 区分 tune/（空壳）vs tuner/（实际模块）
+- 写作规范新增"结构模板预告"（每卷第一章加结构框）和"无 API key 友好"规则
+- 设计推理嵌入改为"卷一和卷二每章至少 1 个设计一瞥侧边栏"
+- 文件总数修正为 40 个
 
 ### 源码覆盖修复
-- 卷一第 4 章拆分为两章：ch04（工作记忆存入）+ ch05（长期记忆检索 + RAG + embedding），各指向正确源码
 - 卷一第 9 章（原第 8 章）加入 plan/（PlanNotebook）、token/（Token 压缩）、tts/（语音输出）
-- 卷二 ch13 加入 types/ 模块（AgentHookTypes 类型约束）
-- 卷四 ch29 标题改为"上帝类 vs 模块拆分"（去掉硬编码行数）
+- 卷二 ch15 加入 types/ 模块（AgentHookTypes 类型约束）
+- 卷四 ch31 标题改为"上帝类 vs 模块拆分"（去掉硬编码行数）
+
+### 官方文档融入修订（2026-05-11）
+- 新增"官方文档融入"写作规范：每章至少 1 个"官方文档对照"侧边栏
+- 侧边栏对比文档视角（怎么用）vs 本书视角（为什么这样实现）
+- 文档来源确认：docs.agentscope.io（Mintlify）+ doc.agentscope.io（Sphinx API）
+- 建立文档页面→章节的映射表
+- 已写完的 ch01-ch12 需要回填"官方文档对照"侧边栏
+- ch13-ch36 在写作时直接融入
+
+### 外部资源融入修订（2026-05-11）
+在"官方文档对照"基础上，额外融入以下高质量外部资源：
+
+**学术论文**：
+- AgentScope 1.0 论文 (arXiv:2508.16279)：架构设计原则、设计理念、Foundational Components 详细描述
+
+**视频教程（Bilibili）**：
+- "AgentScope源码带读"系列（BV1NVZDBfE4w 等）：源码讲解思路可借鉴
+- "AgentScope1.0 开发者教程"系列（ReAct Agent、上下文管理、工具&MCP 等）：官方出品教程
+
+**高质量博客文章**：
+- cnblogs "AgentScope源码阅读"：核心模块精读方法论
+- 阿里云开发者社区 "深入源码：智能体定义及模型配置流程"：reply 函数详细解读
+- MarkTechPost "Production Ready AgentScope Workflows"：完整实战教程（ReAct + 工具 + 多智能体辩论 + 结构化输出 + 并发流水线）
+- Analytics Vidhya "Complete Guide to Multi-Agent Systems"：框架对比 + 多智能体工作流
+
+**融入方式**：
+- 每章的"试一试"环节可引用 MarkTechPost 等外部教程中的完整示例作为"进阶练习"
+- ch29-ch36（卷四设计权衡）可引用论文中的设计原则章节
+- ch21-ch28（卷三实战）可引用视频教程中的演示步骤
+- 不直接复制外部内容，而是标注"推荐阅读"链接
 
 ### 教学设计增强
 - 每章增加"检查点"（你现在已经理解了 X）+ 1-2 道自检练习题
-- 每章增加"设计一瞥"侧边栏，嵌入小型方案对比
 - 卷二每章以具体场景开头（bug 场景 / 任务场景）
 - 卷二每章标注难度（入门 / 中等 / 进阶）
-- 卷一增加 ch10 旅程复盘（兼作卷一→卷二过渡桥）
-- 卷三增加 ch26 集成终章（端到端测试前面造的所有模块）
-- 章节篇幅改为弹性控制（卷一 400-600 行，卷四 200-400 行）
+- 卷三增加 ch28 集成终章（端到端测试前面造的所有模块）
+- 章节篇幅改为弹性控制
