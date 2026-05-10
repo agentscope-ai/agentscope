@@ -6,14 +6,16 @@
 
 ## 📚 学到的内容
 
-### 第14章：Runtime
-- Runtime管理Agent生命周期
-- @DS装饰器简化配置
+### 第14章：初始化与配置
+- `agentscope.init()` 初始化全局配置
+- `_ConfigCls` 使用ContextVar实现协程安全配置
+- 配置项目名称、运行ID、日志和追踪
 
-### 第15章：Docker
+### 第15章：Docker部署
+- Quart框架将Agent部署为HTTP服务
 - Dockerfile构建镜像
-- docker-compose编排
-- 环境变量与监控
+- docker-compose编排多服务
+- 环境变量与敏感信息管理
 
 ---
 

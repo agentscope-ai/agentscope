@@ -108,7 +108,7 @@ async def main():
     ))
     print(response.content)
 
-agentscope.run(main())
+asyncio.run(main())
 ```
 
 ---

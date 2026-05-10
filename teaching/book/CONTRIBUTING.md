@@ -158,6 +158,7 @@ agent = agentscope.ReActAgent
 
 # ✅ 正确 - 完整可运行
 import agentscope
+from agentscope.message import Msg
 
 agentscope.init()
 agent = agentscope.ReActAgent(
@@ -165,7 +166,7 @@ agent = agentscope.ReActAgent(
     model=agentscope.OpenAIChatModel(api_key="..."),
     sys_prompt="你是一个有帮助的助手"
 )
-result = await agent("你好")
+result = await agent(Msg(name="user", content="你好", role="user"))
 print(result)
 ```
 

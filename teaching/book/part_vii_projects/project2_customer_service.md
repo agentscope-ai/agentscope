@@ -56,7 +56,8 @@ Agent: "让我帮您查询...您的订单12345预计明天发货。"
 ```python
 from agentscope.agent import ReActAgent
 from agentscope.tool import Toolkit
-from agentscope.memory import RAGMemory
+from agentscope.rag import SimpleKnowledge, QdrantStore, TextReader
+from agentscope.embedding import DashScopeTextEmbedding  # 需要实际的embedding模型
 
 # 创建工具
 product_toolkit = Toolkit()
@@ -72,18 +73,27 @@ def query_product(product_id: str):
 def query_order(order_id: str):
     return {"id": order_id, "status": "待发货", "eta": "明天"}
 
-# 创建RAG知识库
-faq_memory = RAGMemory(
-    documents=["常见问题FAQ..."],
-    embedding_model="text-embedding-3-small"
+# 创建知识库（用于RAG）
+faq_knowledge = SimpleKnowledge(
+    embedding_store=QdrantStore(
+        location=":memory:",
+        collection_name="faq_collection",
+        dimensions=1024,
+    ),
+    embedding_model=DashScopeTextEmbedding(...)  # 需要传入实际的embedding模型
 )
+
+# 使用TextReader读取文档
+reader = TextReader(chunk_size=100, split_by="char")
+documents = await reader("常见问题FAQ：...")
+await faq_knowledge.add_documents(documents)
 
 # 创建Agent
 agent = ReActAgent(
     name="客服",
     model=model,
     toolkit=[product_toolkit, order_toolkit],
-    memory=faq_memory,
+    knowledge=faq_knowledge,  # 使用knowledge参数，不是memory
     sys_prompt="你是一个智能客服，根据用户问题选择合适的工具回答。"
 )
 ```
@@ -113,6 +123,6 @@ Agent: 让我查询一下...您的订单12345状态是"待发货"，预计明天
 
 ★ **Insight** ─────────────────────────────────────
 - **多Toolkit组合** = 按功能模块化工具
-- **RAGMemory** = 基于向量检索的FAQ
+- **KnowledgeBase** = 基于向量检索的RAG知识库
 - **对话状态** = Memory记忆历史上下文
 ─────────────────────────────────────────────────

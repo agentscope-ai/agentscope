@@ -11,6 +11,7 @@
 ```python showLineNumbers
 import agentscope
 from agentscope.agent import ReActAgent
+from agentscope.message import Msg
 from agentscope.model import OpenAIChatModel
 from agentscope.formatter import OpenAIChatFormatter
 
@@ -32,7 +33,7 @@ agent = ReActAgent(
 import asyncio
 
 async def main():
-    response = await agent("你好")
+    response = await agent(Msg(name="user", content="你好", role="user"))
     print(response)
 
 asyncio.run(main())
@@ -303,7 +304,7 @@ async def main():
         formatter=OpenAIChatFormatter()
     )
 
-    result = await agent("你好")
+    result = await agent(Msg(name="user", content="你好", role="user"))
     print(result)
 
 asyncio.run(main())
@@ -333,7 +334,7 @@ asyncio.run(main())
 
 ```python showLineNumbers
 try:
-    response = await agent("你好")
+    response = await agent(Msg(name="user", content="你好", role="user"))
 except Exception as e:
     print(f"Agent运行错误: {e}")
 ```

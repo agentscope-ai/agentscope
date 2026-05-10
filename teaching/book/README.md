@@ -19,29 +19,42 @@
 ## 📚 书籍结构
 
 ```
-┌────────────────────────────────────────────────────────────────────┐
-│                      第一部分：Python基础                              │
-│                 （为Java开发者量身定制）                              │
-│   第1章：Python面向对象    第2章：异步编程    第3章：高级语法           │
-├────────────────────────────────────────────────────────────────────┤
-│                      第二部分：Agent开发基础                          │
-│        第4章：消息传递    第5章：管道流水线    第6章：发布订阅          │
-├────────────────────────────────────────────────────────────────────┤
-│                      第三部分：Agent核心原理                          │
-│      第7章：ReActAgent    第8章：Hook    第9章：Model/Formatter      │
-├────────────────────────────────────────────────────────────────────┤
-│                      第四部分：工具与记忆                              │
-│                  第10章：Toolkit    第11章：Memory                   │
-├────────────────────────────────────────────────────────────────────┤
-│                      第五部分：多Agent系统                            │
-│                第12章：协作模式    第13章：追踪调试                    │
-├────────────────────────────────────────────────────────────────────┤
-│                      第六部分：部署与运维                              │
-│                    第14章：Runtime    第15章：Docker                   │
-├────────────────────────────────────────────────────────────────────┤
-│                      第七部分：项目实战                                │
-│        项目1-5：天气Agent → 客服机器人 → 辩论系统 → 研究助手 → 语音助手  │
-└────────────────────────────────────────────────────────────────────┘
+teaching/
+├── book/                           # 主教材
+│   ├── README.md                   # 本文件
+│   ├── BOOK_INDEX.md               # 详细目录
+│   ├── part_i_getting_started/     # 第一部分：Python基础
+│   ├── part_ii_core_concepts/     # 第二部分：Agent开发基础
+│   ├── part_iii_advanced_topics/  # 第三部分：Agent核心原理
+│   ├── part_iv_tools_memory/      # 第四部分：工具与记忆
+│   ├── part_v_multi_agent/         # 第五部分：多Agent系统
+│   ├── part_vi_deployment/         # 第六部分：部署与运维
+│   ├── part_vii_projects/          # 第七部分：项目实战
+│   ├── practice/                    # 实践练习（8站）
+│   │   ├── station1_departure/    # 1站：Python基础
+│   │   ├── station2_user_interface/  # 2站：Msg消息
+│   │   ├── station3_agent_brain/   # 3站：ReActAgent
+│   │   ├── station4_model_engine/  # 4站：Model/Formatter
+│   │   ├── station5_tools_memory/  # 5站：Toolkit/Memory
+│   │   ├── station6_multi_agent/   # 6站：多Agent协作
+│   │   ├── station7_deployment/     # 7站：部署运维
+│   │   └── station8_projects/        # 8站：项目实战
+│   ├── appendices/                 # 附录（A-E）
+│   │   ├── appendix_a.md           # 术语对照表
+│   │   ├── appendix_b.md           # Python速查卡
+│   │   ├── appendix_c.md           # 代码模板库
+│   │   ├── appendix_d.md           # 常见错误急救箱
+│   │   ├── appendix_e.md           # 学习路径图
+│   │   └── troubleshooting.md     # 故障排除
+│   └── reference/                  # 参考资料（深度内容）
+│       ├── module_*_deep.md      # 20个模块深度解析
+│       ├── best_practices.md      # 最佳实践
+│       ├── case_studies.md        # 案例研究
+│       └── reference_*.md         # 官方文档参考
+└── python/                        # Python语法教程（前置内容）
+    ├── 01_class_object.md         # 类与对象
+    ├── 02_async_await.md          # 异步编程
+    └── ...                        # 共9章
 ```
 
 ---
@@ -66,93 +79,45 @@ pip install agentscope
 python -c "import agentscope; print('OK')"
 
 # 3. 快速测试
-python -m agentscope.examples.quickstart
+cd examples/agent/react_agent && python main.py
 ```
 
 ---
 
-## 📖 各部分内容
+## 📖 双轨学习系统
 
-### [第一部分：Python基础](./part_i_getting_started/)
+本书提供**两条并行学习路径**，适合不同学习风格：
 
-为Java开发者提供Python核心知识速览。
+### 理论路径：章节学习 (`part_*`)
 
-| 章节 | 主题 | 关键点 |
-|------|------|--------|
-| [第1章](./part_i_getting_started/chapter1_python_oop.md) | 面向对象 | self、继承、dataclass |
-| [第2章](./part_i_getting_started/chapter2_async_programming.md) | 异步编程 | async/await、事件循环 |
-| [第3章](./part_i_getting_started/chapter3_advanced_syntax.md) | 高级语法 | 装饰器、上下文管理器、元类 |
+系统化学习每个主题的理论知识。
 
----
+| 部分 | 章节 | 主题 |
+|------|------|------|
+| [第一部分](./part_i_getting_started/) | 第1-3章 | Python基础 |
+| [第二部分](./part_ii_core_concepts/) | 第4-6章 | Agent开发基础 |
+| [第三部分](./part_iii_advanced_topics/) | 第7-9章 | Agent核心原理 |
+| [第四部分](./part_iv_tools_memory/) | 第10-11章 | 工具与记忆 |
+| [第五部分](./part_v_multi_agent/) | 第12-13章 | 多Agent系统 |
+| [第六部分](./part_vi_deployment/) | 第14-15章 | 部署与运维 |
+| [第七部分](./part_vii_projects/) | 项目1-5 | 项目实战 |
 
-### [第二部分：Agent开发基础](./part_ii_core_concepts/)
+### 实践路径：站点练习 (`practice/station*`)
 
-理解AgentScope的三大核心概念。
+通过追踪代码执行路径，深入理解系统工作原理。
 
-| 章节 | 主题 | 关键点 |
-|------|------|--------|
-| [第4章](./part_ii_core_concepts/chapter4_message_system.md) | Msg消息 | role、ContentBlock |
-| [第5章](./part_ii_core_concepts/chapter5_pipeline.md) | Pipeline | Sequential、Fanout |
-| [第6章](./part_ii_core_concepts/chapter6_msg_hub.md) | MsgHub | 发布-订阅、松耦合 |
+| 站 | 内容 | 对应章节 |
+|----|------|----------|
+| [1站：出发](./practice/station1_departure/) | Python基础、环境搭建 | 第1-2章 |
+| [2站：用户界面](./practice/station2_user_interface/) | Msg消息、Pipeline、MsgHub | 第4-6章 |
+| [3站：Agent大脑](./practice/station3_agent_brain/) | ReActAgent、Hook机制 | 第7-8章 |
+| [4站：Model引擎](./practice/station4_model_engine/) | Model、Formatter | 第9章 |
+| [5站：工具与记忆](./practice/station5_tools_memory/) | Toolkit、Memory | 第10-11章 |
+| [6站：多Agent](./practice/station6_multi_agent/) | 多Agent协作 | 第12-13章 |
+| [7站：部署上线](./practice/station7_deployment/) | Runtime、Docker | 第14-15章 |
+| [8站：项目实战](./practice/station8_projects/) | 5个完整项目 | 项目1-5 |
 
----
-
-### [第三部分：Agent核心原理](./part_iii_advanced_topics/)
-
-深入ReActAgent的工作机制。
-
-| 章节 | 主题 | 关键点 |
-|------|------|--------|
-| [第7章](./part_iii_advanced_topics/chapter7_react_agent.md) | ReActAgent | Reasoning+Acting循环 |
-| [第8章](./part_iii_advanced_topics/chapter8_hook.md) | Hook | 拦截器、AOP |
-| [第9章](./part_iii_advanced_topics/chapter9_model_formatter.md) | Model/Formatter | 统一接口、格式适配 |
-
----
-
-### [第四部分：工具与记忆](./part_iv_tools_memory/)
-
-扩展Agent能力。
-
-| 章节 | 主题 | 关键点 |
-|------|------|--------|
-| [第10章](./part_iv_tools_memory/chapter10_toolkit.md) | Toolkit | 工具注册、函数调用 |
-| [第11章](./part_iv_tools_memory/chapter11_memory.md) | Memory | 短期/长期、RAG |
-
----
-
-### [第五部分：多Agent系统](./part_v_multi_agent/)
-
-构建多Agent协作。
-
-| 章节 | 主题 | 关键点 |
-|------|------|--------|
-| [第12章](./part_v_multi_agent/chapter12_multi_agent.md) | 协作模式 | 流水线、广播、分层 |
-| [第13章](./part_v_multi_agent/chapter13_trace_debug.md) | 追踪调试 | tracing、可视化 |
-
----
-
-### [第六部分：部署与运维](./part_vi_deployment/)
-
-生产环境部署。
-
-| 章节 | 主题 | 关键点 |
-|------|------|--------|
-| [第14章](./part_vi_deployment/chapter14_runtime.md) | Runtime | 生命周期、服务化 |
-| [第15章](./part_vi_deployment/chapter15_docker.md) | Docker | 容器化、docker-compose |
-
----
-
-### [第七部分：项目实战](./part_vii_projects/)
-
-5个完整项目。
-
-| 项目 | 难度 | 核心技能 | 预计时间 |
-|------|------|---------|---------|
-| [天气查询](./part_vii_projects/project1_weather.md) | ⭐ | Toolkit基础 | 2小时 |
-| [智能客服](./part_vii_projects/project2_customer_service.md) | ⭐⭐ | 多工具、RAG | 4小时 |
-| [多Agent辩论](./part_vii_projects/project3_debate.md) | ⭐⭐⭐ | MsgHub协作 | 6小时 |
-| [深度研究](./part_vii_projects/project4_research.md) | ⭐⭐⭐⭐ | 多Agent编排 | 8小时 |
-| [语音对话](./part_vii_projects/project5_voice.md) | ⭐⭐⭐⭐⭐ | 实时交互 | 12小时 |
+**建议**：先学习对应章节，再完成站点练习巩固知识。
 
 ---
 
@@ -163,6 +128,7 @@ python -m agentscope.examples.quickstart
 3. **图解优先** - 每一步都用ASCII图说明
 4. **项目驱动** - 5个完整项目串联知识点
 5. **先跑起来** - 代码完整可运行
+6. **双轨并行** - 理论章节 + 实践站点，互补学习
 
 ---
 
@@ -184,7 +150,8 @@ python -m agentscope.examples.quickstart
 ## 🔗 配套资源
 
 - [AgentScope官方文档](https://agentscope.readthedocs.io)
-- [Python基础教程](./python/)
+- [Python基础教程](../python/) - Java开发者Python速成
+- [模块深度解析](./reference/) - 20个模块源码解读
 - [附录：术语对照表](./appendices/appendix_a.md)
 - [附录：Python速查卡](./appendices/appendix_b.md)
 - [附录：代码模板](./appendices/appendix_c.md)

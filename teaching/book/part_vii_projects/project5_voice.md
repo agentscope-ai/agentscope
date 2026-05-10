@@ -42,21 +42,32 @@ Agent: [语音回复] "北京今天天气晴朗"
 ## 3. 核心代码
 
 ```python
-from agentscope.realtime import RealtimeAgent
-from agentscope.server import WebSocketServer
+from agentscope.agent import RealtimeAgent
+from agentscope.realtime import OpenAIRealtimeModel
 
 # 创建实时Agent
+model = OpenAIRealtimeModel(
+    api_key="your-api-key",
+    model="gpt-4o-realtime-preview"
+)
 agent = RealtimeAgent(
     name="语音助手",
     model=model,
-    asr="whisper",  # 语音识别
-    tts="tts-3"     # 语音合成
+    sys_prompt="你是一个友好的语音助手..."
 )
 
-# WebSocket服务
-server = WebSocketServer(agent=agent)
-await server.start()
+# 使用start/stop管理生命周期
+await agent.start(output_queue)
+
+# 发送用户输入（需要构造ClientEvents对象）
+from agentscope.realtime import ClientEvents
+client_event = ClientEvents.ClientTextInputEvent(text="你好")
+await agent.handle_input(client_event)
+
+await agent.stop()
 ```
+
+> 注：WebSocket服务需要配合FastAPI等Web框架自行搭建，参考 `examples/agent/realtime_voice_agent/run_server.py`
 
 ---
 

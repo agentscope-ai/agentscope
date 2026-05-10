@@ -86,11 +86,23 @@ async def debate(topic: str, rounds: int = 3):
         
         # 多轮辩论
         for round in range(rounds):
-            pro_response = await pro_agent(f"请就'{topic}'发表正方观点")
-            con_response = await con_agent(f"请就'{topic}'发表反方观点")
-    
+            pro_response = await pro_agent(Msg(
+                name="user",
+                content=f"请就'{topic}'发表正方观点",
+                role="user"
+            ))
+            con_response = await con_agent(Msg(
+                name="user",
+                content=f"请就'{topic}'发表反方观点",
+                role="user"
+            ))
+
     # 主持人总结
-    summary = await host(f"总结辩论：正方={pro_response}, 反方={con_response}")
+    summary = await host(Msg(
+        name="user",
+        content=f"总结辩论：正方={pro_response}, 反方={con_response}",
+        role="user"
+    ))
     return summary
 ```
 

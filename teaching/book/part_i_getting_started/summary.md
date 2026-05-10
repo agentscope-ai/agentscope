@@ -33,7 +33,7 @@
 |-----------|---------------|
 | async/await | Agent.reply(), MsgHub.broadcast() |
 | 上下文管理器 | `async with MsgHub(...)` |
-| 装饰器 | `@DS` runtime装饰器 |
+| 装饰器 | `@abstractmethod`定义抽象方法 |
 | dataclass | Msg类的简化定义 |
 
 ---

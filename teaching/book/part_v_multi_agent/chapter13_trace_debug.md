@@ -18,7 +18,7 @@
 
 ### 消息流追踪
 
-```python
+```python showLineNumbers
 from agentscope.tracing import trace
 
 # 追踪整个流程
@@ -29,13 +29,59 @@ async with trace("multi_agent_process"):
 
 ### 可视化
 
-```
-User → MsgHub → [Agent1, Agent2] → Response
-  │           ↕ broadcast
-  └─────────────────────────────────────
+```mermaid
+sequenceDiagram
+    participant User as 用户
+    participant Hub as MsgHub
+    participant A1 as Agent1
+    participant A2 as Agent2
+    participant Res as Response
+
+    User->>Hub: 发送消息
+    Hub->>A1: 广播分发
+    Hub->>A2: 广播分发
+    A1-->>Hub: 响应
+    A2-->>Hub: 响应
+    Hub-->>User: 汇总响应
 ```
 
 ---
+
+## 💡 Java开发者注意
+
+追踪类似Java的日志框架：
+
+```python
+# Python trace
+async with trace("process"):
+    result = await agent(msg)
+```
+
+```java
+// Java logging
+try (Tracer tracer = Tracer.start("process")) {
+    Object result = agent.process(msg);
+}
+```
+
+---
+
+## 🎯 思考题
+
+<details>
+<summary>点击查看答案</summary>
+
+1. **什么情况下需要追踪？**
+   - 多Agent交互复杂时
+   - 消息丢失或顺序错乱
+   - 性能问题排查
+
+2. **trace和print有什么区别？**
+   - trace记录结构化数据，可查询
+   - print只能看文本
+   - trace可记录时间、调用栈
+
+</details>
 
 ★ **Insight** ─────────────────────────────────────
 - **追踪** = 看清消息在系统中的完整旅程
