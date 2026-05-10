@@ -1,144 +1,100 @@
-# 《AgentScope Agent开发实战》
+# AgentScope 源码之旅
 
-> **目标读者**：有编程基础的开发者
-> **学习路径**：从"Hello World"到"生产级Agent系统" → "Contributor实践"
-> **核心原则**：所有内容以源码为唯一事实来源
+**从一次函数调用到架构贡献者**
 
 ---
 
-## 这本书能让你学到什么
+## 关于本书
 
-1. **掌握 AgentScope 核心概念**：Msg、Pipeline、MsgHub、ReActAgent
-2. **理解 Agent 架构**：AgentBase → ReActAgent → Hook系统 → 元类驱动的包装机制
-3. **开发多 Agent 协作系统**：Pipeline 串行/并行、MsgHub 发布-订阅、A2A 协议
-4. **掌握工具和记忆系统**：Toolkit 工具注册/执行、Memory 工作记忆/长期记忆、RAG 知识库
-5. **部署到生产环境**：Runtime 服务化、Docker 容器化
-6. **完成 5 个实战项目**：天气、客服、辩论、研究、语音
-7. **成为真实的 Contributor**：PR 流程、代码规范、调试指南、架构决策
+这是一本源码分析书。你将跟随一行代码 `await agent(msg)` 走完它在 AgentScope 框架中的完整旅程——从消息诞生、Agent 收信、记忆存取、格式转换、模型调用、工具执行，到 ReAct 循环的最终返回。
 
----
+读完这本书，你会经历四个阶段：
 
-## 书籍结构
+| 卷 | 你将获得的能力 | 怎么读 |
+|----|--------------|--------|
+| **卷一 · 一次调用** | 能追踪请求流程、定位 bug、修小问题 | 从头到尾顺序阅读 |
+| **卷二 · 每个齿轮** | 能理解设计模式、读懂任意模块的代码 | 按需跳读，每章独立 |
+| **卷三 · 造新齿轮** | 能独立添加新功能模块（Tool / Model / Memory / Agent） | 跟着动手做 |
+| **卷四 · 为什么** | 能参与架构讨论、理解设计权衡 | 任意顺序，独立论述 |
+
+## 前置知识
+
+- Python 基础（函数、类、列表、字典）
+- 不需要熟悉 Agent 框架
+- Python 进阶知识（async、TypedDict、元类等）在正文中以侧边栏补充
+
+附录 [python-primer.md](./appendix/python-primer.md) 提供进阶知识的速查。
+
+## 源码版本
+
+本书基于 AgentScope `main` 分支写作。所有源码引用格式为：
 
 ```
-teaching/book/
-├── README.md                         # 本文件 — 快速入口
-├── BOOK_INDEX.md                     # 详细目录 + 学习路径
-│
-├── PHASE0-2 前置文档                  # 学习前的必读基础
-│   ├── repository-map.md            # 仓库结构地图
-│   ├── tech-stack.md                # 技术栈分析
-│   ├── system-entrypoints.md         # 架构入口点
-│   ├── teaching-audit.md             # 教学审计报告
-│   ├── architecture.md              # 模块边界图、生命周期图、数据流图、调用链索引
-│   └── curriculum.md                # Level 1-9 学习路径、Contributor 成长路线
-│
-├── 00-architecture-overview/         # 架构总览
-│   ├── 00-overview.md               # AgentScope 是什么
-│   ├── 00-source-map.md             # 源码地图
-│   └── 00-data-flow.md              # 核心数据流
-│
-├── 01-getting-started/              # 入门
-│   ├── 01-installation.md           # 环境搭建
-│   ├── 01-first-agent.md            # 第一个 Agent
-│   └── 01-concepts.md               # 核心概念速览
-│
-├── 02-message-system/               # 消息系统
-├── 03-pipeline/                     # Pipeline 编排
-├── 04-agent-architecture/           # Agent 架构
-├── 05-model-formatter/              # 模型与格式化
-├── 06-tool-system/                  # 工具系统
-├── 07-memory-rag/                   # 记忆与 RAG
-├── 08-multi-agent/                  # 多 Agent 系统
-├── 09-advanced-modules/             # 高级模块 (Plan, Session, Realtime, TTS, Evaluate, Tuner)
-├── 10-deployment/                   # 部署
-├── 11-projects/                     # 项目实战 (5个项目)
-├── 12-contributing/                 # Contributor 成长
-│
-├── appendices/                      # 附录 (术语表/Python速查/代码模板/故障排除)
-├── reference/                       # 深度参考 (16个模块深度解析)
-└── python/                          # Python 语法教程 (前置内容, 9章)
+src/agentscope/<module>/_<file>.py:<行号>
 ```
 
----
+引用的行号在写作时已通过 `grep -n` 验证。如遇源码更新导致行号偏移，请以实际代码为准。
 
-## 快速开始
+## 目录
 
-### 推荐学习路径
+### 卷一：一次 agent() 调用的旅程
 
-| 路径 | 适合人群 | 时间 | 内容 |
-|------|---------|------|------|
-| **快速入门** | 有 Agent 开发经验 | 1周 | 00-architecture → 01-getting-started → 11-weather-agent |
-| **系统学习** | 一般开发者 | 8周 | Level 0→9 完整路径 |
-| **深入精通** | 全栈工程师 | 12周 | 全部章节 + reference/ 深度参考 + 源码贡献 |
+| 章 | 标题 | 主题 |
+|----|------|------|
+| [ch01](./volume-1-journey/ch01-toolbox.md) | 出发前：准备你的工具箱 | init / install / 第一个 agent |
+| [ch02](./volume-1-journey/ch02-message-born.md) | 第 1 站：消息诞生 | Msg 与 ContentBlock |
+| [ch03](./volume-1-journey/ch03-agent-receives.md) | 第 2 站：Agent 收信 | AgentBase.__call__ / Hook / 广播 |
+| [ch04](./volume-1-journey/ch04-memory-store.md) | 第 3 站：记忆存入 | 工作记忆的 add/get/delete |
+| [ch05](./volume-1-journey/ch05-retrieval-knowledge.md) | 第 4 站：检索与知识 | 长期记忆 / RAG / Embedding |
+| [ch06](./volume-1-journey/ch06-formatter.md) | 第 5 站：格式转换 | Msg → API 格式 / Token 截断 |
+| [ch07](./volume-1-journey/ch07-model.md) | 第 6 站：调用模型 | HTTP 请求 / 流式响应 / ChatResponse |
+| [ch08](./volume-1-journey/ch08-toolkit.md) | 第 7 站：执行工具 | ToolUseBlock → ToolResultBlock |
+| [ch09](./volume-1-journey/ch09-loop-return.md) | 第 8 站：循环与返回 | ReAct 循环 / Plan / Token 压缩 / TTS |
+| [ch10](./volume-1-journey/ch10-journey-review.md) | 旅程复盘 | 全景图 / 卷一→卷二过渡 |
 
-### 环境准备
+### 卷二：拆开每个齿轮
 
-```bash
-pip install -e "agentscope[full]"
-python -c "from agentscope.agent import ReActAgent; print('OK')"
-```
+| 章 | 标题 | 设计模式 |
+|----|------|---------|
+| [ch11](./volume-2-patterns/ch11-module-system.md) | 模块系统：文件的命名与导入 | _前缀 / re-export / lazy import |
+| [ch12](./volume-2-patterns/ch12-inheritance.md) | 继承体系：从 StateModule 到 AgentBase | PyTorch 式状态管理 |
+| [ch13](./volume-2-patterns/ch13-metaclass-hooks.md) | 元类与 Hook：方法调用的拦截 | _AgentMeta 编译期包装 |
+| [ch14](./volume-2-patterns/ch14-formatter-strategy.md) | 策略模式：Formatter 的多态分发 | FormatterBase → 各 Provider |
+| [ch15](./volume-2-patterns/ch15-schema-factory.md) | 工厂与 Schema：从函数到 JSON Schema | _parse_tool_function + pydantic |
+| [ch16](./volume-2-patterns/ch16-middleware.md) | 中间件与洋葱模型 | _apply_middlewares 装饰器链 |
+| [ch17](./volume-2-patterns/ch17-pubsub.md) | 发布-订阅：多 Agent 通信 | MsgHub / Pipeline |
+| [ch18](./volume-2-patterns/ch18-observability.md) | 可观测性与持久化 | Tracing / Session |
 
----
+### 卷三：造一个新齿轮
 
-## 学习路径 (Level 1-9)
+| 章 | 标题 | 实战项目 |
+|----|------|---------|
+| [ch19](./volume-3-building/ch19-dev-setup.md) | 扩展准备 | 开发环境 / 测试策略 |
+| [ch20](./volume-3-building/ch20-new-tool.md) | 造一个新 Tool | 数据库查询工具 |
+| [ch21](./volume-3-building/ch21-new-model.md) | 造一个新 Model Provider | 接入 FastLLM API |
+| [ch22](./volume-3-building/ch22-new-memory.md) | 造一个新 Memory Backend | SQLite Memory |
+| [ch23](./volume-3-building/ch23-new-agent.md) | 造一个新 Agent 类型 | Plan-Execute Agent |
+| [ch24](./volume-3-building/ch24-mcp-server.md) | 集成 MCP Server | 对接本地 MCP Server |
+| [ch25](./volume-3-building/ch25-advanced-extension.md) | 高级扩展：中间件与分组 | 限流中间件 / 场景分组 |
+| [ch26](./volume-3-building/ch26-integration-capstone.md) | 终章：集成实战 | 端到端集成测试 |
 
-| Level | 目标 | 核心章节 | 预计时间 |
-|-------|------|----------|----------|
-| **1** | 知道项目是什么 | 00-overview, 01-installation | 1小时 |
-| **2** | 能运行项目 | 01-first-agent, 02-msg-basics | 2小时 |
-| **3** | 理解模块边界 | 03-pipeline, 04-agent-base | 4小时 |
-| **4** | 理解核心数据流 | 04-react-agent, 05-model-interface | 5小时 |
-| **5** | 能跟踪源码调用链 | 05-formatter, 06-toolkit-core, 07-memory | 6小时 |
-| **6** | 能修改小功能 | 08-multi-agent, 08-tracing-debugging | 6小时 |
-| **7** | 能独立开发模块 | 09-advanced-modules | 8小时 |
-| **8** | 能提交高质量 PR | 11-projects, 12-contributing | 10小时 |
-| **9** | 能参与架构讨论 | reference/ + 12-architecture-decisions | 持续 |
+### 卷四：为什么要这样设计
 
-详细学习路径和章节依赖关系见 [BOOK_INDEX.md](./BOOK_INDEX.md) 和 [curriculum.md](./curriculum.md)。
+| 章 | 标题 | 设计决策 |
+|----|------|---------|
+| [ch27](./volume-4-why/ch27-msg-interface.md) | 消息为什么是唯一接口 | Msg 统一通信 |
+| [ch28](./volume-4-why/ch28-no-decorator.md) | 为什么不用装饰器注册工具 | 显式 vs 隐式注册 |
+| [ch29](./volume-4-why/ch29-god-class.md) | 上帝类 vs 模块拆分 | Toolkit 单文件权衡 |
+| [ch30](./volume-4-why/ch30-compile-time-hooks.md) | 编译期 Hook vs 运行时 Hook | 元类 vs 装饰器链 |
+| [ch31](./volume-4-why/ch31-typedict-union.md) | 为什么 ContentBlock 是 Union | TypedDict vs OOP |
+| [ch32](./volume-4-why/ch32-contextvar.md) | 为什么用 ContextVar | 并发安全配置 |
+| [ch33](./volume-4-why/ch33-formatter-separate.md) | 为什么 Formatter 独立于 Model | 关注点分离 vs 简单性 |
+| [ch34](./volume-4-why/ch34-panorama.md) | 架构的全景与边界 | 依赖图 / 演进方向 |
 
----
+### 附录
 
-## 源码映射
-
-| 模块 | 源码路径 | 对应章节 |
-|------|----------|----------|
-| **Msg** | `src/agentscope/message/_message_base.py` | 02-message-system |
-| **ContentBlock** | `src/agentscope/message/_message_block.py` | 02-content-blocks |
-| **Pipeline** | `src/agentscope/pipeline/_class.py`, `_functional.py` | 03-pipeline |
-| **MsgHub** | `src/agentscope/pipeline/_msghub.py` | 03-msghub |
-| **AgentBase** | `src/agentscope/agent/_agent_base.py` | 04-agent-base |
-| **ReActAgent** | `src/agentscope/agent/_react_agent.py` | 04-react-agent |
-| **Hook 系统** | `src/agentscope/agent/_agent_meta.py` | 04-agent-base |
-| **Formatter** | `src/agentscope/formatter/` | 05-formatter-system |
-| **Model** | `src/agentscope/model/` | 05-model-interface |
-| **Toolkit** | `src/agentscope/tool/_toolkit.py` | 06-tool-system |
-| **Memory** | `src/agentscope/memory/` | 07-memory-rag |
-| **RAG** | `src/agentscope/rag/` | 07-rag-knowledge |
-| **A2A Protocol** | `src/agentscope/a2a/` | 08-a2a-protocol |
-| **Tracing** | `src/agentscope/tracing/` | 08-tracing-debugging |
-| **Realtime** | `src/agentscope/realtime/` | 09-realtime-agent |
-| **Session** | `src/agentscope/session/` | 09-session-management |
-| **MCP** | `src/agentscope/mcp/` | 06-mcp-integration |
-
----
-
-## 配套资源
-
-- [AgentScope 官方仓库](https://github.com/agentscope-ai/agentscope)
-- [Python 基础教程](../python/) — Java 开发者 Python 速成
-- [模块深度解析](./reference/) — 16 个模块源码深度解读
-- [附录：术语对照表](./appendices/appendix_a.md)
-- [附录：Python 速查卡](./appendices/appendix_b.md)
-- [附录：代码模板](./appendices/appendix_c.md)
-- [附录：故障排除](./appendices/troubleshooting.md)
-
----
-
-## 参与贡献
-
-欢迎提交 Issue 和 Pull Request。详见 [CONTRIBUTING.md](./CONTRIBUTING.md) 和 [12-contributing/](./12-contributing/)。
-
----
-
-*本书为 AgentScope 学习资料，基于 Apache 2.0 许可证。*
+| 文件 | 内容 |
+|------|------|
+| [python-primer.md](./appendix/python-primer.md) | Python 进阶知识速查 |
+| [glossary.md](./appendix/glossary.md) | 术语中英文对照表 |
+| [source-map.md](./appendix/source-map.md) | 源码文件速查表 |
