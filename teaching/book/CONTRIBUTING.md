@@ -228,7 +228,89 @@ public String greet(String name) {
 
 ---
 
-## 八、质量检查清单
+## 八、源码引用规范
+
+### 必须验证的内容
+
+编写涉及源码的章节时，**必须**验证以下内容：
+
+1. **文件路径验证**
+   ```bash
+   # 确认文件存在
+   ls src/agentscope/agent/_react_agent.py
+   ```
+
+2. **行号验证**
+   ```bash
+   # 确认方法/类的行号
+   grep -n "def reply" src/agentscope/agent/_react_agent.py
+   ```
+
+3. **参数签名验证**
+   ```python
+   # 确认参数名称与源码一致
+   # ❌ 错误：MsgHub(agents=[...])
+   # ✅ 正确：MsgHub(participants=[...])
+   ```
+
+### 源码引用格式
+
+```markdown
+**文件**: `src/agentscope/agent/_react_agent.py:376-537`
+
+```python showLineNumbers
+async def reply(  # 第376行开始
+    ...
+```
+```
+
+### 常见错误避免
+
+| 错误类型 | 后果 | 正确做法 |
+|----------|------|----------|
+| 行号错误 | 读者找不到代码 | 用 `grep -n` 验证 |
+| 参数名错误 | 代码无法运行 | 用IDE自动补全验证 |
+| 已删除的API | 文档过时 | 提交前运行示例代码 |
+
+---
+
+## 九、文档维护指南
+
+### 源码更新时的文档同步
+
+当 AgentScope 源码发生以下变化时，**必须**同步更新文档：
+
+| 源码变化 | 文档更新要求 |
+|----------|--------------|
+| 新增类/方法 | 在对应章节添加说明，更新源码映射索引 |
+| 方法签名变化 | 更新参数说明、示例代码 |
+| 行号变化 | 更新所有引用的行号 |
+| API废弃 | 标记为已废弃，添加迁移指南 |
+
+### 版本管理
+
+在章节开头标注适用版本：
+```markdown
+> **适用版本**: AgentScope >= 1.0.19
+```
+
+### 验证命令
+
+提交前运行以下命令验证文档质量：
+
+```bash
+# 检查文档中引用的文件是否存在
+grep -rh "src/agentscope/" teaching/ | grep "\.py:" | while read line; do
+    file=$(echo "$line" | cut -d: -f1)
+    if [ ! -f "$file" ]; then
+        echo "Missing: $file"
+    fi
+done
+```
+
+---
+
+## 十、质量检查清单
 
 提交章节前，请检查：
 
@@ -239,3 +321,7 @@ public String greet(String name) {
 - [ ] 是否有"说人话"的术语解释？
 - [ ] 是否有思考题和答案？
 - [ ] 是否遵循本指南的风格？
+- [ ] 源码文件路径是否正确？
+- [ ] 引用的行号是否与当前源码匹配？
+- [ ] API参数名是否与源码一致？
+- [ ] 是否标注了适用版本？

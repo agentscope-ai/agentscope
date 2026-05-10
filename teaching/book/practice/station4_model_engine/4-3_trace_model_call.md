@@ -1,428 +1,562 @@
-# 4-3 追踪一次模型调用
+# 4-3 追踪模型调用链路
 
 > **目标**：理解从Agent到Model到API的完整调用链路
 
 ---
 
-## 🎯 这一章的目标
+## 学习目标
 
-学完之后，你能：
+学完本章后，你能：
 - 画出模型调用的完整流程
 - 理解每一步的转换关系
 - 调试模型调用问题
+- 识别Token溢出、API Key等常见问题
 
 ---
 
-## 🚀 模型调用完整流程
+## 背景问题
 
-### 第一步：Agent准备消息
+### 为什么需要理解完整调用链路？
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Agent内部                                                 │
-│                                                             │
-│  1. 收集历史Msg                                            │
-│  2. 添加sys_prompt作为system消息                           │
-│  3. 构建消息列表                                            │
-│                                                             │
-│  messages = [                                              │
-│      Msg(name="system", role="system", content="你是助手"), │
-│      Msg(name="user", role="user", content="你好"),         │
-│  ]                                                         │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-```
+当遇到以下问题时，需要追踪调用链路定位问题：
+- API调用失败
+- 返回内容不符合预期
+- Token超出限制
+- 模型行为异常
 
-### 第二步：Formatter转换
+### 调用链全景
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  OpenAIFormatter.format(messages)                         │
+│              Agent到API的完整调用链                        │
 │                                                             │
-│  输入: [Msg(name="system", ...), Msg(name="user", ...)]   │
+│  1. Agent准备消息                                          │
+│     user_input → Msg → 添加到Memory                        │
 │                                                             │
-│  输出:                                                      │
-│  {                                                         │
-│      "model": "gpt-4",                                    │
-│      "messages": [                                          │
-│          {"role": "system", "content": "你是助手"},         │
-│          {"role": "user", "content": "你好"}                 │
-│      ]                                                      │
-│  }                                                         │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-```
-
-### 第三步：ChatModel调用API
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  OpenAIChatModel.__call__(formatted_request)              │
+│  2. Formatter格式化                                        │
+│     [Msg(...), Msg(...)] → await formatter.format()       │
+│                           → [dict(...), dict(...)]         │
 │                                                             │
-│  1. HTTP POST 请求                                         │
-│  2. 发送到 OpenAI API                                      │
-│  3. 等待响应                                              │
+│  3. Model调用API                                           │
+│     list[dict] → await model() → HTTP POST                │
 │                                                             │
-│  请求: POST https://api.openai.com/v1/chat/completions    │
-│       Headers: Authorization: Bearer sk-xxx                  │
-│       Body: {...formatted_request...}                        │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-```
-
-### 第四步：API返回响应
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  OpenAI API响应                                            │
+│  4. API返回响应                                            │
+│     HTTP Response → Model解析 → ChatResponse               │
 │                                                             │
-│  {                                                         │
-│      "id": "chatcmpl-xxx",                                │
-│      "choices": [{                                         │
-│          "message": {                                        │
-│              "role": "assistant",                           │
-│              "content": "你好！有什么可以帮助你的吗？"     │
-│          }                                                  │
-│      }]                                                     │
-│  }                                                         │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-```
-
-### 第五步：Formatter解析响应
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  OpenAIFormatter.parse(response)                           │
-│                                                             │
-│  输入: {..., "message": {...}}                           │
-│                                                             │
-│  输出: Msg(                                                 │
-│      name="assistant",                                     │
-│      content="你好！有什么可以帮助你的吗？",                 │
-│      role="assistant"                                       │
-│  )                                                         │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-```
-
-### 第六步：Agent返回Msg
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Agent得到Msg，返回给调用方                                  │
-│                                                             │
-│  response = Msg(                                            │
-│      name="assistant",                                      │
-│      content="你好！有什么可以帮助你的吗？",                 │
-│      role="assistant"                                        │
-│  )                                                         │
+│  5. Agent处理响应                                          │
+│     ChatResponse → 存入Memory → 返回给用户                 │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 📊 完整时序图
+## 源码入口
+
+### 核心文件
+
+| 文件路径 | 类/方法 | 说明 |
+|---------|--------|------|
+| `src/agentscope/agent/_react_agent.py` | `reply()` | Agent核心循环 |
+| `src/agentscope/agent/_react_agent.py` | `_reasoning()` | 调用Model的入口 |
+| `src/agentscope/agent/_react_agent_base.py` | `_call_model()` | Model调用封装 |
+| `src/agentscope/formatter/_formatter_base.py` | `format()` | 格式化方法 |
+| `src/agentscope/model/_openai_model.py` | `__call__()` | OpenAI API调用 |
+
+### 调用链
+
+```
+Agent.reply(msg)
+    │
+    ├── memory.add(msg)                    # 保存用户消息
+    │
+    ├── for _ in range(max_iters):
+    │       │
+    │       ├── _reasoning()
+    │       │       │
+    │       │       ├── memory.get()       # 获取历史
+    │       │       │
+    │       │       ├── formatter.format() # 格式化消息
+    │       │       │
+    │       │       └── model(format_result) # 调用Model
+    │       │
+    │       └── _acting()
+    │
+    └── return final_msg
+```
+
+---
+
+## 架构定位
+
+### 各层职责
+
+| 层级 | 组件 | 职责 |
+|------|------|------|
+| 应用层 | Agent | 管理对话、决定调用工具、生成回复 |
+| 格式层 | Formatter | Msg → API请求格式 |
+| 模型层 | ChatModel | API调用、响应解析 |
+| 网络层 | HTTP Client | 实际HTTP请求 |
+
+### 数据流向
+
+```
+用户输入
+    │
+    ▼
+Msg对象 ──────────────────────────────┐
+    │                                 │
+    ▼                                 │
+Formatter.format()                    │
+    │                                 │
+    ▼                                 │
+API请求格式 (list[dict])              │
+    │                                 │
+    ▼                                 │
+Model.__call__()                      │
+    │                                 │
+    ├── HTTP POST请求 ────────────────┼──► 第三方API
+    │                                 │
+    ▼                                 │
+API响应格式 (dict)                    │
+    │                                 │
+    ▼                                 │
+Model内部解析                         │
+    │                                 │
+    ▼                                 │
+ChatResponse/Msg                      │
+    │                                 │
+    ▼                                 │
+返回给Agent                           │
+    │
+    ▼
+最终回复
+```
+
+---
+
+## 核心源码分析
+
+### 1. Agent调用Model的完整流程
+
+**源码**：`src/agentscope/agent/_react_agent.py:540-580`
+
+```python
+async def _reasoning(self, *args: Any, **kwargs: Any) -> Msg:
+    """推理阶段：获取历史、格式化、调用Model"""
+
+    # Step 1: 获取历史消息
+    history = await self.memory.get()
+
+    # Step 2: 构建Prompt（包含sys_prompt和history）
+    prompt = self._build_reasoning_prompt(history)
+
+    # Step 3: 格式化消息（异步）
+    formatted = await self.formatter.format(history)
+
+    # Step 4: 调用Model
+    response = await self.model(
+        formatted,
+        tools=self.toolkit.get_json_schemas() if self.toolkit else None,
+        tool_choice=self.tool_choice,
+    )
+
+    return response
+```
+
+### 2. Formatter.format()实现
+
+**源码**：`src/agentscope/formatter/_formatter_base.py`
+
+```python
+async def format(self, messages: list[Msg]) -> list[dict[str, Any]]:
+    """将Msg列表转换为API请求格式
+
+    Args:
+        messages: Msg对象列表
+
+    Returns:
+        符合API要求的字典列表
+    """
+    formatted = []
+
+    for msg in messages:
+        # 提取消息内容（支持多模态）
+        content = []
+        for block in msg.get_content_blocks():
+            if block.get("type") == "text":
+                content.append({
+                    "type": "text",
+                    "text": block.get("text", "")
+                })
+            # ... 处理其他类型 ...
+
+        formatted.append({
+            "role": msg.role,
+            "name": msg.name,
+            "content": content
+        })
+
+    return formatted
+```
+
+**转换示例**：
+
+```
+输入:
+[
+    Msg(name="system", role="system", content="你是一个助手"),
+    Msg(name="user", role="user", content="你好")
+]
+
+输出:
+[
+    {"role": "system", "name": "system", "content": [{"type": "text", "text": "你是一个助手"}]},
+    {"role": "user", "name": "user", "content": [{"type": "text", "text": "你好"}]}
+]
+```
+
+### 3. Model.__call__()实现
+
+**源码**：`src/agentscope/model/_openai_model.py`
+
+```python
+async def __call__(
+    self,
+    prompt: list[dict],
+    **kwargs: Any,
+) -> ChatResponse:
+    """调用OpenAI API"""
+
+    # 1. 提取参数
+    messages = prompt
+    tools = kwargs.get("tools")
+    tool_choice = kwargs.get("tool_choice", "auto")
+
+    # 2. 调用OpenAI API
+    response = await self.client.chat.completions.create(
+        model=self.model_name,
+        messages=messages,
+        tools=tools,
+        tool_choice=tool_choice,
+        **self.generate_kwargs,
+    )
+
+    # 3. 解析响应（内部处理）
+    return self._parse_response(response)
+```
+
+### 4. 响应解析
+
+**源码**：`src/agentscope/model/_openai_model.py`
+
+```python
+def _parse_response(self, response: Any) -> ChatResponse:
+    """解析API响应为ChatResponse"""
+    # 从OpenAI响应中提取内容
+    choice = response.choices[0]
+
+    if choice.finish_reason == "tool_calls":
+        # 工具调用响应
+        return ChatResponse(
+            role="assistant",
+            content=choice.message.content,
+            tool_calls=choice.message.tool_calls,
+        )
+    else:
+        # 普通文本响应
+        return ChatResponse(
+            role="assistant",
+            content=choice.message.content,
+        )
+```
+
+---
+
+## 可视化结构
+
+### 完整时序图
 
 ```mermaid
 sequenceDiagram
     participant User as 用户
-    participant Agent as Agent
-    participant Form as Formatter
+    participant Agent as ReActAgent
+    participant Memory as Memory
+    participant Formatter as Formatter
     participant Model as ChatModel
     participant API as OpenAI API
-    
-    User->>Agent: 调用agent(prompt)
-    
-    Agent->>Agent: 构建消息列表
-    Agent->>Form: format(messages)
-    Form-->>Agent: api_request
-    
-    Agent->>Model: model(api_request)
-    Model->>API: HTTP POST
-    API-->>Model: HTTP Response
-    Model-->>Agent: api_response
-    
-    Agent->>Form: parse(api_response)
-    Form-->>Agent: response_msg
-    
-    Agent->>Agent: 保存到Memory
-    Agent-->>User: response_msg
+
+    User->>Agent: Msg("北京天气怎么样?")
+
+    Agent->>Memory: add(user_msg)
+    Agent->>Memory: get() → history
+
+    rect rgb(220, 240, 220)
+        Note over Agent,Formatter: 格式化阶段
+        Agent->>Formatter: format(history)
+        Formatter-->>Agent: [api_request_dicts]
+    end
+
+    rect rgb(220, 220, 240)
+        Note over Agent,API: Model调用阶段
+        Agent->>Model: __call__(api_request, tools)
+        Model->>API: POST /v1/chat/completions
+        API-->>Model: HTTP Response
+        Model->>Model: _parse_response()
+        Model-->>Agent: ChatResponse
+    end
+
+    rect rgb(240, 220, 220)
+        Note over Agent,Memory: 响应处理阶段
+        Agent->>Agent: 检查是否有tool_call
+        Agent->>Memory: add(response)
+        Agent-->>User: 最终回复
+    end
+```
+
+### 数据转换图
+
+```mermaid
+flowchart LR
+    subgraph 输入
+        A1[用户输入]
+        A2[Msg对象]
+    end
+
+    subgraph Formatter
+        B1[format()异步方法]
+    end
+
+    subgraph API层
+        C1[API请求JSON]
+    end
+
+    subgraph 网络
+        D1[HTTP POST]
+    end
+
+    subgraph API层
+        C2[API响应JSON]
+    end
+
+    subgraph Model
+        E1[_parse_response()]
+    end
+
+    subgraph 输出
+        F1[ChatResponse/Msg]
+    end
+
+    A1 --> A2
+    A2 --> B1
+    B1 --> C1
+    C1 --> D1
+    D1 --> C2
+    C2 --> E1
+    E1 --> F1
 ```
 
 ---
 
-## 🔬 关键代码段解析
+## 工程经验
 
-### 代码段1：Agent是如何调用Model的？
+### 设计原因
 
-```python showLineNumbers
-# Agent调用Model的完整流程（简化版）
-async def _call_model(self, messages: list[Msg]) -> Msg:
-    # 1.Formatter格式化消息（异步）
-    formatted = await self.formatter.format(messages)
+1. **为什么Formatter.format()是异步的？**
+   - 可能需要从外部获取动态Schema
+   - 保持与Model.__call__()接口一致
 
-    # 2.调用Model API（内部处理响应）
-    response = await self.model(formatted)
+2. **为什么响应解析在Model内部而不是Formatter？**
+   - 减少转换步骤
+   - 每个Model有自己的响应格式
 
-    # 3.Model返回的已经是Msg对象
-    return response
+3. **为什么Tools通过kwargs传递而不是作为格式化的一部分？**
+   - Tools是给LLM看的，不是给API格式看的
+   - 保持Formatter职责单一
+
+### 常见问题
+
+#### 问题1：Token超出限制
+
+**原因**：消息太长超出模型Token限制
+
+**表现**：
+```
+Error: This model's maximum context length is 128000 tokens
 ```
 
-**思路说明**：
-
-| 步骤 | 代码 | 输入 | 输出 |
-|------|------|------|------|
-| 格式化 | `await self.formatter.format(messages)` | `[Msg(...), ...]` | `list[dict]` (API请求格式) |
-| 调用 | `await self.model(formatted)` | list[dict] | `Msg` (已解析的响应) |
-| 无需解析 | Model内部处理 | API响应 | 直接返回Msg |
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│              Agent调用Model的完整流程                      │
-│                                                             │
-│   messages = [Msg("system", ...), Msg("user", "你好")]    │
-│        │                                                   │
-│        ▼ await formatter.format() (异步)                  │
-│   api_request = [{"role": "system", ...}, {...}]          │
-│        │                                                   │
-│        ▼ await model()                                    │
-│   response = Msg(name="assistant", content="你好！")       │
-│   （Model内部已解析，直接返回Msg）                          │
-└─────────────────────────────────────────────────────────────┘
+**诊断**：
+```python
+# 检查消息总长度
+history = await memory.get()
+total_chars = sum(len(str(m)) for m in history)
+print(f"总字符数: {total_chars}")
 ```
 
-**💡 设计思想**：Formatter负责**格式转换**（Msg → API格式），Model负责**网络通信和解析**（API响应 → Msg）。两者各司其职。
+**解决**：
+```python
+# 方案1：使用滑动窗口Memory
+agent = ReActAgent(
+    memory=InMemoryMemory(window=10),  # 只保留最近10条
+    ...
+)
 
----
-
-### 代码段2：ChatModel是怎么调用API的？
-
-```python showLineNumbers
-# OpenAIChatModel的实现（简化版）
-class OpenAIChatModel:
-    def __init__(self, api_key: str, model: str):
-        self.api_key = api_key
-        self.model = model
-        self.client = OpenAI(api_key=api_key)
-
-    async def __call__(self, request: dict) -> dict:
-        # 从request中提取参数
-        model = request.get("model", self.model)
-        messages = request["messages"]
-
-        # 调用OpenAI API
-        response = self.client.chat.completions.create(
-            model=model,
-            messages=messages
-        )
-
-        # 返回原始响应
-        return response.model_dump()
+# 方案2：使用截断Formatter
+agent = ReActAgent(
+    formatter=TruncatedFormatter(max_tokens=100000),
+    ...
+)
 ```
 
-**思路说明**：
+#### 问题2：API Key泄露
 
-| 步骤 | 代码 | 说明 |
-|------|------|------|
-| 提取参数 | `request["messages"]` | 从格式化后的请求中获取 |
-| 构造请求 | `client.chat.completions.create()` | 调用OpenAI SDK |
-| 返回响应 | `response.model_dump()` | 返回字典格式 |
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│              OpenAIChatModel调用流程                       │
-│                                                             │
-│   request = {                                              │
-│       "model": "gpt-4",                                   │
-│       "messages": [{"role": "user", "content": "你好"}]  │
-│   }                                                        │
-│        │                                                   │
-│        ▼                                                   │
-│   client.chat.completions.create(                         │
-│       model="gpt-4",                                     │
-│       messages=[...]                                       │
-│   )                                                        │
-│        │                                                   │
-│        ▼                                                   │
-│   response = {                                             │
-│       "id": "chatcmpl-xxx",                               │
-│       "choices": [{"message": {"content": "你好！"}}]     │
-│   }                                                        │
-└─────────────────────────────────────────────────────────────┘
+**危险**：
+```python
+# 危险：硬编码
+model = OpenAIChatModel(api_key="sk-xxx", ...)
 ```
 
-**💡 设计思想**：ChatModel是**适配器模式**——封装了不同API的调用细节，提供统一的`__call__`接口。
+**安全做法**：
+```python
+# 安全：环境变量
+import os
+model = OpenAIChatModel(
+    api_key=os.environ.get("OPENAI_API_KEY"),
+    ...
+)
 
----
-
-### 代码段3：Formatter是怎么实现格式转换的？
-
-```python showLineNumbers
-# OpenAIFormatter的实现
-class OpenAIFormatter(FormatterBase):
-    async def format(self, messages: list[Msg]) -> list[dict]:
-        """Msg列表 → API请求格式（异步）"""
-        formatted = []
-        for msg in messages:
-            # 处理消息内容（支持多模态）
-            content = []
-            for block in msg.get_content_blocks():
-                if block.get("type") == "text":
-                    content.append({"type": "text", "text": block.get("text", "")})
-            formatted.append({
-                "role": msg.role,
-                "name": msg.name,
-                "content": content
-            })
-        return formatted
+# 最佳：使用密钥管理服务
+model = OpenAIChatModel(
+    api_key=os.environ.get("AZURE_OPENAI_KEY"),
+    ...
+)
 ```
 
-**思路说明**：
+#### 问题3：API响应超时
 
-| 方法 | 输入 | 输出 | 关键操作 |
-|------|------|------|----------|
-| format | `[Msg(...)]` | `list[dict]` | 提取role、name、content |
+**原因**：网络问题或API服务繁忙
 
+**解决**：
+```python
+# 设置超时（如果支持）
+model = OpenAIChatModel(
+    api_key=os.environ.get("OPENAI_API_KEY"),
+    timeout=30,  # 30秒超时
+    ...
+)
+
+# 或使用重试机制
+from tenacity import retry, stop_after_attempt
+
+@retry(stop=stop_after_attempt(3))
+async def call_with_retry(model, prompt):
+    return await model(prompt)
 ```
-┌─────────────────────────────────────────────────────────────┐
-│              Formatter格式转换示例                         │
-│                                                             │
-│   format (异步):                                           │
-│   ┌─────────────────────────────────────────────────────┐  │
-│   │  [Msg(role="user", content="你好")]                │  │
-│   │       ↓ await formatter.format()                    │  │
-│   │  [{"role": "user", "name": "user",               │  │
-│   │    "content": [{"type": "text", "text": "你好"}]}] │  │
-│   └─────────────────────────────────────────────────────┘  │
-│                                                             │
-│   响应由Model内部解析，直接返回Msg，无需Formatter处理      │
-└─────────────────────────────────────────────────────────────┘
+
+#### 问题4：ToolCall格式错误
+
+**原因**：Formatter输出的工具Schema格式不对
+
+**诊断**：
+```python
+# 打印工具Schema
+schemas = toolkit.get_json_schemas()
+print(f"Schema: {schemas}")
+
+# 检查是否符合OpenAI格式
+# 应该是: {"type": "function", "function": {...}}
 ```
 
-**💡 设计思想**：Formatter是**转换器**——把统一格式Msg转成API请求格式。响应由Model内部解析后返回Msg。
+### 调试方法
 
----
+**方法1：打印中间结果**
 
-### 代码段4：如何调试模型调用问题？
-
-```python showLineNumbers
-# 调试模型调用的方法
-async def debug_model_call():
+```python
+async def debug_agent_call():
     # 1. 打印格式化前的消息
-    messages = [Msg(name="user", content="你好")]
-    print(f"原始消息: {messages}")
+    messages = await memory.get()
+    print(f"[Step 1] 原始消息: {messages}")
 
     # 2. 打印格式化后的请求
-    formatter = OpenAIChatFormatter()
-    formatted = formatter.format(messages)
-    print(f"格式化请求: {formatted}")
+    formatted = await formatter.format(messages)
+    print(f"[Step 2] 格式化请求: {formatted}")
 
-    # 3. 打印API响应
-    model = OpenAIChatModel(api_key="sk-xxx", model="gpt-4")
+    # 3. 打印API响应（需要mock或日志）
     response = await model(formatted)
-    print(f"API响应: {response}")
+    print(f"[Step 3] API响应: {response}")
 
-    # 4. 打印解析后的消息
-    parsed = formatter.parse(response)
-    print(f"解析结果: {parsed}")
+    # 4. 打印最终结果
+    print(f"[Step 4] 最终回复: {response.content}")
 ```
 
-**思路说明**：
+**方法2：使用Hook拦截**
 
-| 调试点 | 打印内容 | 可以发现的问题 |
-|--------|----------|---------------|
-| format前 | `messages` | 消息内容是否正确 |
-| format后 | `formatted` | 格式是否匹配API |
-| response | API原始响应 | 是否有错误码 |
-| parse后 | `Msg` | 解析是否正确 |
+```python
+# 拦截pre_reasoning查看格式化后的请求
+def log_pre_reasoning(agent, kwargs):
+    print(f"调用Model，工具数: {len(kwargs.get('tools', []))}")
+    return kwargs
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│              模型调用调试检查点                            │
-│                                                             │
-│   messages ──► formatter.format() ──► formatted          │
-│                                     │                      │
-│                                     ▼                      │
-│                              检查格式是否正确               │
-│                                     │                      │
-│                                     ▼                      │
-│                              await model()                  │
-│                                     │                      │
-│                                     ▼                      │
-│                              检查API响应                   │
-│                                     │                      │
-│                                     ▼                      │
-│                              formatter.parse()              │
-│                                     │                      │
-│                                     ▼                      │
-│                              检查解析结果                   │
-└─────────────────────────────────────────────────────────────┘
+agent.register_instance_hook("pre_reasoning", "log", log_pre_reasoning)
 ```
 
-**💡 设计思想**：调试模型调用要**逐层检查**——每一步的输入输出都打印出来，快速定位问题在哪一层。
+**方法3：使用tracing**
+
+```python
+# AgentScope内置tracing
+from agentscope.tracing import trace
+
+@trace("model_call")
+async def call_model(model, prompt):
+    return await model(prompt)
+```
 
 ---
 
-## 💡 Java开发者注意
+## Contributor指南
 
-模型调用链路类似Java的**HTTP客户端调用**：
+### 适合新手修改的文件
 
-```java
-// Java HTTP调用链
-RestTemplate template = new RestTemplate();
+| 文件 | 原因 |
+|------|------|
+| `src/agentscope/agent/_react_agent.py` | 核心循环，调用链清晰 |
+| `src/agentscope/formatter/_openai_formatter.py` | 最常用的Formatter |
+| `src/agentscope/model/_openai_model.py` | 完整API调用示例 |
 
-// 1. 准备请求（类似Agent构建消息）
-HttpEntity<Request> request = new HttpEntity<>(requestBody, headers);
+### 危险修改区域
 
-// 2. 发送请求（类似ChatModel调用）
-ResponseEntity<Response> response = template.postForEntity(
-    url, request, Response.class
-);
+**警告**：
 
-// 3. 处理响应（类似Formatter解析）
-Result result = response.getBody();
+1. **Model的__call__方法**
+   - 处理HTTP请求和响应解析
+   - 错误修改可能导致API调用失败或数据丢失
+
+2. **Formatter的format方法**
+   - 格式转换逻辑
+   - 错误可能导致请求格式不正确
+
+### 调试工具
+
+**HTTP日志**：
+```python
+import httpx
+httpx_log = logging.getLogger("httpx")
+httpx_log.setLevel(logging.DEBUG)
 ```
 
-| AgentScope | Java | 说明 |
-|------------|------|------|
-| Agent构建消息 | 构建请求体 | 准备数据 |
-| Formatter.format() | ObjectMapper | 序列化 |
-| ChatModel.call() | RestTemplate | HTTP调用 |
-| Formatter.parse() | ObjectMapper | 反序列化 |
-| Agent返回Msg | Controller返回 | 输出结果 |
-
----
-
-## 🎯 思考题
-
-<details>
-<summary>点击查看答案</summary>
-
-1. **如果API返回错误，流程会在哪里处理？**
-   - ChatModel会捕获异常
-   - 可能重试或返回错误Msg
-
-2. **Formatter.parse()失败会怎样？**
-   - 可能抛出解析异常
-   - Agent会捕获并返回错误信息
-
-3. **如何调试模型调用问题？**
-   - 打印Formatter.format()的输入输出
-   - 检查HTTP请求和响应
-   - 查看API返回的错误信息
-
-</details>
+**完整调用链追踪**：
+```python
+import agentscope
+agentscope.init(
+    project="DebugAgent",
+    logging_level="DEBUG",
+)
+```
 
 ---
 
 ★ **Insight** ─────────────────────────────────────
-- **Agent → Formatter → ChatModel → API** 是单向调用链
-- **format()在调用前，parse()在调用后**
-- 理解这个流程有助于调试问题
+- **Agent → Formatter → Model → API** 是单向调用链
+- **format()是异步的**：必须用await
+- **响应由Model内部解析**：Formatter只管请求格式化
+- 调试时**逐层打印**中间结果，快速定位问题在哪一层
 ─────────────────────────────────────────────────

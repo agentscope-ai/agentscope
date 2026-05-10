@@ -252,6 +252,7 @@ reference/
 ├── module_plan_deep.md          # Plan模块深度解析
 ├── module_evaluate_deep.md      # Evaluate模块深度解析
 ├── module_tuner_deep.md        # Tuner模块深度解析
+├── module_a2a_deep.md          # A2A Agent-to-Agent协议深度解析
 ├── best_practices.md            # 最佳实践指南
 ├── case_studies.md             # 案例研究
 ├── reference_best_practices.md  # 最佳实践参考

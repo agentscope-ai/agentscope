@@ -4,171 +4,199 @@
 
 ---
 
-## 🎯 这一章的目标
+## 学习目标
 
 学完之后，你能：
 - 画出Agent处理请求的完整流程图
-- 理解Agent/Model/Formatter/Toolkit的关系
+- 理解Agent/Model/Formatter/Memory的关系
 - 说出每一步数据是怎么传递的
+- 理解async/await在Agent调用中的作用
 
 ---
 
-## 🚀 先跑起来
+## 背景问题
 
-```python showLineNumbers
-# 02_trace_your_first_agent.py
-# 追踪"你好"的旅程
+**为什么需要追踪"你好"的旅程？**
 
-import agentscope
-from agentscope.agent import ReActAgent
-from agentscope.message import Msg
-from agentscope.model import OpenAIChatModel
-from agentscope.formatter import OpenAIChatFormatter
+理解完整调用链才能：
+- 调试问题（知道在哪一步出错）
+- 优化性能（知道哪一步最慢）
+- 扩展功能（知道在哪插入自定义逻辑）
 
-# 初始化
-agentscope.init(project="TraceDemo")
-
-# 创建Agent
-agent = ReActAgent(
-    name="Tracer",
-    model=OpenAIChatModel(
-        api_key="your-api-key",
-        model="gpt-4"
-    ),
-    sys_prompt="你是一个友好的AI助手。",
-    formatter=OpenAIChatFormatter()
-)
-
-# 运行 - 追踪这个过程！
-import asyncio
-
-async def main():
-    # ========== 追踪开始 ==========
-    print("1. 用户输入: 你好")
-
-    response = await agent(Msg(
-        name="user",
-        content="你好",
-        role="user"
-    ))
-
-    print(f"2. Agent回复: {response.content}")
-    # ========== 追踪结束 ==========
-
-asyncio.run(main())
+**核心组件协作**：
+```
+用户 ──► Msg ──► Agent ──► Formatter ──► Model ──► API
+                │                              │
+                └──► Memory（存储历史）◄────────┘
 ```
 
 ---
 
-## 🔍 追踪"你好"的完整旅程
+## 源码入口
 
-### 第一站：用户输入
+**涉及的核心模块**：
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  用户在终端输入 "你好"                                        │
-│                                                             │
-│  你好 ─────────────────────────────────────────────────────►│
-└─────────────────────────────────────────────────────────────┘
-```
+| 模块 | 文件路径 | 职责 |
+|------|---------|------|
+| `Msg` | `src/agentscope/message/_message_base.py` | 消息载体 |
+| `Agent` | `src/agentscope/agent/_react_agent.py` | Agent实现 |
+| `Formatter` | `src/agentscope/formatter/` | 格式转换 |
+| `Model` | `src/agentscope/model/_openai_model.py` | OpenAI模型 |
+| `Memory` | `src/agentscope/memory/` | 记忆存储 |
 
-### 第二站：Agent接收
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Agent收到消息                                              │
-│                                                             │
-│  Agent内部：                                                │
-│  1. 创建Msg对象 (name="user", content="你好", role="user") │
-│  2. 保存到短期记忆                                          │
-│  3. 准备调用Model                                          │
-└─────────────────────────────────────────────────────────────┘
-```
-
-💡 **Java开发者注意**：Msg就像Java的一个POJO：
+**关键类和方法**：
 ```python
-# Python的Msg
-Msg(name="user", content="你好", role="user")
+# Agent调用入口
+await agent(msg: Msg) -> Msg
 
-// Java的等价值
-public class Msg {
-    private String name;
-    private String content;
-    private String role;
-    // getters, setters
-}
-```
+# Model调用
+await model(prompt: list[Msg]) -> Msg
 
-### 第三站：Formatter转换
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Formatter将Msg转换为API格式                                  │
-│                                                             │
-│  Msg对象 ────────────Formatter─────────────► API请求JSON     │
-│                                                             │
-│  输入: Msg(name="user", content="你好", role="user")       │
-│  输出: {"role": "user", "content": [{"type": "text", ...}]}│
-└─────────────────────────────────────────────────────────────┘
-```
-
-💡 **Java开发者注意**：Formatter就像Java的**对象映射器**（ObjectMapper/ModelMapper）：
-- 把统一的Msg对象，转换成各个API能认识的格式
-- OpenAI用一种格式，Claude用另一种格式
-
-### 第四站：Model调用
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Model调用远程API                                            │
-│                                                             │
-│  Formatter ───────ChatModelBase─────────► OpenAI API        │
-│                                                             │
-│  Model就像一个"万能插头"，不管后面是什么API，调用方式都一样   │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### 第五站：API返回
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  OpenAI API返回响应                                          │
-│                                                             │
-│  OpenAI API ───────ChatModelBase──────────► 返回JSON         │
-│                                                             │
-│  {"choices": [{"message": {"role": "assistant",           │
-│                "content": "你好！很高兴认识你。"}}]}        │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### 第六站：Formatter解析
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Formatter将API响应转换为Msg                                  │
-│                                                             │
-│  API响应JSON ─────Formatter───────────────► Msg对象            │
-│                                                             │
-│  输入: {"choices": [{"message": {...}}]}                     │
-│  输出: Msg(name="assistant", content="你好！...", role="assistant")│
-└─────────────────────────────────────────────────────────────┘
-```
-
-### 第七站：Agent返回
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Agent返回Msg给用户                                           │
-│                                                             │
-│  Msg对象 ────────────────────────────────────────────────► 用户│
-│                                                             │
-│  你好！很高兴认识你。                                         │
-└─────────────────────────────────────────────────────────────┘
+# Formatter转换
+formatter.format(messages: list[Msg]) -> dict
 ```
 
 ---
 
-## 📊 完整流程图
+## 架构定位
+
+### Agent在系统中的位置
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      用户层                                  │
+│                  "你好" → Msg                              │
+└──────────────────────────┬──────────────────────────────────┘
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Agent层（协调者）                        │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │  1. 接收Msg  2. 保存Memory  3. 调用Formatter       │  │
+│  │  4. 调用Model  5. 返回Msg                          │  │
+│  └────────────────────────────────────────────────────┘  │
+└──────────────────────────┬──────────────────────────────────┘
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Formatter层                             │
+│              Msg → API格式 → Model调用                    │
+└──────────────────────────┬──────────────────────────────────┘
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│                     Model层                                │
+│              API格式 → HTTP请求 → API响应                 │
+└──────────────────────────┬──────────────────────────────────┘
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    远程LLM API                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Agent的协作关系
+
+| 组件 | 与Agent的关系 | 数据流向 |
+|------|-------------|---------|
+| Memory | Agent的记忆库 | Agent写入/读取 |
+| Formatter | Agent的翻译器 | Agent → Formatter → Model |
+| Model | Agent的大脑 | Formatter → Model → Formatter |
+| MsgHub | Agent的广播站 | Agent → MsgHub → 其他Agent |
+
+### Agent的生命周期
+
+```
+创建Agent → 设置model/memory/formatter → 运行agent(msg) → 循环处理
+                                              ↑
+                                         reply()方法
+                                         ├── Memory.get()      获取历史
+                                         ├── Formatter.format()  格式化
+                                         ├── Model.invoke()     调用LLM
+                                         ├── Formatter.parse()   解析响应
+                                         └── Memory.add()       保存记忆
+```
+
+### 为什么需要这些组件协同？
+
+```
+用户: "计算 2+2"
+    │
+    ▼
+Agent收到Msg
+    │
+    ├── 需要知道"之前聊过什么" → Memory.get_history()
+    ├── 需要把Msg转成API格式 → Formatter.format()
+    ├── 需要调用LLM得到回复 → Model.invoke()
+    └── 需要保存这次对话   → Memory.add()
+
+所有组件缺一不可，共同完成一次完整的Agent调用。
+```
+
+---
+
+## 核心源码分析
+
+### 调用链1: Agent的__call__方法
+
+```python
+# 源码位置: src/agentscope/agent/_react_agent.py
+
+async def __call__(self, msg: Msg | None) -> Msg:
+    # 1. 如果有输入，保存到记忆
+    if msg is not None:
+        self.memory.add(msg)
+
+    # 2. 获取历史消息
+    history = self.memory.get()
+
+    # 3. 调用model
+    response = await self.model(
+        prompt=history,  # 注意：这里是history，不是msg
+        ...
+    )
+
+    # 4. 保存回复到记忆
+    self.memory.add(response)
+
+    return response
+```
+
+### 调用链2: Formatter转换
+
+```python
+# 源码位置: src/agentscope/formatter/_openai.py
+
+class OpenAIChatFormatter:
+    def format(self, messages: list[Msg]) -> dict:
+        """将Msg列表转换为OpenAI API格式"""
+        return {
+            "model": self.model_name,
+            "messages": [
+                {"role": msg.role, "content": msg.content}
+                for msg in messages
+            ]
+        }
+```
+
+### 调用链3: Model调用
+
+```python
+# 源码位置: src/agentscope/model/_openai_model.py (推测)
+
+class OpenAIChatModel:
+    async def __call__(self, prompt: list[Msg], **kwargs) -> Msg:
+        # 1. 格式化
+        formatted = self.formatter.format(prompt)
+
+        # 2. 调用API
+        response = await self._call_api(formatted)
+
+        # 3. 解析响应
+        return self.formatter.parse(response)
+```
+
+---
+
+## 可视化结构
+
+### 完整调用时序图
 
 ```mermaid
 sequenceDiagram
@@ -178,183 +206,27 @@ sequenceDiagram
     participant Form as Formatter
     participant Model as ChatModel
     participant API as OpenAI API
-    
+
     User->>Agent: "你好"
-    
+
     Note over Agent: 1. 创建Msg对象
-    
+
     Agent->>Mem: 保存到短期记忆
     Agent->>Mem: 获取历史消息
-    
+
     Agent->>Form: 2. 转换Msg为API格式
     Form-->>Agent: API请求JSON
-    
+
     Agent->>Model: 3. 调用ChatModel
     Model->>API: 4. 发送HTTP请求
     API-->>Model: 5. 返回响应JSON
     Model-->>Agent: 响应Msg
-    
+
     Agent->>Mem: 保存到短期记忆
     Agent-->>User: 6. 返回Msg
 ```
 
----
-
-## 💡 Java开发者注意：整个流程类似Java的分层架构
-
-| AgentScope | Java | 说明 |
-|------------|------|------|
-| Agent | Controller | 接收请求，协调处理 |
-| Formatter | ObjectMapper | 格式转换 |
-| ChatModel | HTTP Client | 远程调用 |
-| Memory | Session/Redis | 存储状态 |
-| Msg | POJO/DTO | 数据传输对象 |
-
----
-
-## 🎯 思考题
-
-<details>
-<summary>点击查看答案</summary>
-
-1. **为什么需要Formatter而不是直接发Msg？**
-   - 不同API（OpenAI/Claude）接受的格式不同
-   - Formatter像适配器，屏蔽底层差异
-   - 让Agent代码不用改，就能切换模型
-
-2. **如果API返回错误，Agent会怎么处理？**
-   - ChatModel会抛出异常
-   - Agent的try-catch会捕获
-   - 可能重试，或者返回错误信息给用户
-
-3. **Memory在这里起什么作用？**
-   - 保存对话历史（短期记忆）
-   - 让Agent知道之前聊过什么
-   - 类比Java的HttpSession
-
-</details>
-
----
-
-★ **Insight** ─────────────────────────────────────
-- **Formatter是适配器**：把统一的Msg转换成各API认识的格式
-- **ChatModel是网关**：不管什么API，调用方式都一样
-- **Memory是记忆**：让Agent知道"我们之前聊过什么"
-─────────────────────────────────────────────────
-
----
-
-## 🔬 关键代码段解析
-
-### 代码段1：初始化 —— 为什么需要init？
-
-```python showLineNumbers
-# 这是第22-27行
-import agentscope
-from agentscope.agent import ReActAgent
-from agentscope.model import OpenAIChatModel
-
-# 初始化
-agentscope.init(project="TraceDemo")
-```
-
-**思路说明**：
-
-| 问题 | 答案 |
-|------|------|
-| 为什么要`init`？ | `init`是全局初始化，设置项目名称、日志、追踪系统 |
-| 为什么用`project="TraceDemo"`？ | 类似Java的Spring Boot项目名，用于在AgentScope Studio中区分不同项目 |
-| 不写会怎样？ | 会用默认值"UnnamedProject"，日志和追踪会混在一起 |
-
-**💡 设计思想**：AgentScope采用"先初始化，后使用"的模式，类似Spring Boot的启动流程。`init`确保所有组件（日志、追踪、配置）在使用前都已就绪。
-
----
-
-### 代码段2：Agent创建 —— 为什么这样组织？
-
-```python showLineNumbers
-# 这是第30-37行
-agent = ReActAgent(
-    name="Tracer",                    # ① Agent的名字
-    model=OpenAIChatModel(            # ② 使用的模型
-        api_key="your-api-key",       # API密钥（生产环境用环境变量）
-        model="gpt-4"                 # 模型名称
-    ),
-    sys_prompt="你是一个友好的AI助手。"  # ③ 系统提示词
-)
-```
-
-**思路说明**：
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                  ReActAgent 的三要素                        │
-│                                                             │
-│   ① name（名字）    ② model（大脑）    ③ sys_prompt（性格）  │
-│        │                  │                  │              │
-│        ▼                  ▼                  ▼              │
-│   "Tracer"         OpenAI gpt-4      "你是一个友好的..."    │
-│                                                             │
-│   就像给一个员工分配：工号 + 大脑（AI模型）+ 工作职责         │
-└─────────────────────────────────────────────────────────────┘
-```
-
-| 参数 | 思考 | 为什么这样设计 |
-|------|------|----------------|
-| `name` | Agent叫什么？ | 用于日志和追踪中标识 |
-| `model` | 用什么AI？ | 决定Agent的"聪明程度" |
-| `sys_prompt` | Agent是什么角色？ | 决定Agent的行为风格 |
-
-**💡 设计思想**：这三个要素（名字、模型、提示词）构成了Agent的基本配置。分离这些参数让Agent可以灵活配置，就像Java的依赖注入。
-
----
-
-### 代码段3：异步调用 —— 为什么需要async/await？
-
-```python showLineNumbers
-# 这是第42-51行
-async def main():
-    print("1. 用户输入: 你好")
-    response = await agent(Msg(
-        name="user",
-        content="你好",
-        role="user"
-    ))  # 关键：await等待异步结果
-    print(f"2. Agent回复: {response.content}")
-
-asyncio.run(main())
-```
-
-**思路说明**：
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│              同步 vs 异步：为什么需要await？                │
-│                                                             │
-│  同步方式（会卡住）：              异步方式（不卡）：          │
-│  ─────────────────              ──────────────              │
-│  result = agent("你好")          response = await agent()   │
-│  print(result)    ← 等API返回才执行  print(response)        │
-│                                                             │
-│  时间线：                          时间线：                   │
-│  ├─发请求─├─等API─├─返回─┤       ├─发请求─┤               │
-│  (用户看到卡顿)                       ├─等API─┤            │
-│                                       ├─返回─┤              │
-│                                       (用户可以干别的)        │
-└─────────────────────────────────────────────────────────────┘
-```
-
-| 问题 | 答案 |
-|------|------|
-| 为什么要`async def`？ | Python的`async`用于声明异步函数 |
-| 为什么要`await`？ | `await`等待异步操作完成，类似Java的`Future.get()` |
-| 为什么要`asyncio.run()`？ | 运行异步函数的入口，类似Java的`main`方法 |
-
-**💡 设计思想**：Agent调用LLM API是网络IO操作，可能耗时几百毫秒到几秒。异步让程序在等待时可以干别的，提高整体效率。
-
----
-
-## 📋 核心关系图
+### 组件关系图
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -385,3 +257,147 @@ asyncio.run(main())
                            ▼
                      返回回复给用户
 ```
+
+### Java开发者对比
+
+| AgentScope | Java | 说明 |
+|------------|------|------|
+| Agent | Controller | 接收请求，协调处理 |
+| Formatter | ObjectMapper | 格式转换 |
+| ChatModel | HTTP Client | 远程调用 |
+| Memory | Session/Redis | 存储状态 |
+| Msg | POJO/DTO | 数据传输对象 |
+
+---
+
+## 工程经验
+
+### 设计原因
+
+**为什么Msg需要name/content/role？**
+
+- `name`：标识发送者
+- `content`：消息内容
+- `role`：区分用户/助手/系统，模型需要知道谁说什么
+
+**为什么Formatter在Model内部？**
+
+不同API（OpenAI/Claude）格式不同。Formatter封装在Model内部，外部调用方式保持一致。
+
+**为什么Memory是必须的？**
+
+多轮对话需要历史消息。Agent每次调用都获取完整历史，确保理解上下文。
+
+### API调用失败的处理
+
+```python
+# 常见错误
+# openai.AuthenticationError: Incorrect API key provided
+# httpx.ConnectTimeout: Connection timeout
+# openai.RateLimitError: You exceeded your quota
+
+async def call_with_retry(agent, msg, max_retries=3):
+    for i in range(max_retries):
+        try:
+            return await agent(msg)
+        except Exception as e:
+            if i == max_retries - 1:
+                raise
+            print(f"尝试 {i+1} 失败: {e}")
+            await asyncio.sleep(2 ** i)  # 指数退避
+```
+
+### 异步代码的常见陷阱
+
+```python
+# ❌ 错误：忘记await
+async def main():
+    response = agent(Msg(...))  # 没有await！
+    print(response.content)  # 不会打印
+
+# ✅ 正确：使用await
+async def main():
+    response = await agent(Msg(...))
+    print(response.content)
+```
+
+---
+
+## Contributor指南
+
+### 适合新手修改的文件
+
+| 文件 | 原因 |
+|------|------|
+| `src/agentscope/agent/__init__.py` | Agent导出，了解Agent类型 |
+| `src/agentscope/message/__init__.py` | Msg定义，理解消息结构 |
+| `examples/agent/` | 示例代码，学习Agent用法 |
+
+### 追踪调试方法
+
+**1. 开启调试日志**：
+```python
+import logging
+logging.basicConfig(level=logging.DEBUG)
+```
+
+**2. 查看源码调用链**：
+```python
+# 在关键位置加打印
+async def main():
+    print(">>> 调用agent前")
+    response = await agent(msg)
+    print("<<< agent返回:", response.content)
+```
+
+**3. 追踪Formatter转换**：
+```python
+class DebugFormatter(OpenAIChatFormatter):
+    def format(self, messages):
+        print(">>> Format输入:", messages)
+        result = super().format(messages)
+        print("<<< Format输出:", result)
+        return result
+```
+
+### 扩展练习
+
+**练习1：添加日志**：
+```python
+import logging
+logging.basicConfig(level=logging.INFO)
+```
+
+**练习2：修改Formatter**：
+```python
+# 位置：src/agentscope/formatter/formatting.py
+```
+
+**练习3：添加新组件**：
+```python
+# 参考 src/agentscope/agent/_react_agent.py 中的组件集成方式
+```
+
+---
+
+## 思考题
+
+<details>
+<summary>点击查看答案</summary>
+
+1. **为什么需要Formatter而不是直接发Msg？**
+   - 不同API（OpenAI/Claude）接受的格式不同
+   - Formatter像适配器，屏蔽底层差异
+   - 让Agent代码不用改，就能切换模型
+
+2. **如果API返回错误，Agent会怎么处理？**
+   - ChatModel会抛出异常
+   - Agent的try-catch会捕获
+   - 可能重试，或者返回错误信息给用户
+
+3. **Memory在这里起什么作用？**
+   - 保存对话历史（短期记忆）
+   - 让Agent知道之前聊过什么
+   - 类比Java的HttpSession
+
+</details>

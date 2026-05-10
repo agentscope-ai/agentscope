@@ -4,82 +4,174 @@
 
 ---
 
-## 🎯 这一章的目标
+## 学习目标
 
 学完之后，你能：
-- 理解发布-订阅模式
+- 理解发布-订阅模式的核心概念
 - 使用MsgHub进行消息广播
 - 区分MsgHub和Pipeline的使用场景
+- 理解auto_broadcast的机制和风险
 
 ---
 
-## 🚀 先跑起来
+## 背景问题
 
-```python showLineNumbers
-from agentscope.message import Msg
+**为什么需要MsgHub？**
+
+当多个Agent需要协作时，有时候不是简单的顺序或并行关系，而是"一个Agent说了什么，其他Agent都需要知道"的需求。
+
+MsgHub就是解决这个问题的——它是一个消息中心，发布者只管发，订阅者自动收。
+
+**MsgHub vs Pipeline**:
+- Pipeline: 数据按顺序流过每个Agent，上一输出是下一输入
+- MsgHub: 消息广播给所有订阅者，无顺序依赖
+
+---
+
+## 源码入口
+
+**文件路径**: `src/agentscope/pipeline/_msghub.py`
+
+**核心类**: `MsgHub`
+
+**构造方法签名**:
+```python
+class MsgHub:
+    def __init__(
+        self,
+        participants: Sequence[AgentBase],
+        announcement: list[Msg] | Msg | None = None,
+        enable_auto_broadcast: bool = True,
+        name: str | None = None,
+    ) -> None:
+```
+
+**导出路径**: `src/agentscope/pipeline/__init__.py`
+```python
+from ._msghub import MsgHub
+__all__ = ["MsgHub", ...]
+```
+
+**使用入口**:
+```python
 from agentscope.pipeline import MsgHub
-from agentscope.agent import ReActAgent
-
-# 创建Agent
-analyst = ReActAgent(name="Analyst", model=..., sys_prompt="...")
-reporter = ReActAgent(name="Reporter", model=..., sys_prompt="...")
-critic = ReActAgent(name="Critic", model=..., sys_prompt="...")
-
-# 使用async with语法创建消息中心 - participants参数是必填的
-async with MsgHub(participants=[analyst, reporter, critic]) as hub:
-    # 广播消息 - 所有订阅者都会收到
-    await hub.broadcast(Msg(
-        name="publisher",
-        content="开始分析这个项目",
-        role="system"
-    ))
-
-# 也可以使用async with进行异步广播
-import asyncio
-
-async def broadcast_message():
-    async with MsgHub(participants=[analyst, reporter, critic]) as hub:
-        await hub.broadcast(Msg(name="user", content="启动分析", role="user"))
 ```
 
 ---
 
-## 🔍 发布-订阅模式
+## 架构定位
 
-### 核心概念
+**模块职责**: MsgHub是消息广播中心，管理发布-订阅关系。
 
+**生命周期**:
+1. `async with MsgHub(participants=[...])` 进入时：自动订阅所有参与者
+2. 运行时：通过`broadcast()`广播消息，或开启auto_broadcast自动广播
+3. 退出with块时：自动取消订阅
+
+**与其他模块的关系**:
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      MsgHub（消息中心）                       │
-│                                                             │
-│   ┌───────┐                                                 │
-│   │发布者 │ ──► 消息 ──► ┌─────────────────────────┐      │
-│   └───────┘              │        广播              │      │
-│                         └─────────┬─────────────────┘      │
-│                                   │                         │
-│                    ┌──────────────┼──────────────┐         │
-│                    ▼              ▼              ▼         │
-│               ┌────────┐     ┌────────┐     ┌────────┐     │
-│               │订阅者A│     │订阅者B│     │订阅者C│     │
-│               └────────┘     └────────┘     └────────┘     │
-│                                                             │
-│   发布者只管发，订阅者会自动收到                               │
-└─────────────────────────────────────────────────────────────┘
+发布者 ──► MsgHub ──► Agent A (observe)
+              │
+              ├──► Agent B (observe)
+              │
+              └──► Agent C (observe)
+
+Pipeline ──► Agent ──► MsgHub ──► 多个订阅者
 ```
-
-### 对比：Pipeline vs MsgHub
-
-| 特性 | Pipeline | MsgHub |
-|------|----------|--------|
-| 连接方式 | 硬编码顺序 | 动态订阅 |
-| 消息传递 | 上一节点的输出是下一节点的输入 | 所有订阅者收到相同消息 |
-| 关系 | "流水线" | "广播电台" |
-| 依赖 | 有顺序依赖 | 无依赖 |
-| 适合场景 | 固定流程 | 事件通知、多方协作 |
 
 ---
 
-## 🔍 追踪MsgHub的消息流
+## 核心源码分析
+
+### 调用链1: MsgHub初始化与订阅
+
+```python
+# 源码位置: src/agentscope/pipeline/_msghub.py
+
+async def __aenter__(self) -> "MsgHub":
+    """Will be called when entering the MsgHub."""
+    self._reset_subscriber()
+
+    # broadcast the input message to all participants
+    if self.announcement is not None:
+        await self.broadcast(msg=self.announcement)
+
+    return self
+
+def _reset_subscriber(self) -> None:
+    """Reset the subscriber for agent in `self.participant`"""
+    if self.enable_auto_broadcast:
+        for agent in self.participants:
+            agent.reset_subscribers(self.name, self.participants)
+```
+
+### 调用链2: MsgHub广播消息
+
+```python
+# 源码位置: src/agentscope/pipeline/_msghub.py
+
+async def broadcast(self, msg: list[Msg] | Msg) -> None:
+    """Broadcast the message to all participants.
+
+    Args:
+        msg (`list[Msg] | Msg`):
+            Message(s) to be broadcast among all participants.
+    """
+    for agent in self.participants:
+        await agent.observe(msg)
+```
+
+### 调用链3: 动态添加/删除参与者
+
+```python
+# 源码位置: src/agentscope/pipeline/_msghub.py
+
+def add(self, new_participant: list[AgentBase] | AgentBase) -> None:
+    """Add new participant into this hub"""
+    if isinstance(new_participant, AgentBase):
+        new_participant = [new_participant]
+
+    for agent in new_participant:
+        if agent not in self.participants:
+            self.participants.append(agent)
+
+    self._reset_subscriber()
+
+def delete(self, participant: list[AgentBase] | AgentBase) -> None:
+    """Delete agents from participant."""
+    if isinstance(participant, AgentBase):
+        participant = [participant]
+
+    for agent in participant:
+        if agent in self.participants:
+            self.participants.pop(self.participants.index(agent))
+
+    self._reset_subscriber()
+```
+
+### 调用链4: Agent的observe机制
+
+```python
+# 源码位置: src/agentscope/agent/_class.py (推测)
+
+# AgentBase中的订阅机制
+def observe(self, msg: Msg | list[Msg]) -> None:
+    """接收消息并保存到观察者队列"""
+    if isinstance(msg, list):
+        self._observed_messages.extend(msg)
+    else:
+        self._observed_messages.append(msg)
+
+def reset_subscribers(self, hub_name: str, participants: list[AgentBase]) -> None:
+    """设置订阅关系"""
+    self._subscribers[hub_name] = participants
+```
+
+---
+
+## 可视化结构
+
+### MsgHub发布-订阅模式
 
 ```mermaid
 sequenceDiagram
@@ -101,162 +193,158 @@ sequenceDiagram
     Hub->>C: observe(Msg) 推送消息
 ```
 
----
+### auto_broadcast机制
 
-## 🔬 关键代码段解析
+```mermaid
+sequenceDiagram
+    participant A as Agent A
+    participant Hub as MsgHub
+    participant B as Agent B
 
-### 代码段1：为什么需要MsgHub？
-
-```python showLineNumbers
-# 创建Agent
-analyst = ReActAgent(name="Analyst", ...)
-reporter = ReActAgent(name="Reporter", ...)
-critic = ReActAgent(name="Critic", ...)
-
-# 使用with语法，participants参数是必填的
-# 进入with时自动订阅，退出时自动取消订阅
-async with MsgHub(participants=[analyst, reporter, critic]) as hub:
-    # 广播消息 - 所有订阅者都会收到
-    await hub.broadcast(Msg(name="publisher", content="开始分析", role="system"))
+    Note over Hub: enable_auto_broadcast=True
+    A->>Hub: Agent A回复
+    Hub->>Hub: 自动广播
+    Hub->>B: observe(A的回复)
+    Note over B: B自动收到A的回复
 ```
 
-**思路说明**：
+### 组件选择决策树
 
-| 问题 | 答案 |
+```mermaid
+flowchart TD
+    A[任务类型] --> B{有顺序依赖?}
+    B -->|Yes| C{需要广播?}
+    B -->|No| D{需要汇总多结果?}
+    C -->|Yes| E[MsgHub]
+    C -->|No| F[SequentialPipeline]
+    D -->|Yes| G[FanoutPipeline]
+    D -->|No| H[MsgHub]
+```
+
+---
+
+## 工程经验
+
+### 设计原因
+
+**为什么使用async with语法？**
+
+`async with`确保订阅和取消订阅成对出现，避免资源泄漏。类似文件操作的`with`语法。
+
+**为什么enable_auto_broadcast默认开启？**
+
+为了让常见的"一个Agent回复，其他Agent都需要知道"场景开箱即用。但这也带来了消息风暴的风险。
+
+**为什么broadcast使用for循环而不是gather？**
+
+因为broadcast是"fire and forget"模式，不需要等待所有Agent处理完成。使用for循环立即返回，适合广播场景。
+
+### 替代方案
+
+**如果需要有序广播**:
+```python
+# 手动控制广播顺序
+async with MsgHub(participants=[a, b, c]) as hub:
+    await a.observe(msg)  # 先发给a
+    await b.observe(msg)  # 再发给b
+    await c.observe(msg)  # 最后发给c
+```
+
+**如果需要等待所有订阅者处理完成**:
+```python
+# 自己实现等待逻辑
+async with MsgHub(participants=[a, b, c]) as hub:
+    await hub.broadcast(msg)
+    # 等待某个条件
+    while not all_done():
+        await asyncio.sleep(0.1)
+```
+
+### 可能出现的问题
+
+**问题1: auto_broadcast导致消息风暴**
+```python
+# 风险：Agent互相回复，形成无限循环
+async with MsgHub(participants=[agent1, agent2]) as hub:
+    # agent1回复 -> auto_broadcast -> agent2收到 -> agent2回复
+    # -> auto_broadcast -> agent1收到 -> agent1回复 -> ...
+```
+建议：复杂场景建议禁用auto_broadcast
+
+**问题2: 广播顺序不确定**
+```python
+# 不保证订阅者收到消息的顺序
+await hub.broadcast(msg)
+# Agent A可能在Agent B之前或之后收到
+```
+
+**问题3: 退出with后订阅关系保留**
+```python
+# 正确做法
+async with MsgHub(participants=[a, b]) as hub:
+    await hub.broadcast(msg)
+# 退出后自动取消订阅
+
+# 错误做法
+hub = MsgHub(participants=[a, b])
+await hub.broadcast(msg)  # 没有用with，不会自动取消订阅
+```
+
+---
+
+## Contributor指南
+
+### 适合新手修改的文件
+
+| 文件 | 原因 |
 |------|------|
-| 为什么需要发布-订阅？ | 发布者和订阅者解耦，不需要知道彼此 |
-| `participants`是什么？ | 在MsgHub初始化时传入参与者列表 |
-| `broadcast`后发生什么？ | 所有参与者同时收到消息 |
+| `src/agentscope/pipeline/_msghub.py` | MsgHub核心类，逻辑清晰 |
+| `src/agentscope/agent/_class.py` | Agent的observe和订阅机制 |
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│            发布-订阅 vs 直接调用                           │
-│                                                             │
-│   直接调用（紧耦合）：                                     │
-│   analyst.receive(msg)                                     │
-│   reporter.receive(msg)    ← 需要知道所有接收者           │
-│   critic.receive(msg)                                      │
-│                                                             │
-│   发布-订阅（松耦合）：                                   │
-│   await hub.broadcast(msg)  ──► 广播给所有订阅者                  │
-│                    ↑                                       │
-│                    │                                       │
-│            发布者不需要知道谁在听                         │
-└─────────────────────────────────────────────────────────────┘
+### 危险区域
+
+**_reset_subscriber()的订阅关系逻辑**（`_msghub.py`）
+- 控制auto_broadcast的核心逻辑
+- 错误修改可能导致消息丢失或重复
+
+**broadcast()的遍历顺序**（`_msghub.py:130`）
+- 如果包含正在执行中的Agent，可能有竞态条件
+
+### 调试方法
+
+**检查订阅关系**:
+```python
+# 查看Agent的订阅者
+print(agent._subscribers)
 ```
 
-**💡 设计思想**：发布-订阅模式的核心是**松耦合**。发布者只管发消息，不关心谁会收到；订阅者只管收消息，不关心谁发的。
+**追踪广播消息**:
+```python
+# 在broadcast中添加日志
+original_broadcast = MsgHub.broadcast
+
+async def debug_broadcast(self, msg):
+    print(f">>> 广播消息: {msg}")
+    await original_broadcast(self, msg)
+
+MsgHub.broadcast = debug_broadcast
+```
+
+**检查auto_broadcast状态**:
+```python
+print(f"auto_broadcast: {hub.enable_auto_broadcast}")
+```
+
+### 扩展MsgHub的步骤
+
+1. 在`_msghub.py`中添加新方法
+2. 确保线程安全（如果涉及并发）
+3. 在`__aenter__`和`__aexit__`中正确管理资源
+4. 添加测试用例
 
 ---
 
-### 代码段2：MsgHub的with语法
-
-```python showLineNumbers
-# with语法，自动管理订阅生命周期
-async with MsgHub(participants=[analyst, reporter, critic]) as hub:
-    await hub.broadcast(Msg(name="user", content="启动分析", role="user"))
-```
-
-**思路说明**：
-
-| 问题 | 答案 |
-|------|------|
-| `with`语法有什么好处？ | 自动订阅和取消订阅 |
-| 什么时候用with？ | 临时性的广播任务 |
-| 什么时候用`add()`？ | 需要动态添加参与者时 |
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                 with语法的生命周期                          │
-│                                                             │
-│   async with MsgHub([A, B, C]) as hub:                          │
-│       │                                                    │
-│       ├──► 进入with：自动订阅 A, B, C                     │
-│       │                                                    │
-│       ├──► 执行 await hub.broadcast()                             │
-│       │                                                    │
-│       └──► 退出with：自动取消订阅 A, B, C                │
-│                                                             │
-│   适合：临时任务、一次性广播                               │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**💡 设计思想**：`with`语法简化了资源管理，确保订阅和取消订阅成对出现，避免资源泄漏。
-
----
-
-### 代码段3：MsgHub vs Pipeline 选型
-
-```python showLineNumbers
-# 场景1：固定流程，用Pipeline
-pipeline = SequentialPipeline([A, B, C])
-result = await pipeline(input)
-# A的结果自动传给B，B的结果自动传给C
-
-# 场景2：事件通知，用MsgHub
-async with MsgHub([A, B, C]) as hub:
-    await hub.broadcast(Msg(content="任务完成"))
-# 所有订阅者同时收到通知
-```
-
-**思路说明**：
-
-| 场景 | 选择 | 原因 |
-|------|------|------|
-| 翻译→校对→格式化 | SequentialPipeline | 有顺序依赖 |
-| 任务完成通知多人 | MsgHub | 广播通知 |
-| 头脑风暴（多专家意见） | FanoutPipeline | 并行收集 |
-| 监控系统报警 | MsgHub | 事件驱动 |
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                 组件选择决策树                              │
-│                                                             │
-│   有顺序依赖吗？                                          │
-│        │                                                  │
-│        ├──► Yes ──► 固定顺序？                         │
-│        │                      │                            │
-│        │                      ├──► Yes ──► SequentialPipeline│
-│        │                      │                            │
-│        │                      └──► No ──► FanoutPipeline   │
-│        │                                                  │
-│        └──► No ──► 需要广播？                         │
-│                             │                            │
-│                             ├──► Yes ──► MsgHub          │
-│                             │                            │
-│                             └──► No ──► 直接调用        │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**💡 设计思想**：不同场景用不同组件。Pipeline适合有依赖的顺序任务，MsgHub适合无依赖的广播通知。
-
----
-
-## 💡 Java开发者注意
-
-MsgHub类似Java的**EventBus**或者**Message Broker**：
-
-```java
-// Google Guava EventBus
-eventBus.register(subscriber);
-eventBus.post(new MessageEvent("hello"));
-
-// Java Message Broker (Kafka/RabbitMQ)
-producer.send("topic", message);
-consumer.subscribe("topic");
-```
-
-### Publish-Subscribe vs Message Queue
-
-| | Publish-Subscribe | Message Queue |
-|--|-----------------|--------------|
-| 消费者 | 动态订阅 | 预先定义 |
-| 消息处理 | 广播 | 轮询/竞争消费 |
-| 适合 | 事件通知 | 异步任务 |
-
----
-
-## 🎯 思考题
+## 思考题
 
 <details>
 <summary>点击查看答案</summary>
@@ -274,12 +362,8 @@ consumer.subscribe("topic");
    - 默认不保存，只广播给当前订阅者
    - 需要持久化可以用session或额外存储
 
+4. **auto_broadcast可能导致什么问题？**
+   - Agent互相回复形成无限循环
+   - 消息数量可能指数增长
+
 </details>
-
----
-
-★ **Insight** ─────────────────────────────────────
-- **MsgHub = 广播电台**，发布者发消息，所有订阅者都能收到
-- **Pipeline = 流水线**，按顺序处理，上一步输出是下一步输入
-- 选择哪个取决于：是需要广播通知，还是顺序处理
-─────────────────────────────────────────────────

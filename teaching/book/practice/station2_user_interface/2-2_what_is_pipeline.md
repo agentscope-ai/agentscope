@@ -4,118 +4,174 @@
 
 ---
 
-## 🎯 这一章的目标
+## 学习目标
 
 学完之后，你能：
 - 理解Pipeline的两种模式（Sequential/Fanout）
 - 使用SequentialPipeline编排顺序任务
 - 使用FanoutPipeline编排并行任务
+- 理解Pipeline的数据传递机制
 
 ---
 
-## 🚀 先跑起来
+## 背景问题
 
-```python showLineNumbers
-import agentscope
-from agentscope.agent import ReActAgent
+**为什么需要Pipeline？**
+
+当有多个Agent需要协作时，如果手动一个个调用并传递结果，代码会变得复杂且难以维护。Pipeline把多个Agent组织成一个工作流，自动处理数据传递。
+
+**Pipeline vs 直接调用**:
+```python
+# 直接调用（繁琐）
+result_a = await agent_a(input)
+result_b = await agent_b(result_a)
+result_c = await agent_c(result_b)
+
+# Pipeline（简洁）
+pipeline = SequentialPipeline([agent_a, agent_b, agent_c])
+result = await pipeline(input)
+```
+
+---
+
+## 源码入口
+
+**文件路径**: `src/agentscope/pipeline/_class.py` 和 `src/agentscope/pipeline/_functional.py`
+
+**核心类**:
+- `SequentialPipeline` - 顺序执行管道
+- `FanoutPipeline` - 并行执行管道
+
+**导出路径**: `src/agentscope/pipeline/__init__.py`
+```python
+from ._class import SequentialPipeline, FanoutPipeline
+from ._functional import sequential_pipeline, fanout_pipeline
+
+__all__ = [
+    "SequentialPipeline",
+    "sequential_pipeline",
+    "FanoutPipeline",
+    "fanout_pipeline",
+    ...
+]
+```
+
+**使用入口**:
+```python
 from agentscope.pipeline import SequentialPipeline, FanoutPipeline
-from agentscope.model import OpenAIChatModel
-
-# 初始化
-agentscope.init(project="PipelineDemo")
-
-# 创建多个Agent
-preprocessor = ReActAgent(name="Preprocessor", model=..., sys_prompt="...")
-analyzer = ReActAgent(name="Analyzer", model=..., sys_prompt="...")
-summarizer = ReActAgent(name="Summarizer", model=..., sys_prompt="...")
-
-# SequentialPipeline - 顺序执行
-pipeline1 = SequentialPipeline([
-    preprocessor,
-    analyzer,
-    summarizer
-])
-
-# FanoutPipeline - 并行执行
-pipeline2 = FanoutPipeline([
-    preprocessor,
-    analyzer,
-    summarizer
-])
 ```
 
 ---
 
-## 🔍 Pipeline的两种模式
+## 架构定位
 
-### SequentialPipeline - 流水线（顺序）
+**模块职责**: Pipeline编排多个Agent的执行顺序和数据传递。
 
+**两种模式的对比**:
+
+| 特性 | SequentialPipeline | FanoutPipeline |
+|------|-------------------|----------------|
+| 执行方式 | 顺序 | 并行 |
+| 数据传递 | 上一Agent输出是下一Agent输入 | 同一输入发给所有Agent |
+| 输出格式 | 单个Msg | Msg列表 |
+| 适用场景 | 有依赖的顺序任务 | 独立的并行任务 |
+
+**与其他模块的关系**:
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                  SequentialPipeline                          │
-│                                                             │
-│  输入 ──► Agent A ──► Agent B ──► Agent C ──► 输出       │
-│                                                             │
-│  一个接一个，按顺序执行                                       │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**适用场景**：
-- 预处理 → 分析 → 后处理
-- 数据清洗 → 转换 → 存储
-- 理解 → 推理 → 回答
-
-**代码示例**：
-```python showLineNumbers
-# 例子：翻译工作流
-pipeline = SequentialPipeline([
-    translator,    # 第一步：翻译
-    reviewer,     # 第二步：校对
-    formatter     # 第三步：格式化
-])
-
-result = await pipeline("Hello world")
-# translator处理 → reviewer处理 → formatter处理 → 返回
-```
-
-### FanoutPipeline - 扇出（并行）
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                   FanoutPipeline                            │
-│                                                             │
-│                    ┌─► Agent B                             │
-│  输入 ─────────────┤                                         │
-│                    ├─► Agent C                             │
-│                    └─► Agent D                             │
-│                                                             │
-│  一个输入，同时发给多个Agent处理                              │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**适用场景**：
-- 同时问多个专家意见
-- 多角度分析问题
-- 头脑风暴
-
-**代码示例**：
-```python showLineNumbers
-# 例子：多专家会诊
-pipeline = FanoutPipeline([
-    economist,    # 经济专家
-    lawyer,      # 法律专家
-    tech_expert  # 技术专家
-])
-
-result = await pipeline("这个项目值得投资吗？")
-# 同时问三个专家，收集所有回复
+用户输入
+    │
+    ▼
+Pipeline ──► Agent A ──► Agent B ──► Agent C  (Sequential)
+    │
+    └──► Agent A ──► Agent B ──► Agent C     (Fanout, 并行)
+    │
+    ▼
+汇总结果
 ```
 
 ---
 
-## 🔍 追踪Pipeline的执行
+## 核心源码分析
 
-### SequentialPipeline执行流程
+### 调用链1: SequentialPipeline执行流程
+
+```python
+# 源码位置: src/agentscope/pipeline/_class.py
+
+class SequentialPipeline:
+    def __init__(self, agents: list[AgentBase]) -> None:
+        self.agents = agents
+
+    async def __call__(self, msg: Msg | list[Msg] | None = None) -> Msg | list[Msg] | None:
+        return await sequential_pipeline(agents=self.agents, msg=msg)
+
+# 源码位置: src/agentscope/pipeline/_functional.py
+
+async def sequential_pipeline(
+    agents: list[AgentBase],
+    msg: Msg | list[Msg] | None = None,
+) -> Msg | list[Msg] | None:
+    """顺序执行: 上一Agent输出是下一Agent输入"""
+    for agent in agents:
+        msg = await agent(msg)  # 注意: msg被覆盖
+    return msg
+```
+
+### 调用链2: FanoutPipeline执行流程
+
+```python
+# 源码位置: src/agentscope/pipeline/_class.py
+
+class FanoutPipeline:
+    def __init__(self, agents: list[AgentBase], enable_gather: bool = True) -> None:
+        self.agents = agents
+        self.enable_gather = enable_gather
+
+    async def __call__(self, msg: Msg | list[Msg] | None = None, **kwargs: Any) -> list[Msg]:
+        return await fanout_pipeline(
+            agents=self.agents,
+            msg=msg,
+            enable_gather=self.enable_gather,
+            **kwargs,
+        )
+
+# 源码位置: src/agentscope/pipeline/_functional.py
+
+async def fanout_pipeline(
+    agents: list[AgentBase],
+    msg: Msg | list[Msg] | None = None,
+    enable_gather: bool = True,
+    **kwargs: Any,
+) -> list[Msg]:
+    """并行执行: 同一输入发给所有Agent"""
+    if enable_gather:
+        # 并发执行
+        tasks = [asyncio.create_task(agent(deepcopy(msg), **kwargs)) for agent in agents]
+        return await asyncio.gather(*tasks)
+    else:
+        # 顺序执行
+        return [await agent(deepcopy(msg), **kwargs) for agent in agents]
+```
+
+### 调用链3: deep copy在Fanout中的作用
+
+```python
+# 源码位置: src/agentscope/pipeline/_functional.py
+
+from copy import deepcopy
+
+# FanoutPipeline中使用deepcopy避免消息共享
+tasks = [
+    asyncio.create_task(agent(deepcopy(msg), **kwargs))  # 深度拷贝
+    for agent in agents
+]
+```
+
+---
+
+## 可视化结构
+
+### SequentialPipeline数据流
 
 ```mermaid
 sequenceDiagram
@@ -124,7 +180,7 @@ sequenceDiagram
     participant A as Agent A
     participant B as Agent B
     participant C as Agent C
-    
+
     User->>P: "翻译这段文字"
     P->>A: 发送给A
     A-->>P: A的回复
@@ -135,7 +191,7 @@ sequenceDiagram
     P-->>User: 最终结果
 ```
 
-### FanoutPipeline执行流程
+### FanoutPipeline数据流
 
 ```mermaid
 sequenceDiagram
@@ -144,155 +200,148 @@ sequenceDiagram
     participant A as Agent A
     participant B as Agent B
     participant C as Agent C
-    
+
     User->>P: "分析这个问题"
-    P->>A: 同时发送给A
-    P->>B: 同时发送给B
-    P->>C: 同时发送给C
+    P->>A: 同时发送给A（deepcopy）
+    P->>B: 同时发送给B（deepcopy）
+    P->>C: 同时发送给C（deepcopy）
     A-->>P: A的回复
     B-->>P: B的回复
     C-->>P: C的回复
     P-->>User: [A的回复, B的回复, C的回复]
 ```
 
----
+### Pipeline选择决策树
 
-## 🔬 关键代码段解析
-
-### 代码段1：Pipeline创建 —— 为什么用列表？
-
-```python showLineNumbers
-# 这是第32-37行
-pipeline1 = SequentialPipeline([
-    preprocessor,   # 第一步Agent
-    analyzer,        # 第二步Agent
-    summarizer       # 第三步Agent
-])
+```mermaid
+flowchart TD
+    A[任务类型] --> B{有顺序依赖?}
+    B -->|Yes| C{需要同时执行?}
+    B -->|No| D{需要广播通知?}
+    C -->|Yes| E[FanoutPipeline]
+    C -->|No| F[SequentialPipeline]
+    D -->|Yes| G[MsgHub]
+    D -->|No| H[直接调用]
 ```
-
-**思路说明**：
-
-| 问题 | 答案 |
-|------|------|
-| 为什么要用列表？ | 把多个Agent组织成一组，按顺序/并行执行 |
-| 为什么叫"Pipeline"？ | 类似工厂流水线，原材料进去，产品出来 |
-| Agent的顺序重要吗？ | SequentialPipeline重要，FanoutPipeline不重要 |
-
-**💡 设计思想**：Pipeline把多个Agent组织起来工作。就像Java的`Stream`链式调用，数据依次流过每个处理环节。
 
 ---
 
-### 代码段2：数据如何传递？
+## 工程经验
 
-```python showLineNumbers
-# SequentialPipeline 的数据流
-result = await pipeline("Hello world")
+### 设计原因
 
-# 内部发生了什么：
-# 1. "Hello world" → preprocessor → 输出A
-# 2. 输出A → analyzer → 输出B
-# 3. 输出B → summarizer → 最终输出
-```
+**为什么SequentialPipeline用列表顺序决定执行顺序？**
 
-**思路说明**：
+列表是有序的，直接用`for agent in agents`遍历确保顺序执行。如果需要调整顺序，只需改变列表中的元素顺序。
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│           SequentialPipeline 数据流动                        │
-│                                                             │
-│  输入         Agent A        Agent B        Agent C        │
-│  ─────►  输出A ─────────►  输出B  ─────────►  最终输出    │
-│              │                              │               │
-│              ▼                              ▼               │
-│         "原文翻译"                    "总结"               │
-│                                                             │
-│  每一步的输出，成为下一步的输入                               │
-└─────────────────────────────────────────────────────────────┘
-```
+**为什么FanoutPipeline需要deepcopy？**
 
-**💡 设计思想**：Agent之间通过数据传递协作。SequentialPipeline保证数据按顺序流过每个Agent，就像工厂流水线。
+并行执行时，如果多个Agent共享同一个Msg对象引用，一个Agent修改msg会影响其他Agent。deepcopy创建独立副本，避免竞态条件。
 
----
+**为什么FanoutPipeline返回列表而SequentialPipeline返回单个Msg？**
 
-### 代码段3：Fanout的输出是什么？
+- Sequential: 数据经过每个Agent处理，结果是最终输出
+- Fanout: 多个Agent并行处理，返回所有结果的集合
 
-```python showLineNumbers
-# FanoutPipeline 的输出
-results = await pipeline2("分析这个问题")
+### 替代方案
 
-# results 是这样的：
-# [
-#     "经济专家：值得投资，因为...",
-#     "法律专家：需要关注合同条款...",
-#     "技术专家：技术方案可行..."
-# ]
-```
-
-**思路说明**：
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│            FanoutPipeline 数据流动                          │
-│                                                             │
-│                         输入                                │
-│                     "分析这个问题"                            │
-│                    ┌────┴────┐                            │
-│                    ▼         ▼         ▼                   │
-│               Agent A    Agent B    Agent C                │
-│                    │         │         │                   │
-│                    ▼         ▼         ▼                   │
-│               ["专家A",  "专家B",  "专家C"]                  │
-│                    │         │         │                   │
-│                    └─────────┴─────────┘                   │
-│                             │                               │
-│                             ▼                               │
-│                        [结果列表]                           │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**💡 设计思想**：FanoutPipeline收集所有Agent的回复，返回一个列表。需要自己决定如何汇总这些结果。
-
----
-
-## 💡 Java开发者注意
-
-### Pipeline vs Java Stream
-
+**如果需要更复杂的数据汇聚逻辑**:
 ```python
-# Python Pipeline
-pipeline = SequentialPipeline([a, b, c])
-result = await pipeline(input)
-
-# Java Stream - 类似的链式调用
-result = list.stream()
-    .filter(a)
-    .map(b)
-    .collect(c);
+# FanoutPipeline返回列表，自己实现汇聚
+results = await fanout_pipeline(agents, msg)
+# 自己决定如何汇总
+summary = await summarizer_agent(Msg(content=str(results), role="system"))
 ```
 
-### Pipeline vs 责任链模式
+**如果需要条件执行**:
+```python
+# 自己控制执行流程，不使用Pipeline
+if condition:
+    result = await agent_a(msg)
+else:
+    result = await agent_b(msg)
+```
 
-```java
-// Java责任链
-public interface Handler {
-    Response handle(Request request);
-}
+### 可能出现的问题
 
-public class ChainHandler extends Handler {
-    private Handler next;
-    
-    public Response handle(Request request) {
-        if (next != null) {
-            return next.handle(process(request));
-        }
-        return process(request);
-    }
-}
+**问题1: SequentialPipeline的错误传播**
+```python
+# 如果某个Agent抛出异常，后续Agent不会执行
+for agent in self.agents:
+    msg = await agent(msg)  # 这里出错，后续不会执行
+```
+建议：在Agent内部做好错误处理
+
+**问题2: FanoutPipeline的enable_gather=False**
+```python
+# 顺序执行但返回列表
+results = await fanout_pipeline(agents, msg, enable_gather=False)
+# 仍然是 [result_a, result_b, result_c]
+```
+
+**问题3: Msg对象的浅拷贝风险**
+```python
+# 如果content是复杂对象，deepcopy可能不够
+# 需要时可自定义深拷贝逻辑
+from copy import deepcopy
+
+def custom_deepcopy(msg):
+    return Msg.from_dict(deepcopy(msg.to_dict()))
 ```
 
 ---
 
-## 🎯 思考题
+## Contributor指南
+
+### 适合新手修改的文件
+
+| 文件 | 原因 |
+|------|------|
+| `src/agentscope/pipeline/_class.py` | Pipeline核心类，结构清晰 |
+| `src/agentscope/pipeline/_functional.py` | 函数式实现，包含核心逻辑 |
+
+### 危险区域
+
+**SequentialPipeline的顺序执行逻辑**（`_functional.py:sequential_pipeline`）
+- 错误修改可能导致消息传递顺序错乱
+- 影响Agent间的数据流
+
+**FanoutPipeline的deepcopy逻辑**（`_functional.py:fanout_pipeline`）
+- 并行执行需要处理竞态条件
+- 错误可能导致结果丢失或重复
+
+### 调试方法
+
+**打印Pipeline执行过程**:
+```python
+# 在sequential_pipeline中添加日志
+async def sequential_pipeline(agents, msg):
+    for i, agent in enumerate(agents):
+        print(f">>> 调用Agent {i}: {agent}")
+        msg = await agent(msg)
+        print(f"<<< Agent {i}返回: {msg}")
+    return msg
+```
+
+**检查FanoutPipeline的并行执行**:
+```python
+import asyncio
+
+# 使用asyncio.gather的返回顺序是确定的
+results = await fanout_pipeline(agents, msg)
+# results[0] 对应 agents[0] 的返回值
+```
+
+### 扩展Pipeline的步骤
+
+1. 在`_class.py`中添加新Pipeline类
+2. 在`_functional.py`中实现核心逻辑
+3. 在`__init__.py`中导出新类
+4. 添加测试用例
+
+---
+
+## 思考题
 
 <details>
 <summary>点击查看答案</summary>
@@ -309,12 +358,8 @@ public class ChainHandler extends Handler {
    - 是一个列表 [A的回复, B的回复, C的回复]
    - 需要后续处理来汇总
 
+4. **为什么FanoutPipeline需要deepcopy？**
+   - 避免并行执行的Agent共享同一个Msg引用
+   - 防止一个Agent修改影响其他Agent
+
 </details>
-
----
-
-★ **Insight** ─────────────────────────────────────
-- **SequentialPipeline** = 流水线 = 一个接一个，上一步输出是下一步输入
-- **FanoutPipeline** = 广播 = 一个输入同时发给多个，返回列表
-- 选择哪个取决于任务是否有依赖关系
-─────────────────────────────────────────────────

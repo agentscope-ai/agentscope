@@ -2386,7 +2386,7 @@ asyncio.run(main())
 ### 练习 11.12: 模型配置错误诊断 [中级]
 
 **题目描述**：
-以下代码运行时出现 `ValueError: model_name must be specified` 或类似错误。请阅读模型适配器源码（参考 `_openai.py`），找出所有可能导致此错误的配置问题，并修复代码。
+以下代码运行时出现 `ValueError: model_name must be specified` 或类似错误。请阅读模型适配器源码（参考 `_openai_model.py`），找出所有可能导致此错误的配置问题，并修复代码。
 
 ```python
 from agentscope.model import OpenAIChatModel
