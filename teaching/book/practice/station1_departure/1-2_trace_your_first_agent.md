@@ -161,7 +161,7 @@ async def __call__(self, msg: Msg | None) -> Msg:
 ### 调用链2: Formatter转换
 
 ```python
-# 源码位置: src/agentscope/formatter/_openai.py
+# 源码位置: src/agentscope/formatter/_openai_formatter.py
 
 class OpenAIChatFormatter:
     def format(self, messages: list[Msg]) -> dict:
@@ -178,7 +178,7 @@ class OpenAIChatFormatter:
 ### 调用链3: Model调用
 
 ```python
-# 源码位置: src/agentscope/model/_openai_model.py (推测)
+# 源码位置: src/agentscope/model/_openai_model.py
 
 class OpenAIChatModel:
     async def __call__(self, prompt: list[Msg], **kwargs) -> Msg:

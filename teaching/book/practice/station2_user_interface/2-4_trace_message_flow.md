@@ -176,7 +176,7 @@ async def __call__(self, msg: Msg | None) -> Msg:
 ### 调用链2: Model调用与Formatter转换
 
 ```python
-# 源码位置: src/agentscope/model/_openai_model.py (推测)
+# 源码位置: src/agentscope/model/_openai_model.py
 
 class OpenAIChatModel:
     async def __call__(self, prompt: list[Msg], **kwargs) -> Msg:
@@ -219,7 +219,7 @@ async def broadcast(self, msg: list[Msg] | Msg) -> None:
         await agent.observe(msg)
 
 # Agent接收广播
-# 源码位置: src/agentscope/agent/_class.py (推测)
+# 源码位置: src/agentscope/agent/_agent_base.py
 def observe(self, msg: Msg | list[Msg]) -> None:
     """接收消息"""
     if isinstance(msg, list):

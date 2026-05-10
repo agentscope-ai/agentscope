@@ -152,7 +152,7 @@ def delete(self, participant: list[AgentBase] | AgentBase) -> None:
 ### 调用链4: Agent的observe机制
 
 ```python
-# 源码位置: src/agentscope/agent/_class.py (推测)
+# 源码位置: src/agentscope/agent/_agent_base.py
 
 # AgentBase中的订阅机制
 def observe(self, msg: Msg | list[Msg]) -> None:
