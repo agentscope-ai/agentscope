@@ -142,7 +142,7 @@ sequenceDiagram
 
 请求中的 `messages` 是一个**消息列表**，每条消息有两个关键字段：
 
-- `role`（角色）：`system`（系统指令）、`user`（用户）、`assistant`（助手）
+- `role`（角色）：`system`（系统指令）、`user`（用户）、`assistant`（助手）、`tool`（工具返回结果）
 - `content`（内容）：文本内容
 
 一个完整的对话通常长这样：
@@ -163,7 +163,7 @@ sequenceDiagram
 > **Token 是什么？**
 >
 > 响应中的 `usage.prompt_tokens` 和 `completion_tokens` 涉及 Token 的概念。
-> Token 是模型处理文本的基本单位，大约 1 个汉字 = 1-2 个 Token。
+> Token 是模型处理文本的基本单位，大约 1 个汉字 = 1.5-2 个 Token（通常接近 2 个）。
 > Token 计费、Token 上限（context window）是实际使用中的关键约束。
 > 本书 ch08 会详细讲解 Token 在源码中的计算方式。
 >
@@ -239,6 +239,7 @@ sequenceDiagram
         "content": null,
         "tool_calls": [
           {
+            "id": "call_abc123",
             "type": "function",
             "function": {
               "name": "get_weather",

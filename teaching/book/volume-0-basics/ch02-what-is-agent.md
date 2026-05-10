@@ -471,7 +471,7 @@ Agent: 再见！
 
 **什么是 ReAct？**
 
-> ReAct（Reasoning + Acting）是一种工作模式：先推理当前情况并决定下一步，再执行动作，然后观察结果。如果任务没完成，就继续循环。
+> ReAct（Reasoning + Acting）是一种工作模式，由 Shunyu Yao 等人在 2022 年的论文《ReAct: Synergizing Reasoning and Acting in Language Models》中提出：先推理当前情况并决定下一步，再执行动作，然后观察结果。如果任务没完成，就继续循环。
 
 **什么是 Memory？**
 
