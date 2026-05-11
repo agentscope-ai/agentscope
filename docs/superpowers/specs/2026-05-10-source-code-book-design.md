@@ -99,9 +99,9 @@ result = await agent(Msg("user", "北京今天天气怎么样？", "user"))
 | 5 | 第 2 站：Agent 收信 | `__call__()` → `reply()` 入口、Hook 初见、`_broadcast_to_subscribers` 广播机制 | `agent/_agent_base.py`, `agent/_agent_meta.py` | 元类（只需知道"它可以自动包装方法"） |
 | 6 | 第 3 站：工作记忆 | 工作记忆的 add/get_memory/delete 机制、mark 系统 | `memory/_working_memory/_base.py`, `memory/_working_memory/_in_memory_memory.py` | 无 |
 | 7 | 第 4 站：检索与知识 | 长期记忆检索（Mem0/ReMe）、RAG 知识库查询、embedding 流程 | `memory/_long_term_memory/`, `rag/`, `embedding/` | 事件循环（为什么 async 代码需要事件循环） |
-| 8 | 第 5 站：格式转换 | Msg 列表 → API messages 格式、Token 截断 | `formatter/_openai_formatter.py`, `token/` | JSON Schema（工具参数的描述格式） |
-| 9 | 第 6 站：调用模型 | HTTP 请求、流式响应解析、ThinkingBlock 处理 | `model/_openai_model.py`, `model/_model_response.py`, `model/_model_usage.py` | AsyncGenerator（流式返回） |
-| 10 | 第 7 站：执行工具 | ToolUseBlock → tool function → ToolResultBlock、同步/异步包装、中间件链 | `tool/_toolkit.py`, `tool/_async_wrapper.py`, `tool/_types.py`, `_utils/_common.py` | 装饰器模式（洋葱模型的本质） |
+| 8 | 第 5 站：格式转换 | Msg 列表 → API messages 格式、Token 截断 | `formatter/_formatter_base.py`, `formatter/_truncated_formatter_base.py`, `formatter/_openai_formatter.py`, `token/` | JSON Schema（工具参数的描述格式） |
+| 9 | 第 6 站：调用模型 | HTTP 请求、流式响应解析、ThinkingBlock 处理 | `model/_model_base.py`, `model/_openai_model.py`, `model/_model_response.py`, `model/_model_usage.py` | AsyncGenerator（流式返回） |
+| 10 | 第 7 站：执行工具 | ToolUseBlock → tool function → ToolResultBlock、同步/异步包装、中间件链 | `tool/_toolkit.py`, `tool/_response.py`, `tool/_async_wrapper.py`, `tool/_types.py`, `_utils/_common.py` | 装饰器模式（洋葱模型的本质） |
 | 11 | 第 8 站：循环与返回 | ReAct 循环终止条件、ReActAgentBase 中间层、规划子系统、Token 压缩、TTS | `agent/_react_agent.py`, `agent/_react_agent_base.py`, `plan/`, `token/`, `tts/` | 结构化输出（让 LLM 返回特定格式的 JSON） |
 | 12 | 旅程复盘 | 完整调用链全景图、各站串联、从追踪到理解 | 全部 | 无 |
 

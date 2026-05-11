@@ -232,6 +232,8 @@ git add teaching/book/volume-1-journey/ch03-toolbox.md
 git commit -m "docs: write ch03 - toolbox and dev setup"
 ```
 
+### Task 4: ch04-message-born.md — 第 1 站：消息诞生
+
 **Files:**
 - Create: `teaching/book/volume-1-journey/ch04-message-born.md`
 - Verify: `src/agentscope/message/_message_base.py`, `src/agentscope/message/_message_block.py`, `src/agentscope/_utils/_mixin.py`
@@ -329,7 +331,7 @@ git commit -m "docs: write ch05 - agent receives"
 
 ```bash
 grep -n "class MemoryBase\|async def add\|async def delete\|def size\|async def clear\|async def get_memory\|_compressed_summary" src/agentscope/memory/_working_memory/_base.py
-grep -n "class InMemoryMemory\|def add\|def get_memory\|def delete\|def state_dict\|def load_state_dict" src/agentscope/memory/_working_memory/_in_memory_memory.py
+grep -n "class InMemoryMemory\|def add\|def get_memory\|def delete\|def delete_by_mark\|def update_messages_mark\|def state_dict\|def load_state_dict" src/agentscope/memory/_working_memory/_in_memory_memory.py
 ```
 
 - [ ] **Step 2: 写 ch06-memory-store.md**
@@ -433,7 +435,7 @@ git commit -m "docs: write ch08 - formatter"
 
 **Files:**
 - Create: `teaching/book/volume-1-journey/ch09-model.md`
-- Verify: `src/agentscope/model/_model_base.py`, `src/agentscope/model/_openai_model.py`, `src/agentscope/model/_model_response.py`, `src/agentscope/model/_model_usage.py`
+- Verify: `src/agentscope/model/_model_base.py`, `src/agentscope/model/_openai_model.py`, `src/agentscope/model/_model_response.py`, `src/agentscope/model/_model_usage.py`, `src/agentscope/message/_message_block.py`
 
 **源码验证目标：**
 - `class ChatModelBase` at line 13
@@ -448,7 +450,9 @@ git commit -m "docs: write ch08 - formatter"
 ```bash
 grep -n "class ChatModelBase\|async def __call__\|def _validate_tool_choice" src/agentscope/model/_model_base.py
 grep -n "class OpenAIChatModel\|async def __call__\|def _parse_openai_stream_response\|def _structured_via_tool_call" src/agentscope/model/_openai_model.py
-grep -n "class ChatResponse\|class TextBlock\|class ToolUseBlock\|class ThinkingBlock" src/agentscope/model/_model_response.py
+grep -n "class ChatResponse" src/agentscope/model/_model_response.py
+grep -n "class TextBlock\|class ToolUseBlock\|class ThinkingBlock" src/agentscope/message/_message_block.py
+grep -n "class ChatUsage" src/agentscope/model/_model_usage.py
 ```
 
 - [ ] **Step 2: 写 ch09-model.md**
@@ -527,9 +531,10 @@ git commit -m "docs: write ch10 - tool execution"
 
 ```bash
 grep -n "async def reply\|max_iters\|while\|_compress_memory\|_reasoning\|_acting\|_summarizing\|structured_model\|finish_function" src/agentscope/agent/_react_agent.py
-grep -n "class ReActAgentBase\|async def reply" src/agentscope/agent/_react_agent_base.py
+grep -n "class ReActAgentBase" src/agentscope/agent/_react_agent_base.py
 grep -n "class PlanNotebook\|class Plan\|class SubTask" src/agentscope/plan/_plan_notebook.py src/agentscope/plan/_plan_model.py
 grep -n "class TokenCounterBase\|async def count" src/agentscope/token/_token_base.py
+grep -n "class TTSModelBase" src/agentscope/tts/_tts_base.py
 ```
 
 - [ ] **Step 2: 写 ch11-loop-return.md**
@@ -555,7 +560,12 @@ git commit -m "docs: write ch11 - loop and return"
 **Files:**
 - Create: `teaching/book/volume-1-journey/ch12-journey-review.md`
 
-- [ ] **Step 1: 回扫 Task 3-11 的所有行号引用**，确认全景图中的行号与已写完的章节一致
+- [ ] **Step 1: 回扫验证** — 确认卷一全景图中的类名/方法名引用一致
+
+```bash
+# 抽验卷一关键类名是否全部存在
+grep -rn "class Toolkit\|class InMemoryMemory\|class OpenAIChatModel\|class ReActAgent\|class Msg\b" src/agentscope/
+```
 - [ ] **Step 2: 写 ch12-journey-review.md**
 
 内容重点：
