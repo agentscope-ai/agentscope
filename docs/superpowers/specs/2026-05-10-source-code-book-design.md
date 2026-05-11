@@ -38,6 +38,7 @@ from agentscope.model import OpenAIChatModel
 from agentscope.formatter import OpenAIChatFormatter
 from agentscope.tool import Toolkit
 from agentscope.memory import InMemoryMemory
+from agentscope.message import Msg
 
 agentscope.init(project="weather-demo")
 
