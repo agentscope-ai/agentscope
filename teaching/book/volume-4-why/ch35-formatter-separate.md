@@ -1,161 +1,67 @@
-# 第 35 章：为什么 Formatter 独立于 Model
+# 第 35 章 为什么 Formatter 独立于 Model
 
-> **难度**：中等
->
-> 其他框架把消息格式转换和 API 调用放在同一个类里。AgentScope 把它们分成 `Formatter` 和 `Model` 两个独立的类。为什么？
+> 本章讨论：关注点分离 vs 简单性——为什么把格式化和模型调用分开。
 
-## 决策回顾
-
-```
-Agent 调用流程：
-
-Msg 列表 → Formatter.format() → dict 列表 → Model.__call__() → ChatResponse → Formatter → Msg
-```
-
-`Formatter` 负责 `Msg ↔ dict` 转换，`Model` 负责 HTTP 调用。它们是独立的对象，通过 Agent 的 `reply` 方法协调。
+> **源码验证日期**: 2026-05-11, commit `f17cfd0a`
 
 ---
 
-## 被否方案：合并为 Model
-
-**方案**：格式转换逻辑内置在 Model 中：
+## 35.1 合并方案
 
 ```python
-class OpenAIModel:
-    def __init__(self, model_name, api_key):
-        self.client = openai.OpenAI(api_key=api_key)
-
-    async def __call__(self, msgs: list[Msg], tools=None):
-        # 格式转换 + API 调用都在这里
-        messages = self._convert_msgs(msgs)
-        response = await self.client.chat.completions.create(
-            model=self.model_name,
-            messages=messages,
-            tools=tools,
-        )
-        return self._convert_response(response)
-
-    def _convert_msgs(self, msgs):
-        # OpenAI 格式转换
-        result = []
-        for msg in msgs:
-            if msg.role == "system":
-                result.append({"role": "system", "content": msg.content})
-            ...
-        return result
+class OpenAIChatModel:
+    async def __call__(self, msgs):
+        # 格式化 + 调用 合在一起
+        formatted = self._format(msgs)
+        response = await self._call_api(formatted)
+        return response
 ```
 
-LangChain 和很多框架就是这样做的——`ChatOpenAI` 类同时处理格式和调用。
+一个类做两件事：格式化 + API 调用。简单直接。
 
 ---
 
-## 为什么分离
-
-### 理由一：Ollama 兼容 OpenAI 格式
-
-Ollama 的 API 兼容 OpenAI 格式，但 HTTP 调用方式不同：
+## 35.2 分离方案（AgentScope 的选择）
 
 ```python
-# 不分离时
-class OllamaOpenAIModel:     # 格式 = OpenAI, 调用 = Ollama
-class OllamaModel:            # 格式 = 自定义, 调用 = Ollama
-class DeepSeekModel:          # 格式 = OpenAI, 调用 = DeepSeek
-
-# 分离后
-OpenAIChatFormatter + OllamaChatModel   # Ollama 用 OpenAI 格式
-OllamaChatFormatter + OllamaChatModel   # Ollama 用自定义格式
-OpenAIChatFormatter + DeepSeekChatModel # DeepSeek 用 OpenAI 格式
-```
-
-分离前需要 N × M 个类（N 种格式 × M 种 API）。分离后只需 N + M 个类。
-
-### 理由二：独立测试
-
-```python
-# 测试格式转换——不需要 mock HTTP
-formatter = OpenAIChatFormatter()
+# Formatter 负责格式化
 formatted = await formatter.format(msgs)
-assert formatted[0]["role"] == "system"
 
-# 测试 API 调用——不需要构造 Msg
-model = OpenAIChatModel(...)
-response = await model(formatted_dicts, tools=schemas)
+# Model 负责调用
+response = await model(formatted)
 ```
 
-### 理由三：独立替换
+### 为什么分离？
 
-```python
-# 运行时切换格式——不影响 Model
-agent.formatter = AnthropicChatFormatter()  # 从 OpenAI 切换到 Anthropic 格式
-# Model 不变，还是同一个 HTTP 客户端
-```
+1. **复用**：多个 Model 可能共享同一种格式（OpenAI 兼容 API 很普遍）
+2. **独立测试**：格式化逻辑可以单独测试，不需要调用真实 API
+3. **独立配置**：Token 截断策略可以独立于 Model 调整
+4. **策略组合**：可以混合搭配不同的 Formatter 和 Model
 
-```mermaid
-flowchart LR
-    subgraph "合并方案 (N × M)"
-        A1["OpenAI 全栈类"]
-        A2["Anthropic 全栈类"]
-        A3["Ollama 全栈类"]
-        A4["DeepSeek 全栈类"]
-    end
+### 代价
 
-    subgraph "分离方案 (N + M)"
-        B1["OpenAIChatFormatter"] --- C1["OpenAIChatModel"]
-        B1 --- C2["OllamaChatModel"]
-        B1 --- C3["DeepSeekChatModel"]
-        B2["AnthropicChatFormatter"] --- C4["AnthropicChatModel"]
-    end
-```
+- **API 复杂**：用户需要创建两个对象而不是一个
+- **概念多**：需要理解 Formatter 和 Model 的职责划分
+
+### 权衡
+
+AgentScope 选择分离，因为：
+- 支持多种 API 格式是核心需求（OpenAI、Anthropic、Gemini）
+- Token 截断是一个独立关注点（需要 TokenCounter 配合）
+- 测试需要在不调用 API 的情况下验证格式化
+
+如果只支持一种 API，合并方案更简单。但 AgentScope 需要支持多种，分离是必要的。
 
 ---
 
-## 后果分析
+## 35.3 检查点
 
-### 好处
+你现在已经理解了：
 
-1. **组合自由**：N + M 个类替代 N × M 个
-2. **独立测试**：格式转换和 API 调用分别测试
-3. **运行时替换**：可以动态切换格式化策略
-4. **关注点分离**：Formatter 只关心格式，Model 只关心 HTTP
-
-### 麻烦
-
-1. **两处修改**：添加新模型 API 可能需要同时写 Formatter 和 Model
-2. **协调复杂**：Formatter 和 Model 的接口需要匹配（stream 参数、tool_schema 格式等）
-3. **额外概念**：开发者需要理解"为什么要两个类"
-
----
-
-## 横向对比
-
-| 框架 | 格式与调用 | 组织方式 |
-|------|-----------|---------|
-| **AgentScope** | 分离（Formatter + Model） | 正交分解 |
-| **LangChain** | 合并（`ChatOpenAI` 等） | 按提供者分 |
-| **LiteLLM** | 合并（统一接口） | 一个类适配所有 |
-| **AutoGen** | 合并 | 按模型分 |
-
-LiteLLM 的方案也有趣——用一个类适配所有 API，内部做格式转换。但扩展性不如 AgentScope 的分离方案。
-
-AgentScope 官方文档的 Building Blocks > Models 页面展示了不同模型提供商的使用方法，包括 OpenAI、Anthropic、DashScope、Gemini、Ollama 等。每种模型可以搭配不同的 Formatter，实现格式与通信的分离。
-
-AgentScope 1.0 论文对这一设计的说明是：
-
-> "we abstract foundational components essential for agentic applications and provide unified interfaces and extensible modules, enabling developers to easily leverage the latest progress, such as new models and MCPs"
->
-> — AgentScope 1.0: A Comprehensive Framework for Building Agentic Applications, arXiv:2508.16279, Section 2
-
-Formatter 与 Model 的分离正是"可扩展模块"思想的体现——新增一个模型提供商只需要实现 `ChatModelBase` 和对应的 `FormatterBase`，两者独立演进。
-
----
-
-## 你的判断
-
-1. LiteLLM 的"统一接口"方案是否比 AgentScope 的"分离方案"更简单？在什么场景下？
-2. 如果未来的模型 API 全部兼容 OpenAI 格式，Formatter 还有存在的必要吗？
+- **分离的好处**：复用、独立测试、独立配置、灵活组合
+- **分离的代价**：API 复杂、概念多
+- **为什么 AgentScope 选择分离**：多 API 支持是核心需求
 
 ---
 
 ## 下一章预告
-
-我们看了 7 个具体的设计决策。最后一章，我们拉远视角，看整个架构的全景图和边界。
