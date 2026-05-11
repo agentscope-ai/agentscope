@@ -97,7 +97,7 @@ class DeepSeekChatFormatter(FormatterBase):
 
             msg_deepseek: dict[str, Any] = {
                 "role": msg.role,
-                "content": content_msg or None,
+                "content": content_msg or (None if tool_calls else ""),
             }
 
             # DeepSeek requires `reasoning_content` to be present on ALL
