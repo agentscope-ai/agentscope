@@ -57,6 +57,7 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
                     "name": "tool_1",
                     "description": "A test tool function.",
                     "parameters": {
+                        "title": "tool_1Arguments",
                         "type": "object",
                         "properties": {
                             "arg2": {
@@ -81,6 +82,7 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
                     "name": "tool_1",
                     "description": "A test tool function.",
                     "parameters": {
+                        "title": "tool_1Arguments",
                         "type": "object",
                         "properties": {
                             "arg1": {
