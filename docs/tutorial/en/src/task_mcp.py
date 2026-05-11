@@ -102,7 +102,7 @@ toolkit = Toolkit()
 async def example_register_stateless_mcp() -> None:
     """Example of registering MCP tools from a stateless client."""
     # Register all tools from the MCP server
-    await toolkit.register_mcp_client(
+    await toolkit.register_mcp(
         stateless_client,
         # group_name="map_services",  # Optional group name
     )

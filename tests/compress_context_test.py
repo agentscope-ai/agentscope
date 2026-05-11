@@ -6,7 +6,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from utils import MockModel, AnyString
 
 from agentscope.model import StructuredResponse
-from agentscope.agent import Agent, CompressionConfig
+from agentscope.agent import Agent, ContextConfig
 from agentscope.state import AgentState
 from agentscope.message import UserMsg, AssistantMsg, TextBlock
 from agentscope.tool import Toolkit
@@ -24,7 +24,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             name="Friday",
             system_prompt="".join(["0" for _ in range(60 * 4)]),
             model=MockModel(),
-            compression=CompressionConfig(
+            context_config=ContextConfig(
                 trigger_ratio=0.8,
                 reserve_ratio=0.1,
             ),
@@ -474,7 +474,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             name="Friday",
             system_prompt="".join(["0" for _ in range(20 * 4)]),
             model=model,
-            compression=CompressionConfig(
+            context_config=ContextConfig(
                 trigger_ratio=0.7,
                 reserve_ratio=0.4,
             ),

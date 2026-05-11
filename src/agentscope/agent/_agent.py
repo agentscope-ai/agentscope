@@ -1,21 +1,21 @@
 # -*- coding: utf-8 -*-
 """The unified agent class in AgentScope library."""
 import asyncio
+import inspect
 import uuid
 from asyncio import Queue
 from copy import deepcopy
-from typing import Any, AsyncGenerator, Sequence, Literal, List
-
-import jsonschema
-from pydantic import (
-    BaseModel,
-    Field,
-    SerializeAsAny,
-    PrivateAttr,
-    ConfigDict,
+from typing import (
+    Any,
+    AsyncGenerator,
+    Sequence,
+    Literal,
+    List,
 )
 
-from ._config import CompressionConfig
+import jsonschema
+
+from ._config import ContextConfig, ReActConfig, ModelConfig
 from ..state import AgentState
 from ._utils import _ToolCallBatch
 from .._logging import logger
@@ -49,6 +49,7 @@ from ..event import (
     ExceedMaxItersEvent,
 )
 from ..exception import AgentOrientedException
+from ..middleware import MiddlewareBase
 from ..model import (
     ChatResponse,
     ChatUsage,
@@ -82,103 +83,53 @@ from ..permission import (
 )
 
 
-class ReasoningConfig(BaseModel):
-    """The reasoning related configuration"""
-
-    max_iters: int = 20
-    """The maximum number of iterations for the reasoning-acting loop."""
-
-
-class ActingConfig(BaseModel):
-    """The acting related configuration in AgentScope"""
-
-    parallel: bool = True
-    """Whether to execute tool calls in parallel when there are multiple tool
-    calls awaiting execution."""
-
-
-class Agent(BaseModel):
+class Agent:
     """The agent class."""
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    def __init__(
+        self,
+        name: str,
+        system_prompt: str,
+        model: ChatModelBase,
+        toolkit: Toolkit,
+        middlewares: list[MiddlewareBase] | None = None,
+        state: AgentState | None = None,
+        model_config: ModelConfig = ModelConfig(),
+        context_config: ContextConfig = ContextConfig(),
+        react_config: ReActConfig = ReActConfig(),
+    ) -> None:
+        self.name = name
+        self._system_prompt = system_prompt
+        self.model = model
+        self.toolkit = toolkit
+        self.state = state or AgentState()
 
-    name: str = Field(description="The identifier of the agent.")
-    """The name of the agent."""
+        self.model_config = model_config
+        self.context_config = context_config
+        self.react_config = react_config
 
-    system_prompt: str = Field(default="You're a helpful assistant.")
-    """The base system prompt of the agent, extra hints will be attached to
-    this prompt during agent's reply."""
-
-    model: SerializeAsAny[ChatModelBase] = Field(
-        description="The language model used by the agent.",
-    )
-    """The language model used by the agent."""
-
-    max_retries: int = Field(
-        default=10,
-        gt=0,
-        description="Maximum number of retries when the model call fails.",
-    )
-    """The maximum number of retries when the model call fails. Must be
-    greater than 0."""
-
-    fallback_model: SerializeAsAny[ChatModelBase] | None = Field(
-        default=None,
-        description="The fallback model used when the main model fails.",
-    )
-    """The fallback model used when the main model fails. Also supports the
-    max_retries logic."""
-
-    compression: CompressionConfig = Field(
-        default_factory=CompressionConfig,
-        description="The compression related configuration for the agent.",
-    )
-    """The agent compression related configuration."""
-
-    reasoning: ReasoningConfig = Field(
-        default_factory=ReasoningConfig,
-        description="The reasoning related configuration for the agent.",
-    )
-    """The reasoning related configuration for the agent."""
-
-    acting: ActingConfig = Field(
-        default_factory=ActingConfig,
-        description="The acting related configuration for the agent.",
-    )
-    """The acting, i.e. tool execution, related configuration for the agent."""
-
-    state: AgentState = Field(default_factory=AgentState)
-    """The agent state, including the conversation context, permission context,
-    tool context, etc."""
-
-    toolkit: Toolkit = Field(exclude=True)
-    """The toolkit used by the agent."""
-
-    _engine: PermissionEngine = PrivateAttr()
-    """The permission engine used to manage the tool usage permissions for the
-    agent."""
-
-    # @field_validator("model", "fallback_model", mode="before")
-    # @classmethod
-    # def validate_model(cls, v: Any, info: ValidationInfo) -> Any:
-    #     """Deserialize model from dict using context-injected custom
-    #     classes."""
-    #     if not isinstance(v, dict):
-    #         return v
-    #     custom_classes = (
-    #         info.context.get("custom_model_classes", [])
-    #         if info.context
-    #         else []
-    #     )
-    #     return _deserialize_model(
-    #         v,
-    #         custom_classes=custom_classes,
-    #         context=info.context,
-    #     )
-
-    def model_post_init(self, __context: Any) -> None:
-        """Initialize the permission engine after the model is initialized."""
         self._engine = PermissionEngine(self.state.permission_context)
+
+        # ====================================================================
+        # The Middleware-related attributes
+        # ====================================================================
+        # Filter middlewares by implemented hooks (only once)
+        middlewares = middlewares or []
+        self._reply_middlewares = [
+            _ for _ in middlewares if _.is_implemented("on_reply")
+        ]
+        self._reasoning_middlewares = [
+            _ for _ in middlewares if _.is_implemented("on_reasoning")
+        ]
+        self._acting_middlewares = [
+            _ for _ in middlewares if _.is_implemented("on_acting")
+        ]
+        self._model_call_middlewares = [
+            _ for _ in middlewares if _.is_implemented("on_model_call")
+        ]
+        self._system_prompt_middlewares = [
+            _ for _ in middlewares if _.is_implemented("on_system_prompt")
+        ]
 
     # =======================================================================
     # Agent public methods
@@ -251,18 +202,18 @@ class Agent(BaseModel):
 
     async def compress_context(
         self,
-        compression_config: CompressionConfig | None = None,
+        context_config: ContextConfig | None = None,
     ) -> None:
         """Compress the agent's context if the token count exceeds the
         threshold.
 
         Args:
-            compression_config (`CompressionConfig | None`, optional):
-                If provided, compress the context with the given compression
-                config. Otherwise, use the default compression config in the
+            context_config (`ContextConfig | None`, optional):
+                If provided, compress the context with the given context
+                config. Otherwise, use the default context config in the
                 agent.
         """
-        cfg: CompressionConfig = compression_config or self.compression
+        cfg: ContextConfig = context_config or self.context_config
 
         # Count the current tokens
         kwargs = await self._prepare_model_input()
@@ -439,6 +390,49 @@ class Agent(BaseModel):
         | ExternalExecutionResultEvent
         | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
+        """Reply entry point (may be wrapped by middleware)."""
+        if not self._reply_middlewares:
+            async for item in self._reply_impl(msgs=msgs, event=event):
+                yield item
+        else:
+
+            async def execute_chain(
+                index: int = 0,
+                msgs: Msg | list[Msg] | None = msgs,
+                event: UserConfirmResultEvent
+                | ExternalExecutionResultEvent
+                | None = event,
+            ) -> AsyncGenerator[AgentEvent | Msg, None]:
+                if index >= len(self._reply_middlewares):
+                    async for item in self._reply_impl(msgs=msgs, event=event):
+                        yield item
+                else:
+                    mw = self._reply_middlewares[index]
+                    input_kwargs = {"msgs": msgs, "event": event}
+
+                    async def next_handler(
+                        **kwargs: Any,
+                    ) -> AsyncGenerator[AgentEvent | Msg, None]:
+                        async for item in execute_chain(index + 1, **kwargs):
+                            yield item
+
+                    async for item in mw.on_reply(
+                        agent=self,
+                        input_kwargs=input_kwargs,
+                        next_handler=next_handler,
+                    ):
+                        yield item
+
+            async for item in execute_chain():
+                yield item
+
+    async def _reply_impl(
+        self,
+        msgs: Msg | list[Msg] | None = None,
+        event: UserConfirmResultEvent
+        | ExternalExecutionResultEvent
+        | None = None,
+    ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Core reply logic."""
         # ===================================================================
         # Step 1: Checking agent input:
@@ -471,7 +465,7 @@ class Agent(BaseModel):
         # Step 3: Enter the reasoning-acting loop until reaching max_iters or
         #  no more tool calls to execute
         # ===================================================================
-        while self.state.cur_iter < self.reasoning.max_iters:
+        while self.state.cur_iter < self.react_config.max_iters:
             # ===============================================================
             # Step 3.1:
             # ===============================================================
@@ -584,8 +578,61 @@ class Agent(BaseModel):
         | Msg,
         None,
     ]:
+        """Reasoning entry point (may be wrapped by middleware)."""
+        if not self._reasoning_middlewares:
+            async for item in self._reasoning_impl(tool_choice=tool_choice):
+                yield item
+        else:
+
+            async def execute_chain(
+                index: int = 0,
+                tool_choice: ToolChoice = tool_choice,
+            ) -> AsyncGenerator:
+                if index >= len(self._reasoning_middlewares):
+                    async for item in self._reasoning_impl(
+                        tool_choice=tool_choice,
+                    ):
+                        yield item
+                else:
+                    mw = self._reasoning_middlewares[index]
+                    input_kwargs = {"tool_choice": tool_choice}
+
+                    async def next_handler(**kwargs: Any) -> AsyncGenerator:
+                        async for item in execute_chain(index + 1, **kwargs):
+                            yield item
+
+                    async for item in mw.on_reasoning(
+                        agent=self,
+                        input_kwargs=input_kwargs,
+                        next_handler=next_handler,
+                    ):
+                        yield item
+
+            async for item in execute_chain():
+                yield item
+
+    async def _reasoning_impl(
+        self,
+        tool_choice: ToolChoice = "auto",
+    ) -> AsyncGenerator[
+        ModelCallStartEvent
+        | TextBlockStartEvent
+        | TextBlockDeltaEvent
+        | TextBlockEndEvent
+        | ToolCallBlock
+        | ToolCallDeltaEvent
+        | ToolCallEndEvent
+        | ThinkingBlockStartEvent
+        | ThinkingBlockDeltaEvent
+        | ThinkingBlockEndEvent
+        | DataBlockStartEvent
+        | DataBlockDeltaEvent
+        | DataBlockEndEvent
+        | ModelCallEndEvent
+        | Msg,
+        None,
+    ]:
         """Core reasoning logic. Yields chunks with is_last flag."""
-        # TODO: Pass tool schemas from toolkit when toolkit is implemented
 
         yield ModelCallStartEvent(
             reply_id=self.state.reply_id,
@@ -605,19 +652,20 @@ class Agent(BaseModel):
         block_ids: dict = {"text": None, "thinking": None, "tools": []}
         completed_response: ChatResponse | None = None
 
-        if self.model.stream:
+        # Check if res is an async generator (streaming response)
+        if inspect.isasyncgen(res):
             async for chunk in res:
-                # Break if it's the last chunk with completed response
+                # Save the last chunk with completed response
                 if chunk.is_last:
                     completed_response = chunk
-                    break
 
-                # Convert the chunk into events
-                async for evt in self._convert_chat_response_to_event(
-                    block_ids,
-                    chunk,
-                ):
-                    yield evt
+                else:
+                    # Convert the chunk into events
+                    async for evt in self._convert_chat_response_to_event(
+                        block_ids,
+                        chunk,
+                    ):
+                        yield evt
 
         elif isinstance(res, ChatResponse):
             completed_response = res
@@ -1096,6 +1144,49 @@ class Agent(BaseModel):
         | ToolResultEndEvent,
         None,
     ]:
+        """Execute tool call entry point (maybe wrapped by middleware)."""
+        if not self._acting_middlewares:
+            async for item in self._execute_tool_call_impl(tool_call):
+                yield item
+        else:
+
+            async def execute_chain(
+                index: int = 0,
+                tool_call: ToolCallBlock = tool_call,
+            ) -> AsyncGenerator:
+                if index >= len(self._acting_middlewares):
+                    async for item in self._execute_tool_call_impl(tool_call):
+                        yield item
+                else:
+                    mw = self._acting_middlewares[index]
+                    input_kwargs = {"tool_call": tool_call}
+
+                    async def next_handler(**kwargs: Any) -> AsyncGenerator:
+                        async for item in execute_chain(index + 1, **kwargs):
+                            yield item
+
+                    async for item in mw.on_acting(
+                        agent=self,
+                        input_kwargs=input_kwargs,
+                        next_handler=next_handler,
+                    ):
+                        yield item
+
+            async for item in execute_chain():
+                yield item
+
+    async def _execute_tool_call_impl(
+        self,
+        tool_call: ToolCallBlock,
+    ) -> AsyncGenerator[
+        RequireUserConfirmEvent
+        | RequireExternalExecutionEvent
+        | ToolResultStartEvent
+        | ToolResultTextDeltaEvent
+        | ToolResultDataDeltaEvent
+        | ToolResultEndEvent,
+        None,
+    ]:
         """Execute a single tool call with permission checking.
 
         Args:
@@ -1235,17 +1326,56 @@ class Agent(BaseModel):
 
             res = self.toolkit.call_tool(tool_call, self.state)
             async for chunk in res:
+                # The ToolResponse is the last and completed tool result here
                 if isinstance(chunk, ToolResponse):
-                    self._save_to_context(
-                        [
-                            ToolResultBlock(
-                                id=tool_call.id,
-                                name=tool_call.name,
-                                output=chunk.content,
-                                state=chunk.state,
-                            ),
-                        ],
+                    tool_result_block = ToolResultBlock(
+                        id=tool_call.id,
+                        name=tool_call.name,
+                        output=[TextBlock(text=chunk.content)]
+                        if isinstance(chunk.content, str)
+                        else chunk.content,
+                        state=chunk.state,
                     )
+
+                    # ========================================================
+                    # Step 4: Truncate the tool result if exceed
+                    # ========================================================
+                    (
+                        reserved_tool_result_block,
+                        offload_tool_result_block,
+                    ) = await self._split_tool_result_for_compression(
+                        tool_result_block,
+                    )
+
+                    # If offload result is not empty, attach reminder to the
+                    # reserved context
+                    if offload_tool_result_block is not None:
+                        reminder = (
+                            "\n<<<TRUNCATED>>>\n<system-reminder>The "
+                            "remaining content has been omitted for "
+                            "limited context.</system-reminder>"
+                        )
+                        if isinstance(reserved_tool_result_block.output, str):
+                            reserved_tool_result_block.output += reminder
+
+                        elif len(
+                            reserved_tool_result_block.output,
+                        ) > 0 and isinstance(
+                            reserved_tool_result_block.output[-1],
+                            TextBlock,
+                        ):
+                            reserved_tool_result_block.output[
+                                -1
+                            ].text += reminder
+
+                        else:
+                            reserved_tool_result_block.output += [
+                                TextBlock(text=reminder),
+                            ]
+
+                        # TODO: offload the tool result
+
+                    self._save_to_context([reserved_tool_result_block])
                     # Ends the tool call lifecycle.
                     self._update_tool_call_state(
                         tool_call.id,
@@ -1449,20 +1579,173 @@ class Agent(BaseModel):
 
         return msgs_to_compress, msgs_to_reserve
 
+    async def _split_tool_result_for_compression(
+        self,
+        tool_result: ToolResultBlock,
+    ) -> tuple[ToolResultBlock, ToolResultBlock | None]:
+        """Split the tool result for compression.
+
+        Args:
+            tool_result (`ToolResultBlock`):
+                The tool result block.
+
+        Returns:
+            `tuple[ToolResultBlock, ToolResultBlock | None]`:
+                A tuple of the tool result blocks to reserved in context and
+                to offload (if any).
+        """
+        n_tokens = await self.model.count_tokens(
+            [AssistantMsg(self.name, content=tool_result.output)],
+            None,
+        )
+
+        # Return the tool result without truncation
+        if n_tokens <= self.context_config.tool_result_limit:
+            return tool_result, None
+
+        # Use a copied block for token counting
+        copied_tool_result = deepcopy(tool_result)
+
+        # Normalized into content blocks
+        if isinstance(copied_tool_result.output, str):
+            copied_tool_result.output = [
+                TextBlock(text=copied_tool_result.output),
+            ]
+
+        # Find the index of the block that will exceed the limit
+        boundary_index = 0
+        for i in range(len(copied_tool_result.output) - 1, 0, -1):
+            copied_tool_result.output = tool_result.output[:i]
+            cur_tokens = await self.model.count_tokens(
+                [
+                    AssistantMsg(
+                        self.name,
+                        content=copied_tool_result.output,
+                    ),
+                ],
+                None,
+            )
+            if cur_tokens < self.context_config.tool_result_limit:
+                boundary_index = i
+                break
+
+        # The blocks to reserve and offload (deep copy to avoid
+        # modifying original)
+        reserved_blocks: list = [
+            deepcopy(b) for b in tool_result.output[:boundary_index]
+        ]
+        offload_blocks: list = [
+            deepcopy(b) for b in tool_result.output[boundary_index + 1 :]
+        ]
+
+        # Get the boundary block, if text block, we can truncate it
+        boundary_block = tool_result.output[boundary_index]
+        if isinstance(boundary_block, TextBlock):
+            # Truncate it
+            truncated_text = boundary_block.text
+            cur_tokens = await self.model.count_tokens(
+                [AssistantMsg(self.name, content=reserved_blocks)],
+                None,
+            )
+            cur_tokens_plus = await self.model.count_tokens(
+                [
+                    AssistantMsg(
+                        self.name,
+                        content=reserved_blocks + [boundary_block],
+                    ),
+                ],
+                None,
+            )
+            # Truncate the text by proportion of tokens
+            token_delta = cur_tokens_plus - cur_tokens
+            remaining_token_budget = (
+                self.context_config.tool_result_limit - cur_tokens
+            )
+            if token_delta <= 0:
+                reserved_tokens = (
+                    len(truncated_text) if remaining_token_budget > 0 else 0
+                )
+            else:
+                reserved_tokens = int(
+                    remaining_token_budget / token_delta * len(truncated_text),
+                )
+            reserved_tokens = max(
+                0,
+                min(len(truncated_text), reserved_tokens),
+            )
+
+            reserved_text = truncated_text[:reserved_tokens]
+            offload_text = truncated_text[reserved_tokens:]
+
+            if reserved_text:
+                if (
+                    len(reserved_blocks) > 0
+                    and reserved_blocks[-1].type == "text"
+                ):
+                    reserved_blocks[-1].text += reserved_text
+
+                else:
+                    reserved_blocks.append(
+                        TextBlock(text=reserved_text, id=boundary_block.id),
+                    )
+
+            if offload_text:
+                if (
+                    len(offload_blocks) > 0
+                    and offload_blocks[0].type == "text"
+                ):
+                    offload_blocks[0].text = (
+                        offload_text + offload_blocks[0].text
+                    )
+
+                else:
+                    offload_blocks.insert(
+                        0,
+                        TextBlock(text=offload_text, id=boundary_block.id),
+                    )
+
+        else:
+            # Drop the boundary block if inseparable
+            offload_blocks.insert(0, boundary_block)
+
+        if len(offload_blocks) == 0:
+            return tool_result, None
+
+        # Create new ToolResultBlock instances for reserved and offload
+        reserved_tool_result = ToolResultBlock(
+            id=tool_result.id,
+            name=tool_result.name,
+            output=reserved_blocks,
+            state=tool_result.state,
+        )
+        offload_tool_result = ToolResultBlock(
+            id=tool_result.id,
+            name=tool_result.name,
+            output=offload_blocks,
+            state=tool_result.state,
+        )
+
+        return reserved_tool_result, offload_tool_result
+
     # ======================================================================
     # Agent internal utility methods
     # ======================================================================
-
     async def _get_system_prompt(self) -> str:
         """Get the system prompt of the agent."""
-        prompt = [self.system_prompt]
+        prompt = [self._system_prompt]
 
         # Skill related instructions
         skill_instructions = await self.toolkit.get_skill_instructions()
         if skill_instructions:
             prompt.append(skill_instructions)
 
-        return "\n".join(prompt)
+        result = "\n".join(prompt)
+
+        # Apply system_prompt middlewares sequentially (transformer pattern)
+        for mw in self._system_prompt_middlewares:
+            result = await mw.on_system_prompt(self, result)
+
+        return result
 
     async def _prepare_model_input(self) -> dict[str, Any]:
         """A unified method to prepare the chat model input according to
@@ -1500,7 +1783,7 @@ class Agent(BaseModel):
         tools: list[dict],
         tool_choice: ToolChoice,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
-        """Perform model inference and return the response.
+        """Perform model inference with retry logic and middleware support.
 
         Args:
             messages (`list[Msg]`):
@@ -1520,18 +1803,64 @@ class Agent(BaseModel):
 
         # Fallback to the secondary model if the primary model fails after
         # retries
-        if self.fallback_model:
-            models.append(self.fallback_model)
+        if self.model_config.fallback_model:
+            models.append(self.model_config.fallback_model)
 
         last_exception = None
         for model in models:
-            for _ in range(self.max_retries):
+            for _ in range(self.model_config.max_retries):
                 try:
-                    return await model(
-                        messages=messages,
-                        tools=tools,
-                        tool_choice=tool_choice,
-                    )
+                    # Apply middleware to wrap the actual model() call
+                    if not self._model_call_middlewares:
+                        return await model(
+                            messages=messages,
+                            tools=tools,
+                            tool_choice=tool_choice,
+                        )
+                    else:
+                        # pylint: disable=cell-var-from-loop
+                        async def execute_chain(
+                            index: int = 0,
+                            current_model: ChatModelBase = model,
+                            messages: list[Msg] = messages,
+                            tools: list[dict] = tools,
+                            tool_choice: ToolChoice = tool_choice,
+                        ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
+                            """Execute the model chain."""
+                            if index >= len(self._model_call_middlewares):
+                                return await current_model(
+                                    messages=messages,
+                                    tools=tools,
+                                    tool_choice=tool_choice,
+                                )
+                            else:
+                                mw = self._model_call_middlewares[index]
+                                input_kwargs = {
+                                    "current_model": current_model,
+                                    "messages": messages,
+                                    "tools": tools,
+                                    "tool_choice": tool_choice,
+                                }
+
+                                async def next_handler(
+                                    **kwargs: Any,
+                                ) -> (
+                                    ChatResponse
+                                    | AsyncGenerator[ChatResponse, None]
+                                ):
+                                    # pylint: disable=cell-var-from-loop
+                                    return await execute_chain(
+                                        index + 1,
+                                        **kwargs,
+                                    )
+
+                                return await mw.on_model_call(
+                                    agent=self,
+                                    input_kwargs=input_kwargs,
+                                    next_handler=next_handler,
+                                )
+
+                        return await execute_chain()
                 except Exception as e:
                     logger.warning(
                         "Model %s call failed for agent %s. "
@@ -1539,7 +1868,7 @@ class Agent(BaseModel):
                         model.model,
                         self.name,
                         _ + 1,
-                        self.max_retries,
+                        self.model_config.max_retries,
                     )
                     last_exception = e
 

@@ -2,17 +2,12 @@
 """The MCP module in AgentScope, that provides fine-grained control over
 the MCP servers."""
 
-from ._client_base import MCPClientBase
-from ._stateful_client_base import StatefulClientBase
-from ._stdio_stateful_client import StdIOStatefulClient
-from ._http_stateless_client import HttpStatelessClient
-from ._http_stateful_client import HttpStatefulClient
+from ._config import StdioMCPConfig, HttpMCPConfig
+from ._mcp_client import MCPClient
 
 
 __all__ = [
-    "MCPClientBase",
-    "StatefulClientBase",
-    "StdIOStatefulClient",
-    "HttpStatelessClient",
-    "HttpStatefulClient",
+    "MCPClient",
+    "StdioMCPConfig",
+    "HttpMCPConfig",
 ]

@@ -34,10 +34,7 @@ from ..exception import (
     ToolNotFoundError,
     ToolGroupInactiveError,
 )
-from ..mcp import (
-    MCPClientBase,
-    StatefulClientBase,
-)
+from ..mcp import MCPClient
 from ..message import (
     ToolCallBlock,
     TextBlock,
@@ -112,7 +109,6 @@ class Toolkit:
         tools: list[ToolBase] | None = None,
         skills: list[str | SkillLoaderBase] | None = None,
         meta_tool_response_template: str = DEFAULT_META_TOOL_RESPONSE_TEMPLATE,
-        mcp_tool_name: str = "mcp__{server}__{tool}",
         skill_viewer_enabled: bool = True,
         skill_instruction_template: str = DEFAULT_SKILL_INSTRUCTION,
     ) -> None:
@@ -125,8 +121,6 @@ class Toolkit:
                 The agent skill directories to be registered.
             meta_tool_response_template (`str`, optional):
                 The template for meta tool responses.
-            mcp_tool_name (`str`, optional):
-                The naming pattern for MCP tools.
             skill_viewer_enabled (`bool`, defaults to `True`):
                 Whether enable the built-in skill viewer tool function.
             skill_instruction_template (`str`):
@@ -165,7 +159,6 @@ class Toolkit:
                     )
 
         self.meta_tool_response_template = meta_tool_response_template
-        self.mcp_tool_name = mcp_tool_name
 
         self.skill_instruction_template = skill_instruction_template
         self.skill_viewer_enabled = skill_viewer_enabled
@@ -616,17 +609,21 @@ class Toolkit:
             # Finally, yield the complete tool response
             yield tool_response
 
-    async def register_mcp_client(
+    async def register_mcp(
         self,
-        mcp_client: MCPClientBase,
+        mcp_client: MCPClient,
         group_name: str = "basic",
         enable_funcs: list[str] | None = None,
         disable_funcs: list[str] | None = None,
     ) -> None:
-        """Register tool functions from an MCP client.
+        """Register tools from an MCP client.
+
+        .. note:: When registering tools from an MCP client, the tool will
+         be renamed by template `mcp__{mcp_name}__{tool_name}` to avoid
+         name conflicts.
 
         Args:
-            mcp_client (`MCPClientBase`):
+            mcp_client (`MCPClient`):
                 The MCP client instance to connect to the MCP server.
             group_name (`str`, defaults to `"basic"`):
                 The group name that the tool functions will be added to.
@@ -637,17 +634,20 @@ class Toolkit:
                 The functions that will be filtered out. If `None`, no
                 tool functions will be filtered out.
         """
-        if (
-            isinstance(mcp_client, StatefulClientBase)
-            and not mcp_client.is_connected
-        ):
+        if not isinstance(mcp_client, MCPClient):
+            raise ValueError(
+                f"The 'mcp_client' should be an instance of "
+                f"'MCPClient' but got {type(mcp_client)}.",
+            )
+
+        if mcp_client.is_stateful and not mcp_client.is_connected:
             raise RuntimeError(
                 "The MCP client is not connected to the server. Use the "
                 "`connect()` method first.",
             )
 
-        # Check arguments for enable_funcs and disabled_funcs
-        if enable_funcs is not None and disable_funcs is not None:
+        # Check arguments for enable_funcs and disable_funcs
+        if enable_funcs is not None:
             assert isinstance(enable_funcs, list) and all(
                 isinstance(_, str) for _ in enable_funcs
             ), (
@@ -655,12 +655,15 @@ class Toolkit:
                 f"{enable_funcs}."
             )
 
+        if disable_funcs is not None:
             assert isinstance(disable_funcs, list) and all(
                 isinstance(_, str) for _ in disable_funcs
             ), (
                 "Disable functions should be a list of strings, but got "
                 f"{disable_funcs}."
             )
+
+        if enable_funcs is not None and disable_funcs is not None:
             intersection = set(enable_funcs).intersection(
                 set(disable_funcs),
             )
@@ -691,6 +694,7 @@ class Toolkit:
             registered = RegisteredTool(
                 tool=tool_obj,
                 group=group_name,
+                original_name=mcp_tool.name,
             )
 
             self.tools[tool_obj.name] = registered

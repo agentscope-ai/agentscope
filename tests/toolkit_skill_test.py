@@ -34,6 +34,7 @@ class MockSkillLoader(SkillLoaderBase):
         self._skills = skills
 
     async def list_skills(self) -> list[Skill]:
+        """Return a list of all skills."""
         return self._skills
 
 
