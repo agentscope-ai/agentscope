@@ -1,0 +1,17 @@
+name: deepseek-r1:14b
+label: DeepSeek R1 14B
+status: active
+
+input_types:
+  - text/plain
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 131072
+output_size: 8192
+
+parameter_overrides:
+  max_tokens:
+    maximum: 8192

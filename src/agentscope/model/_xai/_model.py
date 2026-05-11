@@ -1,0 +1,422 @@
+# -*- coding: utf-8 -*-
+"""The xAI chat model implementation using the official xai_sdk."""
+from datetime import datetime
+from typing import Any, AsyncGenerator, List, Literal, TYPE_CHECKING
+
+from pydantic import BaseModel, Field, SecretStr
+
+from .. import ChatUsage, ChatModelBase
+from ...formatter._xai_formatter import XAIChatFormatter
+from ...message import (
+    TextBlock,
+    ThinkingBlock,
+    ToolCallBlock,
+)
+from ...model import ChatResponse
+from ...tool import ToolChoice
+from ...tracing import trace_llm
+
+if TYPE_CHECKING:
+    from xai_sdk import AsyncClient
+    from xai_sdk.chat import Response, Chunk
+else:
+    AsyncClient = Any
+    Response = Any
+    Chunk = Any
+
+
+class XAICredential(BaseModel):
+    """The xAI credential model."""
+
+    type: Literal["xai_credential"] = "xai_credential"
+    """The credential type."""
+
+    api_key: SecretStr = Field(
+        description="The xAI API key.",
+    )
+    """The xAI API key."""
+
+
+class XAIChatModel(ChatModelBase):
+    """The xAI chat model using the official ``xai_sdk`` gRPC client.
+
+    This model provides native access to xAI-specific features such as
+    server-side agentic tools (web search, X search, code execution) and
+    reasoning effort control, which are not available through the
+    OpenAI-compatible REST endpoint.
+    """
+
+    class Parameters(BaseModel):
+        """The parameters for the xAI chat model."""
+
+        max_tokens: int | None = Field(
+            default=None,
+            title="Max Tokens",
+            description="The maximum number of tokens for the LLM output.",
+            gt=0,
+        )
+        """The maximum number of tokens to generate."""
+
+        reasoning_effort: Literal["low", "medium", "high"] | None = Field(
+            default=None,
+            title="Reasoning Effort",
+            description=(
+                "Controls the depth of reasoning for models that support "
+                "extended thinking (e.g. ``grok-3-mini``). Set to "
+                "``'low'``, ``'medium'``, or ``'high'`` to enable reasoning "
+                "with the corresponding effort level. ``None`` disables "
+                "reasoning."
+            ),
+        )
+        """Reasoning effort level for xAI reasoning models."""
+
+        temperature: float | None = Field(
+            default=None,
+            title="Temperature",
+            description="The temperature for the LLM output.",
+            ge=0,
+            le=2,
+        )
+        """The sampling temperature."""
+
+        top_p: float | None = Field(
+            default=None,
+            title="Top P",
+            description="The top-p nucleus sampling value.",
+            gt=0,
+            le=1,
+        )
+        """The top-p sampling parameter."""
+
+    type: Literal["xai_chat"] = "xai_chat"
+    """The type of the chat model."""
+
+    credential: XAICredential
+    """The xAI credential."""
+
+    model: str = Field(
+        title="Model",
+        description="The xAI model name.",
+    )
+    """The xAI model name."""
+
+    stream: bool = Field(
+        default=True,
+        title="Enable Streaming Output",
+        description="Whether to enable streaming output.",
+    )
+    """Whether to enable streaming output."""
+
+    max_retries: int = Field(
+        default=0,
+        title="Max Retries",
+        description="The maximum number of retries for the xAI API.",
+        ge=0,
+    )
+    """The maximum number of API call retries."""
+
+    parameters: Parameters = Field(
+        default_factory=Parameters,
+        title="XAI API Parameters",
+        description="The xAI API parameters.",
+    )
+    """The xAI API parameters."""
+
+    formatter: XAIChatFormatter = Field(
+        default_factory=XAIChatFormatter,
+        description="The formatter that converts Msg objects to xai_sdk "
+        "protos.",
+    )
+    """The formatter that converts Msg objects to xai_sdk proto messages."""
+
+    @trace_llm
+    async def _call_api(
+        self,
+        model_name: str,
+        messages: list[Any],
+        tools: list[dict] | None = None,
+        tool_choice: ToolChoice | None = None,
+        **generate_kwargs: Any,
+    ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
+        """Call the xAI API using the official ``xai_sdk`` gRPC client.
+
+        Args:
+            model_name (`str`):
+                The model name to use for this call.
+            messages (`list`):
+                A list of ``Msg`` objects representing the conversation.
+            tools (`list[dict]`, default `None`):
+                The tools JSON schemas.
+            tool_choice (`ToolChoice | None`, optional):
+                Controls which (if any) tool is called by the model.
+            **generate_kwargs (`Any`):
+                Extra keyword arguments forwarded to the API.
+
+        Returns:
+            `ChatResponse | AsyncGenerator[ChatResponse, None]`:
+                A ``ChatResponse`` when streaming is disabled, or an async
+                generator of ``ChatResponse`` objects when streaming is
+                enabled.
+        """
+        from xai_sdk import (
+            AsyncClient as XAIAsyncClient,
+        )  # pylint: disable=import-outside-toplevel
+
+        client = XAIAsyncClient(
+            api_key=self.credential.api_key.get_secret_value(),
+        )
+
+        xai_messages = await self.formatter.format(messages)
+
+        xai_tools = self._convert_tools(tools) if tools else None
+        xai_tool_choice = (
+            self._convert_tool_choice(tool_choice, tools)
+            if tool_choice
+            else None
+        )
+
+        create_kwargs: dict[str, Any] = {"model": model_name}
+        if self.parameters.max_tokens is not None:
+            create_kwargs["max_tokens"] = self.parameters.max_tokens
+        if self.parameters.temperature is not None:
+            create_kwargs["temperature"] = self.parameters.temperature
+        if self.parameters.top_p is not None:
+            create_kwargs["top_p"] = self.parameters.top_p
+        if self.parameters.reasoning_effort is not None:
+            create_kwargs[
+                "reasoning_effort"
+            ] = self.parameters.reasoning_effort
+        if xai_tools:
+            create_kwargs["tools"] = xai_tools
+        if xai_tool_choice is not None:
+            create_kwargs["tool_choice"] = xai_tool_choice
+
+        create_kwargs.update(generate_kwargs)
+
+        chat = client.chat.create(**create_kwargs)
+        for xai_msg in xai_messages:
+            chat.append(xai_msg)
+
+        start_datetime = datetime.now()
+
+        if self.stream:
+            return self._parse_stream_response(start_datetime, chat, client)
+
+        try:
+            response = await chat.sample()
+        finally:
+            await client.close()
+
+        return self._parse_completion_response(start_datetime, response)
+
+    def _convert_tools(self, tools: list[dict]) -> list:
+        """Convert AgentScope tool schemas to ``xai_sdk`` ``Tool`` protos.
+
+        Args:
+            tools (`list[dict]`):
+                A list of tool schemas in OpenAI function-calling format.
+
+        Returns:
+            `list`:
+                A list of ``chat_pb2.Tool`` proto objects.
+        """
+        from xai_sdk.chat import tool
+
+        xai_tools = []
+        for t in tools:
+            if t.get("type") == "function" and "function" in t:
+                fn = t["function"]
+                xai_tools.append(
+                    tool(
+                        name=fn["name"],
+                        description=fn.get("description", ""),
+                        parameters=fn.get("parameters", {}),
+                    ),
+                )
+        return xai_tools
+
+    def _convert_tool_choice(
+        self,
+        tool_choice: ToolChoice | None,
+        tools: list[dict] | None,
+    ) -> Any:
+        """Convert a ``ToolChoice`` value to an ``xai_sdk`` compatible object.
+
+        Args:
+            tool_choice (`ToolChoice | None`):
+                The unified tool-choice parameter (``"auto"``, ``"none"``,
+                ``"required"``, or a specific function name).
+            tools (`list[dict] | None`):
+                The list of available tools, used for validation.
+
+        Returns:
+            `Any`:
+                The ``xai_sdk``-compatible tool-choice value, or ``None``.
+        """
+        from xai_sdk.chat import (  # pylint: disable=import-outside-toplevel
+            required_tool,
+        )
+
+        self._validate_tool_choice(tool_choice, tools)
+
+        if tool_choice is None:
+            return None
+        if tool_choice in ("auto", "none", "required"):
+            return tool_choice
+        return required_tool(tool_choice)
+
+    async def _parse_stream_response(
+        self,
+        start_datetime: datetime,
+        chat: Any,
+        client: Any,
+    ) -> AsyncGenerator[ChatResponse, None]:
+        """Parse the xAI streaming response from ``xai_sdk``.
+
+        Args:
+            start_datetime (`datetime`):
+                The start datetime of the response generation.
+            chat (`Any`):
+                The ``xai_sdk`` chat session object.
+            client (`Any`):
+                The ``xai_sdk.AsyncClient`` instance; closed when the
+                generator is exhausted or abandoned.
+
+        Yields:
+            `ChatResponse`:
+                Incremental ``ChatResponse`` objects with ``is_last=False``
+                followed by a final one with ``is_last=True``.
+        """
+        acc_text = TextBlock(text="")
+        acc_thinking = ThinkingBlock(thinking="")
+        last_response = None
+        response_id: str | None = None
+
+        try:
+            async for response, chunk in chat.stream():
+                if response_id is None:
+                    response_id = getattr(response, "id", None) or None
+
+                delta_text: str = chunk.content or ""
+                delta_thinking: str = chunk.reasoning_content or ""
+
+                delta_contents: List[TextBlock | ThinkingBlock] = []
+
+                if delta_thinking:
+                    acc_thinking.thinking += delta_thinking
+                    delta_contents.append(
+                        ThinkingBlock(
+                            id=acc_thinking.id,
+                            thinking=delta_thinking,
+                        ),
+                    )
+                if delta_text:
+                    acc_text.text += delta_text
+                    delta_contents.append(
+                        TextBlock(id=acc_text.id, text=delta_text),
+                    )
+
+                if delta_contents:
+                    _kwargs: dict[str, Any] = {
+                        "content": delta_contents,
+                        "is_last": False,
+                    }
+                    if response_id:
+                        _kwargs["id"] = response_id
+                    yield ChatResponse(**_kwargs)
+
+                last_response = response
+
+        finally:
+            await client.close()
+
+        final_contents: List[TextBlock | ToolCallBlock | ThinkingBlock] = []
+        if acc_thinking.thinking:
+            final_contents.append(acc_thinking)
+        if acc_text.text:
+            final_contents.append(acc_text)
+
+        if last_response is not None:
+            for tc in last_response.tool_calls or []:
+                final_contents.append(
+                    ToolCallBlock(
+                        id=tc.id,
+                        name=tc.function.name,
+                        input=tc.function.arguments,
+                    ),
+                )
+
+        usage = None
+        if last_response is not None and last_response.usage is not None:
+            u = last_response.usage
+            usage = ChatUsage(
+                input_tokens=u.prompt_tokens,
+                output_tokens=u.completion_tokens,
+                time=(datetime.now() - start_datetime).total_seconds(),
+                metadata=u,
+            )
+
+        final_kwargs: dict[str, Any] = {
+            "content": final_contents,
+            "usage": usage,
+            "is_last": True,
+        }
+        if response_id:
+            final_kwargs["id"] = response_id
+        yield ChatResponse(**final_kwargs)
+
+    def _parse_completion_response(
+        self,
+        start_datetime: datetime,
+        response: Any,
+    ) -> ChatResponse:
+        """Parse the xAI non-streaming response from ``xai_sdk``.
+
+        Args:
+            start_datetime (`datetime`):
+                The start datetime of the response generation.
+            response (`Any`):
+                The ``xai_sdk`` ``Response`` object.
+
+        Returns:
+            `ChatResponse`:
+                A single ``ChatResponse`` with ``is_last=True``.
+        """
+        content_blocks: List[TextBlock | ToolCallBlock | ThinkingBlock] = []
+
+        if response.reasoning_content:
+            content_blocks.append(
+                ThinkingBlock(thinking=response.reasoning_content),
+            )
+        if response.content:
+            content_blocks.append(TextBlock(text=response.content))
+
+        for tc in response.tool_calls or []:
+            content_blocks.append(
+                ToolCallBlock(
+                    id=tc.id,
+                    name=tc.function.name,
+                    input=tc.function.arguments,
+                ),
+            )
+
+        usage = None
+        if response.usage is not None:
+            u = response.usage
+            usage = ChatUsage(
+                input_tokens=u.prompt_tokens,
+                output_tokens=u.completion_tokens,
+                time=(datetime.now() - start_datetime).total_seconds(),
+                metadata=u,
+            )
+
+        resp_kwargs: dict[str, Any] = {
+            "content": content_blocks,
+            "is_last": True,
+            "usage": usage,
+        }
+        response_id = getattr(response, "id", None)
+        if response_id:
+            resp_kwargs["id"] = response_id
+
+        return ChatResponse(**resp_kwargs)

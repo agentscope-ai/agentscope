@@ -5,7 +5,6 @@ status: active
 input_types:
   - text/plain
   - application/x-thinking
-  - image/bmp
   - image/jpeg
   - image/png
   - image/gif

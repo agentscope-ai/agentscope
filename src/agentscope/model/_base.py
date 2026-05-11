@@ -59,7 +59,7 @@ class ChatModelBase(BaseModel):
         cls,
         custom_yaml_dir: str | None = None,
     ) -> list[ModelCard]:
-        """List candidate models of the DashScope API.
+        """List candidate models of the API.
 
         Args:
             custom_yaml_dir (`str | None`):

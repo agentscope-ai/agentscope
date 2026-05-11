@@ -7,6 +7,13 @@ from ._model_response import ChatResponse, StructuredResponse
 from ._model_usage import ChatUsage
 from ._anthropic import AnthropicCredential, AnthropicChatModel
 from ._dashscope import DashScopeCredential, DashScopeChatModel
+from ._deepseek import DeepSeekCredential, DeepSeekChatModel
+from ._gemini import GeminiCredential, GeminiChatModel
+from ._ollama import OllamaCredential, OllamaChatModel
+from ._openai_chat import OpenAIChatCredential, OpenAIChatModel
+from ._xai import XAICredential, XAIChatModel
+from ._kimi import KimiCredential, KimiChatModel
+from ._openai_response import OpenAIResponseCredential, OpenAIResponseModel
 
 __all__ = [
     "ChatUsage",
@@ -18,4 +25,18 @@ __all__ = [
     "AnthropicChatModel",
     "DashScopeCredential",
     "DashScopeChatModel",
+    "DeepSeekCredential",
+    "DeepSeekChatModel",
+    "GeminiCredential",
+    "GeminiChatModel",
+    "OllamaCredential",
+    "OllamaChatModel",
+    "OpenAIChatCredential",
+    "OpenAIChatModel",
+    "XAICredential",
+    "XAIChatModel",
+    "KimiCredential",
+    "KimiChatModel",
+    "OpenAIResponseCredential",
+    "OpenAIResponseModel",
 ]

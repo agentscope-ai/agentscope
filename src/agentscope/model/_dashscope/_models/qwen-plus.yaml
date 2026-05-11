@@ -1,0 +1,17 @@
+name: qwen-plus
+label: Qwen Plus
+status: active
+
+input_types:
+  - text/plain
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 1000000
+output_size: 16384
+
+parameter_overrides:
+  max_tokens: {"maximum": 16384}
+  context_size: {"maximum": 1000000}
