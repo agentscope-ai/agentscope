@@ -1,141 +1,131 @@
-# 第 17 章：工厂与 Schema——从函数到 JSON Schema
+# 第 17 章 Schema 工厂
 
-> **难度**：中等
->
-> 你写了一个 Python 函数 `get_weather(city: str)`，加了 docstring。AgentScope 怎么从这个函数自动生成 OpenAI 需要的 JSON Schema？这个过程涉及哪些文件？
+> 本章你将理解：AgentScope 如何从配置创建对象、Schema 驱动的对象工厂、工具参数的自动提取。
 
-## 知识补全：JSON Schema 与 Pydantic
+---
 
-**JSON Schema** 是一种描述 JSON 数据格式的规范。OpenAI 的工具调用 API 要求每个工具用 JSON Schema 描述参数：
+## 17.1 工厂模式
+
+工厂模式（Factory Pattern）的核心：**不直接 `new` 对象，而是通过配置或参数让工厂创建**。
+
+AgentScope 有两处工厂模式：
+1. 工具参数 Schema：从函数签名自动生成 JSON Schema
+2. 模型/Agent 配置：从字典创建对象（`_run_config.py`）
+
+> **源码验证日期**: 2026-05-11, commit `f17cfd0a`
+
+---
+
+## 17.2 工具参数的自动提取
+
+`Toolkit.register_tool_function()` 做了一件神奇的事——从 Python 函数自动生成 JSON Schema：
+
+```python
+def get_weather(city: str, unit: str = "celsius") -> str:
+    """获取城市天气
+
+    Args:
+        city (str): 城市名
+        unit (str): 温度单位，celsius 或 fahrenheit
+    """
+    ...
+```
+
+注册后自动生成：
 
 ```json
 {
-  "type": "function",
-  "function": {
     "name": "get_weather",
-    "description": "获取天气信息",
+    "description": "获取城市天气",
     "parameters": {
-      "type": "object",
-      "properties": {
-        "city": {"type": "string", "description": "城市名称"}
-      },
-      "required": ["city"]
+        "type": "object",
+        "properties": {
+            "city": {"type": "string", "description": "城市名"},
+            "unit": {"type": "string", "description": "温度单位", "default": "celsius"}
+        },
+        "required": ["city"]
     }
-  }
 }
 ```
 
-**Pydantic** 是 Python 的数据验证库。AgentScope 用 Pydantic 的 `BaseModel` 来动态扩展工具的 JSON Schema——在运行时给工具添加参数。
+### 提取过程
+
+1. **函数名** → `name`
+2. **文档字符串第一行** → `description`
+3. **类型注解** → `type`（`str` → `"string"`, `int` → `"integer"`）
+4. **默认值** → `default`
+5. **文档字符串的 Args 段** → 每个参数的 `description`
+6. **无默认值的参数** → 加入 `required`
+
+这个提取让模型知道工具的完整参数格式，从而正确生成 `ToolUseBlock`。
 
 ---
 
-## Schema 生成的完整路径
-
-```mermaid
-flowchart TD
-    A["Python 函数 + docstring"] --> B["_parse_tool_function()"]
-    B --> C["提取函数名、描述、参数"]
-    C --> D["RegisteredToolFunction"]
-    D --> E["json_schema 字段"]
-    E --> F["Toolkit.get_json_schemas()"]
-    F --> G["传给 Model.__call__()"]
-```
-
-### _parse_tool_function
-
-打开 `src/agentscope/_utils/_common.py`：
-
-```bash
-grep -n "_parse_tool_function" src/agentscope/_utils/_common.py
-```
-
-这个函数做这些事：
-
-1. **函数名**：从 `func.__name__` 获取（或用自定义 `func_name`）
-2. **描述**：从 docstring 的第一行提取（或用自定义 `func_description`）
-3. **参数**：从 `inspect.signature(func)` 获取参数列表和类型标注
-4. **生成 Schema**：构造 `{"type": "function", "function": {"name": ..., "parameters": ...}}`
-
-### register_tool_function 中的组装
-
-回到 `_toolkit.py:274`：
+## 17.3 设计一瞥：为什么自动提取而不是手写？
 
 ```python
-def register_tool_function(self, tool_func, ...):
-    # 解析函数
-    parsed = _parse_tool_function(tool_func, ...)
+# 方案 A：手写 Schema（容易出错）
+toolkit.register(
+    name="get_weather",
+    description="获取城市天气",
+    parameters={
+        "type": "object",
+        "properties": {
+            "city": {"type": "string", "description": "城市名"}
+        },
+        "required": ["city"]
+    },
+    func=get_weather,
+)
 
-    # 创建 RegisteredToolFunction
-    registered = RegisteredToolFunction(
-        name=parsed.name,
-        json_schema=parsed.schema,
-        original_func=tool_func,
-        ...
-    )
-    self.tools[parsed.name] = registered
+# 方案 B：自动提取（AgentScope 的选择）
+toolkit.register_tool_function(get_weather)
 ```
+
+自动提取的好处：
+1. **DRY**：不重复写参数信息
+2. **一致性**：函数签名和 Schema 永远同步
+3. **少出错**：不会有"函数改了但 Schema 忘了改"的问题
 
 ---
 
-## 动态 Schema 扩展
+## 17.4 试一试
 
-`RegisteredToolFunction` 有一个 `extended_model` 字段（`_types.py:45`）：
-
-```python
-extended_model: Type[BaseModel] | None = None
-```
-
-这允许运行时用 Pydantic 模型扩展工具的 JSON Schema。比如，结构化输出功能就在这里插入额外的参数。
-
-`Toolkit.set_extended_model()` 方法把 Pydantic 模型合并到工具的 JSON Schema 中——这样模型在调用工具时必须按扩展后的格式返回数据。
-
-AgentScope 官方文档的 Building Blocks > Tool Capabilities 页面展示了"Extending JSON Schema Dynamically"的使用方法——通过 `Toolkit` 的扩展 API 动态修改工具的参数描述。本章解释了 `_parse_tool_function` 如何从 docstring 提取参数信息并自动生成 JSON Schema。
-
-在实际项目中，自动 JSON Schema 生成的常见应用包括：
-- 搜索工具：参数 `query: str` + `max_results: int`，从 docstring 自动提取参数说明
-- 数据库查询工具：参数 `sql: str`，自动生成描述"要执行的 SQL 查询语句"
-- 文件处理工具：参数 `file_path: str` + `encoding: str = "utf-8"`，自动识别可选参数和默认值
-
----
-
-## 试一试：查看自动生成的 Schema
-
-**步骤**：
-
-1. 在 Python 中运行：
+### 查看自动生成的 Schema
 
 ```python
-from agentscope.tool import Toolkit, ToolResponse
+from agentscope.tool import Toolkit
 
-def get_weather(city: str, unit: str = "celsius") -> ToolResponse:
-    """获取天气信息。
+def calculate(a: int, b: int, operation: str = "add") -> int:
+    """执行数学运算
 
     Args:
-        city (str): 城市名称
-        unit (str, optional): 温度单位，celsius 或 fahrenheit
+        a (int): 第一个数字
+        b (int): 第二个数字
+        operation (str): 运算类型，add/subtract/multiply
     """
-    return ToolResponse(content=[])
+    pass
 
 toolkit = Toolkit()
-toolkit.register_tool_function(get_weather)
+toolkit.register_tool_function(calculate)
 
 import json
-for name, func in toolkit.tools.items():
-    print(json.dumps(func.json_schema, ensure_ascii=False, indent=2))
+for schema in toolkit.get_tool_schemas():
+    print(json.dumps(schema, ensure_ascii=False, indent=2))
 ```
-
-2. 观察输出：`city` 是 required，`unit` 有默认值不是 required。docstring 中的描述被提取到了 schema 中。
 
 ---
 
-## 检查点
+## 17.5 检查点
 
-- `_parse_tool_function()` 从函数签名和 docstring 自动生成 JSON Schema
-- `RegisteredToolFunction` 存储工具的完整信息（名称、Schema、原始函数、分组）
-- `extended_model` 允许用 Pydantic 模型动态扩展 Schema（用于结构化输出）
+你现在已经理解了：
+
+- **工厂模式**：从配置/签名自动创建对象或 Schema
+- **自动 Schema 提取**：从函数签名、类型注解、文档字符串生成 JSON Schema
+- **DRY 原则**：函数定义是唯一的真相来源
 
 ---
 
 ## 下一章预告
 
-Schema 生成是静态的——定义时确定。但工具执行时可能需要插入额外逻辑（日志、权限检查、缓存）。下一章我们看**中间件的洋葱模型**。
+Schema 工厂自动化了对象创建。下一章看中间件管道——给工具执行加横切逻辑。
