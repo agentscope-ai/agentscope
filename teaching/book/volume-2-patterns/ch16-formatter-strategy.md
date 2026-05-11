@@ -1,133 +1,193 @@
-# 第 16 章：策略模式——Formatter 的多态分发
+# 第 16 章 格式化策略
 
-> **难度**：中等
->
-> 你把 Formatter 从 `OpenAIChatFormatter` 换成 `AnthropicChatFormatter`，Agent 的行为完全不变——只是发送给 API 的 JSON 格式变了。这是怎么做到的？
-
-## 知识补全：策略模式
-
-**策略模式（Strategy Pattern）** 的核心思想：定义一个统一接口，不同的实现提供不同的策略，使用者在运行时选择策略。
-
-```
-              ┌──────────────┐
-              │ FormatterBase │  ← 统一接口
-              │  format()    │
-              └──────┬───────┘
-                     │
-        ┌────────────┼────────────┐
-        ▼            ▼            ▼
-  OpenAI格式    Anthropic格式   Gemini格式
-```
-
-调用者只依赖 `FormatterBase`，不关心具体是哪种格式。
-
-AgentScope 官方文档的 Building Blocks > Models 页面展示了不同模型提供商的使用方法——OpenAI、Anthropic、DashScope、Gemini、Ollama 等。每种模型可以搭配对应的 Formatter，实现格式转换与 API 通信的分离。同一个 Model 可以搭配不同的 Formatter，这就是策略模式的威力——算法（格式化）与使用者（Model）解耦。
+> 本章你将理解：Formatter 的策略模式设计、为什么 Formatter 独立于 Model、如何添加新的格式化策略。
 
 ---
 
-## 策略在 AgentScope 中的体现
+## 16.1 策略模式是什么？
 
-Formatter 是最典型的策略模式：
+策略模式（Strategy Pattern）的核心思想：**定义一族算法，把它们封装成独立的类，让它们可以互相替换**。
 
-| 类 | 策略（API 格式） |
-|----|----------------|
-| `OpenAIChatFormatter` | OpenAI Chat Completions API 格式 |
-| `AnthropicChatFormatter` | Anthropic Messages API 格式 |
-| `DashScopeChatFormatter` | 阿里云通义千问 API 格式 |
-| `GeminiChatFormatter` | Google Gemini API 格式 |
-| `OllamaChatFormatter` | Ollama 本地模型 API 格式 |
-
-它们都继承自 `FormatterBase`（`_formatter_base.py:11`），实现了同一个 `format()` 方法。
-
-### ReActAgent 如何使用 Formatter
+在 AgentScope 中，不同的模型 API 需要不同的消息格式。Formatter 用策略模式解决这个问题：
 
 ```python
-# _react_agent.py 中 _reasoning 方法
-prompt = await self.formatter.format(msgs)  # 只调用接口，不关心具体格式
-res = await self.model(prompt, tools=self.toolkit.get_json_schemas())
+# 同样的消息，不同的格式化策略
+formatter = OpenAIChatFormatter()   # → OpenAI API 格式
+formatter = AnthropicFormatter()    # → Anthropic API 格式
+formatter = GeminiFormatter()       # → Gemini API 格式
 ```
 
-Agent 不写 `if isinstance(self.formatter, OpenAIChatFormatter)`——它只调用 `format()`，由具体子类决定输出格式。
+Agent 不需要知道底层 API 格式的差异——只需要调用 `formatter.format(msgs)`。
 
-### 另一个策略模式：Model
+> **源码验证日期**: 2026-05-11, commit `f17cfd0a`
 
-`ChatModelBase` 也是策略模式：
+---
+
+## 16.2 源码入口
+
+| 文件 | 内容 |
+|------|------|
+| `src/agentscope/formatter/_formatter_base.py` | `FormatterBase` |
+| `src/agentscope/formatter/_truncated_formatter_base.py` | `TruncatedFormatterBase` |
+| `src/agentscope/formatter/_openai_formatter.py` | `OpenAIChatFormatter` |
+
+---
+
+## 16.3 逐行阅读
+
+### FormatterBase：策略接口
 
 ```python
-# _model_base.py:13
-class ChatModelBase:
+class FormatterBase:
     @abstractmethod
-    async def __call__(self, messages, tools=None, ...) -> ChatResponse | AsyncGenerator:
+    async def format(self, *args, **kwargs) -> list[dict[str, Any]]:
+        """Format the Msg objects to API format."""
 ```
 
-不同的模型实现（OpenAI、Anthropic、DashScope……）提供不同的"调用策略"。
+一个方法定义了整个策略接口。
 
----
+### TruncatedFormatterBase：通用策略
 
-## 为什么要分离 Formatter 和 Model？
-
-如果不用策略模式，每添加一个新模型 API，就要写一个新的 Model 类，里面包含格式转换逻辑。分离后：
-
-- **添加新 API 格式**：只需写一个新的 Formatter
-- **添加新模型提供者**：只需写一个新的 Model
-- **组合自由**：Ollama 兼容 OpenAI API → `OllamaChatModel` + `OpenAIChatFormatter`
-
-```mermaid
-flowchart LR
-    subgraph 可组合
-        M1[OpenAIChatModel] --- F1[OpenAIChatFormatter]
-        M2[AnthropicChatModel] --- F2[AnthropicChatFormatter]
-        M3[OllamaChatModel] --- F1
-        M4[DeepSeekChatModel] --- F1
-    end
-```
-
-> **设计一瞥**：Formatter 和 Model 的分离是一种"正交分解"——把"格式转换"和"API 调用"作为两个独立的维度。每个维度独立变化，组合时不需要 1:1 绑定。
-> 详见卷四第 35 章。
-
----
-
-## TruncatedFormatterBase：模板方法模式
-
-`TruncatedFormatterBase`（`_truncated_formatter_base.py:19`）使用了另一种设计模式——**模板方法**：
+截断逻辑是所有格式化策略都需要的——不管 OpenAI 还是 Anthropic，消息太长都要截断。所以截断逻辑放在中间层：
 
 ```python
 class TruncatedFormatterBase(FormatterBase, ABC):
-    async def format(self, msgs, **kwargs):
+    async def format(self, msgs: list[Msg]) -> list[dict]:
         while True:
-            formatted = await self._format(msgs)     # 子类实现
-            n_tokens = await self._count(formatted)
-            if n_tokens <= self.max_tokens:
+            formatted = await self._format(msgs)
+            tokens = await self._count(formatted)
+            if tokens <= self.max_tokens:
                 return formatted
-            msgs = self._truncate(msgs)               # 子类实现
+            msgs = await self._truncate(msgs)
+
+    @abstractmethod
+    async def _format(self, msgs) -> list[dict]:
+        """子类实现具体的格式化"""
 ```
 
-`format()` 是**模板方法**——它定义了算法骨架（格式化 → 计数 → 截断），但把具体步骤留给子类。`_format()` 和 `_truncate()` 由 `OpenAIChatFormatter` 等具体类实现。
+这里用了**模板方法模式**（Template Method）：`format()` 定义了算法骨架（格式化 → 计数 → 截断），`_format()` 是子类要实现的具体步骤。
+
+### OpenAIChatFormatter：具体策略
+
+```python
+class OpenAIChatFormatter(TruncatedFormatterBase):
+    async def _format_tool_sequence(self, msgs) -> list[dict]:
+        # OpenAI 的 tool_calls 格式
+        ...
+
+    async def _format_agent_message(self, msgs, is_first) -> list[dict]:
+        # OpenAI 的 assistant/user 格式
+        ...
+```
+
+### 策略如何组合
+
+```mermaid
+graph TB
+    Agent["Agent"] -->|"format(msgs)"| Formatter["FormatterBase"]
+    Formatter --> TB["TruncatedFormatterBase<br/>截断逻辑"]
+    TB --> OCF["OpenAIChatFormatter<br/>OpenAI 格式"]
+    TB --> ACF["AnthropicChatFormatter<br/>Anthropic 格式"]
+
+    Agent -->|"model(messages)"| Model["ChatModelBase"]
+    Model --> OCM["OpenAIChatModel"]
+    Model --> ACM["AnthropicChatModel"]
+
+    style Formatter fill:#e8f5e9
+    style Model fill:#e3f2fd
+```
+
+Agent 持有 Formatter 和 Model 两个独立对象。Formatter 把消息转为 API 格式，Model 发送请求。两者独立变化。
+
+### 设计一瞥：为什么 Formatter 和 Model 分离？
+
+如果把格式化写在 Model 里：
+
+```python
+class OpenAIChatModel:
+    async def __call__(self, msgs):
+        formatted = self._format_openai(msgs)  # 格式化写在 Model 里
+        return await self._call_api(formatted)
+```
+
+问题：
+1. **不能复用**：多个 Model 可能共享同一种格式（如 OpenAI 兼容 API）
+2. **不能独立测试**：格式化逻辑和 API 调用混在一起
+3. **不能独立配置**：想换截断策略需要改 Model
+
+分离后：Formatter 可以独立配置（截断策略、Token 限制），Model 只负责 API 调用。
 
 ---
 
-## 试一试：查看不同的格式化输出
+## 16.4 消息分组：tool_sequence vs agent_message
 
-**步骤**：
+Formatter 的一个核心设计是消息分组。为什么需要分组？
 
-1. 搜索 Formatter 的所有实现：
+因为 API 对工具调用的格式要求严格。OpenAI 要求：
 
-```bash
-grep -n "class.*Formatter.*TruncatedFormatterBase" src/agentscope/formatter/*.py
+```json
+[
+    {"role": "assistant", "tool_calls": [...]},   // 工具调用
+    {"role": "tool", "tool_call_id": "..."}       // 工具结果
+]
 ```
 
-2. 对比 `OpenAIChatFormatter._format()` 和 `AnthropicChatFormatter._format()` 的不同——特别注意系统提示的处理方式（OpenAI 用 `{"role": "system"}` 消息，Anthropic 用单独的 `system` 参数）。
+工具调用和结果必须相邻。但多 Agent 场景下，消息可能交错：
+
+```
+Agent A 说: "让我查一下"
+Agent B 说: "我也帮你查"
+Agent A 调用工具
+Agent B 调用工具
+Agent A 获得结果
+Agent B 获得结果
+```
+
+`_group_messages()` 把交错的消息按类型重新分组，保证格式正确。
 
 ---
 
-## 检查点
+## 16.5 试一试
 
-- **策略模式**：统一接口 + 多种实现，运行时选择
-- Formatter 和 Model 的分离是正交分解，允许自由组合
-- **模板方法**：`TruncatedFormatterBase.format()` 定义算法骨架，子类填充细节
+### 创建自定义 Formatter
+
+```python
+from agentscope.formatter import FormatterBase
+from agentscope.message import Msg
+
+class SimpleFormatter(FormatterBase):
+    """最简单的格式化：把 Msg 转为 dict"""
+    async def format(self, msgs, **kwargs):
+        result = []
+        for msg in msgs:
+            result.append({"role": msg.role, "content": msg.content if isinstance(msg.content, str) else str(msg.content)})
+        return result
+
+formatter = SimpleFormatter()
+formatted = await formatter.format([
+    Msg("system", "你是助手", "system"),
+    Msg("user", "你好", "user"),
+])
+print(formatted)
+```
+
+---
+
+## 16.6 检查点
+
+你现在已经理解了：
+
+- **策略模式**：Formatter 定义接口，子类实现不同 API 格式
+- **模板方法**：`TruncatedFormatterBase.format()` 定义截断流程骨架
+- **Formatter 和 Model 分离**：格式化和 API 调用独立变化
+- **消息分组**：`_group_messages()` 按类型分组，满足 API 格式要求
+
+**自检练习**：
+1. 如果要支持一个新的 API 格式，需要做什么？（提示：继承 `TruncatedFormatterBase`，实现 `_format_*` 方法）
+2. 截断逻辑为什么放在中间层而不是子类？（提示：所有格式化策略都需要截断）
 
 ---
 
 ## 下一章预告
 
-Formatter 把 `Msg` 转成 API 需要的 JSON。但工具的 JSON Schema 是怎么从 Python 函数的 docstring 和类型标注自动生成的？下一章我们看工厂与 Schema。
+Formatter 用策略模式处理格式差异。下一章看 Schema 工厂——配置驱动的对象创建。
