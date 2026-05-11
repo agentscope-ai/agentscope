@@ -105,7 +105,7 @@ class DeepSeekChatFormatter(TruncatedFormatterBase):
 
             msg_deepseek = {
                 "role": msg.role,
-                "content": content_msg or None,
+                "content": content_msg or (None if tool_calls else ""),
             }
 
             if reasoning_msg:
