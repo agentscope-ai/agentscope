@@ -634,6 +634,7 @@ class LocalWorkspace(WorkspaceBase):
             `_SkillsFile`: The updated index (also persisted to disk).
         """
         existing: dict[str, _SkillEntry] = skills_file["skills"]
+        original_mtime = skills_file["skills_dir_mtime"]
 
         # Collect actual subdirectories on disk
         def _list_dirs() -> set[str]:
@@ -698,7 +699,12 @@ class LocalWorkspace(WorkspaceBase):
 
         skills_file["skills"] = existing
         skills_file["skills_dir_mtime"] = current_mtime
-        if updated:
+
+        # Save if index changed OR if mtime needs updating
+        # (mtime change without index change means non-skill files were
+        # added/removed, we still need to record the new mtime to avoid
+        # re-reconciling on every list_skills call)
+        if updated or current_mtime != original_mtime:
             await self._save_skills_file(skills_dir, skills_file)
 
         return skills_file
