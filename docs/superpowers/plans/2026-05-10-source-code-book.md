@@ -147,7 +147,7 @@ git commit -m "docs: create book directory structure and README"
 1. **生活类比** — "LLM 像一个超级预测下一个字的输入法"
 2. **动手试试** — 用 curl 或 Python 几行代码调用 OpenAI API。如果没有 API key，提供模拟响应示例，跟随阅读即可
 3. **核心概念** — 大模型是什么、Chat API、Token、流式响应、Tool Calling
-4. **试一试** — 从 GitHub clone AgentScope、pip install -e，确认环境可用
+4. **试一试** — 分两级：基础级（pip install agentscope，3 行脚本验证安装）、完整级（clone + pip install -e，为后续改源码做准备）
 5. **检查点** — "你现在已经理解了：什么是 LLM、Chat API、Token、Tool Calling"
 
 目标篇幅：300-500 行
@@ -172,7 +172,7 @@ git commit -m "docs: write ch01 - what is LLM"
 1. **生活类比** — "Agent 像一个有记忆、会查资料、能用工具的助手"
 2. **动手试试** — 用天气 Agent 的完整代码跑一次，看到 Agent 自动调用工具
 3. **核心概念** — Agent = 大模型 + 记忆 + 工具 + 循环；ReAct 模式；Memory/Tool/RAG
-4. **试一试** — 修改天气 Agent 的 sys_prompt，观察行为变化
+4. **试一试** — 分两级：纯本地级（用 input + if/else 模拟最简 Agent 循环，不依赖 API key）、完整级（修改天气 Agent 的 sys_prompt，观察行为变化）
 5. **检查点** — "你现在已经理解了：什么是 Agent / ReAct / Memory / Tool / RAG"
 
 目标篇幅：300-400 行
