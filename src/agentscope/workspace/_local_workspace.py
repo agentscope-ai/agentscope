@@ -137,6 +137,7 @@ class LocalWorkspace(WorkspaceBase):
         self,
         workdir: str,
         skill_paths: list[str] | None = None,
+        mcps: list[MCPClient] | None = None,
         instructions: str = _DEFAULT_WORKSPACE_INSTRUCTIONS,
     ) -> None:
         """Initialize the local workspace.
@@ -158,6 +159,7 @@ class LocalWorkspace(WorkspaceBase):
             dict.fromkeys(os.path.abspath(p) for p in (skill_paths or [])),
         )
         self._instructions = instructions
+        self._mcps = mcps or []
 
     async def initialize(self) -> None:
         """Initialize the local workspace by copying skills to the target
@@ -170,6 +172,14 @@ class LocalWorkspace(WorkspaceBase):
         suffixes
         4. Copy the skill, then update the .skills index
         """
+        # Initialize the MCP connections
+        for mcp in self._mcps:
+            if (
+                mcp.is_stateful or mcp.mcp_config.type == "stdio_mcp"
+            ) and not mcp.is_connected:
+                await mcp.connect()
+
+        # Copy the skills
         skills_dir = os.path.join(self._workdir, "skills")
         os.makedirs(skills_dir, exist_ok=True)
 
@@ -550,6 +560,12 @@ class LocalWorkspace(WorkspaceBase):
         For LocalWorkspace, this is a no-op as there are no persistent
         connections or resources to clean up.
         """
+        # Close the MCP connection
+        for mcp in self._mcps:
+            if (
+                mcp.is_stateful or mcp.mcp_config.type == "stdio_mcp"
+            ) and mcp.is_connected:
+                await mcp.close()
 
     async def list_tools(self) -> list[ToolBase]:
         """List all tools available in the workspace."""
@@ -770,4 +786,4 @@ class LocalWorkspace(WorkspaceBase):
     async def list_mcps(self) -> list[MCPClient]:
         """The workspace doesn't need to handle the MCP servers. Just leave
         it empty."""
-        return []
+        return self._mcps
