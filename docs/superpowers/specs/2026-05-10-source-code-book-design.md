@@ -131,7 +131,7 @@ result = await agent(Msg("user", "北京今天天气怎么样？", "user"))
 |----|------|---------|---------|---------|---------|
 | 13 | 模块系统：文件的命名与导入 | "你 clone 了仓库，打开 src/ 看到一堆 _ 开头的文件" | _前缀约定、re-export、lazy import | 各 `__init__.py` | Python 模块与包导入机制 |
 | 14 | 继承体系：从 StateModule 到 AgentBase | "你收到一个 bug：Agent 序列化后恢复，但记忆丢失了" | PyTorch 式状态管理 | `module/_state_module.py`, `agent/_agent_base.py` | 继承与多态 |
-| 15 | 元类与 Hook：方法调用的拦截 | "你加了一行日志到 reply() 但没生效——因为 Hook 先执行了" | _AgentMeta 编译期包装、AgentHookTypes/ReActAgentHookTypes 类型约束 | `agent/_agent_meta.py`, `types/`, `hooks/` | 无（卷一 ch05 已讲过元类基础） |
+| 15 | 元类与 Hook：方法调用的拦截 | "你加了一行日志到 reply() 但没生效——因为 Hook 先执行了" | _AgentMeta 编译期包装、AgentHookTypes/ReActAgentHookTypes 类型约束 | `agent/_agent_base.py`, `agent/_agent_meta.py`, `types/_hook.py`, `hooks/` | 无（卷一 ch05 已讲过元类基础） |
 | 16 | 策略模式：Formatter 的多态分发 | "你接了一个 bug：Gemini 模型的工具调用格式不对" | FormatterBase → TruncatedFormatterBase → 各 Provider | `formatter/_formatter_base.py` 及子类 | 策略模式（用同一接口做不同事） |
 | 17 | 工厂与 Schema：从函数到 JSON Schema | "你的工具函数有嵌套的 Pydantic 参数，Schema 生成报错了" | _parse_tool_function + pydantic.create_model | `_utils/_common.py`, `tool/_toolkit.py`, `types/_tool.py` | Pydantic 基础（只需理解 BaseModel 自动生成 JSON Schema 这一功能，5 行最小示例） |
 | 18 | 中间件与洋葱模型 | "你的工具被并发调用，需要加限流" | _apply_middlewares 装饰器链、AsyncGenerator 统一接口 | `tool/_toolkit.py` | 装饰器链（函数包装函数） |

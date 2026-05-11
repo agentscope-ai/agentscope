@@ -603,6 +603,11 @@ git commit -m "docs: complete volume 1 - one agent() call journey"
 - [ ] **Step 1: 验证源码 → Step 2: 写 ch13（开场场景 → 知识补全 → 源码分析 → 对比反思 → 试一试 → 检查点）→ Step 3: 自检 + 提交**
 
 ```bash
+grep -n "from\|import\|__all__" src/agentscope/__init__.py
+grep -n "from\|import" src/agentscope/agent/__init__.py src/agentscope/model/__init__.py src/agentscope/tool/__init__.py
+```
+
+```bash
 git add teaching/book/volume-2-patterns/ch13-module-system.md
 git commit -m "docs: write ch13 - module system"
 ```
@@ -622,6 +627,11 @@ git commit -m "docs: write ch13 - module system"
 - [ ] **Step 1: 验证源码 → Step 2: 写 ch14 → Step 3: 自检 + 提交**
 
 ```bash
+grep -n "class StateModule\|def state_dict\|def load_state_dict\|def register_state" src/agentscope/module/_state_module.py
+grep -n "class AgentBase\|from.*module import StateModule" src/agentscope/agent/_agent_base.py
+```
+
+```bash
 git add teaching/book/volume-2-patterns/ch14-inheritance.md
 git commit -m "docs: write ch14 - inheritance hierarchy"
 ```
@@ -638,6 +648,12 @@ git commit -m "docs: write ch14 - inheritance hierarchy"
 **难度：** 进阶
 
 - [ ] **Step 1: 验证源码 → Step 2: 写 ch15 → Step 3: 自检 + 提交**
+
+```bash
+grep -n "class _AgentMeta\|def __new__\|def _wrap_with_hooks" src/agentscope/agent/_agent_meta.py
+grep -n "AgentHookTypes\|register_class_hook\|_hooks" src/agentscope/agent/_agent_base.py
+grep -n "AgentHookTypes\|ReActAgentHookTypes" src/agentscope/types/_hook.py
+```
 
 ```bash
 git add teaching/book/volume-2-patterns/ch15-metaclass-hooks.md
@@ -659,6 +675,12 @@ git commit -m "docs: write ch15 - metaclass and hooks"
 - [ ] **Step 1: 验证源码 → Step 2: 写 ch16 → Step 3: 自检 + 提交**
 
 ```bash
+grep -n "class FormatterBase\|async def format" src/agentscope/formatter/_formatter_base.py
+grep -rn "class.*Formatter.*TruncatedFormatterBase\|class.*Formatter.*FormatterBase" src/agentscope/formatter/
+grep -n "class TruncatedFormatterBase\|def _format\|def _truncate\|def _count" src/agentscope/formatter/_truncated_formatter_base.py
+```
+
+```bash
 git add teaching/book/volume-2-patterns/ch16-formatter-strategy.md
 git commit -m "docs: write ch16 - formatter strategy"
 ```
@@ -678,6 +700,12 @@ git commit -m "docs: write ch16 - formatter strategy"
 - [ ] **Step 1: 验证源码 → Step 2: 写 ch17 → Step 3: 自检 + 提交**
 
 ```bash
+grep -n "def _parse_tool_function\|def _extract_json_schema_from_mcp_tool\|def _remove_title_field" src/agentscope/_utils/_common.py
+grep -n "def register_tool_function\|def get_json_schemas\|json_schema" src/agentscope/tool/_toolkit.py
+grep -n "ToolFunction" src/agentscope/types/_tool.py
+```
+
+```bash
 git add teaching/book/volume-2-patterns/ch17-schema-factory.md
 git commit -m "docs: write ch17 - schema factory"
 ```
@@ -688,13 +716,17 @@ git commit -m "docs: write ch17 - schema factory"
 
 **Files:**
 - Create: `teaching/book/volume-2-patterns/ch18-middleware.md`
-- Verify: `src/agentscope/tool/_toolkit.py` (lines 57-114, 853-1033)
+- Verify: `src/agentscope/tool/_toolkit.py` (lines 57-114, 853-1033, 1441+)
 
 **开场场景：** "你的工具被并发调用，需要加限流"
 **难度：** 进阶
 **知识补全：** 装饰器链
 
 - [ ] **Step 1: 验证源码 → Step 2: 写 ch18 → Step 3: 自检 + 提交**
+
+```bash
+grep -n "def _apply_middlewares\|def call_tool_function\|def register_middleware" src/agentscope/tool/_toolkit.py
+```
 
 ```bash
 git add teaching/book/volume-2-patterns/ch18-middleware.md
@@ -716,6 +748,12 @@ git commit -m "docs: write ch18 - middleware"
 - [ ] **Step 1: 验证源码 → Step 2: 写 ch19 → Step 3: 自检 + 提交**
 
 ```bash
+grep -n "class MsgHub\|def add\|def delete\|async def broadcast\|enable_auto_broadcast" src/agentscope/pipeline/_msghub.py
+grep -n "class SequentialPipeline\|class FanoutPipeline" src/agentscope/pipeline/_class.py
+grep -n "async def sequential_pipeline\|async def fanout_pipeline\|async def stream_printing_messages" src/agentscope/pipeline/_functional.py
+```
+
+```bash
 git add teaching/book/volume-2-patterns/ch19-pubsub.md
 git commit -m "docs: write ch19 - pubsub"
 ```
@@ -732,6 +770,11 @@ git commit -m "docs: write ch19 - pubsub"
 **难度：** 中等
 
 - [ ] **Step 1: 验证源码 → Step 2: 写 ch20 → Step 3: 自检 + 提交**
+
+```bash
+grep -n "def trace\|def trace_toolkit\|def trace_reply\|def trace_llm\|def trace_format\|def trace_embedding" src/agentscope/tracing/_trace.py
+grep -n "class SessionBase\|class JSONSession\|class RedisSession\|class TablestoreSession" src/agentscope/session/
+```
 
 ```bash
 git add teaching/book/volume-2-patterns/ch20-observability.md
