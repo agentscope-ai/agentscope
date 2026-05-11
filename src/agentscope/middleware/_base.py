@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from ..model import ChatResponse
 
 
-class MiddlewareBase:
+class MiddlewareBase:  # pylint: disable=unused-argument
     """Base class for all middleware implementations.
 
     Middleware provides interception mechanisms at 5 key execution points
@@ -80,9 +80,10 @@ class MiddlewareBase:
         Yields:
             AgentEvent | Msg: Events from the reply process
         """
-        raise NotImplementedError(
+        raise RuntimeError(
             f"{type(self).__name__} does not implement on_reply",
         )
+        yield  # pylint: disable=unreachable
 
     async def on_reasoning(
         self,
@@ -102,9 +103,10 @@ class MiddlewareBase:
         Yields:
             Various events from the reasoning process
         """
-        raise NotImplementedError(
+        raise RuntimeError(
             f"{type(self).__name__} does not implement on_reasoning",
         )
+        yield  # pylint: disable=unreachable
 
     async def on_acting(
         self,
@@ -124,9 +126,10 @@ class MiddlewareBase:
         Yields:
             Events from the tool execution process
         """
-        raise NotImplementedError(
+        raise RuntimeError(
             f"{type(self).__name__} does not implement on_acting",
         )
+        yield  # pylint: disable=unreachable
 
     async def on_model_call(
         self,
@@ -152,7 +155,7 @@ class MiddlewareBase:
         Returns:
             ChatResponse or AsyncGenerator[ChatResponse, None]
         """
-        raise NotImplementedError(
+        raise RuntimeError(
             f"{type(self).__name__} does not implement on_model_call",
         )
 
@@ -174,6 +177,6 @@ class MiddlewareBase:
         Returns:
             str: The transformed system prompt
         """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not implement " f"on_system_prompt",
+        raise RuntimeError(
+            f"{type(self).__name__} does not implement on_system_prompt",
         )

@@ -2,21 +2,10 @@
 """The tracing interface class in agentscope."""
 
 from ._setup import setup_tracing
-from ._trace import (
-    trace,
-    trace_llm,
-    trace_reply_stream,
-    trace_format,
-    trace_toolkit,
-    trace_embedding,
-)
+from ._trace import TracingMiddleware, trace_llm
 
 __all__ = [
     "setup_tracing",
-    "trace",
+    "TracingMiddleware",
     "trace_llm",
-    "trace_reply_stream",
-    "trace_format",
-    "trace_toolkit",
-    "trace_embedding",
 ]

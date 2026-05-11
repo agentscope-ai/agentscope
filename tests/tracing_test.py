@@ -35,6 +35,7 @@ from agentscope.permission import (
     PermissionBehavior,
 )
 from agentscope.tool import Toolkit, ToolBase
+from agentscope.tracing import TracingMiddleware
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +183,7 @@ class TracingTest(IsolatedAsyncioTestCase):
             system_prompt="You are a test assistant.",
             model=self.model,
             toolkit=Toolkit(tools=[WeatherTool()]),
+            middlewares=[TracingMiddleware()],
         )
 
     # -----------------------------------------------------------------------
@@ -330,6 +332,7 @@ class TracingTest(IsolatedAsyncioTestCase):
             system_prompt="You are a test assistant.",
             model=self.model,
             toolkit=Toolkit(tools=[HitlWeatherTool()]),
+            middlewares=[TracingMiddleware()],
         )
         # The HITL tool returns ASK;
         # first call ends with RequireUserConfirmEvent
@@ -363,6 +366,7 @@ class TracingTest(IsolatedAsyncioTestCase):
             system_prompt="You are a test assistant.",
             model=self.model,
             toolkit=Toolkit(tools=[HitlWeatherTool()]),
+            middlewares=[TracingMiddleware()],
         )
 
         # First call: agent asks for confirmation
@@ -432,6 +436,7 @@ class TracingTest(IsolatedAsyncioTestCase):
             system_prompt="You are a test assistant.",
             model=self.model,
             toolkit=Toolkit(tools=[HitlWeatherTool()]),
+            middlewares=[TracingMiddleware()],
         )
 
         # First call: agent asks for confirmation
@@ -503,6 +508,7 @@ class TracingTest(IsolatedAsyncioTestCase):
             system_prompt="You are a test assistant.",
             model=self.model,
             toolkit=Toolkit(tools=[ExternalWeatherTool()]),
+            middlewares=[TracingMiddleware()],
         )
         self.model.set_responses(
             [_make_tool_call_response("e1", "Guangzhou")],
@@ -535,6 +541,7 @@ class TracingTest(IsolatedAsyncioTestCase):
             system_prompt="You are a test assistant.",
             model=self.model,
             toolkit=Toolkit(tools=[ExternalWeatherTool()]),
+            middlewares=[TracingMiddleware()],
         )
 
         # First call: agent requires external execution
@@ -608,6 +615,7 @@ class TracingTest(IsolatedAsyncioTestCase):
             system_prompt="You are a test assistant.",
             model=self.model,
             toolkit=Toolkit(tools=[ExternalWeatherTool()]),
+            middlewares=[TracingMiddleware()],
         )
 
         # First call
@@ -667,6 +675,7 @@ class TracingTest(IsolatedAsyncioTestCase):
             system_prompt="You are a test assistant.",
             model=self.model,
             toolkit=Toolkit(tools=[ExternalWeatherTool()]),
+            middlewares=[TracingMiddleware()],
         )
 
         # First call
