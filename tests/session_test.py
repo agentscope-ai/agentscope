@@ -96,6 +96,22 @@ class SessionTest(IsolatedAsyncioTestCase):
         self.assertEqual(agent1.name, "Friday")
         self.assertEqual(agent2.sys_prompt, "A helpful assistant.")
 
+    async def test_json_session_rejects_path_traversal(self) -> None:
+        """Test JSONSession rejects path traversal in session identifiers."""
+        session = JSONSession(save_dir="./sessions")
+        agent = MyAgent()
+
+        for field_name, kwargs in [
+            ("session_id", {"session_id": "../outside"}),
+            ("user_id", {"session_id": "safe", "user_id": "../outside"}),
+        ]:
+            with self.subTest(field_name=field_name):
+                with self.assertRaisesRegex(ValueError, field_name):
+                    await session.save_session_state(**kwargs, agent=agent)
+
+        self.assertFalse(os.path.exists("./outside.json"))
+        self.assertFalse(os.path.exists("./outside_safe.json"))
+
     async def asyncTearDown(self) -> None:
         """Clean up after the test."""
         # Remove the session file if it exists
