@@ -19,8 +19,8 @@ from typing import TYPE_CHECKING, Any
 
 import mcp.types as mtypes
 
-from ..mcp import MCPClient, StdioMCPConfig
 from .._logging import logger
+from ..mcp import MCPClient, StdioMCPConfig
 
 if TYPE_CHECKING:
     from .config import MCPServerConfig

@@ -24,8 +24,8 @@ from .connection import SandboxConnection, register_sandbox_connection_type
 from .exceptions import UnsupportedOperation
 from .types import (
     SandboxExecutionResult,
-    SandboxInternalEndpoint,
     SandboxInitializationConfig,
+    SandboxInternalEndpoint,
     SerializedSandboxState,
 )
 
@@ -400,8 +400,8 @@ class DockerSandboxConnection(SandboxConnection):
         loop = asyncio.get_running_loop()
 
         rm_workspace = (
-            f"rm -rf {self._workspace}/* "
-            f"{self._workspace}/.[!.]* 2>/dev/null; true"
+            f"rm -rf {self._workspace}/* {self._workspace}"
+            "/.[!.]* 2>/dev/null; true"
         )
 
         def _clear_workspace() -> None:

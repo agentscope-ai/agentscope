@@ -18,10 +18,10 @@ from abc import ABC, abstractmethod
 
 from .exceptions import CapabilityError, UnsupportedOperation
 from .types import (
-    SandboxExecutionResult,
-    SandboxInternalEndpoint,
     SandboxConnectionCapabilities,
+    SandboxExecutionResult,
     SandboxInitializationConfig,
+    SandboxInternalEndpoint,
     SerializedSandboxState,
 )
 
@@ -144,6 +144,10 @@ class SandboxConnection(ABC):
 
     async def pty_write(self, session_id: int, data: str) -> str:
         """PTY write — unsupported unless overridden."""
+        raise CapabilityError("pty", backend=self.backend_id)
+
+    async def pty_kill(self, session_id: int) -> bool:
+        """PTY kill — unsupported unless overridden."""
         raise CapabilityError("pty", backend=self.backend_id)
 
     # ─── optional: networking ─────────────────────────────────

@@ -13,20 +13,8 @@ Layer 3 (top):     ``SandboxManager`` — session lifecycle, pooling.
 """
 
 # --- Layer 1: backend primitives ---
-from .connection import (
-    SandboxConnection,
-    create_sandbox_connection,
-    get_sandbox_connection_type,
-    register_sandbox_connection_type,
-)
-from .exceptions import CapabilityError, SandboxError, UnsupportedOperation
-from .types import (
-    SandboxExecutionResult,
-    SandboxInternalEndpoint,
-    SandboxConnectionCapabilities,
-    SandboxInitializationConfig,
-    SerializedSandboxState,
-)
+# --- Backends (register themselves on import) ---
+from . import local_temp as _local_temp  # noqa: F401
 
 # --- Config ---
 from .backend_config import (
@@ -41,19 +29,29 @@ from .config import (
     SkillsConfig,
     ToolDefinition,
 )
-from .mcp_gateway import MCPGatewayConfig
+from .connection import (
+    SandboxConnection,
+    create_sandbox_connection,
+    get_sandbox_connection_type,
+    register_sandbox_connection_type,
+)
+from .exceptions import CapabilityError, SandboxError, UnsupportedOperation
+
+# --- Layer 2.5: MCP gateway ---
+from .mcp_gateway import MCPGateway, MCPGatewayConfig
 
 # --- Layer 2: agent-side proxy ---
 from .sandbox import FileAccessor, Sandbox
 
-# --- Layer 2.5: MCP gateway ---
-from .mcp_gateway import MCPGateway
-
 # --- Layer 3: manager ---
 from .sandbox_manager import SandboxManager
-
-# --- Backends (register themselves on import) ---
-from . import local_temp as _local_temp  # noqa: F401
+from .types import (
+    SandboxConnectionCapabilities,
+    SandboxExecutionResult,
+    SandboxInitializationConfig,
+    SandboxInternalEndpoint,
+    SerializedSandboxState,
+)
 
 try:
     from .docker import DockerSandboxConnection  # noqa: F401

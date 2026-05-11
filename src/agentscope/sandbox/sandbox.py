@@ -23,18 +23,18 @@ import mcp.types as mtypes
 from mcp.types import Tool as MCPToolSchema
 from pydantic import AnyUrl
 
+from .._logging import logger
 from ..message import (
-    Msg,
-    ToolResultBlock,
-    TextBlock,
-    DataBlock,
     Base64Source,
+    DataBlock,
+    Msg,
+    TextBlock,
+    ToolResultBlock,
     URLSource,
 )
 from ..skill import Skill
-from ..tool import ToolBase, MCPTool
+from ..tool import MCPTool, ToolBase
 from ..workspace import WorkspaceBase
-from .._logging import logger
 from .config import SandboxConfig, ToolDefinition
 from .connection import SandboxConnection, create_sandbox_connection
 from .mcp_gateway import MCPGateway
@@ -612,9 +612,8 @@ class Sandbox(WorkspaceBase):
             if dm:
                 extra["domain"] = dm
         if hasattr(cfg.backend, "timeout"):
-            extra[
-                "timeout"
-            ] = cfg.backend.timeout  # type: ignore[attr-defined]
+            timeout = cfg.backend.timeout  # type: ignore[attr-defined]
+            extra["timeout"] = timeout
         if hasattr(cfg.backend, "metadata"):
             md = cfg.backend.metadata  # type: ignore[attr-defined]
             if md:
@@ -665,8 +664,10 @@ class Sandbox(WorkspaceBase):
                 pass
         else:
             logger.warning(
-                "MCP server %r failed to start in sandbox %s "
-                "(exit_code=%s, stderr=%s)",
+                (
+                    "MCP server %r failed to start in sandbox "
+                    "%s (exit_code=%s, stderr=%s)"
+                ),
                 name,
                 self._id,
                 r.exit_code,
