@@ -153,11 +153,11 @@ result = await agent(Msg("user", "北京今天天气怎么样？", "user"))
 | 章 | 标题 | 实战项目 | 核心文件 |
 |----|------|---------|---------|
 | 21 | 扩展准备 | 开发环境、测试策略、pre-commit | `tests/`, `.github/`, `pyproject.toml` |
-| 22 | 造一个新 Tool | 数据库查询工具（同步 + 流式） | `tool/_toolkit.py` |
+| 22 | 造一个新 Tool | 数据库查询工具（同步 + 流式） | `tool/_toolkit.py`, `_utils/_common.py` |
 | 23 | 造一个新 Model Provider | 接入 FastLLM API（非流式→流式→结构化输出三步走） | `model/`, `formatter/` |
 | 24 | 造一个新 Memory Backend | SQLite Memory | `memory/_working_memory/` |
-| 25 | 造一个新 Agent 类型 | Plan-Execute Agent | `agent/_agent_base.py` |
-| 26 | 集成 MCP Server | 对接本地 MCP Server | `mcp/_client_base.py` |
+| 25 | 造一个新 Agent 类型 | Plan-Execute Agent | `agent/_agent_base.py`, `agent/_react_agent_base.py` |
+| 26 | 集成 MCP Server | 对接本地 MCP Server | `mcp/_client_base.py`, `mcp/_stateful_client_base.py`, `mcp/_stdio_stateful_client.py` |
 | 27 | 高级扩展：中间件与分组 | 限流中间件 + 场景分组 + Agent Skill | `tool/_toolkit.py` |
 | 28 | 终章：集成实战 | 把 ch22-ch25 造的 Tool/Model/Memory/Agent 集成为完整系统，跑通端到端测试 | 综合 |
 

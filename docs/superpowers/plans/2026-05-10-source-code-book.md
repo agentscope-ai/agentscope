@@ -801,6 +801,10 @@ git commit -m "docs: complete volume 2 - design patterns"
 - Verify: `tests/`, `.github/`, `pyproject.toml`
 
 - [ ] **Step 1: 验证源码** — tests/ 结构、pre-commit config、pytest 配置
+
+```bash
+ls tests/ && cat pyproject.toml | grep -A5 "\[tool.pytest" && cat .pre-commit-config.yaml | head -20
+```
 - [ ] **Step 2: 写 ch21** — 开发环境搭建、fork/branch 工作流、pytest 运行、pre-commit
 - [ ] **Step 3: 自检 + 提交**
 
@@ -822,6 +826,11 @@ git commit -m "docs: write ch21 - dev setup"
 - [ ] **Step 1: 验证源码 → Step 2: 写 ch22（含完整可运行代码示例）→ Step 3: PR 检查清单 + 提交**
 
 ```bash
+grep -n "def register_tool_function\|def call_tool_function" src/agentscope/tool/_toolkit.py
+grep -n "def _parse_tool_function" src/agentscope/_utils/_common.py
+```
+
+```bash
 git add teaching/book/volume-3-building/ch22-new-tool.md
 git commit -m "docs: write ch22 - new tool"
 ```
@@ -837,6 +846,11 @@ git commit -m "docs: write ch22 - new tool"
 实战：接入 FastLLM API。三步走：非流式 → 流式 → 结构化输出。
 
 - [ ] **Step 1: 验证源码 → Step 2: 写 ch23 → Step 3: PR 检查清单 + 提交**
+
+```bash
+grep -n "class ChatModelBase\|async def __call__" src/agentscope/model/_model_base.py
+grep -n "class FormatterBase\|async def format" src/agentscope/formatter/_formatter_base.py
+```
 
 ```bash
 git add teaching/book/volume-3-building/ch23-new-model.md
@@ -856,6 +870,11 @@ git commit -m "docs: write ch23 - new model provider"
 - [ ] **Step 1: 验证源码 → Step 2: 写 ch24 → Step 3: PR 检查清单 + 提交**
 
 ```bash
+grep -n "class MemoryBase\|async def add\|async def delete\|def size\|async def get_memory" src/agentscope/memory/_working_memory/_base.py
+grep -n "class InMemoryMemory" src/agentscope/memory/_working_memory/_in_memory_memory.py
+```
+
+```bash
 git add teaching/book/volume-3-building/ch24-new-memory.md
 git commit -m "docs: write ch24 - new memory backend"
 ```
@@ -871,6 +890,11 @@ git commit -m "docs: write ch24 - new memory backend"
 实战：Plan-Execute Agent。
 
 - [ ] **Step 1: 验证源码 → Step 2: 写 ch25 → Step 3: PR 检查清单 + 提交**
+
+```bash
+grep -n "class AgentBase\|async def reply\|async def observe" src/agentscope/agent/_agent_base.py
+grep -n "class ReActAgentBase" src/agentscope/agent/_react_agent_base.py
+```
 
 ```bash
 git add teaching/book/volume-3-building/ch25-new-agent.md
@@ -890,6 +914,12 @@ git commit -m "docs: write ch25 - new agent type"
 - [ ] **Step 1: 验证源码 → Step 2: 写 ch26 → Step 3: PR 检查清单 + 提交**
 
 ```bash
+grep -n "class MCPClientBase" src/agentscope/mcp/_client_base.py
+grep -n "class StatefulClientBase\|async def connect\|async def list_tools" src/agentscope/mcp/_stateful_client_base.py
+grep -n "class StdIOStatefulClient" src/agentscope/mcp/_stdio_stateful_client.py
+```
+
+```bash
 git add teaching/book/volume-3-building/ch26-mcp-server.md
 git commit -m "docs: write ch26 - mcp server"
 ```
@@ -905,6 +935,10 @@ git commit -m "docs: write ch26 - mcp server"
 实战：限流中间件 + 按场景分组 + Agent Skill。
 
 - [ ] **Step 1: 验证源码 → Step 2: 写 ch27 → Step 3: PR 检查清单 + 提交**
+
+```bash
+grep -n "def register_middleware\|def create_tool_group\|class.*ToolGroup\|class.*AgentSkill" src/agentscope/tool/_toolkit.py src/agentscope/tool/_types.py
+```
 
 ```bash
 git add teaching/book/volume-3-building/ch27-advanced-extension.md
@@ -946,7 +980,8 @@ git commit -m "docs: complete volume 3 - building new modules"
 
 ```bash
 grep -n "class Msg\|def __init__" src/agentscope/message/_message_base.py
-grep -n "msg:" src/agentscope/agent/_agent_base.py src/agentscope/model/_model_base.py src/agentscope/tool/_toolkit.py
+grep -n "msg:" src/agentscope/agent/_agent_base.py
+grep -n "from.*message import\|from.*msg" src/agentscope/model/_model_base.py src/agentscope/tool/_toolkit.py
 ```
 
 - [ ] **Step 2: 写 ch29**（决策回顾 → 被否方案 → 后果分析 → 横向对比 → 开放问题）
@@ -978,11 +1013,11 @@ grep -n "def _parse_tool_function" src/agentscope/_utils/_common.py
 **Files:**
 - Verify: `src/agentscope/tool/_toolkit.py`
 
-- [ ] **Step 1: 验证源码**（Toolkit 的行数、方法数）
+- [ ] **Step 1: 验证源码**（Toolkit 的行数、方法数 — 注意 module-level 函数也计入）
 
 ```bash
 wc -l src/agentscope/tool/_toolkit.py
-grep -c "def " src/agentscope/tool/_toolkit.py
+grep -n "    def \|    async def " src/agentscope/tool/_toolkit.py | wc -l
 ```
 
 - [ ] **Step 2: 写 ch31**
@@ -1052,7 +1087,8 @@ grep -n "ContextVar\|class _ConfigCls" src/agentscope/_run_config.py
 
 ```bash
 grep -n "class FormatterBase" src/agentscope/formatter/_formatter_base.py
-grep -n "class ChatModelBase\|formatter" src/agentscope/model/_model_base.py
+grep -n "class ChatModelBase" src/agentscope/model/_model_base.py
+grep -n "from.*formatter\|formatter" src/agentscope/model/_openai_model.py
 ```
 
 - [ ] **Step 2: 写 ch35**
