@@ -85,10 +85,10 @@ sequenceDiagram
 | ch05: Hook 系统 | ch15: 元类与 Hook 的实现细节 |
 | ch06: 工作记忆 | ch14: MemoryBase 的继承设计 |
 | ch08: Formatter 继承链 | ch16: 策略模式与 Formatter 多态 |
-| ch07: 知识库和 Embedding | ch17: 工厂与 Schema（从函数到 JSON Schema） |
+| ch07: 知识库和 Embedding | ch17: 工厂与 Schema（知识库与向量化检索） |
 | ch10: Toolkit 中间件 | ch18: 中间件与洋葱模型 |
 | ch05: 广播机制 | ch19: 发布-订阅（多 Agent 通信） |
-| ch05: `state_dict` / `load_state_dict` | ch20: 可观测性与持久化 |
+| ch14: `state_dict` / `load_state_dict` | ch20: 可观测性与持久化 |
 
 > **官方文档对照**：本章是卷一的总结章，串联了 [Basic Concepts](https://docs.agentscope.io/basic-concepts) 和 [Building Blocks](https://docs.agentscope.io/building-blocks) 的所有核心模块。官方文档按功能模块分别介绍，本章把它们串成一次完整的调用旅程。
 >

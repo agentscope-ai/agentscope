@@ -232,7 +232,7 @@ sequenceDiagram
 > **设计一瞥**：为什么 `__call__` 的返回类型是 Union？
 > `ChatResponse | AsyncGenerator[ChatResponse, None]` 是一种妥协。非流式返回一个对象，流式返回一个异步生成器——调用者需要自己判断。
 > 另一种设计是让流式和非流式有统一接口（都返回 AsyncGenerator，非流式只是 yield 一次）。但 AgentScope 选择区分它们，因为大多数调用者只使用其中一种模式。
-> 详见卷四第 31 章。
+> 详见卷四第 33 章。
 
 ---
 

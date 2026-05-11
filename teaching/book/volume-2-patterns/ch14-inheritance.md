@@ -205,7 +205,7 @@ flowchart TD
 > **设计一瞥**：为什么用四层继承而不是一层？
 > 每一层都有独立的职责。`StateModule` 被超过 10 个类复用（Agent、Memory、Toolkit、Formatter……）。`AgentBase` 被所有 Agent 类型复用。`ReActAgentBase` 被所有 ReAct 类型的 Agent 复用。
 > 如果把所有功能放在一个类里，改序列化逻辑会影响 Agent，改 ReAct 逻辑会影响序列化——耦合度太高。
-> 详见卷四第 31 章。
+> 详见卷四第 31 章（上帝类问题）和第 36 章（架构全景）。
 
 ---
 

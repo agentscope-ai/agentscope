@@ -127,7 +127,7 @@ if self._agent_control:
 > `static_control` 模式简单可控，但开发者必须预测所有需要记住的场景。
 > `agent_control` 模式更灵活——Agent 可以在对话中主动说"这个用户的偏好我应该记住"。
 > 代价是 Agent 可能遗忘不该忘的，或者记住不该记的。
-> 详见卷四第 31 章。
+> 详见卷四第 36 章。
 
 ---
 
@@ -369,4 +369,4 @@ git checkout src/agentscope/agent/_react_agent.py
 > **设计一瞥**：为什么长期记忆的基类方法都 raise NotImplementedError？
 > 这是一种"可选实现"模式。`record` 和 `retrieve` 是给开发者用的，`record_to_memory` 和 `retrieve_from_memory` 是给 Agent 用的工具函数。
 > 不是每个长期记忆实现都需要支持所有四种用法。比如你可能只想让开发者控制检索，不想让 Agent 自己调用——那就只实现 `record`/`retrieve`，让工具函数保持未实现。
-> 详见卷四第 31 章。
+> 详见卷四第 36 章。

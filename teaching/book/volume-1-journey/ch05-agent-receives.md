@@ -371,7 +371,7 @@ Agent 在回复过程中可能会产生"思考"内容（thinking blocks）——
 self._subscribers: dict[str, list[AgentBase]] = {}
 ```
 
-MsgHub 是 AgentScope 中多 Agent 通信的核心组件。当一个 Agent 在 MsgHub 中发言时，Hub 中的其他 Agent 会自动收到通知。我们会在第 11 章和卷二第 19 章深入看 MsgHub 的实现。
+MsgHub 是 AgentScope 中多 Agent 通信的核心组件。当一个 Agent 在 MsgHub 中发言时，Hub 中的其他 Agent 会自动收到通知。我们会在卷二第 19 章深入看 MsgHub 的实现。
 
 广播机制的完整流程：
 
