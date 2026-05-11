@@ -990,6 +990,11 @@ grep -n "from.*message import\|from.*msg" src/agentscope/model/_model_base.py sr
 
 - [ ] **Step 3: 自检 + 提交**
 
+```bash
+git add teaching/book/volume-4-why/ch29-msg-interface.md
+git commit -m "docs: write ch29 - msg as universal interface"
+```
+
 ### Task 30: ch30-no-decorator.md — 为什么不用装饰器注册工具
 
 **Files:**
@@ -1007,6 +1012,11 @@ grep -n "def _parse_tool_function" src/agentscope/_utils/_common.py
 目标篇幅：200-300 行
 
 - [ ] **Step 3: 自检 + 提交**
+
+```bash
+git add teaching/book/volume-4-why/ch30-no-decorator.md
+git commit -m "docs: write ch30 - no decorator registration"
+```
 
 ### Task 31: ch31-god-class.md — 上帝类 vs 模块拆分
 
@@ -1026,6 +1036,11 @@ grep -n "    def \|    async def " src/agentscope/tool/_toolkit.py | wc -l
 
 - [ ] **Step 3: 自检 + 提交**
 
+```bash
+git add teaching/book/volume-4-why/ch31-god-class.md
+git commit -m "docs: write ch31 - god class vs modular"
+```
+
 ### Task 32: ch32-compile-time-hooks.md — 编译期 Hook vs 运行时 Hook
 
 **Files:**
@@ -1044,6 +1059,11 @@ grep -n "class AgentBase\|async def reply\|async def observe" src/agentscope/age
 
 - [ ] **Step 3: 自检 + 提交**
 
+```bash
+git add teaching/book/volume-4-why/ch32-compile-time-hooks.md
+git commit -m "docs: write ch32 - compile-time vs runtime hooks"
+```
+
 ### Task 33: ch33-typedict-union.md — 为什么 ContentBlock 是 Union
 
 **Files:**
@@ -1061,6 +1081,11 @@ grep -n "class TextBlock\|class ThinkingBlock\|class ToolUseBlock\|class ToolRes
 
 - [ ] **Step 3: 自检 + 提交**
 
+```bash
+git add teaching/book/volume-4-why/ch33-typedict-union.md
+git commit -m "docs: write ch33 - ContentBlock Union design"
+```
+
 ### Task 34: ch34-contextvar.md — 为什么用 ContextVar
 
 **Files:**
@@ -1077,6 +1102,11 @@ grep -n "ContextVar\|class _ConfigCls" src/agentscope/_run_config.py
 目标篇幅：200-300 行
 
 - [ ] **Step 3: 自检 + 提交**
+
+```bash
+git add teaching/book/volume-4-why/ch34-contextvar.md
+git commit -m "docs: write ch34 - ContextVar design"
+```
 
 ### Task 35: ch35-formatter-separate.md — 为什么 Formatter 独立于 Model
 
@@ -1096,6 +1126,11 @@ grep -n "from.*formatter\|formatter" src/agentscope/model/_openai_model.py
 目标篇幅：250-350 行
 
 - [ ] **Step 3: 自检 + 提交**
+
+```bash
+git add teaching/book/volume-4-why/ch35-formatter-separate.md
+git commit -m "docs: write ch35 - formatter independent from model"
+```
 
 ### Task 36: ch36-panorama.md — 架构的全景与边界
 
