@@ -318,6 +318,10 @@ agent = ReActAgent(
 
 `ReActAgent` 这个名字本身就说明了它是一个使用 ReAct 模式的 Agent。`formatter` 是一个辅助组件——不同 LLM 提供商（OpenAI、Anthropic、Google 等）对消息格式的要求不同，formatter 负责把统一的 `Msg` 格式转换成对应的 API 格式。我们在卷一第 8 章会深入看 formatter。
 
+> **官方文档对照**：本章对应 [Getting Started](https://docs.agentscope.io/getting-started) 和 [Basic Concepts > Agent](https://docs.agentscope.io/basic-concepts)。官方文档展示了 `ReActAgent` 的创建和调用方法，本章解释了 ReAct 模式的原理（推理→行动→观察循环）。
+>
+> **推荐阅读**：[ReAct 论文](https://arxiv.org/abs/2210.03629) 是 ReAct 模式的原始论文。Bilibili [AgentScope 快速上手](https://www.bilibili.com/video/BV1NVZDBfE4w) 有视频演示。
+
 ---
 
 ## 2.4 试一试

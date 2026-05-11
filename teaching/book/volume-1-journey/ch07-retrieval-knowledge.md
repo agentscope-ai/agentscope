@@ -286,6 +286,10 @@ flowchart TB
 
 > 三者不互斥，可以同时使用。工作记忆是必需的；长期记忆和知识库是可选的增强。
 
+> **官方文档对照**：本章对应 [Building Blocks > Memory](https://docs.agentscope.io/building-blocks/memory) 中长期记忆和 RAG 部分。官方文档展示了 `KnowledgeBase` 和各种向量数据库的使用方法，本章解释了 `LongTermMemoryBase` 的两种控制模式（static_control vs agent_control）和 RAG 管道的内部流程。
+>
+> **推荐阅读**：[AgentScope 1.0 论文](https://arxiv.org/pdf/2508.16279) 第 2.1 节讨论了 Memory 模块的设计目标和扩展点。
+
 ---
 
 ## 试一试：观察长期记忆的注册过程

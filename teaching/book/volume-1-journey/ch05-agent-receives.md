@@ -388,6 +388,10 @@ graph LR
     style F fill:#fce4ec
 ```
 
+> **官方文档对照**：本章对应 [Building Blocks > Agent](https://docs.agentscope.io/building-blocks/agent) 和 [Building Blocks > Hooking Functions](https://docs.agentscope.io/building-blocks/hooking-functions)。官方文档展示了 `__call__` → `reply` 的调用链和 Hook 注册方法，本章解释了元类 `_AgentMeta` 如何在类定义时自动包装这些方法。
+>
+> **推荐阅读**：[AgentScope 1.0 论文](https://arxiv.org/pdf/2508.16279) 第 2.2 节讨论了 Agent 的 Hook 机制设计。
+
 ---
 
 ## 5.5 调试实践

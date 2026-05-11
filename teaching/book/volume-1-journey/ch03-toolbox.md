@@ -383,6 +383,10 @@ sequenceDiagram
 
 如果你只写了 `agentscope.init()` 不传任何参数，它也能正常工作——所有配置都有默认值。
 
+> **官方文档对照**：本章对应 [Getting Started > Initialization](https://docs.agentscope.io/getting-started)。官方文档展示了 `agentscope.init()` 的参数配置方法，本章解释了 `init()` 内部的四步初始化流程和 `_run_config.py` 的 ContextVar 机制。
+>
+> **推荐阅读**：[AgentScope 1.0 论文](https://arxiv.org/pdf/2508.16279) 第 2 节 "Foundational Components" 介绍了四大基础模块的设计目标。
+
 ---
 
 ## 3.5 调试实践

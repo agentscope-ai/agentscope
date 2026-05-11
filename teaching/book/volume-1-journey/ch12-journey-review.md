@@ -90,6 +90,10 @@ sequenceDiagram
 | ch05: 广播机制 | ch19: 发布-订阅（多 Agent 通信） |
 | ch05: `state_dict` / `load_state_dict` | ch20: 可观测性与持久化 |
 
+> **官方文档对照**：本章是卷一的总结章，串联了 [Basic Concepts](https://docs.agentscope.io/basic-concepts) 和 [Building Blocks](https://docs.agentscope.io/building-blocks) 的所有核心模块。官方文档按功能模块分别介绍，本章把它们串成一次完整的调用旅程。
+>
+> **推荐阅读**：[AgentScope 1.0 论文](https://arxiv.org/pdf/2508.16279) 的 Figure 1 展示了框架的完整架构图，可以和本章的全景序列图对照阅读。
+
 ---
 
 ## 你现在能做什么

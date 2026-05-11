@@ -305,6 +305,10 @@ class PlanNotebook(StateModule):
 
 `_reasoning` 和 `_summarizing` 中都有 TTS（Text-to-Speech）处理：如果配置了语音模型，文字回答会被转换成语音输出。
 
+> **官方文档对照**：本章对应 [Building Blocks > Agent > ReActAgent](https://docs.agentscope.io/building-blocks/agent)。官方文档展示了 `ReActAgent` 的使用方法和配置参数，本章解释了 `reply()` 中的完整 ReAct 循环、三种退出条件和 `_compress_memory_if_needed` 的压缩机制。
+>
+> **推荐阅读**：[AgentScope 1.0 论文](https://arxiv.org/pdf/2508.16279) 第 2.2 节讨论了 ReAct Agent 的推理循环设计。
+
 ---
 
 ## 完整的循环流程图

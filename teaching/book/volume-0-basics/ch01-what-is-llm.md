@@ -342,6 +342,10 @@ flowchart LR
     end
 ```
 
+> **官方文档对照**：本章对应 [Basic Concepts](https://docs.agentscope.io/basic-concepts) 中 Message、Agent、Model 的基础概念介绍。官方文档侧重"怎么调用 API"，本章侧重"LLM 和 Agent 的基本原理"。
+>
+> **推荐阅读**：[AgentScope 1.0 论文](https://arxiv.org/pdf/2508.16279) 第 1 节介绍了框架的设计动机和核心概念。
+
 ---
 
 ## 1.4 试一试：搭建环境

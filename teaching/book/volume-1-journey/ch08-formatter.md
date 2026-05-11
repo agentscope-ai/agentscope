@@ -202,6 +202,10 @@ src/agentscope/formatter/
 > 如果 Formatter 和 Model 绑定，换一个兼容服务就要写一个新的 Model 类。
 > 代价：用户需要自己选择 Formatter 和 Model 的组合。详见卷四第 35 章。
 
+> **官方文档对照**：本章对应 [Building Blocks > Models](https://docs.agentscope.io/building-blocks/models)。官方文档展示了不同模型的使用方法，本章解释了 Formatter 的三层继承体系（FormatterBase → TruncatedFormatterBase → OpenAIChatFormatter）和 Token 截断循环的实现。
+>
+> **推荐阅读**：[AgentScope 1.0 论文](https://arxiv.org/pdf/2508.16279) 第 2.1 节讨论了 Formatter 与 Model 分离的设计理由。
+
 ---
 
 ## 试一试：观察 Formatter 的输入和输出

@@ -421,6 +421,10 @@ Msg 类本身**没有继承 DictMixin**。Msg 选择用普通属性访问（`msg
 
 这个区分是设计上的刻意选择：**固定结构用属性，动态结构用 DictMixin**。
 
+> **官方文档对照**：本章对应 [Basic Concepts > Message](https://docs.agentscope.io/basic-concepts)。官方文档展示了 `Msg` 的创建方法和 7 种 `ContentBlock` 类型，本章解释了为什么用 `TypedDict` 而不是 dataclass（详见卷四第 33 章）。
+>
+> **推荐阅读**：[AgentScope 1.0 论文](https://arxiv.org/pdf/2508.16279) 第 2.1 节讨论了统一消息格式的设计理由。
+
 ---
 
 > **设计一瞥：为什么 ContentBlock 是 TypedDict 而非 dataclass**

@@ -218,6 +218,10 @@ toolkit.register_tool_function(complex_tool, group_name="advanced")
 
 这是一种**动态工具管理**机制——不是所有工具都一次性给模型，而是让 Agent 自己决定需要哪些。
 
+> **官方文档对照**：本章对应 [Building Blocks > Tool Capabilities](https://docs.agentscope.io/building-blocks/tool-capabilities)。官方文档展示了工具注册、分组、中间件的使用方法，本章解释了 `call_tool_function` 的内部流程和 `_apply_middlewares` 的洋葱模型实现。
+>
+> **推荐阅读**：[MarkTechPost AgentScope 教程](https://www.marktechpost.com/2026/04/01/how-to-build-production-ready-agentscope-workflows/) Part 2 展示了自定义工具函数和自动 JSON Schema 生成的完整示例。
+
 ---
 
 ## 中间件：洋葱模型
