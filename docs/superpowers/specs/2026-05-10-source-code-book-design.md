@@ -213,7 +213,7 @@ result = await agent(Msg("user", "北京今天天气怎么样？", "user"))
 
 ### 设计推理嵌入
 
-在卷一和卷二的正文中，用侧边栏嵌入小型设计对比（"方案 A vs 方案 B"）。不把所有设计讨论都堆到卷四。**卷一和卷二每章至少 1 个"设计一瞥"侧边栏。** 格式：
+在卷一和卷二的正文中，用引用块（blockquote）嵌入小型设计对比（"方案 A vs 方案 B"）。不把所有设计讨论都堆到卷四。**卷一和卷二每章至少 1 个"设计一瞥"引用块。** 格式：
 
 ```
 > **设计一瞥**：为什么用 TypedDict 而不是 dataclass？
@@ -269,14 +269,7 @@ result = await agent(Msg("user", "北京今天天气怎么样？", "user"))
 
 ### 官方文档融入
 
-每章融入 AgentScope 官方文档内容，增加"官方文档对照"侧边栏。格式：
-
-```
-> **官方文档对照**：本文对应 [AgentScope 文档 - <主题>](<url>)
-> 官方文档侧重 API 使用方法，本章侧重源码实现原理。两者互补：
-> - 文档告诉你"怎么用" → 本章告诉你"为什么这样用"
-> - 文档的代码示例可以直接运行 → 本章的代码片段来自真实源码
-```
+本书面向**离线读者**——内测用户可能没有网络访问。所有参考资料必须**内嵌到正文中**，不能仅放外部链接。
 
 **文档来源**（按优先级）：
 1. `docs.agentscope.io`（Mintlify 新文档）— Basic Concepts + Building Blocks
@@ -284,10 +277,10 @@ result = await agent(Msg("user", "北京今天天气怎么样？", "user"))
 3. 仓库内 `docs/tutorial/` — 教程源码和示例脚本
 
 **融入规则**：
-- 每章至少 1 个"官方文档对照"侧边栏
-- 侧边栏放在首次提到该章核心主题的位置
-- 不直接复制文档内容，而是**对比视角差异**：文档讲用法 vs 本书讲实现
-- 代码示例优先用源码片段；如果官方文档有更好的完整示例，标注链接
+- 每章在首次提到核心主题时，用 1-3 句话自然引入官方文档的用法说明
+- 官方文档的配置示例、API 使用示例直接写进正文（如"官方文档推荐的配置方式是：……"）
+- 不再使用"官方文档对照"侧边栏格式，改为融入正文叙述
+- 代码示例优先用源码片段；官方文档有更好的完整示例时，直接把示例代码写进"试一试"环节
 - 建筑块（Building Blocks）页面特别有价值：Hook、Middleware、Memory、Tool Capabilities
 
 **已确认的官方文档页面与章节对应**：
@@ -412,35 +405,84 @@ teaching/book/
 - 卷二 ch15 加入 types/ 模块（AgentHookTypes 类型约束）
 - 卷四 ch31 标题改为"上帝类 vs 模块拆分"（去掉硬编码行数）
 
-### 官方文档融入修订（2026-05-11）
-- 新增"官方文档融入"写作规范：每章至少 1 个"官方文档对照"侧边栏
-- 侧边栏对比文档视角（怎么用）vs 本书视角（为什么这样实现）
+### 官方文档融入修订（2026-05-11）[已被离线修订取代]
+- ~~新增"官方文档融入"写作规范：每章至少 1 个"官方文档对照"侧边栏~~
+- ~~侧边栏对比文档视角（怎么用）vs 本书视角（为什么这样实现）~~
 - 文档来源确认：docs.agentscope.io（Mintlify）+ doc.agentscope.io（Sphinx API）
-- 建立文档页面→章节的映射表
-- 已写完的 ch01-ch12 需要回填"官方文档对照"侧边栏
-- ch13-ch36 在写作时直接融入
+- 建立文档页面→章节的映射表（仍有效）
+- ~~已写完的 ch01-ch12 需要回填"官方文档对照"侧边栏~~ → 改为内嵌到正文
+- ~~ch13-ch36 在写作时直接融入~~ → 已被离线修订取代
 
-### 外部资源融入修订（2026-05-11）
-在"官方文档对照"基础上，额外融入以下高质量外部资源：
+### 外部资源融入修订（2026-05-11 → 2026-05-11 离线修订）
 
-**学术论文**：
-- AgentScope 1.0 论文 (arXiv:2508.16279)：架构设计原则、设计理念、Foundational Components 详细描述
+内测用户没有网络，所有外部参考资料必须**直接融入正文**。不再使用"推荐阅读"侧边栏+链接的方式。
 
-**视频教程（Bilibili）**：
-- "AgentScope源码带读"系列（BV1NVZDBfE4w 等）：源码讲解思路可借鉴
-- "AgentScope1.0 开发者教程"系列（ReAct Agent、上下文管理、工具&MCP 等）：官方出品教程
+**需融入的外部资源**：
 
-**高质量博客文章**：
-- cnblogs "AgentScope源码阅读"：核心模块精读方法论
-- 阿里云开发者社区 "深入源码：智能体定义及模型配置流程"：reply 函数详细解读
-- MarkTechPost "Production Ready AgentScope Workflows"：完整实战教程（ReAct + 工具 + 多智能体辩论 + 结构化输出 + 并发流水线）
-- Analytics Vidhya "Complete Guide to Multi-Agent Systems"：框架对比 + 多智能体工作流
+| 类别 | 来源 | 数量 | 融入方式 |
+|------|------|------|---------|
+| 学术论文 | AgentScope 1.0 论文 (arXiv:2508.16279) | 18 处引用 | 摘录论文原文 1-3 句，用引用格式融入正文 |
+| 学术论文 | ReAct 论文 (arXiv:2210.03629) | 1 处引用 | 摘录核心思想（Reason+Act > Act-only）到知识补全 |
+| 教程文章 | MarkTechPost Production Ready Workflows | 6 处引用 | 关键示例代码直接写进"试一试"环节 |
+| 视频教程 | Bilibili 源码带读系列 | 3 处引用 | 转为文字说明，描述视频核心内容 |
+| 技术规范 | PEP 589 (TypedDict)、PEP 567 (ContextVar)、Python metaclass 文档 | 4 处引用 | 关键规范条款摘录到"知识补全"节 |
+| 设计文章 | Refactoring Guru "Bloaters" | 1 处引用 | 大类拆分标准融入 ch31 正文 |
+| 技术文档 | OpenTelemetry Python Tracing | 1 处引用 | Tracer/Span API 要点融入 ch20 知识补全 |
 
-**融入方式**：
-- 每章的"试一试"环节可引用 MarkTechPost 等外部教程中的完整示例作为"进阶练习"
-- ch29-ch36（卷四设计权衡）可引用论文中的设计原则章节
-- ch21-ch28（卷三实战）可引用视频教程中的演示步骤
-- 不直接复制外部内容，而是标注"推荐阅读"链接
+**论文摘录格式**：
+
+```
+AgentScope 1.0 论文对这一设计的说明是：
+
+> "The framework adopts a unified message format (Msg) across all components to ensure seamless interoperability."
+>
+> — AgentScope 1.0: A Comprehensive Framework for Building Multi-Agent Systems, Section 2.1
+```
+
+**官方文档内嵌格式**：
+
+把官方文档的用法示例直接写进正文，例如：
+
+```
+官方文档推荐的配置方式是：
+
+\`\`\`python
+from agentscope.model import OpenAIChatModel
+model = OpenAIChatModel(model_name="gpt-4o", api_key="your-key")
+\`\`\`
+
+这和我们在源码中看到的 `__init__` 参数一一对应。
+```
+
+**融入规则**：
+- 不再使用"推荐阅读"侧边栏
+- 不再使用"官方文档对照"侧边栏（上一节已删除）
+- 论文内容用 `>` 引用格式，标注出处（论文名 + 节号 + arXiv ID）
+- 官方文档内容自然融入正文叙述
+- 教程示例代码从源码重写（避免第三方教程的版权问题），直接写进"试一试"或正文
+- PEP/技术规范的关键条款摘录到"知识补全"节
+
+**PEP/技术规范摘录格式**：
+
+```
+Python 的 PEP 589 (TypedDict) 规范规定：
+
+> TypedDict types are defined using a class definition syntax ...
+> The body of the class is processed using the regular class semantics.
+>
+> — PEP 589, "Specification"
+```
+
+**视频内容文字化格式**：
+
+```
+AgentScope 源码带读系列视频中，对 Memory 模块的讲解覆盖了以下要点：
+1. `MemoryBase` 的 5 个抽象方法定义
+2. `InMemoryMemory` 的内部 `list[tuple[Msg, list[str]]]` 结构
+3. mark 机制的添加和过滤流程
+```
+
+> 注：如果视频内容不可用，直接从源码和文档中提取等价信息。
 
 ### 教学设计增强
 - 每章增加"检查点"（你现在已经理解了 X）+ 1-2 道自检练习题
@@ -448,3 +490,12 @@ teaching/book/
 - 卷二每章标注难度（入门 / 中等 / 进阶）
 - 卷三增加 ch28 集成终章（端到端测试前面造的所有模块）
 - 章节篇幅改为弹性控制
+
+### 离线自包含修订（2026-05-11）
+内测用户反馈无法访问网络，需将所有外部参考资料直接内嵌到正文中：
+- 删除"官方文档对照"侧边栏格式，改为在正文中自然引入官方文档的用法说明
+- 删除"推荐阅读"侧边栏格式，论文内容用引用格式摘录到正文
+- MarkTechPost 等教程的关键示例代码直接写进"试一试"环节
+- Bilibili 视频引用转为文字说明
+- PEP/技术规范的关键条款摘录到"知识补全"节
+- 全书不再依赖任何外部链接即可完整阅读
