@@ -216,22 +216,17 @@ def _save_base64_data(
 def _extract_json_schema_from_mcp_tool(tool: Tool) -> dict[str, Any]:
     """Extract JSON schema from MCP tool."""
 
+    parameters = dict(tool.inputSchema) if tool.inputSchema else {}
+    parameters.setdefault("type", "object")
+    parameters.setdefault("properties", {})
+    parameters.setdefault("required", [])
+
     return {
         "type": "function",
         "function": {
             "name": tool.name,
             "description": tool.description,
-            "parameters": {
-                "type": "object",
-                "properties": tool.inputSchema.get(
-                    "properties",
-                    {},
-                ),
-                "required": tool.inputSchema.get(
-                    "required",
-                    [],
-                ),
-            },
+            "parameters": parameters,
         },
     }
 
