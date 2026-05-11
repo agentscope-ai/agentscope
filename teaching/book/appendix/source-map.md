@@ -90,8 +90,8 @@
 | 文件 | 行数 | 主要内容 | 首次引用 |
 |------|------|---------|---------|
 | `_msghub.py` | ~160 | `MsgHub` | ch19 |
-| `_functional.py` | ~190 | `sequential_pipeline`, `fanout_pipeline` | ch26 |
-| `_class.py` | ~100 | `SequentialPipeline`, `FanoutPipeline` | ch26 |
+| `_functional.py` | ~190 | `sequential_pipeline`, `fanout_pipeline` | ch19 |
+| `_class.py` | ~100 | `SequentialPipeline`, `FanoutPipeline` | ch19 |
 
 ---
 
