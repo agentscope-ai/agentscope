@@ -218,12 +218,15 @@ flowchart LR
 2. 尝试给框架添加一个新功能
 3. 在讨论区分享你的理解
 
-> **官方文档对照**：本文对应 [AgentScope 官方文档](https://docs.agentscope.io/) 全站。本书从源码角度补充了官方文档的使用方法背后的设计理由。
->
-> **推荐阅读**：
-> - [AgentScope 1.0 论文](https://arxiv.org/pdf/2508.16279) — 框架的完整技术报告
-> - [AgentScope GitHub](https://github.com/modelscope/agentscope) — 源码和 Issue
-> - Bilibili [AgentScope 源码带读系列](https://www.bilibili.com/video/BV1NVZDBfE4w) — 视频教程
+AgentScope 官方文档覆盖了本书讨论的所有模块：Basic Concepts 介绍 Msg、Agent、Model 等核心概念，Building Blocks 展示各模块的用法和配置方法。本书从源码角度补充了这些设计决策背后的理由。
+
+AgentScope 1.0 论文（arXiv:2508.16279）提供了框架的完整技术报告，涵盖 Foundational Components（Section 2.1）、Agent Infrastructure（Section 2.2）和 Multi-Agent Orchestration（Section 2.3）三大设计维度。
+
+AgentScope 源码带读系列视频教程覆盖了以下核心内容：
+- `StateModule` 的序列化机制和子模块自动追踪
+- Memory 模块的工作记忆和长期记忆实现
+- ReAct Agent 的推理循环和工具调用流程
+- Toolkit 的注册、中间件和分组机制
 
 ---
 

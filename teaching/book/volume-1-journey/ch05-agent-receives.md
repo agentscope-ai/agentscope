@@ -388,9 +388,13 @@ graph LR
     style F fill:#fce4ec
 ```
 
-> **官方文档对照**：本章对应 [Building Blocks > Agent](https://docs.agentscope.io/building-blocks/agent) 和 [Building Blocks > Hooking Functions](https://docs.agentscope.io/building-blocks/hooking-functions)。官方文档展示了 `__call__` → `reply` 的调用链和 Hook 注册方法，本章解释了元类 `_AgentMeta` 如何在类定义时自动包装这些方法。
+AgentScope 官方文档的 Building Blocks > Agent 页面展示了 `__call__` → `reply` 的调用链和 Agent 的创建方法；Building Blocks > Hooking Functions 页面展示了 Hook 的注册方法（`register_instance_hook` / `register_class_hook`）。本章解释了元类 `_AgentMeta` 如何在类定义时自动包装这些方法。
+
+AgentScope 1.0 论文对 Agent 的 Hook 机制设计说明是：
+
+> "we ground agent behaviors in the ReAct paradigm and offer advanced agent-level infrastructure based on a systematic asynchronous design"
 >
-> **推荐阅读**：[AgentScope 1.0 论文](https://arxiv.org/pdf/2508.16279) 第 2.2 节讨论了 Agent 的 Hook 机制设计。
+> — AgentScope 1.0: A Comprehensive Framework for Building Agentic Applications, arXiv:2508.16279, Section 2.2
 
 ---
 

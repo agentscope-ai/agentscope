@@ -121,9 +121,15 @@ Msg("assistant", [
 | **AutoGen** | 字典 | 灵活 | 无类型检查 |
 | **CrewAI** | 字符串 + 元组 | 极简 | 无法承载复杂内容 |
 
-> **官方文档对照**：本文对应 [Basic Concepts > Message](https://docs.agentscope.io/basic-concepts)。官方文档展示了 `Msg` 的创建和 ContentBlock 类型，本章分析了为什么只用一种消息类型。
+AgentScope 官方文档的 Basic Concepts > Message 页面详细展示了 `Msg` 的创建方法和 7 种 `ContentBlock` 类型（TextBlock、ThinkingBlock、ImageBlock、AudioBlock、VideoBlock、ToolUseBlock、ToolResultBlock），并说明了 `Msg` 在 Agent、用户和工具之间传递信息的核心作用。
+
+AgentScope 1.0 论文对这一设计的说明是：
+
+> "we abstract foundational components essential for agentic applications and provide unified interfaces and extensible modules"
 >
-> **推荐阅读**：[AgentScope 1.0 论文](https://arxiv.org/pdf/2508.16279) 第 2.1 节讨论了 Message 模块的设计目标——"unified message format across all components"。
+> — AgentScope 1.0: A Comprehensive Framework for Building Agentic Applications, arXiv:2508.16279, Section 2
+
+统一消息格式（unified message format）是框架的核心设计目标——所有组件通过同一种 `Msg` 类型通信，确保无缝互操作。
 
 ---
 

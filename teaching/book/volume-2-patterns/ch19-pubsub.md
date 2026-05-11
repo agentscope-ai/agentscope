@@ -190,9 +190,15 @@ def _strip_thinking_blocks_single(msg):
 >
 > 另一个设计选择是：为什么不直接让 Agent 之间互相引用？因为直接引用会产生紧耦合——Agent A 需要知道 Agent B 的存在。通过 MsgHub 解耦后，Agent 只需 reply，不关心谁在监听。
 
-> **官方文档对照**：本文对应 [Building Blocks > Multi-Agent Collaboration > MsgHub](https://docs.agentscope.io/building-blocks/multi-agent-collaboration)。官方文档展示了 MsgHub 的使用方法和 `enable_auto_broadcast` 参数，本章解释了 `_broadcast_to_subscribers` 和 `_subscribers` 字典的内部机制。
+AgentScope 官方文档的 Building Blocks > Multi-Agent Collaboration > MsgHub 页面展示了 MsgHub 的使用方法和 `enable_auto_broadcast` 参数——开启后，Agent 的每次回复都会自动广播给 Hub 中的其他 Agent。
+
+AgentScope 1.0 论文对多 Agent 协作的设计说明是：
+
+> "agent-agent interaction patterns while improving execution efficiency"
 >
-> **推荐阅读**：[AgentScope 1.0 论文](https://arxiv.org/pdf/2508.16279) 第 2.3 节讨论了多 Agent 协作的消息分发设计。
+> — AgentScope 1.0: A Comprehensive Framework for Building Agentic Applications, arXiv:2508.16279, Section 2.3
+
+本章解释了 `_broadcast_to_subscribers` 和 `_subscribers` 字典如何实现这一消息分发机制。
 
 ---
 

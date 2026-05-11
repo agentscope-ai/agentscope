@@ -168,9 +168,15 @@ flowchart TD
     F --> B
 ```
 
-> **官方文档对照**：本文对应 [Building Blocks > Models](https://docs.agentscope.io/building-blocks/models)。官方文档展示了不同模型的使用方法，本章解释了 Formatter 的接口规范和实现步骤。
+AgentScope 官方文档的 Building Blocks > Models 页面展示了不同模型的使用方法。本章聚焦于 Formatter 的接口规范和实现步骤——这是适配新模型 API 的关键扩展点。
+
+AgentScope 1.0 论文对 Formatter 与 Model 分离的设计说明是：
+
+> "we abstract foundational components essential for agentic applications and provide unified interfaces and extensible modules"
 >
-> **推荐阅读**：[AgentScope 1.0 论文](https://arxiv.org/pdf/2508.16279) 第 2.1 节讨论了 Formatter 与 Model 分离的设计理由。
+> — AgentScope 1.0: A Comprehensive Framework for Building Agentic Applications, arXiv:2508.16279, Section 2.1
+
+Formatter 的独立设计正是"可扩展模块"思想的体现：新增模型提供商只需要实现对应的 Formatter（将 `Msg` 列表转为该 API 要求的 JSON 格式），不需要修改 Model 的代码。AgentScope 已为 OpenAI、Anthropic、DashScope、Gemini、Ollama、DeepSeek 等提供了内置 Formatter 实现，每个 API 对消息格式的要求略有不同（例如 Anthropic 把系统提示放在单独的 `system` 字段，而不是 `{"role": "system"}` 消息中）。
 
 ---
 

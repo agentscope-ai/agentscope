@@ -173,9 +173,15 @@ async def stream_printing_messages(agents, coroutine_task):
 
 这让你可以在 Agent 执行过程中实时获取中间输出，而不需要等整个执行完成。
 
-> **官方文档对照**：本文对应 [Building Blocks > Multi-Agent Collaboration](https://docs.agentscope.io/building-blocks/multi-agent-collaboration)。官方文档展示了 SequentialPipeline、FanoutPipeline 和 MsgHub 的使用方法，本章补充了组合模式（MapReduce、Router、Loop）的实现思路。
+AgentScope 官方文档的 Building Blocks > Multi-Agent Collaboration 页面展示了 SequentialPipeline、FanoutPipeline 和 MsgHub 的基本使用方法。本章补充了三种组合模式（MapReduce、Router、Loop）的实现思路。
+
+AgentScope 1.0 论文对多 Agent 协作的编排说明是：
+
+> "We provide flexible message flow mechanisms, including sequential pipelines, fan-out parallelism, and MsgHub for dynamic multi-agent discussions."
 >
-> **推荐阅读**：[AgentScope 1.0 论文](https://arxiv.org/pdf/2508.16279) 第 2.3 节讨论了多 Agent 协作的编排模式。
+> — AgentScope 1.0: A Comprehensive Framework for Building Agentic Applications, arXiv:2508.16279, Section 2.3
+
+论文中将多 Agent 编排分为三个层次：SequentialPipeline（确定性顺序）、FanoutPipeline（并行分发 + 收集）、MsgHub（动态讨论 + 自动广播）。本章展示的 MapReduce、Router、Loop 等模式都是在这三种基础模式上的组合应用。
 
 ---
 

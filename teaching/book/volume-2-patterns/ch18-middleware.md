@@ -237,9 +237,12 @@ async def cache_middleware(kwargs, next_handler):
 
 命中缓存时跳过执行，未命中时正常执行并缓存结果。
 
-> **官方文档对照**：本文对应 [Building Blocks > Tool Capabilities > Middleware](https://docs.agentscope.io/building-blocks/tool-capabilities)。官方文档展示了 `register_middleware` 的使用方法和中间件函数的签名，本章解释了 `_apply_middlewares` 如何在运行时动态构建洋葱链——这是官方文档没有展开的实现细节。
->
-> **推荐阅读**：[MarkTechPost AgentScope 教程](https://www.marktechpost.com/2026/04/01/how-to-build-production-ready-agentscope-workflows/) Part 3 展示了日志中间件和缓存中间件的完整使用示例。
+AgentScope 官方文档的 Building Blocks > Tool Capabilities > Middleware 页面展示了 `register_middleware` 的使用方法和中间件函数的签名：接收 `kwargs`（包含 `tool_call`）和 `next_handler`，返回 `AsyncGenerator[ToolResponse]`。本章解释了 `_apply_middlewares` 如何在运行时动态构建洋葱链——这是官方文档没有展开的实现细节。
+
+常见的中间件实现包括：
+- **日志中间件**：在调用前后记录工具名、参数和返回值
+- **缓存中间件**：命中缓存时跳过执行，未命中时正常执行并缓存结果
+- **限流中间件**：控制并发调用数量，超出时排队等待
 
 ---
 

@@ -185,9 +185,13 @@ flowchart TD
     C --> D["call_tool_function<br/>(核心)"]
 ```
 
-> **官方文档对照**：本文对应 [Building Blocks > Tool Capabilities > Middleware](https://docs.agentscope.io/building-blocks/tool-capabilities)。官方文档展示了中间件的注册和签名，本章提供了三个可直接使用的中间件实现。
->
-> **推荐阅读**：[MarkTechPost AgentScope 教程](https://www.marktechpost.com/2026/04/01/how-to-build-production-ready-agentscope-workflows/) Part 3 展示了日志和缓存中间件的生产级实现。
+AgentScope 官方文档的 Building Blocks > Tool Capabilities 页面展示了中间件的注册方法和函数签名。本章在此基础上提供了三个可直接使用的中间件实现（限流、重试、指标收集），并详细说明了注册顺序对执行层级的影响。
+
+在生产环境中，常见的中间件模式还包括：
+- **日志中间件**：记录每次工具调用的入参、出参和耗时，便于排查问题
+- **缓存中间件**：对相同参数的工具调用缓存结果，避免重复执行（适用于幂等的查询类工具）
+- **参数验证中间件**：在调用前检查参数合法性，提前拦截无效请求
+- **错误转换中间件**：将底层异常转换为用户友好的错误消息，避免原始异常泄露给模型
 
 ---
 

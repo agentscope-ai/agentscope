@@ -162,9 +162,15 @@ src/agentscope/_utils/
 
 ## 试一试：追踪一个 import 语句
 
-> **官方文档对照**：AgentScope 的模块组织遵循 Python 包的公共/私有分层惯例。官方文档 [Basic Concepts](https://docs.agentscope.io/basic-concepts) 展示了 `Msg`、`Agent`、`Model` 等公共 API 的使用方法，而本章解释了这些公共 API 是如何从 `_` 前缀的内部文件中暴露出来的。
+AgentScope 官方文档的 Basic Concepts 页面展示了 `Msg`、`Agent`、`Model` 等公共 API 的使用方法，而本章解释了这些公共 API 是如何从 `_` 前缀的内部文件中暴露出来的。
+
+AgentScope 1.0 论文对模块组织的设计说明是：
+
+> "we abstract foundational components essential for agentic applications and provide unified interfaces and extensible modules"
 >
-> **推荐阅读**：[AgentScope 1.0 论文](https://arxiv.org/pdf/2508.16279) 第 2 节 "Foundational Components" 介绍了 Message、Model、Memory、Tool 四大基础模块的设计目标。
+> — AgentScope 1.0: A Comprehensive Framework for Building Agentic Applications, arXiv:2508.16279, Section 2
+
+四大基础模块（Message、Model、Memory、Tool）各有统一的接口和可扩展的实现——这正是 `_base.py` 定义抽象类、`__init__.py` 暴露公共 API 的组织逻辑。
 
 **目标**：理解 `from agentscope.agent import ReActAgent` 背后发生了什么。
 

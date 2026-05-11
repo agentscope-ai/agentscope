@@ -156,9 +156,9 @@ toolkit.register_tool_function(
 
 后处理函数在工具执行完成后被调用，可以修改或替换返回值。
 
-> **官方文档对照**：本文对应 [Building Blocks > Tool Capabilities > Custom Tools](https://docs.agentscope.io/building-blocks/tool-capabilities)。官方文档展示了 `register_tool_function` 的基本用法和 `ToolResponse` 的字段说明，本章补充了流式工具、后处理函数和注册方式的选择依据。
->
-> **推荐阅读**：[MarkTechPost AgentScope 教程](https://www.marktechpost.com/2026/04/01/how-to-build-production-ready-agentscope-workflows/) Part 2 展示了自定义搜索工具和文件处理工具的完整示例。
+AgentScope 官方文档的 Building Blocks > Tool Capabilities 页面展示了 `register_tool_function` 的基本用法和 `ToolResponse` 的字段说明。本章在此基础上补充了流式工具、后处理函数和两种注册方式（装饰器 vs 方法调用）的选择依据。
+
+在实际项目中，自定义工具函数的典型开发流程包括：定义带类型标注和 docstring 的 Python 函数，通过 `toolkit.register_tool_function(fn)` 注册（框架自动从签名中提取 JSON Schema），然后在 ReAct 循环中由模型返回 `ToolUseBlock` 触发执行。对于需要逐步返回结果的场景（如数据分析、文件处理），可以使用异步生成器（`yield ToolResponse`）实现流式工具。
 
 ---
 

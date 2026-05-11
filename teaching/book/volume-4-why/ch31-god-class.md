@@ -131,9 +131,15 @@ toolkit.view_task(...)
 | **AutoGen** | 函数列表 + `FunctionTool` 包装 | 分散 |
 | **CrewAI** | `Tool` 基类 + 装饰器 | 中等 |
 
-> **官方文档对照**：本文对应 [Building Blocks > Tool Capabilities](https://docs.agentscope.io/building-blocks/tool-capabilities)。官方文档按功能分组展示 Toolkit 的方法，本章讨论了为什么这些功能放在同一个类中。
+AgentScope 官方文档的 Building Blocks > Tool Capabilities 页面按功能分组展示 Toolkit 的方法：Custom Tools（注册和调用）、Tool Groups（动态激活/停用）、Middleware（中间件链）和 Agent Skills（技能系统）。这些功能被组织在同一个 `Toolkit` 类中。
+
+关于"大类"何时需要拆分，Refactoring Guru 的代码味道分类指出：
+
+> "Bloaters are code, methods and classes that have increased to such gargantuan proportions that they're hard to work with. Usually these smells don't crop up right away, rather they accumulate over time as the program evolves."
 >
-> **推荐阅读**：Martin Fowler 的 ["Bloaters" 代码味道](https://refactoring.guru/refactoring/smells/bloaters) 讨论了"大类"何时需要拆分。
+> 对于 Large Class，推荐的处理方式包括：Extract Class（将部分行为抽取到独立组件）、Extract Subclass（将部分行为实现为不同变体）、Extract Interface（提取公共操作列表）。
+
+Toolkit 目前 1684 行，如果继续增长，可以考虑将 Middleware 管理和 Skill 管理各自抽取为独立模块。
 
 ---
 

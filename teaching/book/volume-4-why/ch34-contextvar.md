@@ -147,9 +147,15 @@ asyncio 事件循环
 
 AgentScope 全异步架构 → `ContextVar` 是唯一同时满足线程安全和异步安全的方案。
 
-> **官方文档对照**：本文对应 [Getting Started > Initialization](https://docs.agentscope.io/getting-started)。官方文档展示了 `agentscope.init()` 的参数，本章解释了配置存储为什么使用 `ContextVar`。
+AgentScope 官方文档的 Getting Started > Initialization 页面展示了 `agentscope.init()` 的参数配置方法，包括模型配置、日志级别、追踪设置等。本章解释了这些配置在源码中是如何通过 `ContextVar` 存储和传递的。
+
+Python 的 `contextvars` 模块对 ContextVar 的核心 API 说明是：
+
+> `ContextVar.set(value) -> Token` 用于在当前上下文中设置新值。`ContextVar.get()` 返回当前上下文中的值。每个 asyncio Task 会自动获得父任务上下文的副本——子任务的修改不影响父任务。
 >
-> **推荐阅读**：Python [PEP 567](https://peps.python.org/pep-0567/) 是 ContextVar 的官方规范。Real Python 的 [Context Variables 教程](https://realpython.com/python-contextvars/) 有详细的使用示例。
+> — Python 标准库文档, `contextvars` 模块
+
+这意味着在 AgentScope 中，每个 Agent 的 asyncio Task 都有独立的配置副本，互不干扰。这正是 `agentscope.init()` 使用 `ContextVar` 存储配置的原因。
 
 ---
 

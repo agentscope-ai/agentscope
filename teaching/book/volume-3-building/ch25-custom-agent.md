@@ -184,9 +184,15 @@ flowchart TD
 | 继承 `ReActAgentBase` | 中 | 自定义 ReAct 变体 |
 | 使用 `ReActAgent` | 无 | 标准推理+工具场景 |
 
-> **官方文档对照**：本文对应 [Building Blocks > Agent](https://docs.agentscope.io/building-blocks/agent)。官方文档展示了 `ReActAgent` 和 `UserAgent` 的使用方法，本章解释了如何通过继承 `AgentBase` 或 `ReActAgentBase` 创建自定义 Agent。
+AgentScope 官方文档的 Building Blocks > Agent 页面展示了 `ReActAgent` 和 `UserAgent` 的使用方法。本章解释了如何通过继承 `AgentBase` 或 `ReActAgentBase` 创建自定义 Agent——这是框架最核心的扩展点。
+
+AgentScope 1.0 论文对 Agent 的抽象设计说明是：
+
+> "we ground agent behaviors in the ReAct paradigm and offer advanced agent-level infrastructure based on a systematic asynchronous design"
 >
-> **推荐阅读**：[AgentScope 1.0 论文](https://arxiv.org/pdf/2508.16279) 第 2.2 节讨论了 Agent 的抽象设计和扩展点。
+> — AgentScope 1.0: A Comprehensive Framework for Building Agentic Applications, arXiv:2508.16279, Section 2.2
+
+论文中的"systematic asynchronous design"体现在 `AgentBase.__call__` 的 Hook 系统（元类自动包装）和 `ReActAgentBase` 的 6 个 Hook 点（pre/post reasoning、pre/post acting 等）。继承 `ReActAgentBase` 可以复用这套基础设施，只自定义推理和行动的具体逻辑。
 
 ---
 

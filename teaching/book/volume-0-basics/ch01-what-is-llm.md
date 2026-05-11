@@ -342,9 +342,9 @@ flowchart LR
     end
 ```
 
-> **官方文档对照**：本章对应 [Basic Concepts](https://docs.agentscope.io/basic-concepts) 中 Message、Agent、Model 的基础概念介绍。官方文档侧重"怎么调用 API"，本章侧重"LLM 和 Agent 的基本原理"。
->
-> **推荐阅读**：[AgentScope 1.0 论文](https://arxiv.org/pdf/2508.16279) 第 1 节介绍了框架的设计动机和核心概念。
+**与官方文档的对应关系**：AgentScope 官方文档的 Basic Concepts 页面详细介绍了 Message、Agent、Model 三大基础概念。其中 Message（`Msg`）是 AgentScope 的基本数据结构，负责在 Agent、用户和工具之间传递信息，支持文本、图像、视频、音频、工具调用等多种内容类型；Agent 是一个独立实体，通过 `reply`（处理消息并生成回复）和 `observe`（接收外部信息更新内部状态）两个核心方法运作；Model 层则提供了统一的异步抽象，覆盖 OpenAI、Anthropic、DashScope、Gemini、Ollama 等多个模型提供商。官方文档侧重"怎么调用 API"，本章则侧重"LLM 和 Agent 的基本原理"。
+
+> AgentScope 1.0 论文（arXiv:2508.16279）第 1 节阐述了框架的设计动机："Driven by rapid advancements of Large Language Models (LLMs), agents are empowered to combine intrinsic knowledge with dynamic tool use, greatly enhancing their capacity to address real-world tasks. ... AgentScope introduces major improvements in a new version (1.0), towards comprehensively supporting flexible and efficient tool-based agent-environment interactions for building agentic applications." 论文还指出，框架将 Agent 行为建立在 ReAct 范式之上，并提供基于系统性异步设计的高级 Agent 基础设施。
 
 ---
 

@@ -249,9 +249,13 @@ return initial_size - len(self.content)
 
 如果传入多个 mark，逐一过滤。每轮都重建列表，排除含有当前 mark 的消息。
 
-> **官方文档对照**：本章对应 [Building Blocks > Memory](https://docs.agentscope.io/building-blocks/memory)。官方文档展示了 `InMemoryMemory`、`RedisMemory` 等内置 Memory 的使用方法，本章解释了 `MemoryBase` 的 5 个抽象方法和 `InMemoryMemory` 的内部存储结构。
->
-> **推荐阅读**：Bilibili [AgentScope 源码带读系列](https://www.bilibili.com/video/BV1NVZDBfE4w) 对 Memory 模块有视频讲解。
+AgentScope 官方文档的 Building Blocks > Memory 页面展示了 `InMemoryMemory`、`RedisMemory` 等内置 Memory 的使用方法。本章解释了 `MemoryBase` 的 5 个抽象方法和 `InMemoryMemory` 的内部存储结构。
+
+AgentScope 源码带读系列视频对 Memory 模块的讲解覆盖了以下要点：
+- `MemoryBase` 的 5 个抽象方法（`add`、`get_memory`、`delete`、`size`、`clear`）
+- `InMemoryMemory` 的内部 `list[tuple[Msg, list[str]]]` 存储结构
+- mark 机制的添加、过滤和删除流程
+- 序列化时的状态保存和恢复
 
 ---
 

@@ -110,9 +110,9 @@ class ReActAgent(ReActAgentBase):
 
 LangChain 用运行时回调——更灵活但更容易遗漏。AgentScope 用编译期注入——更安全但更不透明。
 
-> **官方文档对照**：本文对应 [Building Blocks > Hooking Functions](https://docs.agentscope.io/building-blocks/hooking-functions)。官方文档展示了 Hook 的注册方式，本章分析了为什么用元类自动注入而不是运行时手动调用。
->
-> **推荐阅读**：Python 官方文档的 [metaclass](https://docs.python.org/3/reference/datamodel.html#metaclasses) 章节是理解元类机制的权威参考。
+AgentScope 官方文档的 Building Blocks > Hooking Functions 页面展示了 Hook 的注册方式（`register_instance_hook` / `register_class_hook`）和支持的 Hook 类型表格（reply/observe/print 的 pre/post hooks），以及 ReAct Agent 额外支持的 reasoning/acting hooks。
+
+Python 的元类机制是编译期注入的基础。Python 数据模型文档对元类的说明是：当 Python 解释器执行 `class MyClass(Base, metaclass=Meta):` 时，`Meta.__new__()` 会在类对象创建时被调用，可以在此时检查和修改类的属性字典（`attrs`）。这意味着元类可以在类定义时就自动包装某些方法——开发者甚至不需要知道这个机制的存在。
 
 ---
 

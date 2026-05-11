@@ -236,9 +236,15 @@ import agentscope
 agentscope.setup_tracing(endpoint="http://localhost:4318/v1/traces")
 ```
 
-> **官方文档对照**：本文对应 [Building Blocks > Observability](https://docs.agentscope.io/building-blocks/observability) 和 [Building Blocks > Hooking Functions](https://docs.agentscope.io/building-blocks/hooking-functions)。官方文档展示了追踪和 Hook 的使用方法，本章提供了具体的排查流程和调试技巧。
->
-> **推荐阅读**：[AgentScope GitHub Issues](https://github.com/modelscope/agentscope/issues) 中有大量实际问题的排查记录。
+AgentScope 官方文档的 Building Blocks > Observability 页面展示了追踪（Tracing）功能的配置和使用方法，Building Blocks > Hooking Functions 页面展示了 Hook 的注册和使用。本章将这些能力整合为具体的排查流程和调试技巧。
+
+常见的调试手段按侵入程度从低到高排列：
+1. **Hook 记录**：不改源码，通过 `register_instance_post_reply_hook` 等方法注入调试逻辑
+2. **中间件记录**：不改源码，通过 `register_middleware` 拦截工具调用的入参和出参
+3. **OpenTelemetry 追踪**：启用后可在 Jaeger/Zipkin 中查看完整的调用链，适合集成环境
+4. **print 大法**：直接在源码中添加 print，最直接但需要记得恢复（`git checkout`）
+
+AgentScope 的 GitHub Issues 中记录了大量社区用户遇到的实际问题和排查方案，按错误类型（API 报错、工具失败、序列化异常等）搜索通常能找到类似案例。
 
 ---
 

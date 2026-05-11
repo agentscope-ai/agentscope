@@ -151,9 +151,15 @@ def log_hook(self, kwargs, output):
 agent.register_instance_pre_reply_hook("validate", my_validator)
 ```
 
-> **官方文档对照**：本文对应 [Building Blocks > Hooking Functions](https://docs.agentscope.io/building-blocks/hooking-functions)。官方文档展示了 Hook 的注册方式和支持的 Hook 类型表格（reply/observe/print/reasoning/acting 的 pre/post），本章解释了这些 Hook 是如何通过元类在类定义时自动注入的。
+AgentScope 官方文档的 Building Blocks > Hooking Functions 页面展示了 Hook 的注册方式（`register_instance_hook` / `register_class_hook`）和支持的 Hook 类型表格：reply/observe/print 各有 pre 和 post 两个时机，ReAct Agent 额外支持 reasoning/acting 的 pre/post hooks。本章解释了这些 Hook 是如何通过元类在类定义时自动注入的。
+
+AgentScope 1.0 论文对 Hook 机制的设计说明是：
+
+> "we ground agent behaviors in the ReAct paradigm and offer advanced agent-level infrastructure based on a systematic asynchronous design"
 >
-> **推荐阅读**：[AgentScope 1.0 论文](https://arxiv.org/pdf/2508.16279) 第 2.2 节讨论了 Agent 的 Hook 机制设计。
+> — AgentScope 1.0: A Comprehensive Framework for Building Agentic Applications, arXiv:2508.16279, Section 2.2
+
+Hook 系统是这个"高级 Agent 基础设施"的一部分——让开发者在不修改源码的情况下，在 Agent 的关键方法执行前后插入自定义逻辑。
 
 ---
 

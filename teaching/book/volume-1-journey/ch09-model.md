@@ -195,9 +195,12 @@ async def _structured_via_tool_call(self, ...):
 
 结构化输出的巧妙实现：把 Pydantic 模型转换成一个"工具函数"的 JSON Schema，让模型以为自己要调用工具——但实际上这只是为了让模型返回特定格式的 JSON。
 
-> **官方文档对照**：本章对应 [Building Blocks > Models](https://docs.agentscope.io/building-blocks/models)。官方文档展示了不同模型的配置和调用方法，本章解释了 `ChatModelBase.__call__` 的流式解析过程和 `ChatResponse` 的内部结构。
->
-> **推荐阅读**：[MarkTechPost AgentScope 教程](https://www.marktechpost.com/2026/04/01/how-to-build-production-ready-agentscope-workflows/) Part 1 展示了模型配置和流式调用的完整示例。
+AgentScope 官方文档的 Building Blocks > Models 页面展示了不同模型的配置和调用方法。本章解释了 `ChatModelBase.__call__` 的流式解析过程和 `ChatResponse` 的内部结构。
+
+在实际项目中，模型配置和流式调用的典型用法包括：
+- 配置 `stream=True` 启用流式输出，逐 chunk 接收模型响应
+- 通过 `tool_choice="required"` 强制模型调用工具
+- 使用 `structured_model` 参数让模型返回特定格式的 JSON
 
 ---
 

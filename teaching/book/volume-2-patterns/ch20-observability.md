@@ -171,9 +171,14 @@ ReActAgent.state_dict()
 
 每一层只序列化自己的状态，通过 `_module_dict` 递归收集子模块。
 
-> **官方文档对照**：本文对应 [Building Blocks > Observability](https://docs.agentscope.io/building-blocks/observability) 和 [Building Blocks > Agent - State & Session Management](https://docs.agentscope.io/building-blocks/agent)。官方文档展示了 `setup_tracing` 的使用方法和序列化 API，本章解释了追踪装饰器的层级关系和 Span 的记录机制。
->
-> **推荐阅读**：[OpenTelemetry Python 官方文档](https://opentelemetry.io/docs/languages/python/) 提供了 Tracing API 的完整参考。
+AgentScope 官方文档的 Building Blocks > Observability 页面展示了 `setup_tracing` 的使用方法和配置参数，Building Blocks > Agent - State & Session Management 页面展示了序列化 API。本章解释了追踪装饰器的层级关系和 Span 的记录机制。
+
+AgentScope 的追踪系统基于 OpenTelemetry 构建。OpenTelemetry 的核心概念包括：
+- **Tracer**：创建和管理 Span 的工厂
+- **Span**：代表一次操作的执行过程，包含名称、开始时间、持续时间、属性和事件
+- **Span 上下文传播**：在异步调用链中自动传递追踪信息，确保父子 Span 正确关联
+
+在 AgentScope 中，`@trace_llm`、`@trace_toolkit`、`@trace_agent` 等装饰器分别在不同层级创建 Span，形成完整的调用追踪链。
 
 ---
 

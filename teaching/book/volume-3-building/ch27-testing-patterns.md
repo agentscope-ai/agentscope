@@ -211,9 +211,13 @@ flowchart TD
     D --> G["仅 CI 环境"]
 ```
 
-> **官方文档对照**：AgentScope 的测试策略在 GitHub 仓库的 `tests/` 目录中体现。官方文档没有专门的测试章节，但 [Building Blocks > Observability](https://docs.agentscope.io/building-blocks/observability) 中的追踪功能可以帮助调试 Agent 行为。
->
-> **推荐阅读**：AgentScope 仓库的 `tests/` 目录是最好的测试模式参考。
+AgentScope 的测试策略体现在 GitHub 仓库的 `tests/` 目录中。官方文档虽然没有专门的测试章节，但 Building Blocks > Observability 中的追踪功能可以在集成测试中辅助调试 Agent 行为。
+
+AgentScope 仓库的 `tests/` 目录是最好的测试模式参考，其中展示了以下关键模式：
+- 使用 `IsolatedAsyncioTestCase` 作为测试基类（框架全异步）
+- 用 `AsyncMock` 替代真实模型，避免 API 依赖和 token 消耗
+- 测试文件按 `模块名_test.py` 命名（如 `memory_test.py`、`formatter_openai_test.py`）
+- 重点关注行为断言（工具是否被调用、记忆是否更新），而非输出文本断言
 
 ---
 

@@ -211,9 +211,13 @@ flowchart TD
 
 ## 试一试：观察序列化的层级
 
-> **官方文档对照**：本文对应 [Building Blocks > Agent - State & Session Management](https://docs.agentscope.io/building-blocks/agent)。官方文档展示了 `state_dict()` / `load_state_dict()` 的使用方法和代码示例，本章解释了 `StateModule.__setattr__` 如何自动追踪子模块——这是官方文档没有展开的实现细节。
->
-> **推荐阅读**：Bilibili [AgentScope 源码带读系列](https://www.bilibili.com/video/BV1NVZDBfE4w) 对 `StateModule` 的序列化机制有视频讲解。
+AgentScope 官方文档的 Building Blocks > Agent - State & Session Management 页面展示了 `state_dict()` / `load_state_dict()` 的使用方法和代码示例——可以保存和恢复 Agent 的完整状态。本章解释了 `StateModule.__setattr__` 如何自动追踪子模块——这是官方文档没有展开的实现细节。
+
+AgentScope 源码带读系列视频对 `StateModule` 的序列化机制讲解覆盖了以下要点：
+- `__setattr__` 如何在属性赋值时自动检测 `StateModule` 子类并注册到 `_module_dict`
+- `state_dict()` 如何递归收集所有子模块的状态
+- `load_state_dict()` 如何按层级恢复子模块状态
+- 序列化在 Agent 会话恢复和分布式部署中的应用
 
 **目标**：看到 `state_dict()` 如何递归收集子模块状态。
 

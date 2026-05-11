@@ -172,9 +172,15 @@ flowchart TD
 | **AutoGen** | dict | 极简 | 无类型安全 |
 | **OpenAI SDK** | dataclass-like | API 原生 | 框架锁定 |
 
-> **官方文档对照**：本文对应 [Basic Concepts > Message](https://docs.agentscope.io/basic-concepts)。官方文档展示了 ContentBlock 的 7 种类型，本章分析了为什么选择 TypedDict 而不是 dataclass 或 OOP 继承。
+AgentScope 官方文档的 Basic Concepts > Message 页面展示了 ContentBlock 的 7 种类型（TextBlock、ThinkingBlock、ImageBlock、AudioBlock、VideoBlock、ToolUseBlock、ToolResultBlock），并说明了 `Msg` 如何承载这些不同类型的内容。
+
+Python 的 PEP 589 (TypedDict) 规范对这一设计的支持是：
+
+> "A TypedDict type represents dictionary objects with a specific set of string keys, and with specific value types for each valid key."
 >
-> **推荐阅读**：Python [PEP 589](https://peps.python.org/pep-0589/) 是 TypedDict 的官方规范。
+> — PEP 589, "Specification"
+
+TypedDict 直接对应 JSON dict 结构，与 OpenAI 等 API 的消息格式天然兼容——不需要额外的序列化/反序列化步骤。这是 AgentScope 选择 TypedDict 而非 dataclass 或 OOP 继承的核心原因。
 
 ---
 

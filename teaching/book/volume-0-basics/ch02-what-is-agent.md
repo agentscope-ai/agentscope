@@ -318,9 +318,16 @@ agent = ReActAgent(
 
 `ReActAgent` 这个名字本身就说明了它是一个使用 ReAct 模式的 Agent。`formatter` 是一个辅助组件——不同 LLM 提供商（OpenAI、Anthropic、Google 等）对消息格式的要求不同，formatter 负责把统一的 `Msg` 格式转换成对应的 API 格式。我们在卷一第 8 章会深入看 formatter。
 
-> **官方文档对照**：本章对应 [Getting Started](https://docs.agentscope.io/getting-started) 和 [Basic Concepts > Agent](https://docs.agentscope.io/basic-concepts)。官方文档展示了 `ReActAgent` 的创建和调用方法，本章解释了 ReAct 模式的原理（推理→行动→观察循环）。
->
-> **推荐阅读**：[ReAct 论文](https://arxiv.org/abs/2210.03629) 是 ReAct 模式的原始论文。Bilibili [AgentScope 快速上手](https://www.bilibili.com/video/BV1NVZDBfE4w) 有视频演示。
+**与官方文档的对应关系**：AgentScope 官方文档展示了 `ReActAgent` 的创建和调用方法。官方文档将 Agent 抽象为两个核心方法——`reply`（处理收到的消息，基于当前状态推理并生成回复）和 `observe`（接收外部信息、更新内部状态但不触发回复，适用于注入上下文或背景知识）。在 `reply` 过程中，Agent 基于当前状态推理并采取行动，这正是 ReAct（Reasoning + Acting）范式。本章则侧重解释 ReAct 模式本身的原理——推理→行动→观察循环。
+
+> ReAct 论文（Shunyu Yao 等人, ICLR 2023, arXiv:2210.03629）的摘要阐述了核心思想："we explore the use of LLMs to generate both reasoning traces and task-specific actions in an interleaved manner, allowing for greater synergy between the two: reasoning traces help the model induce, track, and update action plans as well as handle exceptions, while actions allow it to interface with and gather additional information from external sources such as knowledge bases or environments." 简言之，ReAct 让 LLM 交替生成"推理轨迹"和"具体动作"：推理帮助模型制定和调整行动计划，而动作让模型与外部环境交互获取额外信息。
+
+AgentScope 快速上手视频教程的要点如下：
+
+- **安装与初始化**：通过 `pip install agentscope` 安装，使用 `agentscope.init()` 初始化项目
+- **创建 Agent**：使用 `ReActAgent` 配置模型、工具和记忆，指定 `sys_prompt` 定义 Agent 角色
+- **注册工具**：通过 `Toolkit.register_tool_function()` 将 Python 函数注册为工具，自动生成参数描述
+- **运行对话**：调用 `await agent(msg)` 启动 ReAct 循环，观察"思考→调用工具→生成回复"的完整过程
 
 ---
 

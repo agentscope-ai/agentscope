@@ -21,7 +21,7 @@
 
 调用者只依赖 `FormatterBase`，不关心具体是哪种格式。
 
-> **官方文档对照**：本文对应 [Building Blocks > Models](https://docs.agentscope.io/building-blocks/models)。官方文档展示了不同模型的使用方法，本章解释了为什么 Formatter 和 Model 是分开的——同一个 Model 可以搭配不同的 Formatter。
+AgentScope 官方文档的 Building Blocks > Models 页面展示了不同模型提供商的使用方法——OpenAI、Anthropic、DashScope、Gemini、Ollama 等。每种模型可以搭配对应的 Formatter，实现格式转换与 API 通信的分离。同一个 Model 可以搭配不同的 Formatter，这就是策略模式的威力——算法（格式化）与使用者（Model）解耦。
 
 ---
 

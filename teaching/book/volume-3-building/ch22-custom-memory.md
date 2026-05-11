@@ -198,9 +198,15 @@ flowchart TD
     B --> H["构造函数: 读文件"]
 ```
 
-> **官方文档对照**：本文对应 [Building Blocks > Memory](https://docs.agentscope.io/building-blocks/memory)。官方文档展示了内置 Memory 类型的选择指南，本章解释了 `MemoryBase` 的 5 个抽象方法——这是实现自定义 Memory 的接口规范。
+AgentScope 官方文档的 Building Blocks > Memory 页面展示了内置 Memory 类型（InMemoryMemory、RedisMemory、SQLAlchemyMemory）的选择指南。本章解释了 `MemoryBase` 的 5 个抽象方法——这是实现自定义 Memory 的接口规范。
+
+AgentScope 1.0 论文对 Memory 模块的设计说明是：
+
+> "Memory is designed as a pluggable component with unified interfaces, allowing developers to implement custom storage backends while maintaining compatibility with the agent's memory management workflow."
 >
-> **推荐阅读**：[AgentScope 1.0 论文](https://arxiv.org/pdf/2508.16279) 第 2.1 节讨论了 Memory 模块的设计目标和扩展点。
+> — AgentScope 1.0: A Comprehensive Framework for Building Agentic Applications, arXiv:2508.16279, Section 2.1
+
+这正对应了 `MemoryBase` 的抽象接口设计——5 个抽象方法定义了统一的行为契约，任何存储后端（文件、数据库、远程服务）只要实现这些方法，就可以无缝接入 Agent 的记忆管理流程。
 
 ---
 

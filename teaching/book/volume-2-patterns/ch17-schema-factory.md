@@ -89,9 +89,12 @@ extended_model: Type[BaseModel] | None = None
 
 `Toolkit.set_extended_model()` 方法把 Pydantic 模型合并到工具的 JSON Schema 中——这样模型在调用工具时必须按扩展后的格式返回数据。
 
-> **官方文档对照**：本文对应 [Building Blocks > Tool Capabilities](https://docs.agentscope.io/building-blocks/tool-capabilities)。官方文档展示了"Extending JSON Schema Dynamically"的使用方法，本章解释了 `_parse_tool_function` 如何从 docstring 提取参数信息。
->
-> **推荐阅读**：[MarkTechPost AgentScope 教程](https://www.marktechpost.com/2026/04/01/how-to-build-production-ready-agentscope-workflows/) Part 2 展示了自定义工具函数和自动 JSON Schema 生成的完整示例。
+AgentScope 官方文档的 Building Blocks > Tool Capabilities 页面展示了"Extending JSON Schema Dynamically"的使用方法——通过 `Toolkit` 的扩展 API 动态修改工具的参数描述。本章解释了 `_parse_tool_function` 如何从 docstring 提取参数信息并自动生成 JSON Schema。
+
+在实际项目中，自动 JSON Schema 生成的常见应用包括：
+- 搜索工具：参数 `query: str` + `max_results: int`，从 docstring 自动提取参数说明
+- 数据库查询工具：参数 `sql: str`，自动生成描述"要执行的 SQL 查询语句"
+- 文件处理工具：参数 `file_path: str` + `encoding: str = "utf-8"`，自动识别可选参数和默认值
 
 ---
 

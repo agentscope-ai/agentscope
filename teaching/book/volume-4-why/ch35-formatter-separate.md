@@ -137,9 +137,15 @@ flowchart LR
 
 LiteLLM 的方案也有趣——用一个类适配所有 API，内部做格式转换。但扩展性不如 AgentScope 的分离方案。
 
-> **官方文档对照**：本文对应 [Building Blocks > Models](https://docs.agentscope.io/building-blocks/models)。官方文档展示了不同模型的使用方法，本章解释了为什么 Formatter 和 Model 是分开的。
+AgentScope 官方文档的 Building Blocks > Models 页面展示了不同模型提供商的使用方法，包括 OpenAI、Anthropic、DashScope、Gemini、Ollama 等。每种模型可以搭配不同的 Formatter，实现格式与通信的分离。
+
+AgentScope 1.0 论文对这一设计的说明是：
+
+> "we abstract foundational components essential for agentic applications and provide unified interfaces and extensible modules, enabling developers to easily leverage the latest progress, such as new models and MCPs"
 >
-> **推荐阅读**：[AgentScope 1.0 论文](https://arxiv.org/pdf/2508.16279) 第 2.1 节讨论了 Formatter 与 Model 分离的设计理由。
+> — AgentScope 1.0: A Comprehensive Framework for Building Agentic Applications, arXiv:2508.16279, Section 2
+
+Formatter 与 Model 的分离正是"可扩展模块"思想的体现——新增一个模型提供商只需要实现 `ChatModelBase` 和对应的 `FormatterBase`，两者独立演进。
 
 ---
 

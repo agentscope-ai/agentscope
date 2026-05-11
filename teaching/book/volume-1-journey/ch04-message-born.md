@@ -421,9 +421,15 @@ Msg 类本身**没有继承 DictMixin**。Msg 选择用普通属性访问（`msg
 
 这个区分是设计上的刻意选择：**固定结构用属性，动态结构用 DictMixin**。
 
-> **官方文档对照**：本章对应 [Basic Concepts > Message](https://docs.agentscope.io/basic-concepts)。官方文档展示了 `Msg` 的创建方法和 7 种 `ContentBlock` 类型，本章解释了为什么用 `TypedDict` 而不是 dataclass（详见卷四第 33 章）。
+AgentScope 官方文档的 Basic Concepts > Message 页面展示了 `Msg` 的创建方法和 7 种 `ContentBlock` 类型（TextBlock、ThinkingBlock、ImageBlock、AudioBlock、VideoBlock、ToolUseBlock、ToolResultBlock）。本章解释了为什么用 `TypedDict` 而不是 dataclass（详见卷四第 33 章）。
+
+AgentScope 1.0 论文对统一消息格式的设计说明是：
+
+> "we abstract foundational components essential for agentic applications and provide unified interfaces"
 >
-> **推荐阅读**：[AgentScope 1.0 论文](https://arxiv.org/pdf/2508.16279) 第 2.1 节讨论了统一消息格式的设计理由。
+> — AgentScope 1.0: A Comprehensive Framework for Building Agentic Applications, arXiv:2508.16279, Section 2.1
+
+统一消息格式（unified message format）是框架的核心设计——所有组件通过同一种 `Msg` 类型通信。
 
 ---
 

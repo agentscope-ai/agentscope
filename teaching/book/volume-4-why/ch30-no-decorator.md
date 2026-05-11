@@ -132,9 +132,15 @@ def test_tool():
 
 AgentScope 和 AutoGen 都选择了实例级注册——这是多 Agent 场景的刚需。
 
-> **官方文档对照**：本文对应 [Building Blocks > Tool Capabilities](https://docs.agentscope.io/building-blocks/tool-capabilities)。官方文档展示了 `register_tool_function` 的使用方法，本章分析了为什么不使用全局装饰器的设计理由。
+AgentScope 官方文档的 Building Blocks > Tool Capabilities 页面展示了 `register_tool_function` 的基本用法——传入一个 Python 函数，框架自动从 docstring 和类型标注中提取参数描述并生成 JSON Schema。此外还展示了工具分组（Tool Group）和中间件（Middleware）的高级用法。
+
+AgentScope 1.0 论文对工具系统的设计说明是：
+
+> "flexible and efficient tool-based agent-environment interactions for building agentic applications"
 >
-> **推荐阅读**：[AgentScope 1.0 论文](https://arxiv.org/pdf/2508.16279) 第 2.1 节讨论了工具系统的设计目标。
+> — AgentScope 1.0: A Comprehensive Framework for Building Agentic Applications, arXiv:2508.16279, Section 1
+
+显式注册让同一个函数可以在不同的 Agent 实例中以不同的配置使用——这是多 Agent 场景的刚需。
 
 ---
 
