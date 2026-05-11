@@ -1,378 +1,254 @@
-# 第 7 站：检索与知识
+# 第 7 章 第 4 站：检索知识
 
-> 天气 Agent 收到"北京今天天气怎么样？"后，不仅要查天气工具，还可能需要记住用户之前说过"我经常去北京出差"——这种跨对话的信息，存在哪里？
-
-## 路线图
-
-上一站，我们看到 Agent 把消息存进了**工作记忆**（`InMemoryMemory`）。但工作记忆只在一次对话中有效——对话结束就消失了。
-
-这一站，我们追踪两条平行的"长期记忆"路径：
-
-```
-用户消息 ──→ Agent.reply()
-                │
-                ├── 长期记忆（LongTermMemory）── 跨对话的个性化记忆
-                │
-                └── 知识库（KnowledgeBase/RAG）── 外部文档检索
-```
-
-读完本章，你会理解：
-- 长期记忆的两种控制模式：`static_control` vs `agent_control`
-- RAG 知识库的完整流程：文档 → Embedding → 向量存储 → 检索
-- 为什么 Agent 要同时有"工作记忆"和"长期记忆"
+> **追踪线**：消息存入记忆后，Agent 可能需要从知识库中查找相关信息。
+> 本章你将理解：长期记忆检索、RAG 知识库查询、Embedding 流程、事件循环。
 
 ---
 
-## 知识补全：Embedding 与向量检索
+## 7.1 路线图
 
-在进入源码之前，先理解一个核心概念：**Embedding（嵌入向量）**。
+```mermaid
+graph LR
+    Init["init()"] --> Msg["Msg 诞生"]
+    Msg --> Agent["Agent 收信"]
+    Agent --> Memory["工作记忆"]
+    Memory --> Retrieve["检索知识"]
+    Retrieve --> Format["格式转换"]
+    Format --> Model["请求模型"]
+    Model --> Tool["执行工具"]
+    Tool --> Loop["循环/返回"]
 
-### 什么是 Embedding？
-
-简单说，Embedding 就是**把文本变成一组数字**。语义相近的文本，数字也相近。
-
+    style Init fill:#e0e0e0
+    style Msg fill:#e0e0e0
+    style Agent fill:#e0e0e0
+    style Memory fill:#e0e0e0
+    style Retrieve fill:#4caf50,color:white
 ```
-"北京天气"     → [0.12, -0.34, 0.56, ...]   (假设 1536 维)
-"北京气候"     → [0.11, -0.33, 0.55, ...]   (非常接近！)
-"今天吃什么"   → [0.87, 0.22, -0.41, ...]   (完全不同)
-```
 
-这样，"检索相关文档"就变成了"找数字最接近的向量"——这是数学运算，计算机做起来非常快。
+绿色是当前位置——从知识库检索信息。
 
-> 不需要理解 Embedding 模型内部的神经网络结构。只要记住：**文本 → 一串数字 → 用数字的"距离"衡量语义的"远近"**。
+> **源码验证日期**: 2026-05-11, commit `f17cfd0a`
 
 ---
 
-## 源码入口：LongTermMemoryBase
+## 7.2 知识补全：事件循环
+
+上一章我们提到了 `async` 方法但没有深入。现在来解释事件循环（Event Loop）——async 的底层机制。
+
+### 为什么需要事件循环？
+
+`async` 函数不能直接运行——它需要一个"调度员"来管理。这个调度员就是事件循环。
+
+想象一个餐厅服务员：
+
+```
+同步服务员：一次只服务一桌。点菜→等厨房做→上菜→再点菜→...
+异步服务员：同时服务多桌。A 桌点菜→把菜单送厨房→去 B 桌点菜→
+          A 桌菜好了→去上菜→继续服务 B 桌
+```
+
+事件循环就是这个异步服务员。它维护一个任务队列，在等待 IO 时切换到其他任务：
+
+```mermaid
+graph TD
+    EL["事件循环"] --> T1["任务 1: 请求模型"]
+    EL --> T2["任务 2: 执行工具"]
+    EL --> T3["任务 3: 读取文件"]
+
+    T1 -->|"等待网络响应"| EL
+    T2 -->|"等待数据库"| EL
+    T3 -->|"等待磁盘"| EL
+
+    EL -->|"响应回来了"| T1
+
+    style EL fill:#e8f5e9,stroke:#4caf50
+```
+
+### 你需要知道的
+
+- `await` 暂停当前协程，把控制权交给事件循环
+- 事件循环发现有人在等待 IO → 切换到另一个就绪的任务
+- IO 完成后 → 恢复之前的协程
+- `asyncio.run()` 启动事件循环
+
+在 AgentScope 中，你通常不需要手动管理事件循环——框架内部处理好了。
+
+---
+
+## 7.3 源码入口
+
+| 文件 | 内容 |
+|------|------|
+| `src/agentscope/memory/_long_term_memory/_long_term_memory_base.py` | `LongTermMemoryBase` |
+| `src/agentscope/rag/_knowledge_base.py` | 知识库 |
+| `src/agentscope/rag/_simple_knowledge.py` | 简单知识实现 |
+| `src/agentscope/embedding/` | Embedding 模型 |
+
+---
+
+## 7.4 逐行阅读
+
+### 长期记忆 vs 工作记忆
+
+上一章讲的是工作记忆（Working Memory）——存当前对话的消息。长期记忆（Long-term Memory）存的是跨对话的知识和经验。
+
+| 特性 | 工作记忆 | 长期记忆 |
+|------|---------|---------|
+| 生命周期 | 单次对话 | 跨对话持久 |
+| 存储内容 | 消息历史 | 知识片段 |
+| 访问方式 | 按索引/mark | 按语义相似度检索 |
+| 典型实现 | `InMemoryMemory` | 向量数据库 |
+
+### LongTermMemoryBase
 
 打开 `src/agentscope/memory/_long_term_memory/_long_term_memory_base.py`：
 
 ```python
-# _long_term_memory_base.py:11
 class LongTermMemoryBase(StateModule):
+    async def retrieve(
+        self,
+        query: str,
+        top_k: int = 10,
+        **kwargs,
+    ) -> list[Msg]:
+        """Retrieve relevant messages from long-term memory."""
 ```
 
-它继承自 `StateModule`——还记得吗？这意味着它也有 `state_dict()` / `load_state_dict()` 序列化能力。
+核心方法只有两个：
 
-### 四个核心方法
+- `retrieve()`：根据查询文本检索相关记忆
+- `retrieve_from_memory()`：从工作记忆中检索（桥接两种记忆）
 
-这个基类定义了四个方法，分为两组：
+长期记忆的关键在于"语义检索"——不是按关键词匹配，而是按**意思相似度**匹配。这就需要 Embedding。
 
-**开发者调用的方法**（在 `reply` 流程中自动调用）：
+### Embedding：把文字变成向量
 
-```python
-# _long_term_memory_base.py:24
-async def record(self, msgs: list[Msg | None], **kwargs) -> Any:
-    """开发者设计的方法：从消息中提取信息，存入长期记忆"""
-
-# _long_term_memory_base.py:35
-async def retrieve(self, msg: Msg | list[Msg] | None, limit: int = 5, **kwargs) -> str:
-    """开发者设计的方法：根据消息检索长期记忆，返回字符串"""
-```
-
-**Agent 自主调用的工具函数**（Agent 可以像调用 `get_weather` 一样调用它们）：
-
-```python
-# _long_term_memory_base.py:48
-async def record_to_memory(self, thinking: str, content: list[str], **kwargs) -> ToolResponse:
-    """Agent 可以主动调用的"记笔记"工具"""
-
-# _long_term_memory_base.py:69
-async def retrieve_from_memory(self, keywords: list[str], limit: int = 5, **kwargs) -> ToolResponse:
-    """Agent 可以主动调用的"查笔记"工具"""
-```
-
-注意基类中这四个方法都直接 `raise NotImplementedError`——它只是一个接口定义。
-
-### 两种控制模式
-
-回到 ReActAgent 的构造函数，看它如何使用长期记忆：
-
-```python
-# _react_agent.py:286
-self.long_term_memory = long_term_memory
-
-# _react_agent.py:289
-self._static_control = long_term_memory and long_term_memory_mode in [
-    "static_control",
-    "both",
-]
-self._agent_control = long_term_memory and long_term_memory_mode in [
-    "agent_control",
-    "both",
-]
-```
-
-两种模式的区别：
-
-| 模式 | 谁决定记录/检索什么 | 工作方式 |
-|------|-------------------|---------|
-| `static_control` | **开发者**（在代码中预设） | 每次对话开始时自动检索，结果注入系统提示 |
-| `agent_control` | **Agent**（大模型自己决定） | 把 `record_to_memory`/`retrieve_from_memory` 注册为工具，Agent 自主决定何时记/查 |
-
-如果设为 `"both"`，两种都启用。
-
-```python
-# _react_agent.py:303
-if self._agent_control:
-    self.toolkit.register_tool_function(
-        long_term_memory.record_to_memory,
-    )
-    self.toolkit.register_tool_function(
-        long_term_memory.retrieve_from_memory,
-    )
-```
-
-> **设计一瞥**：为什么让 Agent 自己管理记忆？
-> `static_control` 模式简单可控，但开发者必须预测所有需要记住的场景。
-> `agent_control` 模式更灵活——Agent 可以在对话中主动说"这个用户的偏好我应该记住"。
-> 代价是 Agent 可能遗忘不该忘的，或者记住不该记的。
-> 详见卷四第 36 章。
-
----
-
-## 现有实现：Mem0 和 ReMe
-
-AgentScope 提供了两个长期记忆实现：
-
-### Mem0（第三方集成）
+Embedding（嵌入）是把文字转换成数字向量的过程。语义相近的文字，向量也相近。
 
 ```
-src/agentscope/memory/_long_term_memory/_mem0/
-├── _mem0_long_term_memory.py   # Mem0LongTermMemory at line 72
-└── _mem0_utils.py
+"今天天气很好" → [0.23, -0.15, 0.89, ...]
+"阳光明媚"    → [0.21, -0.14, 0.87, ...]  ← 相似！
+"今天下雨了"  → [0.05, 0.32, -0.41, ...]  ← 不同
 ```
 
-Mem0 是一个开源的记忆管理库，它会自动从对话中提取"事实"并存储。
+AgentScope 的 Embedding 模块在 `src/agentscope/embedding/` 下，支持多种 embedding 提供商。
 
-### ReMe（内置实现）
+### RAG 知识库
 
-```
-src/agentscope/memory/_long_term_memory/_reme/
-├── _reme_long_term_memory_base.py          # ReMeLongTermMemoryBase at line 77
-├── _reme_personal_long_term_memory.py      # 个人记忆
-├── _reme_task_long_term_memory.py          # 任务记忆
-└── _reme_tool_long_term_memory.py          # 工具使用记忆
-```
-
-ReMe 把记忆分成了三种类型：个人偏好、任务经验、工具使用经验。
-
----
-
-## RAG 知识库：另一条检索路径
-
-长期记忆是从对话中"学习"的信息。但 Agent 还需要另一种知识——**外部文档**。
-
-比如你有一个产品手册，想让 Agent 根据手册回答问题。这不是"记忆"，而是"知识检索"——RAG（Retrieval-Augmented Generation，检索增强生成）。
-
-### RAG 的三大组件
-
-打开 RAG 相关的三个核心文件：
-
-**1. Document（文档数据结构）**
-
-```python
-# _document.py:35
-@dataclass
-class Document:
-    metadata: DocMetadata    # 文档元信息（内容、ID、分块号）
-    id: str = field(default_factory=shortuuid.uuid)
-    embedding: Embedding | None = field(default_factory=lambda: None)
-    score: float | None = None
-```
-
-一个 `Document` 代表文档的一个**分块**（chunk）。一段长文本会被切成多个小块，每块独立检索。
-
-**2. EmbeddingModelBase（嵌入模型）**
-
-```python
-# _embedding_base.py:8
-class EmbeddingModelBase:
-    model_name: str
-    supported_modalities: list[str]
-    dimensions: int
-
-    async def __call__(self, *args, **kwargs) -> EmbeddingResponse:
-        """调用嵌入 API，把文本变成向量"""
-```
-
-支持的实现包括：OpenAI、DashScope、Gemini、Ollama。
-
-**3. VDBStoreBase（向量数据库）**
-
-```python
-# _store_base.py:10
-class VDBStoreBase:
-    async def add(self, documents: list[Document], **kwargs) -> None: ...
-    async def delete(self, *args, **kwargs) -> None: ...
-    async def search(self, query_embedding: Embedding, limit: int, ...) -> list[Document]: ...
-```
-
-支持的向量数据库：Milvus、Qdrant、MongoDB、OceanBase、阿里云 MySQL。
-
-### KnowledgeBase：把它们串起来
-
-`KnowledgeBase` 是一个协调者，把"嵌入模型"和"向量数据库"组合在一起：
-
-```python
-# _knowledge_base.py:13
-class KnowledgeBase:
-    embedding_store: VDBStoreBase
-    embedding_model: EmbeddingModelBase
-
-    async def retrieve(self, query: str, limit: int = 5, ...) -> list[Document]:
-        """检索相关文档"""
-
-    async def add_documents(self, documents: list[Document], ...) -> None:
-        """添加文档（自动 embedding + 存储）"""
-```
-
-完整的 RAG 流程：
+RAG（Retrieval-Augmented Generation）的核心流程：
 
 ```mermaid
-flowchart LR
-    A[原始文档] -->|分块| B[Document 列表]
-    B -->|add_documents| C[EmbeddingModel]
-    C -->|文本→向量| D[VDBStore]
-    D -->|存储| E[(向量数据库)]
+sequenceDiagram
+    participant Agent
+    participant KnowledgeBase
+    participant Embedding
 
-    F[用户提问] -->|retrieve| C
-    C -->|问题→向量| D
-    D -->|向量搜索| E
-    E -->|返回最相似的文档| G[相关文档列表]
+    Agent->>KnowledgeBase: retrieve("北京天气")
+    KnowledgeBase->>Embedding: embed("北京天气")
+    Embedding-->>KnowledgeBase: [0.23, -0.15, ...]
+    KnowledgeBase->>KnowledgeBase: 向量相似度搜索
+    KnowledgeBase-->>Agent: 最相关的 top_k 条知识
 ```
 
-### ReActAgent 如何使用 KnowledgeBase
-
-回到 `_react_agent.py`，看 `knowledge` 参数的处理：
+打开 `src/agentscope/rag/_knowledge_base.py`：
 
 ```python
-# _react_agent.py:318
-if isinstance(knowledge, KnowledgeBase):
-    knowledge = [knowledge]
-self.knowledge: list[KnowledgeBase] = knowledge or []
+async def retrieve(
+    self,
+    query: str,
+    top_k: int = 10,
+) -> list[Msg]:
+    """Retrieve relevant knowledge."""
+
+async def retrieve_knowledge(
+    self,
+    queries: list[str],
+    top_k: int = 10,
+) -> list[Msg]:
+    """Retrieve knowledge for multiple queries."""
 ```
 
-Agent 可以持有**多个**知识库。它们会在 `_reasoning` 阶段被检索，检索结果注入到系统提示中。
+`retrieve()` 接受一个查询字符串，`retrieve_knowledge()` 支持批量查询。
+
+### 简单知识实现
+
+`src/agentscope/rag/_simple_knowledge.py` 提供了一个基础的知识检索实现。更复杂的实现可以对接向量数据库（如 ChromaDB、Milvus 等）。
 
 ---
 
-## 完整的"记忆 + 知识"流程图
+## 7.5 调试实践
 
-```mermaid
-flowchart TB
-    subgraph 输入
-        MSG[用户消息]
-    end
+### 查看 Embedding 向量
 
-    subgraph 记忆系统
-        WM[工作记忆<br/>InMemoryMemory<br/>__当前对话__]
-        LTM[长期记忆<br/>LongTermMemoryBase<br/>__跨对话__]
-        KB[知识库<br/>KnowledgeBase<br/>__外部文档__]
-    end
+```python
+from agentscope.embedding import OpenAIEmbedding
 
-    MSG -->|存入| WM
-    MSG -->|static_control: 自动检索| LTM
-    MSG -->|检索相关文档| KB
-
-    LTM -->|检索结果| SP[注入系统提示]
-    KB -->|相关文档| SP
-
-    SP -->|增强后的上下文| MODEL[大模型推理]
-    MODEL -->|需要记笔记？| LTM
+embedder = OpenAIEmbedding(model_name="text-embedding-3-small")
+vector = await embedder.embed("北京天气")
+print(f"向量维度: {len(vector)}")
+print(f"前 5 维: {vector[:5]}")
 ```
 
-**工作记忆**是短期记忆——当前对话说了什么。**长期记忆**是个性化记忆——跨对话记住用户偏好。**知识库**是外部知识——产品手册、FAQ、技术文档。
+### 追踪检索过程
 
-> 三者不互斥，可以同时使用。工作记忆是必需的；长期记忆和知识库是可选的增强。
-
-AgentScope 官方文档的 Building Blocks > Memory 页面中长期记忆和 RAG 部分展示了 `KnowledgeBase` 和各种向量数据库的使用方法。本章解释了 `LongTermMemoryBase` 的两种控制模式（static_control vs agent_control）和 RAG 管道的内部流程。
-
-AgentScope 1.0 论文对 Memory 模块的设计说明是：
-
-> "we abstract foundational components essential for agentic applications and provide unified interfaces and extensible modules"
->
-> — AgentScope 1.0: A Comprehensive Framework for Building Agentic Applications, arXiv:2508.16279, Section 2.1
-
-Memory 模块的可扩展设计意味着你可以根据需求选择不同的存储后端——从简单的内存列表到分布式向量数据库。
+如果你配置了长期记忆，可以在 `retrieve()` 方法中加 print 观察检索过程。
 
 ---
 
-## 试一试：观察长期记忆的注册过程
+## 7.6 试一试
 
-这个练习不需要 API key，只需要看源码和 print。
+### 在天气 Agent 中加入知识库（概念演示）
 
-**目标**：观察 `agent_control` 模式下，长期记忆方法如何被注册为工具。
-
-**步骤**：
-
-1. 打开 `src/agentscope/agent/_react_agent.py`，找到第 303 行附近：
+完整的 RAG 需要向量数据库，这里演示概念：
 
 ```python
-if self._agent_control:
-    self.toolkit.register_tool_function(
-        long_term_memory.record_to_memory,
-    )
-    self.toolkit.register_tool_function(
-        long_term_memory.retrieve_from_memory,
-    )
+from agentscope.message import Msg
+
+# 模拟知识库
+knowledge_base = [
+    Msg("system", "北京春季干燥多风，气温 10-25°C", "system"),
+    Msg("system", "北京夏季炎热多雨，气温 25-35°C", "system"),
+    Msg("system", "上海全年湿润，冬季阴冷夏季闷热", "system"),
+]
+
+# 模拟检索：用简单的关键词匹配代替向量搜索
+def simple_retrieve(query: str, knowledge: list[Msg], top_k: int = 2) -> list[Msg]:
+    """简单的关键词匹配检索"""
+    scored = []
+    for msg in knowledge:
+        # 计算关键词重叠度（简化版）
+        query_words = set(query)
+        msg_words = set(msg.content)
+        overlap = len(query_words & msg_words)
+        scored.append((overlap, msg))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [msg for _, msg in scored[:top_k]]
+
+# 试试看
+results = simple_retrieve("北京天气", knowledge_base)
+for msg in results:
+    print(f"  知识: {msg.content}")
 ```
 
-2. 在 `register_tool_function` 调用之前加一行 print：
-
-```python
-if self._agent_control:
-    print(f"[DEBUG] 注册长期记忆工具: {long_term_memory.record_to_memory.__name__}")
-    self.toolkit.register_tool_function(
-        long_term_memory.record_to_memory,
-    )
-    print(f"[DEBUG] 注册长期记忆工具: {long_term_memory.retrieve_from_memory.__name__}")
-    self.toolkit.register_tool_function(
-        long_term_memory.retrieve_from_memory,
-    )
-```
-
-3. 如果你有 Mem0 或其他长期记忆实现，创建 ReActAgent 时设 `long_term_memory_mode="agent_control"`，运行后观察 print 输出。
-
-4. 如果没有长期记忆实现，可以手动验证：搜索 `toolkit.register_tool_function` 的所有调用位置，看看除了长期记忆还有哪些函数被注册为工具：
-
-```bash
-grep -n "register_tool_function" src/agentscope/agent/_react_agent.py
-```
-
-你会看到至少 3 处调用：`record_to_memory`、`retrieve_from_memory`、以及 `meta_tool` 相关的注册。
-
-**改完后记得用 `git checkout` 恢复源码：**
-
-```bash
-git checkout src/agentscope/agent/_react_agent.py
-```
+这个简化版本展示了 RAG 的核心思想：根据查询检索相关知识。真实的 RAG 用向量相似度代替关键词匹配，效果更好。
 
 ---
 
-## 检查点
+## 7.7 检查点
 
-你现在理解了：
+你现在已经理解了：
 
-- **长期记忆**（`LongTermMemoryBase`）是跨对话的记忆，有两种控制模式
-- `static_control` 由开发者控制（自动检索 + 注入系统提示），`agent_control` 由 Agent 自己决定（注册为工具）
-- **RAG 知识库**（`KnowledgeBase`）是外部文档检索，流程是 文档 → Embedding → 向量存储 → 搜索
-- 工作记忆、长期记忆、知识库各有分工，可以同时使用
+- **长期记忆**：跨对话持久存储，用语义相似度检索
+- **Embedding**：把文字转换成数字向量，语义相近的文字向量也相近
+- **RAG 流程**：查询 → Embedding → 向量搜索 → 返回相关知识
+- **事件循环**：async 的底层调度机制，在等待 IO 时切换任务
 
 **自检练习**：
-
-1. 如果你想让 Agent 自动记住"用户喜欢用英文交流"，应该用 `static_control` 还是 `agent_control`？
-2. RAG 的 `retrieve` 方法的输入是什么？输出是什么？（提示：看 `_knowledge_base.py:38`）
+1. 工作记忆和长期记忆的区别是什么？
+2. 为什么 RAG 用向量相似度而不是关键词匹配？
 
 ---
 
 ## 下一站预告
 
-消息已经通过记忆和知识库被增强了。但大模型不接受 `Msg` 对象——它只认特定格式的 JSON。下一站，我们追踪 **Formatter**（格式转换器），看 `Msg` 如何被转换成 OpenAI API 需要的格式。
-
----
-
-> **设计一瞥**：为什么长期记忆的基类方法都 raise NotImplementedError？
-> 这是一种"可选实现"模式。`record` 和 `retrieve` 是给开发者用的，`record_to_memory` 和 `retrieve_from_memory` 是给 Agent 用的工具函数。
-> 不是每个长期记忆实现都需要支持所有四种用法。比如你可能只想让开发者控制检索，不想让 Agent 自己调用——那就只实现 `record`/`retrieve`，让工具函数保持未实现。
-> 详见卷四第 36 章。
+知识检索完毕。下一站，Agent 需要把消息和知识转换成模型能理解的格式。
