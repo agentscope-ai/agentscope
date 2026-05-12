@@ -633,7 +633,7 @@ they will be executed in parallel by the <code class="docutils literal notransla
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Jarvis: {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_f4a7bcd6f9084f3d93aa4f&quot;,
+    &quot;id&quot;: &quot;call_798bea34ec164106afc850&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;input&quot;: {
         &quot;tag&quot;: &quot;tag1&quot;
@@ -642,7 +642,7 @@ they will be executed in parallel by the <code class="docutils literal notransla
 }
 Jarvis: {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_e1161e4ded214b38892b84&quot;,
+    &quot;id&quot;: &quot;call_fbaa7e911394463cad4ac2&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;input&quot;: {
         &quot;tag&quot;: &quot;tag2&quot;
@@ -651,32 +651,32 @@ Jarvis: {
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_f4a7bcd6f9084f3d93aa4f&quot;,
+    &quot;id&quot;: &quot;call_798bea34ec164106afc850&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;Tag tag1 started at 08:03:05.727487 and ended at 08:03:08.730722. &quot;
+            &quot;text&quot;: &quot;Tag tag1 started at 09:32:36.614039 and ended at 09:32:39.617277. &quot;
         }
     ]
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_e1161e4ded214b38892b84&quot;,
+    &quot;id&quot;: &quot;call_fbaa7e911394463cad4ac2&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;Tag tag2 started at 08:03:05.727537 and ended at 08:03:08.731458. &quot;
+            &quot;text&quot;: &quot;Tag tag2 started at 09:32:36.614098 and ended at 09:32:39.617944. &quot;
         }
     ]
 }
-Jarvis: The function &#39;example_tool_function&#39; has been called in parallel with two different tags. Here are the results:
+Jarvis: The &#39;example_tool_function&#39; has been called in parallel with two different tags. Here are the results:
 
-- For the tag &#39;tag1&#39;, the function started at 08:03:05.727487 and ended at 08:03:08.730722.
-- For the tag &#39;tag2&#39;, the function started at 08:03:05.727537 and ended at 08:03:08.731458.
+- For tag &#39;tag1&#39;, the function started at 09:32:36.614039 and ended at 09:32:39.617277.
+- For tag &#39;tag2&#39;, the function started at 09:32:36.614098 and ended at 09:32:39.617944.
 
-Both instances of the function ran concurrently, as evidenced by their close start and end times.
+Both functions executed during approximately the same time frame, indicating that they ran concurrently.
 </pre></div>
 </div>
 </section>
@@ -736,7 +736,7 @@ Then we can get the structured output from the <code class="docutils literal not
   warnings.warn(
 Jarvis: {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_720e1031aa5244f88f34ce&quot;,
+    &quot;id&quot;: &quot;call_1b996c07ad044a6f938345&quot;,
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;input&quot;: {
         &quot;name&quot;: &quot;Albert Einstein&quot;,
@@ -752,7 +752,7 @@ Jarvis: {
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_720e1031aa5244f88f34ce&quot;,
+    &quot;id&quot;: &quot;call_1b996c07ad044a6f938345&quot;,
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;output&quot;: [
         {
@@ -761,7 +761,7 @@ system: {
         }
     ]
 }
-Jarvis: Allow me to introduce Albert Einstein, a renowned physicist celebrated for developing the theory of relativity, which revolutionized our understanding of space, time, and gravity. Born in 1879, Einstein&#39;s life was marked by profound intellectual achievements until his death at the age of 76. Among his many accolades, he was honored with the Nobel Prize in Physics in 1921, primarily for his services to theoretical physics and his discovery of the law of the photoelectric effect. He also received the prestigious Copley Medal in 1925 and the Max Planck Medal in 1929, further cementing his legacy as one of the most influential scientists of the 20th century.
+Jarvis: Allow me to introduce Albert Einstein, a renowned physicist celebrated for developing the theory of relativity. Born in 1879 and passing away at the age of 76, Einstein&#39;s contributions to science have left an indelible mark on our understanding of the universe. Among his many accolades, he was awarded the Nobel Prize in Physics in 1921, received the Copley Medal in 1925, and was honored with the Max Planck Medal in 1929. His work continues to influence not only the field of physics but also our broader scientific and cultural landscapes.
 
 The structured output:
 {
@@ -871,7 +871,7 @@ We summarize the agent under <code class="docutils literal notranslate"><span cl
 <li><p><a class="reference internal" href="task_hook.html#hook"><span class="std std-ref">Agent Hooks</span></a></p></li>
 <li><p><a class="reference internal" href="task_a2a.html#a2a"><span class="std std-ref">A2A Agent</span></a></p></li>
 </ul>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 35.809 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 20.007 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-agent-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/7dec07e2c813e72e1dad091b3ac4913a/task_agent.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_agent.ipynb</span></code></a></p>
