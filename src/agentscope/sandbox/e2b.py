@@ -8,6 +8,9 @@ an E2B API key and the ``e2b`` package to be installed::
 
 The E2B SDK provides a native async API (``AsyncSandbox``) so no thread
 pool is needed — all calls are truly async.
+
+The remote filesystem root for ``exec`` / ``read`` / ``write`` is named
+**working_dir** here.
 """
 
 import asyncio
@@ -15,7 +18,7 @@ import posixpath
 import shlex
 import uuid
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .connection import SandboxConnection, register_sandbox_connection_type
 from .exceptions import UnsupportedOperation
@@ -26,48 +29,71 @@ from .types import (
     SerializedSandboxState,
 )
 
-
-def _import_e2b() -> tuple[Any, Any]:
-    """Lazy-import ``e2b`` SDK; raises ``ImportError`` with guidance."""
-    try:
-        from e2b import AsyncSandbox as _AsyncSandbox
-        from e2b import PtySize as _PtySize
-    except ImportError as exc:
-        raise ImportError(
-            "E2BSandboxConnection requires the `e2b` "
-            "package. Install with: pip install agentscope[sandbox]",
-        ) from exc
-    return _AsyncSandbox, _PtySize
-
-
-_DEFAULT_TEMPLATE = "base"
-_DEFAULT_WORKSPACE = "/home/user"
-_DEFAULT_TIMEOUT = 300
-_DEFAULT_PTY_ROWS = 24
-_DEFAULT_PTY_COLS = 80
+if TYPE_CHECKING:
+    from e2b import AsyncSandbox
 
 
 class E2BSandboxConnection(SandboxConnection):
     """Sandbox backed by the E2B cloud platform.
 
-    The ``workspace`` is the working directory inside the sandbox where
-    ``exec``, ``read``, and ``write`` operate relative to.  It defaults
-    to ``/home/user``.
+    **working_dir** is the absolute path *inside* the remote sandbox used as
+    the default cwd for :meth:`exec` and as the root for resolving relative
+    paths in :meth:`read` / :meth:`write`. It defaults to ``/home/user``.
 
     E2B sandboxes natively support exposed ports (via hostname-based
     routing) and snapshot/restore (via the pause/connect API).
     """
 
+    DEFAULT_TEMPLATE: str = "base"
+    DEFAULT_WORKING_DIR: str = "/home/user"
+    DEFAULT_TIMEOUT: int = 300
+    DEFAULT_PTY_ROWS: int = 24
+    DEFAULT_PTY_COLS: int = 80
+
     _supports_exposed_ports = True
     _supports_snapshot = True
     _supports_pty = True
 
+    @staticmethod
+    def _import_e2b_sdk() -> tuple[Any, Any]:
+        """Lazy-import ``e2b`` SDK; raises ``ImportError`` with guidance.
+
+        Import is deferred so importing ``agentscope`` does not require
+        ``e2b`` unless this backend is actually used.
+        """
+        try:
+            from e2b import AsyncSandbox as _AsyncSandbox
+            from e2b import PtySize as _PtySize
+        except ImportError as exc:
+            raise ImportError(
+                "E2BSandboxConnection requires the `e2b` "
+                "package. Install with: pip install agentscope[sandbox]",
+            ) from exc
+        return _AsyncSandbox, _PtySize
+
+    @classmethod
+    def _working_dir_from_extra(cls, extra: dict[str, Any]) -> str:
+        """Resolve remote working directory from
+        ``SandboxInitializationConfig.extra``."""
+        wd = extra.get("working_dir")
+        if isinstance(wd, str) and wd.strip():
+            return wd
+        return cls.DEFAULT_WORKING_DIR
+
+    @classmethod
+    def _working_dir_from_payload(cls, payload: dict[str, Any]) -> str:
+        """Resolve working directory from serialized resume ``payload``."""
+        wd = payload.get("working_dir")
+        if isinstance(wd, str) and wd.strip():
+            return wd
+        return cls.DEFAULT_WORKING_DIR
+
     def __init__(
         self,
-        sandbox: Any,
+        sandbox: "AsyncSandbox",
         *,
         instance_id: str,
-        workspace: str = _DEFAULT_WORKSPACE,
+        working_dir: str | None = None,
         api_key: str | None = None,
         domain: str | None = None,
     ) -> None:
@@ -76,17 +102,24 @@ class E2BSandboxConnection(SandboxConnection):
         Args:
             sandbox: ``e2b.AsyncSandbox`` instance (already created/connected).
             instance_id: Unique id for this connection instance.
-            workspace: Working directory inside the sandbox; all relative
-                ``read``/``write`` paths resolve under this.
+            working_dir: Absolute path inside the remote sandbox used as the
+                default cwd for :meth:`exec` and as the root for relative
+                :meth:`read` / :meth:`write` paths. Defaults to
+                :attr:`DEFAULT_WORKING_DIR`.
             api_key: E2B API key (stored for resume/reconnect).
             domain: E2B domain (stored for resume/reconnect).
         """
         self._sandbox = sandbox
         self._instance_id = instance_id
-        self._workspace = workspace
+        self._working_dir = (
+            working_dir
+            if working_dir is not None
+            else self.DEFAULT_WORKING_DIR
+        )
         self._api_key = api_key
         self._domain = domain
         self._destroyed = False
+        self._working_dir_lock = asyncio.Lock()
         # pid → AsyncCommandHandle for live PTY sessions.
         self._pty_handles: dict[int, Any] = {}
 
@@ -95,16 +128,20 @@ class E2BSandboxConnection(SandboxConnection):
         return "e2b"
 
     @property
-    def workspace_root(self) -> Path:
-        """Logical workspace root inside the sandbox."""
-        return Path(self._workspace)
+    def working_dir_root(self) -> Path:
+        """Remote root for sandbox-relative I/O (internal ``_working_dir``).
+
+        E2B working-directory path as :class:`~pathlib.Path`; not a
+        :class:`~agentscope.workspace.WorkspaceBase`.
+        """
+        return Path(self._working_dir)
 
     @property
     def sandbox_id(self) -> str:
         """The E2B-assigned sandbox identifier."""
         return self._sandbox.sandbox_id
 
-    # ─── factory ──────────────────────────────────────────────
+    # --- factory ---
 
     @classmethod
     async def create(
@@ -113,14 +150,14 @@ class E2BSandboxConnection(SandboxConnection):
     ) -> "E2BSandboxConnection":
         """Provision a new E2B sandbox and return a connected instance."""
         if options.backend_id != "e2b":
-            raise ValueError(
-                f"expected backend 'e2b', got {options.backend_id!r}",
-            )
-        AsyncSandbox, _ = _import_e2b()
+            msg = f"expected backend 'e2b', got {options.backend_id!r}"
+            raise ValueError(msg)
 
-        template: str = options.extra.get("template", _DEFAULT_TEMPLATE)
-        workspace: str = options.extra.get("workspace", _DEFAULT_WORKSPACE)
-        timeout: int = options.extra.get("timeout", _DEFAULT_TIMEOUT)
+        AsyncSandbox, _ = cls._import_e2b_sdk()
+
+        template: str = options.extra.get("template", cls.DEFAULT_TEMPLATE)
+        working_dir: str = cls._working_dir_from_extra(options.extra)
+        timeout: int = options.extra.get("timeout", cls.DEFAULT_TIMEOUT)
         api_key: str | None = options.extra.get("api_key") or None
         domain: str | None = options.extra.get("domain") or None
         metadata: dict[str, str] = options.extra.get("metadata", {})
@@ -146,16 +183,16 @@ class E2BSandboxConnection(SandboxConnection):
 
         sandbox = await AsyncSandbox.create(**create_kwargs)
 
-        # Ensure workspace directory exists.
-        await _run_command_with_retry(
+        # Ensure working directory exists.
+        await cls._run_command_with_retry(
             sandbox,
-            f"mkdir -p {shlex.quote(workspace)}",
+            f"mkdir -p {shlex.quote(working_dir)}",
             timeout=30,
         )
         conn = cls(
             sandbox,
             instance_id=instance_id,
-            workspace=workspace,
+            working_dir=working_dir,
             api_key=api_key,
             domain=domain,
         )
@@ -176,12 +213,10 @@ class E2BSandboxConnection(SandboxConnection):
         If the sandbox was paused, ``AsyncSandbox.connect`` will
         automatically resume it.
         """
-        if state.backend_id != "e2b":
-            raise ValueError("backend mismatch for resume")
-        AsyncSandbox, _ = _import_e2b()
+        AsyncSandbox, _ = cls._import_e2b_sdk()
 
         e2b_sandbox_id = state.payload.get("sandbox_id")
-        if not isinstance(e2b_sandbox_id, str):
+        if not e2b_sandbox_id or not isinstance(e2b_sandbox_id, str):
             raise ValueError(
                 "invalid resume payload: missing sandbox_id",
             )
@@ -190,7 +225,7 @@ class E2BSandboxConnection(SandboxConnection):
         if not isinstance(instance_id, str):
             instance_id = uuid.uuid4().hex
 
-        workspace = state.payload.get("workspace", _DEFAULT_WORKSPACE)
+        working_dir = cls._working_dir_from_payload(state.payload)
         api_key: str | None = state.payload.get("api_key") or None
         domain: str | None = state.payload.get("domain") or None
 
@@ -212,28 +247,30 @@ class E2BSandboxConnection(SandboxConnection):
         return cls(
             sandbox,
             instance_id=instance_id,
-            workspace=workspace,
+            working_dir=working_dir,
             api_key=api_key,
             domain=domain,
         )
 
-    # ─── path resolution ─────────────────────────────────────
+    # --- path resolution ---
 
     def _resolve(self, path: str) -> str:
-        """Resolve a sandbox-relative path inside the container workspace."""
+        """Resolve a path relative to the remote working directory."""
         p = PurePosixPath(path)
         if p.is_absolute():
             resolved = posixpath.normpath(p.as_posix())
         else:
             resolved = posixpath.normpath(
-                (PurePosixPath(self._workspace) / p).as_posix(),
+                (PurePosixPath(self._working_dir) / p).as_posix(),
             )
-        ws = posixpath.normpath(self._workspace)
+        ws = posixpath.normpath(self._working_dir)
         if resolved != ws and not resolved.startswith(ws + "/"):
-            raise ValueError(f"path escapes sandbox workspace: {path!r}")
+            raise ValueError(
+                f"path escapes sandbox working directory: {path!r}",
+            )
         return resolved
 
-    # ─── exec ─────────────────────────────────────────────────
+    # --- exec ---
 
     async def exec(
         self,
@@ -247,18 +284,18 @@ class E2BSandboxConnection(SandboxConnection):
 
         If E2B reports that the sandbox is still pending, wait and retry.
         """
-        workdir = self._workspace if cwd is None else self._resolve(cwd)
+        workdir = self._working_dir if cwd is None else self._resolve(cwd)
 
         run_kwargs: dict[str, Any] = {
             "cwd": workdir,
         }
         if env:
             run_kwargs["envs"] = env
-        if not timeout:
+        if timeout is not None:
             run_kwargs["timeout"] = timeout
 
         try:
-            result = await _run_command_with_retry(
+            result = await self._run_command_with_retry(
                 self._sandbox,
                 command,
                 **run_kwargs,
@@ -278,7 +315,7 @@ class E2BSandboxConnection(SandboxConnection):
             stderr=(result.stderr or "").encode("utf-8"),
         )
 
-    # ─── filesystem ───────────────────────────────────────────
+    # --- filesystem ---
 
     async def read(self, path: str) -> bytes:
         """Read a file from the E2B sandbox as bytes."""
@@ -299,7 +336,7 @@ class E2BSandboxConnection(SandboxConnection):
         sandbox_path = self._resolve(path)
         await self._sandbox.files.write(sandbox_path, data)
 
-    # ─── lifecycle ────────────────────────────────────────────
+    # --- lifecycle ---
 
     async def destroy(self) -> None:
         """Kill the E2B sandbox, releasing all cloud resources."""
@@ -338,7 +375,7 @@ class E2BSandboxConnection(SandboxConnection):
         except Exception:
             return False
 
-    # ─── capabilities: exposed ports ──────────────────────────
+    # --- exposed ports ---
 
     async def resolve_exposed_port(self, port: int) -> SandboxInternalEndpoint:
         """Resolve a port to the E2B hostname-based endpoint.
@@ -352,51 +389,50 @@ class E2BSandboxConnection(SandboxConnection):
             is_tls_enabled=True,
         )
 
-    # ─── capabilities: snapshot ───────────────────────────────
+    # --- snapshot (working_dir) ---
 
-    async def snapshot_workspace(self) -> bytes:
-        """Export the workspace directory as a tar archive."""
-        result = await self._sandbox.commands.run(
-            f"tar cf /tmp/_ws_snapshot.tar -C {self._workspace} .",
-            timeout=120,
-        )
-        if result.exit_code != 0:
-            raise RuntimeError(
-                f"snapshot tar failed: {result.stderr}",
+    async def snapshot_working_dir(self) -> bytes:
+        """Export the working directory tree as a tar archive."""
+        async with self._working_dir_lock:
+            result = await self._sandbox.commands.run(
+                f"tar cf /tmp/_ws_snapshot.tar -C {self._working_dir} .",
+                timeout=120,
             )
-        data = await self._sandbox.files.read(
-            "/tmp/_ws_snapshot.tar",
-            format="bytes",
-        )
-        # Clean up temp file.
-        await self._sandbox.commands.run(
-            "rm -f /tmp/_ws_snapshot.tar",
-            timeout=10,
-        )
-        return bytes(data)
-
-    async def restore_workspace(self, data: bytes) -> None:
-        """Restore the workspace directory from a tar archive."""
-        await self._sandbox.files.write("/tmp/_ws_restore.tar", data)
-        rm_cmd = (
-            f"rm -rf {self._workspace}/* {self._workspace}"
-            "/.[!.]* 2>/dev/null; true"
-        )
-        await self._sandbox.commands.run(rm_cmd, timeout=30)
-        result = await self._sandbox.commands.run(
-            f"tar xf /tmp/_ws_restore.tar -C {self._workspace}",
-            timeout=120,
-        )
-        if result.exit_code != 0:
-            raise RuntimeError(
-                f"restore tar failed: {result.stderr}",
+            if result.exit_code != 0:
+                raise RuntimeError(
+                    f"snapshot tar failed: {result.stderr}",
+                )
+            data = await self._sandbox.files.read(
+                "/tmp/_ws_snapshot.tar",
+                format="bytes",
             )
-        await self._sandbox.commands.run(
-            "rm -f /tmp/_ws_restore.tar",
-            timeout=10,
-        )
+            await self._sandbox.commands.run(
+                "rm -f /tmp/_ws_snapshot.tar",
+                timeout=10,
+            )
+            return bytes(data)
 
-    # ─── capabilities: PTY ───────────────────────────────────
+    async def restore_working_dir(self, data: bytes) -> None:
+        """Restore the working directory tree from a tar archive."""
+        async with self._working_dir_lock:
+            await self._sandbox.files.write("/tmp/_ws_restore.tar", data)
+            wd = self._working_dir
+            rm_cmd = f"rm -rf {wd}/* {wd}/.[!.]* 2>/dev/null; true"
+            await self._sandbox.commands.run(rm_cmd, timeout=30)
+            result = await self._sandbox.commands.run(
+                f"tar xf /tmp/_ws_restore.tar -C {self._working_dir}",
+                timeout=120,
+            )
+            if result.exit_code != 0:
+                raise RuntimeError(
+                    f"restore tar failed: {result.stderr}",
+                )
+            await self._sandbox.commands.run(
+                "rm -f /tmp/_ws_restore.tar",
+                timeout=10,
+            )
+
+    # --- PTY ---
 
     async def pty_start(self, command: str, **kwargs: Any) -> int:
         """Start a PTY session inside the E2B sandbox.
@@ -414,10 +450,10 @@ class E2BSandboxConnection(SandboxConnection):
             The PID of the PTY process (used as ``session_id`` for
             subsequent ``pty_write`` calls).
         """
-        _, PtySize = _import_e2b()
+        _, PtySize = self._import_e2b_sdk()
 
-        rows = int(kwargs.get("rows", _DEFAULT_PTY_ROWS))
-        cols = int(kwargs.get("cols", _DEFAULT_PTY_COLS))
+        rows = int(kwargs.get("rows", self.DEFAULT_PTY_ROWS))
+        cols = int(kwargs.get("cols", self.DEFAULT_PTY_COLS))
         cwd = kwargs.get("cwd")
         env = kwargs.get("env")
 
@@ -460,7 +496,7 @@ class E2BSandboxConnection(SandboxConnection):
                 f"PTY session {session_id} not found or already closed",
             )
 
-        # Temporarily reconnect to the PTY stream to capture output.
+        # Reconnect to the PTY stream to capture output.
         buf = bytearray()
         got_data = asyncio.Event()
 
@@ -468,11 +504,18 @@ class E2BSandboxConnection(SandboxConnection):
             buf.extend(chunk)
             got_data.set()
 
-        # Temporarily reconnect to the PTY stream to capture output.
-        reader = await self._sandbox.pty.connect(
-            pid=session_id,
-            on_data=_on_data,
-        )
+        try:
+            reader = await asyncio.wait_for(
+                self._sandbox.pty.connect(
+                    pid=session_id,
+                    on_data=_on_data,
+                ),
+                timeout=30.0,
+            )
+        except asyncio.TimeoutError as e:
+            raise TimeoutError(
+                "pty.connect timed out; session may be dead or overloaded",
+            ) from e
         try:
             if data:
                 await self._sandbox.pty.send_stdin(
@@ -480,13 +523,20 @@ class E2BSandboxConnection(SandboxConnection):
                     data.encode("utf-8"),
                 )
 
-            # Give the PTY a short window to produce output.
+            # Wait for first bytes, then a short drain so command output
+            # (after local echo) is not cut off before disconnect.
             try:
-                await asyncio.wait_for(got_data.wait(), timeout=1.0)
+                await asyncio.wait_for(got_data.wait(), timeout=3.0)
             except asyncio.TimeoutError:
                 pass
+            await asyncio.sleep(0.35)
         finally:
-            await reader.disconnect()
+            try:
+                await asyncio.wait_for(reader.disconnect(), timeout=8.0)
+            except (asyncio.TimeoutError, Exception):
+                # Avoid hanging the caller if the data plane never ACKs
+                # disconnect (seen with some E2B / gateway builds).
+                pass
 
         return buf.decode("utf-8", errors="replace")
 
@@ -498,7 +548,7 @@ class E2BSandboxConnection(SandboxConnection):
             rows: New terminal row count.
             cols: New terminal column count.
         """
-        _, PtySize = _import_e2b()
+        _, PtySize = self._import_e2b_sdk()
 
         if session_id not in self._pty_handles:
             raise ValueError(
@@ -525,7 +575,7 @@ class E2BSandboxConnection(SandboxConnection):
         except Exception:
             return False
 
-    # ─── optional: export_state ───────────────────────────────
+    # --- export_state ---
 
     async def export_state(self) -> SerializedSandboxState:
         """Serialize connection state for resume via ``connect()``."""
@@ -534,43 +584,46 @@ class E2BSandboxConnection(SandboxConnection):
             payload={
                 "sandbox_id": self._sandbox.sandbox_id,
                 "instance_id": self._instance_id,
-                "workspace": self._workspace,
+                "working_dir": self._working_dir,
                 "api_key": self._api_key or "",
                 "domain": self._domain or "",
             },
         )
 
+    @staticmethod
+    async def _run_command_with_retry(
+        e2b_async_sandbox: "AsyncSandbox",
+        command: str,
+        *,
+        retries: int = 5,
+        initial_delay: float = 1.0,
+        max_delay: float = 5.0,
+        **kwargs: Any,
+    ) -> Any:
+        """Run ``command`` on the E2B ``AsyncSandbox`` handle.
+
+        Retries while the platform reports the environment is still pending.
+        """
+        delay = initial_delay
+
+        for attempt in range(1, retries + 1):
+            try:
+                return await e2b_async_sandbox.commands.run(command, **kwargs)
+            except Exception as e:
+                msg = str(e).lower()
+
+                transient = (
+                    "still pending" in msg
+                    or "sandbox is pending" in msg
+                    or "not ready" in msg
+                    or "sandbox not ready" in msg
+                )
+
+                if not transient or attempt >= retries:
+                    raise
+
+                await asyncio.sleep(delay)
+                delay = min(delay * 1.5, max_delay)
+
 
 register_sandbox_connection_type(E2BSandboxConnection)
-
-
-async def _run_command_with_retry(
-    sandbox: Any,
-    command: str,
-    *,
-    retries: int = 5,
-    initial_delay: float = 1.0,
-    max_delay: float = 5.0,
-    **kwargs: Any,
-) -> Any:
-    """Run a command with retry while E2B sandbox is still pending."""
-    delay = initial_delay
-
-    for attempt in range(1, retries + 1):
-        try:
-            return await sandbox.commands.run(command, **kwargs)
-        except Exception as e:
-            msg = str(e).lower()
-
-            transient = (
-                "still pending" in msg
-                or "sandbox is pending" in msg
-                or "not ready" in msg
-                or "sandbox not ready" in msg
-            )
-
-            if not transient or attempt >= retries:
-                raise
-
-            await asyncio.sleep(delay)
-            delay = min(delay * 1.5, max_delay)
