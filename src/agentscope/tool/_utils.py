@@ -29,9 +29,16 @@ def _remove_title_field(schema: dict) -> dict:
         schema["additionalProperties"],
         dict,
     ):
-        _remove_title_field(
-            schema["additionalProperties"],
-        )
+        _remove_title_field(schema["additionalProperties"])
+
+    # $defs — referenced sub-schemas, e.g. Pydantic models used as parameter
+    # types generate "$defs": {"SubModel": {"title": "SubModel", ...}}.
+    # These titles are auto-generated noise just like property titles, and
+    # should be removed for the same reason.
+    if "$defs" in schema and isinstance(schema["$defs"], dict):
+        for def_schema in schema["$defs"].values():
+            if isinstance(def_schema, dict):
+                _remove_title_field(def_schema)
 
     return schema
 

@@ -3,6 +3,7 @@
 """Toolkit test case."""
 import json
 from typing import Any, AsyncGenerator, Generator
+from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
 from utils import AnyString
 
@@ -1027,3 +1028,67 @@ The tool instructions are a collection of suggestions, rules and notifications a
                 "state": "success",
             },
         )
+
+
+class RemoveTitleFieldTest(TestCase):
+    """Unit tests for _remove_title_field."""
+
+    def setUp(self) -> None:
+        from agentscope.tool._utils import _remove_title_field
+
+        self.fn = _remove_title_field
+
+    def test_removes_top_level_title(self) -> None:
+        """The top level title field must be removed."""
+        schema = {"title": "Root", "type": "object", "properties": {}}
+        self.fn(schema)
+        self.assertNotIn("title", schema)
+
+    def test_removes_property_titles(self) -> None:
+        """Titles inside properties must be removed."""
+        schema: dict[str, Any] = {
+            "type": "object",
+            "properties": {
+                "name": {"title": "Name", "type": "string"},
+            },
+        }
+        self.fn(schema)
+        self.assertNotIn("title", schema["properties"]["name"])
+
+    def test_removes_defs_titles(self) -> None:
+        """Titles inside $defs must be recursively stripped."""
+        schema: dict[str, Any] = {
+            "type": "object",
+            "properties": {"x": {"$ref": "#/$defs/MyModel"}},
+            "$defs": {
+                "MyModel": {
+                    "title": "MyModel",
+                    "type": "object",
+                    "properties": {
+                        "val": {"title": "Val", "type": "string"},
+                    },
+                },
+            },
+        }
+        self.fn(schema)
+
+        self.assertNotIn(
+            "title",
+            schema["$defs"]["MyModel"],
+            "Top-level title inside $defs must be removed",
+        )
+        self.assertNotIn(
+            "title",
+            schema["$defs"]["MyModel"]["properties"]["val"],
+            "Nested property title inside $defs must be removed",
+        )
+
+    def test_does_not_mutate_non_dict_defs(self) -> None:
+        """Boolean schema values inside $defs should not raise."""
+        schema: dict[str, Any] = {
+            "type": "object",
+            "properties": {},
+            "$defs": {"AlwaysTrue": True},
+        }
+        self.fn(schema)
+        self.assertEqual(schema["$defs"]["AlwaysTrue"], True)
