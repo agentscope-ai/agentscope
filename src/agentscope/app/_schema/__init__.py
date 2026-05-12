@@ -1,18 +1,21 @@
 # -*- coding: utf-8 -*-
 """Schema models for the agent service."""
 
-from ._mcp import (
-    ConnectionScope,
-    MCPCreateRequest,
-    MCPUpdateRequest,
-    MCPResponse,
-    MCPListResponse,
+from ._chat import ChatRequest
+from ._model import ListModelResponse, ListModelRequest
+from ._schedule import (
+    CreateScheduleRequest,
+    CreateScheduleResponse,
+    ScheduleListResponse,
+    UpdateScheduleRequest,
 )
 
 __all__ = [
-    "ConnectionScope",
-    "MCPCreateRequest",
-    "MCPUpdateRequest",
-    "MCPResponse",
-    "MCPListResponse",
+    "ChatRequest",
+    "CreateScheduleRequest",
+    "CreateScheduleResponse",
+    "ListModelRequest",
+    "ListModelResponse",
+    "ScheduleListResponse",
+    "UpdateScheduleRequest",
 ]

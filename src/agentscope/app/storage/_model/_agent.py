@@ -1,19 +1,19 @@
 # -*- coding: utf-8 -*-
 """The agent storage class."""
-import uuid
 
-from pydantic import BaseModel, Field
+from pydantic import Field, BaseModel
 
+from ._base import _RecordBase
 from ....agent import ContextConfig, ReActConfig
 
 
-class AgentRecord(BaseModel):
-    """The agent ORM model."""
+class AgentData(BaseModel):
+    """The agent data model."""
 
     id: str = Field(
-        default_factory=lambda: uuid.uuid4().hex,
+        description="Unique agent id",
     )
-    """The user id."""
+    """The agent id."""
 
     name: str = Field(
         description="The name of the agent.",
@@ -34,3 +34,13 @@ class AgentRecord(BaseModel):
         description="The react config for the agent.",
         title="React Config",
     )
+
+
+class AgentRecord(_RecordBase):
+    """The agent ORM model."""
+
+    user_id: str
+    """The user id"""
+
+    data: AgentData
+    """The agent data"""

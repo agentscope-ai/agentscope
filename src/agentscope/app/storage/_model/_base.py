@@ -15,11 +15,11 @@ class _RecordBase(BaseModel):
     )
 
     updated_at: datetime = Field(
-        default_factory=lambda: datetime.now(),
+        default_factory=datetime.now,
     )
     """The updated time."""
 
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(),
+        default_factory=datetime.now,
     )
     """The created time."""

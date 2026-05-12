@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-""""""
+"""The lifespan of the agent service."""
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -13,10 +13,11 @@ else:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> None:
-    app.state.background_task_manager = BackgroundTaskManager()
-    app.state.session_manager = SessionManager()
+    async with app.state.storage:
+        app.state.session_manager = SessionManager()
+        app.state.background_task_manager = BackgroundTaskManager()
 
-    yield
+        yield
 
-    app.state.background_task_manager.cancel()
-    app.state.session_manager.cancel()
+        app.state.session_manager.cancel()
+        app.state.background_task_manager.cancel()

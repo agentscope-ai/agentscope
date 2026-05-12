@@ -143,7 +143,8 @@ class BackgroundTaskManager:
         )
         self._tasks[task.id] = task
 
-        async def _run_task():
+        async def _run_task() -> None:
+            """Run the background task."""
             try:
                 await task.coroutine_task
             finally:

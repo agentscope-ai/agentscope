@@ -4,7 +4,6 @@ from pydantic import BaseModel
 
 from ._base import _RecordBase
 from ....state import AgentState
-from ....agent import ContextConfig, ReActConfig
 
 
 class ChatModelConfig(BaseModel):

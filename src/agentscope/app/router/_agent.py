@@ -1,63 +1,18 @@
 # -*- coding: utf-8 -*-
-"""Agent router for managing agent configurations."""
-import uuid
+"""Agent router — CRUD endpoints for agent configurations."""
+from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, status
 
-from ...agent import CompressionConfig, ReActConfig
-
-
-class AgentInfo(AgentConfig):
-    """Full agent record including server-assigned metadata."""
-
-    agent_id: str = Field(description="Unique identifier of the agent.")
-    created_at: float = Field(description="Creation timestamp (Unix epoch).")
-    updated_at: float = Field(
-        description="Last-updated timestamp (Unix epoch).",
-    )
-
-
-class AgentListResponse(BaseModel):
-    """Response model for listing agents."""
-
-    agents: list[AgentInfo] = Field(description="List of agent records.")
-    total: int = Field(description="Total number of agents.")
-
-
-class CreateAgentResponse(BaseModel):
-    """Response model after creating an agent."""
-
-    agent_id: str = Field(
-        description="Unique identifier of the newly created agent.",
-    )
-    name: str = Field(description="Display name of the created agent.")
-
-
-class UpdateAgentRequest(BaseModel):
-    """Request body for partially updating an agent.
-
-    All fields are optional; omit any field to keep its current value.
-    """
-
-    name: str | None = Field(default=None, description="New display name.")
-    system_prompt: str | None = Field(
-        default=None,
-        description="New system prompt.",
-    )
-    chat_model_config: ChatModelConfig | None = Field(
-        default=None,
-        description="New model configuration.",
-    )
-    compression_config: CompressionConfig | None = Field(
-        default=None,
-        description="New compression configuration.",
-    )
-    react_config: ReActConfig | None = Field(
-        default=None,
-        description="New ReAct loop configuration.",
-    )
-
+from .._deps import get_current_user_id, get_storage
+from .._schema._agent import (
+    AgentListResponse,
+    CreateAgentRequest,
+    CreateAgentResponse,
+    UpdateAgentRequest,
+)
+from ..storage._base import StorageBase
+from ..storage._model._agent import AgentData, AgentRecord
 
 agent_router = APIRouter(
     prefix="/agent",
@@ -71,91 +26,127 @@ agent_router = APIRouter(
     response_model=AgentListResponse,
     summary="List all agents",
 )
-async def list_agents() -> AgentListResponse:
-    """Return a list of all stored agent configurations.
+async def list_agents(
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+) -> AgentListResponse:
+    """Return all agent records belonging to the authenticated user.
+
+    Args:
+        user_id (`str`): Injected authenticated user ID.
+        storage (`StorageBase`): Injected storage backend.
 
     Returns:
-        `AgentListResponse`:
-            The list of agents and the total count.
+        `AgentListResponse`: All agent records and their total count.
     """
-    # TODO: query storage / agent registry to retrieve all agent records
-    agents: list[AgentInfo] = []
+    agents = await storage.list_agent(user_id)
     return AgentListResponse(agents=agents, total=len(agents))
 
 
 @agent_router.post(
     "/",
     response_model=CreateAgentResponse,
-    status_code=201,
+    status_code=status.HTTP_201_CREATED,
     summary="Create a new agent",
 )
-async def create_agent(body: AgentConfig) -> CreateAgentResponse:
+async def create_agent(
+    body: CreateAgentRequest,
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+) -> CreateAgentResponse:
     """Create and persist a new agent configuration.
 
     Args:
-        body (`AgentConfig`):
-            The full agent configuration to store.
+        body (`CreateAgentRequest`): Agent configuration to store.
+        user_id (`str`): Injected authenticated user ID.
+        storage (`StorageBase`): Injected storage backend.
 
     Returns:
-        `CreateAgentResponse`:
-            The server-assigned identifier and display name of the new agent.
+        `CreateAgentResponse`: The server-assigned agent identifier.
     """
-    agent_id = uuid.uuid4().hex
-    # TODO: persist the agent configuration to storage / agent registry
-    return CreateAgentResponse(agent_id=agent_id, name=body.name)
-
-
-@agent_router.delete(
-    "/{agent_id}",
-    status_code=204,
-    summary="Delete an agent",
-)
-async def delete_agent(agent_id: str) -> None:
-    """Permanently delete an agent configuration.
-
-    Args:
-        agent_id (`str`):
-            The unique identifier of the agent to delete.
-
-    Raises:
-        `HTTPException`:
-            404 if the agent does not exist.
-    """
-    # TODO: verify agent exists; raise HTTPException(status_code=404) if not found
-    # TODO: delete the agent record from storage / agent registry
+    record = AgentRecord(
+        user_id=user_id,
+        data=AgentData(
+            name=body.name,
+            system_prompt=body.system_prompt,
+            context_config=body.context_config,
+            react_config=body.react_config,
+        ),
+    )
+    agent_id = await storage.create_agent(user_id, record)
+    return CreateAgentResponse(agent_id=agent_id)
 
 
 @agent_router.patch(
     "/{agent_id}",
-    response_model=AgentInfo,
+    response_model=AgentRecord,
     summary="Update an agent",
 )
 async def update_agent(
     agent_id: str,
     body: UpdateAgentRequest,
-) -> AgentInfo:
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+) -> AgentRecord:
     """Partially update an existing agent configuration.
 
     Only the fields present in the request body are updated; all other fields
     keep their current values.
 
     Args:
-        agent_id (`str`):
-            The unique identifier of the agent to update.
-        body (`UpdateAgentRequest`):
-            Fields to update.
+        agent_id (`str`): The agent to update.
+        body (`UpdateAgentRequest`): Fields to update.
+        user_id (`str`): Injected authenticated user ID.
+        storage (`StorageBase`): Injected storage backend.
 
     Returns:
-        `AgentInfo`:
-            The full agent record after the update.
+        `AgentRecord`: The full agent record after the update.
 
     Raises:
-        `HTTPException`:
-            404 if the agent does not exist.
+        `HTTPException`: 404 if the agent does not exist or does not belong
+            to the authenticated user.
     """
-    # TODO: load existing agent record; raise HTTPException(status_code=404) if not found
-    # TODO: apply partial updates and persist the changes to storage
-    # TODO: return the updated agent record fetched from storage
+    agents = await storage.list_agent(user_id)
+    existing = next((a for a in agents if a.id == agent_id), None)
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent '{agent_id}' not found.",
+        )
 
-    # Placeholder – replaced once storage is wired in
-    raise HTTPException(status_code=501, detail="Not implemented")
+    updates = body.model_dump(exclude_none=True)
+    updated_data = existing.data.model_copy(update=updates)
+    existing = existing.model_copy(
+        update={"data": updated_data, "updated_at": datetime.now()}
+    )
+    await storage.create_agent(user_id, existing)
+    return existing
+
+
+@agent_router.delete(
+    "/{agent_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete an agent",
+)
+async def delete_agent(
+    agent_id: str,
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+) -> None:
+    """Permanently delete an agent configuration.
+
+    Args:
+        agent_id (`str`): The agent to delete.
+        user_id (`str`): Injected authenticated user ID.
+        storage (`StorageBase`): Injected storage backend.
+
+    Raises:
+        `HTTPException`: 404 if the agent does not exist or does not belong
+            to the authenticated user.
+    """
+    deleted = await storage.delete_agent(user_id, agent_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent '{agent_id}' not found.",
+        )

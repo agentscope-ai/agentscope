@@ -1,10 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Session router for managing agent sessions."""
-import uuid
-from typing import Any
+"""Session router — create, list, update, and delete sessions."""
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from fastapi import APIRouter, HTTPException  # noqa: F401
-from pydantic import BaseModel, Field
+from .._deps import get_current_user_id, get_storage
+from .._schema._session import (
+    CreateSessionRequest,
+    CreateSessionResponse,
+    SessionListResponse,
+    UpdateSessionRequest,
+)
+from ..storage._base import StorageBase
+from ..storage._model._session import SessionData
 
 session_router = APIRouter(
     prefix="/sessions",
@@ -13,169 +19,185 @@ session_router = APIRouter(
 )
 
 
-class SessionInfo(BaseModel):
-    """Basic information of a session."""
-
-    session_id: str = Field(
-        description="The unique identifier of the session.",
-    )
-    name: str = Field(description="The display name of the session.")
-
-    created_at: float = Field(
-        description="The creation timestamp of the session (Unix epoch).",
-    )
-    updated_at: float = Field(
-        description="The last-updated timestamp of the session (Unix epoch).",
-    )
-
-    metadata: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Optional extra metadata attached to the session.",
-    )
-
-
-class SessionListResponse(BaseModel):
-    """Response model for listing sessions."""
-
-    sessions: list[SessionInfo] = Field(
-        description="The list of all sessions.",
-    )
-    total: int = Field(description="Total number of sessions.")
-
-
-class CreateSessionRequest(BaseModel):
-    """Request body for creating a new session."""
-
-    name: str = Field(description="The display name for the new session.")
-    metadata: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Optional extra metadata to attach to the session.",
-    )
-
-
-class CreateSessionResponse(BaseModel):
-    """Response model for a newly created session."""
-
-    session_id: str = Field(
-        description="The unique identifier of the created session.",
-    )
-    name: str = Field(description="The display name of the created session.")
-
-
-class UpdateSessionRequest(BaseModel):
-    """Request body for updating an existing session."""
-
-    name: str | None = Field(
-        default=None,
-        description="New display name for the session. Omit to keep unchanged.",
-    )
-    metadata: dict[str, Any] | None = Field(
-        default=None,
-        description="New metadata for the session. Omit to keep unchanged.",
-    )
-
-
-class UpdateSessionResponse(BaseModel):
-    """Response model after updating a session."""
-
-    session_id: str = Field(description="The session identifier.")
-    name: str = Field(description="The updated display name.")
-    metadata: dict[str, Any] = Field(description="The updated metadata.")
-
-
 @session_router.get(
     "/",
     response_model=SessionListResponse,
-    summary="List all sessions",
+    summary="List sessions for an agent",
 )
-async def list_sessions() -> SessionListResponse:
-    """Return a list of all existing sessions.
+async def list_sessions(
+    agent_id: str = Query(description="Filter sessions by agent ID."),
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+) -> SessionListResponse:
+    """Return all sessions belonging to the authenticated user for a given agent.
+
+    Args:
+        agent_id (`str`): Agent whose sessions to list.
+        user_id (`str`): Injected authenticated user ID.
+        storage (`StorageBase`): Injected storage backend.
 
     Returns:
-        `SessionListResponse`:
-            The list of sessions and the total count.
+        `SessionListResponse`: All matching session records and their count.
+
+    Raises:
+        `HTTPException`: 404 if the agent does not exist or does not belong
+            to the authenticated user.
     """
-    # TODO: query storage / session registry to retrieve all sessions
-    sessions: list[SessionInfo] = []
+    agents = await storage.list_agent(user_id)
+    if not any(a.id == agent_id for a in agents):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent '{agent_id}' not found.",
+        )
+
+    sessions = await storage.list_sessions(user_id, agent_id)
     return SessionListResponse(sessions=sessions, total=len(sessions))
 
 
 @session_router.post(
     "/",
     response_model=CreateSessionResponse,
-    status_code=201,
+    status_code=status.HTTP_201_CREATED,
     summary="Create a new session",
 )
 async def create_session(
     body: CreateSessionRequest,
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
 ) -> CreateSessionResponse:
-    """Create a new session with the given name and optional metadata.
+    """Create (or resume) a session for a given agent and workspace.
+
+    At most one session exists per ``(user_id, agent_id, workspace_id)``
+    triple — a second call with the same triple updates the existing session
+    rather than creating a duplicate.
 
     Args:
-        body (`CreateSessionRequest`):
-            The request body containing session details.
+        body (`CreateSessionRequest`): Agent, workspace, and model config.
+        user_id (`str`): Injected authenticated user ID.
+        storage (`StorageBase`): Injected storage backend.
 
     Returns:
-        `CreateSessionResponse`:
-            The identifier and name of the newly created session.
+        `CreateSessionResponse`: The session identifier.
+
+    Raises:
+        `HTTPException`: 404 if the agent or credential does not exist or
+            does not belong to the authenticated user.
     """
-    session_id = uuid.uuid4().hex
-    # TODO: persist the new session to storage / session registry
-    return CreateSessionResponse(session_id=session_id, name=body.name)
+    agents = await storage.list_agent(user_id)
+    if not any(a.id == body.agent_id for a in agents):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent '{body.agent_id}' not found.",
+        )
+
+    credentials = await storage.list_credentials(user_id)
+    if not any(c.id == body.chat_model_config.credential_id for c in credentials):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Credential '{body.chat_model_config.credential_id}' not found.",
+        )
+
+    from ....state import AgentState  # avoid circular at module level
+
+    await storage.upsert_session(
+        user_id=user_id,
+        agent_id=body.agent_id,
+        workspace_id=body.workspace_id,
+        session_data=SessionData(
+            agent_state=AgentState(),
+            chat_model_config=body.chat_model_config,
+        ),
+    )
+
+    sessions = await storage.list_sessions(user_id, body.agent_id)
+    session = next(
+        s for s in sessions if s.workspace_id == body.workspace_id
+    )
+    return CreateSessionResponse(session_id=session.id)
 
 
 @session_router.delete(
     "/{session_id}",
-    status_code=204,
+    status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete a session",
 )
-async def delete_session(session_id: str) -> None:
-    """Delete a session and all associated agent states.
+async def delete_session(
+    session_id: str,
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+) -> None:
+    """Permanently delete a session and all its associated state.
 
     Args:
-        session_id (`str`):
-            The unique identifier of the session to delete.
+        session_id (`str`): The session to delete.
+        user_id (`str`): Injected authenticated user ID.
+        storage (`StorageBase`): Injected storage backend.
 
     Raises:
-        `HTTPException`:
-            404 if the session does not exist.
+        `HTTPException`: 404 if the session does not exist or does not belong
+            to the authenticated user.
     """
-    # TODO: verify session exists; raise HTTPException(404) if not found
-    # TODO: remove all agent states linked to this session from storage
-    # TODO: delete the session record from storage / session registry
+    deleted = await storage.delete_session(user_id, session_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session '{session_id}' not found.",
+        )
 
 
 @session_router.patch(
     "/{session_id}",
-    response_model=UpdateSessionResponse,
+    response_model=SessionRecord,
     summary="Update a session",
 )
 async def update_session(
     session_id: str,
     body: UpdateSessionRequest,
-) -> UpdateSessionResponse:
-    """Update the name and/or metadata of an existing session.
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+) -> SessionRecord:
+    """Update the model configuration of an existing session.
 
     Args:
-        session_id (`str`):
-            The unique identifier of the session to update.
-        body (`UpdateSessionRequest`):
-            Fields to update; omit any field to leave it unchanged.
+        session_id (`str`): The session to update.
+        body (`UpdateSessionRequest`): Fields to update.
+        user_id (`str`): Injected authenticated user ID.
+        storage (`StorageBase`): Injected storage backend.
 
     Returns:
-        `UpdateSessionResponse`:
-            The session identifier together with its updated fields.
+        `SessionRecord`: The full session record after the update.
 
     Raises:
-        `HTTPException`:
-            404 if the session does not exist.
+        `HTTPException`: 404 if the session, agent, or credential does not
+            exist or does not belong to the authenticated user.
     """
-    # TODO: load the existing session record; raise HTTPException(404) if not found
-    # TODO: apply the partial updates and persist the changes to storage
-    updated_name = body.name or ""
-    updated_metadata = body.metadata or {}
-    return UpdateSessionResponse(
-        session_id=session_id,
-        name=updated_name,
-        metadata=updated_metadata,
+    existing = await storage.get_session(user_id, session_id)
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session '{session_id}' not found.",
+        )
+
+    if body.chat_model_config is not None:
+        credentials = await storage.list_credentials(user_id)
+        if not any(
+            c.id == body.chat_model_config.credential_id for c in credentials
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Credential '{body.chat_model_config.credential_id}' not found.",
+            )
+
+    updated_data = existing.data.model_copy(
+        update={
+            k: v
+            for k, v in body.model_dump(exclude_none=True).items()
+        }
     )
+    await storage.upsert_session(
+        user_id=user_id,
+        agent_id=existing.agent_id,
+        workspace_id=existing.workspace_id,
+        session_data=updated_data,
+    )
+    return await storage.get_session(user_id, session_id)

@@ -24,19 +24,41 @@ class SchedulerManager:
     async def shutdown(self) -> None:
         self._scheduler.shutdown()
 
-    async def add_cron_task(
+    async def add_schedule(
         self,
         coro_func: Callable[[], Coroutine],
-        cron_expr: str,  # "0 2 * * *" 标准5段cron
+        cron_expr: str,
         name: str = "",
+        job_id: str | None = None,
     ) -> str:
         job = self._scheduler.add_job(
             coro_func,
             trigger=CronTrigger.from_crontab(cron_expr),
-            id=shortuuid.uuid(),
+            id=job_id or shortuuid.uuid(),
             name=name,
         )
         return job.id
+
+    async def restore(
+        self,
+        tasks: list,
+        task_factory: Callable,
+    ) -> None:
+        """Re-register persisted schedules on startup.
+
+        Args:
+            tasks: List of ScheduleRecord loaded from storage.
+            task_factory: Callable that takes a ScheduleRecord and returns
+                a zero-argument coroutine function to pass to APScheduler.
+        """
+        for task in tasks:
+            coro_func = task_factory(task)
+            await self.add_schedule(
+                coro_func,
+                task.data.cron_expression,
+                name=task.data.name,
+                job_id=task.id,
+            )
 
     async def remove_task(self, job_id: str) -> None:
         self._scheduler.remove_job(job_id)
