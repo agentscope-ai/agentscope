@@ -3,8 +3,10 @@
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, HTTPException  # noqa: F401
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
+
+from ..storage import CredentialRecord
 
 credential_router = APIRouter(
     prefix="/credential",
@@ -21,33 +23,18 @@ credential_router = APIRouter(
 class CredentialListResponse(BaseModel):
     """Response model for listing credentials."""
 
-    credentials: list[CredentialInfo] = Field(
+    credentials: list[CredentialRecord] = Field(
+        title="Credentials",
         description="List of stored credentials.",
     )
+
     total: int = Field(description="Total number of credentials.")
 
 
 class CreateCredentialRequest(BaseModel):
     """Request body for creating a new credential."""
 
-    name: str = Field(description="Display name for the credential.")
-    provider: str = Field(
-        description=(
-            "Model provider this key belongs to, e.g. ``openai``, "
-            "``anthropic``, ``dashscope``."
-        ),
-    )
-    api_key: str = Field(
-        description="The plain-text API key (stored securely, never echoed back).",
-    )
-    description: str = Field(
-        default="",
-        description="Optional human-readable description.",
-    )
-    metadata: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Optional extra metadata.",
-    )
+
 
 
 class CreateCredentialResponse(BaseModel):
@@ -56,11 +43,7 @@ class CreateCredentialResponse(BaseModel):
     credential_id: str = Field(
         description="Unique identifier of the newly created credential.",
     )
-    name: str = Field(description="Display name of the created credential.")
-    provider: str = Field(description="Model provider.")
-    api_key_masked: str = Field(
-        description="Masked API key, showing only the last 4 characters.",
-    )
+
 
 
 class UpdateCredentialRequest(BaseModel):
@@ -68,21 +51,6 @@ class UpdateCredentialRequest(BaseModel):
 
     All fields are optional; omit any field to leave it unchanged.
     """
-
-    name: str | None = Field(default=None, description="New display name.")
-    provider: str | None = Field(default=None, description="New provider.")
-    api_key: str | None = Field(
-        default=None,
-        description="New API key (plain-text). Omit to keep the existing key.",
-    )
-    description: str | None = Field(
-        default=None,
-        description="New description.",
-    )
-    metadata: dict[str, Any] | None = Field(
-        default=None,
-        description="New metadata. Omit to keep existing metadata.",
-    )
 
 
 class UpdateCredentialResponse(BaseModel):

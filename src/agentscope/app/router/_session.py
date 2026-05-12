@@ -20,12 +20,14 @@ class SessionInfo(BaseModel):
         description="The unique identifier of the session.",
     )
     name: str = Field(description="The display name of the session.")
+
     created_at: float = Field(
         description="The creation timestamp of the session (Unix epoch).",
     )
     updated_at: float = Field(
         description="The last-updated timestamp of the session (Unix epoch).",
     )
+
     metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="Optional extra metadata attached to the session.",
