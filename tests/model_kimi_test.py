@@ -11,7 +11,8 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock
 
 from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
-from agentscope.model import KimiChatModel, KimiCredential
+from agentscope.model import KimiChatModel
+from agentscope.credential import KimiCredential
 
 
 # ---------------------------------------------------------------------------
@@ -25,7 +26,6 @@ def _make_model() -> Any:
         model="kimi-k2-5",
         stream=False,
         context_size=131_072,
-        output_size=32_768,
     )
 
 

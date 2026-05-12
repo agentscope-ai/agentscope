@@ -11,7 +11,8 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock
 
 from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
-from agentscope.model import OpenAIChatModel, OpenAIChatCredential
+from agentscope.model import OpenAIChatModel
+from agentscope.credential import OpenAICredential
 
 
 # ---------------------------------------------------------------------------
@@ -21,11 +22,10 @@ from agentscope.model import OpenAIChatModel, OpenAIChatCredential
 
 def _make_model() -> Any:
     return OpenAIChatModel(
-        credential=OpenAIChatCredential(api_key="test"),
+        credential=OpenAICredential(api_key="test"),
         model="gpt-4o",
         stream=False,
         context_size=128_000,
-        output_size=4_096,
     )
 
 

@@ -17,7 +17,8 @@ from agentscope.message import (
     ToolCallBlock,
     ThinkingBlock,
 )
-from agentscope.model import XAIChatModel, XAICredential
+from agentscope.model import XAIChatModel
+from agentscope.credential import XAICredential
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +118,6 @@ def _make_model() -> Any:
         model="grok-3",
         stream=False,
         context_size=131_072,
-        output_size=32_768,
     )
 
 

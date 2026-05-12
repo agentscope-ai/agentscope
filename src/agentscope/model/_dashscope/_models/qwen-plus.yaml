@@ -14,4 +14,3 @@ output_size: 16384
 
 parameter_overrides:
   max_tokens: {"maximum": 16384}
-  context_size: {"maximum": 1000000}

@@ -4,12 +4,14 @@ from collections import OrderedDict
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List
 
-from pydantic import BaseModel, SecretStr, Field
+from pydantic import BaseModel, Field
 
-from .. import ChatUsage, ChatModelBase
+from .._base import ChatModelBase
+from .._model_response import ChatResponse
+from .._model_usage import ChatUsage
+from ...credential import KimiCredential
 from ...formatter import FormatterBase, KimiChatFormatter
 from ...message import ThinkingBlock, ToolCallBlock, TextBlock
-from ...model import ChatResponse
 from ...tool import ToolChoice
 from ...tracing import trace_llm
 
@@ -19,26 +21,6 @@ if TYPE_CHECKING:
 else:
     ChatCompletion = Any
     AsyncStream = Any
-
-_KIMI_BASE_URL = "https://api.moonshot.cn/v1"
-
-
-class KimiCredential(BaseModel):
-    """The Kimi (Moonshot AI) credential model."""
-
-    type: Literal["kimi_credential"] = "kimi_credential"
-    """The credential type."""
-
-    api_key: SecretStr = Field(
-        description="The Kimi (Moonshot AI) API key.",
-    )
-    """The API key."""
-
-    base_url: str = Field(
-        default=_KIMI_BASE_URL,
-        description="The base URL for the Kimi API.",
-    )
-    """The base URL for the Kimi API."""
 
 
 class KimiChatModel(ChatModelBase):
@@ -73,37 +55,48 @@ class KimiChatModel(ChatModelBase):
     type: Literal["kimi_chat"] = "kimi_chat"
     """The type of the chat model."""
 
-    credential: KimiCredential
-    """The Kimi credential."""
+    def __init__(
+        self,
+        credential: KimiCredential,
+        model: str,
+        parameters: "KimiChatModel.Parameters | None" = None,
+        stream: bool = True,
+        max_retries: int = 3,
+        context_size: int = 131072,
+        formatter: FormatterBase | None = None,
+    ) -> None:
+        """Initialize the Kimi chat model.
 
-    model: str = Field(
-        title="Model",
-        description="The Kimi model name.",
-    )
-
-    stream: bool = Field(
-        default=True,
-        title="Enable Streaming Output",
-        description="Whether to enable streaming output.",
-    )
-
-    max_retries: int = Field(
-        default=0,
-        title="Max Retries",
-        description="The maximum retries for the Kimi API.",
-        ge=0,
-    )
-
-    parameters: Parameters = Field(
-        default_factory=Parameters,
-        title="Kimi API parameters",
-        description="The Kimi API parameters.",
-    )
-
-    formatter: FormatterBase = Field(
-        default_factory=KimiChatFormatter,
-    )
-    """The formatter for Kimi API."""
+        Args:
+            credential (`KimiCredential`):
+                The Kimi (Moonshot AI) credential used to authenticate API
+                calls.
+            model (`str`):
+                The Kimi model name, e.g. ``moonshot-v1-8k``.
+            parameters (`KimiChatModel.Parameters | None`, defaults to \
+            `None`):
+                The Kimi API parameters. When ``None``, the default
+                parameters will be used.
+            stream (`bool`, defaults to `True`):
+                Whether to enable streaming output.
+            max_retries (`int`, defaults to `3`):
+                The maximum number of retries for the Kimi API.
+            context_size (`int`, defaults to `131072`):
+                The model context size used for context compression.
+            formatter (`FormatterBase | None`, defaults to `None`):
+                The formatter that converts ``Msg`` objects to the format
+                required by the Kimi API. When ``None``, a
+                ``KimiChatFormatter`` instance will be used.
+        """
+        super().__init__(
+            model=model,
+            stream=stream,
+            max_retries=max_retries,
+            context_size=context_size,
+        )
+        self.credential = credential
+        self.parameters = parameters or self.Parameters()
+        self.formatter = formatter or KimiChatFormatter()
 
     @trace_llm
     async def _call_api(

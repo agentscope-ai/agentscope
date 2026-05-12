@@ -4,12 +4,14 @@ from collections import OrderedDict
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List
 
-from pydantic import BaseModel, SecretStr, Field
+from pydantic import BaseModel, Field
 
-from .. import ChatUsage, ChatModelBase
+from .._base import ChatModelBase
+from .._model_response import ChatResponse
+from .._model_usage import ChatUsage
+from ...credential import DeepSeekCredential
 from ...formatter import FormatterBase, DeepSeekChatFormatter
 from ...message import ThinkingBlock, ToolCallBlock, TextBlock
-from ...model import ChatResponse
 from ...tool import ToolChoice
 from ...tracing import trace_llm
 
@@ -19,26 +21,6 @@ if TYPE_CHECKING:
 else:
     ChatCompletion = Any
     AsyncStream = Any
-
-_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-
-
-class DeepSeekCredential(BaseModel):
-    """The DeepSeek credential model."""
-
-    type: Literal["deepseek_credential"] = "deepseek_credential"
-    """The credential type."""
-
-    api_key: SecretStr = Field(
-        description="The DeepSeek API key.",
-    )
-    """The API key."""
-
-    base_url: str = Field(
-        default=_DEEPSEEK_BASE_URL,
-        description="The base URL for the DeepSeek API.",
-    )
-    """The base URL for the DeepSeek API."""
 
 
 class DeepSeekChatModel(ChatModelBase):
@@ -83,38 +65,47 @@ class DeepSeekChatModel(ChatModelBase):
     type: Literal["deepseek_chat"] = "deepseek_chat"
     """The type of the chat model."""
 
-    credential: DeepSeekCredential
-    """The DeepSeek credential."""
+    def __init__(
+        self,
+        credential: DeepSeekCredential,
+        model: str,
+        parameters: "DeepSeekChatModel.Parameters | None" = None,
+        stream: bool = True,
+        max_retries: int = 3,
+        context_size: int = 65536,
+        formatter: FormatterBase | None = None,
+    ) -> None:
+        """Initialize the DeepSeek chat model.
 
-    model: str = Field(
-        title="Model",
-        description="The DeepSeek model name.",
-    )
-    """The DeepSeek model name."""
-
-    stream: bool = Field(
-        default=True,
-        title="Enable Streaming Output",
-        description="Whether to enable streaming output.",
-    )
-
-    max_retries: int = Field(
-        default=0,
-        title="Max Retries",
-        description="The maximum retries for the DeepSeek API.",
-        ge=0,
-    )
-
-    parameters: Parameters = Field(
-        default_factory=Parameters,
-        title="DeepSeek API parameters",
-        description="The DeepSeek API parameters.",
-    )
-
-    formatter: FormatterBase = Field(
-        default_factory=DeepSeekChatFormatter,
-    )
-    """The formatter for DeepSeek API."""
+        Args:
+            credential (`DeepSeekCredential`):
+                The DeepSeek credential used to authenticate API calls.
+            model (`str`):
+                The DeepSeek model name, e.g. ``deepseek-chat``.
+            parameters (`DeepSeekChatModel.Parameters | None`, defaults to \
+            `None`):
+                The DeepSeek API parameters. When ``None``, the default
+                parameters will be used.
+            stream (`bool`, defaults to `True`):
+                Whether to enable streaming output.
+            max_retries (`int`, defaults to `3`):
+                The maximum number of retries for the DeepSeek API.
+            context_size (`int`, defaults to `65536`):
+                The model context size used for context compression.
+            formatter (`FormatterBase | None`, defaults to `None`):
+                The formatter that converts ``Msg`` objects to the format
+                required by the DeepSeek API. When ``None``, a
+                ``DeepSeekChatFormatter`` instance will be used.
+        """
+        super().__init__(
+            model=model,
+            stream=stream,
+            max_retries=max_retries,
+            context_size=context_size,
+        )
+        self.credential = credential
+        self.parameters = parameters or self.Parameters()
+        self.formatter = formatter or DeepSeekChatFormatter()
 
     @trace_llm
     async def _call_api(

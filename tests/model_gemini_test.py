@@ -11,7 +11,8 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock
 
 from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
-from agentscope.model import GeminiChatModel, GeminiCredential
+from agentscope.model import GeminiChatModel
+from agentscope.credential import GeminiCredential
 
 
 # ---------------------------------------------------------------------------
@@ -25,7 +26,6 @@ def _make_model() -> Any:
         model="gemini-2.5-flash",
         stream=False,
         context_size=1_048_576,
-        output_size=65_536,
     )
 
 

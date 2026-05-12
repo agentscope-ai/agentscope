@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The base class for the chat models."""
+import inspect
 import json
 from abc import abstractmethod
 from copy import deepcopy
@@ -7,7 +8,7 @@ from pathlib import Path
 from typing import Type, Any, AsyncGenerator
 
 import jsonschema
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from ._model_response import StructuredResponse, ChatResponse
 from ._model_card import ModelCard
@@ -29,30 +30,48 @@ from ..tool import ToolChoice
 _TOOL_CHOICE_MODES = ["auto", "none", "required"]
 
 
-class ChatModelBase(BaseModel):
+class ChatModelBase:
     """The base class for chat models."""
 
     class Parameters(BaseModel):
         """Each subclass should implement this inner class to define its
         parameters."""
 
-    stream: bool = Field(
-        default=True,
-        title="Enable Streaming Output.",
-        description="The enable stream output for the LLM output.",
-    )
+    model: str
+    """The model name."""
 
-    max_retries: int = Field(
-        default=0,
-        title="Max Retries",
-        description="The maximum retries for the Anthropic API.",
-        ge=0,
-    )
+    stream: bool
+    """The enable stream output for the LLM output."""
+
+    max_retries: int
     """The maximum retries for the Anthropic API."""
 
-    context_size: int | None
+    context_size: int
+    """The model context size that will be used in the context compression."""
 
-    output_size: int | None
+    def __init__(
+        self,
+        model: str,
+        stream: bool = True,
+        max_retries: int = 3,
+        context_size: int = 32768,
+    ) -> None:
+        """Initialize the chat model base.
+
+        Args:
+            model (`str`):
+                The model name.
+            stream (`bool`, defaults to `True`):
+                Whether to enable streaming output for the LLM.
+            max_retries (`int`, defaults to `3`):
+                The maximum number of retries for API calls.
+            context_size (`int`, defaults to `32768`):
+                The model context size used for context compression.
+        """
+        self.model = model
+        self.stream = stream
+        self.max_retries = max_retries
+        self.context_size = context_size
 
     @classmethod
     def list_models(
@@ -72,9 +91,10 @@ class ChatModelBase(BaseModel):
 
         # Determine YAML directory
         if custom_yaml_dir is None:
-            # Use default _models directory next to this file
-            current_dir = Path(__file__).parent
-            yaml_dir = current_dir / "_models"
+            # Use the ``_models`` directory that sits next to the concrete
+            # subclass's source file (not this base file).
+            subclass_file = Path(inspect.getfile(cls))
+            yaml_dir = subclass_file.parent / "_models"
         else:
             yaml_dir = Path(custom_yaml_dir)
 
@@ -89,8 +109,7 @@ class ChatModelBase(BaseModel):
                     yaml_path=str(yaml_file),
                     parameter_class=cls.Parameters,
                 )
-                # Convert to dict for API response
-                model_cards.append(card.model_dump())
+                model_cards.append(card)
             except Exception as e:
                 # Log error but continue with other files
                 logger.warning(

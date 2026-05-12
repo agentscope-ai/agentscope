@@ -11,7 +11,8 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock
 
 from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
-from agentscope.model import OpenAIResponseModel, OpenAIResponseCredential
+from agentscope.model import OpenAIResponseModel
+from agentscope.credential import OpenAICredential
 
 
 # ---------------------------------------------------------------------------
@@ -21,11 +22,10 @@ from agentscope.model import OpenAIResponseModel, OpenAIResponseCredential
 
 def _make_model() -> Any:
     return OpenAIResponseModel(
-        credential=OpenAIResponseCredential(api_key="test"),
+        credential=OpenAICredential(api_key="test"),
         model="o4-mini",
         stream=False,
         context_size=200_000,
-        output_size=100_000,
     )
 
 

@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 class ModelCard(BaseModel):
     """The model card class."""
 
-    type: Literal["llm"] = "llm"
+    type: Literal["chat_model"] = "chat_model"
     """The model card type."""
 
     name: str = Field(description="The name of the model")
@@ -66,6 +66,8 @@ class ModelCard(BaseModel):
     DashScopeChatParameter class."""
 
     parameters_overrides: dict[str, dict]
+    """The parameter overrides, which will be merged into the parameter schema.
+    """
 
     @classmethod
     def from_yaml(

@@ -24,7 +24,6 @@ def _make_model() -> Any:
         model="qwen3:8b",
         stream=False,
         context_size=40_960,
-        output_size=8_192,
     )
 
 

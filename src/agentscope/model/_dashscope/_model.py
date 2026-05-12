@@ -4,15 +4,17 @@ import uuid
 import warnings
 from datetime import datetime
 from http import HTTPStatus
-from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, Generator, List
+from typing import Any, AsyncGenerator, Generator, List, Literal, TYPE_CHECKING
 
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field
 from aioitertools import iter as giter
 
-from .. import ChatUsage, ChatModelBase
+from .._base import ChatModelBase
+from .._model_response import ChatResponse
+from .._model_usage import ChatUsage
+from ...credential import DashScopeCredential
 from ...formatter import FormatterBase, DashScopeChatFormatter
 from ...message import Msg, TextBlock, ThinkingBlock, ToolCallBlock
-from ...model import ChatResponse
 from ...tool import ToolChoice
 from ...tracing import trace_llm
 
@@ -25,24 +27,6 @@ if TYPE_CHECKING:
 else:
     GenerationResponse = Any
     MultiModalConversationResponse = Any
-
-
-class DashScopeCredential(BaseModel):
-    """The credential for DashScope API."""
-
-    type: Literal["dashscope_credential"] = "dashscope_credential"
-    """The type of the credential."""
-
-    api_key: SecretStr = Field(
-        description="The DashScope API key.",
-        title="API Key",
-    )
-
-    base_http_api_url: str | None = Field(
-        default=None,
-        title="API Base URL",
-        description="The base URL of the DashScope API.",
-    )
 
 
 class DashScopeChatModel(ChatModelBase):
@@ -104,52 +88,54 @@ class DashScopeChatModel(ChatModelBase):
     type: Literal["dashscope_chat"] = "dashscope_chat"
     """The type of the chat model."""
 
-    credential: DashScopeCredential
-    """The DashScope API credential."""
+    def __init__(
+        self,
+        credential: DashScopeCredential,
+        model: str,
+        parameters: "DashScopeChatModel.Parameters | None" = None,
+        stream: bool = True,
+        max_retries: int = 3,
+        context_size: int = 131072,
+        multimodality: bool | None = None,
+        formatter: FormatterBase | None = None,
+    ) -> None:
+        """Initialize the DashScope chat model.
 
-    model: str = Field(
-        title="Model",
-        description="The LLM of DashScope API.",
-    )
-    """The DashScope API model."""
-
-    stream: bool = Field(
-        default=True,
-        title="Enable Streaming Output.",
-        description="The enable stream output for the LLM output.",
-    )
-
-    multimodality: bool | None = Field(
-        default=None,
-        title="Multimodality",
-        description=(
-            "Whether to call the MultiModalConversation API. "
-            "``True`` forces multimodal mode, ``False`` forces text-only "
-            "mode, and ``None`` (default) auto-detects from the model name "
-            "(e.g. 'qvq' or '-vl' suffix)."
-        ),
-    )
-
-    max_retries: int = Field(
-        default=0,
-        title="Max Retries",
-        description="The maximum retries for the DashScope API.",
-        ge=0,
-    )
-    """The maximum retries for the DashScope API."""
-
-    parameters: Parameters = Field(
-        default_factory=Parameters,
-        title="DashScope API parameters",
-        description="The DashScope API parameters",
-    )
-    """The DashScope API parameters."""
-
-    formatter: FormatterBase = Field(
-        default_factory=DashScopeChatFormatter,
-    )
-    """The DashScope API formatter, responsible for converting Msg objects
-    into the format required by the DashScope API."""
+        Args:
+            credential (`DashScopeCredential`):
+                The DashScope credential used to authenticate API calls.
+            model (`str`):
+                The DashScope model name, e.g. ``qwen-plus``.
+            parameters (`DashScopeChatModel.Parameters | None`, defaults to \
+            `None`):
+                The DashScope API parameters. When ``None``, the default
+                parameters will be used.
+            stream (`bool`, defaults to `True`):
+                Whether to enable streaming output.
+            max_retries (`int`, defaults to `3`):
+                The maximum number of retries for the DashScope API.
+            context_size (`int`, defaults to `131072`):
+                The model context size used for context compression.
+            multimodality (`bool | None`, defaults to `None`):
+                Whether to call the MultiModalConversation API. ``True``
+                forces multimodal mode, ``False`` forces text-only mode,
+                and ``None`` auto-detects from the model name
+                (e.g. ``qvq`` or ``-vl`` suffix).
+            formatter (`FormatterBase | None`, defaults to `None`):
+                The formatter that converts ``Msg`` objects to the format
+                required by the DashScope API. When ``None``, a
+                ``DashScopeChatFormatter`` instance will be used.
+        """
+        super().__init__(
+            model=model,
+            stream=stream,
+            max_retries=max_retries,
+            context_size=context_size,
+        )
+        self.credential = credential
+        self.parameters = parameters or self.Parameters()
+        self.multimodality = multimodality
+        self.formatter = formatter or DashScopeChatFormatter()
 
     @trace_llm
     async def _call_api(

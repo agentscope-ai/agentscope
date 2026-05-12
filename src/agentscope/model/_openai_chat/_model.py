@@ -4,12 +4,14 @@ from collections import OrderedDict
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List
 
-from pydantic import BaseModel, SecretStr, Field
+from pydantic import BaseModel, Field
 
-from .. import ChatUsage, ChatModelBase
+from .._base import ChatModelBase
+from .._model_response import ChatResponse
+from .._model_usage import ChatUsage
+from ...credential import OpenAICredential
 from ...formatter import FormatterBase, OpenAIChatFormatter
 from ...message import ThinkingBlock, ToolCallBlock, TextBlock
-from ...model import ChatResponse
 from ...tool import ToolChoice
 from ...tracing import trace_llm
 
@@ -19,33 +21,6 @@ if TYPE_CHECKING:
 else:
     ChatCompletion = Any
     AsyncStream = Any
-
-
-class OpenAIChatCredential(BaseModel):
-    """The OpenAI Chat credential model."""
-
-    type: Literal["openai_chat_credential"] = "openai_chat_credential"
-    """The credential type."""
-
-    api_key: SecretStr = Field(
-        description="The OpenAI API key.",
-    )
-    """The API key."""
-
-    organization: str | None = Field(
-        default=None,
-        description="The OpenAI organization ID.",
-    )
-    """The OpenAI organization ID."""
-
-    base_url: str | None = Field(
-        default=None,
-        description=(
-            "The base URL for the OpenAI API. "
-            "Can be used for OpenAI-compatible endpoints."
-        ),
-    )
-    """Custom base URL for OpenAI-compatible endpoints."""
 
 
 class OpenAIChatModel(ChatModelBase):
@@ -96,37 +71,47 @@ class OpenAIChatModel(ChatModelBase):
     type: Literal["openai_chat"] = "openai_chat"
     """The type of the chat model."""
 
-    credential: OpenAIChatCredential
-    """The OpenAI credential."""
+    def __init__(
+        self,
+        credential: OpenAICredential,
+        model: str,
+        parameters: "OpenAIChatModel.Parameters | None" = None,
+        stream: bool = True,
+        max_retries: int = 3,
+        context_size: int = 128000,
+        formatter: FormatterBase | None = None,
+    ) -> None:
+        """Initialize the OpenAI chat model.
 
-    model: str = Field(
-        title="Model",
-        description="The OpenAI model name.",
-    )
-
-    stream: bool = Field(
-        default=True,
-        title="Enable Streaming Output",
-        description="Whether to enable streaming output.",
-    )
-
-    max_retries: int = Field(
-        default=0,
-        title="Max Retries",
-        description="The maximum retries for the OpenAI API.",
-        ge=0,
-    )
-
-    parameters: Parameters = Field(
-        default_factory=Parameters,
-        title="OpenAI Chat API parameters",
-        description="The OpenAI Chat API parameters.",
-    )
-
-    formatter: FormatterBase = Field(
-        default_factory=OpenAIChatFormatter,
-    )
-    """The formatter for OpenAI Chat API."""
+        Args:
+            credential (`OpenAICredential`):
+                The OpenAI credential used to authenticate API calls.
+            model (`str`):
+                The OpenAI model name, e.g. ``gpt-4.1``.
+            parameters (`OpenAIChatModel.Parameters | None`, defaults to \
+            `None`):
+                The OpenAI Chat API parameters. When ``None``, the default
+                parameters will be used.
+            stream (`bool`, defaults to `True`):
+                Whether to enable streaming output.
+            max_retries (`int`, defaults to `3`):
+                The maximum number of retries for the OpenAI API.
+            context_size (`int`, defaults to `128000`):
+                The model context size used for context compression.
+            formatter (`FormatterBase | None`, defaults to `None`):
+                The formatter that converts ``Msg`` objects to the format
+                required by the OpenAI API. When ``None``, an
+                ``OpenAIChatFormatter`` instance will be used.
+        """
+        super().__init__(
+            model=model,
+            stream=stream,
+            max_retries=max_retries,
+            context_size=context_size,
+        )
+        self.credential = credential
+        self.parameters = parameters or self.Parameters()
+        self.formatter = formatter or OpenAIChatFormatter()
 
     @trace_llm
     async def _call_api(

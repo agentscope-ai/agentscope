@@ -10,7 +10,8 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock
 
 from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
-from agentscope.model import DeepSeekChatModel, DeepSeekCredential
+from agentscope.model import DeepSeekChatModel
+from agentscope.credential import DeepSeekCredential
 
 
 # ---------------------------------------------------------------------------
@@ -24,7 +25,6 @@ def _make_model() -> Any:
         model="deepseek-v4-pro",
         stream=False,
         context_size=65_536,
-        output_size=16_384,
     )
 
 

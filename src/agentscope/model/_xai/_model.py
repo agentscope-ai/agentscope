@@ -3,16 +3,18 @@
 from datetime import datetime
 from typing import Any, AsyncGenerator, List, Literal, TYPE_CHECKING
 
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field
 
-from .. import ChatUsage, ChatModelBase
+from .._base import ChatModelBase
+from .._model_response import ChatResponse
+from .._model_usage import ChatUsage
+from ...credential import XAICredential
 from ...formatter._xai_formatter import XAIChatFormatter
 from ...message import (
     TextBlock,
     ThinkingBlock,
     ToolCallBlock,
 )
-from ...model import ChatResponse
 from ...tool import ToolChoice
 from ...tracing import trace_llm
 
@@ -23,18 +25,6 @@ else:
     AsyncClient = Any
     Response = Any
     Chunk = Any
-
-
-class XAICredential(BaseModel):
-    """The xAI credential model."""
-
-    type: Literal["xai_credential"] = "xai_credential"
-    """The credential type."""
-
-    api_key: SecretStr = Field(
-        description="The xAI API key.",
-    )
-    """The xAI API key."""
 
 
 class XAIChatModel(ChatModelBase):
@@ -91,43 +81,47 @@ class XAIChatModel(ChatModelBase):
     type: Literal["xai_chat"] = "xai_chat"
     """The type of the chat model."""
 
-    credential: XAICredential
-    """The xAI credential."""
+    def __init__(
+        self,
+        credential: XAICredential,
+        model: str,
+        parameters: "XAIChatModel.Parameters | None" = None,
+        stream: bool = True,
+        max_retries: int = 3,
+        context_size: int = 131072,
+        formatter: XAIChatFormatter | None = None,
+    ) -> None:
+        """Initialize the xAI chat model.
 
-    model: str = Field(
-        title="Model",
-        description="The xAI model name.",
-    )
-    """The xAI model name."""
-
-    stream: bool = Field(
-        default=True,
-        title="Enable Streaming Output",
-        description="Whether to enable streaming output.",
-    )
-    """Whether to enable streaming output."""
-
-    max_retries: int = Field(
-        default=0,
-        title="Max Retries",
-        description="The maximum number of retries for the xAI API.",
-        ge=0,
-    )
-    """The maximum number of API call retries."""
-
-    parameters: Parameters = Field(
-        default_factory=Parameters,
-        title="XAI API Parameters",
-        description="The xAI API parameters.",
-    )
-    """The xAI API parameters."""
-
-    formatter: XAIChatFormatter = Field(
-        default_factory=XAIChatFormatter,
-        description="The formatter that converts Msg objects to xai_sdk "
-        "protos.",
-    )
-    """The formatter that converts Msg objects to xai_sdk proto messages."""
+        Args:
+            credential (`XAICredential`):
+                The xAI credential used to authenticate API calls.
+            model (`str`):
+                The xAI model name, e.g. ``grok-3`` or ``grok-3-mini``.
+            parameters (`XAIChatModel.Parameters | None`, defaults to \
+            `None`):
+                The xAI API parameters. When ``None``, the default
+                parameters will be used.
+            stream (`bool`, defaults to `True`):
+                Whether to enable streaming output.
+            max_retries (`int`, defaults to `3`):
+                The maximum number of retries for the xAI API.
+            context_size (`int`, defaults to `131072`):
+                The model context size used for context compression.
+            formatter (`XAIChatFormatter | None`, defaults to `None`):
+                The formatter that converts ``Msg`` objects to xai_sdk
+                proto messages. When ``None``, an ``XAIChatFormatter``
+                instance will be used.
+        """
+        super().__init__(
+            model=model,
+            stream=stream,
+            max_retries=max_retries,
+            context_size=context_size,
+        )
+        self.credential = credential
+        self.parameters = parameters or self.Parameters()
+        self.formatter = formatter or XAIChatFormatter()
 
     @trace_llm
     async def _call_api(

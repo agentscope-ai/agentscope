@@ -2,7 +2,7 @@
 """The utility module for unit tests in agentscope."""
 from typing import Any, AsyncGenerator, Type
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from agentscope.message import Msg
 from agentscope.model import ChatModelBase, ChatResponse, StructuredResponse
@@ -23,12 +23,21 @@ class AnyString:
 class MockModel(ChatModelBase):
     """A mock model for testing."""
 
-    model: str = "mock-model"
-    context_size: int | None = 10000
-    output_size: int | None = 8192
-    mock_chat_responses: Any = Field(default_factory=list)
-    mock_structured_response: Any = None
-    cnt: int = 0
+    def __init__(
+        self,
+        model: str = "mock-model",
+        context_size: int = 1000,
+        mock_chat_responses: list | None = None,
+        mock_structured_response: Any = None,
+    ) -> None:
+        """Initialize the mock model."""
+        super().__init__(
+            model=model,
+            context_size=context_size,
+        )
+        self.mock_chat_responses = mock_chat_responses or []
+        self.mock_structured_response = mock_structured_response
+        self.cnt = 0
 
     def set_responses(
         self,

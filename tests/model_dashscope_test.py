@@ -12,7 +12,8 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock
 
 from agentscope.message import TextBlock, ToolCallBlock
-from agentscope.model import DashScopeChatModel, DashScopeCredential
+from agentscope.model import DashScopeChatModel
+from agentscope.credential import DashScopeCredential
 
 
 # ---------------------------------------------------------------------------
@@ -25,8 +26,14 @@ def _make_model() -> Any:
         credential=DashScopeCredential(api_key="test"),
         model="qwen3-max",
         stream=False,
-        context_size=1_000_000,
-        output_size=65_536,
+        multimodality=True,
+        max_retries=3,
+        context_size=int(1500),
+        parameters=DashScopeChatModel.Parameters(
+            max_tokens=1000,
+            thinking_enable=True,
+            thinking_budget=100,
+        ),
     )
 
 

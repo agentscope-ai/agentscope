@@ -5,15 +5,15 @@ from ._base import ChatModelBase
 from ._model_card import ModelCard
 from ._model_response import ChatResponse, StructuredResponse
 from ._model_usage import ChatUsage
-from ._anthropic import AnthropicCredential, AnthropicChatModel
-from ._dashscope import DashScopeCredential, DashScopeChatModel
-from ._deepseek import DeepSeekCredential, DeepSeekChatModel
-from ._gemini import GeminiCredential, GeminiChatModel
-from ._ollama import OllamaCredential, OllamaChatModel
-from ._openai_chat import OpenAIChatCredential, OpenAIChatModel
-from ._xai import XAICredential, XAIChatModel
-from ._kimi import KimiCredential, KimiChatModel
-from ._openai_response import OpenAIResponseCredential, OpenAIResponseModel
+from ._anthropic import AnthropicChatModel
+from ._dashscope import DashScopeChatModel
+from ._deepseek import DeepSeekChatModel
+from ._gemini import GeminiChatModel
+from ._ollama import OllamaChatModel
+from ._openai_chat import OpenAIChatModel
+from ._xai import XAIChatModel
+from ._kimi import KimiChatModel
+from ._openai_response import OpenAIResponseModel
 
 __all__ = [
     "ChatUsage",
@@ -21,22 +21,13 @@ __all__ = [
     "ChatResponse",
     "ModelCard",
     "StructuredResponse",
-    "AnthropicCredential",
     "AnthropicChatModel",
-    "DashScopeCredential",
     "DashScopeChatModel",
-    "DeepSeekCredential",
     "DeepSeekChatModel",
-    "GeminiCredential",
     "GeminiChatModel",
-    "OllamaCredential",
     "OllamaChatModel",
-    "OpenAIChatCredential",
     "OpenAIChatModel",
-    "XAICredential",
     "XAIChatModel",
-    "KimiCredential",
     "KimiChatModel",
-    "OpenAIResponseCredential",
     "OpenAIResponseModel",
 ]

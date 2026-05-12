@@ -11,7 +11,8 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock
 
 from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
-from agentscope.model import AnthropicChatModel, AnthropicCredential
+from agentscope.model import AnthropicChatModel
+from agentscope.credential import AnthropicCredential
 
 
 # ---------------------------------------------------------------------------
@@ -25,7 +26,6 @@ def _make_model() -> Any:
         model="claude-opus-4-5",
         stream=False,
         context_size=200_000,
-        output_size=8_192,
     )
 
 

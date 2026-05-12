@@ -4,12 +4,14 @@ from collections import OrderedDict
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List
 
-from pydantic import BaseModel, SecretStr, Field
+from pydantic import BaseModel, Field
 
-from .. import ChatUsage, ChatModelBase
+from .._base import ChatModelBase
+from .._model_response import ChatResponse
+from .._model_usage import ChatUsage
+from ...credential import AnthropicCredential
 from ...formatter import FormatterBase, AnthropicChatFormatter
 from ...message import ThinkingBlock, ToolCallBlock, TextBlock
-from ...model import ChatResponse
 from ...tool import ToolChoice
 from ...tracing import trace_llm
 
@@ -21,36 +23,23 @@ else:
     AsyncStream = Any
 
 
-class AnthropicCredential(BaseModel):
-    """The Anthropic credential model."""
-
-    type: Literal["anthropic_credential"] = "anthropic_credential"
-    """The credential type."""
-
-    api_key: SecretStr = Field(
-        description="The Anthropic API key",
-    )
-    """The API key."""
-
-    base_url: str | None = Field(
-        description="The base URL for the Anthropic API.",
-        default=None,
-    )
-    """The base URL for the Anthropic API."""
-
-
 class AnthropicChatModel(ChatModelBase):
     """The Anthropic chat model."""
+
+    type: Literal["anthropic_chat"] = "anthropic_chat"
+    """The type of the chat model."""
 
     class Parameters(BaseModel):
         """The parameters for the Anthropic chat model."""
 
         max_tokens: int | None = Field(
             default=None,
+            title="Max Tokens",
             description=(
                 "The maximum number of tokens to generate in the chat "
-                "completion.",
+                "completion."
             ),
+            gt=0,
         )
 
         thinking_enable: bool = Field(
@@ -66,44 +55,47 @@ class AnthropicChatModel(ChatModelBase):
             gt=0,
         )
 
-    type: Literal["anthropic_chat"] = "anthropic_chat"
-    """The type of the chat model."""
+    def __init__(
+        self,
+        credential: AnthropicCredential,
+        model: str,
+        parameters: "AnthropicChatModel.Parameters | None" = None,
+        stream: bool = True,
+        max_retries: int = 3,
+        context_size: int = 200000,
+        formatter: FormatterBase | None = None,
+    ) -> None:
+        """Initialize the Anthropic chat model.
 
-    credential: AnthropicCredential
-    """The Anthropic credential model."""
-
-    model: str = Field(
-        title="Model",
-        description="The LLM of Anthropic API.",
-    )
-    """The Anthropic API model."""
-
-    stream: bool = Field(
-        default=True,
-        title="Enable Streaming Output.",
-        description="The enable stream output for the LLM output.",
-    )
-
-    max_retries: int = Field(
-        default=0,
-        title="Max Retries",
-        description="The maximum retries for the Anthropic API.",
-        ge=0,
-    )
-    """The maximum retries for the Anthropic API."""
-
-    parameters: Parameters = Field(
-        default_factory=Parameters,
-        title="Anthropic API parameters",
-        description="The Anthropic API parameters",
-    )
-    """The Anthropic API parameters."""
-
-    formatter: FormatterBase = Field(
-        default_factory=AnthropicChatFormatter,
-    )
-    """The Anthropic API formatter, responsible for converting Msg objects into
-    the format required by the Anthropic API."""
+        Args:
+            credential (`AnthropicCredential`):
+                The Anthropic credential used to authenticate API calls.
+            model (`str`):
+                The Anthropic model name, e.g. ``claude-opus-4-7``.
+            parameters (`AnthropicChatModel.Parameters | None`, defaults to \
+            `None`):
+                The Anthropic API parameters. When ``None``, the default
+                parameters will be used.
+            stream (`bool`, defaults to `True`):
+                Whether to enable streaming output.
+            max_retries (`int`, defaults to `3`):
+                The maximum number of retries for the Anthropic API.
+            context_size (`int`, defaults to `200000`):
+                The model context size used for context compression.
+            formatter (`FormatterBase | None`, defaults to `None`):
+                The formatter that converts ``Msg`` objects to the format
+                required by the Anthropic API. When ``None``, an
+                ``AnthropicChatFormatter`` instance will be used.
+        """
+        super().__init__(
+            model=model,
+            stream=stream,
+            max_retries=max_retries,
+            context_size=context_size,
+        )
+        self.credential = credential
+        self.parameters = parameters or self.Parameters()
+        self.formatter = formatter or AnthropicChatFormatter()
 
     @trace_llm
     async def _call_api(

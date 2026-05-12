@@ -1,6 +1,6 @@
 name: gemini-3-flash-preview
 label: Gemini 3 Flash Preview
-status: preview
+status: active
 
 input_types:
   - text/plain
