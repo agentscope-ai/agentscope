@@ -51,9 +51,11 @@ dependencies = [
 # ------------ Model APIs ------------
 gemini = ["google-genai"]
 ollama = ["ollama>=0.5.4"]
+xai = ["xai-sdk"]
 models = [
     "agentscope[ollama]",
     "agentscope[gemini]",
+    "agentscope[xai]",
 ]
 
 # ------------ Full ------------

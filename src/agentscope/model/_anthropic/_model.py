@@ -1,119 +1,101 @@
 # -*- coding: utf-8 -*-
-"""The Anthropic API model classes."""
-from datetime import datetime
-from typing import (
-    Any,
-    AsyncGenerator,
-    TYPE_CHECKING,
-    List,
-    Literal,
-)
+"""The Anthropic chat model implementation."""
 from collections import OrderedDict
+from datetime import datetime
+from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from ._model_base import ChatModelBase
-from ._model_response import ChatResponse
-from ._model_usage import ChatUsage
-from ..formatter import FormatterBase, AnthropicChatFormatter
-from ..message import TextBlock, ToolCallBlock, ThinkingBlock
-from ..tool import ToolChoice
-from ..tracing import trace_llm
-from ..types import JSONSerializableObject
+from .._base import ChatModelBase
+from .._model_response import ChatResponse
+from .._model_usage import ChatUsage
+from ...credential import AnthropicCredential
+from ...formatter import FormatterBase, AnthropicChatFormatter
+from ...message import ThinkingBlock, ToolCallBlock, TextBlock
+from ...tool import ToolChoice
+from ...tracing import trace_llm
 
 if TYPE_CHECKING:
     from anthropic.types.message import Message
     from anthropic import AsyncStream
 else:
-    Message = "anthropic.types.message.Message"
-    AsyncStream = "anthropic.AsyncStream"
+    Message = Any
+    AsyncStream = Any
 
 
 class AnthropicChatModel(ChatModelBase):
-    """The Anthropic model wrapper for AgentScope."""
+    """The Anthropic chat model."""
 
-    class ThinkingConfig(BaseModel):
-        """Configuration for Claude's internal reasoning process."""
+    type: Literal["anthropic_chat"] = "anthropic_chat"
+    """The type of the chat model."""
 
-        enable_thinking: bool
-        budget_tokens: int = 1024
+    class Parameters(BaseModel):
+        """The parameters for the Anthropic chat model."""
+
+        max_tokens: int | None = Field(
+            default=None,
+            title="Max Tokens",
+            description=(
+                "The maximum number of tokens to generate in the chat "
+                "completion."
+            ),
+            gt=0,
+        )
+
+        thinking_enable: bool = Field(
+            default=False,
+            title="Thinking",
+            description="The thinking enable for the LLM output.",
+        )
+
+        thinking_budget: int | None = Field(
+            default=None,
+            title="Thinking budget",
+            description="The thinking budget for the LLM output.",
+            gt=0,
+        )
 
     def __init__(
         self,
-        model_name: str,
-        context_length: int,
-        api_key: str | None = None,
-        max_tokens: int = 2048,
+        credential: AnthropicCredential,
+        model: str,
+        parameters: "AnthropicChatModel.Parameters | None" = None,
         stream: bool = True,
-        max_retries: int = 0,
-        fallback_model_name: str | None = None,
+        max_retries: int = 3,
+        context_size: int = 200000,
         formatter: FormatterBase | None = None,
-        thinking_config: ThinkingConfig | None = None,
-        stream_tool_parsing: bool = True,
-        client_kwargs: dict[str, JSONSerializableObject] | None = None,
-        generate_kwargs: dict[str, JSONSerializableObject] | None = None,
     ) -> None:
         """Initialize the Anthropic chat model.
 
         Args:
-            model_name (`str`):
-                The model names.
-            context_length (`int`):
-                The context length of the model, used in context compression.
-            api_key (`str`):
-                The anthropic API key.
-            max_tokens (`int`):
-                Limit the maximum token count the model can generate.
-            stream (`bool`):
-                The streaming output or not
-            max_retries (`int`, optional):
-                Maximum number of retries on failure. Defaults to 0.
-            fallback_model_name (`str | None`, optional):
-                Fallback model name to use after all retries fail.
-            formatter (`FormatterBase | None`, optional):
-                Formatter for message preprocessing.
-            thinking_config (`ThinkingConfig | None`, default `None`):
-                Configuration for Claude's internal reasoning process.
-            stream_tool_parsing (`bool`, default to `True`):
-                Whether to parse incomplete tool use JSON during streaming
-                with auto-repair. If True, partial JSON (e.g., `'{"a": "x'`)
-                is repaired to valid dicts ({"a": "x"}) in real-time for
-                immediate tool function input. Otherwise, the input field
-                remains {} until the final chunk arrives.
-            client_kwargs (`dict[str, JSONSerializableObject] | None`, \
-             optional):
-                The extra keyword arguments to initialize the Anthropic client.
-            generate_kwargs (`dict[str, JSONSerializableObject] | None`, \
-             optional):
-                The extra keyword arguments used in Anthropic API generation,
-                e.g. `temperature`, `seed`.
+            credential (`AnthropicCredential`):
+                The Anthropic credential used to authenticate API calls.
+            model (`str`):
+                The Anthropic model name, e.g. ``claude-opus-4-7``.
+            parameters (`AnthropicChatModel.Parameters | None`, defaults to \
+            `None`):
+                The Anthropic API parameters. When ``None``, the default
+                parameters will be used.
+            stream (`bool`, defaults to `True`):
+                Whether to enable streaming output.
+            max_retries (`int`, defaults to `3`):
+                The maximum number of retries for the Anthropic API.
+            context_size (`int`, defaults to `200000`):
+                The model context size used for context compression.
+            formatter (`FormatterBase | None`, defaults to `None`):
+                The formatter that converts ``Msg`` objects to the format
+                required by the Anthropic API. When ``None``, an
+                ``AnthropicChatFormatter`` instance will be used.
         """
-
-        try:
-            import anthropic
-        except ImportError as e:
-            raise ImportError(
-                "Please install the `anthropic` package by running "
-                "`pip install anthropic`.",
-            ) from e
-
         super().__init__(
-            model_name=model_name,
+            model=model,
             stream=stream,
-            context_length=context_length,
             max_retries=max_retries,
-            fallback_model_name=fallback_model_name,
-            formatter=formatter or AnthropicChatFormatter(),
+            context_size=context_size,
         )
-
-        self.client = anthropic.AsyncAnthropic(
-            api_key=api_key,
-            **(client_kwargs or {}),
-        )
-        self.max_tokens = max_tokens
-        self.thinking_config = thinking_config
-        self.stream_tool_parsing = stream_tool_parsing
-        self.generate_kwargs = generate_kwargs or {}
+        self.credential = credential
+        self.parameters = parameters or self.Parameters()
+        self.formatter = formatter or AnthropicChatFormatter()
 
     @trace_llm
     async def _call_api(
@@ -121,7 +103,7 @@ class AnthropicChatModel(ChatModelBase):
         model_name: str,
         messages: list[dict[str, Any]],
         tools: list[dict] | None = None,
-        tool_choice: Literal["auto", "none", "required"] | str | None = None,
+        tool_choice: ToolChoice | None = None,
         **generate_kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Get the response from Anthropic chat completions API by the given
@@ -135,29 +117,47 @@ class AnthropicChatModel(ChatModelBase):
                 required, and `name` field is optional.
             tools (`list[dict]`, default `None`):
                 The tools JSON schemas.
-            tool_choice (`Literal["auto", "none", "required"] | str \
-            | None`, default `None`):
+            tool_choice (`ToolChoice | None`, optional):
                 Controls which (if any) tool is called by the model.
             **generate_kwargs (`Any`):
                 The keyword arguments for Anthropic chat completions API.
 
         Returns:
             `ChatResponse | AsyncGenerator[ChatResponse, None]`:
-                The response from the Anthropic chat completions API."""
+                A ``ChatResponse`` when streaming is disabled, or an async
+                generator of ``ChatResponse`` objects when streaming is
+                enabled.
+        """
+
+        import anthropic
+
+        client = anthropic.AsyncAnthropic(
+            api_key=self.credential.api_key.get_secret_value(),
+            base_url=self.credential.base_url,
+        )
+
+        # Anthropic requires max_tokens; fall back to a safe default when
+        # the user hasn't configured one explicitly.
+        max_tokens = self.parameters.max_tokens or 8192
 
         kwargs: dict[str, Any] = {
             "model": model_name,
-            "max_tokens": self.max_tokens,
+            "max_tokens": max_tokens,
             "stream": self.stream,
-            **self.generate_kwargs,
             **generate_kwargs,
         }
-        if self.thinking_config and "thinking" not in kwargs:
+
+        # Anthropic extended thinking — only set when explicitly enabled.
+        # Anthropic requires max_tokens > budget_tokens strictly.
+        if self.parameters.thinking_enable and "thinking" not in kwargs:
+            budget = self.parameters.thinking_budget or (max_tokens // 2)
+            if budget >= max_tokens:
+                # Auto-expand max_tokens to satisfy the strict inequality.
+                max_tokens = budget + 1024
+                kwargs["max_tokens"] = max_tokens
             kwargs["thinking"] = {
-                "type": "enabled"
-                if self.thinking_config.enable_thinking
-                else "disabled",
-                "budget_tokens": self.thinking_config.budget_tokens,
+                "type": "enabled",
+                "budget_tokens": budget,
             }
 
         if tools:
@@ -169,16 +169,18 @@ class AnthropicChatModel(ChatModelBase):
                 tools,
             )
 
-        # Extract the system message
-        if messages[0]["role"] == "system":
-            kwargs["system"] = messages[0]["content"]
-            messages = messages[1:]
+        formatted_messages = await self.formatter.format(messages)
 
-        kwargs["messages"] = messages
+        # Extract the system message
+        if formatted_messages and formatted_messages[0]["role"] == "system":
+            kwargs["system"] = formatted_messages[0]["content"]
+            formatted_messages = formatted_messages[1:]
+
+        kwargs["messages"] = formatted_messages
 
         start_datetime = datetime.now()
 
-        response = await self.client.messages.create(**kwargs)
+        response = await client.messages.create(**kwargs)
 
         if self.stream:
             return self._parse_anthropic_stream_completion_response(
@@ -209,8 +211,9 @@ class AnthropicChatModel(ChatModelBase):
                 Anthropic Message object to parse.
 
         Returns:
-            ChatResponse (`ChatResponse`):
-                A ChatResponse object containing the content blocks and usage.
+            `ChatResponse`:
+                A single ``ChatResponse`` with ``is_last=True`` containing
+                the extracted content blocks and usage.
         """
         content_blocks: List[ThinkingBlock | TextBlock | ToolCallBlock] = []
 
@@ -222,8 +225,9 @@ class AnthropicChatModel(ChatModelBase):
                 ):
                     thinking_block = ThinkingBlock(
                         thinking=content_block.thinking,
+                        signature=getattr(content_block, "signature", "")
+                        or "",
                     )
-                    thinking_block["signature"] = content_block.signature
                     content_blocks.append(thinking_block)
 
                 elif (
@@ -281,22 +285,21 @@ class AnthropicChatModel(ChatModelBase):
             response (`AsyncStream`):
                 Anthropic AsyncStream object to parse.
 
-        Returns:
-            `AsyncGenerator[ChatResponse, None]`:
-                An async generator that yields ChatResponse objects containing
-                the content blocks and usage information for each chunk in
-                the streaming response.
+        Yields:
+            `ChatResponse`:
+                Incremental ``ChatResponse`` objects with ``is_last=False``
+                followed by a final one with ``is_last=True`` containing the
+                fully accumulated content blocks and usage.
         """
 
         usage = None
         response_id: str | None = None
-        # Accumulated state
-        acc_text = ""
-        acc_thinking = ""
+        # All delta should have the same block identifier
+        acc_text = TextBlock(text="")
+        acc_thinking = ThinkingBlock(thinking="")
         thinking_signature = ""
-        acc_tool_calls: OrderedDict = (
-            OrderedDict()
-        )  # index -> {id, name, input}
+        # index -> {id, name, input}
+        acc_tool_calls: OrderedDict = OrderedDict()
 
         async for event in response:
             delta_content: list = []
@@ -330,12 +333,17 @@ class AnthropicChatModel(ChatModelBase):
                 block_index = event.index
                 delta = event.delta
                 if delta.type == "text_delta":
-                    acc_text += delta.text
-                    delta_content.append(TextBlock(text=delta.text))
-                elif delta.type == "thinking_delta":
-                    acc_thinking += delta.thinking
+                    acc_text.text += delta.text
                     delta_content.append(
-                        ThinkingBlock(thinking=delta.thinking),
+                        TextBlock(id=acc_text.id, text=delta.text),
+                    )
+                elif delta.type == "thinking_delta":
+                    acc_thinking.thinking += delta.thinking
+                    delta_content.append(
+                        ThinkingBlock(
+                            id=acc_thinking.id,
+                            thinking=delta.thinking,
+                        ),
                     )
                 elif delta.type == "signature_delta":
                     thinking_signature = delta.signature
@@ -370,12 +378,11 @@ class AnthropicChatModel(ChatModelBase):
 
         # Build final accumulated content
         final_content: list = []
-        if acc_thinking:
-            thinking_block = ThinkingBlock(thinking=acc_thinking)
-            thinking_block["signature"] = thinking_signature
-            final_content.append(thinking_block)
-        if acc_text:
-            final_content.append(TextBlock(text=acc_text))
+        if acc_thinking.thinking:
+            acc_thinking.signature = thinking_signature
+            final_content.append(acc_thinking)
+        if acc_text.text:
+            final_content.append(acc_text)
         for tc in acc_tool_calls.values():
             input_str = tc["input"]
             final_content.append(

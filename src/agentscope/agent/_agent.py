@@ -220,7 +220,7 @@ class Agent:
         estimated_tokens = await self.model.count_tokens(**kwargs)
 
         # Skip if no compression is needed
-        threshold = cfg.trigger_ratio * self.model.context_length
+        threshold = cfg.trigger_ratio * self.model.context_size
         if estimated_tokens < threshold:
             return
 
@@ -251,7 +251,7 @@ class Agent:
             msgs_to_compress,
             msgs_to_reserve,
         ) = await self._split_context_for_compression(
-            cfg.reserve_ratio * self.model.context_length,
+            cfg.reserve_ratio * self.model.context_size,
             tools,
         )
 
@@ -268,7 +268,7 @@ class Agent:
                 msgs_to_compress,
                 msgs_to_reserve,
             ) = await self._split_context_for_compression(
-                0 * self.model.context_length,
+                0 * self.model.context_size,
                 tools,
             )
 
@@ -313,12 +313,12 @@ class Agent:
             messages,
             compression_tool_schema,
         )
-        if estimated_compression_tokens > self.model.context_length:
+        if estimated_compression_tokens > self.model.context_size:
             logger.warning(
                 "The current context length exceeds the model's context "
                 "length (%d tokens), the compression maybe failed due to "
                 "insufficient reserved context for compression.",
-                self.model.context_length,
+                self.model.context_size,
             )
             context_overflow = True
 
@@ -357,7 +357,7 @@ class Agent:
                     # tokens for compression response
                     if (
                         estimated_compression_tokens
-                        < self.model.context_length * cfg.trigger_ratio
+                        < self.model.context_size * cfg.trigger_ratio
                     ):
                         break
 
@@ -636,7 +636,7 @@ class Agent:
 
         yield ModelCallStartEvent(
             reply_id=self.state.reply_id,
-            model_name=self.model.model_name,
+            model_name=self.model.model,
         )
 
         # Get the input arguments for the chat model, including messages and
@@ -1865,7 +1865,7 @@ class Agent:
                     logger.warning(
                         "Model %s call failed for agent %s. "
                         "Retrying (%d/%d)...",
-                        model.model_name,
+                        model.model,
                         self.name,
                         _ + 1,
                         self.model_config.max_retries,

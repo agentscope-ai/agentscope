@@ -1,30 +1,22 @@
 # -*- coding: utf-8 -*-
-"""The dashscope API model classes."""
+"""The DashScope chat model class."""
 import uuid
 import warnings
 from datetime import datetime
 from http import HTTPStatus
-from typing import (
-    Any,
-    AsyncGenerator,
-    Generator,
-    Union,
-    TYPE_CHECKING,
-    List,
-)
+from typing import Any, AsyncGenerator, Generator, List, Literal, TYPE_CHECKING
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from aioitertools import iter as giter
 
-from ._model_base import ChatModelBase
-from ._model_response import ChatResponse
-from ._model_usage import ChatUsage
-from ..formatter import FormatterBase, DashScopeChatFormatter
-from ..message import TextBlock, ToolCallBlock, ThinkingBlock, Msg
-from ..tool import ToolChoice
-from ..tracing import trace_llm
-from ..types import JSONSerializableObject
-from .._logging import logger
+from .._base import ChatModelBase
+from .._model_response import ChatResponse
+from .._model_usage import ChatUsage
+from ...credential import DashScopeCredential
+from ...formatter import FormatterBase, DashScopeChatFormatter
+from ...message import Msg, TextBlock, ThinkingBlock, ToolCallBlock
+from ...tool import ToolChoice
+from ...tracing import trace_llm
 
 
 if TYPE_CHECKING:
@@ -33,131 +25,117 @@ if TYPE_CHECKING:
         MultiModalConversationResponse,
     )
 else:
-    GenerationResponse = (
-        "dashscope.api_entities.dashscope_response.GenerationResponse"
-    )
-    MultiModalConversationResponse = (
-        "dashscope.api_entities.dashscope_response."
-        "MultiModalConversationResponse"
-    )
+    GenerationResponse = Any
+    MultiModalConversationResponse = Any
 
 
 class DashScopeChatModel(ChatModelBase):
-    """The DashScope chat model class, which unifies the Generation and
-    MultimodalConversation APIs into one method.
+    """The DashScope chat model."""
 
-    This class provides a unified interface for DashScope API by automatically
-    selecting between text-only (Generation API) and multimodal
-    (MultiModalConversation API) endpoints. The `multimodality` parameter
-    allows explicit control over API selection:
+    class Parameters(BaseModel):
+        """The parameters for DashScope LLM API."""
 
-    - When `multimodality=True`: Forces use of MultiModalConversation API
-      for handling images, videos, and other multimodal inputs
-    - When `multimodality=False`: Forces use of Generation API for
-      text-only processing
-    - When `multimodality=None` (default): Automatically selects the API
-      based on model name (e.g., models with "-vl" suffix or starting
-      with "qvq" will use MultiModalConversation API)
+        max_tokens: int | None = Field(
+            default=None,
+            title="Max Tokens",
+            description="The maximum number of tokens for the LLM output.",
+            gt=0,
+        )
 
-    This design enables seamless switching between text and multimodal
-    models without changing code structure, making it easier to work with
-    DashScope's diverse model offerings.
-    """
+        thinking_enable: bool = Field(
+            default=False,
+            title="Thinking",
+            description="The thinking enable for the LLM output.",
+        )
 
-    class ThinkingConfig(BaseModel):
-        """The configuration for the thinking process in DashScope API."""
+        thinking_budget: int | None = Field(
+            default=None,
+            title="Thinking budget",
+            description="The thinking budget for the LLM output.",
+            gt=0,
+        )
 
-        enable_thinking: bool
-        thinking_budget: int = 2000
-        preserve_thinking: bool = False
+        temperature: float | None = Field(
+            default=None,
+            title="Temperature",
+            description="The temperature for the LLM output.",
+            ge=0,
+            lt=2,
+        )
+
+        top_p: float | None = Field(
+            default=None,
+            title="Top P",
+            description="The top P value for the LLM output.",
+            gt=0,
+            le=1,
+        )
+
+        top_k: int | None = Field(
+            default=None,
+            title="Top K",
+            description="The top K value for the LLM output.",
+            gt=0,
+            le=100,
+        )
+
+        parallel_tool_calls: bool = Field(
+            default=True,
+            title="Parallel Tool Calls",
+            description="If enable parallel tool calls for the LLM output.",
+        )
+
+    type: Literal["dashscope_chat"] = "dashscope_chat"
+    """The type of the chat model."""
 
     def __init__(
         self,
-        model_name: str,
-        api_key: str,
-        context_length: int,
+        credential: DashScopeCredential,
+        model: str,
+        parameters: "DashScopeChatModel.Parameters | None" = None,
         stream: bool = True,
-        max_retries: int = 0,
-        fallback_model_name: str | None = None,
+        max_retries: int = 3,
+        context_size: int = 131072,
+        multimodality: bool | None = None,
         formatter: FormatterBase | None = None,
-        thinking_config: ThinkingConfig | None = None,
-        multimodality: bool = False,
-        generate_kwargs: dict[str, JSONSerializableObject] | None = None,
-        base_http_api_url: str | None = None,
-        **_kwargs: Any,
     ) -> None:
         """Initialize the DashScope chat model.
 
         Args:
-            model_name (`str`):
-                The model names.
-            api_key (`str`):
-                The dashscope API key.
-            context_length (`int`):
-                The context length of the model.
-            stream (`bool`):
-                The streaming output or not
-            enable_thinking (`bool | None`, optional):
-                Enable thinking or not, only support Qwen3, QwQ, DeepSeek-R1.
-                Refer to `DashScope documentation
-                <https://help.aliyun.com/zh/model-studio/deep-thinking>`_
-                for more details.
-            multimodality (`bool | None`, optional):
-                Whether to use multimodal conversation API. If `True`,
-                it will use `dashscope.AioMultiModalConversation.call`
-                to process multimodal inputs such as images and text. If
-                `False`, it will use
-                `dashscope.aigc.generation.AioGeneration.call` to process
-                text inputs. If `None` (default), the choice is based on
-                the model name.
-            generate_kwargs (`dict[str, JSONSerializableObject] | None`, \
-            optional):
-               The extra keyword arguments used in DashScope API generation,
-               e.g. `temperature`, `seed`.
-            base_http_api_url (`str | None`, optional):
-                The base URL for DashScope API requests. If not provided,
-                the default base URL from the DashScope SDK will be used.
-            stream_tool_parsing (`bool`, default to `True`):
-                Whether to parse incomplete tool use JSON in streaming mode
-                with auto-repair. If True, partial JSON (e.g., `'{"a": "x'`)
-                is repaired to valid dicts (`{"a": "x"}`) in real-time for
-                immediate tool function input. Otherwise, the input field
-                remains {} until the final chunk arrives.
-            **_kwargs (`Any`):
-                Additional keyword arguments.
+            credential (`DashScopeCredential`):
+                The DashScope credential used to authenticate API calls.
+            model (`str`):
+                The DashScope model name, e.g. ``qwen-plus``.
+            parameters (`DashScopeChatModel.Parameters | None`, defaults to \
+            `None`):
+                The DashScope API parameters. When ``None``, the default
+                parameters will be used.
+            stream (`bool`, defaults to `True`):
+                Whether to enable streaming output.
+            max_retries (`int`, defaults to `3`):
+                The maximum number of retries for the DashScope API.
+            context_size (`int`, defaults to `131072`):
+                The model context size used for context compression.
+            multimodality (`bool | None`, defaults to `None`):
+                Whether to call the MultiModalConversation API. ``True``
+                forces multimodal mode, ``False`` forces text-only mode,
+                and ``None`` auto-detects from the model name
+                (e.g. ``qvq`` or ``-vl`` suffix).
+            formatter (`FormatterBase | None`, defaults to `None`):
+                The formatter that converts ``Msg`` objects to the format
+                required by the DashScope API. When ``None``, a
+                ``DashScopeChatFormatter`` instance will be used.
         """
-
-        self.thinking_config = (
-            thinking_config
-            or DashScopeChatModel.ThinkingConfig(
-                enable_thinking=False,
-            )
-        )
-
-        if self.thinking_config.enable_thinking and not stream:
-            logger.info(
-                "In DashScope API, `stream` must be True when "
-                "`enable_thinking` is True. ",
-            )
-            stream = True
-
         super().__init__(
-            model_name,
-            stream,
-            context_length,
-            formatter or DashScopeChatFormatter(),
-            max_retries,
-            fallback_model_name,
+            model=model,
+            stream=stream,
+            max_retries=max_retries,
+            context_size=context_size,
         )
-
-        self.api_key = api_key
+        self.credential = credential
+        self.parameters = parameters or self.Parameters()
         self.multimodality = multimodality
-        self.generate_kwargs = generate_kwargs or {}
-
-        if base_http_api_url is not None:
-            import dashscope
-
-            dashscope.base_http_api_url = base_http_api_url
+        self.formatter = formatter or DashScopeChatFormatter()
 
     @trace_llm
     async def _call_api(
@@ -210,7 +188,6 @@ class DashScopeChatModel(ChatModelBase):
             # In agentscope, the `incremental_output` must be `True` when
             # `self.stream` is True
             "incremental_output": self.stream,
-            **self.generate_kwargs,
             **kwargs,
         }
 
@@ -225,25 +202,32 @@ class DashScopeChatModel(ChatModelBase):
                 tools,
             )
 
-        # thinking related options
-        kwargs = {**kwargs, **self.thinking_config.model_dump()}
+        # thinking related options — map to DashScope API parameter names
+        kwargs["enable_thinking"] = self.parameters.thinking_enable
+        if self.parameters.thinking_budget is not None:
+            kwargs["thinking_budget"] = self.parameters.thinking_budget
 
         # 3. Call the API and parse the response
         start_datetime = datetime.now()
         # Use MultiModalConversation API if multimodality is True, or if the
         # model is multimodal based on the model name.
+        api_key = self.credential.api_key.get_secret_value()
         if self.multimodality or (
             self.multimodality is None
-            and ("qvq" in self.model_name or "-vl" in self.model_name)
+            and (
+                "qvq" in model_name
+                or "-vl" in model_name
+                or "-omni" in model_name
+            )
         ):
             response = await dashscope.AioMultiModalConversation.call(
-                api_key=self.api_key,
+                api_key=api_key,
                 **kwargs,
             )
 
         else:
             response = await dashscope.aigc.generation.AioGeneration.call(
-                api_key=self.api_key,
+                api_key=api_key,
                 **kwargs,
             )
 
@@ -351,6 +335,9 @@ class DashScopeChatModel(ChatModelBase):
                 # Use the index to identify different tool calls
                 index = tool_call.get("index", 0)
 
+                # Initialize accumulator for a new tool call index
+                acc_tool_calls.setdefault(index, {})
+
                 # Avoid appending duplicate id
                 if "id" in tool_call and tool_call["id"] != acc_tool_calls[
                     index
@@ -402,16 +389,24 @@ class DashScopeChatModel(ChatModelBase):
             )
 
         # Yield a final complete response with the accumulated content and
-        # final usage
+        # final usage.  Thinking comes before text to preserve the natural
+        # generation order (reasoning first, then answer).
         content = []
-        if acc_text.text:
-            content.append(acc_text)
-
         if acc_thinking.thinking:
             content.append(acc_thinking)
 
+        if acc_text.text:
+            content.append(acc_text)
+
         if acc_tool_calls:
-            content.extend(acc_tool_calls.values())
+            content.extend(
+                ToolCallBlock(
+                    id=tc.get("id", uuid.uuid4().hex),
+                    name=tc.get("name", ""),
+                    input=tc.get("arguments", "{}"),
+                )
+                for tc in acc_tool_calls.values()
+            )
 
         yield ChatResponse(
             id=response_id or uuid.uuid4().hex,
@@ -423,10 +418,7 @@ class DashScopeChatModel(ChatModelBase):
     async def _parse_dashscope_generation_response(
         self,
         start_datetime: datetime,
-        response: Union[
-            GenerationResponse,
-            MultiModalConversationResponse,
-        ],
+        response: GenerationResponse | MultiModalConversationResponse,
     ) -> ChatResponse:
         """Given a DashScope GenerationResponse object, extract the content
         blocks and usages from it.
@@ -435,7 +427,7 @@ class DashScopeChatModel(ChatModelBase):
             start_datetime (`datetime`):
                 The start datetime of the response generation.
             response (
-                `Union[GenerationResponse, MultiModalConversationResponse]`
+                `GenerationResponse | MultiModalConversationResponse`
             ):
                 Dashscope GenerationResponse | MultiModalConversationResponse
                 object to parse.

@@ -1,0 +1,22 @@
+name: gpt-4.1
+label: GPT-4.1
+status: active
+
+input_types:
+  - text/plain
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+
+output_types:
+  - text/plain
+
+context_size: 1047576
+output_size: 32768
+
+parameter_overrides:
+  max_tokens:
+    maximum: 32768
+  thinking_enable:
+    hidden: true

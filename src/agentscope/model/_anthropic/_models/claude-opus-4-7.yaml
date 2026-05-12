@@ -1,0 +1,21 @@
+name: claude-opus-4-7
+label: Claude Opus 4.7
+status: active
+
+input_types:
+  - text/plain
+  - application/x-thinking
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+
+output_types:
+    - text/plain
+    - application/x-thinking
+
+context_size: 1000000
+output_size: 128000
+
+parameter_overrides:
+  max_tokens: {"maximum": 128000}
