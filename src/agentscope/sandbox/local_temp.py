@@ -41,11 +41,11 @@ class LocalTempSandboxConnection(SandboxConnection):
         return "local_temp"
 
     @property
-    def workspace_root(self) -> Path:
-        """Absolute host path of the sandbox workspace root."""
+    def working_dir_root(self) -> Path:
+        """Absolute host path of the sandbox working-directory root."""
         return self._root
 
-    # ─── factory ──────────────────────────────────────────────
+    # --- factory ---
 
     @classmethod
     async def create(
@@ -79,17 +79,17 @@ class LocalTempSandboxConnection(SandboxConnection):
         root = Path(root_s)
         if not root.exists():
             raise UnsupportedOperation(
-                f"workspace root no longer exists: {root}",
+                f"working_dir root no longer exists: {root}",
             )
         iid = state.payload.get("instance_id")
         if not isinstance(iid, str):
             iid = uuid.uuid4().hex
         return cls(root, instance_id=iid)
 
-    # ─── path resolution ─────────────────────────────────────
+    # --- path resolution ---
 
     def _resolve(self, path: str) -> Path:
-        """Resolve a sandbox-relative path under the workspace root."""
+        """Resolve a sandbox-relative path under the working-directory root."""
         rel = Path(path)
         if rel.is_absolute():
             rel = Path(*rel.parts[1:]) if rel.parts[0] == "/" else rel
@@ -100,7 +100,7 @@ class LocalTempSandboxConnection(SandboxConnection):
             raise ValueError(f"path escapes sandbox root: {path!r}") from e
         return dest
 
-    # ─── exec ─────────────────────────────────────────────────
+    # --- exec ---
 
     async def exec(
         self,
@@ -138,7 +138,7 @@ class LocalTempSandboxConnection(SandboxConnection):
             stderr=err_b or b"",
         )
 
-    # ─── filesystem ───────────────────────────────────────────
+    # --- filesystem ---
 
     async def read(self, path: str) -> bytes:
         return self._resolve(path).read_bytes()
@@ -148,7 +148,7 @@ class LocalTempSandboxConnection(SandboxConnection):
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(data)
 
-    # ─── lifecycle ────────────────────────────────────────────
+    # --- lifecycle ---
 
     async def destroy(self) -> None:
         if self._destroyed:
@@ -164,7 +164,7 @@ class LocalTempSandboxConnection(SandboxConnection):
     async def is_running(self) -> bool:
         return not self._destroyed and self._root.exists()
 
-    # ─── optional: export_state ───────────────────────────────
+    # --- export_state ---
 
     async def export_state(self) -> SerializedSandboxState:
         return SerializedSandboxState(

@@ -70,7 +70,7 @@ class MCPGateway:
         """True after :meth:`start` finishes successfully."""
         return self._is_started
 
-    # ─── lifecycle ────────────────────────────────────────────
+    # --- lifecycle ---
 
     async def start(
         self,
@@ -127,7 +127,7 @@ class MCPGateway:
         self._tool_routes.clear()
         self._is_started = False
 
-    # ─── tool surface ─────────────────────────────────────────
+    # --- tool surface ---
 
     async def list_tools(
         self,
@@ -174,7 +174,7 @@ class MCPGateway:
         """
         return name in self._tool_routes
 
-    # ─── info ─────────────────────────────────────────────────
+    # --- info ---
 
     def list_servers(self) -> list[dict[str, Any]]:
         """Metadata rows for :meth:`Sandbox.list_mcps`."""
@@ -188,7 +188,7 @@ class MCPGateway:
         route = self._tool_routes.get(exposed_tool_name)
         return route.mcp_name if route else None
 
-    # ─── route builder ────────────────────────────────────────
+    # --- route builder ---
 
     @staticmethod
     def _build_tool_routes(
