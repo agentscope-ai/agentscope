@@ -85,9 +85,6 @@ class SpanAttributes:
     GEN_AI_AGENT_DESCRIPTION = GenAIAttributes.GEN_AI_AGENT_DESCRIPTION
     """The gen ai agent description."""
 
-    GEN_AI_SYSTEM_INSTRUCTIONS = GenAIAttributes.GEN_AI_SYSTEM_INSTRUCTIONS
-    """The gen ai system instructions."""
-
     # GenAI Tool Attributes
     GEN_AI_TOOL_CALL_ID = GenAIAttributes.GEN_AI_TOOL_CALL_ID
     """The gen ai tool call ID."""
@@ -106,28 +103,6 @@ class SpanAttributes:
 
     GEN_AI_TOOL_DEFINITIONS = GenAIAttributes.GEN_AI_TOOL_DEFINITIONS
     """The gen ai tool definitions."""
-
-    # GenAI Embedding Attributes
-    GEN_AI_EMBEDDINGS_DIMENSION_COUNT = (
-        GenAIAttributes.GEN_AI_EMBEDDINGS_DIMENSION_COUNT
-    )
-    """The gen ai embeddings dimension count."""
-
-    # AgentScope Extended Attributes
-    AGENTSCOPE_FORMAT_TARGET = "agentscope.format.target"
-    """The agentscope format target."""
-
-    AGENTSCOPE_FORMAT_COUNT = "agentscope.format.count"
-    """The count of formatted messages in the result."""
-
-    AGENTSCOPE_FUNCTION_NAME = "agentscope.function.name"
-    """The agentscope function name."""
-
-    AGENTSCOPE_FUNCTION_INPUT = "agentscope.function.input"
-    """The agentscope function input."""
-
-    AGENTSCOPE_FUNCTION_OUTPUT = "agentscope.function.output"
-    """The agentscope function output."""
 
     AGENTSCOPE_REPLY_ID = "agentscope.agent.reply_id"
     """The reply ID of the current agent reply.
@@ -172,12 +147,6 @@ class SpanAttributes:
 class OperationNameValues:
     """The operation name values."""
 
-    FORMATTER = "format"
-    """The formatter operation name."""
-
-    INVOKE_GENERIC_FUNCTION = "invoke_generic_function"
-    """The invoke generic function operation name."""
-
     CHAT = GenAIAttributes.GenAiOperationNameValues.CHAT.value
     """The chat operation name."""
 
@@ -186,9 +155,6 @@ class OperationNameValues:
 
     EXECUTE_TOOL = GenAIAttributes.GenAiOperationNameValues.EXECUTE_TOOL.value
     """The execute tool operation name."""
-
-    EMBEDDINGS = GenAIAttributes.GenAiOperationNameValues.EMBEDDINGS.value
-    """The embeddings operation name."""
 
 
 class ProviderNameValues:

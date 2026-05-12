@@ -1,13 +1,11 @@
 # -*- coding: utf-8 -*-
 """TracingMiddleware and supporting utilities for OpenTelemetry tracing."""
 import json
-from functools import wraps
 from typing import (
     Any,
     AsyncGenerator,
     Callable,
     Awaitable,
-    Coroutine,
     Union,
     TypeVar,
     TYPE_CHECKING,
@@ -17,7 +15,6 @@ from contextvars import ContextVar
 
 import aioitertools
 
-from .._logging import logger
 from ..middleware import MiddlewareBase
 from ..message import Msg
 
@@ -33,7 +30,6 @@ from ._extractor import (
     _get_tool_request_attributes,
     _get_tool_span_name,
     _get_tool_response_attributes,
-    _get_generic_function_response_attributes,
 )
 from ._setup import _get_tracer
 from ._utils import _serialize_to_str
@@ -127,9 +123,7 @@ async def _trace_async_generator_wrapper(
             ):
                 response_attributes = _get_tool_response_attributes(last_chunk)
             else:
-                response_attributes = (
-                    _get_generic_function_response_attributes(last_chunk)
-                )
+                response_attributes = {}
 
             span.set_attributes(response_attributes)
             _set_span_success_status(span)
@@ -182,18 +176,15 @@ class TracingMiddleware(MiddlewareBase):
             tracer = _get_tracer()
             request_attributes = _get_agent_request_attributes(
                 agent,
-                (),
                 input_kwargs,
             )
             span_name = _get_agent_span_name(request_attributes)
-            function_name = f"{agent.__class__.__name__}._reply"
 
             with tracer.start_as_current_span(
                 name=span_name,
                 attributes={
                     **request_attributes,
                     **_get_common_attributes(),
-                    SpanAttributes.AGENTSCOPE_FUNCTION_NAME: function_name,
                 },
                 end_on_exit=False,
             ) as span:
@@ -318,18 +309,15 @@ class TracingMiddleware(MiddlewareBase):
         }
         request_attributes = _get_llm_request_attributes(
             model,
-            (),
             combined_kwargs,
         )
         span_name = _get_llm_span_name(request_attributes)
-        function_name = f"{model.__class__.__name__}.__call__"
 
         with tracer.start_as_current_span(
             name=span_name,
             attributes={
                 **request_attributes,
                 **_get_common_attributes(),
-                SpanAttributes.AGENTSCOPE_FUNCTION_NAME: function_name,
             },
             end_on_exit=False,
         ) as span:
@@ -372,14 +360,12 @@ class TracingMiddleware(MiddlewareBase):
             tool_call,
         )
         span_name = _get_tool_span_name(request_attributes)
-        function_name = "Agent._execute_tool_call"
 
         with tracer.start_as_current_span(
             name=span_name,
             attributes={
                 **request_attributes,
                 **_get_common_attributes(),
-                SpanAttributes.AGENTSCOPE_FUNCTION_NAME: function_name,
             },
             end_on_exit=False,
         ) as span:
@@ -407,75 +393,12 @@ class TracingMiddleware(MiddlewareBase):
 # ---------------------------------------------------------------------------
 
 
-def trace_llm(
-    func: Callable[..., Coroutine[Any, Any, Any]],
-) -> Callable[..., Coroutine[Any, Any, Any]]:
-    """Trace the LLM call with OpenTelemetry.
+def trace_llm(func: Callable) -> Callable:
+    """No-op decorator retained for backward compatibility.
 
-    Args:
-        func (`Callable`):
-            The function to be traced, which should be a coroutine that
-            returns either a `ChatResponse` or an `AsyncGenerator`
-            of `ChatResponse`.
-
-    Returns:
-        `Callable`:
-            A wrapper function that traces the LLM call and handles
-            input/output and exceptions.
+    LLM call tracing is now handled by :class:`TracingMiddleware` via the
+    ``on_model_call`` hook.  This decorator simply returns the original
+    function unchanged so that existing ``@trace_llm`` usages in model
+    classes continue to work without modification.
     """
-
-    @wraps(func)
-    async def async_wrapper(
-        self: Any,
-        *args: Any,
-        **kwargs: Any,
-    ) -> Any:
-        """The wrapper function for tracing the LLM call."""
-        if not _check_tracing_enabled():
-            return await func(self, *args, **kwargs)
-
-        from ..model import ChatModelBase
-
-        if not isinstance(self, ChatModelBase):
-            logger.warning(
-                "Skipping tracing for %s as the first argument "
-                "is not an instance of ChatModelBase, but %s",
-                func.__name__,
-                type(self),
-            )
-            return await func(self, *args, **kwargs)
-
-        tracer = _get_tracer()
-
-        # Prepare the attributes for the span
-        request_attributes = _get_llm_request_attributes(self, args, kwargs)
-        span_name = _get_llm_span_name(request_attributes)
-        function_name = f"{self.__class__.__name__}.__call__"
-        # Begin the llm call span
-        with tracer.start_as_current_span(
-            name=span_name,
-            attributes={
-                **request_attributes,
-                **_get_common_attributes(),
-                SpanAttributes.AGENTSCOPE_FUNCTION_NAME: function_name,
-            },
-            end_on_exit=False,
-        ) as span:
-            try:
-                # Must be an async calling
-                res = await func(self, *args, **kwargs)
-
-                # If the result is a AsyncGenerator
-                if isinstance(res, AsyncGenerator):
-                    return _trace_async_generator_wrapper(res, span)
-
-                # non-generator result
-                span.set_attributes(_get_llm_response_attributes(res))
-                _set_span_success_status(span)
-                return res
-
-            except BaseException as e:
-                _set_span_error_status(span, e)
-                raise
-
-    return async_wrapper
+    return func
