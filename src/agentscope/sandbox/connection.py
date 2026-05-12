@@ -5,6 +5,8 @@ Each backend (E2B, Docker, local_temp, ...) subclasses this **once**.
 The subclass provides:
 
   - ``@classmethod create(options) -> Self``  (factory)
+  - ``working_dir_root`` — :class:`~pathlib.Path` root for
+    sandbox-relative I/O
   - instance methods: exec / read / write / destroy / close /
     is_running
   - optional: resume / PTY / ports / snapshot
@@ -15,6 +17,7 @@ The subclass provides:
 """
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 from .exceptions import CapabilityError, UnsupportedOperation
 from .types import (
@@ -26,11 +29,14 @@ from .types import (
 )
 
 
-class SandboxConnection(ABC):
+class SandboxConnection(ABC):  # pylint: disable=too-many-public-methods
     """Handle to one running sandbox instance.
 
     Required: exec + read/write + destroy + close + is_running.
     Optional: PTY, ports, snapshot, resume (gate on ``get_capabilities()``).
+
+    Public method count is intentionally high: this ABC defines the full
+    optional backend surface (PTY, ports, snapshot, …) in one type.
     """
 
     @property
@@ -38,7 +44,16 @@ class SandboxConnection(ABC):
     def backend_id(self) -> str:
         """Identifier for this backend (e.g. ``'local_temp'``, ``'e2b'``)."""
 
-    # ─── factory ──────────────────────────────────────────────
+    @property
+    @abstractmethod
+    def working_dir_root(self) -> Path:
+        """Root for sandbox-relative I/O and default ``exec`` cwd.
+
+        A filesystem location (host, container, or remote VM). Not a
+        :class:`~agentscope.workspace.WorkspaceBase`.
+        """
+
+    # --- factory ---
 
     @classmethod
     @abstractmethod
@@ -58,7 +73,7 @@ class SandboxConnection(ABC):
             "resume not implemented for this backend",
         )
 
-    # ─── execution ────────────────────────────────────────────
+    # --- execution ---
 
     @abstractmethod
     async def exec(
@@ -71,7 +86,7 @@ class SandboxConnection(ABC):
     ) -> SandboxExecutionResult:
         """Run a shell command string inside the sandbox."""
 
-    # ─── filesystem ───────────────────────────────────────────
+    # --- filesystem ---
 
     @abstractmethod
     async def read(self, path: str) -> bytes:
@@ -81,7 +96,7 @@ class SandboxConnection(ABC):
     async def write(self, path: str, data: bytes) -> None:
         """Write bytes to a sandbox-relative path."""
 
-    # ─── lifecycle ────────────────────────────────────────────
+    # --- lifecycle ---
 
     @abstractmethod
     async def destroy(self) -> None:
@@ -110,7 +125,7 @@ class SandboxConnection(ABC):
         """Leave context manager — destroy connection."""
         await self.destroy()
 
-    # ─── capabilities ─────────────────────────────────────────
+    # --- capabilities ---
 
     def get_capabilities(self) -> SandboxConnectionCapabilities:
         """Return capability flags for optional features."""
@@ -133,10 +148,11 @@ class SandboxConnection(ABC):
         return self._supports_exposed_ports
 
     def supports_snapshot(self) -> bool:
-        """Whether workspace snapshot/restore is implemented."""
+        """Whether :meth:`snapshot_working_dir` /
+        :meth:`restore_working_dir` are implemented."""
         return self._supports_snapshot
 
-    # ─── optional: PTY ────────────────────────────────────────
+    # --- optional: PTY ---
 
     async def pty_start(self, command: str, **kwargs: object) -> int:
         """PTY attach — unsupported unless overridden."""
@@ -150,7 +166,7 @@ class SandboxConnection(ABC):
         """PTY kill — unsupported unless overridden."""
         raise CapabilityError("pty", backend=self.backend_id)
 
-    # ─── optional: networking ─────────────────────────────────
+    # --- optional: networking ---
 
     async def resolve_exposed_port(
         self,
@@ -159,18 +175,18 @@ class SandboxConnection(ABC):
         """Map logical container port to host endpoint."""
         raise CapabilityError("exposed_ports", backend=self.backend_id)
 
-    # ─── optional: persistence ────────────────────────────────
+    # --- optional: persistence ---
 
     async def export_state(self) -> SerializedSandboxState:
         """Serialize connection state for resume."""
         raise CapabilityError("export_state", backend=self.backend_id)
 
-    async def snapshot_workspace(self) -> bytes:
-        """Export workspace as archive bytes."""
+    async def snapshot_working_dir(self) -> bytes:
+        """Export the working-directory tree as archive bytes."""
         raise CapabilityError("snapshot", backend=self.backend_id)
 
-    async def restore_workspace(self, data: bytes) -> None:
-        """Restore workspace from archive bytes."""
+    async def restore_working_dir(self, data: bytes) -> None:
+        """Restore the working-directory tree from archive bytes."""
         raise CapabilityError("snapshot", backend=self.backend_id)
 
 

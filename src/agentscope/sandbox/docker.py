@@ -9,6 +9,9 @@ be running and the ``docker`` package (docker-py) to be installed::
 All blocking docker-py calls are dispatched to a shared
 :class:`~concurrent.futures.ThreadPoolExecutor` so they never block the
 event loop.
+
+The path root inside the container for ``exec`` / ``read`` / ``write`` is
+named **working_dir** here.
 """
 
 import asyncio
@@ -18,7 +21,7 @@ import tarfile
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .connection import SandboxConnection, register_sandbox_connection_type
 from .exceptions import UnsupportedOperation
@@ -29,13 +32,17 @@ from .types import (
     SerializedSandboxState,
 )
 
+if TYPE_CHECKING:
+    from docker import DockerClient
+    from docker.models.containers import Container
+
 
 class DockerSandboxConnection(SandboxConnection):
     """Sandbox backed by a Docker container + ``docker-py``.
 
-    The ``workspace`` is the working directory *inside* the container
-    where ``exec``, ``read``, and ``write`` operate relative
-    to. It defaults to ``/workspace`` and is also the ``cwd`` for commands.
+    **working_dir** is the absolute path *inside* the container used as the
+    default cwd for :meth:`exec` and as the root for resolving relative paths
+    in :meth:`read` / :meth:`write`. It defaults to ``/workspace``.
 
     ``port_mapping`` is the *resolved* mapping
     ``{container_port: host_port}`` obtained after container creation,
@@ -45,7 +52,7 @@ class DockerSandboxConnection(SandboxConnection):
     """
 
     DEFAULT_IMAGE: str = "ubuntu:22.04"
-    DEFAULT_WORKSPACE: str = "/workspace"
+    DEFAULT_WORKING_DIR: str = "/workspace"
 
     _EXECUTOR = ThreadPoolExecutor(
         max_workers=8,
@@ -57,7 +64,12 @@ class DockerSandboxConnection(SandboxConnection):
 
     @staticmethod
     def _import_docker() -> tuple[Any, Any, Any]:
-        """Lazy-import ``docker`` SDK; raises ``ImportError`` with guidance."""
+        """Lazy-import ``docker`` SDK; raises ``ImportError`` with guidance.
+
+        Import is deferred so ``import agentscope`` (or importing this module)
+        does not require ``docker`` to be installed. Only code paths that
+        construct or use a :class:`DockerSandboxConnection` need the extra.
+        """
         try:
             import docker as _docker_sdk
             import docker.errors as _docker_errors
@@ -71,23 +83,57 @@ class DockerSandboxConnection(SandboxConnection):
             ) from exc
         return _docker_sdk, _docker_errors, _Container
 
+    @classmethod
+    def _working_dir_from_extra(cls, extra: dict[str, Any]) -> str:
+        """Resolve container working directory from
+        ``SandboxInitializationConfig.extra``."""
+        wd = extra.get("working_dir")
+        if isinstance(wd, str) and wd.strip():
+            return wd
+        return cls.DEFAULT_WORKING_DIR
+
+    @classmethod
+    def _working_dir_from_payload(cls, payload: dict[str, Any]) -> str:
+        """Resolve working directory from serialized resume ``payload``."""
+        wd = payload.get("working_dir")
+        if isinstance(wd, str) and wd.strip():
+            return wd
+        return cls.DEFAULT_WORKING_DIR
+
     def __init__(
         self,
-        client: Any,
-        container: Any,
+        client: "DockerClient",
+        container: "Container",
         *,
         instance_id: str,
-        workspace: str = DEFAULT_WORKSPACE,
+        working_dir: str | None = None,
         port_mapping: dict[int, int] | None = None,
     ) -> None:
         """Wrap an existing Docker client and running container.
+
+        Prefer :meth:`create` to provision a sandbox. This constructor is for
+        advanced use when you already hold a ``DockerClient`` and a running
+        ``Container``.
+
+        ``working_dir`` is the *logical root* for this connection:
+        relative paths in :meth:`read` / :meth:`write` resolve under
+        it, and :meth:`exec` defaults its working directory to it. It is
+        unrelated to host bind mounts in
+        ``SandboxInitializationConfig.volumes`` (host path → container path).
+
+        ``SandboxInitializationConfig.exposed_ports`` lists container ports to
+        publish *before* the container exists. ``port_mapping`` here is the
+        *resolved* host binding ``{container_port: host_port}`` after Docker
+        assigns ephemeral host ports—only meaningful when using this
+        constructor after :meth:`create` (or after you populate it yourself).
 
         Args:
             client: ``docker.DockerClient`` instance.
             container: ``docker.models.containers.Container`` handle.
             instance_id: Unique id for this sandbox instance.
-            workspace: Working directory inside the container; all
-                relative ``read``/``write`` paths resolve under this.
+            working_dir: Absolute path inside the container; all relative
+                ``read``/``write`` paths resolve under this. Defaults to
+                :attr:`DEFAULT_WORKING_DIR`.
             port_mapping: Resolved ``{container_port: host_port}``
                 mapping. Populated by :meth:`create` after the
                 container is started and Docker assigns host ports.
@@ -95,20 +141,25 @@ class DockerSandboxConnection(SandboxConnection):
         self._client = client
         self._container = container
         self._instance_id = instance_id
-        self._workspace = workspace
+        self._working_dir = (
+            working_dir
+            if working_dir is not None
+            else self.DEFAULT_WORKING_DIR
+        )
         self._port_mapping = port_mapping or {}
         self._destroyed = False
+        self._working_dir_lock = asyncio.Lock()
 
     @property
     def backend_id(self) -> str:
         return "docker"
 
     @property
-    def workspace_root(self) -> Path:
-        """Logical workspace root inside the container (POSIX path string)."""
-        return Path(self._workspace)
+    def working_dir_root(self) -> Path:
+        """Container root for sandbox-relative I/O (``_working_dir``)."""
+        return Path(self._working_dir)
 
-    # ─── factory ──────────────────────────────────────────────
+    # --- factory ---
 
     @classmethod
     async def create(
@@ -116,13 +167,13 @@ class DockerSandboxConnection(SandboxConnection):
         options: SandboxInitializationConfig,
     ) -> "DockerSandboxConnection":
         if options.backend_id != "docker":
-            raise ValueError(
-                f"expected backend 'docker', got {options.backend_id!r}",
-            )
+            msg = f"expected backend 'docker', got {options.backend_id!r}"
+            raise ValueError(msg)
+
         docker_sdk, _, _ = cls._import_docker()
 
         image: str = options.extra.get("image", cls.DEFAULT_IMAGE)
-        workspace: str = options.extra.get("workspace", cls.DEFAULT_WORKSPACE)
+        working_dir: str = cls._working_dir_from_extra(options.extra)
         instance_id = uuid.uuid4().hex
         loop = asyncio.get_running_loop()
 
@@ -141,7 +192,7 @@ class DockerSandboxConnection(SandboxConnection):
             "image": image,
             "command": ["sleep", "infinity"],
             "detach": True,
-            "working_dir": workspace,
+            "working_dir": working_dir,
             "name": f"as_sandbox_{instance_id[:12]}",
             "labels": {
                 "agentscope.sandbox": "true",
@@ -182,14 +233,14 @@ class DockerSandboxConnection(SandboxConnection):
 
         await loop.run_in_executor(
             cls._EXECUTOR,
-            lambda: container.exec_run(["mkdir", "-p", workspace]),
+            lambda: container.exec_run(["mkdir", "-p", working_dir]),
         )
 
         conn = cls(
             client,
             container,
             instance_id=instance_id,
-            workspace=workspace,
+            working_dir=working_dir,
             port_mapping=host_port_map,
         )
 
@@ -204,18 +255,16 @@ class DockerSandboxConnection(SandboxConnection):
         state: SerializedSandboxState,
     ) -> "DockerSandboxConnection":
         docker_sdk, docker_errors, _ = cls._import_docker()
-        if state.backend_id != "docker":
-            raise ValueError("backend mismatch for resume")
 
         container_id = state.payload.get("container_id")
-        if not isinstance(container_id, str):
+        if not container_id or not isinstance(container_id, str):
             raise ValueError("invalid resume payload: missing container_id")
 
         instance_id = state.payload.get("instance_id")
         if not isinstance(instance_id, str):
             instance_id = uuid.uuid4().hex
 
-        workspace = state.payload.get("workspace", cls.DEFAULT_WORKSPACE)
+        working_dir = cls._working_dir_from_payload(state.payload)
         loop = asyncio.get_running_loop()
 
         client = docker_sdk.from_env()
@@ -230,34 +279,49 @@ class DockerSandboxConnection(SandboxConnection):
                 f"container {container_id} no longer exists",
             ) from e
 
-        await loop.run_in_executor(cls._EXECUTOR, container.reload)
+        try:
+            await loop.run_in_executor(cls._EXECUTOR, container.reload)
+        except docker_errors.APIError as e:
+            client.close()
+            raise UnsupportedOperation(
+                f"container {container_id} could not be inspected: {e}",
+            ) from e
+
         if container.status != "running":
-            await loop.run_in_executor(cls._EXECUTOR, container.start)
+            try:
+                await loop.run_in_executor(cls._EXECUTOR, container.start)
+            except docker_errors.APIError as e:
+                client.close()
+                raise UnsupportedOperation(
+                    f"container {container_id} could not be started: {e}",
+                ) from e
 
         return cls(
             client,
             container,
             instance_id=instance_id,
-            workspace=workspace,
+            working_dir=working_dir,
         )
 
-    # ─── path resolution ─────────────────────────────────────
+    # --- path resolution ---
 
     def _resolve(self, path: str) -> str:
-        """Resolve a sandbox-relative path inside the container workspace."""
+        """Resolve a path relative to the container working directory."""
         p = PurePosixPath(path)
         if p.is_absolute():
             resolved = posixpath.normpath(p.as_posix())
         else:
             resolved = posixpath.normpath(
-                (PurePosixPath(self._workspace) / p).as_posix(),
+                (PurePosixPath(self._working_dir) / p).as_posix(),
             )
-        ws = posixpath.normpath(self._workspace)
+        ws = posixpath.normpath(self._working_dir)
         if resolved != ws and not resolved.startswith(ws + "/"):
-            raise ValueError(f"path escapes sandbox workspace: {path!r}")
+            raise ValueError(
+                f"path escapes sandbox working directory: {path!r}",
+            )
         return resolved
 
-    # ─── exec ─────────────────────────────────────────────────
+    # --- exec ---
 
     async def exec(
         self,
@@ -267,7 +331,7 @@ class DockerSandboxConnection(SandboxConnection):
         cwd: str | None = None,
         env: dict[str, str] | None = None,
     ) -> SandboxExecutionResult:
-        workdir = self._resolve(cwd) if cwd else self._workspace
+        workdir = self._resolve(cwd) if cwd else self._working_dir
         loop = asyncio.get_running_loop()
 
         def _run() -> SandboxExecutionResult:
@@ -285,15 +349,19 @@ class DockerSandboxConnection(SandboxConnection):
                 stderr=stderr or b"",
             )
 
-        if not timeout:
-            return await loop.run_in_executor(self._EXECUTOR, _run)
+        try:
+            if timeout is None:
+                return await loop.run_in_executor(self._EXECUTOR, _run)
+            return await asyncio.wait_for(
+                loop.run_in_executor(self._EXECUTOR, _run),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError as e:
+            raise TimeoutError(
+                f"docker exec exceeded timeout={timeout!r}s",
+            ) from e
 
-        return await asyncio.wait_for(
-            loop.run_in_executor(self._EXECUTOR, _run),
-            timeout=timeout,
-        )
-
-    # ─── filesystem ───────────────────────────────────────────
+    # --- filesystem ---
 
     async def read(self, path: str) -> bytes:
         container_path = self._resolve(path)
@@ -335,7 +403,7 @@ class DockerSandboxConnection(SandboxConnection):
 
         await loop.run_in_executor(self._EXECUTOR, _write)
 
-    # ─── lifecycle ────────────────────────────────────────────
+    # --- lifecycle ---
 
     async def destroy(self) -> None:
         if self._destroyed:
@@ -383,36 +451,38 @@ class DockerSandboxConnection(SandboxConnection):
         except docker_errors.APIError:
             return False
 
-    # ─── capabilities ─────────────────────────────────────────
+    # --- snapshot (working_dir) ---
 
-    async def snapshot_workspace(self) -> bytes:
-        """Export the workspace directory as a tar archive."""
+    async def snapshot_working_dir(self) -> bytes:
+        """Export the working directory tree as a tar archive."""
         loop = asyncio.get_running_loop()
 
-        def _snapshot() -> bytes:
-            bits, _stat = self._container.get_archive(self._workspace)
-            return b"".join(bits)
+        async with self._working_dir_lock:
 
-        return await loop.run_in_executor(self._EXECUTOR, _snapshot)
+            def _snapshot() -> bytes:
+                bits, _stat = self._container.get_archive(self._working_dir)
+                return b"".join(bits)
 
-    async def restore_workspace(self, data: bytes) -> None:
-        """Restore the workspace directory from a tar archive."""
+            return await loop.run_in_executor(self._EXECUTOR, _snapshot)
+
+    async def restore_working_dir(self, data: bytes) -> None:
+        """Restore the working directory tree from a tar archive."""
         loop = asyncio.get_running_loop()
 
-        rm_workspace = (
-            f"rm -rf {self._workspace}/* {self._workspace}"
-            "/.[!.]* 2>/dev/null; true"
-        )
+        wd = self._working_dir
+        rm_working = f"rm -rf {wd}/* {wd}/.[!.]* 2>/dev/null; true"
 
-        def _clear_workspace() -> None:
-            self._container.exec_run(["sh", "-c", rm_workspace])
+        async with self._working_dir_lock:
 
-        await loop.run_in_executor(self._EXECUTOR, _clear_workspace)
+            def _clear_working() -> None:
+                self._container.exec_run(["sh", "-c", rm_working])
 
-        def _restore() -> None:
-            self._container.put_archive("/", data)
+            await loop.run_in_executor(self._EXECUTOR, _clear_working)
 
-        await loop.run_in_executor(self._EXECUTOR, _restore)
+            def _restore() -> None:
+                self._container.put_archive("/", data)
+
+            await loop.run_in_executor(self._EXECUTOR, _restore)
 
     async def resolve_exposed_port(
         self,
@@ -435,7 +505,7 @@ class DockerSandboxConnection(SandboxConnection):
             raise ValueError(f"port {port} is not exposed")
         return SandboxInternalEndpoint(host="127.0.0.1", port=host_port)
 
-    # ─── optional: export_state ───────────────────────────────
+    # --- export_state ---
 
     async def export_state(self) -> SerializedSandboxState:
         loop = asyncio.get_running_loop()
@@ -445,7 +515,7 @@ class DockerSandboxConnection(SandboxConnection):
             payload={
                 "container_id": self._container.id,
                 "instance_id": self._instance_id,
-                "workspace": self._workspace,
+                "working_dir": self._working_dir,
             },
         )
 

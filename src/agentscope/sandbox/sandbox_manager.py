@@ -43,7 +43,7 @@ class SandboxManager:
         self._pool_lock = asyncio.Lock()
         self._pool_enabled = False
 
-    # ─── core CRUD ────────────────────────────────────────────
+    # --- core CRUD ---
 
     async def create_sandbox(
         self,
@@ -128,7 +128,7 @@ class SandboxManager:
                     result,
                 )
 
-    # ─── Pool (integrated to avoid circular references) ───────
+    # --- pool (no circular refs) ---
 
     def enable_pool(self, *, capacity: int = 4) -> "SandboxManager":
         """Enable warm-pool mode with ``capacity`` pre-created sandboxes.

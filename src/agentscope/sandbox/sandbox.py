@@ -158,7 +158,7 @@ class Sandbox(WorkspaceBase):
         """MCP gateway instance when gateway mode is enabled."""
         return self._gateway
 
-    # ─── lifecycle (WorkspaceBase) ─────────────────────────────
+    # --- lifecycle (WorkspaceBase) ---
 
     async def initialize(self) -> None:
         """Provision backend, tools/skills scan, and MCP servers."""
@@ -205,7 +205,7 @@ class Sandbox(WorkspaceBase):
         """Exit async context: ``await close()``."""
         await self.close()
 
-    # ─── instructions (WorkspaceBase) ──────────────────────────
+    # --- instructions (WorkspaceBase) ---
 
     async def get_instructions(self) -> str:
         """Return sandbox-specific workspace instructions."""
@@ -213,7 +213,7 @@ class Sandbox(WorkspaceBase):
             backend_type=self._config.backend.type,
         )
 
-    # ─── tool surface (WorkspaceBase) ──────────────────────────
+    # --- tool surface (WorkspaceBase) ---
 
     async def list_tools(self) -> list[ToolBase]:
         """Return tool instances for all registered tools.
@@ -297,7 +297,7 @@ class Sandbox(WorkspaceBase):
                 return stripped
         return None
 
-    # ─── skill surface (WorkspaceBase) ─────────────────────────
+    # --- skill surface (WorkspaceBase) ---
 
     async def list_skills(self) -> list[Skill]:
         """Return :class:`agentscope.skill.Skill` for each registered skill.
@@ -311,8 +311,8 @@ class Sandbox(WorkspaceBase):
         ]
 
     def _resolve_skill_dir(self, entry: _SkillEntry) -> str:
-        """Host path to the skill dir when ``workspace_root`` is available."""
-        root = getattr(self._conn, "workspace_root", None)
+        """Host path to the skill dir when ``working_dir_root`` is set."""
+        root = getattr(self._conn, "working_dir_root", None)
         if root:
             return str((Path(root) / entry.path).resolve())
         return entry.path
@@ -395,7 +395,7 @@ class Sandbox(WorkspaceBase):
             )
             logger.info("Imported skill %r into sandbox %s", name, self._id)
 
-    # ─── offload (WorkspaceBase) ───────────────────────────────
+    # --- offload (WorkspaceBase) ---
 
     async def offload_context(
         self,  # pylint: disable=unused-argument
@@ -514,7 +514,7 @@ class Sandbox(WorkspaceBase):
             ),
         )
 
-    # ─── MCP surface ──────────────────────────────────────────
+    # --- MCP surface ---
 
     async def list_mcps(self) -> list[dict[str, Any]]:
         """List managed MCP servers (gateway-managed or exec-started)."""
@@ -558,7 +558,7 @@ class Sandbox(WorkspaceBase):
             if not (v.source == "mcp" and v.definition.shell_cmd == name)
         }
 
-    # ─── run (general request dispatch) ───────────────────────
+    # --- run (request dispatch) ---
 
     async def run(self, request: str | dict[str, Any]) -> Any:
         """High-level entry point for agents.
@@ -574,7 +574,7 @@ class Sandbox(WorkspaceBase):
         msg = f"Cannot interpret request: {request!r}"
         raise ValueError(msg)
 
-    # ─── internal helpers ─────────────────────────────────────
+    # --- internal helpers ---
 
     async def _create_connection(self) -> SandboxConnection:
         opts = self._merge_infra_requirements()
@@ -636,7 +636,7 @@ class Sandbox(WorkspaceBase):
 
     async def _start_gateway(self) -> None:
         """Create and start the MCPGateway with all configured MCP servers."""
-        ws_root = getattr(self._conn, "workspace_root", None)
+        ws_root = getattr(self._conn, "working_dir_root", None)
         cwd = str(ws_root) if ws_root else None
         self._gateway = MCPGateway(self._config.mcp_gateway)
         await self._gateway.start(self._config.mcp_servers, cwd=cwd)

@@ -23,7 +23,9 @@ class SandboxInitializationConfig:
     """Normalized inputs for ``SandboxConnection.create``.
 
     ``extra`` holds backend-specific flags (E2B template, Docker image, etc.)
-    without forcing the core layer to know each vendor's schema.
+    without forcing the core layer to know each vendor's schema. For E2B and
+    Docker, use ``working_dir`` for the path root inside the remote/container
+    environment (legacy key ``workspace`` is still read for compatibility).
     """
 
     backend_id: str
@@ -45,8 +47,9 @@ class SerializedSandboxState:
         backend_id: Must match the connection class's ``backend_id`` so
             ``resume(state)`` can dispatch to the right factory.
         payload: Transparent to anyone outside of a sandbox instance.
-            Typically holds vendor ids (e.g. E2B ``sandbox_id``),
-            workspace root path, tokens, etc.
+            Typically holds vendor ids (e.g. E2B ``sandbox_id``), remote
+            working-directory path (E2B / Docker: ``working_dir``), tokens,
+            etc.
     """
 
     backend_id: str
@@ -57,7 +60,7 @@ class SerializedSandboxState:
 class SandboxConnectionCapabilities:
     """Optional features a backend may support.
 
-    Check before calling PTY / networking / snapshot APIs.
+    Check before calling PTY / networking / working-dir snapshot APIs.
     """
 
     has_pty: bool = False
