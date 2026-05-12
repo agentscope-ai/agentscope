@@ -472,12 +472,10 @@ class ToolkitBasicTest(IsolatedAsyncioTestCase):
                                     "properties": {
                                         "c": {
                                             "description": "Field c",
-                                            "title": "C",
                                             "type": "integer",
                                         },
                                     },
                                     "required": ["c"],
-                                    "title": "MyBaseModel1",
                                     "type": "object",
                                 },
                                 "MyBaseModel2": {
@@ -490,12 +488,10 @@ class ToolkitBasicTest(IsolatedAsyncioTestCase):
                                             "items": {
                                                 "$ref": "#/$defs/MyBaseModel1",
                                             },
-                                            "title": "B",
                                             "type": "array",
                                         },
                                     },
                                     "required": ["b"],
-                                    "title": "MyBaseModel2",
                                     "type": "object",
                                 },
                             },
