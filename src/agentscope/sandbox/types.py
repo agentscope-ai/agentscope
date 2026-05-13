@@ -28,7 +28,7 @@ class SandboxInitializationConfig:
     environment (legacy key ``workspace`` is still read for compatibility).
     """
 
-    backend_id: str
+    backend_type: str
     env: dict[str, str] = field(default_factory=dict)
     exposed_ports: list[int] = field(default_factory=list)
     volumes: dict[str, str] = field(default_factory=dict)
@@ -44,7 +44,7 @@ class SerializedSandboxState:
     minimal state needed to re-attach to an existing sandbox.
 
     Attributes:
-        backend_id: Must match the connection class's ``backend_id`` so
+        backend_type: Must match the connection class's ``backend_type`` so
             ``resume(state)`` can dispatch to the right factory.
         payload: Transparent to anyone outside of a sandbox instance.
             Typically holds vendor ids (e.g. E2B ``sandbox_id``), remote
@@ -52,7 +52,7 @@ class SerializedSandboxState:
             etc.
     """
 
-    backend_id: str
+    backend_type: str
     payload: dict[str, Any]
 
 

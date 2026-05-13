@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """MCPGateway — aggregates MCP servers behind one unified tool interface.
 
-One Sandbox holds one MCPGateway. The gateway:
-  1. Starts each configured MCP server as a ``StdIOStatefulClient``.
+One Sandbox holds one MCPGateway (always enabled). The gateway:
+  1. Starts each configured MCP server (stdio or HTTP).
   2. Aggregates all tools into a single namespace (conflicts prefixed).
   3. Routes ``call_tool`` to the owning MCP server.
+  4. Supports dynamic add/remove of MCP servers at runtime.
 
 Tool naming conflict resolution:
   - If ``read_file`` exists in both ``filesystem`` and ``browser`` servers,
@@ -20,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 import mcp.types as mtypes
 
 from .._logging import logger
-from ..mcp import MCPClient, StdioMCPConfig
+from ..mcp import HttpMCPConfig, MCPClient, StdioMCPConfig
 
 if TYPE_CHECKING:
     from .config import MCPServerConfig
@@ -28,9 +29,12 @@ if TYPE_CHECKING:
 
 @dataclass(slots=True)
 class MCPGatewayConfig:
-    """Gateway settings (listen port merged into ``exposed_ports``)."""
+    """Gateway settings (listen port merged into ``exposed_ports``).
 
-    enabled: bool = False
+    The gateway is always enabled — the ``enabled`` field is kept only for
+    backward compatibility and is always treated as ``True``.
+    """
+
     port: int = 5600
     mcp_name: str = "sandbox"
 
@@ -48,12 +52,20 @@ class _ToolRoute:
 class MCPGateway:
     """Aggregates multiple MCP servers behind ``list_tools`` / ``call_tool``.
 
+    Always enabled — every Sandbox has a gateway. Supports both stdio and
+    HTTP transports, and dynamic add/remove of MCP servers.
+
     Usage (managed by ``Sandbox``)::
 
         gw = MCPGateway(config)
         await gw.start(mcp_configs, cwd="/sandbox/root")
         tools = await gw.list_tools()
         result = await gw.call_tool("read_file", {"path": "a.txt"})
+
+        # Dynamic management
+        await gw.add_server(new_config, cwd="/sandbox/root")
+        await gw.remove_server("server_name")
+
         await gw.close()
     """
 
@@ -61,9 +73,10 @@ class MCPGateway:
 
     def __init__(self, config: MCPGatewayConfig) -> None:
         self._config = config
-        self._clients: list[MCPClient] = []
+        self._clients: dict[str, MCPClient] = {}
         self._tool_routes: dict[str, _ToolRoute] = {}
         self._is_started = False
+        self._cwd: str | None = None
 
     @property
     def is_started(self) -> bool:
@@ -82,29 +95,12 @@ class MCPGateway:
         if self._is_started:
             return
 
-        raw: list[tuple[str, MCPClient, list[mtypes.Tool]]] = []
-        for cfg in mcp_configs:
-            client = MCPClient(
-                name=cfg.name,
-                is_stateful=True,
-                mcp_config=StdioMCPConfig(
-                    command=cfg.command,
-                    args=cfg.args or None,
-                    env=cfg.env or None,
-                    cwd=cwd,
-                ),
-            )
-            await client.connect()
-            self._clients.append(client)
-            tools = await client.list_tools()
-            raw.append((cfg.name, client, tools))
-            logger.info(
-                "MCPGateway: connected to %r (%d tools)",
-                cfg.name,
-                len(tools),
-            )
+        self._cwd = cwd
 
-        self._tool_routes = self._build_tool_routes(raw)
+        for cfg in mcp_configs:
+            await self._connect_server(cfg)
+
+        self._rebuild_tool_routes()
         self._is_started = True
         logger.info(
             "MCPGateway: started with %d aggregated tools from %d servers",
@@ -113,19 +109,85 @@ class MCPGateway:
         )
 
     async def close(self) -> None:
-        """Close MCP clients (LIFO)."""
-        while self._clients:
-            client = self._clients.pop()
+        """Close all MCP clients."""
+        names = list(self._clients.keys())
+        for name in reversed(names):
+            client = self._clients.pop(name)
             try:
                 await client.close()
             except Exception as e:
                 logger.warning(
                     "MCPGateway: error closing %r: %s",
-                    client.name,
+                    name,
                     e,
                 )
         self._tool_routes.clear()
         self._is_started = False
+
+    # --- dynamic add / remove ---
+
+    async def add_server(
+        self,
+        mcp_config: MCPServerConfig,
+        *,
+        cwd: str | None = None,
+    ) -> None:
+        """Add and connect a new MCP server at runtime.
+
+        Args:
+            mcp_config: Configuration for the MCP server to add.
+            cwd: Working directory override (defaults to the cwd used at
+                 gateway start).
+
+        Raises:
+            ValueError: If a server with the same name already exists.
+        """
+        if mcp_config.name in self._clients:
+            raise ValueError(
+                f"MCP server {mcp_config.name!r} already exists in gateway. "
+                "Remove it first or use a different name.",
+            )
+
+        effective_cwd = cwd or self._cwd
+        await self._connect_server(mcp_config, cwd_override=effective_cwd)
+        self._rebuild_tool_routes()
+        logger.info(
+            "MCPGateway: dynamically added server %r (%d total tools)",
+            mcp_config.name,
+            len(self._tool_routes),
+        )
+
+    async def remove_server(self, name: str) -> None:
+        """Remove and disconnect an MCP server at runtime.
+
+        Args:
+            name: Name of the server to remove.
+
+        Raises:
+            KeyError: If no server with the given name exists.
+        """
+        client = self._clients.pop(name, None)
+        if client is None:
+            raise KeyError(
+                f"MCP server {name!r} not found in gateway. "
+                f"Available: {list(self._clients.keys())}",
+            )
+
+        try:
+            await client.close()
+        except Exception as e:
+            logger.warning(
+                "MCPGateway: error closing removed server %r: %s",
+                name,
+                e,
+            )
+
+        self._rebuild_tool_routes()
+        logger.info(
+            "MCPGateway: removed server %r (%d tools remaining)",
+            name,
+            len(self._tool_routes),
+        )
 
     # --- tool surface ---
 
@@ -167,11 +229,7 @@ class MCPGateway:
         )
 
     def has_tool(self, name: str) -> bool:
-        """Return whether ``name`` exists in the routing table.
-
-        When two servers expose the same tool name, both are namespaced
-        as ``{server_name}___{tool_name}`` to avoid collisions.
-        """
+        """Return whether ``name`` exists in the routing table."""
         return name in self._tool_routes
 
     # --- info ---
@@ -179,14 +237,76 @@ class MCPGateway:
     def list_servers(self) -> list[dict[str, Any]]:
         """Metadata rows for :meth:`Sandbox.list_mcps`."""
         return [
-            {"name": c.name, "command": "stdio", "connected": c.is_connected}
-            for c in self._clients
+            {
+                "name": c.name,
+                "transport": c.mcp_config.type.replace("_mcp", ""),
+                "connected": c.is_connected,
+            }
+            for c in self._clients.values()
         ]
 
     def get_mcp_name(self, exposed_tool_name: str) -> str | None:
         """Return the ``mcp_name`` that owns a tool, or ``None``."""
         route = self._tool_routes.get(exposed_tool_name)
         return route.mcp_name if route else None
+
+    # --- internal helpers ---
+
+    async def _connect_server(
+        self,
+        cfg: MCPServerConfig,
+        *,
+        cwd_override: str | None = None,
+    ) -> None:
+        """Create an MCPClient for a config and connect it."""
+        cwd = cwd_override or self._cwd
+
+        if cfg.transport == "http":
+            mcp_config = HttpMCPConfig(
+                url=cfg.url,
+                headers=cfg.headers or None,
+                timeout=cfg.timeout,
+            )
+            client = MCPClient(
+                name=cfg.name,
+                is_stateful=True,
+                mcp_config=mcp_config,
+            )
+        else:
+            # Default: stdio
+            mcp_config = StdioMCPConfig(
+                command=cfg.command,
+                args=cfg.args or None,
+                env=cfg.env or None,
+                cwd=cwd,
+            )
+            client = MCPClient(
+                name=cfg.name,
+                is_stateful=True,
+                mcp_config=mcp_config,
+            )
+
+        await client.connect()
+        # Fetch tools immediately so _cached_tools is populated
+        await client.list_tools()
+        self._clients[cfg.name] = client
+        logger.info(
+            "MCPGateway: connected to %r (transport=%s, %d tools)",
+            cfg.name,
+            cfg.transport,
+            len(getattr(client, "_cached_tools", None) or []),
+        )
+
+    def _rebuild_tool_routes(self) -> None:
+        """Rebuild the full routing table from all connected clients."""
+        raw: list[tuple[str, MCPClient, list[mtypes.Tool]]] = []
+        for name, client in self._clients.items():
+            cached = getattr(client, "_cached_tools", None)
+            if cached is None:
+                # Tools should have been fetched during connect; skip if empty
+                cached = []
+            raw.append((name, client, cached))
+        self._tool_routes = self._build_tool_routes(raw)
 
     # --- route builder ---
 

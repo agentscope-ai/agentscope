@@ -23,6 +23,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
+import docker
+import docker.errors as docker_errors
+from docker.models.containers import Container
+
 from .connection import SandboxConnection, register_sandbox_connection_type
 from .exceptions import UnsupportedOperation
 from .types import (
@@ -34,7 +38,6 @@ from .types import (
 
 if TYPE_CHECKING:
     from docker import DockerClient
-    from docker.models.containers import Container
 
 
 class DockerSandboxConnection(SandboxConnection):
@@ -61,27 +64,6 @@ class DockerSandboxConnection(SandboxConnection):
 
     _supports_exposed_ports = True
     _supports_snapshot = True
-
-    @staticmethod
-    def _import_docker() -> tuple[Any, Any, Any]:
-        """Lazy-import ``docker`` SDK; raises ``ImportError`` with guidance.
-
-        Import is deferred so ``import agentscope`` (or importing this module)
-        does not require ``docker`` to be installed. Only code paths that
-        construct or use a :class:`DockerSandboxConnection` need the extra.
-        """
-        try:
-            import docker as _docker_sdk
-            import docker.errors as _docker_errors
-            from docker.models.containers import (
-                Container as _Container,
-            )
-        except ImportError as exc:
-            raise ImportError(
-                "DockerSandboxConnection requires the `docker` "
-                "package. Install with: pip install agentscope[sandbox]",
-            ) from exc
-        return _docker_sdk, _docker_errors, _Container
 
     @classmethod
     def _working_dir_from_extra(cls, extra: dict[str, Any]) -> str:
@@ -151,7 +133,7 @@ class DockerSandboxConnection(SandboxConnection):
         self._working_dir_lock = asyncio.Lock()
 
     @property
-    def backend_id(self) -> str:
+    def backend_type(self) -> str:
         return "docker"
 
     @property
@@ -166,23 +148,21 @@ class DockerSandboxConnection(SandboxConnection):
         cls,
         options: SandboxInitializationConfig,
     ) -> "DockerSandboxConnection":
-        if options.backend_id != "docker":
-            msg = f"expected backend 'docker', got {options.backend_id!r}"
+        if options.backend_type != "docker":
+            msg = f"expected backend 'docker', got {options.backend_type!r}"
             raise ValueError(msg)
-
-        docker_sdk, _, _ = cls._import_docker()
 
         image: str = options.extra.get("image", cls.DEFAULT_IMAGE)
         working_dir: str = cls._working_dir_from_extra(options.extra)
         instance_id = uuid.uuid4().hex
         loop = asyncio.get_running_loop()
 
-        client = docker_sdk.from_env()
+        client = docker.from_env()
 
         def _ensure_image() -> None:
             try:
                 client.images.get(image)
-            except docker_sdk.errors.ImageNotFound:
+            except docker_errors.ImageNotFound:
                 repo, _, tag = image.partition(":")
                 client.images.pull(repo, tag=tag or None)
 
@@ -254,8 +234,6 @@ class DockerSandboxConnection(SandboxConnection):
         cls,
         state: SerializedSandboxState,
     ) -> "DockerSandboxConnection":
-        docker_sdk, docker_errors, _ = cls._import_docker()
-
         container_id = state.payload.get("container_id")
         if not container_id or not isinstance(container_id, str):
             raise ValueError("invalid resume payload: missing container_id")
@@ -267,7 +245,7 @@ class DockerSandboxConnection(SandboxConnection):
         working_dir = cls._working_dir_from_payload(state.payload)
         loop = asyncio.get_running_loop()
 
-        client = docker_sdk.from_env()
+        client = docker.from_env()
         try:
             container = await loop.run_in_executor(
                 cls._EXECUTOR,
@@ -409,7 +387,6 @@ class DockerSandboxConnection(SandboxConnection):
         if self._destroyed:
             return
         self._destroyed = True
-        _, docker_errors, _ = self._import_docker()
         loop = asyncio.get_running_loop()
         try:
             await loop.run_in_executor(self._EXECUTOR, self._container.kill)
@@ -429,7 +406,6 @@ class DockerSandboxConnection(SandboxConnection):
         if self._destroyed:
             return
         self._destroyed = True
-        _, docker_errors, _ = self._import_docker()
         loop = asyncio.get_running_loop()
         try:
             await loop.run_in_executor(self._EXECUTOR, self._container.stop)
@@ -440,7 +416,6 @@ class DockerSandboxConnection(SandboxConnection):
     async def is_running(self) -> bool:
         if self._destroyed:
             return False
-        _, docker_errors, _ = self._import_docker()
         loop = asyncio.get_running_loop()
         try:
             await loop.run_in_executor(
@@ -511,7 +486,7 @@ class DockerSandboxConnection(SandboxConnection):
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(self._EXECUTOR, self._container.reload)
         return SerializedSandboxState(
-            backend_id=self.backend_id,
+            backend_type=self.backend_type,
             payload={
                 "container_id": self._container.id,
                 "instance_id": self._instance_id,

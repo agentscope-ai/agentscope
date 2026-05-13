@@ -12,7 +12,7 @@ The subclass provides:
   - optional: resume / PTY / ports / snapshot
 
 ``create_sandbox_connection(options)`` dispatches via
-``options.backend_id`` through the registry
+``options.backend_type`` through the registry
 (``register_sandbox_connection_type`` / ``get_sandbox_connection_type``).
 """
 
@@ -41,7 +41,7 @@ class SandboxConnection(ABC):  # pylint: disable=too-many-public-methods
 
     @property
     @abstractmethod
-    def backend_id(self) -> str:
+    def backend_type(self) -> str:
         """Identifier for this backend (e.g. ``'local_temp'``, ``'e2b'``)."""
 
     @property
@@ -155,16 +155,19 @@ class SandboxConnection(ABC):  # pylint: disable=too-many-public-methods
     # --- optional: PTY ---
 
     async def pty_start(self, command: str, **kwargs: object) -> int:
-        """PTY attach — unsupported unless overridden."""
-        raise CapabilityError("pty", backend=self.backend_id)
+        """PTY attach — unsupported unless overridden.
+        Returns:
+            The session_id of the PTY process for subsequent pty_write calls.
+        """
+        raise CapabilityError("pty", backend=self.backend_type)
 
     async def pty_write(self, session_id: int, data: str) -> str:
         """PTY write — unsupported unless overridden."""
-        raise CapabilityError("pty", backend=self.backend_id)
+        raise CapabilityError("pty", backend=self.backend_type)
 
     async def pty_kill(self, session_id: int) -> bool:
         """PTY kill — unsupported unless overridden."""
-        raise CapabilityError("pty", backend=self.backend_id)
+        raise CapabilityError("pty", backend=self.backend_type)
 
     # --- optional: networking ---
 
@@ -173,25 +176,25 @@ class SandboxConnection(ABC):  # pylint: disable=too-many-public-methods
         port: int,
     ) -> SandboxInternalEndpoint:
         """Map logical container port to host endpoint."""
-        raise CapabilityError("exposed_ports", backend=self.backend_id)
+        raise CapabilityError("exposed_ports", backend=self.backend_type)
 
     # --- optional: persistence ---
 
     async def export_state(self) -> SerializedSandboxState:
         """Serialize connection state for resume."""
-        raise CapabilityError("export_state", backend=self.backend_id)
+        raise CapabilityError("export_state", backend=self.backend_type)
 
     async def snapshot_working_dir(self) -> bytes:
         """Export the working-directory tree as archive bytes."""
-        raise CapabilityError("snapshot", backend=self.backend_id)
+        raise CapabilityError("snapshot", backend=self.backend_type)
 
     async def restore_working_dir(self, data: bytes) -> None:
         """Restore the working-directory tree from archive bytes."""
-        raise CapabilityError("snapshot", backend=self.backend_id)
+        raise CapabilityError("snapshot", backend=self.backend_type)
 
 
 # ---------------------------------------------------------------------------
-# Global registry: backend_id → Connection class
+# Global registry: backend_type → Connection class
 # ---------------------------------------------------------------------------
 
 _registry: dict[str, type[SandboxConnection]] = {}
@@ -200,12 +203,12 @@ _registry: dict[str, type[SandboxConnection]] = {}
 def register_sandbox_connection_type(
     cls: type[SandboxConnection],
 ) -> None:
-    """Register a ``SandboxConnection`` subclass by its ``backend_id``."""
-    bid = cls.backend_id.fget(cls)  # type: ignore[attr-defined]
+    """Register a ``SandboxConnection`` subclass by its ``backend_type``."""
+    bid = cls.backend_type.fget(cls)  # type: ignore[attr-defined]
     if isinstance(bid, property):
         raise TypeError(
-            f"Cannot read backend_id from {cls.__name__}; "
-            "ensure backend_id is a concrete @property on the class.",
+            f"Cannot read backend_type from {cls.__name__}; "
+            "ensure backend_type is a concrete @property on the class.",
         )
     if bid in _registry:
         raise ValueError(f"SandboxConnection already registered for {bid!r}")
@@ -213,15 +216,15 @@ def register_sandbox_connection_type(
 
 
 def get_sandbox_connection_type(
-    backend_id: str,
+    backend_type: str,
 ) -> type[SandboxConnection]:
     """Look up a registered ``SandboxConnection`` class by backend id."""
     try:
-        return _registry[backend_id]
+        return _registry[backend_type]
     except KeyError as e:
         available = list(_registry.keys())
         raise KeyError(
-            f"No SandboxConnection registered for {backend_id!r}. "
+            f"No SandboxConnection registered for {backend_type!r}. "
             f"Available backends: {available}",
         ) from e
 
@@ -229,9 +232,9 @@ def get_sandbox_connection_type(
 async def create_sandbox_connection(
     options: SandboxInitializationConfig,
 ) -> SandboxConnection:
-    """Create a connection using the registry for ``options.backend_id``.
+    """Create a connection using the registry for ``options.backend_type``.
 
     Dispatches to the registered ``SandboxConnection`` subclass.
     """
-    cls = get_sandbox_connection_type(options.backend_id)
+    cls = get_sandbox_connection_type(options.backend_type)
     return await cls.create(options)

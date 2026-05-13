@@ -37,7 +37,7 @@ class LocalTempSandboxConnection(SandboxConnection):
         self._destroyed = False
 
     @property
-    def backend_id(self) -> str:
+    def backend_type(self) -> str:
         return "local_temp"
 
     @property
@@ -53,13 +53,15 @@ class LocalTempSandboxConnection(SandboxConnection):
         options: SandboxInitializationConfig,
     ) -> "LocalTempSandboxConnection":
         """Allocate a temp directory and run ``startup_commands``."""
-        if options.backend_id != "local_temp":
-            msg = f"expected backend 'local_temp', got {options.backend_id!r}"
+        if options.backend_type != "local_temp":
+            msg = (
+                f"expected backend 'local_temp', got {options.backend_type!r}"
+            )
             raise ValueError(msg)
         base = Path(options.extra.get("base_dir", "/tmp"))
         base.mkdir(parents=True, exist_ok=True)
         prefix = options.extra.get("prefix", "ws")
-        root = base / f"as_sandbox_{prefix}_{uuid.uuid4().hex[:12]}"
+        root = base / f"agentscope_sandbox_{prefix}_{uuid.uuid4().hex[:12]}"
         root.mkdir(parents=True, exist_ok=True)
         conn = cls(root, instance_id=uuid.uuid4().hex)
         for cmd in options.startup_commands:
@@ -71,7 +73,7 @@ class LocalTempSandboxConnection(SandboxConnection):
         cls,
         state: SerializedSandboxState,
     ) -> "LocalTempSandboxConnection":
-        if state.backend_id != "local_temp":
+        if state.backend_type != "local_temp":
             raise ValueError("backend mismatch for resume")
         root_s = state.payload.get("root")
         if not isinstance(root_s, str):
@@ -168,7 +170,7 @@ class LocalTempSandboxConnection(SandboxConnection):
 
     async def export_state(self) -> SerializedSandboxState:
         return SerializedSandboxState(
-            backend_id=self.backend_id,
+            backend_type=self.backend_type,
             payload={
                 "root": str(self._root),
                 "instance_id": self._instance_id,
