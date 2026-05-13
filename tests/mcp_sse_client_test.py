@@ -7,7 +7,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from mcp.server import FastMCP
 
-from agentscope.mcp import HttpStatelessClient, HttpStatefulClient
+from agentscope.mcp import MCPClient, HttpMCPConfig
 from agentscope.message import ToolCallBlock
 from agentscope.tool import ToolResponse, ToolChunk, Toolkit
 from agentscope.state import AgentState
@@ -55,7 +55,7 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
             {
                 "type": "function",
                 "function": {
-                    "name": "tool_1",
+                    "name": "mcp__test_sse_client__tool_1",
                     "description": "A test tool function.",
                     "parameters": {
                         "type": "object",
@@ -81,10 +81,14 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
 
     async def test_stateless_client(self) -> None:
         """Test the stateless sse MCP client."""
-        stateless_client = HttpStatelessClient(
+        # Create stateless client (is_stateful=False)
+        stateless_client = MCPClient(
             name="test_sse_client",
-            transport="sse",
-            url=f"http://127.0.0.1:{self.port}/sse",
+            is_stateful=False,
+            mcp_config=HttpMCPConfig(
+                type="http_mcp",
+                url=f"http://127.0.0.1:{self.port}/sse",
+            ),
         )
 
         mcp_tool_1 = await stateless_client.get_tool("tool_1")
@@ -120,7 +124,7 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
             ToolCallBlock(
                 id="xx",
                 type="tool_call",
-                name="tool_1",
+                name="mcp__test_sse_client__tool_1",
                 input=json.dumps(
                     {
                         "arg1": "789",
@@ -148,7 +152,7 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
         self.assertDictEqual(self.toolkit.tools, {})
 
         # Try to add the mcp client
-        await self.toolkit.register_mcp_client(stateless_client)
+        await self.toolkit.register_mcp(stateless_client)
         self.assertListEqual(
             self.toolkit.get_function_schemas(),
             self.schemas,
@@ -159,11 +163,14 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
     async def test_stateful_client(self) -> None:
         """Test the stateful sse MCP client."""
 
-        # Test stateful client
-        stateful_client = HttpStatefulClient(
-            name="test_sse_client_stateful",
-            transport="sse",
-            url=f"http://127.0.0.1:{self.port}/sse",
+        # Test stateful client (is_stateful=True)
+        stateful_client = MCPClient(
+            name="test_sse_client",
+            is_stateful=True,
+            mcp_config=HttpMCPConfig(
+                type="http_mcp",
+                url=f"http://127.0.0.1:{self.port}/sse",
+            ),
         )
 
         self.assertFalse(stateful_client.is_connected)
@@ -203,7 +210,7 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
             ToolCallBlock(
                 id="xx",
                 type="tool_call",
-                name="tool_1",
+                name="mcp__test_sse_client__tool_1",
                 input=json.dumps(
                     {
                         "arg1": "56",
@@ -231,7 +238,7 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
         self.toolkit.clear()
         self.assertDictEqual(self.toolkit.tools, {})
 
-        await self.toolkit.register_mcp_client(stateful_client)
+        await self.toolkit.register_mcp(stateful_client)
         self.assertListEqual(
             self.toolkit.get_function_schemas(),
             self.schemas,

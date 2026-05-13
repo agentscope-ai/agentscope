@@ -1,15 +1,19 @@
 # -*- coding: utf-8 -*-
 """The dashscope formatter module."""
 
+import base64
 from typing import Any
 from fnmatch import fnmatch
 from abc import ABC
 
-from . import FormatterBase
+from pydantic import Field
+
+from ._formatter_base import FormatterBase
 from .._logging import logger
 from ..message import (
     Msg,
     TextBlock,
+    ThinkingBlock,
     ToolResultBlock,
     URLSource,
     DataBlock,
@@ -24,7 +28,38 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
     """Base class for DashScope formatters, providing shared data block
     formatting logic."""
 
-    supported_input_media_types: list[str]
+    input_types: list[str] = Field(
+        default_factory=lambda: [
+            "text/plain",
+            "image/*",
+            "audio/*",
+            "video/*",
+        ],
+        description=(
+            "The supported input types, aligned with the model card's "
+            "``input_types`` field. Media types (non ``text/plain`` / "
+            "``application/x-thinking`` entries) are used to filter "
+            "``DataBlock``\\s; ``application/x-thinking`` enables passing "
+            "``reasoning_content`` back to the API."
+        ),
+    )
+
+    @property
+    def supported_input_media_types(self) -> list[str]:
+        """Derive supported media types from :attr:`input_types`, excluding
+        ``text/plain`` and ``application/x-thinking``."""
+        return [
+            t
+            for t in self.input_types
+            if t not in ("text/plain", "application/x-thinking")
+        ]
+
+    @property
+    def supports_thinking_input(self) -> bool:
+        """Return ``True`` if ``application/x-thinking`` is listed in
+        :attr:`input_types`, meaning the model accepts ``reasoning_content``
+        in the conversation history."""
+        return "application/x-thinking" in self.input_types
 
     def _format_dashscope_data_block(
         self,
@@ -56,7 +91,17 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
         main_type = block.source.media_type.split("/")[0]
 
         if isinstance(block.source, URLSource):
-            return {main_type: block.source.url}
+            url_str = str(block.source.url)
+            if url_str.startswith("file://"):
+                # Local file — read and encode as base64 data URI
+                local_path = url_str.removeprefix("file://")
+                with open(local_path, "rb") as f:
+                    encoded = base64.b64encode(f.read()).decode("utf-8")
+                return {
+                    main_type: f"data:{block.source.media_type};"
+                    f"base64,{encoded}",
+                }
+            return {main_type: url_str}
 
         if isinstance(block.source, Base64Source):
             return {
@@ -90,22 +135,6 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
         list ``[]`` for messages without valid content blocks.
     """
 
-    def __init__(
-        self,
-        supported_input_media_type: list[str] | None = None,
-    ) -> None:
-        """Initialize the DashScope chat formatter.
-
-        Args:
-            supported_input_media_type (`list[str] | None`, optional):
-                The list of supported input media types. Defaults to
-                ["image/*", "audio/*", "video/*"].
-        """
-        super().__init__(
-            supported_input_media_types=supported_input_media_type
-            or ["image/*", "audio/*", "video/*"],
-        )
-
     async def format(
         self,
         msgs: list[Msg],
@@ -128,6 +157,7 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
             msg = msgs[i]
             content_blocks: list[dict] = []
             tool_calls = []
+            thinking_parts: list[str] = []
 
             for block in msg.get_content_blocks():
                 if isinstance(block, TextBlock):
@@ -169,6 +199,10 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                         },
                     )
 
+                elif isinstance(block, ThinkingBlock):
+                    if self.supports_thinking_input:
+                        thinking_parts.append(block.thinking)
+
                 elif isinstance(block, ToolResultBlock):
                     (
                         textual_output,
@@ -196,6 +230,12 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                             ),
                         )
 
+                else:
+                    logger.warning(
+                        "Unsupported block type %s in the message, skipped.",
+                        type(block),
+                    )
+
             msg_dashscope = {
                 "role": msg.role,
                 "content": content_blocks,
@@ -204,17 +244,25 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
             if tool_calls:
                 msg_dashscope["tool_calls"] = tool_calls
 
+            if thinking_parts:
+                msg_dashscope["reasoning_content"] = "\n".join(thinking_parts)
+
             if msg_dashscope["content"] or msg_dashscope.get("tool_calls"):
                 formatted_msgs.append(msg_dashscope)
 
             # Move to next message
             i += 1
 
-        # Merge adjacent text block into one block to avoid API issues
+        # Merge adjacent text blocks into one to avoid API issues.
+        # Tool-result messages have content as a plain string (not a list),
+        # so skip merging for those.
         cleaned_msgs: list = []
-        for msg in formatted_msgs:
+        for formatted_msg in formatted_msgs:
+            if not isinstance(formatted_msg.get("content"), list):
+                cleaned_msgs.append(formatted_msg)
+                continue
             new_content = []
-            for block in msg["content"]:
+            for block in formatted_msg["content"]:
                 if (
                     block.get("text")
                     and new_content
@@ -223,8 +271,8 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                     new_content[-1]["text"] += "\n" + block["text"]
                 else:
                     new_content.append(block)
-            msg["content"] = new_content
-            cleaned_msgs.append(msg)
+            formatted_msg["content"] = new_content
+            cleaned_msgs.append(formatted_msg)
 
         return cleaned_msgs
 
@@ -248,29 +296,14 @@ class DashScopeMultiAgentFormatter(_DashScopeFormatterBase):
 
     """
 
-    def __init__(
-        self,
-        conversation_history_prompt: str = (
+    conversation_history_prompt: str = Field(
+        description="The conversation history prompt.",
+        default=(
             "# Conversation History\n"
             "The content between <history></history> tags contains "
             "your conversation history\n"
         ),
-        supported_input_media_types: list[str] | None = None,
-    ) -> None:
-        """Initialize the DashScope multi-agent formatter.
-
-        Args:
-            conversation_history_prompt (`str`):
-                The prompt to use for the conversation history section.
-            supported_input_media_types (`list[str] | None`, optional):
-                The list of supported input media types. Defaults to
-                ["image/*", "audio/*", "video/*"].
-        """
-        super().__init__(
-            supported_input_media_types=supported_input_media_types
-            or ["image/*", "audio/*", "video/*"],
-        )
-        self.conversation_history_prompt = conversation_history_prompt
+    )
 
     async def format(self, msgs: list[Msg]) -> list[dict]:
         """Format input messages into the structure required by the DashScope
@@ -333,7 +366,7 @@ class DashScopeMultiAgentFormatter(_DashScopeFormatterBase):
                 A list of dictionaries formatted for the DashScope API.
         """
         return await DashScopeChatFormatter(
-            supported_input_media_type=self.supported_input_media_types,
+            input_types=self.input_types,
         ).format(msgs)
 
     async def _format_agent_message(
@@ -370,7 +403,7 @@ class DashScopeMultiAgentFormatter(_DashScopeFormatterBase):
         for msg in msgs:
             for block in msg.get_content_blocks():
                 if isinstance(block, TextBlock):
-                    accumulated_text.append(f"{msg.name}: {block['text']}")
+                    accumulated_text.append(f"{msg.name}: {block.text}")
 
                 elif isinstance(block, DataBlock):
                     # Handle the accumulated text as a single block

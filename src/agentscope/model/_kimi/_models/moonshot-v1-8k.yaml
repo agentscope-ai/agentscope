@@ -1,0 +1,16 @@
+name: moonshot-v1-8k
+label: Kimi Moonshot v1 8K
+status: active
+
+input_types:
+  - text/plain
+
+output_types:
+  - text/plain
+
+context_size: 8192
+output_size: 8192
+
+parameter_overrides:
+  max_tokens:
+    maximum: 8192

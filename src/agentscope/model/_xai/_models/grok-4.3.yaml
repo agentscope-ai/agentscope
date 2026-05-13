@@ -1,0 +1,19 @@
+name: grok-4.3
+label: Grok 4.3
+status: active
+
+input_types:
+  - text/plain
+  - image/jpeg
+  - image/png
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 1000000
+output_size: 30000
+
+parameter_overrides:
+  max_tokens:
+    maximum: 30000

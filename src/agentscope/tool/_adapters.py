@@ -17,7 +17,13 @@ from ..permission import (
 from ._response import ToolChunk
 from ._utils import _extract_func_description, _extract_input_schema
 from .._logging import logger
-from ..message import TextBlock, DataBlock, Base64Source, URLSource
+from ..message import (
+    TextBlock,
+    DataBlock,
+    Base64Source,
+    URLSource,
+    ToolResultState,
+)
 
 
 class _FunctionTool(ToolBase):
@@ -128,7 +134,7 @@ class MCPTool(ToolBase):
     def __init__(
         self,
         mcp_name: str,
-        tool: Any,
+        tool: mcp.types.Tool,
         client_gen: Callable[..., _AsyncGeneratorContextManager[Any]]
         | None = None,
         session: Any | None = None,
@@ -152,7 +158,7 @@ class MCPTool(ToolBase):
                 The timeout in seconds for tool execution.
         """
         self.mcp_name = mcp_name
-        self.name = tool.name
+        self.name = f"mcp__{self.mcp_name}__{tool.name}"
         self.description = tool.description or ""
 
         # Extract input schema
@@ -162,6 +168,7 @@ class MCPTool(ToolBase):
             "required": tool.inputSchema.get("required", []),
         }
 
+        # By default
         self.is_concurrency_safe = False
         self.is_external_tool = False
 
@@ -232,14 +239,14 @@ class MCPTool(ToolBase):
                 async with ClientSession(read_stream, write_stream) as session:
                     await session.initialize()
                     result = await session.call_tool(
-                        self.name,
+                        self._tool.name,
                         arguments=kwargs,
                         read_timeout_seconds=self._timeout,
                     )
         else:
             # Stateful client: use existing session
             result = await self._session.call_tool(
-                self.name,
+                self._tool.name,
                 arguments=kwargs,
                 read_timeout_seconds=self._timeout,
             )
@@ -247,7 +254,9 @@ class MCPTool(ToolBase):
         # Convert MCP result to AgentScope blocks
         return ToolChunk(
             content=self._convert_mcp_content_to_blocks(result.content),
-            state="error" if result.isError else "running",
+            state=ToolResultState.ERROR
+            if result.isError
+            else ToolResultState.RUNNING,
         )
 
     @staticmethod
