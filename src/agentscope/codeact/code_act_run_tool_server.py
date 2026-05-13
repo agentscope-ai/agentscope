@@ -41,7 +41,7 @@ class CodeActRunToolServer:
         self._toolkit = toolkit
         self.code_act_server_thread = None
 
-    async def start(self):
+    async def start(self) -> None:
         """Launch the server."""
 
         app = FastAPI(
