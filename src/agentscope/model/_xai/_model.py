@@ -9,7 +9,7 @@ from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ...credential import XAICredential
-from ...formatter._xai_formatter import XAIChatFormatter
+from ...formatter import XAIChatFormatter
 from ...message import (
     TextBlock,
     ThinkingBlock,
@@ -20,11 +20,10 @@ from ...tracing import trace_llm
 
 if TYPE_CHECKING:
     from xai_sdk import AsyncClient
-    from xai_sdk.chat import Response, Chunk
+    from xai_sdk.chat import Response
 else:
     AsyncClient = Any
     Response = Any
-    Chunk = Any
 
 
 class XAIChatModel(ChatModelBase):
@@ -152,11 +151,9 @@ class XAIChatModel(ChatModelBase):
                 generator of ``ChatResponse`` objects when streaming is
                 enabled.
         """
-        from xai_sdk import (
-            AsyncClient as XAIAsyncClient,
-        )  # pylint: disable=import-outside-toplevel
+        from xai_sdk import AsyncClient
 
-        client = XAIAsyncClient(
+        client = AsyncClient(
             api_key=self.credential.api_key.get_secret_value(),
         )
 
@@ -221,10 +218,7 @@ class XAIChatModel(ChatModelBase):
                 A tuple of (xai_tools, xai_tool_choice) ready for the
                 ``xai_sdk`` client.
         """
-        from xai_sdk.chat import (  # pylint: disable=import-outside-toplevel
-            required_tool,
-            tool,
-        )
+        from xai_sdk.chat import required_tool, tool
 
         if tool_choice and tools:
             self._validate_tool_choice(tool_choice, tools)
@@ -260,7 +254,7 @@ class XAIChatModel(ChatModelBase):
         self,
         start_datetime: datetime,
         chat: Any,
-        client: Any,
+        client: AsyncClient,
     ) -> AsyncGenerator[ChatResponse, None]:
         """Parse the xAI streaming response from ``xai_sdk``.
 
@@ -359,7 +353,7 @@ class XAIChatModel(ChatModelBase):
     def _parse_completion_response(
         self,
         start_datetime: datetime,
-        response: Any,
+        response: Response,
     ) -> ChatResponse:
         """Parse the xAI non-streaming response from ``xai_sdk``.
 
