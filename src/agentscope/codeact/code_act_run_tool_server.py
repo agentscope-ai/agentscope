@@ -27,7 +27,8 @@ class RunToolRequest(BaseModel):
 
 
 class CodeActRunToolServer:
-    """An HTTP server that accepts run-tool requests, calls the tool, and returns the result."""
+    """An HTTP server that accepts run-tool requests, calls the tool,
+    and returns the result."""
 
     def __init__(self, port: int, toolkit: Toolkit):
         if not port or port <= 0:
