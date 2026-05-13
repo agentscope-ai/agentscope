@@ -13,12 +13,29 @@ from .mcp_gateway import MCPGatewayConfig
 
 @dataclass(slots=True)
 class MCPServerConfig:
-    """One MCP server to start inside the sandbox."""
+    """One MCP server to start inside the sandbox.
+
+    Supports two transport types:
+    - ``"stdio"`` (default): spawns a local process via command + args.
+    - ``"http"``: connects to a remote MCP server via HTTP (SSE or
+      StreamableHTTP).
+
+    For stdio: ``command`` and ``args`` are required.
+    For http: ``url`` is required; ``headers`` and ``timeout`` are optional.
+    """
 
     name: str
-    command: str
+    transport: str = "stdio"  # "stdio" | "http"
+
+    # stdio fields
+    command: str = ""
     args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
+
+    # http fields
+    url: str = ""
+    headers: dict[str, str] = field(default_factory=dict)
+    timeout: float = 30.0
 
 
 @dataclass(slots=True)

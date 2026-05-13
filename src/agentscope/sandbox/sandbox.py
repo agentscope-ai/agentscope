@@ -12,6 +12,7 @@ import base64
 import hashlib
 import json
 import mimetypes
+import shlex
 import uuid
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -35,7 +36,7 @@ from ..message import (
 from ..skill import Skill
 from ..tool import MCPTool, ToolBase
 from ..workspace import WorkspaceBase
-from .config import SandboxConfig, ToolDefinition
+from .config import MCPServerConfig, SandboxConfig, ToolDefinition
 from .connection import SandboxConnection, create_sandbox_connection
 from .mcp_gateway import MCPGateway
 from .types import SandboxInitializationConfig
@@ -70,13 +71,6 @@ class FileAccessor:
 class _ToolEntry:
     definition: ToolDefinition
     source: str = "static"  # "static" | "mcp" | "skill"
-
-
-@dataclass(slots=True)
-class _MCPServerHandle:
-    name: str
-    command: str
-    pid: int | None = None
 
 
 @dataclass(slots=True)
@@ -115,7 +109,6 @@ class Sandbox(WorkspaceBase):
         self._started = False
 
         self._tools: dict[str, _ToolEntry] = {}
-        self._exec_mcp_servers: dict[str, _MCPServerHandle] = {}
         self._skills: dict[str, _SkillEntry] = {}
 
         self._gateway: MCPGateway | None = None
@@ -173,16 +166,8 @@ class Sandbox(WorkspaceBase):
         if self._config.skills:
             await self._register_skills()
 
-        if self._config.mcp_gateway.enabled and self._config.mcp_servers:
-            await self._start_gateway()
-        else:
-            for mcp_cfg in self._config.mcp_servers:
-                await self._start_mcp_server(
-                    mcp_cfg.name,
-                    mcp_cfg.command,
-                    mcp_cfg.args,
-                    mcp_cfg.env,
-                )
+        # Gateway is always enabled
+        await self._start_gateway()
 
         self._started = True
 
@@ -384,7 +369,7 @@ class Sandbox(WorkspaceBase):
         )
         for s in spec:
             cmd = (
-                f"cp -r {s} {skills_dir}/ 2>/dev/null || "
+                f"cp -r {s} {shlex.quote(skills_dir)}/ 2>/dev/null || "
                 f"echo '__import_placeholder:{s}'"
             )
             await self.connection.exec(cmd, timeout=60)
@@ -517,46 +502,62 @@ class Sandbox(WorkspaceBase):
     # --- MCP surface ---
 
     async def list_mcps(self) -> list[dict[str, Any]]:
-        """List managed MCP servers (gateway-managed or exec-started)."""
+        """List managed MCP servers via the gateway."""
         if self._gateway:
             return self._gateway.list_servers()
-        return [
-            {"name": h.name, "command": h.command, "pid": h.pid}
-            for h in self._exec_mcp_servers.values()
-        ]
+        return []
 
     async def add_mcp(
         self,
         name: str,
-        command: str,
+        command: str = "",
         *,
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
+        transport: str = "stdio",
+        url: str = "",
+        headers: dict[str, str] | None = None,
+        timeout: float = 30.0,
     ) -> None:
-        """Start an MCP server via exec (disabled when gateway mode is on)."""
-        if self._gateway:
+        """Add an MCP server dynamically via the gateway.
+
+        Args:
+            name: Unique name for the MCP server.
+            command: Command to start the server (stdio transport).
+            args: Command arguments (stdio transport).
+            env: Environment variables (stdio transport).
+            transport: ``"stdio"`` or ``"http"``.
+            url: URL of the MCP server (http transport).
+            headers: HTTP headers (http transport).
+            timeout: HTTP timeout in seconds (http transport).
+        """
+        if not self._gateway:
             raise RuntimeError(
-                "Dynamic add_mcp is not supported when MCPGateway "
-                "is enabled (one-period limitation)",
+                "Sandbox not initialized — call initialize() first",
             )
-        await self._start_mcp_server(name, command, args or [], env or {})
+        cfg = MCPServerConfig(
+            name=name,
+            transport=transport,
+            command=command,
+            args=args or [],
+            env=env or {},
+            url=url,
+            headers=headers or {},
+            timeout=timeout,
+        )
+        await self._gateway.add_server(cfg)
 
     async def remove_mcp(self, name: str) -> None:
-        """Stop a dynamically added MCP server (non-gateway mode only)."""
-        if self._gateway:
+        """Remove an MCP server dynamically via the gateway.
+
+        Args:
+            name: Name of the server to remove.
+        """
+        if not self._gateway:
             raise RuntimeError(
-                "Dynamic remove_mcp is not supported when MCPGateway "
-                "is enabled (one-period limitation)",
+                "Sandbox not initialized — call initialize() first",
             )
-        handle = self._exec_mcp_servers.pop(name, None)
-        if handle and handle.pid:
-            kill_cmd = f"kill {handle.pid} 2>/dev/null || true"
-            await self.connection.exec(kill_cmd, timeout=5)
-        self._tools = {
-            k: v
-            for k, v in self._tools.items()
-            if not (v.source == "mcp" and v.definition.shell_cmd == name)
-        }
+        await self._gateway.remove_server(name)
 
     # --- run (request dispatch) ---
 
@@ -587,9 +588,9 @@ class Sandbox(WorkspaceBase):
         volumes = dict(cfg.volumes)
         env = dict(cfg.env)
 
-        if cfg.mcp_gateway.enabled:
-            if cfg.mcp_gateway.port not in ports:
-                ports.append(cfg.mcp_gateway.port)
+        # Gateway is always enabled — always expose its port
+        if cfg.mcp_gateway.port not in ports:
+            ports.append(cfg.mcp_gateway.port)
 
         if cfg.skills and cfg.skills.persist and cfg.skills.host_dir:
             volumes[cfg.skills.host_dir] = cfg.skills.skills_dir
@@ -626,7 +627,7 @@ class Sandbox(WorkspaceBase):
             extra["endpoint"] = cfg.endpoint
 
         return SandboxInitializationConfig(
-            backend_id=cfg.backend.type,
+            backend_type=cfg.backend.type,
             env=env,
             exposed_ports=ports,
             volumes=volumes,
@@ -640,46 +641,6 @@ class Sandbox(WorkspaceBase):
         cwd = str(ws_root) if ws_root else None
         self._gateway = MCPGateway(self._config.mcp_gateway)
         await self._gateway.start(self._config.mcp_servers, cwd=cwd)
-
-    async def _start_mcp_server(
-        self,
-        name: str,
-        command: str,
-        args: list[str],
-        env: dict[str, str],
-    ) -> None:
-        """Start an MCP server via exec (non-gateway fallback)."""
-        env_prefix = " ".join(f"{k}={v}" for k, v in env.items())
-        args_str = " ".join(args)
-        full_cmd = f"{env_prefix} nohup {command} {args_str} &".strip()
-        r = await self.connection.exec(full_cmd, timeout=30)
-        handle = _MCPServerHandle(name=name, command=command)
-        if r.is_ok():
-            pid_line = (
-                r.stdout.decode(errors="replace").strip().split("\n")[-1]
-            )
-            try:
-                handle.pid = int(pid_line)
-            except ValueError:
-                pass
-        else:
-            logger.warning(
-                (
-                    "MCP server %r failed to start in sandbox "
-                    "%s (exit_code=%s, stderr=%s)"
-                ),
-                name,
-                self._id,
-                r.exit_code,
-                r.stderr.decode(errors="replace").strip()[:200],
-            )
-        self._exec_mcp_servers[name] = handle
-        logger.info(
-            "Started MCP server %r in sandbox %s (pid=%s)",
-            name,
-            self._id,
-            handle.pid,
-        )
 
     async def _register_skills(self) -> None:
         """Fill ``_skills`` by listing the configured skills directory."""
@@ -710,7 +671,7 @@ class Sandbox(WorkspaceBase):
             )
         args_json = json.dumps(args)
         r = await self.connection.exec(
-            f"{shell_cmd} '{args_json}'",
+            f"{shell_cmd} {shlex.quote(args_json)}",
             timeout=120,
         )
         return {
