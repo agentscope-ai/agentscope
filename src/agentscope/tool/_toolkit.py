@@ -138,16 +138,19 @@ class Toolkit(StateModule):  # pylint: disable=too-many-public-methods
 
     _DEFAULT_AGENT_SKILL_INSTRUCTION = (
         "# Agent Skills\n"
-        "The agent skills are a collection of folds of instructions, scripts, "
-        "and resources that you can load dynamically to improve performance "
-        "on specialized tasks. Each agent skill has a `SKILL.md` file in its "
-        "folder that describes how to use the skill. If you want to use a "
-        "skill, you MUST read its `SKILL.md` file carefully."
+        "The agent skills are a collection of folders of instructions, "
+        "scripts, and resources that you can load dynamically to improve "
+        "performance on specialized tasks. Each agent skill has a `SKILL.md` "
+        "file in its folder that describes how to use the skill. You MUST "
+        "read the skill's `SKILL.md` file BEFORE performing any task related "
+        "to that skill. Do NOT rely on prior knowledge or make assumptions "
+        "about how to use a skill — always read its `SKILL.md` first."
     )
 
     _DEFAULT_AGENT_SKILL_TEMPLATE = """## {name}
 {description}
-Check "{dir}/SKILL.md" for how to use this skill"""
+IMPORTANT: You MUST read "{dir}/SKILL.md" before using this skill. Do not \
+perform any actions for this skill without first reading its SKILL.md file."""
 
     def __init__(
         self,
