@@ -300,6 +300,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             "rename",
         ] = "raise",
         async_execution: bool = False,
+        max_calls: int | None = None,
     ) -> None:
         """Register a tool function to the toolkit.
 
@@ -362,11 +363,18 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 agent to view, cancel or check the status of the async task.
                 **This is an experimental feature and may cause unexpected
                 issues, please use it with caution.**
+            max_calls (`int | None`, optional):
+                Maximum number of times this tool can be called. `None` means
+                unlimited. `0` means no calls are allowed.
         """
         # Arguments checking
         if group_name not in self.groups and group_name != "basic":
             raise ValueError(
                 f"Tool group '{group_name}' not found.",
+            )
+        if max_calls is not None and max_calls < 0:
+            raise ValueError(
+                f"max_calls must be non-negative, got {max_calls}",
             )
 
         # Check the manually provided JSON schema if provided
@@ -470,6 +478,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             mcp_name=mcp_name,
             postprocess_func=postprocess_func,
             async_execution=async_execution,
+            max_calls=max_calls,
         )
 
         if func_name in self.tools:
@@ -907,6 +916,25 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 ),
                 None,
             )
+
+        # Check maximum call limit
+        if tool_func.max_calls is not None:
+            if tool_func.call_count >= tool_func.max_calls:
+                return _object_wrapper(
+                    ToolResponse(
+                        content=[
+                            TextBlock(
+                                type="text",
+                                text="ToolCallLimitError: The tool "
+                                f"'{tool_call['name']}' has reached its "
+                                "maximum call limit "
+                                f"({tool_func.max_calls}).",
+                            ),
+                        ],
+                    ),
+                    None,
+                )
+            tool_func.call_count += 1
 
         # Prepare keyword arguments
         kwargs = {
