@@ -39,7 +39,8 @@ async def list_credentials(
     """
     credentials = await storage.list_credentials(user_id)
     return CredentialListResponse(
-        credentials=credentials, total=len(credentials)
+        credentials=credentials,
+        total=len(credentials),
     )
 
 
@@ -65,7 +66,8 @@ async def create_credential(
         `CreateCredentialResponse`: The server-assigned credential identifier.
     """
     credential_id = await storage.upsert_credential(
-        user_id, CredentialBase(data=body.data)
+        user_id,
+        CredentialBase(data=body.data),
     )
     return CreateCredentialResponse(credential_id=credential_id)
 
@@ -105,7 +107,8 @@ async def update_credential(
         )
 
     await storage.upsert_credential(
-        user_id, CredentialBase(id=credential_id, data=body.data)
+        user_id,
+        CredentialBase(id=credential_id, data=body.data),
     )
     # Re-fetch to return the persisted record with updated timestamps.
     credentials = await storage.list_credentials(user_id)

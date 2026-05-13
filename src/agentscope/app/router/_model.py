@@ -12,6 +12,7 @@ model_router = APIRouter(
     responses={404: {"description": "Not found"}},
 )
 
+
 @model_router.get(
     "/",
     response_model=ListModelResponse,
@@ -30,9 +31,4 @@ async def list_models(
         `ListModelResponse`: The response body.
     """
 
-
-    return ListModelResponse(
-
-    )
-
-
+    return ListModelResponse()

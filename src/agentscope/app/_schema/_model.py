@@ -17,5 +17,5 @@ class ListModelRequest(BaseModel):
     """List the candidate models request."""
 
     provider: str = Field(
-        description="The provider type, e.g. openai, dashscope, etc."
+        description="The provider type, e.g. openai, dashscope, etc.",
     )

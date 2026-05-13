@@ -38,13 +38,16 @@ class UpdateAgentRequest(BaseModel):
 
     name: str | None = Field(default=None, description="New display name.")
     system_prompt: str | None = Field(
-        default=None, description="New system prompt."
+        default=None,
+        description="New system prompt.",
     )
     context_config: ContextConfig | None = Field(
-        default=None, description="New context configuration."
+        default=None,
+        description="New context configuration.",
     )
     react_config: ReActConfig | None = Field(
-        default=None, description="New ReAct loop configuration."
+        default=None,
+        description="New ReAct loop configuration.",
     )
 
 

@@ -70,7 +70,10 @@ class ChatService:
 
         # 2. Build the model: merge credential secrets with caller-supplied params
         cfg = session_record.data.chat_model_config
-        credential = await self._storage.get_credential(user_id, cfg.credential_id)
+        credential = await self._storage.get_credential(
+            user_id,
+            cfg.credential_id,
+        )
         if credential is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

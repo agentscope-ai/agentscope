@@ -43,6 +43,16 @@ async def list_schedules(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
 ) -> ScheduleListResponse:
+    """List all schedules.
+
+    Args:
+        user_id (str): User ID
+        storage (StorageBase): Storage instance
+
+    Returns:
+        `ScheduleListResponse`:
+            The schedule list
+    """
     schedules = await storage.list_schedules(user_id)
     return ScheduleListResponse(schedules=schedules, total=len(schedules))
 
@@ -100,6 +110,7 @@ async def update_schedule(
     storage: StorageBase = Depends(get_storage),
     scheduler: SchedulerManager = Depends(get_scheduler_manager),
 ) -> ScheduleRecord:
+    """Update a schedule."""
     existing = await storage.get_schedule(user_id, schedule_id)
     if existing is None:
         raise HTTPException(
@@ -110,7 +121,7 @@ async def update_schedule(
     updates = body.model_dump(exclude_none=True)
     updated_data = existing.data.model_copy(update=updates)
     updated_record = existing.model_copy(
-        update={"data": updated_data, "updated_at": datetime.now()}
+        update={"data": updated_data, "updated_at": datetime.now()},
     )
     await storage.create_schedule(user_id, updated_record)
 
@@ -138,6 +149,7 @@ async def delete_schedule(
     storage: StorageBase = Depends(get_storage),
     scheduler: SchedulerManager = Depends(get_scheduler_manager),
 ) -> None:
+    """Delete a schedule."""
     deleted = await storage.delete_schedule(user_id, schedule_id)
     if not deleted:
         raise HTTPException(

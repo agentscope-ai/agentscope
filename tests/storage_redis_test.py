@@ -20,6 +20,7 @@ from agentscope.state import AgentState
 def make_storage() -> RedisStorage:
     """Create a RedisStorage instance backed by fakeredis."""
     storage = RedisStorage.__new__(RedisStorage)
+    # pylint: disable=protected-access
     storage._client = fakeredis.aioredis.FakeRedis(decode_responses=True)
     storage.key_ttl = None
     storage.key_config = RedisKeyConfig()

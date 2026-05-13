@@ -35,7 +35,9 @@ class CreateScheduleRequest(BaseModel):
 class CreateScheduleResponse(BaseModel):
     """Response body after creating a schedule."""
 
-    schedule_id: str = Field(description="Server-assigned schedule identifier.")
+    schedule_id: str = Field(
+        description="Server-assigned schedule identifier.",
+    )
 
 
 class UpdateScheduleRequest(BaseModel):
@@ -45,7 +47,10 @@ class UpdateScheduleRequest(BaseModel):
     """
 
     name: str | None = Field(default=None, description="New display name.")
-    description: str | None = Field(default=None, description="New description.")
+    description: str | None = Field(
+        default=None,
+        description="New description.",
+    )
     cron_expression: str | None = Field(
         default=None,
         description="New cron expression. Reschedules the task immediately.",

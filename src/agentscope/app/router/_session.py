@@ -9,8 +9,7 @@ from .._schema._session import (
     SessionListResponse,
     UpdateSessionRequest,
 )
-from ..storage._base import StorageBase
-from ..storage._model._session import SessionData
+from ..storage import StorageBase, SessionData, SessionRecord
 
 session_router = APIRouter(
     prefix="/sessions",
@@ -91,7 +90,9 @@ async def create_session(
         )
 
     credentials = await storage.list_credentials(user_id)
-    if not any(c.id == body.chat_model_config.credential_id for c in credentials):
+    if not any(
+        c.id == body.chat_model_config.credential_id for c in credentials
+    ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Credential '{body.chat_model_config.credential_id}' not found.",
@@ -110,9 +111,7 @@ async def create_session(
     )
 
     sessions = await storage.list_sessions(user_id, body.agent_id)
-    session = next(
-        s for s in sessions if s.workspace_id == body.workspace_id
-    )
+    session = next(s for s in sessions if s.workspace_id == body.workspace_id)
     return CreateSessionResponse(session_id=session.id)
 
 
@@ -189,10 +188,7 @@ async def update_session(
             )
 
     updated_data = existing.data.model_copy(
-        update={
-            k: v
-            for k, v in body.model_dump(exclude_none=True).items()
-        }
+        update={k: v for k, v in body.model_dump(exclude_none=True).items()},
     )
     await storage.upsert_session(
         user_id=user_id,

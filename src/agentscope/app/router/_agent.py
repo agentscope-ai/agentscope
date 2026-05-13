@@ -117,7 +117,7 @@ async def update_agent(
     updates = body.model_dump(exclude_none=True)
     updated_data = existing.data.model_copy(update=updates)
     existing = existing.model_copy(
-        update={"data": updated_data, "updated_at": datetime.now()}
+        update={"data": updated_data, "updated_at": datetime.now()},
     )
     await storage.create_agent(user_id, existing)
     return existing

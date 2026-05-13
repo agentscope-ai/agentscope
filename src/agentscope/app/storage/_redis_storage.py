@@ -456,7 +456,11 @@ class RedisStorage(StorageBase):
                 records.append(AgentRecord.model_validate_json(raw))
         return records
 
-    async def get_agent(self, user_id: str, agent_id: str) -> AgentRecord | None:
+    async def get_agent(
+        self,
+        user_id: str,
+        agent_id: str,
+    ) -> AgentRecord | None:
         """Fetch a single agent record by id."""
         key = self._key(
             self.key_config.agent,

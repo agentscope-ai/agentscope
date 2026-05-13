@@ -15,7 +15,7 @@ class CreateCredentialResponse(BaseModel):
     """Response body after creating a credential."""
 
     credential_id: str = Field(
-        description="Server-assigned credential identifier."
+        description="Server-assigned credential identifier.",
     )
 
 
@@ -29,6 +29,6 @@ class CredentialListResponse(BaseModel):
     """Response body for listing credentials."""
 
     credentials: list[CredentialRecord] = Field(
-        description="Credential records."
+        description="Credential records.",
     )
     total: int = Field(description="Total number of credentials.")

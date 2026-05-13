@@ -24,6 +24,6 @@ class ChatRequest(BaseModel):
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
         | None
-    )= Field(
-        description="The input message(s), or agent event, or None."
+    ) = Field(
+        description="The input message(s), or agent event, or None.",
     )
