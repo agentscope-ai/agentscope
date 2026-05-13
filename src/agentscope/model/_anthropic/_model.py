@@ -414,9 +414,9 @@ class AnthropicChatModel(ChatModelBase):
         needing to filter the list, preserving prompt-cache efficiency.
 
         Args:
-            tools (`list[dict] | None`):
+            tools (`list[dict] | None`, optional):
                 The raw tool schemas.
-            tool_choice (`ToolChoice | None`):
+            tool_choice (`ToolChoice | None`, optional):
                 The tool choice configuration.
 
         Returns:
