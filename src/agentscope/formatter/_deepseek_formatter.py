@@ -2,6 +2,8 @@
 """The DeepSeek formatter module."""
 from typing import Any
 
+from pydantic import Field
+
 from ._formatter_base import FormatterBase
 from .._logging import logger
 from ..message import (
@@ -20,13 +22,13 @@ class DeepSeekChatFormatter(FormatterBase):
     entities in the conversation.
     """
 
-    def __init__(
-        self,
-        supported_input_media_types: list[str] | None = None,
-    ) -> None:
-        super().__init__(
-            supported_input_media_types=supported_input_media_types or [],
-        )
+    input_types: list[str] = Field(
+        default_factory=lambda: ["text/plain"],
+        description=(
+            'The supported input types. Defaults to ``["text/plain"]`` '
+            "(DeepSeek does not support multimodal input)."
+        ),
+    )
 
     async def format(
         self,
@@ -95,12 +97,19 @@ class DeepSeekChatFormatter(FormatterBase):
 
             msg_deepseek: dict[str, Any] = {
                 "role": msg.role,
-                "content": content_msg or None,
+                "content": content_msg or (None if tool_calls else ""),
             }
 
-            if reasoning_content_blocks:
-                msg_deepseek["reasoning_content"] = "\n".join(
-                    reasoning_content_blocks,
+            # DeepSeek requires `reasoning_content` to be present on ALL
+            # assistant messages in multi-turn conversations that use thinking
+            # mode.  When switching from a non-thinking model, historical
+            # messages will have no ThinkingBlock, so we always include the
+            # field (as None) for assistant messages to keep the context valid.
+            if msg.role == "assistant":
+                msg_deepseek["reasoning_content"] = (
+                    "\n".join(reasoning_content_blocks)
+                    if reasoning_content_blocks
+                    else ""
                 )
 
             if tool_calls:
@@ -118,28 +127,22 @@ class DeepSeekMultiAgentFormatter(FormatterBase):
     a user and an agent are involved.
     """
 
-    def __init__(
-        self,
-        conversation_history_prompt: str = (
+    conversation_history_prompt: str = Field(
+        default=(
             "# Conversation History\n"
             "The content between <history></history> tags contains "
             "your conversation history\n"
         ),
-        supported_input_media_types: list[str] | None = None,
-    ) -> None:
-        """Initialize the DeepSeek multi-agent formatter.
+        description="The prompt to use for the conversation history section.",
+    )
 
-        Args:
-            conversation_history_prompt (`str`):
-                The prompt to use for the conversation history section.
-            supported_input_media_types (`list[str] | None`, optional):
-                The list of supported input media types. Defaults to ``[]``
-                (DeepSeek does not support multimodal input).
-        """
-        super().__init__(
-            supported_input_media_types=supported_input_media_types or [],
-        )
-        self.conversation_history_prompt = conversation_history_prompt
+    input_types: list[str] = Field(
+        default_factory=lambda: ["text/plain"],
+        description=(
+            'The supported input types. Defaults to ``["text/plain"]`` '
+            "(DeepSeek does not support multimodal input)."
+        ),
+    )
 
     async def format(self, msgs: list[Msg]) -> list[dict[str, Any]]:
         """Format input messages into the structure required by the DeepSeek
@@ -179,7 +182,7 @@ class DeepSeekMultiAgentFormatter(FormatterBase):
         """Given a sequence of tool call/result messages, format them into
         the required format for the DeepSeek API."""
         return await DeepSeekChatFormatter(
-            supported_input_media_types=self.supported_input_media_types,
+            input_types=self.input_types,
         ).format(msgs)
 
     async def _format_agent_message(

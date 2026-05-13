@@ -15,7 +15,7 @@ from typing import (
 
 import jsonschema
 
-from ._config import CompressionConfig, ReActConfig, ModelConfig
+from ._config import ContextConfig, ReActConfig, ModelConfig
 from ..state import AgentState
 from ._utils import _ToolCallBatch
 from .._logging import logger
@@ -95,7 +95,7 @@ class Agent:
         middlewares: list[MiddlewareBase] | None = None,
         state: AgentState | None = None,
         model_config: ModelConfig = ModelConfig(),
-        compression_config: CompressionConfig = CompressionConfig(),
+        context_config: ContextConfig = ContextConfig(),
         react_config: ReActConfig = ReActConfig(),
     ) -> None:
         self.name = name
@@ -105,7 +105,7 @@ class Agent:
         self.state = state or AgentState()
 
         self.model_config = model_config
-        self.compression_config = compression_config
+        self.context_config = context_config
         self.react_config = react_config
 
         self._engine = PermissionEngine(self.state.permission_context)
@@ -202,25 +202,25 @@ class Agent:
 
     async def compress_context(
         self,
-        compression_config: CompressionConfig | None = None,
+        context_config: ContextConfig | None = None,
     ) -> None:
         """Compress the agent's context if the token count exceeds the
         threshold.
 
         Args:
-            compression_config (`CompressionConfig | None`, optional):
-                If provided, compress the context with the given compression
-                config. Otherwise, use the default compression config in the
+            context_config (`ContextConfig | None`, optional):
+                If provided, compress the context with the given context
+                config. Otherwise, use the default context config in the
                 agent.
         """
-        cfg: CompressionConfig = compression_config or self.compression_config
+        cfg: ContextConfig = context_config or self.context_config
 
         # Count the current tokens
         kwargs = await self._prepare_model_input()
         estimated_tokens = await self.model.count_tokens(**kwargs)
 
         # Skip if no compression is needed
-        threshold = cfg.trigger_ratio * self.model.context_length
+        threshold = cfg.trigger_ratio * self.model.context_size
         if estimated_tokens < threshold:
             return
 
@@ -251,7 +251,7 @@ class Agent:
             msgs_to_compress,
             msgs_to_reserve,
         ) = await self._split_context_for_compression(
-            cfg.reserve_ratio * self.model.context_length,
+            cfg.reserve_ratio * self.model.context_size,
             tools,
         )
 
@@ -268,7 +268,7 @@ class Agent:
                 msgs_to_compress,
                 msgs_to_reserve,
             ) = await self._split_context_for_compression(
-                0 * self.model.context_length,
+                0 * self.model.context_size,
                 tools,
             )
 
@@ -313,12 +313,12 @@ class Agent:
             messages,
             compression_tool_schema,
         )
-        if estimated_compression_tokens > self.model.context_length:
+        if estimated_compression_tokens > self.model.context_size:
             logger.warning(
                 "The current context length exceeds the model's context "
                 "length (%d tokens), the compression maybe failed due to "
                 "insufficient reserved context for compression.",
-                self.model.context_length,
+                self.model.context_size,
             )
             context_overflow = True
 
@@ -357,7 +357,7 @@ class Agent:
                     # tokens for compression response
                     if (
                         estimated_compression_tokens
-                        < self.model.context_length * cfg.trigger_ratio
+                        < self.model.context_size * cfg.trigger_ratio
                     ):
                         break
 
@@ -636,7 +636,7 @@ class Agent:
 
         yield ModelCallStartEvent(
             reply_id=self.state.reply_id,
-            model_name=self.model.model_name,
+            model_name=self.model.model,
         )
 
         # Get the input arguments for the chat model, including messages and
@@ -1144,7 +1144,7 @@ class Agent:
         | ToolResultEndEvent,
         None,
     ]:
-        """Execute tool call entry point (may be wrapped by middleware)."""
+        """Execute tool call entry point (maybe wrapped by middleware)."""
         if not self._acting_middlewares:
             async for item in self._execute_tool_call_impl(tool_call):
                 yield item
@@ -1326,17 +1326,56 @@ class Agent:
 
             res = self.toolkit.call_tool(tool_call, self.state)
             async for chunk in res:
+                # The ToolResponse is the last and completed tool result here
                 if isinstance(chunk, ToolResponse):
-                    self._save_to_context(
-                        [
-                            ToolResultBlock(
-                                id=tool_call.id,
-                                name=tool_call.name,
-                                output=chunk.content,
-                                state=chunk.state,
-                            ),
-                        ],
+                    tool_result_block = ToolResultBlock(
+                        id=tool_call.id,
+                        name=tool_call.name,
+                        output=[TextBlock(text=chunk.content)]
+                        if isinstance(chunk.content, str)
+                        else chunk.content,
+                        state=chunk.state,
                     )
+
+                    # ========================================================
+                    # Step 4: Truncate the tool result if exceed
+                    # ========================================================
+                    (
+                        reserved_tool_result_block,
+                        offload_tool_result_block,
+                    ) = await self._split_tool_result_for_compression(
+                        tool_result_block,
+                    )
+
+                    # If offload result is not empty, attach reminder to the
+                    # reserved context
+                    if offload_tool_result_block is not None:
+                        reminder = (
+                            "\n<<<TRUNCATED>>>\n<system-reminder>The "
+                            "remaining content has been omitted for "
+                            "limited context.</system-reminder>"
+                        )
+                        if isinstance(reserved_tool_result_block.output, str):
+                            reserved_tool_result_block.output += reminder
+
+                        elif len(
+                            reserved_tool_result_block.output,
+                        ) > 0 and isinstance(
+                            reserved_tool_result_block.output[-1],
+                            TextBlock,
+                        ):
+                            reserved_tool_result_block.output[
+                                -1
+                            ].text += reminder
+
+                        else:
+                            reserved_tool_result_block.output += [
+                                TextBlock(text=reminder),
+                            ]
+
+                        # TODO: offload the tool result
+
+                    self._save_to_context([reserved_tool_result_block])
                     # Ends the tool call lifecycle.
                     self._update_tool_call_state(
                         tool_call.id,
@@ -1540,6 +1579,154 @@ class Agent:
 
         return msgs_to_compress, msgs_to_reserve
 
+    async def _split_tool_result_for_compression(
+        self,
+        tool_result: ToolResultBlock,
+    ) -> tuple[ToolResultBlock, ToolResultBlock | None]:
+        """Split the tool result for compression.
+
+        Args:
+            tool_result (`ToolResultBlock`):
+                The tool result block.
+
+        Returns:
+            `tuple[ToolResultBlock, ToolResultBlock | None]`:
+                A tuple of the tool result blocks to reserved in context and
+                to offload (if any).
+        """
+        n_tokens = await self.model.count_tokens(
+            [AssistantMsg(self.name, content=tool_result.output)],
+            None,
+        )
+
+        # Return the tool result without truncation
+        if n_tokens <= self.context_config.tool_result_limit:
+            return tool_result, None
+
+        # Use a copied block for token counting
+        copied_tool_result = deepcopy(tool_result)
+
+        # Normalized into content blocks
+        if isinstance(copied_tool_result.output, str):
+            copied_tool_result.output = [
+                TextBlock(text=copied_tool_result.output),
+            ]
+
+        # Find the index of the block that will exceed the limit
+        boundary_index = 0
+        for i in range(len(copied_tool_result.output) - 1, 0, -1):
+            copied_tool_result.output = tool_result.output[:i]
+            cur_tokens = await self.model.count_tokens(
+                [
+                    AssistantMsg(
+                        self.name,
+                        content=copied_tool_result.output,
+                    ),
+                ],
+                None,
+            )
+            if cur_tokens < self.context_config.tool_result_limit:
+                boundary_index = i
+                break
+
+        # The blocks to reserve and offload (deep copy to avoid
+        # modifying original)
+        reserved_blocks: list = [
+            deepcopy(b) for b in tool_result.output[:boundary_index]
+        ]
+        offload_blocks: list = [
+            deepcopy(b) for b in tool_result.output[boundary_index + 1 :]
+        ]
+
+        # Get the boundary block, if text block, we can truncate it
+        boundary_block = tool_result.output[boundary_index]
+        if isinstance(boundary_block, TextBlock):
+            # Truncate it
+            truncated_text = boundary_block.text
+            cur_tokens = await self.model.count_tokens(
+                [AssistantMsg(self.name, content=reserved_blocks)],
+                None,
+            )
+            cur_tokens_plus = await self.model.count_tokens(
+                [
+                    AssistantMsg(
+                        self.name,
+                        content=reserved_blocks + [boundary_block],
+                    ),
+                ],
+                None,
+            )
+            # Truncate the text by proportion of tokens
+            token_delta = cur_tokens_plus - cur_tokens
+            remaining_token_budget = (
+                self.context_config.tool_result_limit - cur_tokens
+            )
+            if token_delta <= 0:
+                reserved_tokens = (
+                    len(truncated_text) if remaining_token_budget > 0 else 0
+                )
+            else:
+                reserved_tokens = int(
+                    remaining_token_budget / token_delta * len(truncated_text),
+                )
+            reserved_tokens = max(
+                0,
+                min(len(truncated_text), reserved_tokens),
+            )
+
+            reserved_text = truncated_text[:reserved_tokens]
+            offload_text = truncated_text[reserved_tokens:]
+
+            if reserved_text:
+                if (
+                    len(reserved_blocks) > 0
+                    and reserved_blocks[-1].type == "text"
+                ):
+                    reserved_blocks[-1].text += reserved_text
+
+                else:
+                    reserved_blocks.append(
+                        TextBlock(text=reserved_text, id=boundary_block.id),
+                    )
+
+            if offload_text:
+                if (
+                    len(offload_blocks) > 0
+                    and offload_blocks[0].type == "text"
+                ):
+                    offload_blocks[0].text = (
+                        offload_text + offload_blocks[0].text
+                    )
+
+                else:
+                    offload_blocks.insert(
+                        0,
+                        TextBlock(text=offload_text, id=boundary_block.id),
+                    )
+
+        else:
+            # Drop the boundary block if inseparable
+            offload_blocks.insert(0, boundary_block)
+
+        if len(offload_blocks) == 0:
+            return tool_result, None
+
+        # Create new ToolResultBlock instances for reserved and offload
+        reserved_tool_result = ToolResultBlock(
+            id=tool_result.id,
+            name=tool_result.name,
+            output=reserved_blocks,
+            state=tool_result.state,
+        )
+        offload_tool_result = ToolResultBlock(
+            id=tool_result.id,
+            name=tool_result.name,
+            output=offload_blocks,
+            state=tool_result.state,
+        )
+
+        return reserved_tool_result, offload_tool_result
+
     # ======================================================================
     # Agent internal utility methods
     # ======================================================================
@@ -1678,7 +1865,7 @@ class Agent:
                     logger.warning(
                         "Model %s call failed for agent %s. "
                         "Retrying (%d/%d)...",
-                        model.model_name,
+                        model.model,
                         self.name,
                         _ + 1,
                         self.model_config.max_retries,
