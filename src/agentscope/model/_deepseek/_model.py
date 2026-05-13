@@ -6,7 +6,7 @@ from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List
 
 from pydantic import BaseModel, Field
 
-from .._base import ChatModelBase
+from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ...credential import DeepSeekCredential
@@ -162,14 +162,13 @@ class DeepSeekChatModel(ChatModelBase):
 
         kwargs.update(generate_kwargs)
 
-        if tools:
-            kwargs["tools"] = tools
+        fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 
-        if tool_choice:
-            kwargs["tool_choice"] = self._format_tool_choice(
-                tool_choice,
-                tools,
-            )
+        if fmt_tools:
+            kwargs["tools"] = fmt_tools
+
+        if fmt_tool_choice is not None:
+            kwargs["tool_choice"] = fmt_tool_choice
 
         if self.stream:
             kwargs["stream_options"] = {"include_usage": True}
@@ -353,32 +352,41 @@ class DeepSeekChatModel(ChatModelBase):
 
         return ChatResponse(**resp_kwargs)
 
-    def _format_tool_choice(
+    def _format_tools(
         self,
-        tool_choice: ToolChoice | None,
         tools: list[dict] | None,
-    ) -> str | dict | None:
-        """Format tool_choice parameter for the DeepSeek API.
+        tool_choice: ToolChoice | None,
+    ) -> tuple[list[dict] | None, str | dict | None]:
+        """Validate, filter, and format tools and tool_choice for the DeepSeek
+        API.
+
+        When ``tool_choice.tools`` is specified the schemas list is filtered
+        to only those tools. When ``tool_choice.mode`` is a specific tool name
+        (str) the model is forced to call exactly that tool without needing to
+        filter the list, preserving prompt-cache efficiency.
 
         Args:
-            tool_choice (`ToolChoice | None`):
-                The unified tool choice parameter which can be ``"auto"``,
-                ``"none"``, ``"required"``, or a specific function name.
             tools (`list[dict] | None`):
-                The list of available tools, used for validation when
-                ``tool_choice`` is a specific function name.
+                The raw tool schemas.
+            tool_choice (`ToolChoice | None`):
+                The tool choice configuration.
 
         Returns:
-            `str | dict | None`:
-                The formatted tool choice string or configuration dict for
-                the DeepSeek API, or ``None`` if ``tool_choice`` is ``None``.
+            `tuple[list[dict] | None, str | dict | None]`:
+                A tuple of (formatted_tools, formatted_tool_choice).
         """
-        self._validate_tool_choice(tool_choice, tools)
+        if tool_choice and tools:
+            self._validate_tool_choice(tool_choice, tools)
+            if tool_choice.get("tools"):
+                allowed = set(tool_choice["tools"])
+                tools = [t for t in tools if t["function"]["name"] in allowed]
 
-        if tool_choice is None:
-            return None
+        if not tool_choice:
+            return tools, None
 
-        if tool_choice in ["auto", "none", "required"]:
-            return tool_choice
+        mode = tool_choice["mode"]
 
-        return {"type": "function", "function": {"name": tool_choice}}
+        if mode not in _TOOL_CHOICE_LITERAL_MODES:
+            return tools, {"type": "function", "function": {"name": mode}}
+
+        return tools, mode

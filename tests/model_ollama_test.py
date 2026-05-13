@@ -7,6 +7,7 @@ Formatter tests have been moved to tests/formatter_ollama_test.py.
 import json
 from typing import Any
 from datetime import datetime
+import unittest
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock
 
@@ -99,3 +100,61 @@ class TestOllamaModelParsing(IsolatedAsyncioTestCase):
         result = await self.model._parse_completion_response(self.start, resp)
         thinkings = [b for b in result.content if isinstance(b, ThinkingBlock)]
         self.assertEqual(thinkings[0].thinking, "Let me think...")
+
+
+# ---------------------------------------------------------------------------
+# Shared _format_tools fixtures
+# ---------------------------------------------------------------------------
+
+_FT_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Get the weather",
+            "parameters": {
+                "type": "object",
+                "properties": {"city": {"type": "string"}},
+                "required": ["city"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_time",
+            "description": "Get the time",
+            "parameters": {
+                "type": "object",
+                "properties": {"timezone": {"type": "string"}},
+                "required": ["timezone"],
+            },
+        },
+    },
+]
+
+
+class TestOllamaFormatTools(unittest.TestCase):
+    """Tests for OllamaChatModel._format_tools."""
+
+    def setUp(self) -> None:
+        """Set up model instance."""
+        self.model = _make_model()
+
+    def test_tools_forwarded_no_choice(self) -> None:
+        """Without tool_choice, returns tools unchanged and None."""
+        fmt_tools, fmt_choice = self.model._format_tools(_FT_TOOLS, None)
+        self.assertEqual(fmt_tools, _FT_TOOLS)
+        self.assertIsNone(fmt_choice)
+
+    def test_tools_filtered(self) -> None:
+        """When tool_choice.tools is set, only those tools are included."""
+        fmt_tools, fmt_choice = self.model._format_tools(
+            _FT_TOOLS,
+            {"mode": "auto", "tools": ["get_weather"]},
+        )
+        self.assertIsNotNone(fmt_tools)
+        assert fmt_tools is not None
+        self.assertEqual(len(fmt_tools), 1)
+        self.assertEqual(fmt_tools[0]["function"]["name"], "get_weather")
+        self.assertIsNone(fmt_choice)

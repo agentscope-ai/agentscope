@@ -5,7 +5,7 @@ from typing import Literal, Any, AsyncGenerator, List, TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
-from .._base import ChatModelBase
+from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ...credential import OpenAICredential
@@ -22,8 +22,6 @@ else:
     Response = Any
     ResponseStreamEvent = Any
     AsyncStream = Any
-
-_TOOL_CHOICE_LITERAL_MODES = ["auto", "none", "required"]
 
 
 class OpenAIResponseModel(ChatModelBase):
@@ -405,7 +403,13 @@ class OpenAIResponseModel(ChatModelBase):
         tools: list[dict] | None,
         tool_choice: ToolChoice | None,
     ) -> tuple[list[dict] | None, str | dict | None]:
-        """Format tools and tool_choice for the Responses API.
+        """Validate, filter, and format tools and tool_choice for the
+        Responses API.
+
+        When ``tool_choice.tools`` is specified the schemas list is filtered
+        to only those tools. When ``tool_choice.mode`` is a specific tool name
+        (str) the model is forced to call exactly that tool without needing to
+        filter the list, preserving prompt-cache efficiency.
 
         Args:
             tools (`list[dict] | None`):
@@ -418,7 +422,11 @@ class OpenAIResponseModel(ChatModelBase):
                 A tuple of ``(formatted_tools, formatted_tool_choice)``
                 ready for the Responses API.
         """
-        self._validate_tool_choice(tool_choice, tools)
+        if tool_choice and tools:
+            self._validate_tool_choice(tool_choice, tools)
+            if tool_choice.get("tools"):
+                allowed = set(tool_choice["tools"])
+                tools = [t for t in tools if t["function"]["name"] in allowed]
 
         fmt_tools = None
         if tools:
@@ -429,7 +437,9 @@ class OpenAIResponseModel(ChatModelBase):
         if not tool_choice:
             return fmt_tools, None
 
-        if tool_choice not in _TOOL_CHOICE_LITERAL_MODES:
-            return fmt_tools, {"type": "function", "name": tool_choice}
+        mode = tool_choice["mode"]
 
-        return fmt_tools, tool_choice
+        if mode not in _TOOL_CHOICE_LITERAL_MODES:
+            return fmt_tools, {"type": "function", "name": mode}
+
+        return fmt_tools, mode

@@ -614,7 +614,7 @@ class Agent:
 
     async def _reasoning_impl(
         self,
-        tool_choice: ToolChoice = "auto",
+        tool_choice: ToolChoice | None = None,
     ) -> AsyncGenerator[
         ModelCallStartEvent
         | TextBlockStartEvent

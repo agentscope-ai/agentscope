@@ -151,11 +151,10 @@ class OllamaChatModel(ChatModelBase):
 
         kwargs.update(generate_kwargs)
 
-        if tools:
-            kwargs["tools"] = tools
+        fmt_tools, _ = self._format_tools(tools, tool_choice)
 
-        if tool_choice:
-            logger.warning("Ollama does not support tool_choice yet, ignored.")
+        if fmt_tools:
+            kwargs["tools"] = fmt_tools
 
         start_datetime = datetime.now()
         response = await client.chat(**kwargs)
@@ -164,6 +163,42 @@ class OllamaChatModel(ChatModelBase):
             return self._parse_stream_response(start_datetime, response)
 
         return await self._parse_completion_response(start_datetime, response)
+
+    def _format_tools(
+        self,
+        tools: list[dict] | None,
+        tool_choice: ToolChoice | None,
+    ) -> tuple[list[dict] | None, None]:
+        """Validate, filter tools, and warn if tool_choice is set.
+
+        Ollama does not support ``tool_choice`` natively. When
+        ``tool_choice.tools`` is specified the schemas list is filtered to
+        only those tools. Any ``tool_choice.mode`` value is ignored with a
+        warning.
+
+        Args:
+            tools (`list[dict] | None`):
+                The raw tool schemas.
+            tool_choice (`ToolChoice | None`):
+                The tool choice configuration.
+
+        Returns:
+            `tuple[list[dict] | None, None]`:
+                A tuple of (filtered_tools, None) — tool_choice is always
+                ``None`` since Ollama does not support it.
+        """
+        if tool_choice and tools:
+            self._validate_tool_choice(tool_choice, tools)
+            if tool_choice.get("tools"):
+                allowed = set(tool_choice["tools"])
+                tools = [t for t in tools if t["function"]["name"] in allowed]
+
+        if tool_choice and tool_choice.get("mode"):
+            logger.warning(
+                "Ollama does not support tool_choice yet, ignored.",
+            )
+
+        return tools, None
 
     async def _parse_stream_response(
         self,
