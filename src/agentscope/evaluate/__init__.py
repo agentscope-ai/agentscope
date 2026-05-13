@@ -17,6 +17,7 @@ from ._benchmark_base import BenchmarkBase
 from ._evaluator_storage import (
     EvaluatorStorageBase,
     FileEvaluatorStorage,
+    AgentLoopEvaluatorStorage,
 )
 from ._ace_benchmark import (
     ACEBenchmark,
@@ -24,6 +25,10 @@ from ._ace_benchmark import (
     ACEProcessAccuracy,
     ACEPhone,
 )
+from ._agentloop_benchmark import (
+    AgentLoopBenchmark,
+)
+from ._agentloop_config import AgentLoopConfig
 
 __all__ = [
     "BenchmarkBase",
@@ -35,10 +40,13 @@ __all__ = [
     "MetricType",
     "EvaluatorStorageBase",
     "FileEvaluatorStorage",
+    "AgentLoopEvaluatorStorage",
     "Task",
     "SolutionOutput",
     "ACEBenchmark",
     "ACEAccuracy",
     "ACEProcessAccuracy",
     "ACEPhone",
+    "AgentLoopBenchmark",
+    "AgentLoopConfig",
 ]
