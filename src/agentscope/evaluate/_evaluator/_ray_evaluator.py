@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """The evaluator base class in agentscope."""
 import asyncio
-from typing import Callable, Awaitable, Coroutine, Any
+from collections.abc import Awaitable, Callable, Coroutine
+from typing import Any
 
 from ._in_memory_exporter import _InMemoryExporter
 from .._benchmark_base import BenchmarkBase

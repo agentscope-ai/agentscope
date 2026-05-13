@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The unittests for toolkit middleware."""
-from typing import Callable, AsyncGenerator, Coroutine, Any
+from collections.abc import AsyncGenerator, Callable, Coroutine
+from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from agentscope.message import TextBlock, ToolUseBlock

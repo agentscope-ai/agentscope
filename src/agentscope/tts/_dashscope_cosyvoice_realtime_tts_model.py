@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """DashScope CosyVoice Realtime TTS model implementation."""
 
-from typing import Any, Literal, AsyncGenerator
+from collections.abc import AsyncGenerator
+from typing import Any, Literal
 
 from ._tts_base import TTSModelBase
 from ._tts_response import TTSResponse

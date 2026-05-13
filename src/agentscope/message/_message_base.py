@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """The message class in agentscope."""
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Literal, List, overload, Sequence
+from typing import Literal, overload
 
 import shortuuid
 
@@ -197,19 +198,19 @@ class Msg:
 
     def get_content_blocks(
         self,
-        block_type: ContentBlockTypes | List[ContentBlockTypes] | None = None,
+        block_type: ContentBlockTypes | list[ContentBlockTypes] | None = None,
     ) -> Sequence[ContentBlock]:
         """Get the content in block format. If the content is a string,
         it will be converted to a text block.
 
         Args:
-            block_type (`ContentBlockTypes | List[ContentBlockTypes] | None`, \
+            block_type (`ContentBlockTypes | list[ContentBlockTypes] | None`, \
             optional):
                 The type of the block to be extracted. If `None`, all blocks
                 will be returned.
 
         Returns:
-            `List[ContentBlock]`:
+            `list[ContentBlock]`:
                 The content blocks.
         """
         blocks = []

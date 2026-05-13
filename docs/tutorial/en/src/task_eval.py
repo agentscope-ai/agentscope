@@ -123,7 +123,7 @@ class CheckEqual(MetricBase):
 # - A ``Task`` is a unit in the benchmark that includes all information for the agent to execute and evaluate (e.g., input/query and its ground truth).
 # - A ``Benchmark`` organizes multiple tasks for systematic evaluation.
 
-from typing import Generator
+from collections.abc import Generator
 from agentscope.evaluate import (
     Task,
     BenchmarkBase,
@@ -186,7 +186,7 @@ class ToyBenchmark(BenchmarkBase):
 
 import os
 import asyncio
-from typing import Callable
+from collections.abc import Callable
 from pydantic import BaseModel
 
 from agentscope.message import Msg

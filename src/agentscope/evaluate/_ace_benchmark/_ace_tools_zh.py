@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """The Chinese tools for ACEBench evaluation."""
+from collections.abc import Callable
 from functools import wraps
-from typing import Callable, Any
+from typing import Any
 
 from ._ace_tools_api import (
     ReminderApi,

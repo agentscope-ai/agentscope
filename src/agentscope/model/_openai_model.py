@@ -3,16 +3,10 @@
 """OpenAI Chat model class."""
 import copy
 import warnings
-from datetime import datetime
-from typing import (
-    Any,
-    TYPE_CHECKING,
-    List,
-    AsyncGenerator,
-    Literal,
-    Type,
-)
 from collections import OrderedDict
+from collections.abc import AsyncGenerator
+from datetime import datetime
+from typing import Any, Literal, TYPE_CHECKING
 
 from pydantic import BaseModel
 
@@ -178,7 +172,7 @@ class OpenAIChatModel(ChatModelBase):
         messages: list[dict],
         tools: list[dict] | None = None,
         tool_choice: Literal["auto", "none", "required"] | str | None = None,
-        structured_model: Type[BaseModel] | None = None,
+        structured_model: type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Get the response from OpenAI chat completions API by the given
@@ -196,7 +190,7 @@ class OpenAIChatModel(ChatModelBase):
                  Can be "auto", "none", "required", or specific tool
                  name. For more details, please refer to
                  https://platform.openai.com/docs/api-reference/responses/create#responses_create-tool_choice
-            structured_model (`Type[BaseModel] | None`, default `None`):
+            structured_model (`type[BaseModel] | None`, default `None`):
                 A Pydantic BaseModel class that defines the expected structure
                 for the model's output. When provided, the model will be forced
                 to return data that conforms to this schema by automatically
@@ -347,7 +341,7 @@ class OpenAIChatModel(ChatModelBase):
         self,
         start_datetime: datetime,
         response: AsyncStream,
-        structured_model: Type[BaseModel] | None = None,
+        structured_model: type[BaseModel] | None = None,
     ) -> AsyncGenerator[ChatResponse, None]:
         """Given an OpenAI streaming completion response, extract the content
          blocks and usages from it and yield ChatResponse objects.
@@ -357,7 +351,7 @@ class OpenAIChatModel(ChatModelBase):
                 The start datetime of the response generation.
             response (`AsyncStream`):
                 OpenAI AsyncStream object to parse.
-            structured_model (`Type[BaseModel] | None`, default `None`):
+            structured_model (`type[BaseModel] | None`, default `None`):
                 A Pydantic BaseModel class that defines the expected structure
                 for the model's output.
 
@@ -379,7 +373,7 @@ class OpenAIChatModel(ChatModelBase):
         tool_calls = OrderedDict()
         last_input_objs = {}  # Store last input_obj for each tool_call
         metadata: dict | None = None
-        contents: List[
+        contents: list[
             TextBlock | ToolUseBlock | ThinkingBlock | AudioBlock
         ] = []
         last_contents = None
@@ -562,7 +556,7 @@ class OpenAIChatModel(ChatModelBase):
         self,
         start_datetime: datetime,
         response: ChatCompletion,
-        structured_model: Type[BaseModel] | None = None,
+        structured_model: type[BaseModel] | None = None,
     ) -> ChatResponse:
         """Given an OpenAI chat completion response object, extract the content
             blocks and usages from it.
@@ -572,7 +566,7 @@ class OpenAIChatModel(ChatModelBase):
                 The start datetime of the response generation.
             response (`ChatCompletion`):
                 OpenAI ChatCompletion object to parse.
-            structured_model (`Type[BaseModel] | None`, default `None`):
+            structured_model (`type[BaseModel] | None`, default `None`):
                 A Pydantic BaseModel class that defines the expected structure
                 for the model's output.
 
@@ -584,7 +578,7 @@ class OpenAIChatModel(ChatModelBase):
             If `structured_model` is not `None`, the expected structured output
             will be stored in the metadata of the `ChatResponse`.
         """
-        content_blocks: List[
+        content_blocks: list[
             TextBlock | ToolUseBlock | ThinkingBlock | AudioBlock
         ] = []
         metadata: dict | None = None

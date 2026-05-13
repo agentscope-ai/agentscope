@@ -4,7 +4,7 @@ embeddings in binary files."""
 import hashlib
 import json
 import os
-from typing import Any, List
+from typing import Any
 
 import numpy as np
 
@@ -52,7 +52,7 @@ class FileEmbeddingCache(EmbeddingCacheBase):
 
     async def store(
         self,
-        embeddings: List[Embedding],
+        embeddings: list[Embedding],
         identifier: JSONSerializableObject,
         overwrite: bool = False,
         **kwargs: Any,
@@ -60,7 +60,7 @@ class FileEmbeddingCache(EmbeddingCacheBase):
         """Store the embeddings with the given identifier.
 
         Args:
-            embeddings (`List[Embedding]`):
+            embeddings (`list[Embedding]`):
                 The embeddings to store.
             identifier (`JSONSerializableObject`):
                 The identifier to distinguish the embeddings, which will be
@@ -89,7 +89,7 @@ class FileEmbeddingCache(EmbeddingCacheBase):
     async def retrieve(
         self,
         identifier: JSONSerializableObject,
-    ) -> List[Embedding] | None:
+    ) -> list[Embedding] | None:
         """Retrieve the embeddings with the given identifier. If not found,
         return `None`.
 

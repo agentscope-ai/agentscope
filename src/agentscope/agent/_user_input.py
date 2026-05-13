@@ -6,7 +6,7 @@ from abc import abstractmethod
 from dataclasses import dataclass
 from queue import Queue
 from threading import Event
-from typing import Any, Type, List
+from typing import Any
 
 import jsonschema
 import requests
@@ -29,7 +29,7 @@ from ..message import (
 class UserInputData:
     """The user input data."""
 
-    blocks_input: List[TextBlock | ImageBlock | AudioBlock | VideoBlock] = None
+    blocks_input: list[TextBlock | ImageBlock | AudioBlock | VideoBlock] = None
     """The text input from the user"""
 
     structured_input: dict[str, Any] | None = None
@@ -45,7 +45,7 @@ class UserInputBase:
         agent_id: str,
         agent_name: str,
         *args: Any,
-        structured_model: Type[BaseModel] | None = None,
+        structured_model: type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> UserInputData:
         """The user input method, which returns the user input and the
@@ -56,7 +56,7 @@ class UserInputBase:
                 The agent identifier.
             agent_name (`str`):
                 The agent name.
-            structured_model (`Type[BaseModel] | None`, optional):
+            structured_model (`type[BaseModel] | None`, optional):
                 A base model class that defines the structured input format.
 
         Returns:
@@ -77,7 +77,7 @@ class TerminalUserInput(UserInputBase):
         agent_id: str,
         agent_name: str,
         *args: Any,
-        structured_model: Type[BaseModel] | None = None,
+        structured_model: type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> UserInputData:
         """Handle the user input from the terminal.
@@ -87,7 +87,7 @@ class TerminalUserInput(UserInputBase):
                 The agent identifier.
             agent_name (`str`):
                 The agent name.
-            structured_model (`Type[BaseModel] | None`, optional):
+            structured_model (`type[BaseModel] | None`, optional):
                 A base model class that defines the structured input format.
 
         Returns:
@@ -258,7 +258,7 @@ class StudioUserInput(UserInputBase):
         @self.sio.on("forwardUserInput", namespace=self._websocket_namespace)
         def receive_user_input(
             request_id: str,
-            blocks_input: List[
+            blocks_input: list[
                 TextBlock | ImageBlock | AudioBlock | VideoBlock
             ],
             structured_input: dict[str, Any],
@@ -338,7 +338,7 @@ class StudioUserInput(UserInputBase):
         agent_id: str,
         agent_name: str,
         *args: Any,
-        structured_model: Type[BaseModel] | None = None,
+        structured_model: type[BaseModel] | None = None,
     ) -> UserInputData:
         """Get the user input from AgentScope Studio.
 
@@ -347,7 +347,7 @@ class StudioUserInput(UserInputBase):
                 The identity of the agent.
             agent_name (`str`):
                 The name of the agent.
-            structured_model (`Type[BaseModel] | None`, optional):
+            structured_model (`type[BaseModel] | None`, optional):
                 The base model class of the structured input.
 
         Raises:

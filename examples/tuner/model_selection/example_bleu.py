@@ -3,7 +3,7 @@
 
 import os
 import logging
-from typing import Dict, Any
+from typing import Any
 from agentscope.agent import ReActAgent
 from agentscope.formatter import OpenAIChatFormatter
 from agentscope.message import Msg
@@ -49,13 +49,13 @@ models = [
 
 
 async def translation_workflow(
-    task: Dict[str, Any],
+    task: dict[str, Any],
     model: Any,
 ) -> WorkflowOutput:
     """A workflow function using the ReAct agent to perform translation tasks.
 
     Args:
-        task (Dict[str, Any]): The translation task
+        task (dict[str, Any]): The translation task
         containing source text and target language.
         model: The model to use for the agent.
 
@@ -92,13 +92,13 @@ async def translation_workflow(
 
 
 async def bleu_judge(
-    task: Dict[str, Any],
+    task: dict[str, Any],
     response: Any,
 ) -> JudgeOutput:
     """A judge function to calculate BLEU score for translation quality.
 
     Args:
-        task (Dict[str, Any]): The task information.
+        task (dict[str, Any]): The task information.
         response (Any): A composite dict containing the workflow response
             and metrics.
 

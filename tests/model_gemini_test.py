@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Unit tests for Google Gemini API model class."""
 import json
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import Mock, patch, AsyncMock
 from pydantic import BaseModel

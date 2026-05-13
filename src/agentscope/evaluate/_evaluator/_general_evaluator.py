@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """General evaluator implementation in AgentScope, which is easy to debug
 compared to the RayEvaluator."""
-from typing import Callable, Awaitable, Coroutine, Any
+from collections.abc import Awaitable, Callable, Coroutine
+from typing import Any
 
 from ._evaluator_base import EvaluatorBase
 from ._in_memory_exporter import _InMemoryExporter

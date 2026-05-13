@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The OpenAI text embedding model class."""
 from datetime import datetime
-from typing import Any, List
+from typing import Any
 
 from ._embedding_response import EmbeddingResponse
 from ._embedding_usage import EmbeddingUsage
@@ -48,13 +48,13 @@ class OpenAITextEmbedding(EmbeddingModelBase):
 
     async def __call__(
         self,
-        text: List[str | TextBlock],
+        text: list[str | TextBlock],
         **kwargs: Any,
     ) -> EmbeddingResponse:
         """Call the OpenAI embedding API.
 
         Args:
-            text (`List[str | TextBlock]`):
+            text (`list[str | TextBlock]`):
                 The input text to be embedded. It can be a list of strings.
         """
         gather_text = []

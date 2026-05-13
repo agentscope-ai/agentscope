@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Configuration conversion for tuner."""
-from typing import Any, Callable, List, Tuple
+from collections.abc import Callable
 from datetime import datetime
+from typing import Any
 import inspect
 
 from ._workflow import WorkflowType
@@ -123,13 +124,13 @@ def _to_trinity_config(
 
 def _load_config_from_path_or_default(
     config_path: str | None,
-) -> Tuple[Any, bool]:
+) -> tuple[Any, bool]:
     """Load configuration from the given path or default template.
 
     Args:
         config_path (`str | None`): The path to the configuration file.
     Returns:
-        `Tuple[Any, bool]`: The loaded configuration and a boolean
+        `tuple[Any, bool]`: The loaded configuration and a boolean
             indicating whether the default template was used.
     """
     from trinity.common.config import (
@@ -217,17 +218,17 @@ def check_judge_function(
 
 def _check_function_signature(
     func: Callable,
-    essential_params: List[str],
-    optional_params: List[str] | None = None,
+    essential_params: list[str],
+    optional_params: list[str] | None = None,
 ) -> None:
     """
     Check if the given function has the required signature.
 
     Args:
         func (`Callable`): The function to check.
-        essential_params (`List[str]`): List of essential parameter names
+        essential_params (`list[str]`): List of essential parameter names
             that must be present in the function.
-        optional_params (`List[str] | None`): List of optional parameter names
+        optional_params (`list[str] | None`): List of optional parameter names
             that can be present in the function.
     """
     if optional_params is None:

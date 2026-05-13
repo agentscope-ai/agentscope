@@ -60,7 +60,7 @@
 
 """
 import asyncio
-from typing import Any, Type
+from typing import Any
 
 from agentscope.agent import ReActAgentBase, AgentBase
 from agentscope.message import Msg

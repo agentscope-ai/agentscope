@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The dashscope embedding module in agentscope."""
 from datetime import datetime
-from typing import Any, List, Literal
+from typing import Any, Literal
 
 from ._cache_base import EmbeddingCacheBase
 from ._embedding_response import EmbeddingResponse
@@ -106,13 +106,13 @@ class DashScopeTextEmbedding(EmbeddingModelBase):
 
     async def __call__(
         self,
-        text: List[str | TextBlock],
+        text: list[str | TextBlock],
         **kwargs: Any,
     ) -> EmbeddingResponse:
         """Call the DashScope embedding API.
 
         Args:
-            text (`List[str | TextBlock]`):
+            text (`list[str | TextBlock]`):
                 The input text to be embedded. It can be a list of strings.
         """
         gather_text = []

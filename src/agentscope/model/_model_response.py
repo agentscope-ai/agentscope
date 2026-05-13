@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """The model response module."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Literal, Sequence
+from typing import Literal
 
 from ._model_usage import ChatUsage
 from .._utils._common import _get_timestamp

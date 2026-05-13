@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The base class for benchmark evaluation."""
 from abc import ABC, abstractmethod
-from typing import Generator
+from collections.abc import Generator
 
 from ._task import Task
 

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The embedding response class."""
 from dataclasses import dataclass, field
-from typing import Literal, List
+from typing import Literal
 
 from ._embedding_usage import EmbeddingUsage
 from .._utils._common import _get_timestamp
@@ -13,7 +13,7 @@ from ..types import Embedding
 class EmbeddingResponse(DictMixin):
     """The embedding response class."""
 
-    embeddings: List[Embedding]
+    embeddings: list[Embedding]
     """The embedding data"""
 
     id: str = field(default_factory=lambda: _get_timestamp(True))

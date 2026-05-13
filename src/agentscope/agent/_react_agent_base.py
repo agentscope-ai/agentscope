@@ -2,7 +2,8 @@
 """The base class for ReAct agent in agentscope."""
 from abc import abstractmethod
 from collections import OrderedDict
-from typing import Callable, Any
+from collections.abc import Callable
+from typing import Any
 
 from ._agent_base import AgentBase
 from ._agent_meta import _ReActAgentMeta

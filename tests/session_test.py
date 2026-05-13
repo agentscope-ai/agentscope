@@ -3,7 +3,7 @@
 import os
 import sys
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Union
+from typing import Any
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, patch
 
@@ -38,7 +38,7 @@ class MyAgent(AgentBase):
 
     async def handle_interrupt(
         self,
-        msg: Union[Msg, list[Msg], None] = None,
+        msg: Msg | list[Msg] | None = None,
     ) -> Msg:
         """Handle interrupt."""
 
@@ -169,8 +169,8 @@ class _FakeSession:
 
     user_id: str
     session_id: str
-    update_time: Optional[int] = None
-    metadata: Optional[Dict[str, Any]] = field(default_factory=dict)
+    update_time: int | None = None
+    metadata: dict[str, Any] | None = field(default_factory=dict)
 
 
 class _FakeMemoryStore:
@@ -205,7 +205,7 @@ class _FakeMemoryStore:
         self,
         user_id: str,
         session_id: str,
-    ) -> Optional[_FakeSession]:
+    ) -> _FakeSession | None:
         """Get a session."""
         return self._sessions.get((user_id, session_id))
 

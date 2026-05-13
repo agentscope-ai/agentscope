@@ -3,7 +3,8 @@
 
 import base64
 import threading
-from typing import TYPE_CHECKING, AsyncGenerator, Any
+from collections.abc import AsyncGenerator
+from typing import Any, TYPE_CHECKING
 
 from ._tts_response import TTSResponse
 from .._logging import logger

@@ -4,17 +4,10 @@
 import base64
 import copy
 import warnings
+from collections.abc import AsyncGenerator, AsyncIterator
 from datetime import datetime
 import json
-from typing import (
-    AsyncGenerator,
-    Any,
-    TYPE_CHECKING,
-    AsyncIterator,
-    Literal,
-    Type,
-    List,
-)
+from typing import Any, Literal, TYPE_CHECKING
 
 from pydantic import BaseModel
 
@@ -204,7 +197,7 @@ class GeminiChatModel(ChatModelBase):
         messages: list[dict],
         tools: list[dict] | None = None,
         tool_choice: Literal["auto", "none", "required"] | str | None = None,
-        structured_model: Type[BaseModel] | None = None,
+        structured_model: type[BaseModel] | None = None,
         **config_kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Call the Gemini model with the provided arguments.
@@ -221,7 +214,7 @@ class GeminiChatModel(ChatModelBase):
                  Can be "auto", "none", "required", or specific tool name.
                  For more details, please refer to
                  https://ai.google.dev/gemini-api/docs/function-calling?hl=en&example=meeting#function_calling_modes
-            structured_model (`Type[BaseModel] | None`, default `None`):
+            structured_model (`type[BaseModel] | None`, default `None`):
                 A Pydantic BaseModel class that defines the expected structure
                 for the model's output.
 
@@ -338,7 +331,7 @@ class GeminiChatModel(ChatModelBase):
         self,
         start_datetime: datetime,
         response: AsyncIterator[GenerateContentResponse],
-        structured_model: Type[BaseModel] | None = None,
+        structured_model: type[BaseModel] | None = None,
     ) -> AsyncGenerator[ChatResponse, None]:
         """Given a Gemini streaming generation response, extract the
         content blocks and usages from it and yield ChatResponse objects.
@@ -348,7 +341,7 @@ class GeminiChatModel(ChatModelBase):
                 The start datetime of the response generation.
             response (`AsyncIterator[GenerateContentResponse]`):
                 Gemini GenerateContentResponse async iterator to parse.
-            structured_model (`Type[BaseModel] | None`, default `None`):
+            structured_model (`type[BaseModel] | None`, default `None`):
                 A Pydantic BaseModel class that defines the expected structure
                 for the model's output.
 
@@ -452,7 +445,7 @@ class GeminiChatModel(ChatModelBase):
         self,
         start_datetime: datetime,
         response: GenerateContentResponse,
-        structured_model: Type[BaseModel] | None = None,
+        structured_model: type[BaseModel] | None = None,
     ) -> ChatResponse:
         """Given a Gemini chat completion response object, extract the content
            blocks and usages from it.
@@ -462,7 +455,7 @@ class GeminiChatModel(ChatModelBase):
                 The start datetime of the response generation.
             response (`GenerateContentResponse`):
                 The Gemini generation response object to parse.
-            structured_model (`Type[BaseModel] | None`, default `None`):
+            structured_model (`type[BaseModel] | None`, default `None`):
                 A Pydantic BaseModel class that defines the expected structure
                 for the model's output.
 
@@ -474,7 +467,7 @@ class GeminiChatModel(ChatModelBase):
             If `structured_model` is not `None`, the expected structured output
             will be stored in the metadata of the `ChatResponse`.
         """
-        content_blocks: List[TextBlock | ToolUseBlock | ThinkingBlock] = []
+        content_blocks: list[TextBlock | ToolUseBlock | ThinkingBlock] = []
         metadata: dict | None = None
         tool_calls: list = []
 
@@ -558,11 +551,11 @@ class GeminiChatModel(ChatModelBase):
          any references.
 
         Args:
-            schemas (`dict[str, Any]`):
+            schemas (`list[dict[str, Any]]`):
                 The tools JSON schemas.
 
         Returns:
-            List[Dict[str, Any]]:
+            list[dict[str, Any]]:
                 A list containing a dictionary with the
                 "function_declarations" key, which maps to a list of
                 function definitions.

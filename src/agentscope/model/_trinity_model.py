@@ -1,9 +1,6 @@
 # -*- coding: utf-8 -*-
 """A model class for RL Training with Trinity-RFT."""
-from typing import (
-    Optional,
-    TYPE_CHECKING,
-)
+from typing import TYPE_CHECKING
 from typing_extensions import deprecated
 from ._openai_model import OpenAIChatModel
 from ..types import JSONSerializableObject
@@ -25,7 +22,7 @@ class TrinityChatModel(OpenAIChatModel):
         self,
         openai_async_client: AsyncOpenAI,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
-        enable_thinking: Optional[bool] = None,
+        enable_thinking: bool | None = None,
     ) -> None:
         """Initialize the Trinity model class.
 

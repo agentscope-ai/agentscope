@@ -5,7 +5,8 @@ Please refer to the `official documentation <https://dashscope.aliyun.com/>`_
  for more details.
 """
 import base64
-from typing import Literal, Sequence
+from collections.abc import Sequence
+from typing import Literal
 
 import os
 
