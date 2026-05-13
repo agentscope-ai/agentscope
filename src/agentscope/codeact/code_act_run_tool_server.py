@@ -1,14 +1,16 @@
 # -*- coding: utf-8 -*-
+"""HTTP server for running CodeAct tools."""
 
 import ast
-import logging
-import uvicorn
 import asyncio
-from threading import Thread
+import logging
 import uuid
-from pydantic import BaseModel
+from threading import Thread
+
+import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from ..message._message_block import ToolUseBlock
 from ..tool._toolkit import Toolkit
@@ -18,15 +20,16 @@ logger = logging.getLogger(__name__)
 
 
 class RunToolRequest(BaseModel):
+    """Request model for running a tool."""
+
     tool_name: str
     tool_args: dict
 
 
 class CodeActRunToolServer:
-    """An http server, accept run tool request, call the actual tool, and return the tool call result."""
+    """An HTTP server that accepts run-tool requests, calls the tool, and returns the result."""
 
     def __init__(self, port: int, toolkit: Toolkit):
-        """"""
         if not port or port <= 0:
             raise ValueError(
                 "CodeActRunToolServer missing a positive port argument"
@@ -36,6 +39,7 @@ class CodeActRunToolServer:
 
         self._port = port
         self._toolkit = toolkit
+        self.code_act_server_thread = None
 
     async def start(self):
         """Launch the server."""
@@ -43,17 +47,23 @@ class CodeActRunToolServer:
         app = FastAPI(
             title="AgentScope CodeAct Run Tool Server",
             version="1.0",
-            description="An http server, accept run tool request, call the actual tool, and return the tool call result.",
+            description=(
+                "An HTTP server that accepts run-tool requests, "
+                "calls the actual tool, and returns the result."
+            ),
         )
 
         @app.post("/run_tool")
         async def run_tool(requst: RunToolRequest) -> JSONResponse:
-            """Handle a run-tool request by calling the tool in toolkit"""
+            """Handle a run-tool request by calling the tool in toolkit."""
 
             try:
                 request_id = uuid.uuid4().hex
                 logger.info(
-                    f"/run_tool, request_id:{request_id}, tool_name:{requst.tool_name}, tool_args:{requst.tool_args}"
+                    "/run_tool, request_id:%s, tool_name:%s, tool_args:%s",
+                    request_id,
+                    requst.tool_name,
+                    requst.tool_args,
                 )
 
                 tool_use_block = ToolUseBlock(
@@ -63,9 +73,12 @@ class CodeActRunToolServer:
                     input=requst.tool_args or {},
                 )
 
-                # NOTE: For now assuming the tool only returns once, and returns a TextBlock
+                # NOTE: For now assuming the tool only returns once,
+                # and returns a TextBlock
                 # TODO: support generator style results
-                result = await self._toolkit.call_tool_function(tool_use_block)
+                result = await self._toolkit.call_tool_function(
+                    tool_use_block
+                )
 
                 result_text = ""
                 # ToolResponse object
@@ -86,13 +99,24 @@ class CodeActRunToolServer:
                         # json cannot handle set object like {'a', 'b'}.
                         # Return a list to caller
                         tool_call_result = list(tool_call_result)
-                        tool_call_result_type = type(tool_call_result).__name__
+                        tool_call_result_type = type(
+                            tool_call_result
+                        ).__name__
                         logger.info(
-                            f"/run_tool, request_id:{request_id}, casted set to list, {tool_call_result}"
+                            "/run_tool, request_id:%s, "
+                            "casted set to list, %s",
+                            request_id,
+                            tool_call_result,
                         )
 
                     logger.info(
-                        f"/run_tool, request_id:{request_id}, casted result_text |{result_text}| to |{tool_call_result}| of type {tool_call_result_type}"
+                        "/run_tool, request_id:%s, "
+                        "casted result_text |%s| to |%s| "
+                        "of type %s",
+                        request_id,
+                        result_text,
+                        tool_call_result,
+                        tool_call_result_type,
                     )
                     return JSONResponse(
                         content={
@@ -103,7 +127,10 @@ class CodeActRunToolServer:
                     )
                 except Exception:
                     logger.warning(
-                        f"/run_tool, request_id:{request_id}, return text type directly |{result_text}|",
+                        "/run_tool, request_id:%s, "
+                        "return text type directly |%s|",
+                        request_id,
+                        result_text,
                         exc_info=True,
                     )
                     return JSONResponse(
@@ -111,9 +138,16 @@ class CodeActRunToolServer:
                         status_code=200,
                     )
             except Exception as e:
-                error_msg = f"/run_tool, failed to call tool, name:{requst.tool_name}, args:{requst.tool_args}, request_id:{request_id}, {str(e)}"
-                logger.error(error_msg)
-                raise HTTPException(status_code=500, detail=error_msg)
+                error_msg = (
+                    "/run_tool, failed to call tool, "
+                    f"name:{requst.tool_name}, "
+                    f"args:{requst.tool_args}, "
+                    f"request_id:{request_id}, {str(e)}"
+                )
+                logger.error("%s", error_msg)
+                raise HTTPException(
+                    status_code=500, detail=error_msg
+                ) from e
 
         @app.get("/heartbeat")
         async def heartbeat() -> JSONResponse:
@@ -128,8 +162,11 @@ class CodeActRunToolServer:
             except Exception as e:
                 raise HTTPException(
                     status_code=500,
-                    detail=f"CodeActRunToolServer is not functional, {str(e)}",
-                )
+                    detail=(
+                        f"CodeActRunToolServer is not functional, "
+                        f"{str(e)}"
+                    ),
+                ) from e
 
         host = "0.0.0.0"
 
@@ -143,4 +180,8 @@ class CodeActRunToolServer:
 
         # wait for the server to be fully started
         await asyncio.sleep(3)
-        logger.info(f"CodeActRunToolServer is running on {host}:{self._port}")
+        logger.info(
+            "CodeActRunToolServer is running on %s:%s",
+            host,
+            self._port,
+        )
