@@ -33,7 +33,7 @@ class CodeActRunToolServer:
     def __init__(self, port: int, toolkit: Toolkit):
         if not port or port <= 0:
             raise ValueError(
-                "CodeActRunToolServer missing a positive port argument"
+                "CodeActRunToolServer missing a positive port argument",
             )
         if not toolkit:
             raise ValueError("CodeActRunToolServer missing toolkit argument")
@@ -78,7 +78,7 @@ class CodeActRunToolServer:
                 # and returns a TextBlock
                 # TODO: support generator style results
                 result = await self._toolkit.call_tool_function(
-                    tool_use_block
+                    tool_use_block,
                 )
 
                 result_text = ""
@@ -101,7 +101,7 @@ class CodeActRunToolServer:
                         # Return a list to caller
                         tool_call_result = list(tool_call_result)
                         tool_call_result_type = type(
-                            tool_call_result
+                            tool_call_result,
                         ).__name__
                         logger.info(
                             "/run_tool, request_id:%s, "
@@ -147,7 +147,8 @@ class CodeActRunToolServer:
                 )
                 logger.error("%s", error_msg)
                 raise HTTPException(
-                    status_code=500, detail=error_msg
+                    status_code=500,
+                    detail=error_msg,
                 ) from e
 
         @app.get("/heartbeat")
@@ -156,7 +157,8 @@ class CodeActRunToolServer:
             try:
                 if self._toolkit.get_json_schemas():
                     return JSONResponse(
-                        content={"status": "ok"}, status_code=200
+                        content={"status": "ok"},
+                        status_code=200,
                     )
 
                 raise ValueError("cannot find any active tool")
@@ -164,8 +166,7 @@ class CodeActRunToolServer:
                 raise HTTPException(
                     status_code=500,
                     detail=(
-                        f"CodeActRunToolServer is not functional, "
-                        f"{str(e)}"
+                        f"CodeActRunToolServer is not functional, {str(e)}"
                     ),
                 ) from e
 
