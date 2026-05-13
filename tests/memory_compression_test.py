@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
 """The unittest for memory compression."""
-from typing import Any
+from typing import Any, AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.agent import ReActAgent
@@ -250,4 +250,140 @@ N/A</system-info>"""
         self.assertListEqual(
             model.received_messages,
             expected_received_messages,
+        )
+
+    async def test_compression_stream_no_chunks_does_not_crash(self) -> None:
+        """Regression test for the AttributeError reported in issue #1546.
+
+        When the compression model is configured with ``stream=True`` but the
+        async generator yields zero chunks (e.g. an empty model response or a
+        silent structured-output parse failure), ``last_chunk`` remains
+        ``None``. Before the fix, ``last_chunk.metadata`` raised
+        ``AttributeError: 'NoneType' object has no attribute 'metadata'`` and
+        crashed the entire ``reply()`` loop. Now the agent should log a
+        warning and continue to a normal turn instead of aborting.
+        """
+
+        class StreamingNoChunkModel(ChatModelBase):
+            """Stream-mode model that yields zero chunks for the compression
+            call, mimicking an empty/parse-failed structured response."""
+
+            def __init__(self) -> None:
+                super().__init__(model_name="mock-stream", stream=True)
+                self.call_count = 0
+                self.received_messages: list[list[dict]] = []
+
+            async def __call__(
+                self,
+                messages: list[dict],
+                **kwargs: Any,
+            ) -> AsyncGenerator[ChatResponse, None]:
+                self.call_count += 1
+                self.received_messages.append(messages)
+
+                async def _empty() -> AsyncGenerator[ChatResponse, None]:
+                    for _ in ():  # pragma: no cover - never yields
+                        yield _
+
+                return _empty()
+
+        model = StreamingNoChunkModel()
+        agent = ReActAgent(
+            name="Friday",
+            sys_prompt="You are a helpful assistant.",
+            model=model,
+            formatter=MockFormatter(),
+            compression_config=ReActAgent.CompressionConfig(
+                enable=True,
+                trigger_threshold=100,  # Low threshold to trigger compression
+                agent_token_counter=CharTokenCounter(),
+                keep_recent=1,
+            ),
+        )
+
+        msgs = [
+            Msg("user", "1", "user"),
+            Msg("user", "This is a long message " * 100, "user"),
+            Msg("user", "2", "user"),
+        ]
+
+        # Should not raise AttributeError. Compression silently no-ops.
+        with self.assertLogs("as", level="WARNING") as captured:
+            await agent(msgs)
+
+        # No compressed summary should be stored when the stream yielded
+        # nothing.
+        self.assertEqual(agent.memory._compressed_summary, "")
+        # The "no response" path should be taken, not the "no metadata" path,
+        # so the warning string identifies the empty-stream case.
+        self.assertTrue(
+            any(
+                "yielded zero chunks" in record.message
+                for record in captured.records
+            ),
+            f"Expected 'yielded zero chunks' warning, got: "
+            f"{[r.message for r in captured.records]}",
+        )
+
+    async def test_compression_stream_with_chunks_succeeds(self) -> None:
+        """Stream-mode compression with a real chunk should still produce a
+        summary. Guards against the regression-test fix accidentally
+        short-circuiting the happy path."""
+
+        class StreamingChunkModel(ChatModelBase):
+            """Stream-mode model that yields a single chunk with metadata."""
+
+            def __init__(self) -> None:
+                super().__init__(model_name="mock-stream", stream=True)
+                self.call_count = 0
+                self.received_messages: list[list[dict]] = []
+
+            async def __call__(
+                self,
+                messages: list[dict],
+                **kwargs: Any,
+            ) -> AsyncGenerator[ChatResponse, None]:
+                self.call_count += 1
+                self.received_messages.append(messages)
+
+                async def _gen() -> AsyncGenerator[ChatResponse, None]:
+                    yield ChatResponse(
+                        content=[
+                            TextBlock(type="text", text="streamed"),
+                        ],
+                        metadata={
+                            "task_overview": "Streamed summary.",
+                            "current_state": "In progress",
+                            "important_discoveries": "N/A",
+                            "next_steps": "N/A",
+                            "context_to_preserve": "N/A",
+                        },
+                    )
+
+                return _gen()
+
+        model = StreamingChunkModel()
+        agent = ReActAgent(
+            name="Friday",
+            sys_prompt="You are a helpful assistant.",
+            model=model,
+            formatter=MockFormatter(),
+            compression_config=ReActAgent.CompressionConfig(
+                enable=True,
+                trigger_threshold=100,
+                agent_token_counter=CharTokenCounter(),
+                keep_recent=1,
+            ),
+        )
+
+        msgs = [
+            Msg("user", "1", "user"),
+            Msg("user", "This is a long message " * 100, "user"),
+            Msg("user", "2", "user"),
+        ]
+        await agent(msgs)
+
+        self.assertIn(
+            "Streamed summary.",
+            agent.memory._compressed_summary,
         )

@@ -1108,8 +1108,19 @@ class ReActAgent(ReActAgentBase):
             else:
                 last_chunk = res
 
-            # Format the compressed memory summary
-            if last_chunk.metadata:
+            # Format the compressed memory summary. ``last_chunk`` can be
+            # ``None`` when the compression model is streaming and yields
+            # zero chunks (e.g. an empty response or silent structured-output
+            # parse failure); accessing ``.metadata`` on ``None`` would raise
+            # ``AttributeError`` and crash the reply loop.
+            if last_chunk is None:
+                logger.warning(
+                    "Compression model produced no response in agent %s; "
+                    "the streaming generator yielded zero chunks. "
+                    "Skipping memory compression for this turn.",
+                    self.name,
+                )
+            elif last_chunk.metadata:
                 # Update the compressed summary in the memory storage
                 await self.memory.update_compressed_summary(
                     self.compression_config.summary_template.format(
