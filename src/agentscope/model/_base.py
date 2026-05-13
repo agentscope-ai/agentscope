@@ -1,92 +1,125 @@
 # -*- coding: utf-8 -*-
-"""The chat model base class."""
+"""The base class for the chat models."""
+import inspect
 import json
 from abc import abstractmethod
 from copy import deepcopy
-from typing import AsyncGenerator, Any, TYPE_CHECKING, Type
+from pathlib import Path
+from typing import Type, Any, AsyncGenerator
 
 import jsonschema
 from pydantic import BaseModel
 
-from ._model_response import ChatResponse, StructuredResponse
+from ._model_response import StructuredResponse, ChatResponse
+from ._model_card import ModelCard
 from .._logging import logger
 from .._utils._common import _json_loads_with_repair
-from ..formatter import FormatterBase
 from ..message import (
     Msg,
     TextBlock,
-    ThinkingBlock,
+    UserMsg,
     ToolCallBlock,
+    ThinkingBlock,
     ToolResultBlock,
     DataBlock,
     URLSource,
     Base64Source,
-    UserMsg,
 )
-
-if TYPE_CHECKING:
-    from ..tool import ToolChoice
-else:
-    ToolChoice = Any
+from ..tool import ToolChoice
 
 _TOOL_CHOICE_MODES = ["auto", "none", "required"]
 
 
 class ChatModelBase:
-    """Base class for chat models."""
+    """The base class for chat models."""
 
-    model_name: str
-    """The model name"""
+    class Parameters(BaseModel):
+        """Each subclass should implement this inner class to define its
+        parameters."""
+
+    model: str
+    """The model name."""
 
     stream: bool
-    """Is the model output streaming or not"""
+    """The enable stream output for the LLM output."""
 
     max_retries: int
-    """Maximum number of retries on failure"""
+    """The maximum retries for the Anthropic API."""
 
-    context_length: int
-    """The context length of the model, which will be used in context
-    compression."""
-
-    fallback_model_name: str | None
-    """Fallback model name to use after all retries fail"""
-
-    formatter: FormatterBase
-    """The API formatter that format the messages into the required format for
-    the underlying API."""
+    context_size: int
+    """The model context size that will be used in the context compression."""
 
     def __init__(
         self,
-        model_name: str,
-        stream: bool,
-        context_length: int,
-        formatter: FormatterBase,
-        max_retries: int = 0,
-        fallback_model_name: str | None = None,
+        model: str,
+        stream: bool = True,
+        max_retries: int = 3,
+        context_size: int = 32768,
     ) -> None:
-        """Initialize the chat model base class.
+        """Initialize the chat model base.
 
         Args:
-            model_name (`str`):
-                The name of the model
-            stream (`bool`):
-                Whether the model output is streaming or not
-            context_length (`int`):
-                The context length of the model, which will be used
-                in context compression.
-            formatter (`FormatterBase`):
-                Formatter for message preprocessing.
-            max_retries (`int`, optional):
-                Maximum number of retries on failure. Defaults to 0.
-            fallback_model_name (`str | None`, optional):
-                Fallback model name to use after all retries fail.
+            model (`str`):
+                The model name.
+            stream (`bool`, defaults to `True`):
+                Whether to enable streaming output for the LLM.
+            max_retries (`int`, defaults to `3`):
+                The maximum number of retries for API calls.
+            context_size (`int`, defaults to `32768`):
+                The model context size used for context compression.
         """
-        self.model_name = model_name
+        self.model = model
         self.stream = stream
-        self.context_length = context_length
         self.max_retries = max_retries
-        self.fallback_model_name = fallback_model_name
-        self.formatter = formatter
+        self.context_size = context_size
+
+    @classmethod
+    def list_models(
+        cls,
+        custom_yaml_dir: str | None = None,
+    ) -> list[ModelCard]:
+        """List candidate models of the API.
+
+        Args:
+            custom_yaml_dir (`str | None`):
+                The custom YAML directory.
+
+        Returns:
+            `list[ModelCard]`:
+                A list of candidate models.
+        """
+
+        # Determine YAML directory
+        if custom_yaml_dir is None:
+            # Use the ``_models`` directory that sits next to the concrete
+            # subclass's source file (not this base file).
+            subclass_file = Path(inspect.getfile(cls))
+            yaml_dir = subclass_file.parent / "_models"
+        else:
+            yaml_dir = Path(custom_yaml_dir)
+
+        # Find all .yaml files
+        yaml_files = list(yaml_dir.glob("*.yaml"))
+
+        # Load each YAML file and create ModelCard
+        model_cards = []
+        for yaml_file in yaml_files:
+            try:
+                card = ModelCard.from_yaml(
+                    yaml_path=str(yaml_file),
+                    parameter_class=cls.Parameters,
+                )
+                model_cards.append(card)
+            except Exception as e:
+                # Log error but continue with other files
+                logger.warning(
+                    "Warning: Failed to load %s: %s",
+                    yaml_file,
+                    str(e),
+                )
+                continue
+
+        return model_cards
 
     async def __call__(
         self,
@@ -114,42 +147,38 @@ class ChatModelBase:
 
         last_error: Exception | None = None
 
-        for model_name in self._models_to_try():
-            for attempt in range(self.max_retries + 1):
-                try:
-                    return await self._call_api(
-                        model_name,
-                        messages=messages,
-                        tools=tools,
-                        tool_choice=tool_choice,
-                        **kwargs,
+        for attempt in range(self.max_retries + 1):
+            try:
+                return await self._call_api(
+                    self.model,
+                    messages=messages,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                    **kwargs,
+                )
+            except Exception as e:
+                last_error = e
+                if attempt < self.max_retries:
+                    logger.warning(
+                        "Attempt %d failed for model %s: %s. Retrying...",
+                        attempt + 1,
+                        self.model,
+                        str(e),
                     )
-                except Exception as e:
-                    last_error = e
-                    if attempt < self.max_retries:
-                        logger.warning(
-                            "Attempt %d failed for model %s: %s. Retrying...",
-                            attempt + 1,
-                            model_name,
-                            str(e),
-                        )
-                    else:
-                        logger.warning(
-                            "All %d attempt(s) failed for model %s.",
-                            self.max_retries + 1,
-                            model_name,
-                        )
+                else:
+                    logger.warning(
+                        "All %d attempt(s) failed for model %s.",
+                        self.max_retries + 1,
+                        self.model,
+                    )
 
         if last_error is not None:
             raise last_error
-        raise RuntimeError("No models to try")
 
-    def _models_to_try(self) -> list[str]:
-        """Return the ordered list of model names to try."""
-        models = [self.model_name]
-        if self.fallback_model_name:
-            models.append(self.fallback_model_name)
-        return models
+        raise RuntimeError(
+            f"Failed to call model {self.model} after "
+            f"{self.max_retries + 1} retries.",
+        )
 
     @abstractmethod
     async def _call_api(
@@ -318,34 +347,37 @@ class ChatModelBase:
 
         last_error: Exception | None = None
 
-        for model_name in self._models_to_try():
-            for attempt in range(self.max_retries + 1):
-                try:
-                    return await self._call_api_with_structured_output(
-                        model_name,
-                        messages=messages,
-                        structured_model=structured_model,
-                        **kwargs,
+        for attempt in range(self.max_retries + 1):
+            try:
+                return await self._call_api_with_structured_output(
+                    self.model,
+                    messages=messages,
+                    structured_model=structured_model,
+                    **kwargs,
+                )
+            except Exception as e:
+                last_error = e
+                if attempt < self.max_retries:
+                    logger.warning(
+                        "Attempt %d failed for model %s: %s. Retrying...",
+                        attempt + 1,
+                        self.model,
+                        str(e),
                     )
-                except Exception as e:
-                    last_error = e
-                    if attempt < self.max_retries:
-                        logger.warning(
-                            "Attempt %d failed for model %s: %s. Retrying...",
-                            attempt + 1,
-                            model_name,
-                            str(e),
-                        )
-                    else:
-                        logger.warning(
-                            "All %d attempt(s) failed for model %s.",
-                            self.max_retries + 1,
-                            model_name,
-                        )
+                else:
+                    logger.warning(
+                        "All %d attempt(s) failed for model %s.",
+                        self.max_retries + 1,
+                        self.model,
+                    )
 
         if last_error is not None:
             raise last_error
-        raise RuntimeError("No models to try")
+
+        raise RuntimeError(
+            f"Failed to generate structured output after "
+            f"{self.max_retries + 1} retries.",
+        )
 
     async def _call_api_with_structured_output(
         self,

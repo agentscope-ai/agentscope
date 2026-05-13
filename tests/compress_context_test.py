@@ -469,7 +469,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
 
     async def test_context_compression(self) -> None:
         """Test the context compression logic."""
-        model = MockModel(context_length=100)
+        model = MockModel(context_size=100)
         agent = Agent(
             name="Friday",
             system_prompt="".join(["0" for _ in range(20 * 4)]),

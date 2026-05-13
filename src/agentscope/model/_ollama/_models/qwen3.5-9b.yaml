@@ -1,0 +1,17 @@
+name: qwen3.5
+label: Qwen3.5 9B
+status: active
+
+input_types:
+  - text/plain
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 262144
+output_size: 8192
+
+parameter_overrides:
+  max_tokens:
+    maximum: 8192

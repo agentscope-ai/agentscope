@@ -2,10 +2,12 @@
 """The Ollama formatter module."""
 import base64
 import fnmatch
+import json
 from abc import ABC
 from typing import Any
 
 import requests
+from pydantic import Field
 
 from ._formatter_base import FormatterBase
 from .._logging import logger
@@ -16,6 +18,7 @@ from ..message import (
     DataBlock,
     ToolCallBlock,
     ToolResultBlock,
+    ThinkingBlock,
     URLSource,
     Base64Source,
 )
@@ -24,8 +27,6 @@ from ..message import (
 class _OllamaFormatterBase(FormatterBase, ABC):
     """Base class for Ollama formatters, providing shared data block
     formatting logic."""
-
-    supported_input_media_types: list[str]
 
     def _format_ollama_data_block(
         self,
@@ -81,7 +82,7 @@ class _OllamaFormatterBase(FormatterBase, ABC):
         if isinstance(source, Base64Source):
             return source.data
         elif isinstance(source, URLSource):
-            url = source.url
+            url = str(source.url)
             if url.startswith("file://"):
                 # Local file - read and convert to base64
                 file_path = url.removeprefix("file://")
@@ -104,14 +105,13 @@ class OllamaChatFormatter(_OllamaFormatterBase):
     participants in the conversation.
     """
 
-    def __init__(
-        self,
-        supported_input_media_types: list[str] | None = None,
-    ) -> None:
-        super().__init__(
-            supported_input_media_types=supported_input_media_types
-            or ["image/*"],
-        )
+    input_types: list[str] = Field(
+        default_factory=lambda: ["text/plain", "image/*"],
+        description=(
+            "The supported input types. "
+            'Defaults to ``["text/plain", "image/*"]``.'
+        ),
+    )
 
     async def format(
         self,
@@ -146,6 +146,11 @@ class OllamaChatFormatter(_OllamaFormatterBase):
                     if formatted_image:
                         images.append(formatted_image)
 
+                elif isinstance(block, ThinkingBlock):
+                    # Ollama does not use reasoning content in the context
+                    # — skip thinking blocks silently.
+                    pass
+
                 elif isinstance(block, ToolCallBlock):
                     messages.append(
                         {
@@ -157,7 +162,11 @@ class OllamaChatFormatter(_OllamaFormatterBase):
                                 {
                                     "function": {
                                         "name": block.name,
-                                        "arguments": block.input,
+                                        # Ollama SDK expects a dict, not a
+                                        # JSON string.
+                                        "arguments": json.loads(
+                                            block.input or "{}",
+                                        ),
                                     },
                                 },
                             ],
@@ -172,7 +181,16 @@ class OllamaChatFormatter(_OllamaFormatterBase):
                         multimodal_data,
                     ) = self.convert_tool_result_to_string(block.output)
 
-                    # If there's multimodal data, insert a user message
+                    # Ollama expects tool results as a separate "tool" role
+                    # message, regardless of the containing Msg's role.
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "content": textual_output,
+                        },
+                    )
+
+                    # If there's multimodal data, append an extra user message.
                     if multimodal_data:
                         user_images = []
                         user_content_parts = []
@@ -197,9 +215,6 @@ class OllamaChatFormatter(_OllamaFormatterBase):
                         if user_images:
                             user_msg["images"] = user_images
                         messages.append(user_msg)
-                    else:
-                        # No multimodal data, just add text to content
-                        content_parts.append(textual_output)
 
                 else:
                     logger.warning(
@@ -228,29 +243,22 @@ class OllamaMultiAgentFormatter(_OllamaFormatterBase):
     a user and an agent are involved.
     """
 
-    def __init__(
-        self,
-        conversation_history_prompt: str = (
+    conversation_history_prompt: str = Field(
+        default=(
             "# Conversation History\n"
             "The content between <history></history> tags contains "
             "your conversation history\n"
         ),
-        supported_input_media_types: list[str] | None = None,
-    ) -> None:
-        """Initialize the Ollama multi-agent formatter.
+        description="The prompt to use for the conversation history section.",
+    )
 
-        Args:
-            conversation_history_prompt (`str`):
-                The prompt to use for the conversation history section.
-            supported_input_media_types (`list[str] | None`, optional):
-                The list of supported input media types. Defaults to
-                ``["image/*"]``.
-        """
-        super().__init__(
-            supported_input_media_types=supported_input_media_types
-            or ["image/*"],
-        )
-        self.conversation_history_prompt = conversation_history_prompt
+    input_types: list[str] = Field(
+        default_factory=lambda: ["text/plain", "image/*"],
+        description=(
+            "The supported input types. "
+            'Defaults to ``["text/plain", "image/*"]``.'
+        ),
+    )
 
     async def format(self, msgs: list[Msg]) -> list[dict[str, Any]]:
         """Format input messages into the structure required by the Ollama
@@ -289,7 +297,7 @@ class OllamaMultiAgentFormatter(_OllamaFormatterBase):
     ) -> list[dict[str, Any]]:
         """Format a sequence of tool-related messages."""
         return await OllamaChatFormatter(
-            supported_input_media_types=self.supported_input_media_types,
+            input_types=self.input_types,
         ).format(msgs)
 
     async def _format_agent_message(
@@ -314,8 +322,8 @@ class OllamaMultiAgentFormatter(_OllamaFormatterBase):
                     formatted_image = self._format_ollama_data_block(block)
                     if formatted_image:
                         images.append(formatted_image)
-                elif isinstance(block, HintBlock):
-                    pass  # Ollama does not support hint blocks
+                elif isinstance(block, (HintBlock, ThinkingBlock)):
+                    pass  # Ollama does not use hint/thinking blocks
                 else:
                     logger.warning(
                         "Unsupported block type %s in agent message, skipped.",

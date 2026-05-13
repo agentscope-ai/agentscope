@@ -7,8 +7,9 @@ from typing import Any
 from urllib.parse import urlparse
 
 import requests
+from pydantic import Field
 
-from . import FormatterBase
+from ._formatter_base import FormatterBase
 from .._logging import logger
 from ..message import (
     Msg,
@@ -19,6 +20,7 @@ from ..message import (
     ToolCallBlock,
     ToolResultBlock,
     HintBlock,
+    ThinkingBlock,
     UserMsg,
 )
 
@@ -26,8 +28,6 @@ from ..message import (
 class _OpenAIFormatterBase(FormatterBase, ABC):
     """Base class for OpenAI formatters, providing shared data block
     formatting logic."""
-
-    supported_input_media_types: list[str]
 
     def _format_openai_data_block(
         self,
@@ -105,15 +105,16 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
             url = f"data:{source.media_type};base64,{source.data}"
 
         elif isinstance(source, URLSource):
-            if source.url.startswith("file://"):
+            url_str = str(source.url)
+            if url_str.startswith("file://"):
                 # Local file — read and encode as base64 data URI
-                local_path = source.url.removeprefix("file://")
+                local_path = url_str.removeprefix("file://")
                 with open(local_path, "rb") as f:
                     encoded = base64.b64encode(f.read()).decode("utf-8")
                 url = f"data:{source.media_type};base64,{encoded}"
             else:
                 # Remote URL — pass through as-is
-                url = source.url
+                url = url_str
 
         else:
             raise ValueError(f"Unsupported image source type: {type(source)}")
@@ -156,9 +157,10 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
             }
 
         if isinstance(source, URLSource):
-            if source.url.startswith("file://"):
+            url_str = str(source.url)
+            if url_str.startswith("file://"):
                 # Local file
-                local_path = source.url.removeprefix("file://")
+                local_path = url_str.removeprefix("file://")
                 extension = local_path.rsplit(".", 1)[-1].lower()
                 if extension not in ["wav", "mp3"]:
                     raise TypeError(
@@ -169,14 +171,14 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
                     data = base64.b64encode(f.read()).decode("utf-8")
             else:
                 # Remote URL — download and encode
-                parsed = urlparse(source.url)
+                parsed = urlparse(url_str)
                 extension = parsed.path.rsplit(".", 1)[-1].lower()
                 if extension not in ["wav", "mp3"]:
                     raise TypeError(
                         f"Unsupported audio file extension: {extension}, "
                         "wav and mp3 are supported.",
                     )
-                response = requests.get(source.url)
+                response = requests.get(url_str)
                 response.raise_for_status()
                 data = base64.b64encode(response.content).decode("utf-8")
 
@@ -197,22 +199,13 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
     identify different entities in the conversation.
     """
 
-    def __init__(
-        self,
-        supported_input_media_types: list[str] | None = None,
-    ) -> None:
-        """Initialize the OpenAI chat formatter.
-
-        Args:
-            supported_input_media_types (`list[str] | None`, optional):
-                The list of supported input media types, using glob-style
-                patterns (e.g. ``"image/*"``, ``"audio/mp3"``). Defaults to
-                ``["image/*", "audio/*"]``.
-        """
-        super().__init__(
-            supported_input_media_types=supported_input_media_types
-            or ["image/*", "audio/*"],
-        )
+    input_types: list[str] = Field(
+        default_factory=lambda: ["text/plain", "image/*", "audio/*"],
+        description=(
+            "The supported input types. "
+            'Defaults to ``["text/plain", "image/*", "audio/*"]``.'
+        ),
+    )
 
     async def format(
         self,
@@ -302,6 +295,11 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                             ),
                         )
 
+                elif isinstance(block, ThinkingBlock):
+                    # OpenAI API does not accept reasoning/thinking content
+                    # in conversation history — skip thinking blocks silently.
+                    pass
+
                 else:
                     logger.warning(
                         "Unsupported block type %s in the message, skipped.",
@@ -336,30 +334,22 @@ class OpenAIMultiAgentFormatter(_OpenAIFormatterBase):
         OpenAI-compatible services like vLLM, Azure OpenAI, and others.
     """
 
-    def __init__(
-        self,
-        conversation_history_prompt: str = (
+    conversation_history_prompt: str = Field(
+        default=(
             "# Conversation History\n"
             "The content between <history></history> tags contains "
             "your conversation history\n"
         ),
-        supported_input_media_types: list[str] | None = None,
-    ) -> None:
-        """Initialize the OpenAI multi-agent formatter.
+        description="The prompt to use for the conversation history section.",
+    )
 
-        Args:
-            conversation_history_prompt (`str`):
-                The prompt to use for the conversation history section.
-            supported_input_media_types (`list[str] | None`, optional):
-                The list of supported input media types, using glob-style
-                patterns (e.g. ``"image/*"``, ``"audio/mp3"``). Defaults to
-                ``["image/*", "audio/*"]``.
-        """
-        super().__init__(
-            supported_input_media_types=supported_input_media_types
-            or ["image/*", "audio/*"],
-        )
-        self.conversation_history_prompt = conversation_history_prompt
+    input_types: list[str] = Field(
+        default_factory=lambda: ["text/plain", "image/*", "audio/*"],
+        description=(
+            "The supported input types. "
+            'Defaults to ``["text/plain", "image/*", "audio/*"]``.'
+        ),
+    )
 
     async def format(self, msgs: list[Msg]) -> list[dict[str, Any]]:
         """Format input messages into the structure required by the OpenAI API
@@ -399,7 +389,7 @@ class OpenAIMultiAgentFormatter(_OpenAIFormatterBase):
         """Given a sequence of tool call/result messages, format them into
         the required format for the OpenAI API."""
         return await OpenAIChatFormatter(
-            supported_input_media_types=self.supported_input_media_types,
+            input_types=self.input_types,
         ).format(msgs)
 
     async def _format_agent_message(
