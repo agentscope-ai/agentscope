@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
 from agentscope.model import AnthropicChatModel
 from agentscope.credential import AnthropicCredential
+from agentscope.tool import ToolChoice
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +199,7 @@ class TestAnthropicFormatTools(unittest.TestCase):
         """Auto mode returns converted tools and type=auto."""
         fmt_tools, fmt_choice = self.model._format_tools(
             _FT_TOOLS,
-            {"mode": "auto"},
+            ToolChoice(mode="auto"),
         )
         self.assertEqual(fmt_tools, _FT_TOOLS_ANTHROPIC)
         self.assertEqual(fmt_choice, {"type": "auto"})
@@ -207,7 +208,7 @@ class TestAnthropicFormatTools(unittest.TestCase):
         """None mode returns converted tools and type=none."""
         fmt_tools, fmt_choice = self.model._format_tools(
             _FT_TOOLS,
-            {"mode": "none"},
+            ToolChoice(mode="none"),
         )
         self.assertEqual(fmt_tools, _FT_TOOLS_ANTHROPIC)
         self.assertEqual(fmt_choice, {"type": "none"})
@@ -216,7 +217,7 @@ class TestAnthropicFormatTools(unittest.TestCase):
         """Required mode maps to type=any."""
         fmt_tools, fmt_choice = self.model._format_tools(
             _FT_TOOLS,
-            {"mode": "required"},
+            ToolChoice(mode="required"),
         )
         self.assertEqual(fmt_tools, _FT_TOOLS_ANTHROPIC)
         self.assertEqual(fmt_choice, {"type": "any"})
@@ -225,7 +226,7 @@ class TestAnthropicFormatTools(unittest.TestCase):
         """A specific tool name forces that tool call."""
         fmt_tools, fmt_choice = self.model._format_tools(
             _FT_TOOLS,
-            {"mode": "get_weather"},
+            ToolChoice(mode="get_weather"),
         )
         self.assertEqual(fmt_tools, _FT_TOOLS_ANTHROPIC)
         self.assertEqual(fmt_choice, {"type": "tool", "name": "get_weather"})
@@ -234,7 +235,7 @@ class TestAnthropicFormatTools(unittest.TestCase):
         """When tool_choice.tools is set, only those tools are included."""
         fmt_tools, fmt_choice = self.model._format_tools(
             _FT_TOOLS,
-            {"mode": "auto", "tools": ["get_weather"]},
+            ToolChoice(mode="auto", tools=["get_weather"]),
         )
         self.assertEqual(len(fmt_tools), 1)
         self.assertEqual(fmt_tools[0]["name"], "get_weather")

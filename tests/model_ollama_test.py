@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 
 from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
 from agentscope.model import OllamaChatModel
+from agentscope.tool import ToolChoice
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +152,7 @@ class TestOllamaFormatTools(unittest.TestCase):
         """When tool_choice.tools is set, only those tools are included."""
         fmt_tools, fmt_choice = self.model._format_tools(
             _FT_TOOLS,
-            {"mode": "auto", "tools": ["get_weather"]},
+            ToolChoice(mode="auto", tools=["get_weather"]),
         )
         self.assertIsNotNone(fmt_tools)
         assert fmt_tools is not None

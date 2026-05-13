@@ -161,7 +161,7 @@ class AnthropicChatModel(ChatModelBase):
             }
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
-        if fmt_tools is not None:
+        if fmt_tools:
             kwargs["tools"] = fmt_tools
         if fmt_tool_choice is not None:
             kwargs["tool_choice"] = fmt_tool_choice
@@ -425,8 +425,8 @@ class AnthropicChatModel(ChatModelBase):
         """
         if tool_choice and tools:
             self._validate_tool_choice(tool_choice, tools)
-            if tool_choice.get("tools"):
-                allowed = set(tool_choice["tools"])
+            if tool_choice.tools:
+                allowed = set(tool_choice.tools)
                 tools = [t for t in tools if t["function"]["name"] in allowed]
 
         fmt_tools = None
@@ -457,7 +457,7 @@ class AnthropicChatModel(ChatModelBase):
         if not tool_choice:
             return fmt_tools, None
 
-        mode = tool_choice["mode"]
+        mode = tool_choice.mode
 
         if mode not in _TOOL_CHOICE_LITERAL_MODES:
             # mode is a specific tool name — force call it

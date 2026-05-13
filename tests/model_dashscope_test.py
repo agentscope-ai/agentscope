@@ -15,6 +15,7 @@ from unittest.mock import MagicMock
 from agentscope.message import TextBlock, ToolCallBlock
 from agentscope.model import DashScopeChatModel
 from agentscope.credential import DashScopeCredential
+from agentscope.tool import ToolChoice
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +162,7 @@ class TestDashScopeFormatTools(unittest.TestCase):
         """Auto mode returns tools unchanged and string 'auto'."""
         fmt_tools, fmt_choice = self.model._format_tools(
             _FT_TOOLS,
-            {"mode": "auto"},
+            ToolChoice(mode="auto"),
         )
         self.assertEqual(fmt_tools, _FT_TOOLS)
         self.assertEqual(fmt_choice, "auto")
@@ -170,7 +171,7 @@ class TestDashScopeFormatTools(unittest.TestCase):
         """None mode returns tools unchanged and string 'none'."""
         fmt_tools, fmt_choice = self.model._format_tools(
             _FT_TOOLS,
-            {"mode": "none"},
+            ToolChoice(mode="none"),
         )
         self.assertEqual(fmt_tools, _FT_TOOLS)
         self.assertEqual(fmt_choice, "none")
@@ -180,7 +181,7 @@ class TestDashScopeFormatTools(unittest.TestCase):
         with self.assertWarns(DeprecationWarning):
             fmt_tools, fmt_choice = self.model._format_tools(
                 _FT_TOOLS,
-                {"mode": "required"},
+                ToolChoice(mode="required"),
             )
         self.assertEqual(fmt_tools, _FT_TOOLS)
         self.assertEqual(fmt_choice, "auto")
@@ -189,7 +190,7 @@ class TestDashScopeFormatTools(unittest.TestCase):
         """A specific tool name forces that tool call."""
         fmt_tools, fmt_choice = self.model._format_tools(
             _FT_TOOLS,
-            {"mode": "get_weather"},
+            ToolChoice(mode="get_weather"),
         )
         self.assertEqual(fmt_tools, _FT_TOOLS)
         self.assertEqual(
@@ -201,7 +202,7 @@ class TestDashScopeFormatTools(unittest.TestCase):
         """When tool_choice.tools is set, only those tools are included."""
         fmt_tools, fmt_choice = self.model._format_tools(
             _FT_TOOLS,
-            {"mode": "auto", "tools": ["get_weather"]},
+            ToolChoice(mode="auto", tools=["get_weather"]),
         )
         self.assertEqual(len(fmt_tools), 1)
         self.assertEqual(fmt_tools[0]["function"]["name"], "get_weather")

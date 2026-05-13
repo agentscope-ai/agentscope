@@ -189,11 +189,11 @@ class OllamaChatModel(ChatModelBase):
         """
         if tool_choice and tools:
             self._validate_tool_choice(tool_choice, tools)
-            if tool_choice.get("tools"):
-                allowed = set(tool_choice["tools"])
+            if tool_choice.tools:
+                allowed = set(tool_choice.tools)
                 tools = [t for t in tools if t["function"]["name"] in allowed]
 
-        if tool_choice and tool_choice.get("mode"):
+        if tool_choice and tool_choice.mode:
             logger.warning(
                 "Ollama does not support tool_choice yet, ignored.",
             )

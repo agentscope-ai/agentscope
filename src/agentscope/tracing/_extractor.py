@@ -148,9 +148,9 @@ def _get_tool_definitions(
             List of tool definitions in OpenAI format with nested
             structure: ``[{"type": "function", "function": {...}}]``
         tool_choice (`ToolChoice | None`, optional):
-            Tool choice configuration dict with 'mode' and optional
-            'tools' fields. If mode is "none", returns None to indicate
-            tools should not be traced.
+            Tool choice configuration with ``mode`` and optional ``tools``
+            fields. If mode is ``"none"``, returns None to indicate tools
+            should not be traced.
 
     Returns:
         `str | None`:
@@ -164,7 +164,7 @@ def _get_tool_definitions(
         return None
 
     # Tool choice is explicitly "none" (model should not use tools)
-    if isinstance(tool_choice, dict) and tool_choice.get("mode") == "none":
+    if tool_choice is not None and tool_choice.mode == "none":
         return None
 
     try:

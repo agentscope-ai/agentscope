@@ -222,8 +222,8 @@ class XAIChatModel(ChatModelBase):
 
         if tool_choice and tools:
             self._validate_tool_choice(tool_choice, tools)
-            if tool_choice.get("tools"):
-                allowed = set(tool_choice["tools"])
+            if tool_choice.tools:
+                allowed = set(tool_choice.tools)
                 tools = [t for t in tools if t["function"]["name"] in allowed]
 
         xai_tools = None
@@ -243,7 +243,7 @@ class XAIChatModel(ChatModelBase):
         if not tool_choice:
             return xai_tools, None
 
-        mode = tool_choice["mode"]
+        mode = tool_choice.mode
 
         if mode in _TOOL_CHOICE_LITERAL_MODES:
             return xai_tools, mode

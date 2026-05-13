@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
 from agentscope.model import GeminiChatModel
 from agentscope.credential import GeminiCredential
+from agentscope.tool import ToolChoice
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +189,7 @@ class TestGeminiFormatTools(unittest.TestCase):
         """Auto mode returns function_declarations and AUTO config."""
         fmt_tools, fmt_choice = self.model._format_tools(
             _FT_TOOLS,
-            {"mode": "auto"},
+            ToolChoice(mode="auto"),
         )
         self.assertEqual(fmt_tools, _FT_TOOLS_GEMINI)
         self.assertEqual(
@@ -200,7 +201,7 @@ class TestGeminiFormatTools(unittest.TestCase):
         """None mode returns function_declarations and NONE config."""
         fmt_tools, fmt_choice = self.model._format_tools(
             _FT_TOOLS,
-            {"mode": "none"},
+            ToolChoice(mode="none"),
         )
         self.assertEqual(fmt_tools, _FT_TOOLS_GEMINI)
         self.assertEqual(
@@ -212,7 +213,7 @@ class TestGeminiFormatTools(unittest.TestCase):
         """Required mode maps to ANY config."""
         fmt_tools, fmt_choice = self.model._format_tools(
             _FT_TOOLS,
-            {"mode": "required"},
+            ToolChoice(mode="required"),
         )
         self.assertEqual(fmt_tools, _FT_TOOLS_GEMINI)
         self.assertEqual(
@@ -224,7 +225,7 @@ class TestGeminiFormatTools(unittest.TestCase):
         """A specific tool name restricts via allowed_function_names."""
         fmt_tools, fmt_choice = self.model._format_tools(
             _FT_TOOLS,
-            {"mode": "get_weather"},
+            ToolChoice(mode="get_weather"),
         )
         self.assertEqual(fmt_tools, _FT_TOOLS_GEMINI)
         self.assertEqual(
@@ -241,7 +242,7 @@ class TestGeminiFormatTools(unittest.TestCase):
         """When tool_choice.tools is set, only those tools are included."""
         fmt_tools, fmt_choice = self.model._format_tools(
             _FT_TOOLS,
-            {"mode": "auto", "tools": ["get_weather"]},
+            ToolChoice(mode="auto", tools=["get_weather"]),
         )
         self.assertEqual(len(fmt_tools[0]["function_declarations"]), 1)
         self.assertEqual(

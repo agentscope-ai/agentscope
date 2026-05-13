@@ -213,44 +213,24 @@ class ChatModelBase:
 
         Args:
             tool_choice (`ToolChoice | None`):
-                Tool choice dict with 'mode' and optional 'tools' fields.
+                Tool choice with ``mode`` and optional ``tools`` fields.
             tools (`list[dict] | None`):
-                Available tools list
+                Available tools list.
 
         Raises:
             `ValueError`:
-                If tool_choice is not a valid dict, or mode/tools values
-                are invalid.
+                If mode or tool names are invalid.
         """
         if tool_choice is None:
             return
 
-        if not isinstance(tool_choice, dict):
-            raise ValueError(
-                f"tool_choice must be a dict, got {type(tool_choice)}",
-            )
-
-        mode = tool_choice.get("mode")
-        if mode is None:
-            raise ValueError(
-                "tool_choice must contain a 'mode' field.",
-            )
-        if not isinstance(mode, str):
-            raise ValueError(
-                f"tool_choice 'mode' must be a str, got {type(mode)}",
-            )
-
+        mode = tool_choice.mode
         available_functions = [
             tool["function"]["name"] for tool in (tools or [])
         ]
 
-        tool_names = tool_choice.get("tools")
+        tool_names = tool_choice.tools
         if tool_names is not None:
-            if not isinstance(tool_names, list):
-                raise ValueError(
-                    f"tool_choice 'tools' field must be a list, "
-                    f"got {type(tool_names)}",
-                )
             for name in tool_names:
                 if name not in available_functions:
                     raise ValueError(

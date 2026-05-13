@@ -20,6 +20,7 @@ from agentscope.message import (
 )
 from agentscope.model import XAIChatModel
 from agentscope.credential import XAICredential
+from agentscope.tool import ToolChoice
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +291,7 @@ class TestXAIFormatTools(unittest.TestCase):
         """Auto mode returns xai_sdk tools and string 'auto'."""
         fmt_tools, fmt_choice = self.model._format_tools(
             _FT_TOOLS,
-            {"mode": "auto"},
+            ToolChoice(mode="auto"),
         )
         self.assertIsNotNone(fmt_tools)
         self.assertEqual(fmt_choice, "auto")
@@ -299,7 +300,7 @@ class TestXAIFormatTools(unittest.TestCase):
         """None mode returns xai_sdk tools and string 'none'."""
         fmt_tools, fmt_choice = self.model._format_tools(
             _FT_TOOLS,
-            {"mode": "none"},
+            ToolChoice(mode="none"),
         )
         self.assertIsNotNone(fmt_tools)
         self.assertEqual(fmt_choice, "none")
@@ -308,7 +309,7 @@ class TestXAIFormatTools(unittest.TestCase):
         """A specific tool name returns a required_tool stub object."""
         fmt_tools, fmt_choice = self.model._format_tools(
             _FT_TOOLS,
-            {"mode": "get_weather"},
+            ToolChoice(mode="get_weather"),
         )
         self.assertIsNotNone(fmt_tools)
         self.assertEqual(fmt_choice.tool_name, "get_weather")
@@ -317,7 +318,7 @@ class TestXAIFormatTools(unittest.TestCase):
         """When tool_choice.tools is set, only those tools are included."""
         fmt_tools, fmt_choice = self.model._format_tools(
             _FT_TOOLS,
-            {"mode": "auto", "tools": ["get_weather"]},
+            ToolChoice(mode="auto", tools=["get_weather"]),
         )
         self.assertEqual(len(fmt_tools), 1)
         self.assertEqual(fmt_tools[0].name, "get_weather")

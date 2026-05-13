@@ -516,8 +516,8 @@ class DashScopeChatModel(ChatModelBase):
         """
         if tool_choice and tools:
             self._validate_tool_choice(tool_choice, tools)
-            if tool_choice.get("tools"):
-                allowed = set(tool_choice["tools"])
+            if tool_choice.tools:
+                allowed = set(tool_choice.tools)
                 tools = [t for t in tools if t["function"]["name"] in allowed]
 
         fmt_tools = None
@@ -538,7 +538,7 @@ class DashScopeChatModel(ChatModelBase):
         if not tool_choice:
             return fmt_tools, None
 
-        mode = tool_choice["mode"]
+        mode = tool_choice.mode
 
         if mode not in _TOOL_CHOICE_LITERAL_MODES:
             # mode is a specific tool name — force call it
