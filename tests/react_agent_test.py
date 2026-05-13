@@ -10,7 +10,7 @@ from agentscope.formatter import DashScopeChatFormatter
 from agentscope.memory import InMemoryMemory
 from agentscope.message import TextBlock, ToolUseBlock, Msg
 from agentscope.model import ChatModelBase, ChatResponse
-from agentscope.tool import Toolkit
+from agentscope.tool import Toolkit, ToolResponse
 
 
 class MyModel(ChatModelBase):
@@ -51,6 +51,37 @@ class MyModel(ChatModelBase):
             return ChatResponse(
                 content=self.fake_content_2,
             )
+
+
+class ReturnDirectModel(ChatModelBase):
+    """Test model class for return_direct behavior."""
+
+    def __init__(self) -> None:
+        """Initialize the test model."""
+        super().__init__("test_model", stream=False)
+        self.call_count = 0
+
+    async def __call__(
+        self,
+        _messages: list[dict],
+        **kwargs: Any,
+    ) -> ChatResponse:
+        """Mock model call."""
+        self.call_count += 1
+        if self.call_count == 1:
+            return ChatResponse(
+                content=[
+                    ToolUseBlock(
+                        type="tool_use",
+                        name="direct_answer",
+                        id="tool_1",
+                        input={"answer": "done"},
+                    ),
+                ],
+            )
+        return ChatResponse(
+            content=[TextBlock(type="text", text="should_not_be_returned")],
+        )
 
 
 async def pre_reasoning_hook(self: ReActAgent, _kwargs: Any) -> None:
@@ -189,3 +220,33 @@ class ReActAgentTest(IsolatedAsyncioTestCase):
             agent.finish_function_name in agent.toolkit.tools,
             "generate_response should be removed when no structured_model",
         )
+
+    async def test_react_agent_return_direct_tool(self) -> None:
+        """Test ReAct agent exits loop when calling return_direct tool."""
+        model = ReturnDirectModel()
+        toolkit = Toolkit()
+
+        def direct_answer(answer: str) -> ToolResponse:
+            return ToolResponse(
+                content=[TextBlock(type="text", text=f"final:{answer}")],
+            )
+
+        toolkit.register_tool_function(
+            direct_answer,
+            func_name="direct_answer",
+            return_direct=True,
+        )
+
+        agent = ReActAgent(
+            name="Friday",
+            sys_prompt="You are a helpful assistant named Friday.",
+            model=model,
+            formatter=DashScopeChatFormatter(),
+            memory=InMemoryMemory(),
+            toolkit=toolkit,
+        )
+
+        msg = await agent(Msg("user", "please answer directly", "user"))
+        self.assertEqual(msg.role, "assistant")
+        self.assertEqual(msg.content[0]["text"], "final:done")
+        self.assertEqual(model.call_count, 1)
