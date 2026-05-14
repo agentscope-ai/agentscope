@@ -444,7 +444,6 @@ class TestDashScopeChatModel(IsolatedAsyncioTestCase):
             model_name="qwen-vl-plus",
             api_key="test_key",
             stream=False,
-            multimodality=True,
         )
         messages = [{"role": "user", "content": "Describe this image."}]
         mock_response = self._create_mock_response("This is a test image.")
@@ -462,6 +461,45 @@ class TestDashScopeChatModel(IsolatedAsyncioTestCase):
             self.assertEqual(
                 result.content,
                 [TextBlock(type="text", text="This is a test image.")],
+            )
+
+    async def test_call_with_multimodal_message_uses_multimodal_api(
+        self,
+    ) -> None:
+        """Test media content routes to multimodal API automatically."""
+        model = DashScopeChatModel(
+            model_name="qwen-turbo",
+            api_key="test_key",
+            stream=False,
+        )
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"text": "Describe this image."},
+                    {"image": "https://example.com/cat.png"},
+                ],
+            },
+        ]
+        mock_response = self._create_mock_response("This is a cat.")
+        with patch(
+            "dashscope.AioMultiModalConversation.call",
+            new_callable=AsyncMock,
+        ) as mock_multimodal_call, patch(
+            "dashscope.aigc.generation.AioGeneration.call",
+            new_callable=AsyncMock,
+        ) as mock_generation_call:
+            mock_multimodal_call.return_value = mock_response
+            result = await model(messages)
+            mock_multimodal_call.assert_called_once()
+            mock_generation_call.assert_not_called()
+            call_kwargs = mock_multimodal_call.call_args[1]
+            self.assertEqual(call_kwargs["messages"], messages)
+            self.assertEqual(call_kwargs["model"], "qwen-turbo")
+            self.assertIsInstance(result, ChatResponse)
+            self.assertEqual(
+                result.content,
+                [TextBlock(type="text", text="This is a cat.")],
             )
 
     async def test_error_handling_scenarios(self) -> None:

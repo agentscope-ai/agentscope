@@ -54,16 +54,14 @@ class DashScopeChatModel(ChatModelBase):
 
     This class provides a unified interface for DashScope API by automatically
     selecting between text-only (Generation API) and multimodal
-    (MultiModalConversation API) endpoints. The `multimodality` parameter
-    allows explicit control over API selection:
+    (MultiModalConversation API) endpoints. Endpoint selection is handled
+    internally based on the formatted message content and model family:
 
-    - When `multimodality=True`: Forces use of MultiModalConversation API
-      for handling images, videos, and other multimodal inputs
-    - When `multimodality=False`: Forces use of Generation API for
-      text-only processing
-    - When `multimodality=None` (default): Automatically selects the API
-      based on model name (e.g., models with "-vl" suffix or starting
-      with "qvq" will use MultiModalConversation API)
+    - Messages containing image/audio/video blocks use
+      MultiModalConversation API
+    - Models with "-vl" suffix or starting with "qvq" use
+      MultiModalConversation API even for text-only messages
+    - Other requests use Generation API
 
     This design enables seamless switching between text and multimodal
     models without changing code structure, making it easier to work with
@@ -97,13 +95,9 @@ class DashScopeChatModel(ChatModelBase):
                 <https://help.aliyun.com/zh/model-studio/deep-thinking>`_
                 for more details.
             multimodality (`bool | None`, optional):
-                Whether to use multimodal conversation API. If `True`,
-                it will use `dashscope.AioMultiModalConversation.call`
-                to process multimodal inputs such as images and text. If
-                `False`, it will use
-                `dashscope.aigc.generation.AioGeneration.call` to process
-                text inputs. If `None` (default), the choice is based on
-                the model name.
+                Deprecated and kept only for backward compatibility.
+                Endpoint selection is now determined automatically from
+                message content and model family.
             generate_kwargs (`dict[str, JSONSerializableObject] | None`, \
             optional):
                The extra keyword arguments used in DashScope API generation,
@@ -135,6 +129,15 @@ class DashScopeChatModel(ChatModelBase):
         self.generate_kwargs = generate_kwargs or {}
         self.stream_tool_parsing = stream_tool_parsing
 
+        if multimodality is not None:
+            warnings.warn(
+                "'multimodality' is deprecated and ignored. DashScopeChatModel "
+                "now selects the API automatically based on message content "
+                "and model family.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         if base_http_api_url is not None:
             import dashscope
 
@@ -158,6 +161,35 @@ class DashScopeChatModel(ChatModelBase):
                     "Failed to parse DASHSCOPE_API_HEADERS environment "
                     "variable as JSON. It should be a JSON object.",
                 )
+
+    @staticmethod
+    def _contains_multimodal_content(
+        messages: list[dict[str, Any]],
+    ) -> bool:
+        """Return whether the formatted messages contain media blocks."""
+        media_keys = {"image", "audio", "video"}
+        for message in messages:
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+
+            for item in content:
+                if (
+                    isinstance(item, dict)
+                    and media_keys.intersection(item.keys())
+                ):
+                    return True
+        return False
+
+    def _should_use_multimodal_api(
+        self,
+        messages: list[dict[str, Any]],
+    ) -> bool:
+        """Select the DashScope endpoint from message content and model."""
+        if self._contains_multimodal_content(messages):
+            return True
+
+        return self.model_name.startswith("qvq") or "-vl" in self.model_name
 
     @trace_llm
     async def __call__(
@@ -262,15 +294,7 @@ class DashScopeChatModel(ChatModelBase):
             )
 
         start_datetime = datetime.now()
-        if self.multimodality or (
-            self.multimodality is None
-            and (
-                self.model_name.startswith(
-                    "qvq",
-                )
-                or "-vl" in self.model_name
-            )
-        ):
+        if self._should_use_multimodal_api(messages):
             response = await dashscope.AioMultiModalConversation.call(
                 api_key=self.api_key,
                 **kwargs,
