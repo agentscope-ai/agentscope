@@ -15,8 +15,8 @@ from contextvars import ContextVar
 
 import aioitertools
 
-from ..middleware import MiddlewareBase
-from ..message import Msg
+from .._base import MiddlewareBase
+from ...message import Msg
 
 from ._attributes import SpanAttributes, OperationNameValues
 from ._extractor import (
@@ -37,8 +37,8 @@ from ._utils import _serialize_to_str
 if TYPE_CHECKING:
     from opentelemetry.trace import Span
 
-    from ..agent import Agent
-    from ..model import ChatResponse
+    from ...agent import Agent
+    from ...model import ChatResponse
 
 T = TypeVar("T")
 
@@ -188,7 +188,7 @@ class TracingMiddleware(MiddlewareBase):
                 },
                 end_on_exit=False,
             ) as span:
-                from ..event import (
+                from ...event import (
                     ExternalExecutionResultEvent,
                     RequireExternalExecutionEvent as _RequireExtExec,
                     RequireUserConfirmEvent as _RequireUserConfirm,
@@ -297,7 +297,7 @@ class TracingMiddleware(MiddlewareBase):
         if not _check_tracing_enabled():
             return await next_handler(**input_kwargs)
 
-        from ..model import ChatModelBase
+        from ...model import ChatModelBase
 
         tracer = _get_tracer()
         model = input_kwargs.get("current_model")
@@ -349,7 +349,7 @@ class TracingMiddleware(MiddlewareBase):
                 yield item
             return
 
-        from ..message import ToolCallBlock
+        from ...message import ToolCallBlock
 
         tracer = _get_tracer()
         tool_call = input_kwargs.get("tool_call")

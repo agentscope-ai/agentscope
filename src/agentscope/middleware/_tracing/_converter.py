@@ -3,7 +3,7 @@
 
 from typing import Any, Dict
 
-from ..message import (
+from ...message import (
     ContentBlock,
     TextBlock,
     ThinkingBlock,

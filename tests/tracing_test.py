@@ -35,7 +35,7 @@ from agentscope.permission import (
     PermissionBehavior,
 )
 from agentscope.tool import Toolkit, ToolBase
-from agentscope.tracing import TracingMiddleware
+from agentscope.middleware import TracingMiddleware
 
 
 # ---------------------------------------------------------------------------

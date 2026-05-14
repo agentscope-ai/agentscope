@@ -3,7 +3,7 @@
 import inspect
 from typing import Any, Dict, TYPE_CHECKING
 
-from ..message import Msg, ToolCallBlock
+from ...message import Msg, ToolCallBlock
 
 from ._attributes import (
     SpanAttributes,
@@ -14,9 +14,9 @@ from ._converter import _convert_block_to_part
 from ._utils import _serialize_to_str
 
 if TYPE_CHECKING:
-    from ..agent import Agent
-    from ..model import ChatModelBase
-    from ..tool import Toolkit, ToolChoice
+    from ...agent import Agent
+    from ...model import ChatModelBase
+    from ...tool import Toolkit, ToolChoice
 
 _CLASS_NAME_MAP = {
     "dashscope": ProviderNameValues.DASHSCOPE,
@@ -461,7 +461,7 @@ def _get_agent_request_attributes(
     # Record the incoming continuation event type for HITL/external execution
     event = kwargs.get("event")
     if event is not None:
-        from ..event import (
+        from ...event import (
             ExternalExecutionResultEvent,
             UserConfirmResultEvent,
         )
