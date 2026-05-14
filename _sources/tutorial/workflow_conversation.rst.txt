@@ -280,9 +280,9 @@ Specifically, the agents within the same ``MsgHub`` will receive messages from o
 
  .. code-block:: none
 
-    Alice: Hi there! I'm Alice, a student with a keen interest in literature and art. It's nice to meet you! What about you?
-    Bob: Hey Alice! I'm Bob. I'm into science and technology, but I also love playing sports. Great to meet you too!
-    Charlie: Hi, I'm Charlie! I enjoy exploring different genres of music and playing video games. It's great to meet you both!
+    Alice: Hi, I'm Alice! I'm a student interested in technology and art. Nice to meet you! What about you?
+    Bob: Hey Alice, I'm Bob. I'm also a student, and I'm really into sports and a bit of gaming. Nice to meet you too! It's cool that you're into both tech and art; that's quite a mix!
+    Charlie: Hey, I'm Charlie! I'm a student too, and I love exploring new music and learning about different cultures. It's great to meet you both! Alice, blending tech and art sounds fascinating. And Bob, sports and gaming are a nice combo as well!
 
 
 
@@ -317,9 +317,9 @@ Now we print the memory of Alice to check if her memory is updated correctly.
 
     Memory of Alice:
     system: Now you meet each other with a brief self-introduction.
-    Alice: Hi there! I'm Alice, a student with a keen interest in literature and art. It's nice to meet you! What about you?
-    Bob: Hey Alice! I'm Bob. I'm into science and technology, but I also love playing sports. Great to meet you too!
-    Charlie: Hi, I'm Charlie! I enjoy exploring different genres of music and playing video games. It's great to meet you both!
+    Alice: Hi, I'm Alice! I'm a student interested in technology and art. Nice to meet you! What about you?
+    Bob: Hey Alice, I'm Bob. I'm also a student, and I'm really into sports and a bit of gaming. Nice to meet you too! It's cool that you're into both tech and art; that's quite a mix!
+    Charlie: Hey, I'm Charlie! I'm a student too, and I love exploring new music and learning about different cultures. It's great to meet you both! Alice, blending tech and art sounds fascinating. And Bob, sports and gaming are a nice combo as well!
 
 
 
@@ -336,7 +336,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 9.041 seconds)
+   **Total running time of the script:** (0 minutes 11.443 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_conversation.py:
