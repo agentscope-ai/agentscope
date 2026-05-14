@@ -5,11 +5,11 @@ from typing import Any, AsyncGenerator, List, Literal, TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
-from .._base import ChatModelBase
+from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ...credential import XAICredential
-from ...formatter._xai_formatter import XAIChatFormatter
+from ...formatter import XAIChatFormatter
 from ...message import (
     TextBlock,
     ThinkingBlock,
@@ -20,11 +20,10 @@ from ...tracing import trace_llm
 
 if TYPE_CHECKING:
     from xai_sdk import AsyncClient
-    from xai_sdk.chat import Response, Chunk
+    from xai_sdk.chat import Response
 else:
     AsyncClient = Any
     Response = Any
-    Chunk = Any
 
 
 class XAIChatModel(ChatModelBase):
@@ -152,22 +151,15 @@ class XAIChatModel(ChatModelBase):
                 generator of ``ChatResponse`` objects when streaming is
                 enabled.
         """
-        from xai_sdk import (
-            AsyncClient as XAIAsyncClient,
-        )  # pylint: disable=import-outside-toplevel
+        from xai_sdk import AsyncClient
 
-        client = XAIAsyncClient(
+        client = AsyncClient(
             api_key=self.credential.api_key.get_secret_value(),
         )
 
         xai_messages = await self.formatter.format(messages)
 
-        xai_tools = self._convert_tools(tools) if tools else None
-        xai_tool_choice = (
-            self._convert_tool_choice(tool_choice, tools)
-            if tool_choice
-            else None
-        )
+        xai_tools, xai_tool_choice = self._format_tools(tools, tool_choice)
 
         create_kwargs: dict[str, Any] = {"model": model_name}
         if self.parameters.max_tokens is not None:
@@ -203,67 +195,66 @@ class XAIChatModel(ChatModelBase):
 
         return self._parse_completion_response(start_datetime, response)
 
-    def _convert_tools(self, tools: list[dict]) -> list:
-        """Convert AgentScope tool schemas to ``xai_sdk`` ``Tool`` protos.
-
-        Args:
-            tools (`list[dict]`):
-                A list of tool schemas in OpenAI function-calling format.
-
-        Returns:
-            `list`:
-                A list of ``chat_pb2.Tool`` proto objects.
-        """
-        from xai_sdk.chat import tool
-
-        xai_tools = []
-        for t in tools:
-            if t.get("type") == "function" and "function" in t:
-                fn = t["function"]
-                xai_tools.append(
-                    tool(
-                        name=fn["name"],
-                        description=fn.get("description", ""),
-                        parameters=fn.get("parameters", {}),
-                    ),
-                )
-        return xai_tools
-
-    def _convert_tool_choice(
+    def _format_tools(
         self,
-        tool_choice: ToolChoice | None,
         tools: list[dict] | None,
-    ) -> Any:
-        """Convert a ``ToolChoice`` value to an ``xai_sdk`` compatible object.
+        tool_choice: ToolChoice | None,
+    ) -> tuple[list | None, Any]:
+        """Validate, filter, and format tools and tool_choice for the xAI API.
+
+        When ``tool_choice.tools`` is specified the schemas list is filtered
+        to only those tools. When ``tool_choice.mode`` is a specific tool name
+        (str) the model is forced to call exactly that tool without needing to
+        filter the list, preserving prompt-cache efficiency.
 
         Args:
-            tool_choice (`ToolChoice | None`):
-                The unified tool-choice parameter (``"auto"``, ``"none"``,
-                ``"required"``, or a specific function name).
-            tools (`list[dict] | None`):
-                The list of available tools, used for validation.
+            tools (`list[dict] | None`, optional):
+                The raw tool schemas.
+            tool_choice (`ToolChoice | None`, optional):
+                The tool choice configuration.
 
         Returns:
-            `Any`:
-                The ``xai_sdk``-compatible tool-choice value, or ``None``.
+            `tuple[list | None, Any]`:
+                A tuple of (xai_tools, xai_tool_choice) ready for the
+                ``xai_sdk`` client.
         """
-        from xai_sdk.chat import (  # pylint: disable=import-outside-toplevel
-            required_tool,
-        )
+        from xai_sdk.chat import required_tool, tool
 
-        self._validate_tool_choice(tool_choice, tools)
+        if tool_choice and tools:
+            self._validate_tool_choice(tool_choice, tools)
+            if tool_choice.tools:
+                allowed = set(tool_choice.tools)
+                tools = [t for t in tools if t["function"]["name"] in allowed]
 
-        if tool_choice is None:
-            return None
-        if tool_choice in ("auto", "none", "required"):
-            return tool_choice
-        return required_tool(tool_choice)
+        xai_tools = None
+        if tools:
+            xai_tools = []
+            for t in tools:
+                if t.get("type") == "function" and "function" in t:
+                    fn = t["function"]
+                    xai_tools.append(
+                        tool(
+                            name=fn["name"],
+                            description=fn.get("description", ""),
+                            parameters=fn.get("parameters", {}),
+                        ),
+                    )
+
+        if not tool_choice:
+            return xai_tools, None
+
+        mode = tool_choice.mode
+
+        if mode in _TOOL_CHOICE_LITERAL_MODES:
+            return xai_tools, mode
+
+        return xai_tools, required_tool(mode)
 
     async def _parse_stream_response(
         self,
         start_datetime: datetime,
         chat: Any,
-        client: Any,
+        client: AsyncClient,
     ) -> AsyncGenerator[ChatResponse, None]:
         """Parse the xAI streaming response from ``xai_sdk``.
 
@@ -362,7 +353,7 @@ class XAIChatModel(ChatModelBase):
     def _parse_completion_response(
         self,
         start_datetime: datetime,
-        response: Any,
+        response: Response,
     ) -> ChatResponse:
         """Parse the xAI non-streaming response from ``xai_sdk``.
 

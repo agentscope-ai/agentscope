@@ -3,6 +3,7 @@
 import asyncio
 import inspect
 import uuid
+
 from asyncio import Queue
 from copy import deepcopy
 from typing import (
@@ -559,7 +560,7 @@ class Agent:
 
     async def _reasoning(
         self,
-        tool_choice: ToolChoice = "auto",
+        tool_choice: ToolChoice | None = None,
     ) -> AsyncGenerator[
         ModelCallStartEvent
         | TextBlockStartEvent
@@ -613,7 +614,7 @@ class Agent:
 
     async def _reasoning_impl(
         self,
-        tool_choice: ToolChoice = "auto",
+        tool_choice: ToolChoice | None = None,
     ) -> AsyncGenerator[
         ModelCallStartEvent
         | TextBlockStartEvent
@@ -1781,7 +1782,7 @@ class Agent:
         self,
         messages: list[Msg],
         tools: list[dict],
-        tool_choice: ToolChoice,
+        tool_choice: ToolChoice | None = None,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Perform model inference with retry logic and middleware support.
 
@@ -1790,7 +1791,7 @@ class Agent:
                 The input messages to the model.
             tools (`list[dict]`):
                 The function schemas of the tools.
-            tool_choice (`ToolChoice`):
+            tool_choice (`ToolChoice | None`, optional):
                 The tool choice strategy for the model call.
 
         Returns:

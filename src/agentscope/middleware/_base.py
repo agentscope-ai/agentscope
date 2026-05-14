@@ -95,7 +95,7 @@ class MiddlewareBase:
         Args:
             agent: The Agent instance executing this middleware
             input_kwargs: Dictionary containing:
-                - tool_choice: ToolChoice (default "auto")
+                - tool_choice: ToolChoice (default None)
             next_handler: Callable that executes the next middleware or
             original method
 

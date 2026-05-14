@@ -9,7 +9,7 @@ from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List
 
 from pydantic import BaseModel, Field
 
-from .._base import ChatModelBase
+from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ...credential import GeminiCredential
@@ -218,14 +218,13 @@ class GeminiChatModel(ChatModelBase):
                 "thinking_budget": self.parameters.thinking_budget or 1024,
             }
 
-        if tools:
-            config["tools"] = self._format_tools_json_schemas(tools)
+        fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 
-        if tool_choice:
-            config["tool_config"] = self._format_tool_choice(
-                tool_choice,
-                tools,
-            )
+        if fmt_tools is not None:
+            config["tools"] = fmt_tools
+
+        if fmt_tool_choice is not None:
+            config["tool_config"] = fmt_tool_choice
 
         kwargs: dict[str, Any] = {
             "model": model_name,
@@ -454,69 +453,73 @@ class GeminiChatModel(ChatModelBase):
             )
         return None
 
-    def _format_tools_json_schemas(
+    def _format_tools(
         self,
-        schemas: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        """Format tool schemas for the Gemini API.
-
-        Args:
-            schemas (`list[dict[str, Any]]`):
-                The raw tool JSON schemas in the standard ``{"function": ...}``
-                format.
-
-        Returns:
-            `list[dict[str, Any]]`:
-                A list containing a single dict with
-                ``"function_declarations"`` key, as required by the Gemini
-                API.
-        """
-        function_declarations = []
-        for schema in schemas:
-            if "function" not in schema:
-                continue
-            func = schema["function"].copy()
-            if "parameters" in func:
-                func["parameters"] = _flatten_json_schema(func["parameters"])
-            function_declarations.append(func)
-        return [{"function_declarations": function_declarations}]
-
-    def _format_tool_choice(
-        self,
-        tool_choice: ToolChoice | None,
         tools: list[dict] | None,
-    ) -> dict | None:
-        """Format tool_choice parameter for the Gemini API.
+        tool_choice: ToolChoice | None,
+    ) -> tuple[list[dict] | None, dict | None]:
+        """Validate and format tools and tool_choice for Gemini.
+
+        Converts tool schemas to Gemini's ``function_declarations``
+        format (resolving ``$ref`` references) and maps tool_choice
+        modes to Gemini's ``function_calling_config``. When
+        ``tool_choice.tools`` is specified the schemas list is filtered
+        to only those tools. When ``tool_choice.mode`` is a specific
+        tool name (str) the model is restricted via
+        ``allowed_function_names`` without needing to filter the list,
+        preserving prompt-cache efficiency.
 
         Args:
-            tool_choice (`ToolChoice | None`):
-                The unified tool choice parameter which can be ``"auto"``,
-                ``"none"``, ``"required"``, or a specific function name.
-            tools (`list[dict] | None`):
-                The list of available tools, used for validation when
-                ``tool_choice`` is a specific function name.
+            tools (`list[dict] | None`, optional):
+                The raw tool schemas.
+            tool_choice (`ToolChoice | None`, optional):
+                The tool choice configuration.
 
         Returns:
-            `dict | None`:
-                The formatted ``tool_config`` dict for the Gemini API, or
-                ``None`` if ``tool_choice`` is ``None``.
+            `tuple[list[dict] | None, dict | None]`:
+                A tuple of (formatted_tools, formatted_tool_config).
         """
-        self._validate_tool_choice(tool_choice, tools)
+        if tool_choice and tools:
+            self._validate_tool_choice(tool_choice, tools)
+            if tool_choice.tools:
+                allowed = set(tool_choice.tools)
+                tools = [t for t in tools if t["function"]["name"] in allowed]
 
-        if tool_choice is None:
-            return None
+        fmt_tools = None
+        if tools:
+            function_declarations = []
+            for schema in tools:
+                if "function" not in schema:
+                    continue
+                func = schema["function"].copy()
+                if "parameters" in func:
+                    func["parameters"] = _flatten_json_schema(
+                        func["parameters"],
+                    )
+                function_declarations.append(func)
+            fmt_tools = [{"function_declarations": function_declarations}]
+
+        if not tool_choice:
+            return fmt_tools, None
+
+        mode = tool_choice.mode
+
+        if mode not in _TOOL_CHOICE_LITERAL_MODES:
+            # mode is a specific tool name — restrict to that single tool
+            fmt_choice: dict = {
+                "function_calling_config": {
+                    "mode": "ANY",
+                    "allowed_function_names": [mode],
+                },
+            }
+            return fmt_tools, fmt_choice
 
         mode_mapping = {
             "auto": "AUTO",
             "none": "NONE",
             "required": "ANY",
         }
-        mode = mode_mapping.get(tool_choice)
-        if mode:
-            return {"function_calling_config": {"mode": mode}}
-        return {
-            "function_calling_config": {
-                "mode": "ANY",
-                "allowed_function_names": [tool_choice],
-            },
+        fmt_choice = {
+            "function_calling_config": {"mode": mode_mapping[mode]},
         }
+        return fmt_tools, fmt_choice

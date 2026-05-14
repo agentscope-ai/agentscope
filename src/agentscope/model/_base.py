@@ -27,7 +27,7 @@ from ..message import (
 )
 from ..tool import ToolChoice
 
-_TOOL_CHOICE_MODES = ["auto", "none", "required"]
+_TOOL_CHOICE_LITERAL_MODES = {"auto", "none", "required"}
 
 
 class ChatModelBase:
@@ -213,32 +213,49 @@ class ChatModelBase:
 
         Args:
             tool_choice (`ToolChoice | None`):
-                Tool choice mode or function name
+                Tool choice with ``mode`` and optional ``tools`` fields.
             tools (`list[dict] | None`):
-                Available tools list
+                Available tools list.
 
         Raises:
             `ValueError`:
-                If tool_choice is not a valid mode or function name.
+                If mode or tool names are invalid.
         """
         if tool_choice is None:
             return
 
-        if not isinstance(tool_choice, str):
-            raise ValueError(
-                f"tool_choice must be str, got {type(tool_choice)}",
-            )
-        if tool_choice in _TOOL_CHOICE_MODES:
-            return
+        mode = tool_choice.mode
+        available_functions = [
+            tool["function"]["name"] for tool in (tools or [])
+        ]
 
-        available_functions = [tool["function"]["name"] for tool in tools]
+        tool_names = tool_choice.tools
+        if tool_names is not None:
+            for name in tool_names:
+                if name not in available_functions:
+                    raise ValueError(
+                        f"Invalid tool name '{name}' in tool_choice.tools. "
+                        f"Available tools: "
+                        f"{', '.join(sorted(available_functions))}",
+                    )
 
-        if tool_choice not in available_functions:
-            all_options = _TOOL_CHOICE_MODES + available_functions
-            raise ValueError(
-                f"Invalid tool_choice '{tool_choice}'. "
-                f"Available options: {', '.join(sorted(all_options))}",
+        if mode not in _TOOL_CHOICE_LITERAL_MODES:
+            # mode is a specific tool name — validate it exists
+            # Fall back to all available tools when tool_names is empty or None
+            validation_scope = (
+                tool_names if tool_names else available_functions
             )
+            if mode not in validation_scope:
+                raise ValueError(
+                    f"Invalid tool name '{mode}' in tool_choice.mode. "
+                    + (
+                        f"Available tools in tool_choice.tools: "
+                        f"{', '.join(sorted(tool_names))}"
+                        if tool_names is not None
+                        else f"Available tools: "
+                        f"{', '.join(sorted(available_functions))}"
+                    ),
+                )
 
     async def count_tokens(
         self,
@@ -440,7 +457,9 @@ class ChatModelBase:
                     },
                 },
             ],
-            tool_choice=func_name,
+            tool_choice=ToolChoice(
+                mode=func_name,
+            ),
             **kwargs,
         )
 
