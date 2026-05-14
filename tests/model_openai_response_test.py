@@ -7,11 +7,13 @@ Formatter tests have been moved to tests/formatter_openai_response_test.py.
 import json
 from typing import Any
 from datetime import datetime
+import unittest
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock
 
 from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
 from agentscope.model import OpenAIResponseModel
+from agentscope.tool import ToolChoice
 from agentscope.credential import OpenAICredential
 
 
@@ -136,3 +138,123 @@ class TestOpenAIResponseModelParsing(IsolatedAsyncioTestCase):
         resp = self._mock_response(text="Hi")
         result = self.model._parse_completion_response(self.start, resp)
         self.assertEqual(result.id, "resp-openai-1")
+
+
+# ---------------------------------------------------------------------------
+# Shared _format_tools fixtures
+# ---------------------------------------------------------------------------
+
+_FT_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Get the weather",
+            "parameters": {
+                "type": "object",
+                "properties": {"city": {"type": "string"}},
+                "required": ["city"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_time",
+            "description": "Get the time",
+            "parameters": {
+                "type": "object",
+                "properties": {"timezone": {"type": "string"}},
+                "required": ["timezone"],
+            },
+        },
+    },
+]
+
+
+_FT_TOOLS_RESPONSE = [
+    {
+        "type": "function",
+        "name": "get_weather",
+        "description": "Get the weather",
+        "parameters": {
+            "type": "object",
+            "properties": {"city": {"type": "string"}},
+            "required": ["city"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "get_time",
+        "description": "Get the time",
+        "parameters": {
+            "type": "object",
+            "properties": {"timezone": {"type": "string"}},
+            "required": ["timezone"],
+        },
+    },
+]
+
+
+# pylint: disable=protected-access
+class TestOpenAIResponseFormatTools(unittest.TestCase):
+    """Tests for OpenAIResponseModel._format_tools."""
+
+    def setUp(self) -> None:
+        """Set up model instance."""
+        self.model = _make_model()
+
+    def test_auto_mode(self) -> None:
+        """Auto mode returns flat tools and string 'auto'."""
+        fmt_tools, fmt_choice = self.model._format_tools(
+            _FT_TOOLS,
+            ToolChoice(mode="auto"),
+        )
+        self.assertEqual(fmt_tools, _FT_TOOLS_RESPONSE)
+        self.assertEqual(fmt_choice, "auto")
+
+    def test_none_mode(self) -> None:
+        """None mode returns flat tools and string 'none'."""
+        fmt_tools, fmt_choice = self.model._format_tools(
+            _FT_TOOLS,
+            ToolChoice(mode="none"),
+        )
+        self.assertEqual(fmt_tools, _FT_TOOLS_RESPONSE)
+        self.assertEqual(fmt_choice, "none")
+
+    def test_required_mode(self) -> None:
+        """Required mode returns flat tools and string 'required'."""
+        fmt_tools, fmt_choice = self.model._format_tools(
+            _FT_TOOLS,
+            ToolChoice(mode="required"),
+        )
+        self.assertEqual(fmt_tools, _FT_TOOLS_RESPONSE)
+        self.assertEqual(fmt_choice, "required")
+
+    def test_str_mode_force_call(self) -> None:
+        """A specific tool name returns a type=function dict with name."""
+        fmt_tools, fmt_choice = self.model._format_tools(
+            _FT_TOOLS,
+            ToolChoice(mode="get_weather"),
+        )
+        self.assertEqual(fmt_tools, _FT_TOOLS_RESPONSE)
+        self.assertEqual(
+            fmt_choice,
+            {"type": "function", "name": "get_weather"},
+        )
+
+    def test_tools_filtered(self) -> None:
+        """When tool_choice.tools is set, only those tools are included."""
+        fmt_tools, fmt_choice = self.model._format_tools(
+            _FT_TOOLS,
+            ToolChoice(mode="auto", tools=["get_weather"]),
+        )
+        self.assertEqual(len(fmt_tools), 1)
+        self.assertEqual(fmt_tools[0]["name"], "get_weather")
+        self.assertEqual(fmt_choice, "auto")
+
+    def test_no_tool_choice(self) -> None:
+        """Without tool_choice, returns flat tools and None."""
+        fmt_tools, fmt_choice = self.model._format_tools(_FT_TOOLS, None)
+        self.assertEqual(fmt_tools, _FT_TOOLS_RESPONSE)
+        self.assertIsNone(fmt_choice)

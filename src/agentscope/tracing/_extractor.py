@@ -16,7 +16,7 @@ from ._utils import _serialize_to_str
 if TYPE_CHECKING:
     from ..agent import Agent
     from ..model import ChatModelBase
-    from ..tool import Toolkit
+    from ..tool import Toolkit, ToolChoice
 
 _CLASS_NAME_MAP = {
     "dashscope": ProviderNameValues.DASHSCOPE,
@@ -107,7 +107,7 @@ def _get_provider_name(instance: "ChatModelBase") -> str:
 
 def _get_tool_definitions(
     tools: list[dict[str, Any]] | None,
-    tool_choice: str | None,
+    tool_choice: "ToolChoice | None",
 ) -> str | None:
     """Extract and serialize tool definitions for tracing.
 
@@ -118,10 +118,10 @@ def _get_tool_definitions(
         tools (`list[dict[str, Any]] | None`, optional):
             List of tool definitions in OpenAI format with nested
             structure: ``[{"type": "function", "function": {...}}]``
-        tool_choice (`str | None`, optional):
-            Tool choice mode. Can be "auto", "none", "any", "required",
-            or a specific tool name. If "none", returns None to indicate
-            tools should not be traced.
+        tool_choice (`ToolChoice | None`, optional):
+            Tool choice configuration with ``mode`` and optional ``tools``
+            fields. If mode is ``"none"``, returns None to indicate tools
+            should not be traced.
 
     Returns:
         `str | None`:
@@ -135,7 +135,7 @@ def _get_tool_definitions(
         return None
 
     # Tool choice is explicitly "none" (model should not use tools)
-    if tool_choice == "none":
+    if tool_choice is not None and tool_choice.mode == "none":
         return None
 
     try:
