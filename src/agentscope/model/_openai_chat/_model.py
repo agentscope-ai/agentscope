@@ -11,9 +11,8 @@ from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ...credential import OpenAICredential
 from ...formatter import FormatterBase, OpenAIChatFormatter
-from ...message import ThinkingBlock, ToolCallBlock, TextBlock
+from ...message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
 from ...tool import ToolChoice
-from ...tracing import trace_llm
 
 if TYPE_CHECKING:
     from openai.types.chat import ChatCompletion
@@ -113,11 +112,10 @@ class OpenAIChatModel(ChatModelBase):
         self.parameters = parameters or self.Parameters()
         self.formatter = formatter or OpenAIChatFormatter()
 
-    @trace_llm
     async def _call_api(
         self,
         model_name: str,
-        messages: list[Any],
+        messages: list[Msg],
         tools: list[dict] | None = None,
         tool_choice: ToolChoice | None = None,
         **generate_kwargs: Any,

@@ -386,19 +386,3 @@ class TracingMiddleware(MiddlewareBase):
                             _get_tool_response_attributes(last_item),
                         )
                     _set_span_success_status(span)
-
-
-# ---------------------------------------------------------------------------
-# Decorator: trace_llm
-# ---------------------------------------------------------------------------
-
-
-def trace_llm(func: Callable) -> Callable:
-    """No-op decorator retained for backward compatibility.
-
-    LLM call tracing is now handled by :class:`TracingMiddleware` via the
-    ``on_model_call`` hook.  This decorator simply returns the original
-    function unchanged so that existing ``@trace_llm`` usages in model
-    classes continue to work without modification.
-    """
-    return func

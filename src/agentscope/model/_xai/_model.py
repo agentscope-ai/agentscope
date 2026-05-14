@@ -11,12 +11,12 @@ from .._model_usage import ChatUsage
 from ...credential import XAICredential
 from ...formatter import XAIChatFormatter
 from ...message import (
+    Msg,
     TextBlock,
     ThinkingBlock,
     ToolCallBlock,
 )
 from ...tool import ToolChoice
-from ...tracing import trace_llm
 
 if TYPE_CHECKING:
     from xai_sdk import AsyncClient
@@ -122,11 +122,10 @@ class XAIChatModel(ChatModelBase):
         self.parameters = parameters or self.Parameters()
         self.formatter = formatter or XAIChatFormatter()
 
-    @trace_llm
     async def _call_api(
         self,
         model_name: str,
-        messages: list[Any],
+        messages: list[Msg],
         tools: list[dict] | None = None,
         tool_choice: ToolChoice | None = None,
         **generate_kwargs: Any,

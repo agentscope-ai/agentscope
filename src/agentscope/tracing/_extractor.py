@@ -197,7 +197,7 @@ def _get_llm_request_attributes(
         # conditionally required attributes
         SpanAttributes.GEN_AI_REQUEST_MODEL: getattr(
             instance,
-            "model_name",
+            "model",
             "unknown_model",
         ),
         # recommended attributes
