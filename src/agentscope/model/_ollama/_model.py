@@ -193,9 +193,10 @@ class OllamaChatModel(ChatModelBase):
                 allowed = set(tool_choice.tools)
                 tools = [t for t in tools if t["function"]["name"] in allowed]
 
-        if tool_choice and tool_choice.mode:
+        if tool_choice:
             logger.warning(
-                "Ollama does not support tool_choice yet, ignored.",
+                "Ollama ignores tool_choice.mode; "
+                "tool_choice.tools is still applied to filter tool schemas.",
             )
 
         return tools, None
