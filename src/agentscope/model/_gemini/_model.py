@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
-from .._model_usage import ChatUsage
+from .._model_usage import ChatUsage, _to_usage_dict
 from ...credential import GeminiCredential
 from ...formatter import FormatterBase, GeminiChatFormatter
 from ...message import ThinkingBlock, ToolCallBlock, TextBlock
@@ -449,7 +449,7 @@ class GeminiChatModel(ChatModelBase):
                 input_tokens=prompt_tokens,
                 output_tokens=total_tokens - prompt_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
-                metadata=usage_metadata,
+                metadata=_to_usage_dict(usage_metadata),
             )
         return None
 

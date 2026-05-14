@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
-from .._model_usage import ChatUsage
+from .._model_usage import ChatUsage, _to_usage_dict
 from ...credential import KimiCredential
 from ...formatter import FormatterBase, KimiChatFormatter
 from ...message import ThinkingBlock, ToolCallBlock, TextBlock
@@ -204,7 +204,7 @@ class KimiChatModel(ChatModelBase):
                         input_tokens=chunk.usage.prompt_tokens,
                         output_tokens=chunk.usage.completion_tokens,
                         time=(datetime.now() - start_datetime).total_seconds(),
-                        metadata=chunk.usage,
+                        metadata=_to_usage_dict(chunk.usage),
                     )
 
                 # Capture response_id from the first chunk that carries it
@@ -329,7 +329,7 @@ class KimiChatModel(ChatModelBase):
                 input_tokens=response.usage.prompt_tokens,
                 output_tokens=response.usage.completion_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
-                metadata=response.usage,
+                metadata=response.usage.model_dump(),
             )
 
         resp_kwargs: dict[str, Any] = {

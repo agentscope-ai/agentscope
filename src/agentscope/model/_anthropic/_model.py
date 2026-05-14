@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
-from .._model_usage import ChatUsage
+from .._model_usage import ChatUsage, _to_usage_dict
 from ...credential import AnthropicCredential
 from ...formatter import FormatterBase, AnthropicChatFormatter
 from ...message import ThinkingBlock, ToolCallBlock, TextBlock
@@ -255,6 +255,7 @@ class AnthropicChatModel(ChatModelBase):
                 input_tokens=response.usage.input_tokens,
                 output_tokens=response.usage.output_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
+                metadata=response.usage.model_dump(),
             )
 
         resp_kwargs: dict[str, Any] = {
@@ -314,6 +315,7 @@ class AnthropicChatModel(ChatModelBase):
                             0,
                         ),
                         time=(datetime.now() - start_datetime).total_seconds(),
+                        metadata=_to_usage_dict(message.usage),
                     )
 
             elif event.type == "content_block_start":
