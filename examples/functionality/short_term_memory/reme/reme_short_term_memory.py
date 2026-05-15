@@ -177,7 +177,13 @@ class ReMeShortTermMemory(InMemoryMemory):
             await self.app.__aexit__(exc_type, exc_val, exc_tb)
         self._app_started = False
 
-    async def get_memory(self) -> list[Msg]:
+    async def get_memory(
+        self,
+        mark: str | None = None,
+        exclude_mark: str | None = None,
+        prepend_summary: bool = True,
+        **kwargs: Any,
+    ) -> list[Msg]:
         """Retrieve and manage working memory with automatic summarization.
 
         This method performs the core working-memory management pipeline:
