@@ -20,6 +20,7 @@ from ._store import (
     MilvusLiteStore,
     OceanBaseStore,
     MongoDBStore,
+    AlibabaCloudAnalyticDBStore,
     AlibabaCloudMySQLStore,
 )
 from ._knowledge_base import KnowledgeBase
@@ -41,6 +42,7 @@ __all__ = [
     "MilvusLiteStore",
     "OceanBaseStore",
     "MongoDBStore",
+    "AlibabaCloudAnalyticDBStore",
     "AlibabaCloudMySQLStore",
     "KnowledgeBase",
     "SimpleKnowledge",
