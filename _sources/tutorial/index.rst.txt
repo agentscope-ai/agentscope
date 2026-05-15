@@ -15,18 +15,18 @@
 
 .. raw:: html
 
-    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope implements OpenTelemetry-based tracing to monitor and debug the execution of agent applications, which features">
+    <div class="sphx-glr-thumbcontainer" tooltip="About AgentScope ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ What is AgentScope?     AgentScope is a multi-agent framework, aiming to provide a simple yet efficient way to build LLM-empowered agent applications.">
 
 .. only:: html
 
-  .. image:: /tutorial/images/thumb/sphx_glr_task_tracing_thumb.png
+  .. image:: /tutorial/images/thumb/sphx_glr_faq_thumb.png
     :alt:
 
-  :doc:`/tutorial/task_tracing`
+  :doc:`/tutorial/faq`
 
 .. raw:: html
 
-      <div class="sphx-glr-thumbnail-title">Tracing</div>
+      <div class="sphx-glr-thumbnail-title">FAQ</div>
     </div>
 
 
@@ -66,18 +66,18 @@
 
 .. raw:: html
 
-    <div class="sphx-glr-thumbcontainer" tooltip="About AgentScope ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ What is AgentScope?     AgentScope is a multi-agent framework, aiming to provide a simple yet efficient way to build LLM-empowered agent applications.">
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope implements OpenTelemetry-based tracing to monitor and debug the execution of agent applications, which features">
 
 .. only:: html
 
-  .. image:: /tutorial/images/thumb/sphx_glr_faq_thumb.png
+  .. image:: /tutorial/images/thumb/sphx_glr_task_tracing_thumb.png
     :alt:
 
-  :doc:`/tutorial/faq`
+  :doc:`/tutorial/task_tracing`
 
 .. raw:: html
 
-      <div class="sphx-glr-thumbnail-title">FAQ</div>
+      <div class="sphx-glr-thumbnail-title">Tracing</div>
     </div>
 
 
@@ -601,10 +601,10 @@
 .. toctree::
    :hidden:
 
-   /tutorial/task_tracing
+   /tutorial/faq
    /tutorial/quickstart_key_concept
    /tutorial/task_studio
-   /tutorial/faq
+   /tutorial/task_tracing
    /tutorial/quickstart_installation
    /tutorial/task_token
    /tutorial/workflow_concurrent_agents
