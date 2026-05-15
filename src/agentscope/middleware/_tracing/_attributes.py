@@ -85,9 +85,6 @@ class SpanAttributes:
     GEN_AI_AGENT_DESCRIPTION = GenAIAttributes.GEN_AI_AGENT_DESCRIPTION
     """The gen ai agent description."""
 
-    GEN_AI_SYSTEM_INSTRUCTIONS = GenAIAttributes.GEN_AI_SYSTEM_INSTRUCTIONS
-    """The gen ai system instructions."""
-
     # GenAI Tool Attributes
     GEN_AI_TOOL_CALL_ID = GenAIAttributes.GEN_AI_TOOL_CALL_ID
     """The gen ai tool call ID."""
@@ -98,44 +95,57 @@ class SpanAttributes:
     GEN_AI_TOOL_DESCRIPTION = GenAIAttributes.GEN_AI_TOOL_DESCRIPTION
     """The gen ai tool description."""
 
-    GEN_AI_TOOL_CALL_ARGUMENTS = "gen_ai.tool.call.arguments"
+    GEN_AI_TOOL_CALL_ARGUMENTS = GenAIAttributes.GEN_AI_TOOL_CALL_ARGUMENTS
     """The gen ai tool call arguments."""
 
-    GEN_AI_TOOL_CALL_RESULT = "gen_ai.tool.call.result"
+    GEN_AI_TOOL_CALL_RESULT = GenAIAttributes.GEN_AI_TOOL_CALL_RESULT
     """The gen ai tool call result."""
 
-    GEN_AI_TOOL_DEFINITIONS = "gen_ai.tool.definitions"
+    GEN_AI_TOOL_DEFINITIONS = GenAIAttributes.GEN_AI_TOOL_DEFINITIONS
     """The gen ai tool definitions."""
 
-    # GenAI Embedding Attributes
-    GEN_AI_EMBEDDINGS_DIMENSION_COUNT = "gen_ai.embeddings.dimension.count"
-    """The gen ai embeddings dimension count."""
+    AGENTSCOPE_REPLY_ID = "agentscope.agent.reply_id"
+    """The reply ID of the current agent reply.
 
-    # AgentScope Extended Attributes
-    AGENTSCOPE_FORMAT_TARGET = "agentscope.format.target"
-    """The agentscope format target."""
+    Shared by both calls in a HITL or external-execution chain, allowing
+    observers to group the two ``invoke_agent`` spans that belong to the
+    same logical reply.
+    """
 
-    AGENTSCOPE_FORMAT_COUNT = "agentscope.format.count"
-    """The count of formatted messages in the result."""
+    AGENTSCOPE_HITL_PENDING_TOOLS = "agentscope.agent.hitl_pending_tools"
+    """JSON list of tool names that are waiting for human confirmation.
 
-    AGENTSCOPE_FUNCTION_NAME = "agentscope.function.name"
-    """The agentscope function name."""
+    Set on the first ``invoke_agent`` span when the agent pauses due to a
+    ``RequireUserConfirmEvent``.
+    """
 
-    AGENTSCOPE_FUNCTION_INPUT = "agentscope.function.input"
-    """The agentscope function input."""
+    AGENTSCOPE_EXTERNAL_EXECUTION_PENDING_TOOLS = (
+        "agentscope.agent.external_execution_pending_tools"
+    )
+    """JSON list of tool names submitted for external execution.
 
-    AGENTSCOPE_FUNCTION_OUTPUT = "agentscope.function.output"
-    """The agentscope function output."""
+    Set on the first ``invoke_agent`` span when the agent pauses due to a
+    ``RequireExternalExecutionEvent``.
+    """
+
+    AGENTSCOPE_INCOMING_EVENT_TYPE = "agentscope.agent.incoming_event_type"
+    """Type of the continuation event passed to the second reply call.
+
+    Possible values: ``"user_confirm_result"``,
+    ``"external_execution_result"``.
+    """
+
+    AGENTSCOPE_IS_EXTERNAL_EXECUTION = "agentscope.agent.is_external_execution"
+    """Marks a synthetic ``execute_tool`` span that represents a tool executed
+    externally (i.e. via ``ExternalExecutionResultEvent``).
+
+    The timestamp reflects when the result was received, not when the tool
+    actually ran on the external system.
+    """
 
 
 class OperationNameValues:
     """The operation name values."""
-
-    FORMATTER = "format"
-    """The formatter operation name."""
-
-    INVOKE_GENERIC_FUNCTION = "invoke_generic_function"
-    """The invoke generic function operation name."""
 
     CHAT = GenAIAttributes.GenAiOperationNameValues.CHAT.value
     """The chat operation name."""
@@ -145,9 +155,6 @@ class OperationNameValues:
 
     EXECUTE_TOOL = GenAIAttributes.GenAiOperationNameValues.EXECUTE_TOOL.value
     """The execute tool operation name."""
-
-    EMBEDDINGS = GenAIAttributes.GenAiOperationNameValues.EMBEDDINGS.value
-    """The embeddings operation name."""
 
 
 class ProviderNameValues:

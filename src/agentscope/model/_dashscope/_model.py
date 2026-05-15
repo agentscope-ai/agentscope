@@ -16,7 +16,6 @@ from ...credential import DashScopeCredential
 from ...formatter import FormatterBase, DashScopeChatFormatter
 from ...message import Msg, TextBlock, ThinkingBlock, ToolCallBlock
 from ...tool import ToolChoice
-from ...tracing import trace_llm
 
 
 if TYPE_CHECKING:
@@ -137,7 +136,6 @@ class DashScopeChatModel(ChatModelBase):
         self.multimodality = multimodality
         self.formatter = formatter or DashScopeChatFormatter()
 
-    @trace_llm
     async def _call_api(
         self,
         model_name: str,

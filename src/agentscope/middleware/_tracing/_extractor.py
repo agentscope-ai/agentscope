@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
 """Extract attributes from AgentScope components for OpenTelemetry tracing."""
 import inspect
-from typing import Any, Dict, Tuple, TYPE_CHECKING
+from typing import Any, Dict, TYPE_CHECKING
 
-from ..embedding import EmbeddingModelBase
-from ..message import Msg, ToolCallBlock
-from ..model import ChatModelBase
-from ..tool import ToolChoice
+from ...message import Msg, ToolCallBlock
 
 from ._attributes import (
     SpanAttributes,
@@ -17,15 +14,9 @@ from ._converter import _convert_block_to_part
 from ._utils import _serialize_to_str
 
 if TYPE_CHECKING:
-    from ..agent import AgentBase
-    from ..formatter import FormatterBase
-    from ..tool import (
-        Toolkit,
-    )
-else:
-    AgentBase = "AgentBase"
-    FormatterBase = "FormatterBase"
-    Toolkit = "Toolkit"
+    from ...agent import Agent
+    from ...model import ChatModelBase
+    from ...tool import Toolkit, ToolChoice
 
 _CLASS_NAME_MAP = {
     "dashscope": ProviderNameValues.DASHSCOPE,
@@ -56,37 +47,17 @@ def _get_common_attributes() -> Dict[str, str]:
         `Dict[str, str]`:
         Common span attributes including conversation ID
     """
+    from ._trace import _current_session_id
+
+    session_id = _current_session_id.get()
     return {
-        SpanAttributes.GEN_AI_CONVERSATION_ID: _serialize_to_str(
-            # TODO: deprecate the id here
-            "[conversation_id_placeholder]",
+        SpanAttributes.GEN_AI_CONVERSATION_ID: (
+            session_id if session_id else "[no_session_id]"
         ),
     }
 
 
-def _get_format_target(instance: Any) -> str:
-    """Get format target for the given instance.
-
-    Maps AgentScope formatter class names to format target names.
-
-    Args:
-        instance (`Any`):
-            The formatter instance to get the format target for.
-
-    Returns:
-        `str`:
-            Format target name (e.g., "openai", "dashscope", "anthropic")
-    """
-    classname = instance.__class__.__name__
-    prefix_key = (
-        classname.removesuffix("ChatFormatter")
-        .removesuffix("MultiAgentFormatter")
-        .lower()
-    )
-    return _CLASS_NAME_MAP.get(prefix_key, "unknown")
-
-
-def _get_provider_name(instance: ChatModelBase) -> str:
+def _get_provider_name(instance: "ChatModelBase") -> str:
     """Get provider name from ChatModelBase instance.
 
     Maps ChatModelBase class names to provider names, with special handling
@@ -136,7 +107,7 @@ def _get_provider_name(instance: ChatModelBase) -> str:
 
 def _get_tool_definitions(
     tools: list[dict[str, Any]] | None,
-    tool_choice: ToolChoice | None,
+    tool_choice: "ToolChoice | None",
 ) -> str | None:
     """Extract and serialize tool definitions for tracing.
 
@@ -197,8 +168,7 @@ def _get_tool_definitions(
 
 
 def _get_llm_request_attributes(
-    instance: ChatModelBase,
-    args: Tuple[Any, ...],
+    instance: "ChatModelBase",
     kwargs: Dict[str, Any],
 ) -> Dict[str, Any]:
     """Get LLM request attributes for OpenTelemetry tracing.
@@ -208,8 +178,6 @@ def _get_llm_request_attributes(
     Args:
         instance (`ChatModelBase`):
             The chat model instance making the request.
-        args (`Tuple[Any, ...]`):
-            Positional arguments passed to the model call.
         kwargs (`Dict[str, Any]`):
             Keyword arguments including generation parameters such as
             temperature, top_p, top_k, max_tokens, presence_penalty,
@@ -219,7 +187,7 @@ def _get_llm_request_attributes(
         `Dict[str, Any]`:
             OpenTelemetry GenAI attributes with string values, including
             operation name, provider name, model name, generation parameters,
-            tool definitions, and custom AgentScope function input.
+            and tool definitions.
     """
 
     attributes = {
@@ -229,7 +197,7 @@ def _get_llm_request_attributes(
         # conditionally required attributes
         SpanAttributes.GEN_AI_REQUEST_MODEL: getattr(
             instance,
-            "model_name",
+            "model",
             "unknown_model",
         ),
         # recommended attributes
@@ -248,13 +216,6 @@ def _get_llm_request_attributes(
             "stop_sequences",
         ),
         SpanAttributes.GEN_AI_REQUEST_SEED: kwargs.get("seed"),
-        # custom attributes
-        SpanAttributes.AGENTSCOPE_FUNCTION_INPUT: _serialize_to_str(
-            {
-                "args": args,
-                "kwargs": kwargs,
-            },
-        ),
     }
 
     # Extract tool definitions if provided
@@ -360,8 +321,8 @@ def _get_llm_response_attributes(
     Returns:
         `Dict[str, Any]`:
             OpenTelemetry GenAI response attributes including response ID,
-            finish reasons, token usage (input/output tokens), output messages,
-            and custom AgentScope function output.
+            finish reasons, token usage (input/output tokens), and output
+            messages.
     """
     attributes = {
         SpanAttributes.GEN_AI_RESPONSE_ID: getattr(
@@ -386,9 +347,6 @@ def _get_llm_response_attributes(
             output_messages,
         )
 
-    attributes[SpanAttributes.AGENTSCOPE_FUNCTION_OUTPUT] = _serialize_to_str(
-        chat_response,
-    )
     return attributes
 
 
@@ -430,24 +388,32 @@ def _get_agent_messages(
 
         return formatted_msgs
     except Exception:
-        return [
-            {
-                "role": msg.role,
-                "parts": [
-                    {
-                        "type": "text",
-                        "content": str(msg.content) if msg.content else "",
-                    },
-                ],
-                "name": msg.name,
-                "finish_reason": "stop",
-            },
-        ]
+        # Fallback: try simple attribute access on the original object.
+        # If msg was already converted to a list or lacks role/name, return
+        # an empty list rather than raising a secondary exception.
+        try:
+            single = msg[0] if isinstance(msg, list) else msg
+            return [
+                {
+                    "role": single.role,
+                    "parts": [
+                        {
+                            "type": "text",
+                            "content": (
+                                str(single.content) if single.content else ""
+                            ),
+                        },
+                    ],
+                    "name": single.name,
+                    "finish_reason": "stop",
+                },
+            ]
+        except Exception:
+            return []
 
 
 def _get_agent_request_attributes(
-    instance: "AgentBase",
-    args: Tuple[Any, ...],
+    instance: "Agent",
     kwargs: Dict[str, Any],
 ) -> Dict[str, str]:
     """Get agent request attributes for OpenTelemetry tracing.
@@ -455,18 +421,15 @@ def _get_agent_request_attributes(
     Extracts agent metadata and input data into GenAI attributes.
 
     Args:
-        instance (`AgentBase`):
+        instance (`Agent`):
             The agent instance making the request.
-        args (`Tuple[Any, ...]`):
-            Positional arguments passed to the agent's reply method.
         kwargs (`Dict[str, Any]`):
             Keyword arguments passed to the agent's reply method.
 
     Returns:
         `Dict[str, str]`:
             OpenTelemetry GenAI attributes including operation name, agent ID,
-            agent name, agent description, input messages (if provided), and
-            custom AgentScope function input.
+            agent name, agent description, and input messages (if provided).
     """
     attributes = {
         SpanAttributes.GEN_AI_OPERATION_NAME: (
@@ -485,8 +448,8 @@ def _get_agent_request_attributes(
     }
 
     msg = None
-    if args and len(args) > 0:
-        msg = args[0]
+    if "msgs" in kwargs:
+        msg = kwargs["msgs"]
     elif "msg" in kwargs:
         msg = kwargs["msg"]
     if msg:
@@ -495,13 +458,23 @@ def _get_agent_request_attributes(
             input_messages,
         )
 
-    # custom attributes
-    attributes[SpanAttributes.AGENTSCOPE_FUNCTION_INPUT] = _serialize_to_str(
-        {
-            "args": args,
-            "kwargs": kwargs,
-        },
-    )
+    # Record the incoming continuation event type for HITL/external execution
+    event = kwargs.get("event")
+    if event is not None:
+        from ...event import (
+            ExternalExecutionResultEvent,
+            UserConfirmResultEvent,
+        )
+
+        if isinstance(event, UserConfirmResultEvent):
+            attributes[
+                SpanAttributes.AGENTSCOPE_INCOMING_EVENT_TYPE
+            ] = "user_confirm_result"
+        elif isinstance(event, ExternalExecutionResultEvent):
+            attributes[
+                SpanAttributes.AGENTSCOPE_INCOMING_EVENT_TYPE
+            ] = "external_execution_result"
+
     return attributes
 
 
@@ -536,15 +509,11 @@ def _get_agent_response_attributes(
 
     Returns:
         `Dict[str, str]`:
-            OpenTelemetry GenAI response attributes including output messages
-            and custom AgentScope function output.
+            OpenTelemetry GenAI response attributes including output messages.
     """
     attributes = {
         SpanAttributes.GEN_AI_OUTPUT_MESSAGES: _serialize_to_str(
             _get_agent_messages(agent_response),
-        ),
-        SpanAttributes.AGENTSCOPE_FUNCTION_OUTPUT: _serialize_to_str(
-            agent_response,
         ),
     }
     return attributes
@@ -569,8 +538,8 @@ def _get_tool_request_attributes(
     Returns:
         `Dict[str, str]`:
             OpenTelemetry GenAI tool attributes including operation name, tool
-            call ID, tool name, tool description (if available), tool call
-            arguments, and custom AgentScope function input.
+            call ID, tool name, tool description (if available), and tool call
+            arguments.
     """
     attributes = {
         SpanAttributes.GEN_AI_OPERATION_NAME: (
@@ -579,31 +548,23 @@ def _get_tool_request_attributes(
     }
 
     if tool_call:
-        tool_name = tool_call.get("name")
-        attributes[SpanAttributes.GEN_AI_TOOL_CALL_ID] = tool_call.get("id")
+        tool_name = tool_call.name
+        attributes[SpanAttributes.GEN_AI_TOOL_CALL_ID] = tool_call.id
         attributes[SpanAttributes.GEN_AI_TOOL_NAME] = tool_name
-        attributes[
-            SpanAttributes.GEN_AI_TOOL_CALL_ARGUMENTS
-        ] = _serialize_to_str(tool_call.get("input"))
+        # tool_call.input is already a JSON string; pass it directly to avoid
+        # double-encoding (e.g. '{"city": "Beijing"}' → '"{\\"city\\"...}"')
+        attributes[SpanAttributes.GEN_AI_TOOL_CALL_ARGUMENTS] = tool_call.input
 
         if tool_name:
-            if tool := getattr(instance, "tools", {}).get(tool_name):
-                if tool_func := getattr(tool, "json_schema", {}).get(
-                    "function",
-                    {},
-                ):
+            registered = getattr(instance, "tools", {}).get(tool_name)
+            if registered is not None:
+                tool_obj = getattr(registered, "tool", None)
+                description = getattr(tool_obj, "description", None)
+                if description:
                     attributes[
                         SpanAttributes.GEN_AI_TOOL_DESCRIPTION
-                    ] = tool_func.get("description", "unknown_description")
+                    ] = description
 
-        # custom attributes
-        attributes[
-            SpanAttributes.AGENTSCOPE_FUNCTION_INPUT
-        ] = _serialize_to_str(
-            {
-                "tool_call": tool_call,
-            },
-        )
     return attributes
 
 
@@ -638,256 +599,11 @@ def _get_tool_response_attributes(
 
     Returns:
         `Dict[str, str]`:
-            OpenTelemetry GenAI response attributes including tool call result
-            and custom AgentScope function output.
+            OpenTelemetry GenAI response attributes including tool call result.
     """
     attributes = {
         SpanAttributes.GEN_AI_TOOL_CALL_RESULT: _serialize_to_str(
             tool_response,
         ),
     }
-
-    attributes[SpanAttributes.AGENTSCOPE_FUNCTION_OUTPUT] = _serialize_to_str(
-        tool_response,
-    )
     return attributes
-
-
-def _get_formatter_request_attributes(
-    instance: "FormatterBase",
-    args: Tuple[Any, ...],
-    kwargs: Dict[str, Any],
-) -> Dict[str, str]:
-    """Get formatter request attributes for OpenTelemetry tracing.
-
-    Extracts formatter metadata into GenAI attributes.
-
-    Args:
-        instance (`FormatterBase`):
-            The formatter instance being used to format messages.
-        args (`Tuple[Any, ...]`):
-            Positional arguments passed to the formatter's format method.
-        kwargs (`Dict[str, Any]`):
-            Keyword arguments passed to the formatter's format method.
-
-    Returns:
-        `Dict[str, str]`:
-            OpenTelemetry GenAI formatter attributes including operation
-            name, format target (provider name), and custom AgentScope
-            function input.
-    """
-    attributes = {
-        SpanAttributes.GEN_AI_OPERATION_NAME: (OperationNameValues.FORMATTER),
-        SpanAttributes.AGENTSCOPE_FORMAT_TARGET: _get_format_target(instance),
-        SpanAttributes.AGENTSCOPE_FUNCTION_INPUT: _serialize_to_str(
-            {
-                "args": args,
-                "kwargs": kwargs,
-            },
-        ),
-    }
-    return attributes
-
-
-def _get_formatter_span_name(attributes: Dict[str, str]) -> str:
-    """Generate span name for formatter operations.
-
-    Args:
-        attributes (`Dict[str, str]`):
-            Formatter request attributes dictionary containing operation name
-            and format target (provider name).
-
-    Returns:
-        `str`:
-            Formatted span name in the format "{operation} {provider}",
-            e.g., "formatter openai".
-    """
-    return (
-        f"{attributes[SpanAttributes.GEN_AI_OPERATION_NAME]} "
-        f"{attributes[SpanAttributes.AGENTSCOPE_FORMAT_TARGET]}"
-    )
-
-
-def _get_formatter_response_attributes(
-    response: Any,
-) -> Dict[str, Any]:
-    """Get formatter response attributes for OpenTelemetry tracing.
-
-    Args:
-        response (`Any`):
-            Response object from formatter. Typically a list of dictionaries
-            representing formatted messages.
-
-    Returns:
-        `Dict[str, Any]`:
-            OpenTelemetry GenAI response attributes including custom AgentScope
-            function output and format count (if response is a list).
-    """
-    attributes = {
-        SpanAttributes.AGENTSCOPE_FUNCTION_OUTPUT: _serialize_to_str(response),
-    }
-    if isinstance(response, list):
-        attributes[SpanAttributes.AGENTSCOPE_FORMAT_COUNT] = len(response)
-
-    return attributes
-
-
-def _get_generic_function_request_attributes(
-    function_name: str,
-    args: Tuple[Any, ...],
-    kwargs: Dict[str, Any],
-) -> Dict[str, str]:
-    """Get generic function request attributes for tracing.
-
-    Extracts metadata from function calls into GenAI attributes.
-
-    Args:
-        function_name (`str`):
-            Name of the function being called.
-        args (`Tuple[Any, ...]`):
-            Positional arguments passed to the function.
-        kwargs (`Dict[str, Any]`):
-            Keyword arguments passed to the function.
-
-    Returns:
-        `Dict[str, str]`:
-            OpenTelemetry GenAI function attributes including operation name,
-            function name, and custom AgentScope function input.
-    """
-    attributes = {
-        SpanAttributes.GEN_AI_OPERATION_NAME: (
-            OperationNameValues.INVOKE_GENERIC_FUNCTION
-        ),
-        SpanAttributes.AGENTSCOPE_FUNCTION_NAME: function_name,
-        SpanAttributes.AGENTSCOPE_FUNCTION_INPUT: _serialize_to_str(
-            {
-                "args": args,
-                "kwargs": kwargs,
-            },
-        ),
-    }
-    return attributes
-
-
-def _get_generic_function_span_name(attributes: Dict[str, str]) -> str:
-    """Generate span name for generic function operations.
-
-    Args:
-        attributes (`Dict[str, str]`):
-            Generic function request attributes dictionary containing operation
-            name and function name.
-
-    Returns:
-        `str`:
-            Formatted span name in the format "{operation} {function_name}",
-            e.g., "invoke_generic_function my_function".
-    """
-    return (
-        f"{attributes[SpanAttributes.GEN_AI_OPERATION_NAME]} "
-        f"{attributes[SpanAttributes.AGENTSCOPE_FUNCTION_NAME]}"
-    )
-
-
-def _get_generic_function_response_attributes(
-    response: Any,
-) -> Dict[str, str]:
-    """Get generic function response attributes for tracing.
-
-    Args:
-        response (`Any`):
-            Response object returned by the generic function. Can be any
-            serializable object.
-
-    Returns:
-        `Dict[str, str]`:
-            OpenTelemetry GenAI response attributes including custom AgentScope
-            function output.
-    """
-    attributes = {
-        SpanAttributes.AGENTSCOPE_FUNCTION_OUTPUT: _serialize_to_str(response),
-    }
-    return attributes
-
-
-def _get_embedding_request_attributes(
-    instance: "EmbeddingModelBase",
-    args: Tuple[Any, ...],
-    kwargs: Dict[str, Any],
-) -> Dict[str, Any]:
-    """Get embedding request attributes for OpenTelemetry tracing.
-
-    Extracts embedding model metadata into GenAI attributes.
-
-    Args:
-        instance (`EmbeddingModelBase`):
-            The embedding model instance making the request.
-        args (`Tuple[Any, ...]`):
-            Positional arguments passed to the embedding model call.
-        kwargs (`Dict[str, Any]`):
-            Keyword arguments including dimensions and other embedding
-            parameters.
-
-    Returns:
-        `Dict[str, Any]`:
-            OpenTelemetry GenAI attributes including operation name,
-            model name, embedding dimensions count, and custom
-            AgentScope function input.
-    """
-    attributes = {
-        SpanAttributes.GEN_AI_OPERATION_NAME: OperationNameValues.EMBEDDINGS,
-        SpanAttributes.GEN_AI_REQUEST_MODEL: getattr(
-            instance,
-            "model_name",
-            "unknown_model",
-        ),
-        SpanAttributes.GEN_AI_EMBEDDINGS_DIMENSION_COUNT: kwargs.get(
-            "dimensions",
-        ),
-        SpanAttributes.AGENTSCOPE_FUNCTION_INPUT: _serialize_to_str(
-            {
-                "args": args,
-                "kwargs": kwargs,
-            },
-        ),
-    }
-    return {k: v for k, v in attributes.items() if v is not None}
-
-
-def _get_embedding_span_name(attributes: Dict[str, str]) -> str:
-    """Generate span name for embedding operations.
-
-    Args:
-        attributes (`Dict[str, str]`):
-            Embedding request attributes dictionary containing operation name
-            and model name.
-
-    Returns:
-        `str`:
-            Formatted span name in the format "{operation} {model}",
-            e.g., "embeddings text-embedding-ada-002".
-    """
-    return (
-        f"{attributes[SpanAttributes.GEN_AI_OPERATION_NAME]} "
-        f"{attributes[SpanAttributes.GEN_AI_REQUEST_MODEL]}"
-    )
-
-
-def _get_embedding_response_attributes(
-    response: Any,
-) -> Dict[str, str]:
-    """Get embedding response attributes for OpenTelemetry tracing.
-
-    Args:
-        response (`Any`):
-            Response object from embedding model. Typically a list of embedding
-            vectors or a similar structure.
-
-    Returns:
-        `Dict[str, str]`:
-            OpenTelemetry GenAI response attributes including custom AgentScope
-            function output.
-    """
-    attributes = {
-        SpanAttributes.AGENTSCOPE_FUNCTION_OUTPUT: _serialize_to_str(response),
-    }
-    return {k: v for k, v in attributes.items() if v is not None}

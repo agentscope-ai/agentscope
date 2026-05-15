@@ -9,7 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from ..message import Msg
+from ...message import Msg
 
 
 def _to_serializable(

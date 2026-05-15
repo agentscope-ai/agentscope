@@ -14,9 +14,8 @@ from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ...credential import GeminiCredential
 from ...formatter import FormatterBase, GeminiChatFormatter
-from ...message import ThinkingBlock, ToolCallBlock, TextBlock
+from ...message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
 from ...tool import ToolChoice
-from ...tracing import trace_llm
 from ..._logging import logger
 
 if TYPE_CHECKING:
@@ -164,11 +163,10 @@ class GeminiChatModel(ChatModelBase):
         self.parameters = parameters or self.Parameters()
         self.formatter = formatter or GeminiChatFormatter()
 
-    @trace_llm
     async def _call_api(
         self,
         model_name: str,
-        messages: list[Any],
+        messages: list[Msg],
         tools: list[dict] | None = None,
         tool_choice: ToolChoice | None = None,
         **config_kwargs: Any,
