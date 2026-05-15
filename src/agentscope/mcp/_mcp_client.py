@@ -132,20 +132,42 @@ class MCPClient(BaseModel):
         """Create an HTTP MCP client (SSE or streamable HTTP)."""
         config = self.mcp_config
 
+        # Build a custom httpx client factory when TLS verification is off
+        def _client_factory(
+            headers: dict[str, str] | None = None,
+            timeout: httpx.Timeout | None = None,
+            auth: httpx.Auth | None = None,
+        ) -> httpx.AsyncClient:
+            kwargs: dict[str, Any] = {
+                "follow_redirects": True,
+                "verify": config.verify,
+            }
+            if timeout is not None:
+                kwargs["timeout"] = timeout
+            if headers is not None:
+                kwargs["headers"] = headers
+            if auth is not None:
+                kwargs["auth"] = auth
+            return httpx.AsyncClient(**kwargs)
+
         # Determine transport from URL
         if config.url.endswith("/sse") or config.url.endswith("/messages/"):
-            return sse_client(
-                url=config.url,
-                headers=config.headers,
-                timeout=config.timeout,
-            )
+            sse_kwargs: dict[str, Any] = {
+                "url": config.url,
+                "headers": config.headers,
+                "timeout": config.timeout or 30.0,
+            }
+            if not config.verify:
+                sse_kwargs["httpx_client_factory"] = _client_factory
+            return sse_client(**sse_kwargs)
 
         # StreamableHTTP transport
         http_client = None
-        if config.headers or config.timeout:
+        if config.headers or config.timeout or not config.verify:
             http_client = httpx.AsyncClient(
                 headers=config.headers,
                 timeout=config.timeout,
+                verify=config.verify,
             )
         return streamable_http_client(
             url=config.url,
