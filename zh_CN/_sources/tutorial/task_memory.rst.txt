@@ -177,30 +177,30 @@ AgentScope 中的记忆模块负责：
  .. code-block:: none
 
     带有标记'hint'的消息：
-    - Msg(id='2mvwvkQsnCcLSxUsF8uj8H', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-05-14 09:38:27.818', invocation_id='None')
+    - Msg(id='Ndo48Shs2JfHyGU8drErfc', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-05-15 07:50:00.986', invocation_id='None')
     记忆的状态字典：
     {
       "_compressed_summary": "",
       "content": [
         [
           {
-            "id": "gP9WtNh9cDCFVx54rjJHz3",
+            "id": "dDB32Bdw3WsNrqUZZVutm5",
             "name": "Alice",
             "role": "user",
             "content": "生成一份关于AgentScope的报告",
             "metadata": {},
-            "timestamp": "2026-05-14 09:38:27.818"
+            "timestamp": "2026-05-15 07:50:00.986"
           },
           []
         ],
         [
           {
-            "id": "2mvwvkQsnCcLSxUsF8uj8H",
+            "id": "Ndo48Shs2JfHyGU8drErfc",
             "name": "system",
             "role": "system",
             "content": "<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>",
             "metadata": {},
-            "timestamp": "2026-05-14 09:38:27.818"
+            "timestamp": "2026-05-15 07:50:00.986"
           },
           [
             "hint"
@@ -215,12 +215,12 @@ AgentScope 中的记忆模块负责：
       "content": [
         [
           {
-            "id": "gP9WtNh9cDCFVx54rjJHz3",
+            "id": "dDB32Bdw3WsNrqUZZVutm5",
             "name": "Alice",
             "role": "user",
             "content": "生成一份关于AgentScope的报告",
             "metadata": {},
-            "timestamp": "2026-05-14 09:38:27.818"
+            "timestamp": "2026-05-15 07:50:00.986"
           },
           []
         ]
@@ -297,7 +297,7 @@ AgentScope 通过 SQLAlchemy 提供统一的接口来使用关系数据库，支
  .. code-block:: none
 
     带有标记'hint'的消息：
-    - Msg(id='bG8Twqt5Q99erDWFsBthxC', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-05-14 09:38:27.854', invocation_id='None')
+    - Msg(id='Jo2ieSnAhvUFbAvXviUtqA', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-05-15 07:50:01.026', invocation_id='None')
 
 
 
@@ -341,9 +341,9 @@ AgentScope 通过 SQLAlchemy 提供统一的接口来使用关系数据库，支
  .. code-block:: none
 
     记忆中的所有消息：
-    - Msg(id='B5Axpo4qpbQhgT7Rv4uAYE', name='Alice', content='生成一份关于AgentScope的报告', role='user', metadata={}, timestamp='2026-05-14 09:38:27.828', invocation_id='None')
-    - Msg(id='bG8Twqt5Q99erDWFsBthxC', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-05-14 09:38:27.854', invocation_id='None')
-    - Msg(id='9HZKvkwevMRKoxPzUDpaq9', name='Alice', content='生成一份关于 AgentScope 的报告', role='user', metadata={}, timestamp='2026-05-14 09:38:27.861', invocation_id='None')
+    - Msg(id='Lk8d4AdWYHgvMkph4Ryost', name='Alice', content='生成一份关于AgentScope的报告', role='user', metadata={}, timestamp='2026-05-15 07:50:00.996', invocation_id='None')
+    - Msg(id='Jo2ieSnAhvUFbAvXviUtqA', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-05-15 07:50:01.026', invocation_id='None')
+    - Msg(id='KFXhf9xuBBHNdn9Q7iiFeA', name='Alice', content='生成一份关于 AgentScope 的报告', role='user', metadata={}, timestamp='2026-05-15 07:50:01.034', invocation_id='None')
 
 
 
@@ -489,7 +489,7 @@ AgentScope还提供基于NoSQL数据库（如Redis）的记忆实现。
  .. code-block:: none
 
     带有标记'hint'的消息：
-    - Msg(id='D7Wxs2afZPXkSX4Aq9QWtu', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-05-14 09:38:27.879', invocation_id='None')
+    - Msg(id='4hd9evF8woPsN6ehYp6RcC', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-05-15 07:50:01.051', invocation_id='None')
 
 
 
@@ -712,7 +712,7 @@ AgentScope 还提供了基于
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 0.083 seconds)
+   **Total running time of the script:** (0 minutes 0.090 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_memory.py:
