@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
-from .._model_usage import ChatUsage, _to_usage_dict
+from .._model_usage import ChatUsage
 from ...credential import OpenAICredential
 from ...formatter import FormatterBase, OpenAIResponseFormatter
 from ...message import ThinkingBlock, ToolCallBlock, TextBlock
@@ -259,11 +259,19 @@ class OpenAIResponseModel(ChatModelBase):
                 if response_id is None:
                     response_id = getattr(resp, "id", None)
                 if resp.usage:
+                    u = resp.usage
+                    details = getattr(u, "input_tokens_details", None)
                     usage = ChatUsage(
-                        input_tokens=resp.usage.input_tokens,
-                        output_tokens=resp.usage.output_tokens,
+                        input_tokens=u.input_tokens,
+                        output_tokens=u.output_tokens,
                         time=(datetime.now() - start_datetime).total_seconds(),
-                        metadata=_to_usage_dict(resp.usage),
+                        cache_input_tokens=getattr(
+                            details,
+                            "cached_tokens",
+                            None,
+                        )
+                        if details
+                        else None,
                     )
                 # Attach reasoning item IDs from the completed response so the
                 # formatter can echo them back in multi-turn history.
@@ -380,11 +388,19 @@ class OpenAIResponseModel(ChatModelBase):
 
         usage = None
         if response.usage:
+            u = response.usage
+            details = getattr(u, "input_tokens_details", None)
             usage = ChatUsage(
-                input_tokens=response.usage.input_tokens,
-                output_tokens=response.usage.output_tokens,
+                input_tokens=u.input_tokens,
+                output_tokens=u.output_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
-                metadata=response.usage.model_dump(),
+                cache_input_tokens=getattr(
+                    details,
+                    "cached_tokens",
+                    None,
+                )
+                if details
+                else None,
             )
 
         resp_kwargs: dict[str, Any] = {

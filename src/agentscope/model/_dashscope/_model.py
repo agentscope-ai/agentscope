@@ -11,7 +11,7 @@ from aioitertools import iter as giter
 
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
-from .._model_usage import ChatUsage, _to_usage_dict
+from .._model_usage import ChatUsage
 from ...credential import DashScopeCredential
 from ...formatter import FormatterBase, DashScopeChatFormatter
 from ...message import Msg, TextBlock, ThinkingBlock, ToolCallBlock
@@ -366,11 +366,20 @@ class DashScopeChatModel(ChatModelBase):
 
             # The chunk usage
             if chunk.usage:
+                u = chunk.usage
+                ptd = getattr(u, "prompt_tokens_details", None)
+                if isinstance(ptd, dict):
+                    cache_creation = ptd.get("cache_creation_input_tokens")
+                    cache_read = ptd.get("cached_tokens")
+                else:
+                    cache_creation = None
+                    cache_read = getattr(u, "cached_tokens", None)
                 usage = ChatUsage(
-                    input_tokens=chunk.usage.input_tokens,
-                    output_tokens=chunk.usage.output_tokens,
+                    input_tokens=u.input_tokens,
+                    output_tokens=u.output_tokens,
                     time=(datetime.now() - start_datetime).total_seconds(),
-                    metadata=_to_usage_dict(chunk.usage),
+                    cache_creation_input_tokens=cache_creation,
+                    cache_input_tokens=cache_read,
                 )
 
             # Yield the chat response
@@ -476,11 +485,20 @@ class DashScopeChatModel(ChatModelBase):
         # Usage information
         usage = None
         if response.usage:
+            u = response.usage
+            ptd = getattr(u, "prompt_tokens_details", None)
+            if isinstance(ptd, dict):
+                cache_creation = ptd.get("cache_creation_input_tokens")
+                cache_read = ptd.get("cached_tokens")
+            else:
+                cache_creation = None
+                cache_read = getattr(u, "cached_tokens", None)
             usage = ChatUsage(
-                input_tokens=response.usage.input_tokens,
-                output_tokens=response.usage.output_tokens,
+                input_tokens=u.input_tokens,
+                output_tokens=u.output_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
-                metadata=_to_usage_dict(response.usage),
+                cache_creation_input_tokens=cache_creation,
+                cache_input_tokens=cache_read,
             )
 
         return ChatResponse(

@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
-from .._model_usage import ChatUsage, _to_usage_dict
+from .._model_usage import ChatUsage
 from ...credential import AnthropicCredential
 from ...formatter import FormatterBase, AnthropicChatFormatter
 from ...message import ThinkingBlock, ToolCallBlock, TextBlock
@@ -251,11 +251,21 @@ class AnthropicChatModel(ChatModelBase):
 
         usage = None
         if response.usage:
+            u = response.usage
             usage = ChatUsage(
-                input_tokens=response.usage.input_tokens,
-                output_tokens=response.usage.output_tokens,
+                input_tokens=u.input_tokens,
+                output_tokens=u.output_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
-                metadata=response.usage.model_dump(),
+                cache_creation_input_tokens=getattr(
+                    u,
+                    "cache_creation_input_tokens",
+                    None,
+                ),
+                cache_input_tokens=getattr(
+                    u,
+                    "cache_read_input_tokens",
+                    None,
+                ),
             )
 
         resp_kwargs: dict[str, Any] = {
@@ -307,15 +317,21 @@ class AnthropicChatModel(ChatModelBase):
                 if response_id is None:
                     response_id = getattr(message, "id", None)
                 if message.usage:
+                    u = message.usage
                     usage = ChatUsage(
-                        input_tokens=message.usage.input_tokens,
-                        output_tokens=getattr(
-                            message.usage,
-                            "output_tokens",
-                            0,
-                        ),
+                        input_tokens=u.input_tokens,
+                        output_tokens=getattr(u, "output_tokens", 0),
                         time=(datetime.now() - start_datetime).total_seconds(),
-                        metadata=_to_usage_dict(message.usage),
+                        cache_creation_input_tokens=getattr(
+                            u,
+                            "cache_creation_input_tokens",
+                            None,
+                        ),
+                        cache_input_tokens=getattr(
+                            u,
+                            "cache_read_input_tokens",
+                            None,
+                        ),
                     )
 
             elif event.type == "content_block_start":

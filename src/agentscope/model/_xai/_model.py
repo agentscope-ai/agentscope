@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
-from .._model_usage import ChatUsage, _to_usage_dict
+from .._model_usage import ChatUsage
 from ...credential import XAICredential
 from ...formatter import XAIChatFormatter
 from ...message import (
@@ -338,7 +338,11 @@ class XAIChatModel(ChatModelBase):
                 input_tokens=u.prompt_tokens,
                 output_tokens=u.completion_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
-                metadata=_to_usage_dict(u),
+                cache_input_tokens=getattr(
+                    u,
+                    "cached_prompt_text_tokens",
+                    None,
+                ),
             )
 
         final_kwargs: dict[str, Any] = {
@@ -392,7 +396,11 @@ class XAIChatModel(ChatModelBase):
                 input_tokens=u.prompt_tokens,
                 output_tokens=u.completion_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
-                metadata=_to_usage_dict(u),
+                cache_input_tokens=getattr(
+                    u,
+                    "cached_prompt_text_tokens",
+                    None,
+                ),
             )
 
         resp_kwargs: dict[str, Any] = {
