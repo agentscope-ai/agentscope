@@ -22,6 +22,7 @@ class OpenAITextEmbedding(EmbeddingModelBase):
         model_name: str,
         dimensions: int = 1024,
         embedding_cache: EmbeddingCacheBase | None = None,
+        batch_size: int = 2048,
         **kwargs: Any,
     ) -> None:
         """Initialize the OpenAI text embedding model class.
@@ -36,8 +37,8 @@ class OpenAITextEmbedding(EmbeddingModelBase):
             embedding_cache (`EmbeddingCacheBase | None`, defaults to `None`):
                 The embedding cache class instance, used to cache the
                 embedding results to avoid repeated API calls.
-
-        # TODO: handle batch size limit and token limit
+            batch_size (`int`, defaults to 2048):
+                The maximum number of texts to embed in a single API call.
         """
         import openai
 
@@ -45,6 +46,7 @@ class OpenAITextEmbedding(EmbeddingModelBase):
 
         self.client = openai.AsyncClient(api_key=api_key, **kwargs)
         self.embedding_cache = embedding_cache
+        self.batch_size = batch_size
 
     async def __call__(
         self,
@@ -91,19 +93,29 @@ class OpenAITextEmbedding(EmbeddingModelBase):
                 )
 
         start_time = datetime.now()
-        response = await self.client.embeddings.create(**kwargs)
+        all_embeddings = []
+        total_tokens = 0
+
+        for i in range(0, len(gather_text), self.batch_size):
+            chunk = gather_text[i : i + self.batch_size]
+            chunk_kwargs = kwargs.copy()
+            chunk_kwargs["input"] = chunk
+            response = await self.client.embeddings.create(**chunk_kwargs)
+            all_embeddings.extend([_.embedding for _ in response.data])
+            total_tokens += response.usage.total_tokens
+
         time = (datetime.now() - start_time).total_seconds()
 
         if self.embedding_cache:
             await self.embedding_cache.store(
                 identifier=kwargs,
-                embeddings=[_.embedding for _ in response.data],
+                embeddings=all_embeddings,
             )
 
         return EmbeddingResponse(
-            embeddings=[_.embedding for _ in response.data],
+            embeddings=all_embeddings,
             usage=EmbeddingUsage(
-                tokens=response.usage.total_tokens,
+                tokens=total_tokens,
                 time=time,
             ),
         )

@@ -22,6 +22,7 @@ class GeminiTextEmbedding(EmbeddingModelBase):
         model_name: str,
         dimensions: int = 3072,
         embedding_cache: EmbeddingCacheBase | None = None,
+        batch_size: int = 100,
         **kwargs: Any,
     ) -> None:
         """Initialize the Gemini text embedding model class.
@@ -39,6 +40,8 @@ class GeminiTextEmbedding(EmbeddingModelBase):
             embedding_cache (`EmbeddingCacheBase | None`, defaults to `None`):
                 The embedding cache class instance, used to cache the
                 embedding results to avoid repeated API calls.
+            batch_size (`int`, defaults to 100):
+                The maximum number of texts to embed in a single API call.
         """
         from google import genai
 
@@ -46,6 +49,7 @@ class GeminiTextEmbedding(EmbeddingModelBase):
 
         self.client = genai.Client(api_key=api_key, **kwargs)
         self.embedding_cache = embedding_cache
+        self.batch_size = batch_size
 
     async def __call__(
         self,
@@ -58,7 +62,6 @@ class GeminiTextEmbedding(EmbeddingModelBase):
             text (`List[str | TextBlock]`):
                 The input text to be embedded. It can be a list of strings.
 
-        # TODO: handle the batch size limit
         """
         gather_text = []
         for _ in text:
@@ -92,17 +95,25 @@ class GeminiTextEmbedding(EmbeddingModelBase):
                 )
 
         start_time = datetime.now()
-        response = self.client.models.embed_content(**kwargs)
+        all_embeddings = []
+
+        for i in range(0, len(gather_text), self.batch_size):
+            chunk = gather_text[i : i + self.batch_size]
+            chunk_kwargs = kwargs.copy()
+            chunk_kwargs["contents"] = chunk
+            response = self.client.models.embed_content(**chunk_kwargs)
+            all_embeddings.extend([_.values for _ in response.embeddings])
+
         time = (datetime.now() - start_time).total_seconds()
 
         if self.embedding_cache:
             await self.embedding_cache.store(
                 identifier=kwargs,
-                embeddings=[_.values for _ in response.embeddings],
+                embeddings=all_embeddings,
             )
 
         return EmbeddingResponse(
-            embeddings=[_.values for _ in response.embeddings],
+            embeddings=all_embeddings,
             usage=EmbeddingUsage(
                 time=time,
             ),
