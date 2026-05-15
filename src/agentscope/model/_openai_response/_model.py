@@ -268,10 +268,10 @@ class OpenAIResponseModel(ChatModelBase):
                         cache_input_tokens=getattr(
                             details,
                             "cached_tokens",
-                            None,
+                            0,
                         )
                         if details
-                        else None,
+                        else 0,
                     )
                 # Attach reasoning item IDs from the completed response so the
                 # formatter can echo them back in multi-turn history.
@@ -397,10 +397,10 @@ class OpenAIResponseModel(ChatModelBase):
                 cache_input_tokens=getattr(
                     details,
                     "cached_tokens",
-                    None,
+                    0,
                 )
                 if details
-                else None,
+                else 0,
             )
 
         resp_kwargs: dict[str, Any] = {

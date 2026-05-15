@@ -208,7 +208,7 @@ class KimiChatModel(ChatModelBase):
                         cache_input_tokens=getattr(
                             u,
                             "cached_tokens",
-                            None,
+                            0,
                         ),
                     )
 
@@ -335,7 +335,7 @@ class KimiChatModel(ChatModelBase):
                 input_tokens=u.prompt_tokens,
                 output_tokens=u.completion_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
-                cache_input_tokens=getattr(u, "cached_tokens", None),
+                cache_input_tokens=getattr(u, "cached_tokens", 0),
             )
 
         resp_kwargs: dict[str, Any] = {

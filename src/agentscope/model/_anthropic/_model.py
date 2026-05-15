@@ -259,12 +259,12 @@ class AnthropicChatModel(ChatModelBase):
                 cache_creation_input_tokens=getattr(
                     u,
                     "cache_creation_input_tokens",
-                    None,
+                    0,
                 ),
                 cache_input_tokens=getattr(
                     u,
                     "cache_read_input_tokens",
-                    None,
+                    0,
                 ),
             )
 
@@ -325,12 +325,12 @@ class AnthropicChatModel(ChatModelBase):
                         cache_creation_input_tokens=getattr(
                             u,
                             "cache_creation_input_tokens",
-                            None,
+                            0,
                         ),
                         cache_input_tokens=getattr(
                             u,
                             "cache_read_input_tokens",
-                            None,
+                            0,
                         ),
                     )
 

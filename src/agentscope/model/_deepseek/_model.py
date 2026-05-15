@@ -217,7 +217,7 @@ class DeepSeekChatModel(ChatModelBase):
                         cache_input_tokens=getattr(
                             u,
                             "prompt_cache_hit_tokens",
-                            None,
+                            0,
                         ),
                     )
 
@@ -347,7 +347,7 @@ class DeepSeekChatModel(ChatModelBase):
                 cache_input_tokens=getattr(
                     u,
                     "prompt_cache_hit_tokens",
-                    None,
+                    0,
                 ),
             )
 

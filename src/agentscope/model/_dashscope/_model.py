@@ -369,11 +369,11 @@ class DashScopeChatModel(ChatModelBase):
                 u = chunk.usage
                 ptd = getattr(u, "prompt_tokens_details", None)
                 if isinstance(ptd, dict):
-                    cache_creation = ptd.get("cache_creation_input_tokens")
-                    cache_read = ptd.get("cached_tokens")
+                    cache_creation = ptd.get("cache_creation_input_tokens", 0)
+                    cache_read = ptd.get("cached_tokens", 0)
                 else:
-                    cache_creation = None
-                    cache_read = getattr(u, "cached_tokens", None)
+                    cache_creation = 0
+                    cache_read = getattr(u, "cached_tokens", 0)
                 usage = ChatUsage(
                     input_tokens=u.input_tokens,
                     output_tokens=u.output_tokens,
@@ -488,11 +488,11 @@ class DashScopeChatModel(ChatModelBase):
             u = response.usage
             ptd = getattr(u, "prompt_tokens_details", None)
             if isinstance(ptd, dict):
-                cache_creation = ptd.get("cache_creation_input_tokens")
-                cache_read = ptd.get("cached_tokens")
+                cache_creation = ptd.get("cache_creation_input_tokens", 0)
+                cache_read = ptd.get("cached_tokens", 0)
             else:
-                cache_creation = None
-                cache_read = getattr(u, "cached_tokens", None)
+                cache_creation = 0
+                cache_read = getattr(u, "cached_tokens", 0)
             usage = ChatUsage(
                 input_tokens=u.input_tokens,
                 output_tokens=u.output_tokens,

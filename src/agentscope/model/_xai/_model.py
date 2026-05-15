@@ -341,7 +341,7 @@ class XAIChatModel(ChatModelBase):
                 cache_input_tokens=getattr(
                     u,
                     "cached_prompt_text_tokens",
-                    None,
+                    0,
                 ),
             )
 
@@ -399,7 +399,7 @@ class XAIChatModel(ChatModelBase):
                 cache_input_tokens=getattr(
                     u,
                     "cached_prompt_text_tokens",
-                    None,
+                    0,
                 ),
             )
 

@@ -227,10 +227,10 @@ class OpenAIChatModel(ChatModelBase):
                         cache_input_tokens=getattr(
                             details,
                             "cached_tokens",
-                            None,
+                            0,
                         )
                         if details
-                        else None,
+                        else 0,
                     )
 
                 # Capture response_id from the first chunk that carries it
@@ -361,10 +361,10 @@ class OpenAIChatModel(ChatModelBase):
                 cache_input_tokens=getattr(
                     details,
                     "cached_tokens",
-                    None,
+                    0,
                 )
                 if details
-                else None,
+                else 0,
             )
 
         resp_kwargs: dict[str, Any] = {

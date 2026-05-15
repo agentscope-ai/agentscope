@@ -452,7 +452,7 @@ class GeminiChatModel(ChatModelBase):
                 cache_input_tokens=getattr(
                     usage_metadata,
                     "cached_content_token_count",
-                    None,
+                    0,
                 ),
             )
         return None
