@@ -49,6 +49,8 @@ class SummarySchema(BaseModel):
             "Any promises made to the user"
         ),
     )
+    """Whether to execute multiple tool calls in parallel within one
+    reasoning step."""
 
 
 class ContextConfig(BaseModel):

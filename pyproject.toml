@@ -57,10 +57,22 @@ models = [
     "agentscope[gemini]",
     "agentscope[xai]",
 ]
-
+# ------------ Service ------------
+service = [
+    "fastapi",
+    "uvicorn",
+    "apscheduler",
+    "ag-ui-protocol>=0.1.10",
+]
+# ------------ Storage ------------
+storage = [
+    "redis",
+]
 # ------------ Full ------------
 full = [
     "agentscope[models]",
+    "agentscope[service]",
+    "agentscope[storage]",
 ]
 
 # ------------ Development ------------
