@@ -62,3 +62,9 @@ class HttpMCPConfig(BaseModel):
         description="The HTTP request timeout in seconds.",
         default=30.0,
     )
+
+    verify: bool = Field(
+        title="TLS Verify",
+        description="Whether to verify TLS certificates.",
+        default=True,
+    )
