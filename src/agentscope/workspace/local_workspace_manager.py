@@ -1,19 +1,19 @@
 # -*- coding: utf-8 -*-
 """LocalWorkspaceManager — manages :class:`LocalWorkspace` instances.
 
-Creates isolated local directories per user/agent pair. Suitable for
+Creates isolated local directories per workspace. Suitable for
 single-machine deployments where no container isolation is needed.
 
 Usage::
 
-    manager = LocalWorkspaceManager(
-        base_dir="/data/workspaces",
-        default_skill_paths=["/skills/web-search"],
-    )
+    manager = LocalWorkspaceManager(base_dir="/data/workspaces")
     await manager.initialize()
 
-    workspace = await manager.get_workspace("user_1", "agent_1")
-    # workspace.workdir → /data/workspaces/user_1/agent_1
+    ws = await manager.create_workspace()
+    # persist ws.workspace_id in your DB
+
+    # later: look up by workspace_id
+    ws = manager.get_workspace(ws_id)
 """
 
 import os
@@ -40,7 +40,6 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
         self._base_dir = os.path.abspath(base_dir)
         self._default_skill_paths = list(default_skill_paths or [])
         self._default_mcps = list(default_mcps or [])
-        self._workspaces: dict[str, LocalWorkspace] = {}
 
     async def initialize(self) -> None:
         os.makedirs(self._base_dir, exist_ok=True)
@@ -50,35 +49,23 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
         )
 
     async def close(self) -> None:
-        for ws in self._workspaces.values():
-            try:
-                await ws.close()
-            except Exception as e:
-                logger.warning("Error closing workspace: %s", e)
-        self._workspaces.clear()
+        await self._close_all_workspaces()
 
-    async def get_workspace(
-        self,
-        user_id: str,
-        agent_id: str,
-        **kwargs: Any,
-    ) -> WorkspaceBase:
-        key = f"{user_id}/{agent_id}"
-        if key in self._workspaces:
-            return self._workspaces[key]
+    async def _do_create(self, **kwargs: Any) -> WorkspaceBase:
+        workdir = kwargs.get("workdir")
+        if not workdir:
+            import uuid
 
-        workdir = os.path.join(self._base_dir, user_id, agent_id)
+            workdir = os.path.join(self._base_dir, uuid.uuid4().hex[:12])
         ws = LocalWorkspace(
             workdir=workdir,
-            skill_paths=self._default_skill_paths,
-            mcps=list(self._default_mcps),
+            skill_paths=kwargs.get(
+                "skill_paths",
+                self._default_skill_paths,
+            ),
+            mcps=list(kwargs.get("mcps", self._default_mcps)),
         )
         await ws.initialize()
-        self._workspaces[key] = ws
-        logger.info(
-            "LocalWorkspaceManager: created workspace for %s",
-            key,
-        )
         return ws
 
     async def restore(
@@ -96,5 +83,5 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
             mcps=list(self._default_mcps),
         )
         await ws.initialize()
+        self._workspaces[ws.workspace_id] = ws
         return ws
-

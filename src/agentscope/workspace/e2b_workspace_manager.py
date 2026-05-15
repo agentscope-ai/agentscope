@@ -8,19 +8,18 @@ Usage::
     manager = E2BWorkspaceManager(
         template="my-template",
         api_key="e2b-api-key",
-        default_mcp_servers=[
-            MCPServerConfig(name="fs", command="mcp-server-fs"),
-        ],
     )
     await manager.initialize()
 
-    workspace = await manager.get_workspace("user_1", "agent_1")
+    ws = await manager.create_workspace()
+    # persist ws.workspace_id in your DB
+
+    # later: look up by workspace_id
+    ws = manager.get_workspace(ws_id)
 
 Pool usage (RL rollout)::
 
-    manager = E2BWorkspaceManager(template="my-template")
     manager.enable_pool(capacity=8)
-    await manager.initialize()
     await manager.warm_up_pool()
 
     ws = await manager.acquire_from_pool()
@@ -28,7 +27,6 @@ Pool usage (RL rollout)::
     await manager.release_to_pool(ws)
 """
 
-import asyncio
 from typing import Any
 
 from .workspace_manager_base import WorkspaceManagerBase
@@ -68,7 +66,6 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         self._default_startup_commands = list(
             default_startup_commands or [],
         )
-        self._workspaces: dict[str, E2BWorkspace] = {}
 
     async def initialize(self) -> None:
         logger.info(
@@ -77,53 +74,33 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         )
 
     async def close(self) -> None:
-        tasks = []
-        for ws in self._workspaces.values():
-            tasks.append(ws.close())
-        if tasks:
-            results = await asyncio.gather(
-                *tasks,
-                return_exceptions=True,
-            )
-            for r in results:
-                if isinstance(r, Exception):
-                    logger.warning("Error closing workspace: %s", r)
-        self._workspaces.clear()
+        await self._close_all_workspaces()
         await self._close_pool()
 
-    async def get_workspace(
-        self,
-        user_id: str,
-        agent_id: str,
-        **kwargs: Any,
-    ) -> WorkspaceBase:
-        key = f"{user_id}/{agent_id}"
-        if key in self._workspaces:
-            existing = self._workspaces[key]
-            if existing._started:
-                return existing
-
+    async def _do_create(self, **kwargs: Any) -> WorkspaceBase:
         ws = E2BWorkspace(
-            template=self._template,
-            api_key=self._api_key,
-            domain=self._domain,
-            timeout=self._timeout,
-            working_dir=self._working_dir,
-            mcp_servers=list(self._default_mcp_servers),
-            gateway_port=self._gateway_port,
-            env=dict(self._default_env),
-            metadata=dict(self._default_metadata),
-            startup_commands=list(self._default_startup_commands),
+            template=kwargs.get("template", self._template),
+            api_key=kwargs.get("api_key", self._api_key),
+            domain=kwargs.get("domain", self._domain),
+            timeout=kwargs.get("timeout", self._timeout),
+            working_dir=kwargs.get("working_dir", self._working_dir),
+            mcp_servers=list(
+                kwargs.get("mcp_servers", self._default_mcp_servers),
+            ),
+            gateway_port=kwargs.get("gateway_port", self._gateway_port),
+            env=dict(kwargs.get("env", self._default_env)),
+            metadata=dict(kwargs.get("metadata", self._default_metadata)),
+            startup_commands=list(
+                kwargs.get(
+                    "startup_commands",
+                    self._default_startup_commands,
+                ),
+            ),
         )
         await ws.initialize()
-        self._workspaces[key] = ws
-        logger.info(
-            "E2BWorkspaceManager: created workspace for %s",
-            key,
-        )
         return ws
 
-    async def restore(
+    async def restore(  # pylint: disable=protected-access
         self,
         state: SerializedWorkspaceState,
     ) -> WorkspaceBase:
@@ -165,21 +142,9 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
             await ws._start_gateway()
 
         ws._started = True
+        self._workspaces[ws.workspace_id] = ws
         logger.info("E2BWorkspaceManager: restored workspace %s", ws._id)
         return ws
 
     async def _create_for_pool(self) -> WorkspaceBase:
-        ws = E2BWorkspace(
-            template=self._template,
-            api_key=self._api_key,
-            domain=self._domain,
-            timeout=self._timeout,
-            working_dir=self._working_dir,
-            mcp_servers=list(self._default_mcp_servers),
-            gateway_port=self._gateway_port,
-            env=dict(self._default_env),
-            metadata=dict(self._default_metadata),
-            startup_commands=list(self._default_startup_commands),
-        )
-        await ws.initialize()
-        return ws
+        return await self._do_create()

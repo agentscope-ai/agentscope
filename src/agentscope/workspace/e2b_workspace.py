@@ -107,6 +107,7 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
 
     @property
     def sandbox_id(self) -> str | None:
+        """E2B sandbox ID, or ``None`` if not started."""
         return self._sandbox.sandbox_id if self._sandbox else None
 
     # ── lifecycle ──────────────────────────────────────────────────
@@ -339,6 +340,7 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
     # ── export state ───────────────────────────────────────────────
 
     async def export_state(self) -> SerializedWorkspaceState:
+        """Serialize workspace identity for later restore."""
         return SerializedWorkspaceState(
             backend_type="e2b",
             payload={
@@ -381,8 +383,12 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
                     if hasattr(e, "exit_code"):
                         return ExecutionResult(
                             exit_code=e.exit_code,
-                            stdout=(getattr(e, "stdout", "") or "").encode("utf-8"),
-                            stderr=(getattr(e, "stderr", "") or "").encode("utf-8"),
+                            stdout=(getattr(e, "stdout", "") or "").encode(
+                                "utf-8",
+                            ),
+                            stderr=(getattr(e, "stderr", "") or "").encode(
+                                "utf-8",
+                            ),
                         )
                     raise
                 await asyncio.sleep(delay)
