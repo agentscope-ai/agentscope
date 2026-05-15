@@ -33,10 +33,10 @@ A simple example is shown below, where two agents are created and executed concu
 
  .. code-block:: none
 
-    Agent 1 started at 09:25:40.642
-    Agent 2 started at 09:25:40.643
-    Agent 1 finished at 09:25:43.646
-    Agent 2 finished at 09:25:43.646
+    Agent 1 started at 07:36:28.067
+    Agent 2 started at 07:36:28.067
+    Agent 1 finished at 07:36:31.071
+    Agent 2 finished at 07:36:31.071
 
 
 
