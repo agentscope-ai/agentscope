@@ -2,7 +2,6 @@
 """The truncated formatter base class, which allows to truncate the input
 messages."""
 from abc import ABC
-from copy import deepcopy
 from typing import (
     Any,
     Tuple,
@@ -66,7 +65,7 @@ class TruncatedFormatterBase(FormatterBase, ABC):
         # Check if the input messages are valid
         self.assert_list_of_msgs(msgs)
 
-        msgs = deepcopy(msgs)
+        msgs = list(msgs)
 
         while True:
             formatted_msgs = await self._format(msgs)
