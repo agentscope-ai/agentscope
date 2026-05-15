@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Example of Kimi model multimodal (vision) calls using DataBlock."""
+"""Example of Moonshot model multimodal (vision) calls using DataBlock."""
 import asyncio
 import base64
 import os
@@ -13,8 +13,8 @@ from agentscope.message import (
     URLSource,
     Base64Source,
 )
-from agentscope.model import KimiChatModel
-from agentscope.credential import KimiCredential
+from agentscope.model import MoonshotChatModel
+from agentscope.credential import MoonshotCredential
 
 # A publicly accessible test image (a simple cat photo)
 TEST_IMAGE_URL = (
@@ -25,8 +25,8 @@ TEST_IMAGE_URL = (
 
 async def example_multimodal() -> None:
     """Call kimi-k2.6 with an image URL and ask what is in the image."""
-    model = KimiChatModel(
-        credential=KimiCredential(
+    model = MoonshotChatModel(
+        credential=MoonshotCredential(
             api_key=os.environ["MOONSHOT_API_KEY"],
         ),
         model="kimi-k2.6",
@@ -58,9 +58,9 @@ async def example_multimodal() -> None:
     await stream_and_collect(await model(msgs))
 
 
-def _build_model() -> KimiChatModel:
-    return KimiChatModel(
-        credential=KimiCredential(api_key=os.environ["MOONSHOT_API_KEY"]),
+def _build_model() -> MoonshotChatModel:
+    return MoonshotChatModel(
+        credential=MoonshotCredential(api_key=os.environ["MOONSHOT_API_KEY"]),
         model="kimi-k2.6",
         stream=True,
         context_size=262_144,

@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
-"""Unit tests for KimiChatModel response parsing.
+"""Unit tests for MoonshotChatModel response parsing.
 
-Formatter tests have been moved to tests/formatter_kimi_test.py.
+Formatter tests have been moved to tests/formatter_moonshot_test.py.
 """
 import json
 from typing import Any
@@ -12,8 +12,8 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock
 
 from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
-from agentscope.model import KimiChatModel
-from agentscope.credential import KimiCredential
+from agentscope.model import MoonshotChatModel
+from agentscope.credential import MoonshotCredential
 from agentscope.tool import ToolChoice
 
 
@@ -23,8 +23,8 @@ from agentscope.tool import ToolChoice
 
 
 def _make_model() -> Any:
-    return KimiChatModel(
-        credential=KimiCredential(api_key="test"),
+    return MoonshotChatModel(
+        credential=MoonshotCredential(api_key="test"),
         model="kimi-k2-5",
         stream=False,
         context_size=131_072,
@@ -36,8 +36,8 @@ def _make_model() -> Any:
 # ---------------------------------------------------------------------------
 
 
-class TestKimiModelParsing(IsolatedAsyncioTestCase):
-    """Unit tests for KimiChatModel response parsing."""
+class TestMoonshotModelParsing(IsolatedAsyncioTestCase):
+    """Unit tests for MoonshotChatModel response parsing."""
 
     def setUp(self) -> None:
         """Set up a fresh model instance and start time."""
@@ -50,7 +50,7 @@ class TestKimiModelParsing(IsolatedAsyncioTestCase):
         tool_calls: Any = None,
         reasoning: Any = None,
     ) -> "MagicMock":
-        """Build a mock Kimi API completion response object."""
+        """Build a mock Moonshot API completion response object."""
         msg = MagicMock()
         msg.content = text
         setattr(msg, "reasoning_content", reasoning)
@@ -149,8 +149,8 @@ _FT_TOOLS = [
 ]
 
 
-class TestKimiFormatTools(unittest.TestCase):
-    """Tests for KimiChatModel._format_tools."""
+class TestMoonshotFormatTools(unittest.TestCase):
+    """Tests for MoonshotChatModel._format_tools."""
 
     def setUp(self) -> None:
         """Set up model instance."""

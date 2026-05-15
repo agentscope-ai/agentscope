@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
-"""Example of Kimi model calls with KimiMultiAgentFormatter.
+"""Example of Moonshot model calls with MoonshotMultiAgentFormatter.
 
 The multi-agent formatter wraps prior conversation history in
-<history></history> tags and preserves reasoning_content for Kimi's
+<history></history> tags and preserves reasoning_content for Moonshot's
 Preserved Thinking feature in multi-turn conversations.
 """
 import asyncio
 import os
 
 from _utils import stream_and_collect
-from agentscope.formatter import KimiMultiAgentFormatter
+from agentscope.formatter import MoonshotMultiAgentFormatter
 from agentscope.message import Msg
-from agentscope.model import KimiChatModel
-from agentscope.credential import KimiCredential
+from agentscope.model import MoonshotChatModel
+from agentscope.credential import MoonshotCredential
 
 
 async def example_multiagent() -> None:
@@ -21,10 +21,10 @@ async def example_multiagent() -> None:
     Alice and Bob discuss the weather, then a moderator (the model) is asked
     to summarize the conversation.
     """
-    formatter = KimiMultiAgentFormatter()
+    formatter = MoonshotMultiAgentFormatter()
 
-    model = KimiChatModel(
-        credential=KimiCredential(
+    model = MoonshotChatModel(
+        credential=MoonshotCredential(
             api_key=os.environ["MOONSHOT_API_KEY"],
         ),
         model="kimi-k2.6",

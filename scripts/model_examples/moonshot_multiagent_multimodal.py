@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Example of Kimi model calls with KimiMultiAgentFormatter and image input."""
+"""Example of Moonshot model calls with MoonshotMultiAgentFormatter and
+image input."""
 import asyncio
 import os
 
 from _utils import stream_and_collect
-from agentscope.formatter import KimiMultiAgentFormatter
+from agentscope.formatter import MoonshotMultiAgentFormatter
 from agentscope.message import Msg, TextBlock, DataBlock, URLSource
-from agentscope.model import KimiChatModel
-from agentscope.credential import KimiCredential
+from agentscope.model import MoonshotChatModel
+from agentscope.credential import MoonshotCredential
 
 TEST_IMAGE_URL = (
     "https://help-static-aliyun-doc.aliyuncs.com/file-manage"
@@ -17,10 +18,10 @@ TEST_IMAGE_URL = (
 
 async def example_multiagent_multimodal() -> None:
     """Multi-agent conversation where Alice shares an image for the group."""
-    formatter = KimiMultiAgentFormatter()
+    formatter = MoonshotMultiAgentFormatter()
 
-    model = KimiChatModel(
-        credential=KimiCredential(
+    model = MoonshotChatModel(
+        credential=MoonshotCredential(
             api_key=os.environ["MOONSHOT_API_KEY"],
         ),
         model="kimi-k2.6",
