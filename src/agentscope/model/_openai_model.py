@@ -24,6 +24,7 @@ from .._utils._common import (
     _json_loads_with_repair,
     _parse_streaming_json_dict,
     _create_tool_from_base_model,
+    _supports_structured_tool_choice,
 )
 from ..message import (
     ToolUseBlock,
@@ -740,21 +741,84 @@ class OpenAIChatModel(ChatModelBase):
         """
         kwargs.pop("response_format", None)
         format_tool = _create_tool_from_base_model(structured_model)
+        tool_name = format_tool["function"]["name"]
         kwargs["tools"] = self._format_tools_json_schemas([format_tool])
-        kwargs["tool_choice"] = self._format_tool_choice(
-            format_tool["function"]["name"],
-        )
+        if _supports_structured_tool_choice(self.model_name):
+            kwargs["tool_choice"] = self._format_tool_choice(tool_name)
+        else:
+            logger.warning(
+                "Provider/model '%s' does not support forcing structured "
+                "tool calls via 'tool_choice'. Sending the schema tool "
+                "without 'tool_choice' and validating that the model "
+                "actually calls it.",
+                self.model_name,
+            )
+            kwargs.pop("tool_choice", None)
         if self.stream:
             kwargs["stream"] = True
             kwargs["stream_options"] = {"include_usage": True}
         response = await self.client.chat.completions.create(**kwargs)
         if self.stream:
-            return self._parse_openai_stream_response(
+            return self._structured_stream_with_tool_validation(
                 start_datetime,
                 response,
                 structured_model,
+                tool_name,
             )
+        self._ensure_structured_tool_was_called(response, tool_name)
         return response
+
+    def _ensure_structured_tool_was_called(
+        self,
+        response: ChatCompletion,
+        tool_name: str,
+    ) -> None:
+        """Ensure tool-call based structured output actually used the
+        schema tool."""
+        tool_calls = []
+        if response.choices:
+            tool_calls = response.choices[0].message.tool_calls or []
+
+        if tool_calls and tool_calls[0].function.name == tool_name:
+            return
+
+        raise ValueError(
+            "Structured output fallback requires the model to call the "
+            f"'{tool_name}' tool, but it returned regular text instead. "
+            "This provider appears not to support forced structured tool "
+            "calls for the current model.",
+        )
+
+    async def _structured_stream_with_tool_validation(
+        self,
+        start_datetime: datetime,
+        response: AsyncStream,
+        structured_model: Type[BaseModel],
+        tool_name: str,
+    ) -> AsyncGenerator[ChatResponse, None]:
+        """Validate that streaming structured fallback actually used the
+        schema tool before yielding chunks."""
+        saw_expected_tool = False
+        async for chunk in self._parse_openai_stream_response(
+            start_datetime,
+            response,
+            structured_model,
+        ):
+            if any(
+                isinstance(block, dict)
+                and block.get("type") == "tool_use"
+                and block.get("name") == tool_name
+                for block in chunk.content
+            ):
+                saw_expected_tool = True
+            yield chunk
+
+        if not saw_expected_tool:
+            raise ValueError(
+                "Structured output fallback requires the model to call the "
+                f"'{tool_name}' tool, but the streaming response completed "
+                "without any structured tool call.",
+            )
 
     def _format_tools_json_schemas(
         self,
