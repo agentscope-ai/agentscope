@@ -1,6 +1,7 @@
 # Model Call Examples
 
 This directory contains example scripts for the major LLM providers supported by AgentScope, together with a unified test runner `run_tests.py`.
+These scripts are designed to verify that AgentScope's chat model components function correctly across various input scenarios.
 
 ---
 

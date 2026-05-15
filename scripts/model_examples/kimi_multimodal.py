@@ -27,7 +27,7 @@ async def example_multimodal() -> None:
     """Call kimi-k2.6 with an image URL and ask what is in the image."""
     model = KimiChatModel(
         credential=KimiCredential(
-            api_key=os.environ["KIMI_API_KEY"],
+            api_key=os.environ["MOONSHOT_API_KEY"],
         ),
         model="kimi-k2.6",
         stream=True,
@@ -60,7 +60,7 @@ async def example_multimodal() -> None:
 
 def _build_model() -> KimiChatModel:
     return KimiChatModel(
-        credential=KimiCredential(api_key=os.environ["KIMI_API_KEY"]),
+        credential=KimiCredential(api_key=os.environ["MOONSHOT_API_KEY"]),
         model="kimi-k2.6",
         stream=True,
         context_size=262_144,

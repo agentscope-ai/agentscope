@@ -25,7 +25,7 @@ async def example_multiagent() -> None:
 
     model = KimiChatModel(
         credential=KimiCredential(
-            api_key=os.environ["KIMI_API_KEY"],
+            api_key=os.environ["MOONSHOT_API_KEY"],
         ),
         model="kimi-k2.6",
         stream=True,
