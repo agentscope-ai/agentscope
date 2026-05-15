@@ -54,12 +54,13 @@ class _UpstreamClient:
         self.tools: list[mtypes.Tool] = []
         self._stack: AsyncExitStack | None = None
 
-    async def connect_stdio(
+    async def connect_stdio(  # noqa: D401
         self,
         command: str,
         args: list[str],
         env: dict[str, str] | None = None,
     ) -> None:
+        """Connect to an MCP server via stdio transport."""
         self._stack = AsyncExitStack()
         ctx = stdio_client(
             StdioServerParameters(command=command, args=args, env=env),
@@ -71,6 +72,7 @@ class _UpstreamClient:
         self.tools = (await self.session.list_tools()).tools
 
     async def connect_http(self, url: str) -> None:
+        """Connect to an MCP server via HTTP transport."""
         self._stack = AsyncExitStack()
         if url.endswith("/sse") or url.endswith("/messages/"):
             ctx = sse_client(url=url)
@@ -83,6 +85,7 @@ class _UpstreamClient:
         self.tools = (await self.session.list_tools()).tools
 
     async def close(self) -> None:
+        """Close the connection and release resources."""
         if self._stack:
             try:
                 await self._stack.aclose()
@@ -139,6 +142,7 @@ class _GatewayState:
         self.server: FastMCP | None = None
 
     def rebuild(self) -> None:
+        """Rebuild the tool route table from all connected clients."""
         self.routes, self.schemas = _build_routes(self.clients)
 
 
@@ -149,7 +153,7 @@ _state = _GatewayState()
 
 
 async def _run(config_path: str, port: int) -> None:
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         config = json.load(f)
 
     token: str = config.get("token", "")
@@ -189,11 +193,12 @@ async def _run(config_path: str, port: int) -> None:
         from starlette.middleware.base import BaseHTTPMiddleware
 
         class _TokenAuth(BaseHTTPMiddleware):
-            async def dispatch(
+            async def dispatch(  # noqa: D401
                 self,
                 request: Request,
                 call_next: Any,
             ) -> Any:
+                """Enforce bearer-token auth on non-health endpoints."""
                 path = request.url.path
                 if path == "/health":
                     return await call_next(request)
@@ -207,7 +212,10 @@ async def _run(config_path: str, port: int) -> None:
 
         app.add_middleware(_TokenAuth)
 
-    async def _health(request: Request) -> PlainTextResponse:
+    async def _health(
+        request: Request,  # pylint: disable=unused-argument
+    ) -> PlainTextResponse:
+        """Liveness probe endpoint."""
         return PlainTextResponse("ok")
 
     async def _admin_add(request: Request) -> JSONResponse:
@@ -263,21 +271,28 @@ async def _run(config_path: str, port: int) -> None:
         _register_proxy_tools(server, _state)
         return JSONResponse({"ok": True})
 
-    async def _admin_list(request: Request) -> JSONResponse:
+    async def _admin_list(
+        request: Request,  # pylint: disable=unused-argument
+    ) -> JSONResponse:
+        """List connected upstream MCP servers."""
         items = [
-            {"name": c.name, "tools": len(c.tools)}
-            for c in _state.clients
+            {"name": c.name, "tools": len(c.tools)} for c in _state.clients
         ]
         return JSONResponse(items)
 
-    async def _api_tools(request: Request) -> JSONResponse:
+    async def _api_tools(
+        request: Request,  # pylint: disable=unused-argument
+    ) -> JSONResponse:
+        """Return JSON list of all available tool schemas."""
         tools = []
         for name, schema in _state.schemas.items():
-            tools.append({
-                "name": name,
-                "description": schema.description or "",
-                "inputSchema": schema.inputSchema or {},
-            })
+            tools.append(
+                {
+                    "name": name,
+                    "description": schema.description or "",
+                    "inputSchema": schema.inputSchema or {},
+                },
+            )
         return JSONResponse(tools)
 
     async def _api_call(request: Request) -> JSONResponse:
@@ -403,6 +418,7 @@ def _register_proxy_tools(
     Clears previously registered tools first so that removed upstream
     servers no longer expose stale tools.
     """
+    # pylint: disable=protected-access
     server._tool_manager._tools.clear()
     for exposed_name, tool_schema in state.schemas.items():
         route = state.routes[exposed_name]
@@ -417,6 +433,7 @@ def _register_proxy_tools(
 
 
 def main() -> None:
+    """CLI entry point for the in-container MCP gateway."""
     parser = argparse.ArgumentParser(
         description="In-container MCP Gateway",
     )

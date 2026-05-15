@@ -121,6 +121,7 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
 
     @property
     def container_id(self) -> str | None:
+        """Docker container ID, or ``None`` if not started."""
         return self._container.id if self._container else None
 
     # ── lifecycle ──────────────────────────────────────────────────
@@ -168,10 +169,13 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
             create_kwargs["environment"] = self._env
         if self._volumes:
             create_kwargs["volumes"] = {
-                src: {"bind": dst, "mode": "rw"} for src, dst in self._volumes.items()
+                src: {"bind": dst, "mode": "rw"}
+                for src, dst in self._volumes.items()
             }
         if ports:
-            create_kwargs["ports"] = {f"{p}/tcp": ("127.0.0.1", None) for p in ports}
+            create_kwargs["ports"] = {
+                f"{p}/tcp": ("127.0.0.1", None) for p in ports
+            }
 
         self._container = await loop.run_in_executor(
             _EXECUTOR,
@@ -419,6 +423,7 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
     # ── export / restore state ─────────────────────────────────────
 
     async def export_state(self) -> SerializedWorkspaceState:
+        """Serialize workspace identity for later restore."""
         return SerializedWorkspaceState(
             backend_type="docker",
             payload={

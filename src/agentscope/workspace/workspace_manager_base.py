@@ -5,24 +5,37 @@ Manages creation, tracking, and destruction of workspace instances.
 Used by agent services (FastAPI, etc.) to share configuration and
 pool workspaces across requests.
 
-Optional pool support for RL rollout scenarios: keep warm workspace
-instances and acquire/release them instead of creating fresh ones
-each time.
+Agent service integration
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Usage::
+The manager owns the ``workspace_id → WorkspaceBase`` mapping in
+memory.  **Agent service** is responsible for persisting the
+``workspace_id`` alongside its own business keys (user, agent,
+session, etc.).  Typical flow::
 
     manager = DockerWorkspaceManager(image="my-image")
     await manager.initialize()
 
-    # Normal per-user/agent usage:
-    workspace = await manager.get_workspace(user_id, agent_id)
-    agent = Agent(..., workspace=workspace)
+    # ── first request: create ──────────────────────────────────
+    ws = await manager.create_workspace()
+    db.save(user_id, agent_id, session_id, ws.workspace_id)
 
-    # Pool usage (RL rollout):
+    # ── subsequent requests: look up ───────────────────────────
+    ws_id = db.load(user_id, agent_id, session_id)
+    ws = manager.get_workspace(ws_id)          # from memory
+    if ws is None:
+        state = db.load_workspace_state(ws_id)  # from DB
+        ws = await manager.restore(state)       # reconnect
+
+    # ── explicit lifecycle ─────────────────────────────────────
+    await manager.close_workspace(ws_id)        # when done
+
+Pool usage (RL rollout)::
+
     manager.enable_pool(capacity=8)
     await manager.warm_up_pool()
     ws = await manager.acquire_from_pool()
-    # ... do work ...
+    # ... rollout ...
     await manager.release_to_pool(ws)
 
     await manager.close()
@@ -40,10 +53,25 @@ from .._logging import logger
 class WorkspaceManagerBase(ABC):
     """Abstract base for workspace managers.
 
-    Includes optional warm-pool support (call :meth:`enable_pool`).
+    Responsibilities:
+
+    * **Create** workspaces via :meth:`create_workspace`.
+    * **Look up** live workspaces by ``workspace_id`` via
+      :meth:`get_workspace` (in-memory, O(1)).
+    * **Restore** workspaces from serialized state via
+      :meth:`restore` (reconnect to a running container/sandbox).
+    * **Close** individual workspaces via :meth:`close_workspace`,
+      or all of them via :meth:`close`.
+    * Optionally manage a **warm pool** (call :meth:`enable_pool`).
+
+    The mapping from business keys ``(user_id, agent_id, session_id)``
+    to ``workspace_id`` is **not** managed here — that belongs to the
+    agent service / persistence layer.
     """
 
     def __init__(self) -> None:
+        self._workspaces: dict[str, WorkspaceBase] = {}
+
         # Pool state — inactive until ``enable_pool()`` is called.
         self._pool_capacity: int = 0
         self._pool_free: asyncio.Queue[str] = asyncio.Queue()
@@ -62,25 +90,17 @@ class WorkspaceManagerBase(ABC):
     async def close(self) -> None:
         """Close all managed workspaces and release resources.
 
-        Implementations MUST call ``await self._close_pool()`` to
-        clean up any pool workspaces.
+        Implementations MUST call ``await self._close_pool()`` and
+        ``await self._close_all_workspaces()`` to clean up.
         """
 
     @abstractmethod
-    async def get_workspace(
-        self,
-        user_id: str,
-        agent_id: str,
-        **kwargs: Any,
-    ) -> WorkspaceBase:
-        """Create or retrieve a workspace for a user/agent pair.
+    async def _do_create(self, **kwargs: Any) -> WorkspaceBase:
+        """Backend-specific workspace creation.
 
-        Args:
-            user_id: User identifier for isolation.
-            agent_id: Agent identifier for workspace scoping.
-
-        Returns:
-            An initialized workspace ready for the agent to use.
+        Subclasses implement this to instantiate a concrete workspace
+        (DockerWorkspace, E2BWorkspace, etc.) with appropriate defaults.
+        The returned workspace must already be initialized.
         """
 
     @abstractmethod
@@ -94,8 +114,72 @@ class WorkspaceManagerBase(ABC):
             state: Serialized state from ``workspace.export_state()``.
 
         Returns:
-            A reconnected workspace instance.
+            A reconnected workspace instance.  Also tracked internally.
         """
+
+    # ── workspace CRUD (non-abstract) ──────────────────────────────
+
+    async def create_workspace(self, **kwargs: Any) -> WorkspaceBase:
+        """Create a new workspace and track it.
+
+        Returns the initialized workspace.  The caller should persist
+        ``workspace.workspace_id`` for later retrieval.
+        """
+        ws = await self._do_create(**kwargs)
+        self._workspaces[ws.workspace_id] = ws
+        logger.info(
+            "%s: created workspace %s",
+            type(self).__name__,
+            ws.workspace_id,
+        )
+        return ws
+
+    def get_workspace(self, workspace_id: str) -> WorkspaceBase | None:
+        """Look up a live workspace by its ID.
+
+        Returns ``None`` if the workspace is not tracked (may have been
+        closed, or this manager instance restarted).  In that case the
+        caller should :meth:`restore` from persisted state.
+        """
+        return self._workspaces.get(workspace_id)
+
+    async def close_workspace(self, workspace_id: str) -> None:
+        """Close and un-track a single workspace.
+
+        No-op if the workspace is not tracked.
+        """
+        if workspace_id not in self._workspaces:
+            return
+        ws = self._workspaces.pop(workspace_id)
+        try:
+            await ws.close()
+        except Exception as e:
+            logger.warning(
+                "%s: error closing workspace %s: %s",
+                type(self).__name__,
+                workspace_id,
+                e,
+            )
+        logger.info(
+            "%s: closed workspace %s",
+            type(self).__name__,
+            workspace_id,
+        )
+
+    def list_workspaces(self) -> list[str]:
+        """Return all tracked workspace IDs."""
+        return list(self._workspaces.keys())
+
+    async def _close_all_workspaces(self) -> None:
+        """Close all tracked (non-pool) workspaces. Call from ``close()``."""
+        if not self._workspaces:
+            return
+        tasks = [ws.close() for ws in self._workspaces.values()]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for r in results:
+            if isinstance(r, Exception):
+                logger.warning("Error closing workspace: %s", r)
+        self._workspaces.clear()
 
     # ── context manager ───────────────────────────────────────────
 
@@ -202,7 +286,10 @@ class WorkspaceManagerBase(ABC):
             if alive:
                 await self._pool_free.put(ws_id)
             else:
-                self._pool_workspaces.pop(ws_id, None)
+                self._pool_workspaces.pop(  # type: ignore[arg-type]
+                    ws_id,
+                    None,
+                )
                 try:
                     await workspace.close()
                 except Exception:
@@ -238,7 +325,7 @@ class WorkspaceManagerBase(ABC):
                 for _ in range(-delta):
                     if not self._pool_free.empty():
                         ws_id = await self._pool_free.get()
-                        ws = self._pool_workspaces.pop(ws_id, None)
+                        ws = self._pool_workspaces.pop(ws_id)
                         if ws:
                             try:
                                 await ws.close()
@@ -262,13 +349,10 @@ class WorkspaceManagerBase(ABC):
     async def _create_for_pool(self) -> WorkspaceBase:
         """Create a workspace for pool use.
 
-        Override in subclasses to customize pool workspace creation.
-        By default raises ``NotImplementedError``.
+        Defaults to calling :meth:`_do_create` with no overrides.
+        Override in subclasses if pool workspaces need different config.
         """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not implement _create_for_pool(). "
-            "Override this method to support pool mode.",
-        )
+        return await self._do_create()
 
     async def _reset_for_pool(self, workspace: WorkspaceBase) -> None:
         """Reset a workspace to a clean state before returning it to the pool.

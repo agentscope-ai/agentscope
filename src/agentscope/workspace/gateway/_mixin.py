@@ -81,15 +81,22 @@ class _RestGatewayClient:
 
     @property
     def is_connected(self) -> bool:
+        """Whether the client considers itself connected."""
         return self._connected
 
     async def connect(self) -> None:
+        """Mark the client as connected."""
         self._connected = True
 
-    async def close(self, ignore_errors: bool = True) -> None:
+    async def close(  # pylint: disable=unused-argument
+        self,
+        ignore_errors: bool = True,
+    ) -> None:
+        """Mark the client as disconnected."""
         self._connected = False
 
     async def list_tools(self) -> list[Any]:
+        """Fetch tool schemas from the gateway REST API."""
         async with httpx.AsyncClient(verify=False) as client:
             resp = await client.get(
                 f"{self._base_url}/api/tools",
@@ -97,7 +104,8 @@ class _RestGatewayClient:
                 timeout=30.0,
             )
             resp.raise_for_status()
-        self._cached_tools = resp.json()
+        tools: list[dict[str, Any]] = resp.json()
+        self._cached_tools = tools
 
         try:
             import mcp.types as mtypes
@@ -108,12 +116,17 @@ class _RestGatewayClient:
                     description=t.get("description", ""),
                     inputSchema=t.get("inputSchema", {}),
                 )
-                for t in self._cached_tools
+                for t in tools
             ]
         except ImportError:
-            return self._cached_tools
+            return list(tools)
+
+    def invalidate_cache(self) -> None:
+        """Clear the cached tool list so the next query re-fetches."""
+        self._cached_tools = None
 
     async def get_tool(self, name: str) -> _RestToolProxy:
+        """Return a callable proxy for the named tool."""
         if self._cached_tools is None:
             await self.list_tools()
         for t in self._cached_tools:
@@ -162,23 +175,25 @@ class GatewayMixin:
         """
         return {}
 
-    # _exec is already provided by the workspace base classes
     async def _exec(
         self,
         command: str,
         *,
         timeout: float | None = None,
     ) -> "ExecutionResult":
+        """Execute a command inside the workspace (provided by subclass)."""
         raise NotImplementedError
 
     # ── public API ────────────────────────────────────────────────
 
     async def list_mcps(self) -> list[Any]:
+        """Return the gateway MCP client (if started) as a list."""
         if self._gateway_mcpc:
             return [self._gateway_mcpc]
         return []
 
     async def add_mcp(self, config: "MCPServerConfig") -> None:
+        """Register a new MCP server via the gateway admin API."""
         if not self._gateway_base_url:
             raise RuntimeError(
                 "Gateway not started. Either configure mcp_servers in "
@@ -213,7 +228,7 @@ class GatewayMixin:
 
         if self._gateway_mcpc:
             if isinstance(self._gateway_mcpc, _RestGatewayClient):
-                self._gateway_mcpc._cached_tools = None
+                self._gateway_mcpc.invalidate_cache()
             await self._gateway_mcpc.list_tools()
 
         logger.info(
@@ -223,6 +238,7 @@ class GatewayMixin:
         )
 
     async def remove_mcp(self, name: str) -> None:
+        """Remove an MCP server via the gateway admin API."""
         if not self._gateway_base_url:
             raise RuntimeError("Gateway not started")
 
@@ -244,7 +260,7 @@ class GatewayMixin:
 
         if self._gateway_mcpc:
             if isinstance(self._gateway_mcpc, _RestGatewayClient):
-                self._gateway_mcpc._cached_tools = None
+                self._gateway_mcpc.invalidate_cache()
             await self._gateway_mcpc.list_tools()
 
         logger.info("%s: removed MCP %r", type(self).__name__, name)

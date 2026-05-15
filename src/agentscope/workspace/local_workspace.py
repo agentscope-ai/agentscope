@@ -32,6 +32,7 @@ from pydantic import AnyUrl
 
 from .workspace_base import WorkspaceBase
 from .config import MCPServerConfig
+from .types import SerializedWorkspaceState
 from ..mcp import HttpMCPConfig, MCPClient, StdioMCPConfig
 from ..message import (
     Base64Source,
@@ -74,28 +75,29 @@ def _sanitize_dir_name(name: str) -> str:
 # ── instructions ──────────────────────────────────────────────────
 
 
-_DEFAULT_INSTRUCTIONS = """<workspace>
-You have access to a local workspace at {workdir} with the following structure:
-
-```
-{workdir}
-├── data/        # offloaded multimodal files (images, etc.)
-├── skills/      # reusable skills, each in its own subdirectory
-└── sessions/    # session context and tool results
-```
-
-This workspace is your personal working environment for completing various tasks.
-
-### Project Directory
-- Create a dedicated subdirectory for each task or project under the workspace root.
-- Always create a `README.md` at the project root documenting what the project is about.
-
-### Python Environment
-- If a project requires Python, use `uv` to create an isolated virtual environment:
-  ```shell
-  uv venv && uv pip install ...
-  ```
-</workspace>"""
+_DEFAULT_INSTRUCTIONS = (
+    "<workspace>\n"
+    "You have access to a local workspace at {workdir} "
+    "with the following structure:\n"
+    "\n"
+    "```\n"
+    "{workdir}\n"
+    "├── data/        # offloaded multimodal files\n"
+    "├── skills/      # reusable skills\n"
+    "└── sessions/    # session context and tool results\n"
+    "```\n"
+    "\n"
+    "### Project Directory\n"
+    "- Create a subdirectory for each task or project.\n"
+    "- Add a `README.md` at the project root.\n"
+    "\n"
+    "### Python Environment\n"
+    "- Use `uv` to create an isolated virtual environment:\n"
+    "  ```shell\n"
+    "  uv venv && uv pip install ...\n"
+    "  ```\n"
+    "</workspace>"
+)
 
 
 # ── LocalWorkspace ────────────────────────────────────────────────
@@ -197,13 +199,13 @@ class LocalWorkspace(WorkspaceBase):
 
         skills: list[Skill] = []
         for dir_name, result in zip(skills_file["skills"], results):
-            if isinstance(result, Exception):
+            if isinstance(result, BaseException):
                 logger.warning(
                     "Failed to load skill from %s: %s",
                     dir_name,
                     str(result),
                 )
-            elif result is not None:
+            elif isinstance(result, Skill):
                 skills.append(result)
         return skills
 
@@ -281,6 +283,18 @@ class LocalWorkspace(WorkspaceBase):
             await f.write("".join(parts))
         return path
 
+    # ── export state ───────────────────────────────────────────────
+
+    async def export_state(self) -> SerializedWorkspaceState:
+        """Serialize workspace identity for later restore."""
+        return SerializedWorkspaceState(
+            backend_type="local",
+            payload={
+                "workspace_id": self._id,
+                "workdir": self._workdir,
+            },
+        )
+
     # ── dynamic MCP management ─────────────────────────────────────
 
     async def add_mcp(self, config: MCPServerConfig) -> None:
@@ -345,7 +359,10 @@ class LocalWorkspace(WorkspaceBase):
         existing_hashes = {e["hash"] for e in existing.values()}
 
         if skill_hash in existing_hashes:
-            logger.info("Skill %r already exists (by hash), skipping", raw_name)
+            logger.info(
+                "Skill %r already exists (by hash), skipping",
+                raw_name,
+            )
             return
 
         existing_agent_names = {e["skill_name"] for e in existing.values()}
@@ -373,7 +390,11 @@ class LocalWorkspace(WorkspaceBase):
             skills_dir,
         )
         await self._save_skills_file(skills_dir, skills_file)
-        logger.info("LocalWorkspace: added skill %r as %r", raw_name, agent_name)
+        logger.info(
+            "LocalWorkspace: added skill %r as %r",
+            raw_name,
+            agent_name,
+        )
 
     async def remove_skill(self, name: str) -> None:
         skills_dir = os.path.join(self._workdir, "skills")
@@ -467,8 +488,8 @@ class LocalWorkspace(WorkspaceBase):
 
         if updated:
             skills_file["skills"] = existing
-            skills_file["skills_dir_mtime"] = (
-                await aiofiles.ospath.getmtime(skills_dir)
+            skills_file["skills_dir_mtime"] = await aiofiles.ospath.getmtime(
+                skills_dir,
             )
             await self._save_skills_file(skills_dir, skills_file)
 
