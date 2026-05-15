@@ -251,10 +251,21 @@ class AnthropicChatModel(ChatModelBase):
 
         usage = None
         if response.usage:
+            u = response.usage
             usage = ChatUsage(
-                input_tokens=response.usage.input_tokens,
-                output_tokens=response.usage.output_tokens,
+                input_tokens=u.input_tokens,
+                output_tokens=u.output_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
+                cache_creation_input_tokens=getattr(
+                    u,
+                    "cache_creation_input_tokens",
+                    0,
+                ),
+                cache_input_tokens=getattr(
+                    u,
+                    "cache_read_input_tokens",
+                    0,
+                ),
             )
 
         resp_kwargs: dict[str, Any] = {
@@ -306,14 +317,21 @@ class AnthropicChatModel(ChatModelBase):
                 if response_id is None:
                     response_id = getattr(message, "id", None)
                 if message.usage:
+                    u = message.usage
                     usage = ChatUsage(
-                        input_tokens=message.usage.input_tokens,
-                        output_tokens=getattr(
-                            message.usage,
-                            "output_tokens",
+                        input_tokens=u.input_tokens,
+                        output_tokens=getattr(u, "output_tokens", 0),
+                        time=(datetime.now() - start_datetime).total_seconds(),
+                        cache_creation_input_tokens=getattr(
+                            u,
+                            "cache_creation_input_tokens",
                             0,
                         ),
-                        time=(datetime.now() - start_datetime).total_seconds(),
+                        cache_input_tokens=getattr(
+                            u,
+                            "cache_read_input_tokens",
+                            0,
+                        ),
                     )
 
             elif event.type == "content_block_start":

@@ -259,11 +259,19 @@ class OpenAIResponseModel(ChatModelBase):
                 if response_id is None:
                     response_id = getattr(resp, "id", None)
                 if resp.usage:
+                    u = resp.usage
+                    details = getattr(u, "input_tokens_details", None)
                     usage = ChatUsage(
-                        input_tokens=resp.usage.input_tokens,
-                        output_tokens=resp.usage.output_tokens,
+                        input_tokens=u.input_tokens,
+                        output_tokens=u.output_tokens,
                         time=(datetime.now() - start_datetime).total_seconds(),
-                        metadata=resp.usage,
+                        cache_input_tokens=getattr(
+                            details,
+                            "cached_tokens",
+                            0,
+                        )
+                        if details
+                        else 0,
                     )
                 # Attach reasoning item IDs from the completed response so the
                 # formatter can echo them back in multi-turn history.
@@ -380,11 +388,19 @@ class OpenAIResponseModel(ChatModelBase):
 
         usage = None
         if response.usage:
+            u = response.usage
+            details = getattr(u, "input_tokens_details", None)
             usage = ChatUsage(
-                input_tokens=response.usage.input_tokens,
-                output_tokens=response.usage.output_tokens,
+                input_tokens=u.input_tokens,
+                output_tokens=u.output_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
-                metadata=response.usage,
+                cache_input_tokens=getattr(
+                    details,
+                    "cached_tokens",
+                    0,
+                )
+                if details
+                else 0,
             )
 
         resp_kwargs: dict[str, Any] = {

@@ -199,11 +199,16 @@ class MoonshotChatModel(ChatModelBase):
         async with response as stream:
             async for chunk in stream:
                 if chunk.usage:
+                    u = chunk.usage
                     usage = ChatUsage(
-                        input_tokens=chunk.usage.prompt_tokens,
-                        output_tokens=chunk.usage.completion_tokens,
+                        input_tokens=u.prompt_tokens,
+                        output_tokens=u.completion_tokens,
                         time=(datetime.now() - start_datetime).total_seconds(),
-                        metadata=chunk.usage,
+                        cache_input_tokens=getattr(
+                            u,
+                            "cached_tokens",
+                            0,
+                        ),
                     )
 
                 # Capture response_id from the first chunk that carries it
@@ -324,11 +329,12 @@ class MoonshotChatModel(ChatModelBase):
 
         usage = None
         if response.usage:
+            u = response.usage
             usage = ChatUsage(
-                input_tokens=response.usage.prompt_tokens,
-                output_tokens=response.usage.completion_tokens,
+                input_tokens=u.prompt_tokens,
+                output_tokens=u.completion_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
-                metadata=response.usage,
+                cache_input_tokens=getattr(u, "cached_tokens", 0),
             )
 
         resp_kwargs: dict[str, Any] = {

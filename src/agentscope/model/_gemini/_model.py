@@ -449,7 +449,11 @@ class GeminiChatModel(ChatModelBase):
                 input_tokens=prompt_tokens,
                 output_tokens=total_tokens - prompt_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
-                metadata=usage_metadata,
+                cache_input_tokens=getattr(
+                    usage_metadata,
+                    "cached_content_token_count",
+                    0,
+                ),
             )
         return None
 
