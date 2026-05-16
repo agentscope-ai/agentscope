@@ -2,13 +2,13 @@
 """MsgHub is designed to share messages among a group of agents."""
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, List, Optional, Dict
 
 import shortuuid
 
 from .._logging import logger
 from ..agent import AgentBase
-from ..message import Msg
+from ..message import Msg, TopicFilter
 
 
 class MsgHub:
@@ -36,7 +36,6 @@ class MsgHub:
             x2 = agent2()
             agent1.observe(x2)
             agent3.observe(x2)
-
     """
 
     def __init__(
@@ -70,6 +69,10 @@ class MsgHub:
         self.announcement = announcement
         self.enable_auto_broadcast = enable_auto_broadcast
 
+        self._participant_topics: Dict[str, Optional[List[str]]] = {}
+        for agent in self.participants:
+            self._participant_topics[agent.id] = None
+
     async def __aenter__(self) -> "MsgHub":
         """Will be called when entering the MsgHub."""
         self._reset_subscriber()
@@ -90,21 +93,58 @@ class MsgHub:
         """Reset the subscriber for agent in `self.participant`"""
         if self.enable_auto_broadcast:
             for agent in self.participants:
-                agent.reset_subscribers(self.name, self.participants)
+                agent.reset_subscribers(
+                    self.name,
+                    self.participants,
+                    self._participant_topics,
+                )
 
     def add(
         self,
         new_participant: list[AgentBase] | AgentBase,
+        topics: Optional[List[str]] = None,
     ) -> None:
-        """Add new participant into this hub"""
+        """Add new participant into this hub.
+
+        Args:
+            new_participant (`list[AgentBase] | AgentBase`):
+                The new participant(s) to add.
+            topics (`Optional[List[str]]`, optional):
+                The topics that the new participant is interested in.
+                None or empty list means the participant receives all messages.
+        """
         if isinstance(new_participant, AgentBase):
             new_participant = [new_participant]
 
         for agent in new_participant:
             if agent not in self.participants:
                 self.participants.append(agent)
+                self._participant_topics[agent.id] = topics
 
         self._reset_subscriber()
+
+    def add_participant(
+        self,
+        participant: AgentBase,
+        topics: Optional[List[str]] = None,
+    ) -> None:
+        """Add a single participant with optional topic subscription.
+
+        This is an alias for `add()` with clearer semantics for topic-based
+        message routing.
+
+        Args:
+            participant (`AgentBase`):
+                The agent to add to the MsgHub.
+            topics (`Optional[List[str]]`, optional):
+                The topics that this participant is interested in. Only messages
+                with matching topics will be delivered to this participant.
+                - None or empty list: receives all messages (backward compatible)
+                - List of patterns: e.g., ["task.*", "notify"] receives messages
+                  with topics matching any of these patterns (supports fnmatch
+                  wildcards like * and ?)
+        """
+        self.add(participant, topics)
 
     def delete(
         self,
@@ -116,26 +156,59 @@ class MsgHub:
 
         for agent in participant:
             if agent in self.participants:
-                # remove agent from self.participant
                 self.participants.pop(self.participants.index(agent))
+                if agent.id in self._participant_topics:
+                    self._participant_topics.pop(agent.id)
             else:
                 logger.warning(
                     "Cannot find the agent with ID %s, skip its deletion.",
                     agent.id,
                 )
 
-        # Remove this agent from the subscriber of other agents
         self._reset_subscriber()
 
     async def broadcast(self, msg: list[Msg] | Msg) -> None:
         """Broadcast the message to all participants.
+
+        Messages are filtered based on topics:
+        - If participant has no topics, receives all messages
+        - If message has no topics, received by all participants
+        - Otherwise, check if any message topic matches any participant topic pattern
 
         Args:
             msg (`list[Msg] | Msg`):
                 Message(s) to be broadcast among all participants.
         """
         for agent in self.participants:
-            await agent.observe(msg)
+            if self._should_deliver_to_participant(msg, agent):
+                await agent.observe(msg)
+
+    def _should_deliver_to_participant(
+        self,
+        msg: list[Msg] | Msg,
+        participant: AgentBase,
+    ) -> bool:
+        """Check if the message should be delivered to a participant.
+
+        Args:
+            msg: The message(s) to check.
+            participant: The participant to check.
+
+        Returns:
+            True if the message should be delivered.
+        """
+        participant_topics = self._participant_topics.get(participant.id, None)
+
+        if participant_topics is None or len(participant_topics) == 0:
+            return True
+
+        if isinstance(msg, list):
+            for single_msg in msg:
+                if TopicFilter.matches(single_msg.topics, participant_topics):
+                    return True
+            return False
+
+        return TopicFilter.matches(msg.topics, participant_topics)
 
     def set_auto_broadcast(self, enable: bool) -> None:
         """Enable automatic broadcasting of the replied message from any
