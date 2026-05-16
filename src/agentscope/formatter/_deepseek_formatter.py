@@ -113,6 +113,11 @@ class DeepSeekChatFormatter(TruncatedFormatterBase):
 
             if tool_calls:
                 msg_deepseek["tool_calls"] = tool_calls
+                # DeepSeek API doesn't allow assistant message to have both
+                # content and tool_calls. When both exist, DeepSeek interprets
+                # it as "interrupted speech" and may repeat the content in the
+                # next iteration.
+                msg_deepseek["content"] = None
 
             if msg_deepseek["content"] or msg_deepseek.get("tool_calls"):
                 messages.append(msg_deepseek)
