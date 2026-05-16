@@ -2,6 +2,7 @@
 """The JSON session class."""
 import json
 import os
+from pathlib import PurePath
 import aiofiles
 
 from ._session_base import SessionBase
@@ -24,6 +25,19 @@ class JSONSession(SessionBase):
         """
         self.save_dir = save_dir
 
+    @staticmethod
+    def _validate_path_part(value: str, field_name: str) -> None:
+        parts = PurePath(value).parts
+        if (
+            os.path.isabs(value)
+            or ".." in parts
+            or any(separator in value for separator in ("/", "\\"))
+        ):
+            raise ValueError(
+                f"{field_name} must be a filename-safe value without path "
+                "separators or parent directory references.",
+            )
+
     def _get_save_path(self, session_id: str, user_id: str) -> str:
         """The path to save the session state.
 
@@ -38,7 +52,9 @@ class JSONSession(SessionBase):
                 The path to save the session state.
         """
         os.makedirs(self.save_dir, exist_ok=True)
+        self._validate_path_part(session_id, "session_id")
         if user_id:
+            self._validate_path_part(user_id, "user_id")
             file_path = f"{user_id}_{session_id}.json"
         else:
             file_path = f"{session_id}.json"
