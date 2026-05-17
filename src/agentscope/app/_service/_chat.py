@@ -5,14 +5,16 @@ from collections.abc import AsyncGenerator
 from fastapi import HTTPException, status
 
 from ..storage import StorageBase
-from .._manager import SessionManager
+from .._manager import SessionManager, WorkspaceManagerBase
+from ._model import get_model
 from ...agent import Agent
-from ...model import _deserialize_model
 from ...tool import Toolkit
-from ...event import AgentEvent
+from ...event import (
+    AgentEvent,
+    UserConfirmResultEvent,
+    ExternalExecutionResultEvent,
+)
 from ...message import Msg
-from ...permission import PermissionMode, PermissionContext
-from ..storage._model._session import SessionData
 
 
 class ChatService:
@@ -26,17 +28,23 @@ class ChatService:
         self,
         storage: StorageBase,
         session_manager: SessionManager,
+        workspace_manager: WorkspaceManagerBase | None = None,
     ) -> None:
+        """Initialize chat service."""
         self._storage = storage
         self._session_manager = session_manager
+        self._workspace_manager = workspace_manager
 
     async def stream_chat(
         self,
         user_id: str,
         session_id: str,
         agent_id: str,
-        input_msg: Msg | None,
-        permission_mode: PermissionMode = PermissionMode.DEFAULT,
+        input_msg: Msg
+        | list[Msg]
+        | UserConfirmResultEvent
+        | ExternalExecutionResultEvent
+        | None = None,
     ) -> AsyncGenerator[AgentEvent, None]:
         """Run the agent and yield events.
 
@@ -45,7 +53,6 @@ class ChatService:
             session_id: Target session ID.
             agent_id: Agent to run.
             input_msg: User message, or None to continue from current state.
-            permission_mode: Permission level for this execution.
 
         Yields:
             AgentEvent: Streamed events from the agent.
@@ -54,7 +61,11 @@ class ChatService:
             HTTPException: 404 if session, agent, or credential not found.
         """
         # 1. Load and validate records
-        session_record = await self._storage.get_session(user_id, session_id)
+        session_record = await self._storage.get_session(
+            user_id,
+            agent_id,
+            session_id,
+        )
         if session_record is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -68,31 +79,25 @@ class ChatService:
                 detail=f"Agent {agent_id!r} not found.",
             )
 
-        # 2. Build the model: merge credential secrets with caller-supplied params
-        cfg = session_record.data.chat_model_config
-        credential = await self._storage.get_credential(
-            user_id,
-            cfg.credential_id,
-        )
-        if credential is None:
+        # 2. Build the model (loads credential + instantiates)
+        cfg = session_record.config.chat_model_config
+        if cfg is None:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Credential {cfg.credential_id!r} not found.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No model configured for this session. Update the "
+                "session with a chat_model_config first.",
             )
-        # credential.data holds the API key / base_url; cfg.parameters holds
-        # model-name, temperature, etc.  Parameters win on conflict.
-        model = _deserialize_model(
-            {"type": cfg.type, **credential.data, **cfg.parameters},
-        )
+        model = await get_model(user_id, cfg, self._storage)
 
         # 3. Build toolkit
         # TODO: load tools / skills configured on the agent record
         toolkit = Toolkit()
 
-        # 4. Restore persisted state and apply the requested permission mode
-        state = session_record.data.agent_state
+        # 4. Restore persisted state; permission_context.mode is already set
+        #    on the stored state (set when the session was created or
+        #    last updated)
+        state = session_record.state
         state.session_id = session_id
-        state.permission_context = PermissionContext(mode=permission_mode)
 
         # 5. Assemble the agent from stored configuration + live state
         agent = Agent(
@@ -113,12 +118,9 @@ class ChatService:
                 yield event
 
         # 7. Persist the updated agent state back into the session
-        await self._storage.upsert_session(
+        await self._storage.update_session_state(
             user_id=user_id,
-            agent_id=session_record.agent_id,
-            workspace_id=session_record.workspace_id,
-            session_data=SessionData(
-                agent_state=agent.state,
-                chat_model_config=cfg,
-            ),
+            agent_id=agent_id,
+            session_id=session_id,
+            state=agent.state,
         )

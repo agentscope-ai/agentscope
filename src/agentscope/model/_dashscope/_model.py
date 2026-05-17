@@ -127,12 +127,12 @@ class DashScopeChatModel(ChatModelBase):
                 ``DashScopeChatFormatter`` instance will be used.
         """
         super().__init__(
+            credential=credential,
             model=model,
             stream=stream,
             max_retries=max_retries,
             context_size=context_size,
         )
-        self.credential = credential
         self.parameters = parameters or self.Parameters()
         self.multimodality = multimodality
         self.formatter = formatter or DashScopeChatFormatter()
@@ -303,8 +303,10 @@ class DashScopeChatModel(ChatModelBase):
                     ),
                 )
 
-            # Update text content
-            if isinstance(message.content, str):
+            # Update text content — skip empty strings to avoid
+            # spurious empty TextBlocks (DashScope often sends content=""
+            # in the first function-call chunk)
+            if isinstance(message.content, str) and message.content:
                 acc_text.text += message.content
                 delta_content.append(
                     TextBlock(
@@ -338,8 +340,10 @@ class DashScopeChatModel(ChatModelBase):
                 # Initialize accumulator for a new tool call index
                 acc_tool_calls.setdefault(index, {})
 
-                # Avoid appending duplicate id
-                if "id" in tool_call and tool_call["id"] != acc_tool_calls[
+                # Avoid overwriting a valid id with an empty string.
+                # DashScope sometimes sends `"id": ""` in later argument
+                # chunks even though the real id was already received.
+                if tool_call.get("id") and tool_call["id"] != acc_tool_calls[
                     index
                 ].get("id"):
                     acc_tool_calls[index]["id"] = tool_call["id"]

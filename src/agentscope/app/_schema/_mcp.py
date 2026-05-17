@@ -78,8 +78,6 @@ class MCPCreateRequest(MCPBase):
     like creator_id, created_at, updated_at.
     """
 
-    pass
-
 
 class MCPUpdateRequest(BaseModel):
     """Request body for partially updating an MCP configuration.

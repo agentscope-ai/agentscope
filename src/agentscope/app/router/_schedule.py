@@ -69,6 +69,7 @@ async def create_schedule(
     storage: StorageBase = Depends(get_storage),
     scheduler: SchedulerManager = Depends(get_scheduler_manager),
 ) -> CreateScheduleResponse:
+    """Create a new schedule."""
     agents = await storage.list_agent(user_id)
     if not any(a.data.id == body.agent_id for a in agents):
         raise HTTPException(
@@ -88,7 +89,7 @@ async def create_schedule(
             input=body.input,
         ),
     )
-    await storage.create_schedule(user_id, record)
+    await storage.upsert_schedule(user_id, record)
     await scheduler.add_schedule(
         _build_trigger(record, storage),
         record.data.cron_expression,
@@ -123,10 +124,10 @@ async def update_schedule(
     updated_record = existing.model_copy(
         update={"data": updated_data, "updated_at": datetime.now()},
     )
-    await storage.create_schedule(user_id, updated_record)
+    await storage.upsert_schedule(user_id, updated_record)
 
     try:
-        scheduler.remove_task(schedule_id)
+        await scheduler.remove_task(schedule_id)
     except Exception:
         pass
     await scheduler.add_schedule(
@@ -157,6 +158,6 @@ async def delete_schedule(
             detail=f"Schedule '{schedule_id}' not found.",
         )
     try:
-        scheduler.remove_task(schedule_id)
+        await scheduler.remove_task(schedule_id)
     except Exception:
         pass

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-""""""
+"""The tool to list the scheduled jobs in the cron scheduler manager."""
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -16,8 +16,6 @@ from .....tool import ToolBase, ToolChunk
 
 class _ScheduleListParams(BaseModel):
     """The params for the schedule list tool."""
-
-    pass
 
 
 class ScheduleList(ToolBase):

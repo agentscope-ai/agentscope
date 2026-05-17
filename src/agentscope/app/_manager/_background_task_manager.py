@@ -29,7 +29,7 @@ class _BackgroundTask:
     """Who create the background task, incase one session has multiple agents.
     """
 
-    id: str = field(default_factory=lambda: shortuuid.uuid())
+    id: str = field(default_factory=shortuuid.uuid)
     """The background task id."""
 
 
@@ -94,7 +94,8 @@ class TaskStop(ToolBase):
             return ToolChunk(
                 content=[
                     TextBlock(
-                        text=f"TaskNotFoundError: The task {task_id} does not exist.",
+                        text=f"TaskNotFoundError: The task {task_id} "
+                        f"does not exist.",
                     ),
                 ],
                 state=ToolResultState.ERROR,

@@ -11,7 +11,7 @@ from .._schema._agent import (
     CreateAgentResponse,
     UpdateAgentRequest,
 )
-from ..storage._base import StorageBase
+from ..storage import StorageBase
 from ..storage._model._agent import AgentData, AgentRecord
 
 agent_router = APIRouter(
@@ -73,7 +73,7 @@ async def create_agent(
             react_config=body.react_config,
         ),
     )
-    agent_id = await storage.create_agent(user_id, record)
+    agent_id = await storage.upsert_agent(user_id, record)
     return CreateAgentResponse(agent_id=agent_id)
 
 
@@ -116,11 +116,11 @@ async def update_agent(
 
     updates = body.model_dump(exclude_none=True)
     updated_data = existing.data.model_copy(update=updates)
-    existing = existing.model_copy(
+    updated_agent = existing.model_copy(
         update={"data": updated_data, "updated_at": datetime.now()},
     )
-    await storage.create_agent(user_id, existing)
-    return existing
+    await storage.upsert_agent(user_id, updated_agent)
+    return updated_agent
 
 
 @agent_router.delete(

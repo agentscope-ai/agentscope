@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Protocol middleware base class for converting AgentEvent stream to various protocols."""
+"""Protocol middleware base class for converting AgentEvent stream to
+various protocols."""
 import json
 from abc import ABC, abstractmethod
 from typing import AsyncGenerator, Callable
@@ -16,7 +17,8 @@ class ProtocolMiddlewareBase(BaseHTTPMiddleware, ABC):
     """Base middleware for converting AgentEvent stream to protocol format.
 
     This middleware intercepts streaming responses that yield AgentEvent
-    objects, deserializes them, and converts them to a specific protocol format.
+    objects, deserializes them, and converts them to a specific protocol
+    format.
 
     Subclasses should implement the `_convert_to_protocol` method to define
     the conversion logic for their specific protocol (e.g., AGUI, A2A).
@@ -46,7 +48,8 @@ class ProtocolMiddlewareBase(BaseHTTPMiddleware, ABC):
         request: Request,
         call_next: Callable,
     ) -> Response:
-        """Process the request and convert AgentEvent stream to protocol format.
+        """Process the request and convert AgentEvent stream to protocol
+        format.
 
         Args:
             request: The incoming HTTP request.
@@ -110,7 +113,7 @@ class ProtocolMiddlewareBase(BaseHTTPMiddleware, ABC):
                     "utf-8",
                 ) + b"\n"
 
-            except (json.JSONDecodeError, KeyError, ValueError) as e:
+            except (json.JSONDecodeError, KeyError, ValueError):
                 # If deserialization fails, pass through the original chunk
                 # or log the error
                 # For now, we'll pass through the original chunk

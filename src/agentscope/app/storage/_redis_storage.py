@@ -8,14 +8,15 @@ from pydantic import BaseModel
 from ._base import StorageBase
 from ._model import (
     AgentRecord,
-    CredentialBase,
     CredentialRecord,
     ScheduleRecord,
     SessionRecord,
-    WorkspaceBase,
-    WorkspaceRecord,
-    SessionData,
+    SessionConfig,
 )
+from ._utils import _dump_with_secrets
+from ...credential import CredentialBase
+from ...message import Msg
+from ...state import AgentState
 
 if TYPE_CHECKING:
     from redis.asyncio import ConnectionPool, Redis
@@ -29,24 +30,23 @@ class RedisKeyConfig(BaseModel):
 
     # Record keys
     credential: str = "agentscope:user:{user_id}:credential:{credential_id}"
-    workspace: str = "agentscope:user:{user_id}:workspace:{workspace_id}"
     agent: str = "agentscope:user:{user_id}:agent:{agent_id}"
     session: str = "agentscope:user:{user_id}:session:{session_id}"
 
     # Index keys (Redis Sets — store all IDs for a given scope)
     credential_index: str = "agentscope:user:{user_id}:credentials"
-    workspace_index: str = "agentscope:user:{user_id}:workspaces"
     agent_index: str = "agentscope:user:{user_id}:agents"
     session_index: str = "agentscope:user:{user_id}:agent:{agent_id}:sessions"
 
-    # Lookup key: maps (user_id, agent_id, workspace_id) → session_id
-    session_lookup: str = (
-        "agentscope:user:{user_id}:agent:{agent_id}"
-        ":workspace:{workspace_id}:session"
-    )
+    # Lookup key: maps (user_id, agent_id) → session_id
+    session_lookup: str = "agentscope:user:{user_id}:agent:{agent_id}:session"
+
+    # Message list key (Redis List — ordered message history per session)
+    messages: str = "agentscope:user:{user_id}:session:{session_id}:messages"
 
     schedule: str = "agentscope:user:{user_id}:schedule:{schedule_id}"
     schedule_index: str = "agentscope:user:{user_id}:schedules"
+    schedule_global_index: str = "agentscope:schedules"
 
 
 class RedisStorage(StorageBase):
@@ -117,7 +117,7 @@ class RedisStorage(StorageBase):
 
         If an external pool was supplied at construction time it is used
         directly and its lifecycle remains the caller's responsibility.
-        Otherwise an internal pool is created from the stored host/port/db
+        Otherwise, an internal pool is created from the stored host/port/db
         parameters and will be closed by :meth:`aclose`.
         """
         try:
@@ -167,6 +167,37 @@ class RedisStorage(StorageBase):
         """Get the underlying Redis client instance."""
         return self._client
 
+    async def _generate_credential_name(
+        self,
+        user_id: str,
+        credential_data: CredentialBase,
+    ) -> str:
+        """Auto-generate a display name for a credential based on its type.
+
+        Produces names like "OpenAI", "OpenAI (2)", "OpenAI (3)", etc.
+        """
+        cred_type = getattr(credential_data, "type", "")
+        base_name = (
+            cred_type.removesuffix("_credential").replace("_", " ").title()
+        )
+        if not base_name:
+            base_name = "Credential"
+
+        existing = await self.list_credentials(user_id)
+        same_type_names = [
+            c.data.get("name", "")
+            for c in existing
+            if c.data.get("type") == cred_type and c.id != credential_data.id
+        ]
+
+        if base_name not in same_type_names:
+            return base_name
+
+        idx = 2
+        while f"{base_name} ({idx})" in same_type_names:
+            idx += 1
+        return f"{base_name} ({idx})"
+
     async def upsert_credential(
         self,
         user_id: str,
@@ -188,6 +219,14 @@ class RedisStorage(StorageBase):
         Returns:
             `str`: The id of the created or updated credential record.
         """
+        if not credential_data.name:
+            credential_data.name = await self._generate_credential_name(
+                user_id,
+                credential_data,
+            )
+
+        data_dump = _dump_with_secrets(credential_data)
+
         if credential_data.id:
             key = self._key(
                 self.key_config.credential,
@@ -197,18 +236,18 @@ class RedisStorage(StorageBase):
             raw = await self._client.get(key)
             if raw:
                 record = CredentialRecord.model_validate_json(raw)
-                record.data = credential_data.data
+                record.data = data_dump
                 record.updated_at = datetime.now()
             else:
                 record = CredentialRecord(
                     id=credential_data.id,
                     user_id=user_id,
-                    data=credential_data.data,
+                    data=data_dump,
                 )
         else:
             record = CredentialRecord(
                 user_id=user_id,
-                data=credential_data.data,
+                data=data_dump,
             )
 
         key = self._key(
@@ -297,113 +336,7 @@ class RedisStorage(StorageBase):
         await self._client.srem(index_key, credential_id)
         return deleted > 0
 
-    async def upsert_workspace(
-        self,
-        user_id: str,
-        workspace_data: WorkspaceBase,
-    ) -> str:
-        """Create or update a workspace record for the given user.
-
-        If `workspace_data.id` is set and the record already exists, the
-        existing record's `agent_id` and `data` fields are updated in place
-        (preserving `created_at`). If the id is set but no record exists, a
-        new record is created with that id. If `workspace_data.id` is
-        ``None``, a new record with a generated id is always created.
-
-        Args:
-            user_id (`str`): The owner user id.
-            workspace_data (`WorkspaceBase`): Input data containing an
-                optional `id`, the `agent_id`, and the workspace `data` dict.
-
-        Returns:
-            `str`: The id of the created or updated workspace record.
-        """
-        if workspace_data.id:
-            key = self._key(
-                self.key_config.workspace,
-                user_id=user_id,
-                workspace_id=workspace_data.id,
-            )
-            raw = await self._client.get(key)
-            if raw:
-                record = WorkspaceRecord.model_validate_json(raw)
-                record.agent_id = workspace_data.agent_id
-                record.data = workspace_data.data
-                record.updated_at = datetime.now()
-            else:
-                record = WorkspaceRecord(
-                    id=workspace_data.id,
-                    user_id=user_id,
-                    agent_id=workspace_data.agent_id,
-                    data=workspace_data.data,
-                )
-        else:
-            record = WorkspaceRecord(
-                user_id=user_id,
-                agent_id=workspace_data.agent_id,
-                data=workspace_data.data,
-            )
-
-        key = self._key(
-            self.key_config.workspace,
-            user_id=user_id,
-            workspace_id=record.id,
-        )
-        index_key = self._key(self.key_config.workspace_index, user_id=user_id)
-        await self._set_with_ttl(key, record.model_dump_json())
-        await self._client.sadd(index_key, record.id)
-        return record.id
-
-    async def list_workspaces(self, user_id: str) -> list[WorkspaceRecord]:
-        """Return all workspace records belonging to the given user.
-
-        Reads the per-user workspace index Set to obtain all ids, then
-        fetches each record individually. Records whose keys have expired or
-        been deleted externally are silently skipped.
-
-        Args:
-            user_id (`str`): The owner user id.
-
-        Returns:
-            `list[WorkspaceRecord]`: All workspace records for the user.
-        """
-        index_key = self._key(self.key_config.workspace_index, user_id=user_id)
-        ids = await self._client.smembers(index_key)
-        records = []
-        for ws_id in ids:
-            raw = await self._client.get(
-                self._key(
-                    self.key_config.workspace,
-                    user_id=user_id,
-                    workspace_id=ws_id,
-                ),
-            )
-            if raw:
-                records.append(WorkspaceRecord.model_validate_json(raw))
-        return records
-
-    async def delete_workspace(self, user_id: str, workspace_id: str) -> bool:
-        """Delete a workspace record and remove it from the user's index.
-
-        Args:
-            user_id (`str`): The owner user id.
-            workspace_id (`str`): The id of the workspace to delete.
-
-        Returns:
-            `bool`: ``True`` if the record existed and was deleted,
-            ``False`` if it did not exist.
-        """
-        key = self._key(
-            self.key_config.workspace,
-            user_id=user_id,
-            workspace_id=workspace_id,
-        )
-        index_key = self._key(self.key_config.workspace_index, user_id=user_id)
-        deleted = await self._client.delete(key)
-        await self._client.srem(index_key, workspace_id)
-        return deleted > 0
-
-    async def create_agent(self, user_id: str, agent_data: AgentRecord) -> str:
+    async def upsert_agent(self, user_id: str, agent_data: AgentRecord) -> str:
         """Persist an agent record and register it in the user's agent index.
 
         The caller is responsible for constructing the full `AgentRecord`
@@ -471,16 +404,33 @@ class RedisStorage(StorageBase):
         return AgentRecord.model_validate_json(raw) if raw else None
 
     async def delete_agent(self, user_id: str, agent_id: str) -> bool:
-        """Delete an agent record and remove it from the user's agent index.
+        """Delete an agent record and cascade-delete its sessions and
+        schedules.
+
+        Removes all session records (and their lookup / index keys) that belong
+        to this agent, then removes all schedule records whose
+        ``data.agent_id`` matches.  Finally, the agent record itself and its
+        entry in the per-user agent index are deleted.
 
         Args:
             user_id (`str`): The owner user id.
             agent_id (`str`): The id of the agent to delete.
 
         Returns:
-            `bool`: ``True`` if the record existed and was deleted,
+            `bool`: ``True`` if the agent record existed and was deleted,
             ``False`` if it did not exist.
         """
+        # Cascade: sessions
+        sessions = await self.list_sessions(user_id, agent_id)
+        for session in sessions:
+            await self.delete_session(user_id, agent_id, session.id)
+
+        # Cascade: schedules owned by this agent
+        schedules = await self.list_schedules(user_id)
+        for schedule in schedules:
+            if schedule.data.agent_id == agent_id:
+                await self.delete_schedule(user_id, schedule.id)
+
         key = self._key(
             self.key_config.agent,
             user_id=user_id,
@@ -495,34 +445,15 @@ class RedisStorage(StorageBase):
         self,
         user_id: str,
         agent_id: str,
-        workspace_id: str,
-        session_data: SessionData,
-    ) -> bool:
-        """Create or update the session for a (user, agent, workspace) triple.
+        config: SessionConfig,
+        state: AgentState | None = None,
+        session_id: str | None = None,
+    ) -> SessionRecord:
+        """Create or update a session for a (user, agent) pair.
 
-        A lookup key mapping ``(user_id, agent_id, workspace_id)`` to a
-        ``session_id`` is maintained so that at most one session exists per
-        triple. If a session already exists for the triple, its ``data``
-        field is updated in place (preserving ``created_at``). Otherwise a
-        new ``SessionRecord`` is created and the lookup key is written.
-
-        Args:
-            user_id (`str`): The owner user id.
-            agent_id (`str`): The agent id this session belongs to.
-            workspace_id (`str`): The workspace id this session belongs to.
-            session_data (`SessionData`): The session state to persist.
-
-        Returns:
-            `bool`: Always ``True``.
+        When *session_id* is provided the existing session is updated.
+        When *session_id* is ``None`` a new session is always created.
         """
-        lookup_key = self._key(
-            self.key_config.session_lookup,
-            user_id=user_id,
-            agent_id=agent_id,
-            workspace_id=workspace_id,
-        )
-        session_id = await self._client.get(lookup_key)
-
         if session_id:
             key = self._key(
                 self.key_config.session,
@@ -532,16 +463,18 @@ class RedisStorage(StorageBase):
             raw = await self._client.get(key)
             if raw:
                 record = SessionRecord.model_validate_json(raw)
-                record.data = session_data
+                record.config = config
+                if state is not None:
+                    record.state = state
                 record.updated_at = datetime.now()
                 await self._set_with_ttl(key, record.model_dump_json())
-                return True
+                return record
 
         record = SessionRecord(
             user_id=user_id,
             agent_id=agent_id,
-            workspace_id=workspace_id,
-            data=session_data,
+            config=config,
+            state=state if state is not None else AgentState(),
         )
         key = self._key(
             self.key_config.session,
@@ -554,9 +487,33 @@ class RedisStorage(StorageBase):
             agent_id=agent_id,
         )
         await self._set_with_ttl(key, record.model_dump_json())
-        await self._client.set(lookup_key, record.id)
         await self._client.sadd(index_key, record.id)
-        return True
+        return record
+
+    async def update_session_state(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        state: AgentState,
+    ) -> None:
+        """Update only the mutable state of an existing session.
+
+        Raises:
+            KeyError: If the session does not exist.
+        """
+        key = self._key(
+            self.key_config.session,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        raw = await self._client.get(key)
+        if not raw:
+            raise KeyError(f"Session {session_id!r} not found.")
+        record = SessionRecord.model_validate_json(raw)
+        record.state = state
+        record.updated_at = datetime.now()
+        await self._set_with_ttl(key, record.model_dump_json())
 
     async def list_sessions(
         self,
@@ -594,22 +551,16 @@ class RedisStorage(StorageBase):
             )
             if raw:
                 records.append(SessionRecord.model_validate_json(raw))
+        records.sort(key=lambda r: r.created_at, reverse=True)
         return records
 
     async def get_session(
         self,
         user_id: str,
+        agent_id: str,
         session_id: str,
     ) -> SessionRecord | None:
-        """Fetch a single session record by id.
-
-        Args:
-            user_id (`str`): The owner user id.
-            session_id (`str`): The session id.
-
-        Returns:
-            `SessionRecord | None`: The record, or ``None`` if not found.
-        """
+        """Fetch a single session record by id."""
         key = self._key(
             self.key_config.session,
             user_id=user_id,
@@ -620,25 +571,13 @@ class RedisStorage(StorageBase):
             return None
         return SessionRecord.model_validate_json(raw)
 
-    async def delete_session(self, user_id: str, session_id: str) -> bool:
-        """Delete a session record and clean up all associated keys.
-
-        Fetches the record first to retrieve ``agent_id`` and
-        ``workspace_id``, then atomically removes:
-
-        - The session record key.
-        - The session id from the per-agent session index Set.
-        - The ``(user_id, agent_id, workspace_id)`` → ``session_id`` lookup
-          key.
-
-        Args:
-            user_id (`str`): The owner user id.
-            session_id (`str`): The id of the session to delete.
-
-        Returns:
-            `bool`: ``True`` if the record existed and was deleted,
-            ``False`` if it did not exist.
-        """
+    async def delete_session(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+    ) -> bool:
+        """Delete a session record and clean up all associated keys."""
         key = self._key(
             self.key_config.session,
             user_id=user_id,
@@ -648,40 +587,40 @@ class RedisStorage(StorageBase):
         if not raw:
             return False
 
-        record = SessionRecord.model_validate_json(raw)
         index_key = self._key(
             self.key_config.session_index,
             user_id=user_id,
-            agent_id=record.agent_id,
+            agent_id=agent_id,
         )
-        lookup_key = self._key(
-            self.key_config.session_lookup,
+        msg_key = self._key(
+            self.key_config.messages,
             user_id=user_id,
-            agent_id=record.agent_id,
-            workspace_id=record.workspace_id,
+            session_id=session_id,
         )
         await self._client.delete(key)
         await self._client.srem(index_key, session_id)
-        await self._client.delete(lookup_key)
+        await self._client.delete(msg_key)
         return True
 
-    async def create_schedule(
+    async def upsert_schedule(
         self,
         user_id: str,
         record: ScheduleRecord,
     ) -> str:
-        """Persist a cron task record and register it in the user's index."""
+        """Persist a cron task record and register it in the user and global
+        indexes."""
         key = self._key(
             self.key_config.schedule,
             user_id=user_id,
             schedule_id=record.id,
         )
-        index_key = self._key(
-            self.key_config.schedule_index,
-            user_id=user_id,
-        )
+        index_key = self._key(self.key_config.schedule_index, user_id=user_id)
         await self._set_with_ttl(key, record.model_dump_json())
         await self._client.sadd(index_key, record.id)
+        await self._client.sadd(
+            self.key_config.schedule_global_index,
+            f"{user_id}:{record.id}",
+        )
         return record.id
 
     async def get_schedule(
@@ -721,16 +660,102 @@ class RedisStorage(StorageBase):
         return records
 
     async def delete_schedule(self, user_id: str, schedule_id: str) -> bool:
-        """Delete a cron task record and remove it from the user's index."""
+        """Delete a cron task record and remove it from the user and global
+        indexes."""
         key = self._key(
             self.key_config.schedule,
             user_id=user_id,
             schedule_id=schedule_id,
         )
-        index_key = self._key(
-            self.key_config.schedule_index,
-            user_id=user_id,
-        )
+        index_key = self._key(self.key_config.schedule_index, user_id=user_id)
         deleted = await self._client.delete(key)
         await self._client.srem(index_key, schedule_id)
+        await self._client.srem(
+            self.key_config.schedule_global_index,
+            f"{user_id}:{schedule_id}",
+        )
         return deleted > 0
+
+    async def list_all_schedules(self) -> list[ScheduleRecord]:
+        """Return every schedule record across all users.
+
+        Reads the global schedule index (a Redis Set of ``user_id:schedule_id``
+        pairs) and fetches each record individually.  Records whose keys have
+        expired or been deleted externally are silently skipped.
+
+        Returns:
+            `list[ScheduleRecord]`: All schedule records in the store.
+        """
+        entries = await self._client.smembers(
+            self.key_config.schedule_global_index,
+        )
+        records = []
+        for entry in entries:
+            user_id, schedule_id = entry.split(":", 1)
+            raw = await self._client.get(
+                self._key(
+                    self.key_config.schedule,
+                    user_id=user_id,
+                    schedule_id=schedule_id,
+                ),
+            )
+            if raw:
+                records.append(ScheduleRecord.model_validate_json(raw))
+        return records
+
+    # ------------------------------------------------------------------
+    # Message persistence
+    # ------------------------------------------------------------------
+
+    def _message_key(self, user_id: str, session_id: str) -> str:
+        """Return the Redis List key for a session's messages."""
+        return self._key(
+            self.key_config.messages,
+            user_id=user_id,
+            session_id=session_id,
+        )
+
+    async def upsert_message(
+        self,
+        user_id: str,
+        session_id: str,
+        msg: Msg,
+    ) -> None:
+        """Persist a message to the session's message list."""
+        key = self._message_key(user_id, session_id)
+        last_raw = await self._client.lindex(key, -1)
+        if last_raw:
+            last_msg = Msg.model_validate_json(last_raw)
+            if last_msg.id == msg.id:
+                await self._client.lset(key, -1, msg.model_dump_json())
+                return
+        await self._client.rpush(key, msg.model_dump_json())
+
+    async def get_message(
+        self,
+        user_id: str,
+        session_id: str,
+        message_id: str,
+    ) -> Msg | None:
+        """Fetch a single message by id from the session's message list."""
+        key = self._message_key(user_id, session_id)
+        length = await self._client.llen(key)
+        for i in range(length - 1, -1, -1):
+            raw = await self._client.lindex(key, i)
+            if raw:
+                msg = Msg.model_validate_json(raw)
+                if msg.id == message_id:
+                    return msg
+        return None
+
+    async def list_messages(
+        self,
+        user_id: str,
+        session_id: str,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> list[Msg]:
+        """Return messages for a session with pagination."""
+        key = self._message_key(user_id, session_id)
+        raw_list = await self._client.lrange(key, offset, offset + limit - 1)
+        return [Msg.model_validate_json(raw) for raw in raw_list]

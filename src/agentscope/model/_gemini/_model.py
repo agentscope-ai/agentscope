@@ -155,12 +155,12 @@ class GeminiChatModel(ChatModelBase):
                 ``GeminiChatFormatter`` instance will be used.
         """
         super().__init__(
+            credential=credential,
             model=model,
             stream=stream,
             max_retries=max_retries,
             context_size=context_size,
         )
-        self.credential = credential
         self.parameters = parameters or self.Parameters()
         self.formatter = formatter or GeminiChatFormatter()
 

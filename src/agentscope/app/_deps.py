@@ -2,7 +2,7 @@
 """Shared FastAPI dependencies for the agentscope app."""
 from fastapi import Header, HTTPException, Request, status
 
-from ._manager import SessionManager
+from ._manager import SessionManager, WorkspaceManagerBase
 from ._manager._scheduler import SchedulerManager
 from .storage import StorageBase
 
@@ -70,3 +70,24 @@ async def get_scheduler_manager(request: Request) -> SchedulerManager:
         `SchedulerManager`: The scheduler manager stored in ``app.state``.
     """
     return request.app.state.scheduler_manager
+
+
+async def get_workspace_manager(request: Request) -> WorkspaceManagerBase:
+    """Return the application-wide workspace manager.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `WorkspaceManagerBase`: The workspace manager stored in ``app.state``.
+
+    Raises:
+        `HTTPException`: 503 if no workspace manager is configured.
+    """
+    manager = request.app.state.workspace_manager
+    if manager is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Workspace manager is not configured.",
+        )
+    return manager

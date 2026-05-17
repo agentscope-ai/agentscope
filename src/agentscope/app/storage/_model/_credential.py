@@ -2,16 +2,9 @@
 """The credential record."""
 import uuid
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from ._base import _RecordBase
-
-
-class CredentialBase(BaseModel):
-    """Input data for creating or updating a credential."""
-
-    id: str | None = None
-    data: dict
 
 
 class CredentialRecord(_RecordBase):

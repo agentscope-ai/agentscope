@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-""""""
+"""The chat endpoint schema."""
 
 from pydantic import BaseModel, Field
 

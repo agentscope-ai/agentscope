@@ -9,9 +9,18 @@ class CreateSessionRequest(BaseModel):
     """Request body for creating a new session."""
 
     agent_id: str = Field(description="Agent this session belongs to.")
-    workspace_id: str = Field(description="Workspace this session belongs to.")
-    chat_model_config: ChatModelConfig = Field(
-        description="Model provider and parameters for this session.",
+    workspace_id: str | None = Field(
+        default=None,
+        description="Workspace this session belongs to.",
+    )
+    name: str | None = Field(
+        default=None,
+        description="Display name. Defaults to current datetime if omitted.",
+    )
+    chat_model_config: ChatModelConfig | None = Field(
+        default=None,
+        description="Model provider and parameters. "
+        "Can be set later via PATCH.",
     )
 
 
@@ -27,9 +36,14 @@ class UpdateSessionRequest(BaseModel):
     Omit any field to keep its current value.
     """
 
+    name: str | None = Field(
+        default=None,
+        description="New display name.",
+    )
     chat_model_config: ChatModelConfig | None = Field(
         default=None,
-        description="New model configuration. Replaces the existing one entirely.",
+        description="New model configuration. "
+        "Replaces the existing one entirely.",
     )
 
 
@@ -38,3 +52,12 @@ class SessionListResponse(BaseModel):
 
     sessions: list[SessionRecord] = Field(description="Session records.")
     total: int = Field(description="Total number of sessions.")
+
+
+class MessagesResponse(BaseModel):
+    """Response body for listing messages in a session."""
+
+    messages: list = Field(description="Messages in chronological order.")
+    is_running: bool = Field(
+        description="Whether the session is currently running.",
+    )

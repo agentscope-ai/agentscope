@@ -1,15 +1,19 @@
 # -*- coding: utf-8 -*-
-"""Session router — create, list, update, and delete sessions."""
+"""Session router — create, list, update, delete, and get messages."""
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from .._deps import get_current_user_id, get_storage
+from .._deps import get_current_user_id, get_session_manager, get_storage
+from .._manager import SessionManager
 from .._schema._session import (
     CreateSessionRequest,
     CreateSessionResponse,
+    MessagesResponse,
     SessionListResponse,
     UpdateSessionRequest,
 )
-from ..storage import StorageBase, SessionData, SessionRecord
+from ..storage import StorageBase, SessionConfig, SessionRecord
 
 session_router = APIRouter(
     prefix="/sessions",
@@ -28,7 +32,8 @@ async def list_sessions(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
 ) -> SessionListResponse:
-    """Return all sessions belonging to the authenticated user for a given agent.
+    """Return all sessions belonging to the authenticated user for a given
+    agent.
 
     Args:
         agent_id (`str`): Agent whose sessions to list.
@@ -89,30 +94,27 @@ async def create_session(
             detail=f"Agent '{body.agent_id}' not found.",
         )
 
-    credentials = await storage.list_credentials(user_id)
-    if not any(
-        c.id == body.chat_model_config.credential_id for c in credentials
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Credential '{body.chat_model_config.credential_id}' not found.",
-        )
+    if body.chat_model_config is not None:
+        credentials = await storage.list_credentials(user_id)
+        if not any(
+            c.id == body.chat_model_config.credential_id for c in credentials
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Credential '{body.chat_model_config.credential_id}' "
+                f"not found.",
+            )
 
-    from ....state import AgentState  # avoid circular at module level
-
-    await storage.upsert_session(
+    session_record = await storage.upsert_session(
         user_id=user_id,
         agent_id=body.agent_id,
-        workspace_id=body.workspace_id,
-        session_data=SessionData(
-            agent_state=AgentState(),
+        config=SessionConfig(
+            workspace_id=body.workspace_id or uuid.uuid4().hex,
             chat_model_config=body.chat_model_config,
+            **({"name": body.name} if body.name is not None else {}),
         ),
     )
-
-    sessions = await storage.list_sessions(user_id, body.agent_id)
-    session = next(s for s in sessions if s.workspace_id == body.workspace_id)
-    return CreateSessionResponse(session_id=session.id)
+    return CreateSessionResponse(session_id=session_record.id)
 
 
 @session_router.delete(
@@ -122,6 +124,7 @@ async def create_session(
 )
 async def delete_session(
     session_id: str,
+    agent_id: str = Query(description="Agent the session belongs to."),
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
 ) -> None:
@@ -136,7 +139,7 @@ async def delete_session(
         `HTTPException`: 404 if the session does not exist or does not belong
             to the authenticated user.
     """
-    deleted = await storage.delete_session(user_id, session_id)
+    deleted = await storage.delete_session(user_id, agent_id, session_id)
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -152,6 +155,7 @@ async def delete_session(
 async def update_session(
     session_id: str,
     body: UpdateSessionRequest,
+    agent_id: str = Query(description="Agent the session belongs to."),
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
 ) -> SessionRecord:
@@ -170,7 +174,7 @@ async def update_session(
         `HTTPException`: 404 if the session, agent, or credential does not
             exist or does not belong to the authenticated user.
     """
-    existing = await storage.get_session(user_id, session_id)
+    existing = await storage.get_session(user_id, agent_id, session_id)
     if existing is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -184,16 +188,70 @@ async def update_session(
         ):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Credential '{body.chat_model_config.credential_id}' not found.",
+                detail=(
+                    f"Credential '{body.chat_model_config.credential_id}' "
+                    f"not found."
+                ),
             )
 
-    updated_data = existing.data.model_copy(
-        update={k: v for k, v in body.model_dump(exclude_none=True).items()},
-    )
-    await storage.upsert_session(
+    return await storage.upsert_session(
         user_id=user_id,
-        agent_id=existing.agent_id,
-        workspace_id=existing.workspace_id,
-        session_data=updated_data,
+        agent_id=agent_id,
+        config=existing.config.model_copy(
+            update=dict(body.model_dump(exclude_none=True).items()),
+        ),
+        state=existing.state,
+        session_id=session_id,
     )
-    return await storage.get_session(user_id, session_id)
+
+
+# ----------------------------------------------------------------------
+# Messages: fetch persisted messages for a session
+# ----------------------------------------------------------------------
+
+
+@session_router.get(
+    "/{session_id}/messages",
+    response_model=MessagesResponse,
+    summary="List messages for a session",
+)
+async def list_messages(
+    session_id: str,
+    agent_id: str = Query(description="Agent the session belongs to."),
+    offset: int = Query(0, ge=0, description="Pagination offset."),
+    limit: int = Query(50, ge=1, le=200, description="Max messages."),
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+    session_manager: SessionManager = Depends(get_session_manager),
+) -> MessagesResponse:
+    """Return persisted messages for a session.
+
+    Args:
+        session_id: The session to query.
+        agent_id: Agent the session belongs to.
+        offset: Pagination offset.
+        limit: Maximum number of messages to return.
+        user_id: Injected authenticated user ID.
+        storage: Injected storage backend.
+        session_manager: Injected session manager.
+
+    Returns:
+        Messages and running status.
+    """
+    existing = await storage.get_session(user_id, agent_id, session_id)
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session '{session_id}' not found.",
+        )
+
+    messages = await storage.list_messages(
+        user_id,
+        session_id,
+        offset=offset,
+        limit=limit,
+    )
+    return MessagesResponse(
+        messages=messages,
+        is_running=session_manager.is_running(session_id),
+    )

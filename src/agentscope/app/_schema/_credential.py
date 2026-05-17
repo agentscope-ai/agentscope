@@ -32,3 +32,11 @@ class CredentialListResponse(BaseModel):
         description="Credential records.",
     )
     total: int = Field(description="Total number of credentials.")
+
+
+class CredentialSchemasResponse(BaseModel):
+    """Response body for listing credential type schemas."""
+
+    schemas: list[dict] = Field(
+        description="JSON schemas for all registered credential types.",
+    )

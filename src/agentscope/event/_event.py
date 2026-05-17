@@ -300,6 +300,8 @@ class ToolResultDataDeltaEvent(EventBase):
     """ID of the reply message this tool result belongs to."""
     tool_call_id: str
     """ID of the corresponding tool call."""
+    block_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    """Unique identifier of the data block created by this event."""
     media_type: str
     """MIME type of the binary content."""
     data: str | None = None

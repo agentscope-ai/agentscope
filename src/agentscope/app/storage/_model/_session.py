@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The session data class for storage."""
-from pydantic import BaseModel
+from datetime import datetime
+from pydantic import BaseModel, Field
 
 from ._base import _RecordBase
 from ....state import AgentState
@@ -15,18 +16,27 @@ class ChatModelConfig(BaseModel):
     credential_id: str
     """The credential id."""
 
+    model: str
+    """The model name."""
+
     parameters: dict
     """The model parameters."""
 
 
-class SessionData(BaseModel):
-    """The session data class."""
+class SessionConfig(BaseModel):
+    """Session configuration — set at creation, updatable via PATCH."""
 
-    agent_state: AgentState
-    """The agent state."""
+    workspace_id: str
+    """The workspace id this session is bound to."""
 
-    chat_model_config: ChatModelConfig
-    """The chat model config."""
+    name: str = Field(
+        default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        description="Display name for the session.",
+    )
+    """The session display name."""
+
+    chat_model_config: ChatModelConfig | None = None
+    """The chat model config. None means no model has been configured yet."""
 
 
 class SessionRecord(_RecordBase):
@@ -38,8 +48,8 @@ class SessionRecord(_RecordBase):
     agent_id: str
     """The agent id."""
 
-    workspace_id: str
-    """The workspace id."""
+    config: SessionConfig
+    """Session configuration (workspace, name, model)."""
 
-    data: SessionData
-    """The session data."""
+    state: AgentState = Field(default_factory=AgentState)
+    """Mutable runtime state, updated after each chat turn."""

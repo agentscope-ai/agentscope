@@ -17,6 +17,11 @@ class CredentialBase(BaseModel):
         description="The credential id",
     )
 
+    name: str = Field(
+        default="",
+        description="User-facing display name for this credential.",
+    )
+
     @classmethod
     def get_chat_model_class(cls) -> Type["ChatModelBase"]:
         """Return the :class:`ChatModelBase` subclass that consumes this
@@ -31,7 +36,8 @@ class CredentialBase(BaseModel):
             f"{cls.__name__} must implement ``get_chat_model_class``.",
         )
 
-    def list_models(self) -> list["ModelCard"]:
+    @classmethod
+    def list_models(cls) -> list["ModelCard"]:
         """List the candidate chat models that are available under this
         credential. The default implementation delegates to the
         :meth:`ChatModelBase.list_models` of the class returned by
@@ -41,4 +47,4 @@ class CredentialBase(BaseModel):
             `list[ModelCard]`:
                 A list of candidate models described by their model cards.
         """
-        return self.get_chat_model_class().list_models()
+        return cls.get_chat_model_class().list_models()

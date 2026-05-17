@@ -3,22 +3,35 @@
 components and a configurable FastAPI app factory.
 """
 
+from ._app import create_app
 from .storage import (
     RedisStorage,
     AgentRecord,
     CredentialRecord,
-    SessionData,
+    SessionConfig,
     SessionRecord,
     UserRecord,
-    WorkspaceRecord,
+)
+from ._manager import (
+    WorkspaceManagerBase,
+    LocalWorkspaceManager,
+    BackgroundTaskManager,
+    SchedulerManager,
+    SessionManager,
 )
 
 __all__ = [
+    "create_app",
     "RedisStorage",
     "AgentRecord",
     "CredentialRecord",
-    "SessionData",
+    "SessionConfig",
     "SessionRecord",
     "UserRecord",
-    "WorkspaceRecord",
+    "WorkspaceManagerBase",
+    "BackgroundTaskManager",
+    "LocalWorkspaceManager",
+    "BackgroundTaskManager",
+    "SchedulerManager",
+    "SessionManager",
 ]

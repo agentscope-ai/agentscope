@@ -39,7 +39,8 @@ class ScheduleData(BaseModel):
 
     permission_mode: PermissionMode = Field(
         default=PermissionMode.DONT_ASK,
-        description="Permission level for the agent during scheduled execution. "
+        description="Permission level for the agent during scheduled "
+        "execution. "
         "Defaults to DONT_ASK since no user is present to answer prompts.",
     )
 

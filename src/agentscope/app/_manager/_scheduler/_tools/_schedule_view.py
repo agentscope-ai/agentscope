@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-""""""
+"""The schedule view tool."""
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -63,16 +63,17 @@ class ScheduleView(ToolBase):
         schedules = self._scheduler.get_jobs()
 
         schedule = None
-        for schedule in schedules:
-            if schedule.id == schedule_id:
-                schedule = schedule
+        for _ in schedules:
+            if _.id == schedule_id:
+                schedule = _
                 break
 
         if schedule is None:
             return ToolChunk(
                 content=[
                     TextBlock(
-                        text=f"ScheduleNotFoundError: Schedule with id {schedule_id} not found.",
+                        text=f"ScheduleNotFoundError: Schedule with "
+                        f"id {schedule_id} not found.",
                     ),
                 ],
                 state=ToolResultState.ERROR,

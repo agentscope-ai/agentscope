@@ -9,11 +9,11 @@ from ._model import (
     CredentialRecord,
     ScheduleRecord,
     SessionRecord,
-    WorkspaceRecord,
-    SessionData,
-    CredentialBase,
+    SessionConfig,
 )
-from ...workspace import WorkspaceBase
+from ...credential import CredentialBase
+from ...message import Msg
+from ...state import AgentState
 
 
 class StorageBase(ABC):
@@ -103,54 +103,7 @@ class StorageBase(ABC):
         """
 
     @abstractmethod
-    async def upsert_workspace(
-        self,
-        user_id: str,
-        workspace_data: WorkspaceBase,
-    ) -> str:
-        """Create a workspace record in the storage.
-
-        Args:
-            user_id (`str`):
-                The user id.
-            workspace_data (`WorkspaceBase`):
-                The workspace data.
-
-        Returns:
-            `str`:
-                The workspace id.
-        """
-
-    @abstractmethod
-    async def list_workspaces(self, user_id: str) -> list[WorkspaceRecord]:
-        """List all workspaces for a given user.
-
-        Args:
-            user_id (`str`):
-                The user id.
-
-        Returns:
-            `list[WorkspaceRecord]`:
-                List of all workspaces for a given user.
-        """
-
-    @abstractmethod
-    async def delete_workspace(self, user_id: str, workspace_id: str) -> bool:
-        """Delete a workspace.
-
-        Args:
-            user_id (`str`):
-                The user id.
-            workspace_id (`str`):
-                The workspace id.
-
-        Returns:
-            `bool`:
-                True if deleted, False if not found.
-        """
-
-    @abstractmethod
-    async def create_agent(
+    async def upsert_agent(
         self,
         user_id: str,
         agent_data: AgentRecord,
@@ -217,24 +170,46 @@ class StorageBase(ABC):
         self,
         user_id: str,
         agent_id: str,
-        workspace_id: str,
-        session_data: SessionData,
-    ) -> bool:
-        """Create a session record in the storage.
+        config: SessionConfig,
+        state: AgentState | None = None,
+        session_id: str | None = None,
+    ) -> SessionRecord:
+        """Create or update a session for a (user, agent) pair.
 
         Args:
-            user_id (`str`):
-                The user id.
-            agent_id (`str`):
-                The agent id.
-            workspace_id (`str`):
-                The workspace id.
-            session_data (`SessionData`):
-                The session data.
+            user_id (`str`): The owner user id.
+            agent_id (`str`): The agent id.
+            config (`SessionConfig`): Immutable session configuration
+                (model, workspace). Required on create; passed unchanged on
+                state-only updates.
+            state (`AgentState | None`, optional): Runtime state to persist.
+                Defaults to a fresh ``AgentState()`` when ``None``.
+            session_id (`str | None`, optional): If provided, update the
+                existing session with this id. If ``None``, create a new
+                session.
 
         Returns:
-            `bool`:
-                True if updated, False if not found.
+            `SessionRecord`: The created or updated record.
+        """
+
+    @abstractmethod
+    async def update_session_state(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        state: AgentState,
+    ) -> None:
+        """Update only the mutable state of an existing session.
+
+        Convenience method for the hot path (post-chat-turn persistence).
+        Raises ``KeyError`` if the session does not exist.
+
+        Args:
+            user_id (`str`): The owner user id.
+            agent_id (`str`): The agent id.
+            session_id (`str`): The session id.
+            state (`AgentState`): The new agent state to persist.
         """
 
     @abstractmethod
@@ -246,41 +221,43 @@ class StorageBase(ABC):
         """List all sessions for a given user and agent entity.
 
         Args:
-            user_id (`str`):
-                The user id.
-            agent_id (`str`):
-                The agent id.
+            user_id (`str`): The user id.
+            agent_id (`str`): The agent id.
 
         Returns:
-            `list[SessionRecord]`:
-                List of all sessions for a given user and agent entity.
+            `list[SessionRecord]`: List of all sessions for the (user, agent).
         """
 
     @abstractmethod
-    async def delete_session(self, user_id: str, session_id: str) -> bool:
+    async def delete_session(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+    ) -> bool:
         """Delete a session.
 
         Args:
-            user_id (`str`):
-                The user id.
-            session_id (`str`):
-                The session id.
+            user_id (`str`): The user id.
+            agent_id (`str`): The agent id.
+            session_id (`str`): The session id.
 
         Returns:
-            `bool`:
-                True if deleted, False if not found.
+            `bool`: True if deleted, False if not found.
         """
 
     @abstractmethod
     async def get_session(
         self,
         user_id: str,
+        agent_id: str,
         session_id: str,
     ) -> SessionRecord | None:
         """Fetch a single session record by id.
 
         Args:
             user_id (`str`): The owner user id.
+            agent_id (`str`): The agent id.
             session_id (`str`): The session id.
 
         Returns:
@@ -288,7 +265,7 @@ class StorageBase(ABC):
         """
 
     @abstractmethod
-    async def create_schedule(
+    async def upsert_schedule(
         self,
         user_id: str,
         record: ScheduleRecord,
@@ -347,4 +324,76 @@ class StorageBase(ABC):
 
         Returns:
             `bool`: ``True`` if deleted, ``False`` if not found.
+        """
+
+    @abstractmethod
+    async def list_all_schedules(self) -> list[ScheduleRecord]:
+        """Return every schedule record across all users.
+
+        Used on startup to restore the in-memory scheduler from persisted
+        state.  Normal per-user listing should use :meth:`list_schedules`.
+
+        Returns:
+            `list[ScheduleRecord]`: All schedule records in the store.
+        """
+
+    # ------------------------------------------------------------------
+    # Message persistence
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    async def upsert_message(
+        self,
+        user_id: str,
+        session_id: str,
+        msg: Msg,
+    ) -> None:
+        """Persist a message to the session's message list.
+
+        If the last message in the list has the same ``id`` as *msg*, it is
+        replaced (merge/overwrite for the same reply_id across continuation
+        calls).  Otherwise, *msg* is appended as a new entry.
+
+        Args:
+            user_id (`str`): The owner user id.
+            session_id (`str`): The session id.
+            msg (`Msg`): The message to persist.
+        """
+
+    @abstractmethod
+    async def get_message(
+        self,
+        user_id: str,
+        session_id: str,
+        message_id: str,
+    ) -> Msg | None:
+        """Fetch a single message by id from the session's message list.
+
+        Args:
+            user_id (`str`): The owner user id.
+            session_id (`str`): The session id.
+            message_id (`str`): The message id to look up.
+
+        Returns:
+            `Msg | None`: The message, or ``None`` if not found.
+        """
+
+    @abstractmethod
+    async def list_messages(
+        self,
+        user_id: str,
+        session_id: str,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> list[Msg]:
+        """Return messages for a session with pagination.
+
+        Args:
+            user_id (`str`): The owner user id.
+            session_id (`str`): The session id.
+            offset (`int`): Starting index (0-based). Defaults to 0.
+            limit (`int`): Maximum number of messages to return.
+
+        Returns:
+            `list[Msg]`: Messages in chronological order.
         """

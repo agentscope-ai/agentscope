@@ -1,35 +1,107 @@
 # -*- coding: utf-8 -*-
-""""""
+"""AgentScope app factory."""
+from collections.abc import Callable
+from typing import Type
 
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI
 from fastapi.middleware import Middleware
-from pydantic import BaseModel
 
-from agentscope.app._schema import ConnectionScope
-from .storage import RedisStorage
-from agentscope.mcp import HttpMCPConfig, StdioMCPConfig
-from agentscope.skill import Skill
+from ._lifespan import lifespan
+from ._manager import SchedulerManager, WorkspaceManagerBase
+from .router import (
+    agent_router,
+    chat_router,
+    credential_router,
+    model_router,
+    schedule_router,
+    session_router,
+    workspace_router,
+)
+from .storage import StorageBase
+from ..credential import CredentialFactory, CredentialBase
 
 
-class MCPConfig(BaseModel):
-    name: str
-
-    mcp_config: HttpMCPConfig | StdioMCPConfig
-
-    connection_scope: ConnectionScope = ConnectionScope.ISOLATED
-
-
-async def create_app(
-    routers: list[APIRouter],
-    middlewares: list[Middleware],
-    skills: list[Skill],
-    tools_factory: list[Skill],
-    storage: RedisStorage,
+def create_app(
+    storage: StorageBase,
+    *,
+    workspace_manager: WorkspaceManagerBase | None = None,
+    trigger_factory: Callable | None = None,
+    extra_credentials: list[Type[CredentialBase]] | None = None,
+    extra_middlewares: list[Middleware] | None = None,
+    title: str = "AgentScope",
+    version: str = "2.0.0",
 ) -> FastAPI:
-    """A factory function that creates a FastAPI application with the given
-    components.
-    """
+    """Create and configure a FastAPI application.
 
-    # Save the MCP configs locally if not exists
-    for mcp in mcps:
-        await storage.upsert_mcp(mcp)
+    This is the primary entry point for embedding AgentScope into an existing
+    service or running it standalone.  All built-in routers are registered
+    automatically; pass ``extra_middlewares`` to add your own.
+
+    Usage — standalone::
+
+        app = create_app(storage=RedisStorage())
+        uvicorn.run(app, host="0.0.0.0", port=8000)
+
+    Usage — mount onto an existing app::
+
+        root = FastAPI()
+        agentscope_app = create_app(storage=RedisStorage())
+        root.mount("/agentscope", agentscope_app)
+
+    Args:
+        storage (`StorageBase`):
+            The storage backend.  Its lifecycle (``__aenter__`` /
+            ``__aexit__``) is managed by the app lifespan.
+        workspace_manager (`WorkspaceManagerBase | None`, optional):
+            The workspace manager.  When provided, its ``close_all`` is called
+            on shutdown.  Pass a :class:`~agentscope.app._manager.
+            LocalWorkspaceManager`
+            for local-directory workspaces.
+        trigger_factory (`Callable | None`, optional):
+            A callable ``(ScheduleRecord) -> async () -> None`` used to
+            rebuild schedule triggers on startup restore.  When ``None``,
+            persisted schedules are not restored into the in-memory scheduler.
+        extra_credentials (`list[Type[CredentialBase]] | None`, optional):
+            Additional :class:`~agentscope.credential.CredentialBase`
+            subclasses to register before the app starts.  Equivalent to
+            calling :func:`~agentscope.credential.CredentialFactory.
+            register_credential` for each class.
+        extra_middlewares (`list[Middleware] | None`, optional):
+            Additional ASGI middlewares to add to the application.
+        title (`str`, defaults to ``"AgentScope"``):
+            OpenAPI title shown in the docs UI.
+        version (`str`, defaults to ``"2.0.0"``):
+            API version shown in the docs UI.
+
+    Returns:
+        `FastAPI`: A fully configured application ready to serve requests.
+    """
+    # Register any user-supplied credential types before the app starts
+    for cls in extra_credentials or []:
+        CredentialFactory.register_credential(cls)
+
+    app = FastAPI(title=title, version=version, lifespan=lifespan)
+
+    # Attach shared state that lifespan and dependencies read from app.state
+    app.state.storage = storage
+    app.state.workspace_manager = workspace_manager
+    app.state.scheduler_manager = SchedulerManager()
+    app.state.trigger_factory = trigger_factory
+
+    # Built-in routers
+    for router in (
+        agent_router,
+        chat_router,
+        credential_router,
+        schedule_router,
+        session_router,
+        workspace_router,
+        model_router,
+    ):
+        app.include_router(router)
+
+    # Optional extra middlewares
+    for middleware in extra_middlewares or []:
+        app.add_middleware(middleware.cls, **middleware.kwargs)
+
+    return app

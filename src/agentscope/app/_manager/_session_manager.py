@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from ...event import AgentEvent
 
 _SENTINEL = object()
-"""Sentinel pushed to subscriber queues to signal end-of-stream."""
+# Sentinel pushed to subscriber queues to signal end-of-stream.
 
 
 @dataclass
@@ -28,17 +28,20 @@ class _SessionRun:
     """One queue per active SSE subscriber; each receives every new event."""
 
     async def publish(self, event: AgentEvent) -> None:
-        """Append *event* to the replay buffer and fan it out to all subscribers.
+        """Append *event* to the replay buffer and fan it out to all
+        subscribers.
 
         Args:
-            event (`AgentEvent`): The event to publish.
+            event (`AgentEvent`):
+                The event to publish.
         """
         self.buffer.append(event)
         for q in self.subscribers:
             await q.put(event)
 
     async def close_subscribers(self) -> None:
-        """Push the sentinel to every subscriber queue to signal end-of-stream."""
+        """Push the sentinel to every subscriber queue to signal
+        end-of-stream."""
         for q in self.subscribers:
             await q.put(_SENTINEL)
 
@@ -67,7 +70,8 @@ class SessionManager:
     # ------------------------------------------------------------------
 
     def _get_lock(self, session_id: str) -> asyncio.Lock:
-        """Return (creating if necessary) the per-session serialisation lock."""
+        """Return (creating if necessary) the per-session serialisation
+        lock."""
         if session_id not in self._locks:
             self._locks[session_id] = asyncio.Lock()
         return self._locks[session_id]
@@ -94,8 +98,8 @@ class SessionManager:
             session_id (`str`): The session to run against.
 
         Yields:
-            `_SessionRun`: The active run object; call :meth:`_SessionRun.publish`
-            to broadcast each event.
+            `_SessionRun`: The active run object;
+            call :meth:`_SessionRun.publish` to broadcast each event.
         """
         lock = self._get_lock(session_id)
         async with lock:
@@ -121,6 +125,22 @@ class SessionManager:
             `bool`: Whether a run is currently active.
         """
         return session_id in self._runs
+
+    def get_buffered_events(self, session_id: str) -> list[AgentEvent]:
+        """Return a snapshot of all events buffered for the active run.
+
+        Used by the stream endpoint to replay events to clients that join
+        mid-execution.
+
+        Args:
+            session_id (`str`): The session to query.
+
+        Returns:
+            `list[AgentEvent]`: Copy of buffered events, or empty list if
+            no active run.
+        """
+        run = self._runs.get(session_id)
+        return list(run.buffer) if run else []
 
     async def subscribe(
         self,

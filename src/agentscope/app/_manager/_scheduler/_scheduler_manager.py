@@ -16,12 +16,15 @@ class SchedulerManager:
     """
 
     def __init__(self) -> None:
+        """Initialize the cron scheduler manager."""
         self._scheduler = AsyncIOScheduler()
 
     async def start(self) -> None:
+        """Start the cron scheduler manager."""
         self._scheduler.start()
 
     async def shutdown(self) -> None:
+        """Stop the cron scheduler manager."""
         self._scheduler.shutdown()
 
     async def add_schedule(
@@ -31,6 +34,22 @@ class SchedulerManager:
         name: str = "",
         job_id: str | None = None,
     ) -> str:
+        """Add a schedule to the cron scheduler manager.
+
+        Args:
+            coro_func (`Callable[[], Coroutine]`):
+                The coroutine function to be executed.
+            cron_expr (`str`):
+                The cron expression to be executed.
+            name (`str`, optional):
+                The name of the schedule.
+            job_id (`str`, optional):
+                The id of the schedule.
+
+        Returns:
+            `str`:
+                The id of the schedule.
+        """
         job = self._scheduler.add_job(
             coro_func,
             trigger=CronTrigger.from_crontab(cron_expr),
@@ -61,9 +80,21 @@ class SchedulerManager:
             )
 
     async def remove_task(self, job_id: str) -> None:
+        """Remove a schedule from the cron scheduler manager.
+
+        Args:
+            job_id (`str`):
+                The id of the schedule.
+        """
         self._scheduler.remove_job(job_id)
 
     async def list_tasks(self) -> list[dict]:
+        """List all scheduled tasks.
+
+        Returns:
+            `list[dict]`:
+                The list of scheduled tasks.
+        """
         return [
             {
                 "id": job.id,

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-""""""
+"""The schedule related tools."""
 
 from ._schedule_stop import ScheduleStop
 from ._schedule_view import ScheduleView

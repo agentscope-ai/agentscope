@@ -7,16 +7,31 @@ from .._schema._credential import (
     CreateCredentialRequest,
     CreateCredentialResponse,
     CredentialListResponse,
+    CredentialSchemasResponse,
     UpdateCredentialRequest,
 )
-from ..storage._base import StorageBase
-from ..storage._model._credential import CredentialBase, CredentialRecord
+from ..storage import StorageBase, CredentialRecord
+from ...credential import CredentialFactory
 
 credential_router = APIRouter(
     prefix="/credential",
     tags=["credential"],
     responses={404: {"description": "Not found"}},
 )
+
+
+@credential_router.get(
+    "/schemas",
+    response_model=CredentialSchemasResponse,
+    summary="List JSON schemas for all credential types",
+)
+async def list_credential_schemas() -> CredentialSchemasResponse:
+    """Return JSON schemas for all registered credential types.
+
+    Used by the frontend to render credential creation forms dynamically.
+    """
+
+    return CredentialSchemasResponse(schemas=CredentialFactory.list_schemas())
 
 
 @credential_router.get(
@@ -67,7 +82,7 @@ async def create_credential(
     """
     credential_id = await storage.upsert_credential(
         user_id,
-        CredentialBase(data=body.data),
+        CredentialFactory.from_dict(body.data),
     )
     return CreateCredentialResponse(credential_id=credential_id)
 
@@ -106,10 +121,9 @@ async def update_credential(
             detail=f"Credential '{credential_id}' not found.",
         )
 
-    await storage.upsert_credential(
-        user_id,
-        CredentialBase(id=credential_id, data=body.data),
-    )
+    credential = CredentialFactory.from_dict(body.data)
+    credential.id = credential_id
+    await storage.upsert_credential(user_id, credential)
     # Re-fetch to return the persisted record with updated timestamps.
     credentials = await storage.list_credentials(user_id)
     updated = next(c for c in credentials if c.id == credential_id)

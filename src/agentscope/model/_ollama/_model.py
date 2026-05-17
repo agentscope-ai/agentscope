@@ -87,13 +87,15 @@ class OllamaChatModel(ChatModelBase):
                 required by the Ollama API. When ``None``, an
                 ``OllamaChatFormatter`` instance will be used.
         """
+        resolved_credential = credential or OllamaCredential()
+
         super().__init__(
+            credential=resolved_credential,
             model=model,
             stream=stream,
             max_retries=max_retries,
             context_size=context_size,
         )
-        self.credential = credential or OllamaCredential()
         self.parameters = parameters or self.Parameters()
         self.formatter = formatter or OllamaChatFormatter()
 

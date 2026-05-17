@@ -4,17 +4,17 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 import fakeredis.aioredis
 
-from agentscope.app.storage._redis_storage import RedisStorage, RedisKeyConfig
-from agentscope.app.storage._model import (
+from agentscope.app.storage import (
+    RedisStorage,
+    RedisKeyConfig,
     AgentRecord,
-    CredentialBase,
-    WorkspaceBase,
-    SessionData,
+    SessionConfig,
+    ChatModelConfig,
 )
+from agentscope.credential import OllamaCredential
 from agentscope.app.storage._model._agent import AgentData
-from agentscope.app.storage._model._session import ChatModelConfig
 from agentscope.agent import ContextConfig, ReActConfig
-from agentscope.state import AgentState
+from agentscope.message import UserMsg, AssistantMsg, TextBlock
 
 
 def make_storage() -> RedisStorage:
@@ -41,14 +41,15 @@ def make_agent_record(user_id: str) -> AgentRecord:
     )
 
 
-def make_session_data() -> SessionData:
-    """Create a test SessionData with all-default agent state."""
-    return SessionData(
-        agent_state=AgentState(),
+def make_session_config(workspace_id: str = "ws-1") -> SessionConfig:
+    """Create a test SessionConfig with a chat model config."""
+    return SessionConfig(
+        workspace_id=workspace_id,
         chat_model_config=ChatModelConfig(
             type="openai",
             credential_id="cred-1",
-            parameters={"model": "gpt-4"},
+            model="gpt-4",
+            parameters={},
         ),
     )
 
@@ -65,12 +66,16 @@ class TestCredential(IsolatedAsyncioTestCase):
         """Create a credential and verify it is retrievable via list."""
         cred_id = await self.storage.upsert_credential(
             self.user_id,
-            CredentialBase(data={"key": "value"}),
+            OllamaCredential(host="http://localhost:11434"),
         )
         records = await self.storage.list_credentials(self.user_id)
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].id, cred_id)
-        self.assertEqual(records[0].data, {"key": "value"})
+        self.assertEqual(records[0].data.get("type"), "ollama_credential")
+        self.assertEqual(
+            records[0].data.get("host"),
+            "http://localhost:11434",
+        )
 
     async def test_list_empty(self) -> None:
         """Verify list returns empty when no records exist."""
@@ -78,24 +83,25 @@ class TestCredential(IsolatedAsyncioTestCase):
         self.assertEqual(records, [])
 
     async def test_update_in_place(self) -> None:
-        """Update a credential and verify data changed without adding a new record."""
+        """Update a credential and verify data changed without adding
+        a new record."""
         cred_id = await self.storage.upsert_credential(
             self.user_id,
-            CredentialBase(data={"key": "old"}),
+            OllamaCredential(host="http://old-host:11434"),
         )
         await self.storage.upsert_credential(
             self.user_id,
-            CredentialBase(id=cred_id, data={"key": "new"}),
+            OllamaCredential(id=cred_id, host="http://new-host:11434"),
         )
         records = await self.storage.list_credentials(self.user_id)
         self.assertEqual(len(records), 1)
-        self.assertEqual(records[0].data, {"key": "new"})
+        self.assertEqual(records[0].data.get("host"), "http://new-host:11434")
 
     async def test_delete(self) -> None:
         """Delete a credential and verify it is gone from Redis."""
         cred_id = await self.storage.upsert_credential(
             self.user_id,
-            CredentialBase(data={"key": "value"}),
+            OllamaCredential(host="http://localhost:11434"),
         )
         result = await self.storage.delete_credential(self.user_id, cred_id)
         self.assertTrue(result)
@@ -114,76 +120,9 @@ class TestCredential(IsolatedAsyncioTestCase):
         """Verify different users cannot see each other's records."""
         await self.storage.upsert_credential(
             "user-A",
-            CredentialBase(data={"a": 1}),
+            OllamaCredential(host="http://localhost:11434"),
         )
         records = await self.storage.list_credentials("user-B")
-        self.assertEqual(records, [])
-
-
-class TestWorkspace(IsolatedAsyncioTestCase):
-    """Tests for workspace CRUD and cascading operations."""
-
-    async def asyncSetUp(self) -> None:
-        """Set up test fixtures."""
-        self.storage = make_storage()
-        self.user_id = "user-1"
-
-    async def test_create(self) -> None:
-        """Create a workspace and verify it is retrievable via list."""
-        ws_id = await self.storage.upsert_workspace(
-            self.user_id,
-            WorkspaceBase(agent_id="agent-1", data={"env": "dev"}),
-        )
-        records = await self.storage.list_workspaces(self.user_id)
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0].id, ws_id)
-        self.assertEqual(records[0].data, {"env": "dev"})
-
-    async def test_list_empty(self) -> None:
-        """Verify list returns empty when no records exist."""
-        records = await self.storage.list_workspaces(self.user_id)
-        self.assertEqual(records, [])
-
-    async def test_update_in_place(self) -> None:
-        """Update a workspace and verify data changed without adding a new record."""
-        ws_id = await self.storage.upsert_workspace(
-            self.user_id,
-            WorkspaceBase(agent_id="agent-1", data={"env": "dev"}),
-        )
-        await self.storage.upsert_workspace(
-            self.user_id,
-            WorkspaceBase(id=ws_id, agent_id="agent-1", data={"env": "prod"}),
-        )
-        records = await self.storage.list_workspaces(self.user_id)
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0].data, {"env": "prod"})
-
-    async def test_delete(self) -> None:
-        """Delete a workspace and verify it is gone from Redis."""
-        ws_id = await self.storage.upsert_workspace(
-            self.user_id,
-            WorkspaceBase(agent_id="agent-1", data={}),
-        )
-        result = await self.storage.delete_workspace(self.user_id, ws_id)
-        self.assertTrue(result)
-        records = await self.storage.list_workspaces(self.user_id)
-        self.assertEqual(records, [])
-
-    async def test_delete_nonexistent(self) -> None:
-        """Verify delete returns False for non-existent record."""
-        result = await self.storage.delete_workspace(
-            self.user_id,
-            "no-such-id",
-        )
-        self.assertFalse(result)
-
-    async def test_user_isolation(self) -> None:
-        """Verify different users cannot see each other's records."""
-        await self.storage.upsert_workspace(
-            "user-A",
-            WorkspaceBase(agent_id="agent-1", data={}),
-        )
-        records = await self.storage.list_workspaces("user-B")
         self.assertEqual(records, [])
 
 
@@ -198,7 +137,7 @@ class TestAgent(IsolatedAsyncioTestCase):
     async def test_create(self) -> None:
         """Create an agent and verify it is retrievable via list."""
         record = make_agent_record(self.user_id)
-        agent_id = await self.storage.create_agent(self.user_id, record)
+        agent_id = await self.storage.upsert_agent(self.user_id, record)
         records = await self.storage.list_agent(self.user_id)
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].id, agent_id)
@@ -212,7 +151,7 @@ class TestAgent(IsolatedAsyncioTestCase):
     async def test_delete(self) -> None:
         """Delete an agent and verify it is gone from Redis."""
         record = make_agent_record(self.user_id)
-        await self.storage.create_agent(self.user_id, record)
+        await self.storage.upsert_agent(self.user_id, record)
         result = await self.storage.delete_agent(self.user_id, record.id)
         self.assertTrue(result)
         records = await self.storage.list_agent(self.user_id)
@@ -225,7 +164,7 @@ class TestAgent(IsolatedAsyncioTestCase):
 
     async def test_user_isolation(self) -> None:
         """Verify different users cannot see each other's records."""
-        await self.storage.create_agent("user-A", make_agent_record("user-A"))
+        await self.storage.upsert_agent("user-A", make_agent_record("user-A"))
         records = await self.storage.list_agent("user-B")
         self.assertEqual(records, [])
 
@@ -245,12 +184,11 @@ class TestSession(IsolatedAsyncioTestCase):
         await self.storage.upsert_session(
             self.user_id,
             self.agent_id,
-            self.workspace_id,
-            make_session_data(),
+            make_session_config(self.workspace_id),
         )
         records = await self.storage.list_sessions(self.user_id, self.agent_id)
         self.assertEqual(len(records), 1)
-        self.assertEqual(records[0].workspace_id, self.workspace_id)
+        self.assertEqual(records[0].config.workspace_id, self.workspace_id)
         self.assertEqual(records[0].agent_id, self.agent_id)
 
     async def test_list_empty(self) -> None:
@@ -259,13 +197,12 @@ class TestSession(IsolatedAsyncioTestCase):
         self.assertEqual(records, [])
 
     async def test_upsert_same_triple_updates_in_place(self) -> None:
-        """Second upsert for the same (user, agent, workspace) must update the
+        """Second upsert for the same (user, agent) pair must update the
         existing record, not create a second one."""
         await self.storage.upsert_session(
             self.user_id,
             self.agent_id,
-            self.workspace_id,
-            make_session_data(),
+            make_session_config(self.workspace_id),
         )
         records_before = await self.storage.list_sessions(
             self.user_id,
@@ -276,8 +213,7 @@ class TestSession(IsolatedAsyncioTestCase):
         await self.storage.upsert_session(
             self.user_id,
             self.agent_id,
-            self.workspace_id,
-            make_session_data(),
+            make_session_config(self.workspace_id),
         )
         records_after = await self.storage.list_sessions(
             self.user_id,
@@ -291,11 +227,14 @@ class TestSession(IsolatedAsyncioTestCase):
         await self.storage.upsert_session(
             self.user_id,
             self.agent_id,
-            self.workspace_id,
-            make_session_data(),
+            make_session_config(self.workspace_id),
         )
         records = await self.storage.list_sessions(self.user_id, self.agent_id)
-        result = await self.storage.delete_session(self.user_id, records[0].id)
+        result = await self.storage.delete_session(
+            self.user_id,
+            self.agent_id,
+            records[0].id,
+        )
         self.assertTrue(result)
         remaining = await self.storage.list_sessions(
             self.user_id,
@@ -305,23 +244,22 @@ class TestSession(IsolatedAsyncioTestCase):
 
     async def test_delete_cascades_lookup_key(self) -> None:
         """Deleting a session must remove the lookup key so a subsequent upsert
-        for the same triple creates a fresh session with a new id."""
+        for the same (user, agent) pair creates a fresh session with a new
+        id."""
         await self.storage.upsert_session(
             self.user_id,
             self.agent_id,
-            self.workspace_id,
-            make_session_data(),
+            make_session_config(self.workspace_id),
         )
         records = await self.storage.list_sessions(self.user_id, self.agent_id)
         old_id = records[0].id
 
-        await self.storage.delete_session(self.user_id, old_id)
+        await self.storage.delete_session(self.user_id, self.agent_id, old_id)
 
         await self.storage.upsert_session(
             self.user_id,
             self.agent_id,
-            self.workspace_id,
-            make_session_data(),
+            make_session_config(self.workspace_id),
         )
         new_records = await self.storage.list_sessions(
             self.user_id,
@@ -332,7 +270,11 @@ class TestSession(IsolatedAsyncioTestCase):
 
     async def test_delete_nonexistent(self) -> None:
         """Verify delete returns False for non-existent record."""
-        result = await self.storage.delete_session(self.user_id, "no-such-id")
+        result = await self.storage.delete_session(
+            self.user_id,
+            self.agent_id,
+            "no-such-id",
+        )
         self.assertFalse(result)
 
     async def test_agent_isolation(self) -> None:
@@ -340,8 +282,162 @@ class TestSession(IsolatedAsyncioTestCase):
         await self.storage.upsert_session(
             self.user_id,
             "agent-A",
-            self.workspace_id,
-            make_session_data(),
+            make_session_config(self.workspace_id),
         )
         records = await self.storage.list_sessions(self.user_id, "agent-B")
         self.assertEqual(records, [])
+
+
+class TestMessage(IsolatedAsyncioTestCase):
+    """Tests for message persistence: upsert_message, get_message and
+    list_messages."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.storage = make_storage()
+        self.user_id = "user-1"
+        self.session_id = "session-1"
+
+    async def test_upsert_appends_new_message(self) -> None:
+        """Upserting a new message appends it to the session list."""
+        msg = UserMsg(name="alice", content="hello")
+        await self.storage.upsert_message(self.user_id, self.session_id, msg)
+        messages = await self.storage.list_messages(
+            self.user_id,
+            self.session_id,
+        )
+        self.assertListEqual(
+            [m.model_dump() for m in messages],
+            [msg.model_dump()],
+        )
+
+    async def test_upsert_replaces_last_message_with_same_id(self) -> None:
+        """Upserting a message whose id matches the last entry replaces it
+        in-place (streaming overwrite), rather than creating a duplicate."""
+        msg = AssistantMsg(name="bot", content="v1")
+        await self.storage.upsert_message(self.user_id, self.session_id, msg)
+
+        # Keep the same id but replace content — simulates a streaming update.
+        updated = msg.model_copy(
+            update={"content": [TextBlock(text="v2")]},
+        )
+        await self.storage.upsert_message(
+            self.user_id,
+            self.session_id,
+            updated,
+        )
+
+        messages = await self.storage.list_messages(
+            self.user_id,
+            self.session_id,
+        )
+        self.assertListEqual(
+            [m.model_dump() for m in messages],
+            [updated.model_dump()],
+            "Duplicate must not be created; existing entry must be replaced.",
+        )
+
+    async def test_upsert_appends_when_id_differs_from_last(self) -> None:
+        """Upserting a message with a different id than the last always
+        appends, even if an earlier message shares the same id."""
+        msg1 = UserMsg(name="alice", content="first")
+        msg2 = UserMsg(name="alice", content="second")
+        await self.storage.upsert_message(self.user_id, self.session_id, msg1)
+        await self.storage.upsert_message(self.user_id, self.session_id, msg2)
+        messages = await self.storage.list_messages(
+            self.user_id,
+            self.session_id,
+        )
+        self.assertListEqual(
+            [m.model_dump() for m in messages],
+            [msg1.model_dump(), msg2.model_dump()],
+        )
+
+    async def test_get_message_returns_correct_message(self) -> None:
+        """get_message fetches the message matching the given id."""
+        msg1 = UserMsg(name="alice", content="first")
+        msg2 = UserMsg(name="alice", content="second")
+        await self.storage.upsert_message(self.user_id, self.session_id, msg1)
+        await self.storage.upsert_message(self.user_id, self.session_id, msg2)
+
+        fetched = await self.storage.get_message(
+            self.user_id,
+            self.session_id,
+            msg1.id,
+        )
+        self.assertIsNotNone(fetched)
+        self.assertDictEqual(fetched.model_dump(), msg1.model_dump())
+
+    async def test_get_message_nonexistent_returns_none(self) -> None:
+        """get_message returns None when the message id does not exist."""
+        result = await self.storage.get_message(
+            self.user_id,
+            self.session_id,
+            "no-such-id",
+        )
+        self.assertIsNone(result)
+
+    async def test_list_messages_empty_session(self) -> None:
+        """list_messages returns an empty list for a session with no
+        messages."""
+        messages = await self.storage.list_messages(
+            self.user_id,
+            self.session_id,
+        )
+        self.assertListEqual(messages, [])
+
+    async def test_list_messages_pagination(self) -> None:
+        """list_messages respects offset and limit parameters."""
+        msgs = [UserMsg(name="alice", content=f"msg-{i}") for i in range(5)]
+        for m in msgs:
+            await self.storage.upsert_message(
+                self.user_id,
+                self.session_id,
+                m,
+            )
+
+        # Fetch the middle slice: offset=1, limit=3 → msgs[1], msgs[2], msgs[3]
+        page = await self.storage.list_messages(
+            self.user_id,
+            self.session_id,
+            offset=1,
+            limit=3,
+        )
+        self.assertListEqual(
+            [m.model_dump() for m in page],
+            [m.model_dump() for m in msgs[1:4]],
+        )
+
+    async def test_list_messages_order_preserved(self) -> None:
+        """Messages are returned in the insertion order (chronological)."""
+        msgs = [
+            UserMsg(name="alice", content=text)
+            for text in ["alpha", "beta", "gamma"]
+        ]
+        for m in msgs:
+            await self.storage.upsert_message(
+                self.user_id,
+                self.session_id,
+                m,
+            )
+        messages = await self.storage.list_messages(
+            self.user_id,
+            self.session_id,
+        )
+        self.assertListEqual(
+            [m.model_dump() for m in messages],
+            [m.model_dump() for m in msgs],
+        )
+
+    async def test_session_isolation(self) -> None:
+        """Messages belonging to different sessions do not interfere."""
+        await self.storage.upsert_message(
+            self.user_id,
+            "session-A",
+            UserMsg(name="alice", content="in A"),
+        )
+        messages = await self.storage.list_messages(
+            self.user_id,
+            "session-B",
+        )
+        self.assertListEqual(messages, [])
