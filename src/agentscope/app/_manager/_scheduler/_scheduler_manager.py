@@ -7,9 +7,11 @@ from apscheduler.triggers.cron import CronTrigger
 
 from ....tool import ToolBase
 from ._tools import ScheduleCreate, ScheduleList, ScheduleStop, ScheduleView
-from ...storage._base import StorageBase
-from ...storage._model._schedule import ScheduleRecord
-from ...storage._model._session import ChatModelConfig
+from ...storage import (
+    StorageBase,
+    ScheduleRecord,
+    ChatModelConfig,
+)
 from .._session_manager import SessionManager
 
 
@@ -56,7 +58,10 @@ class SchedulerManager:
     # Trigger construction
     # ------------------------------------------------------------------
 
-    def _build_trigger(self, record: ScheduleRecord) -> Callable[[], Coroutine]:
+    def _build_trigger(
+        self,
+        record: ScheduleRecord,
+    ) -> Callable[[], Coroutine]:
         """Build the zero-argument coroutine executed by APScheduler on each
         trigger fire.
 
@@ -86,13 +91,15 @@ class SchedulerManager:
         session_manager = self._session_manager
 
         async def _trigger() -> None:
-            if not record.data.enable:
+            if not record.data.enabled:
                 return
 
             # Lazy import to break circular dependency
             from ..._service._chat import ChatService  # noqa: PLC0415
             from ...._logging import logger  # noqa: PLC0415
-            from ...permission._context import PermissionContext  # noqa: PLC0415
+            from ...permission._context import (
+                PermissionContext,
+            )  # noqa: PLC0415
             from ...state import AgentState  # noqa: PLC0415
             from ...storage._model._session import (  # noqa: PLC0415
                 SessionConfig,
@@ -116,16 +123,18 @@ class SchedulerManager:
                         state.permission_context = PermissionContext(
                             mode=record.data.permission_mode,
                         )
+                        session_config = SessionConfig(
+                            workspace_id="",
+                            chat_model_config=record.data.chat_model_config,
+                        )
                         session = await storage.upsert_session(
                             user_id=record.user_id,
                             agent_id=record.agent_id,
-                            config=SessionConfig(
-                                workspace_id="",
-                                chat_model_config=record.data.chat_model_config,
-                            ),
+                            config=session_config,
                             state=state,
                             session_id=stateful_session_id,
                             source=SessionSource.SCHEDULE,
+                            source_schedule_id=record.id,
                         )
                 else:
                     # Create a brand-new session for each trigger fire so
@@ -143,6 +152,7 @@ class SchedulerManager:
                         ),
                         state=state,
                         source=SessionSource.SCHEDULE,
+                        source_schedule_id=record.id,
                     )
 
                 # TODO: assemble input message from record
@@ -226,7 +236,7 @@ class SchedulerManager:
                 All schedule records loaded from storage on startup.
         """
         for record in records:
-            if record.data.enable:
+            if record.data.enabled:
                 await self.register_schedule(record)
 
     async def list_tasks(self) -> list[dict]:

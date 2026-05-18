@@ -10,6 +10,9 @@ from agentscope.app.storage import (
     AgentRecord,
     SessionConfig,
     ChatModelConfig,
+    ScheduleRecord,
+    ScheduleData,
+    SessionSource,
 )
 from agentscope.credential import OllamaCredential
 from agentscope.app.storage._model._agent import AgentData
@@ -197,23 +200,20 @@ class TestSession(IsolatedAsyncioTestCase):
         self.assertEqual(records, [])
 
     async def test_upsert_same_triple_updates_in_place(self) -> None:
-        """Second upsert for the same (user, agent) pair must update the
-        existing record, not create a second one."""
-        await self.storage.upsert_session(
+        """Second upsert with the same session_id must update the existing
+        record, not create a second one."""
+        session = await self.storage.upsert_session(
             self.user_id,
             self.agent_id,
             make_session_config(self.workspace_id),
         )
-        records_before = await self.storage.list_sessions(
-            self.user_id,
-            self.agent_id,
-        )
-        first_id = records_before[0].id
+        first_id = session.id
 
         await self.storage.upsert_session(
             self.user_id,
             self.agent_id,
             make_session_config(self.workspace_id),
+            session_id=first_id,
         )
         records_after = await self.storage.list_sessions(
             self.user_id,
@@ -441,3 +441,142 @@ class TestMessage(IsolatedAsyncioTestCase):
             "session-B",
         )
         self.assertListEqual(messages, [])
+
+
+def make_schedule_record(user_id: str, agent_id: str) -> ScheduleRecord:
+    """Create a test ScheduleRecord."""
+    return ScheduleRecord(
+        user_id=user_id,
+        agent_id=agent_id,
+        data=ScheduleData(
+            name="test-schedule",
+            cron_expression="0 9 * * *",
+            started_at="2026-01-01T00:00:00",
+            chat_model_config=ChatModelConfig(
+                type="openai",
+                credential_id="cred-1",
+                model="gpt-4",
+                parameters={},
+            ),
+        ),
+    )
+
+
+class TestScheduleSession(IsolatedAsyncioTestCase):
+    """Tests for schedule-session index and cascade deletion."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.storage = make_storage()
+        self.user_id = "user-1"
+        self.agent_id = "agent-1"
+
+    async def test_list_sessions_by_schedule(self) -> None:
+        """Sessions created with source_schedule_id are queryable by
+        schedule."""
+        schedule = make_schedule_record(self.user_id, self.agent_id)
+        await self.storage.upsert_schedule(self.user_id, schedule)
+
+        session = await self.storage.upsert_session(
+            self.user_id,
+            self.agent_id,
+            make_session_config(),
+            source=SessionSource.SCHEDULE,
+            source_schedule_id=schedule.id,
+        )
+
+        results = await self.storage.list_sessions_by_schedule(
+            self.user_id,
+            schedule.id,
+        )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].id, session.id)
+        self.assertEqual(results[0].source_schedule_id, schedule.id)
+
+    async def test_list_sessions_by_schedule_empty(self) -> None:
+        """Returns empty list when no sessions exist for a schedule."""
+        results = await self.storage.list_sessions_by_schedule(
+            self.user_id,
+            "nonexistent-schedule",
+        )
+        self.assertEqual(results, [])
+
+    async def test_schedule_session_also_in_agent_index(self) -> None:
+        """A schedule-created session appears in both the schedule and agent
+        session indexes."""
+        schedule = make_schedule_record(self.user_id, self.agent_id)
+        await self.storage.upsert_schedule(self.user_id, schedule)
+
+        session = await self.storage.upsert_session(
+            self.user_id,
+            self.agent_id,
+            make_session_config(),
+            source=SessionSource.SCHEDULE,
+            source_schedule_id=schedule.id,
+        )
+
+        agent_sessions = await self.storage.list_sessions(
+            self.user_id,
+            self.agent_id,
+        )
+        self.assertEqual(len(agent_sessions), 1)
+        self.assertEqual(agent_sessions[0].id, session.id)
+
+    async def test_delete_schedule_cascades_sessions(self) -> None:
+        """Deleting a schedule removes all its execution sessions."""
+        schedule = make_schedule_record(self.user_id, self.agent_id)
+        await self.storage.upsert_schedule(self.user_id, schedule)
+
+        await self.storage.upsert_session(
+            self.user_id,
+            self.agent_id,
+            make_session_config(),
+            source=SessionSource.SCHEDULE,
+            source_schedule_id=schedule.id,
+        )
+        await self.storage.upsert_session(
+            self.user_id,
+            self.agent_id,
+            make_session_config(),
+            source=SessionSource.SCHEDULE,
+            source_schedule_id=schedule.id,
+        )
+
+        await self.storage.delete_schedule(self.user_id, schedule.id)
+
+        schedule_sessions = await self.storage.list_sessions_by_schedule(
+            self.user_id,
+            schedule.id,
+        )
+        self.assertEqual(schedule_sessions, [])
+
+        agent_sessions = await self.storage.list_sessions(
+            self.user_id,
+            self.agent_id,
+        )
+        self.assertEqual(agent_sessions, [])
+
+    async def test_delete_session_cleans_schedule_index(self) -> None:
+        """Deleting a session removes it from the schedule session index."""
+        schedule = make_schedule_record(self.user_id, self.agent_id)
+        await self.storage.upsert_schedule(self.user_id, schedule)
+
+        session = await self.storage.upsert_session(
+            self.user_id,
+            self.agent_id,
+            make_session_config(),
+            source=SessionSource.SCHEDULE,
+            source_schedule_id=schedule.id,
+        )
+
+        await self.storage.delete_session(
+            self.user_id,
+            self.agent_id,
+            session.id,
+        )
+
+        results = await self.storage.list_sessions_by_schedule(
+            self.user_id,
+            schedule.id,
+        )
+        self.assertEqual(results, [])

@@ -54,7 +54,7 @@ class ScheduleList(ToolBase):
             user_id (`str`):
                 The authenticated user; used to scope the storage lookup.
             scheduler (`Any`):
-                The ``AsyncIOScheduler`` instance for reading ``next_run_time``.
+                The ``AsyncIOScheduler`` instance for reading ``next_run_time``
             storage (`StorageBase`):
                 The storage backend that holds the persisted schedule records.
         """
@@ -97,7 +97,7 @@ class ScheduleList(ToolBase):
 
         lines: list[str] = [f"Found {len(records)} scheduled task(s):\n"]
         for record in records:
-            enabled_str = "enabled" if record.data.enable else "disabled"
+            enabled_str = "enabled" if record.data.enabled else "disabled"
             next_run = next_run_map.get(record.id, "not in scheduler")
             lines.append(
                 f"- [{enabled_str}] {record.data.name!r}  (ID: {record.id})\n"
@@ -106,7 +106,7 @@ class ScheduleList(ToolBase):
                 f"  Next run:  {next_run}\n"
                 f"  Stateful:  {record.data.stateful}"
                 f"  |  Agent: {record.agent_id}\n"
-                f"  Source:    {record.data.source.value}\n"
+                f"  Source:    {record.data.source.value}\n",
             )
 
         return ToolChunk(

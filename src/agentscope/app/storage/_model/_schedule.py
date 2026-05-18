@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The schedule storage model."""
+from datetime import datetime
 from enum import Enum
 
 from pydantic import BaseModel, Field
@@ -29,10 +30,10 @@ class ScheduleData(BaseModel):
     description: str = Field(
         default="",
         description="The description of the schedule, including its purpose, "
-                    "trigger conditions, etc.",
+        "trigger conditions, etc.",
     )
 
-    enable: bool = Field(
+    enabled: bool = Field(
         default=True,
         description="Whether the schedule is active. Disabled schedules are "
         "retained but will not trigger.",
@@ -46,6 +47,15 @@ class ScheduleData(BaseModel):
 
     cron_expression: str = Field(
         description="Standard 5-field cron expression, e.g. '0 9 * * 1-5'.",
+    )
+
+    started_at: datetime = Field(
+        description="The date and time the schedule was started.",
+    )
+
+    ended_at: datetime | None = Field(
+        default=None,
+        description="The date and time the schedule was ended.",
     )
 
     chat_model_config: ChatModelConfig = Field(
@@ -75,7 +85,7 @@ class ScheduleData(BaseModel):
     source_session_id: str = Field(
         default="",
         description="The source session identifier, used for resource "
-                    "retrieval.",
+        "retrieval.",
     )
 
 

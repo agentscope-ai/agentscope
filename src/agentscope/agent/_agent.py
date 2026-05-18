@@ -1239,6 +1239,7 @@ class Agent:
                 ToolCallState.ASKING,
             )
 
+            tool_call.suggested_rules = decision.suggested_rules or []
             yield RequireUserConfirmEvent(
                 reply_id=self.state.reply_id,
                 tool_calls=[tool_call],

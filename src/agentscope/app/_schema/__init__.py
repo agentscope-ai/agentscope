@@ -7,6 +7,7 @@ from ._schedule import (
     CreateScheduleRequest,
     CreateScheduleResponse,
     ScheduleListResponse,
+    ScheduleSessionsResponse,
     UpdateScheduleRequest,
 )
 
@@ -17,5 +18,6 @@ __all__ = [
     "ListModelRequest",
     "ListModelResponse",
     "ScheduleListResponse",
+    "ScheduleSessionsResponse",
     "UpdateScheduleRequest",
 ]

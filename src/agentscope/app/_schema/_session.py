@@ -2,6 +2,7 @@
 """Request / response schemas for the session router."""
 from pydantic import BaseModel, Field
 
+from ...permission import PermissionMode
 from ..storage._model._session import ChatModelConfig, SessionRecord
 
 
@@ -44,6 +45,10 @@ class UpdateSessionRequest(BaseModel):
         default=None,
         description="New model configuration. "
         "Replaces the existing one entirely.",
+    )
+    permission_mode: PermissionMode | None = Field(
+        default=None,
+        description="New permission mode for the session.",
     )
 
 

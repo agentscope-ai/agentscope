@@ -79,7 +79,7 @@ class ScheduleView(ToolBase):
 
     async def __call__(
         self,
-        schedule_id: str
+        schedule_id: str,
     ) -> ToolChunk:  # type: ignore[override]
         """View the full details of a scheduled task.
 
@@ -113,7 +113,7 @@ class ScheduleView(ToolBase):
             if job is not None
             else "not in scheduler (may be disabled)"
         )
-        enabled_str = "enabled" if record.data.enable else "disabled"
+        enabled_str = "enabled" if record.data.enabled else "disabled"
 
         text = (
             f"Schedule ID:     {record.id}\n"

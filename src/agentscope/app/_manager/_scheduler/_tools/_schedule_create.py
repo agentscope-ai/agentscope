@@ -200,4 +200,3 @@ class ScheduleCreate(ToolBase):
             ],
             state=ToolResultState.SUCCESS,
         )
-

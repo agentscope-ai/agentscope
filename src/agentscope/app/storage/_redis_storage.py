@@ -49,6 +49,9 @@ class RedisKeyConfig(BaseModel):
     schedule: str = "agentscope:user:{user_id}:schedule:{schedule_id}"
     schedule_index: str = "agentscope:user:{user_id}:schedules"
     schedule_global_index: str = "agentscope:schedules"
+    schedule_session_index: str = (
+        "agentscope:user:{user_id}:schedule:{schedule_id}:sessions"
+    )
 
 
 class RedisStorage(StorageBase):
@@ -451,6 +454,7 @@ class RedisStorage(StorageBase):
         state: AgentState | None = None,
         session_id: str | None = None,
         source: SessionSource = SessionSource.USER,
+        source_schedule_id: str | None = None,
     ) -> SessionRecord:
         """Create or update a session for a (user, agent) pair.
 
@@ -478,6 +482,7 @@ class RedisStorage(StorageBase):
             agent_id=agent_id,
             config=config,
             source=source,
+            source_schedule_id=source_schedule_id,
             state=state if state is not None else AgentState(),
         )
         key = self._key(
@@ -492,6 +497,15 @@ class RedisStorage(StorageBase):
         )
         await self._set_with_ttl(key, record.model_dump_json())
         await self._client.sadd(index_key, record.id)
+
+        if source_schedule_id:
+            schedule_session_key = self._key(
+                self.key_config.schedule_session_index,
+                user_id=user_id,
+                schedule_id=source_schedule_id,
+            )
+            await self._client.sadd(schedule_session_key, record.id)
+
         return record
 
     async def update_session_state(
@@ -591,6 +605,8 @@ class RedisStorage(StorageBase):
         if not raw:
             return False
 
+        record = SessionRecord.model_validate_json(raw)
+
         index_key = self._key(
             self.key_config.session_index,
             user_id=user_id,
@@ -604,7 +620,42 @@ class RedisStorage(StorageBase):
         await self._client.delete(key)
         await self._client.srem(index_key, session_id)
         await self._client.delete(msg_key)
+
+        if record.source_schedule_id:
+            schedule_session_key = self._key(
+                self.key_config.schedule_session_index,
+                user_id=user_id,
+                schedule_id=record.source_schedule_id,
+            )
+            await self._client.srem(schedule_session_key, session_id)
+
         return True
+
+    async def list_sessions_by_schedule(
+        self,
+        user_id: str,
+        schedule_id: str,
+    ) -> list[SessionRecord]:
+        """Return all sessions created by a given schedule."""
+        schedule_session_key = self._key(
+            self.key_config.schedule_session_index,
+            user_id=user_id,
+            schedule_id=schedule_id,
+        )
+        ids = await self._client.smembers(schedule_session_key)
+        records = []
+        for session_id in ids:
+            raw = await self._client.get(
+                self._key(
+                    self.key_config.session,
+                    user_id=user_id,
+                    session_id=session_id,
+                ),
+            )
+            if raw:
+                records.append(SessionRecord.model_validate_json(raw))
+        records.sort(key=lambda r: r.created_at, reverse=True)
+        return records
 
     async def upsert_schedule(
         self,
@@ -664,21 +715,45 @@ class RedisStorage(StorageBase):
         return records
 
     async def delete_schedule(self, user_id: str, schedule_id: str) -> bool:
-        """Delete a cron task record and remove it from the user and global
-        indexes."""
+        """Delete a cron task record, cascade-delete its execution sessions,
+        and remove it from the user and global indexes."""
         key = self._key(
             self.key_config.schedule,
             user_id=user_id,
             schedule_id=schedule_id,
         )
+        raw = await self._client.get(key)
+        if not raw:
+            return False
+
+        record = ScheduleRecord.model_validate_json(raw)
+
+        # Cascade: delete all sessions created by this schedule
+        sessions = await self.list_sessions_by_schedule(user_id, schedule_id)
+        for session in sessions:
+            await self.delete_session(
+                user_id,
+                record.agent_id,
+                session.id,
+            )
+
+        # Clean up the schedule session index key itself
+        schedule_session_key = self._key(
+            self.key_config.schedule_session_index,
+            user_id=user_id,
+            schedule_id=schedule_id,
+        )
+        await self._client.delete(schedule_session_key)
+
+        # Delete the schedule record and its index entries
         index_key = self._key(self.key_config.schedule_index, user_id=user_id)
-        deleted = await self._client.delete(key)
+        await self._client.delete(key)
         await self._client.srem(index_key, schedule_id)
         await self._client.srem(
             self.key_config.schedule_global_index,
             f"{user_id}:{schedule_id}",
         )
-        return deleted > 0
+        return True
 
     async def list_all_schedules(self) -> list[ScheduleRecord]:
         """Return every schedule record across all users.

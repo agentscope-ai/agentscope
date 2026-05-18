@@ -326,7 +326,7 @@ class ToolResultEndEvent(EventBase):
 
 
 class ExceedMaxItersEvent(EventBase):
-    """Exceeded max iterations event."""
+    """Exceeded max iteration event."""
 
     type: Literal[EventType.EXCEED_MAX_ITERS] = EventType.EXCEED_MAX_ITERS
     """Event type."""

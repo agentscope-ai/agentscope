@@ -194,13 +194,30 @@ async def update_session(
                 ),
             )
 
+    updated_state = existing.state
+    if body.permission_mode is not None:
+        updated_ctx = existing.state.permission_context.model_copy(
+            update={"mode": body.permission_mode},
+        )
+
+        updated_state = existing.state.model_copy(
+            update={
+                "permission_context": updated_ctx,
+            },
+        )
+
+    config_updates = body.model_dump(
+        exclude_none=True,
+        exclude={"permission_mode"},
+    )
+
     return await storage.upsert_session(
         user_id=user_id,
         agent_id=agent_id,
         config=existing.config.model_copy(
-            update=dict(body.model_dump(exclude_none=True).items()),
+            update=dict(config_updates.items()),
         ),
-        state=existing.state,
+        state=updated_state,
         session_id=session_id,
     )
 

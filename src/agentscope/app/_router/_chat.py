@@ -12,7 +12,11 @@ from .._deps import (
     get_workspace_manager,
     get_background_task_manager,
 )
-from .._manager import SessionManager, WorkspaceManagerBase, BackgroundTaskManager
+from .._manager import (
+    SessionManager,
+    WorkspaceManagerBase,
+    BackgroundTaskManager,
+)
 from .._schema import ChatRequest
 from .._service import get_agent
 from ..storage import StorageBase
@@ -145,7 +149,9 @@ async def chat(
     storage: StorageBase = Depends(get_storage),
     session_manager: SessionManager = Depends(get_session_manager),
     workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
-    background_task_manager: BackgroundTaskManager = Depends(get_background_task_manager)
+    background_task_manager: BackgroundTaskManager = Depends(
+        get_background_task_manager,
+    ),
 ) -> StreamingResponse:
     """Send a message to an agent and stream back the reply as SSE events.
 

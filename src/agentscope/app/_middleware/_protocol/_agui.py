@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """The AGUI middleware class."""
+from typing import TYPE_CHECKING, Any
+
 from starlette.types import ASGIApp
 
 from ._base import ProtocolMiddlewareBase
@@ -31,6 +33,11 @@ from ....event import (
     ToolResultTextDeltaEvent,
     UserConfirmResultEvent,
 )
+
+if TYPE_CHECKING:
+    from ag_ui.core.events import BaseEvent as AGUIBaseEvent
+else:
+    AGUIBaseEvent = Any
 
 
 class AGUIProtocolMiddleware(ProtocolMiddlewareBase):
@@ -67,7 +74,6 @@ class AGUIProtocolMiddleware(ProtocolMiddlewareBase):
         """Convert an AgentScope event to an AGUI event."""
 
         from ag_ui.core.events import (
-            BaseEvent as AGUIBaseEvent,
             CustomEvent as AGUICustomEvent,
             ReasoningMessageContentEvent as AGUIReasoningMessageContentEvent,
             ReasoningMessageEndEvent as AGUIReasoningMessageEndEvent,
@@ -85,7 +91,6 @@ class AGUIProtocolMiddleware(ProtocolMiddlewareBase):
             ToolCallResultEvent as AGUIToolCallResultEvent,
             ToolCallStartEvent as AGUIToolCallStartEvent,
         )
-
 
         if isinstance(event, ReplyStartEvent):
             return AGUIRunStartedEvent(

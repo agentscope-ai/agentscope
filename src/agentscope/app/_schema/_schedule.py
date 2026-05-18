@@ -2,9 +2,12 @@
 """Request / response schemas for the schedule router."""
 from pydantic import BaseModel, Field
 
-from ..storage._model._schedule import ScheduleRecord
-from ..storage._model._session import ChatModelConfig
-from ...permission._types import PermissionMode
+from ..storage import (
+    ScheduleRecord,
+    SessionRecord,
+    ChatModelConfig,
+)
+from ...permission import PermissionMode
 
 
 class CreateScheduleRequest(BaseModel):
@@ -30,9 +33,10 @@ class CreateScheduleRequest(BaseModel):
         description="Model configuration for the auto-created session.",
     )
 
-    enable: bool = Field(
+    enabled: bool = Field(
         default=True,
-        description="Whether the schedule is active immediately after creation.",
+        description="Whether the schedule is active immediately "
+        "after creation.",
     )
 
     stateful: bool = Field(
@@ -43,7 +47,8 @@ class CreateScheduleRequest(BaseModel):
 
     permission_mode: PermissionMode = Field(
         default=PermissionMode.DONT_ASK,
-        description="Permission level for the agent during scheduled execution.",
+        description="Permission level for the agent during "
+        "scheduled execution.",
     )
 
 
@@ -81,7 +86,7 @@ class UpdateScheduleRequest(BaseModel):
         description="New IANA timezone name.",
     )
 
-    enable: bool | None = Field(
+    enabled: bool | None = Field(
         default=None,
         description="Set to False to pause the schedule without deleting it.",
     )
@@ -102,3 +107,12 @@ class ScheduleListResponse(BaseModel):
 
     schedules: list[ScheduleRecord] = Field(description="Schedule records.")
     total: int = Field(description="Total number of schedules.")
+
+
+class ScheduleSessionsResponse(BaseModel):
+    """Response body for listing execution sessions of a schedule."""
+
+    sessions: list[SessionRecord] = Field(
+        description="Sessions triggered by this schedule.",
+    )
+    total: int = Field(description="Total number of execution sessions.")

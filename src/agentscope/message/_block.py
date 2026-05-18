@@ -5,6 +5,8 @@ from enum import StrEnum
 from typing import Literal, List, TypeAlias
 from pydantic import BaseModel, Field, AnyUrl, field_serializer, ConfigDict
 
+from agentscope.permission import PermissionRule
+
 
 class TextBlock(BaseModel):
     """The text block."""
@@ -142,6 +144,9 @@ class ToolCallBlock(BaseModel):
     submitted
       └── ExternalExecutionResultEvent received ─────► finished
     """
+    suggested_rules: list[PermissionRule] = Field(default_factory=list)
+    """The suggestions for this tool call when asking user, used to maintain
+    the suggestions across requests."""
 
 
 class ToolResultState(StrEnum):

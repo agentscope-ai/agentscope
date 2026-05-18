@@ -176,6 +176,7 @@ class StorageBase(ABC):
         state: AgentState | None = None,
         session_id: str | None = None,
         source: SessionSource = SessionSource.USER,
+        source_schedule_id: str | None = None,
     ) -> SessionRecord:
         """Create or update a session for a (user, agent) pair.
 
@@ -192,6 +193,9 @@ class StorageBase(ABC):
                 session.
             source (`SessionSource`, optional): The source that created this
                 session. Defaults to ``SessionSource.USER``.
+            source_schedule_id (`str | None`, optional): The schedule that
+                created this session. When set, the session is indexed under
+                the schedule for execution history queries.
 
         Returns:
             `SessionRecord`: The created or updated record.
@@ -267,6 +271,23 @@ class StorageBase(ABC):
 
         Returns:
             `SessionRecord | None`: The record, or ``None`` if not found.
+        """
+
+    @abstractmethod
+    async def list_sessions_by_schedule(
+        self,
+        user_id: str,
+        schedule_id: str,
+    ) -> list[SessionRecord]:
+        """Return all sessions created by a given schedule.
+
+        Args:
+            user_id (`str`): The owner user id.
+            schedule_id (`str`): The schedule id.
+
+        Returns:
+            `list[SessionRecord]`: Sessions triggered by this schedule,
+            ordered by creation time (newest first).
         """
 
     @abstractmethod

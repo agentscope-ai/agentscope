@@ -6,14 +6,19 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from .._deps import get_current_user_id, get_scheduler_manager, get_storage
 from .._manager import SchedulerManager
-from .._schema._schedule import (
+from .._schema import (
     CreateScheduleRequest,
     CreateScheduleResponse,
     ScheduleListResponse,
+    ScheduleSessionsResponse,
     UpdateScheduleRequest,
 )
-from ..storage._base import StorageBase
-from ..storage._model._schedule import ScheduleData, ScheduleRecord, ScheduleSource
+from ..storage import (
+    StorageBase,
+    ScheduleData,
+    ScheduleRecord,
+    ScheduleSource,
+)
 
 schedule_router = APIRouter(
     prefix="/schedule",
@@ -73,7 +78,7 @@ async def create_schedule(
         `HTTPException`: 404 if the specified agent does not exist.
     """
     agents = await storage.list_agent(user_id)
-    if not any(a.data.id == body.agent_id for a in agents):
+    if not any(a.id == body.agent_id for a in agents):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Agent '{body.agent_id}' not found.",
@@ -87,16 +92,17 @@ async def create_schedule(
             description=body.description,
             cron_expression=body.cron_expression,
             timezone=body.timezone,
-            enable=body.enable,
+            enabled=body.enabled,
             stateful=body.stateful,
             permission_mode=body.permission_mode,
             chat_model_config=body.chat_model_config,
             source=ScheduleSource.USER,
+            started_at=datetime.now(),
         ),
     )
     await storage.upsert_schedule(user_id, record)
 
-    if record.data.enable:
+    if record.data.enabled:
         await scheduler.register_schedule(record)
 
     return CreateScheduleResponse(schedule_id=record.id)
@@ -151,7 +157,7 @@ async def update_schedule(
 
     # Always remove the existing job first; re-register only if still enabled.
     await scheduler.remove_schedule(schedule_id)
-    if updated_record.data.enable:
+    if updated_record.data.enabled:
         await scheduler.register_schedule(updated_record)
 
     return updated_record
@@ -188,3 +194,38 @@ async def delete_schedule(
             detail=f"Schedule '{schedule_id}' not found.",
         )
     await scheduler.remove_schedule(schedule_id)
+
+
+@schedule_router.get(
+    "/{schedule_id}/sessions",
+    response_model=ScheduleSessionsResponse,
+    summary="List execution sessions for a schedule",
+)
+async def list_schedule_sessions(
+    schedule_id: str,
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+) -> ScheduleSessionsResponse:
+    """Return all sessions triggered by a given schedule.
+
+    Args:
+        schedule_id (`str`): ID of the schedule.
+        user_id (`str`): Authenticated user ID.
+        storage (`StorageBase`): Storage instance.
+
+    Returns:
+        `ScheduleSessionsResponse`:
+            List of execution sessions ordered by creation time (newest first).
+
+    Raises:
+        `HTTPException`: 404 if the schedule does not exist.
+    """
+    existing = await storage.get_schedule(user_id, schedule_id)
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Schedule '{schedule_id}' not found.",
+        )
+
+    sessions = await storage.list_sessions_by_schedule(user_id, schedule_id)
+    return ScheduleSessionsResponse(sessions=sessions, total=len(sessions))

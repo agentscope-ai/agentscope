@@ -372,7 +372,10 @@ class Msg(BaseModel):
                     b = self._find_block("tool_call", tool_call.id)
                     if b is not None:
                         assert isinstance(b, ToolCallBlock)
+                        # Update the state
                         b.state = ToolCallState.ASKING
+                        # Record the suggestions
+                        b.suggested_rules = tool_call.suggested_rules
 
             case EventType.USER_CONFIRM_RESULT:
                 for result in event.confirm_results:

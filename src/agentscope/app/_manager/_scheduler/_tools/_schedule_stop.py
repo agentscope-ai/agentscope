@@ -78,7 +78,10 @@ class ScheduleStop(ToolBase):
             message=f"{self.name} is always allowed to be called.",
         )
 
-    async def __call__(self, schedule_id: str) -> ToolChunk:  # type: ignore[override]
+    async def __call__(
+        self,
+        schedule_id: str,
+    ) -> ToolChunk:  # type: ignore[override]
         """Stop (remove) the scheduled task with the given ID.
 
         Args:
