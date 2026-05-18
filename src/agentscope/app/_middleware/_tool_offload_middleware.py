@@ -17,7 +17,7 @@ from .._manager import BackgroundTaskManager
 _QUEUE_SENTINEL = object()
 
 
-class ToolOffloadMiddleware(MiddlewareBase):
+class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
     """Middleware that offloads timed-out tool calls to background tasks.
 
     When a tool execution exceeds ``timeout_secs`` this middleware:
@@ -117,7 +117,7 @@ class ToolOffloadMiddleware(MiddlewareBase):
     # Middleware hooks
     # ------------------------------------------------------------------
 
-    async def on_reasoning(
+    async def on_reasoning(  # type:ignore[override]
         self,
         agent: "Agent",
         input_kwargs: dict,
@@ -147,7 +147,7 @@ class ToolOffloadMiddleware(MiddlewareBase):
         async for evt in next_handler(**input_kwargs):
             yield evt
 
-    async def on_acting(
+    async def on_acting(  # type:ignore[override]
         self,
         agent: Agent,
         input_kwargs: dict,

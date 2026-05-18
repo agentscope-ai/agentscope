@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=protected-access
 """Unit tests for ToolOffloadMiddleware."""
 import asyncio
 import json
@@ -9,8 +10,7 @@ from pydantic import BaseModel
 from utils import MockModel
 
 from agentscope.agent import Agent
-from agentscope.app import BackgroundTaskManager
-from agentscope.app import ToolOffloadMiddleware
+from agentscope.app import BackgroundTaskManager, ToolOffloadMiddleware
 from agentscope.message import TextBlock, UserMsg, ToolCallBlock
 from agentscope.model import ChatResponse
 from agentscope.permission import (
@@ -158,7 +158,7 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         self,
         toolkit: Toolkit,
         timeout_secs: float,
-    ) -> Agent:
+    ) -> tuple[Agent, ToolOffloadMiddleware]:
         """Create an agent with ToolOffloadMiddleware attached.
 
         Args:
@@ -168,20 +168,21 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
                 The middleware timeout.
 
         Returns:
-            `Agent`:
-                The configured agent.
+            `tuple[Agent, ToolOffloadMiddleware]`:
+                The configured agent and the middleware instance.
         """
         middleware = ToolOffloadMiddleware(
             bg_manager=self.bg_manager,
             timeout_secs=timeout_secs,
         )
-        return Agent(
+        agent = Agent(
             name="test_agent",
             system_prompt="test prompt",
             model=self.mock_model,
             toolkit=toolkit,
             middlewares=[middleware],
         )
+        return agent, middleware
 
     # ------------------------------------------------------------------
     # Tests
@@ -191,7 +192,7 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         """A tool that finishes within the timeout yields its real result."""
 
         toolkit = Toolkit(tools=[FastTool()])
-        agent = self._make_agent(toolkit, timeout_secs=5.0)
+        agent, _ = self._make_agent(toolkit, timeout_secs=5.0)
 
         tool_call = ToolCallBlock(
             id="call_fast",
@@ -210,14 +211,14 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         text = responses[0].content[0].text  # type: ignore[union-attr]
         self.assertIn("FastTool: hello", text)
         # No background tasks registered
-        self.assertEqual(len(self.bg_manager._tasks), 0)
+        self.assertEqual(len(self.bg_manager.tasks), 0)
 
     async def test_slow_tool_offloaded_to_background(self) -> None:
         """A tool that exceeds timeout returns a synthetic result."""
 
         toolkit = Toolkit(tools=[SlowTool()])
         # Set a very short timeout so the 0.5s tool is always offloaded
-        agent = self._make_agent(toolkit, timeout_secs=0.05)
+        agent, _ = self._make_agent(toolkit, timeout_secs=0.05)
 
         tool_call = ToolCallBlock(
             id="call_slow",
@@ -238,7 +239,7 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         self.assertIn("task_id=", text)
 
         # Background task should be registered
-        self.assertEqual(len(self.bg_manager._tasks), 1)
+        self.assertEqual(len(self.bg_manager.tasks), 1)
 
     async def test_background_task_result_injected_into_context(
         self,
@@ -247,7 +248,7 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         messages."""
 
         toolkit = Toolkit(tools=[SlowTool()])
-        agent = self._make_agent(toolkit, timeout_secs=0.05)
+        agent, middleware = self._make_agent(toolkit, timeout_secs=0.05)
 
         tool_call = ToolCallBlock(
             id="call_bg",
@@ -264,7 +265,7 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         await asyncio.sleep(0.4)
 
         # The pending message should now be available
-        pending = self.bg_manager.pop_pending_messages(
+        pending = middleware._pop_pending_messages(
             agent.state.session_id,
         )
         self.assertEqual(len(pending), 1)
@@ -276,12 +277,6 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         """on_reasoning hook prepends pending messages to agent context."""
         session_id = "session_test_inject"
 
-        # Pre-populate a pending message for the session
-        self.bg_manager._push_pending_message(
-            session_id,
-            UserMsg(name="system", content="Background result: done"),
-        )
-
         self.mock_model.set_responses(
             [
                 ChatResponse(
@@ -292,7 +287,13 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         )
 
         toolkit = Toolkit()
-        agent = self._make_agent(toolkit, timeout_secs=5.0)
+        agent, middleware = self._make_agent(toolkit, timeout_secs=5.0)
+
+        # Pre-populate a pending message for the session
+        middleware._push_pending_message(
+            session_id,
+            UserMsg(name="system", content="Background result: done"),
+        )
         # Override the agent's session_id
         agent.state.session_id = session_id
 
@@ -312,7 +313,7 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         """TaskStop tool cancels the running background asyncio task."""
 
         toolkit = Toolkit(tools=[SlowTool()])
-        agent = self._make_agent(toolkit, timeout_secs=0.05)
+        agent, _ = self._make_agent(toolkit, timeout_secs=0.05)
 
         tool_call = ToolCallBlock(
             id="call_cancel",
@@ -325,9 +326,9 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         async for _ in agent._acting(tool_call):
             pass
 
-        self.assertEqual(len(self.bg_manager._tasks), 1)
-        task_id = next(iter(self.bg_manager._tasks))
-        asyncio_task = self.bg_manager._tasks[task_id].asyncio_task
+        self.assertEqual(len(self.bg_manager.tasks), 1)
+        task_id = next(iter(self.bg_manager.tasks))
+        asyncio_task = self.bg_manager.tasks[task_id].asyncio_task
 
         # Call TaskStop
         task_stop_tools = await self.bg_manager.list_tools()
@@ -339,4 +340,4 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         # The asyncio task should be cancelling
         self.assertTrue(asyncio_task.cancelled() or asyncio_task.cancelling())
         # Removed from manager
-        self.assertEqual(len(self.bg_manager._tasks), 0)
+        self.assertEqual(len(self.bg_manager.tasks), 0)

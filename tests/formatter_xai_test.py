@@ -15,12 +15,14 @@ from unittest.mock import MagicMock
 
 from agentscope.formatter import XAIChatFormatter, XAIMultiAgentFormatter
 from agentscope.message import (
-    Msg,
     TextBlock,
     ToolCallBlock,
     ToolResultBlock,
     ThinkingBlock,
     ToolResultState,
+    AssistantMsg,
+    UserMsg,
+    SystemMsg,
 )
 
 # ---------------------------------------------------------------------------
@@ -111,43 +113,37 @@ class TestXAIFormatter(IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         self.msgs_system = [
-            Msg(
+            SystemMsg(
                 name="system",
                 content="You're a helpful assistant.",
-                role="system",
             ),
         ]
 
         self.msgs_conversation = [
-            Msg(
+            UserMsg(
                 name="user",
                 content="What is the capital of France?",
-                role="user",
             ),
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content="The capital of France is Paris.",
-                role="assistant",
             ),
-            Msg(
+            UserMsg(
                 name="user",
                 content="What is the capital of Germany?",
-                role="user",
             ),
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content="The capital of Germany is Berlin.",
-                role="assistant",
             ),
-            Msg(
+            UserMsg(
                 name="user",
                 content="What is the capital of Japan?",
-                role="user",
             ),
         ]
 
         self.msgs_tools = [
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content=[
                     ToolCallBlock(
@@ -156,9 +152,8 @@ class TestXAIFormatter(IsolatedAsyncioTestCase):
                         input='{"country": "Japan"}',
                     ),
                 ],
-                role="assistant",
             ),
-            Msg(
+            AssistantMsg(
                 name="tool",
                 content=[
                     ToolResultBlock(
@@ -173,12 +168,10 @@ class TestXAIFormatter(IsolatedAsyncioTestCase):
                         state=ToolResultState.SUCCESS,
                     ),
                 ],
-                role="assistant",
             ),
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content="The capital of Japan is Tokyo.",
-                role="assistant",
             ),
         ]
 
@@ -244,13 +237,12 @@ class TestXAIFormatter(IsolatedAsyncioTestCase):
         messages."""
         fmt = XAIChatFormatter()
         msgs = [
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content=[
                     ThinkingBlock(thinking="inner thoughts"),
                     TextBlock(type="text", text="reply"),
                 ],
-                role="assistant",
             ),
         ]
         res = await fmt.format(msgs)

@@ -17,8 +17,11 @@ from agentscope.message import (
     ToolResultBlock,
     Base64Source,
     ThinkingBlock,
+    SystemMsg,
+    UserMsg,
+    AssistantMsg,
+    ToolResultState,
 )
-from agentscope.message._block import ToolResultState
 
 
 class TestAnthropicFormatter(IsolatedAsyncioTestCase):
@@ -33,43 +36,37 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
         # (No URL images: Anthropic URL handling downloads from the network)
         # ---------------------------------------------------------------
         self.msgs_system = [
-            Msg(
+            SystemMsg(
                 name="system",
                 content="You're a helpful assistant.",
-                role="system",
             ),
         ]
 
         self.msgs_conversation = [
-            Msg(
+            UserMsg(
                 name="user",
                 content="What is the capital of France?",
-                role="user",
             ),
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content="The capital of France is Paris.",
-                role="assistant",
             ),
-            Msg(
+            UserMsg(
                 name="user",
                 content="What is the capital of Germany?",
-                role="user",
             ),
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content="The capital of Germany is Berlin.",
-                role="assistant",
             ),
-            Msg(
+            UserMsg(
                 name="user",
                 content="What is the capital of Japan?",
-                role="user",
             ),
         ]
 
         self.msgs_tools = [
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content=[
                     ToolCallBlock(
@@ -78,9 +75,8 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
                         input='{"country": "Japan"}',
                     ),
                 ],
-                role="assistant",
             ),
-            Msg(
+            AssistantMsg(
                 name="tool",
                 content=[
                     ToolResultBlock(
@@ -95,12 +91,10 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
                         state=ToolResultState.SUCCESS,
                     ),
                 ],
-                role="assistant",
             ),
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content="The capital of Japan is Tokyo.",
-                role="assistant",
             ),
         ]
 

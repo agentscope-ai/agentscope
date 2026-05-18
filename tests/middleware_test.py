@@ -10,7 +10,13 @@ from agentscope.event import AgentEvent
 from agentscope.agent import Agent
 from agentscope.middleware import MiddlewareBase
 from agentscope.model import ChatResponse
-from agentscope.message import TextBlock, UserMsg, Msg, ToolCallBlock
+from agentscope.message import (
+    TextBlock,
+    UserMsg,
+    SystemMsg,
+    Msg,
+    ToolCallBlock,
+)
 from agentscope.tool import Toolkit, ToolBase, ToolChunk
 from agentscope.permission import (
     PermissionContext,
@@ -499,7 +505,7 @@ class TestMiddleware(IsolatedAsyncioTestCase):
                 if isinstance(msgs, Msg):
                     modified_msg = UserMsg(
                         name=msgs.name,
-                        content="MODIFIED: " + msgs.content,
+                        content="MODIFIED: " + msgs.get_text_content(),
                     )
                     async for item in next_handler(
                         msgs=modified_msg,
@@ -551,7 +557,10 @@ class TestMiddleware(IsolatedAsyncioTestCase):
         # Verify the model received the modified message
         user_messages = [m for m in received_messages if m.role == "user"]
         self.assertTrue(len(user_messages) > 0)
-        self.assertIn("MODIFIED: original message", user_messages[-1].content)
+        self.assertIn(
+            "MODIFIED: original message",
+            user_messages[-1].get_text_content(),
+        )
 
     async def test_on_reasoning_middleware_modify_input(self) -> None:
         """Test that on_reasoning middleware can modify tool_choice input."""
@@ -748,10 +757,9 @@ class TestMiddleware(IsolatedAsyncioTestCase):
                 """Prepend a system message to the messages list."""
                 messages = input_kwargs["messages"]
                 modified_messages = [
-                    Msg(
+                    SystemMsg(
                         name="system",
                         content="INJECTED SYSTEM MESSAGE",
-                        role="system",
                     ),
                 ] + messages
 
@@ -805,7 +813,8 @@ class TestMiddleware(IsolatedAsyncioTestCase):
         system_messages = [m for m in received_messages if m.role == "system"]
         self.assertTrue(
             any(
-                "INJECTED SYSTEM MESSAGE" in m.content for m in system_messages
+                "INJECTED SYSTEM MESSAGE" in m.get_text_content()
+                for m in system_messages
             ),
         )
 

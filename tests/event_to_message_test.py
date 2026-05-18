@@ -121,6 +121,7 @@ def _tcb(tc_id: str, name: str, inp: str, state: str) -> dict:
         "name": name,
         "input": inp,
         "state": state,
+        "suggested_rules": [],
     }
 
 

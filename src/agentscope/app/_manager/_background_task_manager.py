@@ -152,7 +152,7 @@ class BackgroundTaskManager:
 
     def __init__(self) -> None:
         """Initialise the background task manager."""
-        self._tasks: OrderedDict[str, BackgroundTask] = OrderedDict()
+        self.tasks: OrderedDict[str, BackgroundTask] = OrderedDict()
 
     async def register_task(
         self,
@@ -188,7 +188,7 @@ class BackgroundTaskManager:
             agent_id=agent_id,
         )
         task_id = bg_task.id
-        self._tasks[task_id] = bg_task
+        self.tasks[task_id] = bg_task
 
         async def _watch() -> None:
             try:
@@ -198,7 +198,7 @@ class BackgroundTaskManager:
             except Exception:  # pylint: disable=broad-except
                 pass
             finally:
-                self._tasks.pop(task_id, None)
+                self.tasks.pop(task_id, None)
 
             if on_complete is not None:
                 await on_complete()
@@ -213,7 +213,7 @@ class BackgroundTaskManager:
             `list[ToolBase]`:
                 A list containing the :class:`TaskStop` tool.
         """
-        return [TaskStop(self._tasks)]
+        return [TaskStop(self.tasks)]
 
     def cancel(self) -> None:
         """Cancel all running background tasks on application shutdown.
@@ -221,6 +221,6 @@ class BackgroundTaskManager:
         Each task's asyncio task is cancelled.  The ``on_complete``
         callback will **not** be invoked for cancelled tasks.
         """
-        for bg_task in list(self._tasks.values()):
+        for bg_task in list(self.tasks.values()):
             bg_task.asyncio_task.cancel()
-        self._tasks.clear()
+        self.tasks.clear()

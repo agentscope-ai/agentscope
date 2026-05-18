@@ -228,6 +228,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         return {
             "id": AnyString(),
             "created_at": AnyString(),
+            "finished_at": None,
             "metadata": {},
             "name": "Friday",
             "role": "assistant",
@@ -317,6 +318,14 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_1,
                         "state": "asking",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.sequential_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                 ],
             },
@@ -334,7 +343,13 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": self.user_input_text,
+                    },
+                ],
             },
             {
                 "content": [
@@ -344,6 +359,14 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_1,
                         "state": "asking",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.sequential_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                 ],
             },
@@ -393,7 +416,13 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": self.user_input_text,
+                    },
+                ],
             },
             {
                 "content": [
@@ -403,6 +432,14 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_1,
                         "state": "finished",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.sequential_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                     {
                         "type": "tool_result",
@@ -538,6 +575,14 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_1,
                         "state": "asking",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.sequential_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                 ],
             },
@@ -555,7 +600,13 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": self.user_input_text,
+                    },
+                ],
             },
             {
                 "content": [
@@ -565,6 +616,14 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_1,
                         "state": "asking",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.sequential_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                     {
                         "type": "tool_call",
@@ -572,6 +631,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_2,
                         "state": "pending",
+                        "suggested_rules": [],
                     },
                 ],
             },
@@ -616,6 +676,14 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_2,
                         "state": "asking",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.sequential_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                 ],
             },
@@ -665,7 +733,13 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": self.user_input_text,
+                    },
+                ],
             },
             {
                 "content": [
@@ -675,6 +749,14 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_1,
                         "state": "finished",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.sequential_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                     {
                         "type": "tool_call",
@@ -682,6 +764,14 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_2,
                         "state": "finished",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.sequential_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                     {
                         "type": "tool_result",
@@ -828,6 +918,14 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_1,
                         "state": "asking",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.concurrent_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                 ],
             },
@@ -841,6 +939,14 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_2,
                         "state": "asking",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.concurrent_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                 ],
             },
@@ -858,7 +964,13 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": self.user_input_text,
+                    },
+                ],
             },
             {
                 "content": [
@@ -868,6 +980,14 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_1,
                         "state": "asking",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.concurrent_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                     {
                         "type": "tool_call",
@@ -875,6 +995,14 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_2,
                         "state": "asking",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.concurrent_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                 ],
             },
@@ -954,7 +1082,13 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": self.user_input_text,
+                    },
+                ],
             },
             {
                 "content": [
@@ -964,6 +1098,14 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_1,
                         "state": "finished",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.concurrent_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                     {
                         "type": "tool_call",
@@ -971,6 +1113,14 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_2,
                         "state": "finished",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.concurrent_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                     {
                         "type": "tool_result",
@@ -1115,6 +1265,14 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_1,
                         "state": "asking",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.concurrent_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                 ],
             },
@@ -1128,6 +1286,14 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_2,
                         "state": "asking",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.concurrent_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                 ],
             },
@@ -1141,7 +1307,13 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": self.user_input_text,
+                    },
+                ],
             },
             {
                 "content": [
@@ -1151,6 +1323,14 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_1,
                         "state": "asking",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.concurrent_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                     {
                         "type": "tool_call",
@@ -1158,6 +1338,14 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_2,
                         "state": "asking",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.concurrent_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                 ],
             },
@@ -1239,10 +1427,17 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             {
                 "id": AnyString(),
                 "created_at": AnyString(),
+                "finished_at": None,
                 "metadata": {},
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": self.user_input_text,
+                    },
+                ],
             },
         )
 

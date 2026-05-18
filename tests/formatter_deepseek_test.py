@@ -9,13 +9,15 @@ from agentscope.formatter import (
     DeepSeekMultiAgentFormatter,
 )
 from agentscope.message import (
-    Msg,
     TextBlock,
     ToolCallBlock,
     ToolResultBlock,
     ThinkingBlock,
+    AssistantMsg,
+    UserMsg,
+    SystemMsg,
+    ToolResultState,
 )
-from agentscope.message._block import ToolResultState
 
 
 class TestDeepSeekFormatter(IsolatedAsyncioTestCase):
@@ -28,41 +30,35 @@ class TestDeepSeekFormatter(IsolatedAsyncioTestCase):
         )
 
         self.msgs_system = [
-            Msg(
+            SystemMsg(
                 name="system",
                 content="You're a helpful assistant.",
-                role="system",
             ),
         ]
         self.msgs_conversation = [
-            Msg(
+            UserMsg(
                 name="user",
                 content="What is the capital of France?",
-                role="user",
             ),
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content="The capital of France is Paris.",
-                role="assistant",
             ),
-            Msg(
+            UserMsg(
                 name="user",
                 content="What is the capital of Germany?",
-                role="user",
             ),
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content="The capital of Germany is Berlin.",
-                role="assistant",
             ),
-            Msg(
+            UserMsg(
                 name="user",
                 content="What is the capital of Japan?",
-                role="user",
             ),
         ]
         self.msgs_tools = [
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content=[
                     ToolCallBlock(
@@ -71,9 +67,8 @@ class TestDeepSeekFormatter(IsolatedAsyncioTestCase):
                         input='{"country": "Japan"}',
                     ),
                 ],
-                role="assistant",
             ),
-            Msg(
+            AssistantMsg(
                 name="tool",
                 content=[
                     ToolResultBlock(
@@ -88,12 +83,10 @@ class TestDeepSeekFormatter(IsolatedAsyncioTestCase):
                         state=ToolResultState.SUCCESS,
                     ),
                 ],
-                role="assistant",
             ),
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content="The capital of Japan is Tokyo.",
-                role="assistant",
             ),
         ]
 
@@ -244,7 +237,7 @@ class TestDeepSeekFormatter(IsolatedAsyncioTestCase):
     ) -> None:
         """Every assistant message always has a reasoning_content field."""
         fmt = DeepSeekChatFormatter()
-        msgs = [Msg(name="assistant", content="Answer", role="assistant")]
+        msgs = [AssistantMsg(name="assistant", content="Answer")]
         res = await fmt.format(msgs)
         self.assertIn("reasoning_content", res[0])
         self.assertEqual(res[0]["reasoning_content"], "")
@@ -253,13 +246,12 @@ class TestDeepSeekFormatter(IsolatedAsyncioTestCase):
         """ThinkingBlock is placed into reasoning_content."""
         fmt = DeepSeekChatFormatter()
         msgs = [
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content=[
                     ThinkingBlock(thinking="Let me think..."),
                     TextBlock(type="text", text="Answer"),
                 ],
-                role="assistant",
             ),
         ]
         res = await fmt.format(msgs)

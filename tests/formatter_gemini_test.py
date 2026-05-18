@@ -10,15 +10,17 @@ from agentscope.formatter import (
     GeminiMultiAgentFormatter,
 )
 from agentscope.message import (
-    Msg,
     TextBlock,
     DataBlock,
     ToolCallBlock,
     ToolResultBlock,
     Base64Source,
     ThinkingBlock,
+    AssistantMsg,
+    UserMsg,
+    SystemMsg,
+    ToolResultState,
 )
-from agentscope.message._block import ToolResultState
 
 
 class TestGeminiFormatter(IsolatedAsyncioTestCase):
@@ -33,15 +35,14 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
         # (Use base64 images: Gemini URL handling downloads from the network)
         # ---------------------------------------------------------------
         self.msgs_system = [
-            Msg(
+            SystemMsg(
                 name="system",
                 content="You're a helpful assistant.",
-                role="system",
             ),
         ]
 
         self.msgs_conversation = [
-            Msg(
+            UserMsg(
                 name="user",
                 content=[
                     TextBlock(
@@ -56,32 +57,27 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                         ),
                     ),
                 ],
-                role="user",
             ),
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content="The capital of France is Paris.",
-                role="assistant",
             ),
-            Msg(
+            UserMsg(
                 name="user",
                 content="What is the capital of Germany?",
-                role="user",
             ),
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content="The capital of Germany is Berlin.",
-                role="assistant",
             ),
-            Msg(
+            UserMsg(
                 name="user",
                 content="What is the capital of Japan?",
-                role="user",
             ),
         ]
 
         self.msgs_tools = [
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content=[
                     ToolCallBlock(
@@ -90,9 +86,8 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                         input='{"country": "Japan"}',
                     ),
                 ],
-                role="assistant",
             ),
-            Msg(
+            AssistantMsg(
                 name="tool",
                 content=[
                     ToolResultBlock(
@@ -107,12 +102,10 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                         state=ToolResultState.SUCCESS,
                     ),
                 ],
-                role="assistant",
             ),
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content="The capital of Japan is Tokyo.",
-                role="assistant",
             ),
         ]
 
@@ -320,13 +313,12 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
         """ThinkingBlock becomes a part with thought=True in Gemini format."""
         fmt = GeminiChatFormatter()
         msgs = [
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content=[
                     ThinkingBlock(thinking="inner thoughts"),
                     TextBlock(type="text", text="reply"),
                 ],
-                role="assistant",
             ),
         ]
         res = await fmt.format(msgs)

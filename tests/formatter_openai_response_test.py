@@ -20,7 +20,6 @@ from agentscope.formatter import (
     OpenAIResponseMultiAgentFormatter,
 )
 from agentscope.message import (
-    Msg,
     TextBlock,
     DataBlock,
     ToolCallBlock,
@@ -28,8 +27,11 @@ from agentscope.message import (
     Base64Source,
     URLSource,
     ThinkingBlock,
+    AssistantMsg,
+    UserMsg,
+    SystemMsg,
+    ToolResultState,
 )
-from agentscope.message._block import ToolResultState
 
 
 _FIXED_ID = "TESTID1234567"
@@ -53,15 +55,14 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
         # Message fixtures (no audio to avoid downloads)
         # ---------------------------------------------------------------
         self.msgs_system = [
-            Msg(
+            SystemMsg(
                 name="system",
                 content="You're a helpful assistant.",
-                role="system",
             ),
         ]
 
         self.msgs_conversation = [
-            Msg(
+            UserMsg(
                 name="user",
                 content=[
                     TextBlock(
@@ -75,32 +76,27 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                         ),
                     ),
                 ],
-                role="user",
             ),
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content="The capital of France is Paris.",
-                role="assistant",
             ),
-            Msg(
+            UserMsg(
                 name="user",
                 content="What is the capital of Germany?",
-                role="user",
             ),
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content="The capital of Germany is Berlin.",
-                role="assistant",
             ),
-            Msg(
+            UserMsg(
                 name="user",
                 content="What is the capital of Japan?",
-                role="user",
             ),
         ]
 
         self.msgs_tools = [
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content=[
                     ToolCallBlock(
@@ -109,9 +105,8 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                         input='{"country": "Japan"}',
                     ),
                 ],
-                role="assistant",
             ),
-            Msg(
+            AssistantMsg(
                 name="tool",
                 content=[
                     ToolResultBlock(
@@ -126,12 +121,10 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                         state=ToolResultState.SUCCESS,
                     ),
                 ],
-                role="assistant",
             ),
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content="The capital of Japan is Tokyo.",
-                role="assistant",
             ),
         ]
 
@@ -344,7 +337,7 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
         """Base64-encoded image becomes an input_image item with data URI."""
         fmt = OpenAIResponseFormatter()
         msgs = [
-            Msg(
+            UserMsg(
                 name="user",
                 content=[
                     TextBlock(type="text", text="What's in this image?"),
@@ -356,7 +349,6 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                         ),
                     ),
                 ],
-                role="user",
             ),
         ]
         res = await fmt.format(msgs)
@@ -385,13 +377,12 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
         """ThinkingBlock without reasoning_item_id is silently skipped."""
         fmt = OpenAIResponseFormatter()
         msgs = [
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content=[
                     ThinkingBlock(thinking="inner thoughts"),
                     TextBlock(type="text", text="reply"),
                 ],
-                role="assistant",
             ),
         ]
         res = await fmt.format(msgs)
@@ -410,10 +401,9 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
         thinking = ThinkingBlock(thinking="my reasoning")
         thinking.reasoning_item_id = "rs_001"
         msgs = [
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content=[thinking, TextBlock(type="text", text="reply")],
-                role="assistant",
             ),
         ]
         res = await fmt.format(msgs)
@@ -431,7 +421,7 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
         with patch.object(shortuuid, "uuid", return_value=_FIXED_ID):
             fmt = OpenAIResponseFormatter()
             msgs = [
-                Msg(
+                AssistantMsg(
                     name="assistant",
                     content=[
                         ToolCallBlock(
@@ -440,9 +430,8 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                             input='{"city": "Tokyo"}',
                         ),
                     ],
-                    role="assistant",
                 ),
-                Msg(
+                AssistantMsg(
                     name="tool",
                     content=[
                         ToolResultBlock(
@@ -463,7 +452,6 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                             state=ToolResultState.SUCCESS,
                         ),
                     ],
-                    role="assistant",
                 ),
             ]
             res = await fmt.format(msgs)

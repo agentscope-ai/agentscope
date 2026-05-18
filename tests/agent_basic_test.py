@@ -120,6 +120,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         return {
             "id": AnyString(),
             "created_at": AnyString(),
+            "finished_at": None,
             "metadata": {},
             "name": "Friday",
             "role": "assistant",
@@ -221,7 +222,13 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 **msg_base,
                 "name": "user",
                 "role": "user",
-                "content": "Hi",
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": "Hi",
+                    },
+                ],
             },
             {
                 **msg_base,
@@ -253,6 +260,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "created_at": AnyString(),
+                "finished_at": None,
                 "id": AnyString(),
                 "metadata": {},
             },
@@ -264,7 +272,13 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 **msg_base,
                 "name": "user",
                 "role": "user",
-                "content": "Hi",
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": "Hi",
+                    },
+                ],
                 "metadata": {},
             },
             {
@@ -284,7 +298,13 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 **msg_base,
                 "name": "user",
                 "role": "user",
-                "content": "Hi again",
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": "Hi again",
+                    },
+                ],
                 "metadata": {},
             },
             {
@@ -380,7 +400,13 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 **msg_base,
                 "name": "user",
                 "role": "user",
-                "content": "Hi",
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": "Hi",
+                    },
+                ],
                 "metadata": {},
             },
             {
@@ -423,6 +449,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "created_at": AnyString(),
+                "finished_at": None,
                 "id": AnyString(),
                 "metadata": {},
             },
@@ -434,7 +461,13 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 **msg_base,
                 "name": "user",
                 "role": "user",
-                "content": "Hi",
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": "Hi",
+                    },
+                ],
                 "metadata": {},
             },
             {
@@ -454,7 +487,13 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 **msg_base,
                 "name": "user",
                 "role": "user",
-                "content": "Hi again",
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": "Hi again",
+                    },
+                ],
                 "metadata": {},
             },
             {
@@ -669,7 +708,13 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": "Test",
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": "Test",
+                    },
+                ],
             },
             {
                 "content": [
@@ -684,6 +729,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                         "name": "mock_sequential_tool",
                         "input": '{"input": "test1"}',
                         "state": "finished",
+                        "suggested_rules": [],
                     },
                     {
                         "type": "tool_call",
@@ -691,6 +737,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                         "name": "mock_sequential_tool",
                         "input": '{"input": "test2"}',
                         "state": "finished",
+                        "suggested_rules": [],
                     },
                     {
                         "type": "tool_result",
@@ -905,7 +952,13 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": "Test",
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": "Test",
+                    },
+                ],
             },
             {
                 "content": [
@@ -915,6 +968,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                         "name": "mock_concurrent_tool",
                         "input": '{"input": "test1"}',
                         "state": "finished",
+                        "suggested_rules": [],
                     },
                     {
                         "type": "tool_call",
@@ -922,6 +976,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                         "name": "mock_concurrent_tool",
                         "input": '{"input": "test2"}',
                         "state": "finished",
+                        "suggested_rules": [],
                     },
                     {
                         "type": "tool_result",
@@ -1177,7 +1232,13 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": "Test",
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": "Test",
+                    },
+                ],
             },
             {
                 "content": [
@@ -1187,6 +1248,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                         "name": "mock_sequential_tool",
                         "input": '{"input": "seq1"}',
                         "state": "finished",
+                        "suggested_rules": [],
                     },
                     {
                         "type": "tool_call",
@@ -1194,6 +1256,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                         "name": "mock_concurrent_tool",
                         "input": '{"input": "conc1"}',
                         "state": "finished",
+                        "suggested_rules": [],
                     },
                     {
                         "type": "tool_call",
@@ -1201,6 +1264,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                         "name": "mock_concurrent_tool",
                         "input": '{"input": "conc2"}',
                         "state": "finished",
+                        "suggested_rules": [],
                     },
                     {
                         "type": "tool_result",

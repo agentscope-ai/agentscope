@@ -6,14 +6,16 @@ from unittest import IsolatedAsyncioTestCase
 
 from agentscope.formatter import OllamaChatFormatter, OllamaMultiAgentFormatter
 from agentscope.message import (
-    Msg,
     TextBlock,
     DataBlock,
     ToolCallBlock,
     ToolResultBlock,
     Base64Source,
+    AssistantMsg,
+    UserMsg,
+    SystemMsg,
+    ToolResultState,
 )
-from agentscope.message._block import ToolResultState
 
 
 class TestOllamaFormatter(IsolatedAsyncioTestCase):
@@ -27,41 +29,35 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
         self.image_b64 = "ZmFrZSBpbWFnZSBkYXRh"
 
         self.msgs_system = [
-            Msg(
+            SystemMsg(
                 name="system",
                 content="You're a helpful assistant.",
-                role="system",
             ),
         ]
         self.msgs_conversation = [
-            Msg(
+            UserMsg(
                 name="user",
                 content="What is the capital of France?",
-                role="user",
             ),
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content="The capital of France is Paris.",
-                role="assistant",
             ),
-            Msg(
+            UserMsg(
                 name="user",
                 content="What is the capital of Germany?",
-                role="user",
             ),
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content="The capital of Germany is Berlin.",
-                role="assistant",
             ),
-            Msg(
+            UserMsg(
                 name="user",
                 content="What is the capital of Japan?",
-                role="user",
             ),
         ]
         self.msgs_tools = [
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content=[
                     ToolCallBlock(
@@ -70,9 +66,8 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
                         input='{"country": "Japan"}',
                     ),
                 ],
-                role="assistant",
             ),
-            Msg(
+            AssistantMsg(
                 name="tool",
                 content=[
                     ToolResultBlock(
@@ -87,12 +82,10 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
                         state=ToolResultState.SUCCESS,
                     ),
                 ],
-                role="assistant",
             ),
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content="The capital of Japan is Tokyo.",
-                role="assistant",
             ),
         ]
 
@@ -220,7 +213,7 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
         fmt = OllamaChatFormatter()
         tc = ToolCallBlock(id="c1", name="search", input='{"q": "weather"}')
         res = await fmt.format(
-            [Msg(name="assistant", content=[tc], role="assistant")],
+            [AssistantMsg(name="assistant", content=[tc])],
         )
         args = res[0]["tool_calls"][0]["function"]["arguments"]
         self.assertIsInstance(args, dict)
@@ -231,7 +224,7 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
         string."""
         fmt = OllamaChatFormatter()
         msgs = [
-            Msg(
+            UserMsg(
                 name="user",
                 content=[
                     TextBlock(type="text", text="What is this?"),
@@ -243,7 +236,6 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
                         ),
                     ),
                 ],
-                role="user",
             ),
         ]
         res = await fmt.format(msgs)

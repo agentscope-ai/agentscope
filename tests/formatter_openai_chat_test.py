@@ -13,7 +13,6 @@ from agentscope.formatter import (
     OpenAIMultiAgentFormatter,
 )
 from agentscope.message import (
-    Msg,
     TextBlock,
     DataBlock,
     ToolCallBlock,
@@ -21,8 +20,11 @@ from agentscope.message import (
     Base64Source,
     URLSource,
     ThinkingBlock,
+    AssistantMsg,
+    UserMsg,
+    SystemMsg,
+    ToolResultState,
 )
-from agentscope.message._block import ToolResultState
 
 
 _FIXED_ID = "TESTID1234567"
@@ -47,15 +49,14 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
         # (No audio in conversation: OpenAI URL audio requires a download)
         # ---------------------------------------------------------------
         self.msgs_system = [
-            Msg(
+            SystemMsg(
                 name="system",
                 content="You're a helpful assistant.",
-                role="system",
             ),
         ]
 
         self.msgs_conversation = [
-            Msg(
+            UserMsg(
                 name="user",
                 content=[
                     TextBlock(
@@ -69,32 +70,27 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
                         ),
                     ),
                 ],
-                role="user",
             ),
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content="The capital of France is Paris.",
-                role="assistant",
             ),
-            Msg(
+            UserMsg(
                 name="user",
                 content="What is the capital of Germany?",
-                role="user",
             ),
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content="The capital of Germany is Berlin.",
-                role="assistant",
             ),
-            Msg(
+            UserMsg(
                 name="user",
                 content="What is the capital of Japan?",
-                role="user",
             ),
         ]
 
         self.msgs_tools = [
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content=[
                     ToolCallBlock(
@@ -103,9 +99,8 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
                         input='{"country": "Japan"}',
                     ),
                 ],
-                role="assistant",
             ),
-            Msg(
+            AssistantMsg(
                 name="tool",
                 content=[
                     ToolResultBlock(
@@ -120,12 +115,10 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
                         state=ToolResultState.SUCCESS,
                     ),
                 ],
-                role="assistant",
             ),
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content="The capital of Japan is Tokyo.",
-                role="assistant",
             ),
         ]
 
@@ -356,7 +349,7 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
         """Base64-encoded image is inlined as a data URI."""
         fmt = OpenAIChatFormatter()
         msgs = [
-            Msg(
+            UserMsg(
                 name="user",
                 content=[
                     TextBlock(type="text", text="What's in this image?"),
@@ -368,7 +361,6 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
                         ),
                     ),
                 ],
-                role="user",
             ),
         ]
         res = await fmt.format(msgs)
@@ -393,13 +385,12 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
         """ThinkingBlock is silently dropped by OpenAI formatter."""
         fmt = OpenAIChatFormatter()
         msgs = [
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content=[
                     ThinkingBlock(thinking="inner thoughts"),
                     TextBlock(type="text", text="reply"),
                 ],
-                role="assistant",
             ),
         ]
         res = await fmt.format(msgs)
@@ -416,7 +407,7 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
         with patch.object(shortuuid, "uuid", return_value=_FIXED_ID):
             fmt = OpenAIChatFormatter()
             msgs = [
-                Msg(
+                AssistantMsg(
                     name="assistant",
                     content=[
                         ToolCallBlock(
@@ -425,9 +416,8 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
                             input='{"city": "Tokyo"}',
                         ),
                     ],
-                    role="assistant",
                 ),
-                Msg(
+                AssistantMsg(
                     name="tool",
                     content=[
                         ToolResultBlock(
@@ -448,7 +438,6 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
                             state=ToolResultState.SUCCESS,
                         ),
                     ],
-                    role="assistant",
                 ),
             ]
             res = await fmt.format(msgs)

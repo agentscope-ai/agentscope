@@ -13,7 +13,6 @@ from agentscope.formatter import (
     DashScopeMultiAgentFormatter,
 )
 from agentscope.message import (
-    Msg,
     TextBlock,
     DataBlock,
     ToolCallBlock,
@@ -21,8 +20,11 @@ from agentscope.message import (
     Base64Source,
     URLSource,
     ThinkingBlock,
+    SystemMsg,
+    AssistantMsg,
+    UserMsg,
+    ToolResultState,
 )
-from agentscope.message._block import ToolResultState
 
 
 # A fixed short-uuid used to make promote-to-multimodal tests deterministic.
@@ -56,15 +58,14 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
         # Message fixtures
         # ---------------------------------------------------------------
         self.msgs_system = [
-            Msg(
+            SystemMsg(
                 name="system",
                 content="You're a helpful assistant.",
-                role="system",
             ),
         ]
 
         self.msgs_conversation = [
-            Msg(
+            UserMsg(
                 name="user",
                 content=[
                     TextBlock(
@@ -78,14 +79,12 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                         ),
                     ),
                 ],
-                role="user",
             ),
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content="The capital of France is Paris.",
-                role="assistant",
             ),
-            Msg(
+            UserMsg(
                 name="user",
                 content=[
                     TextBlock(
@@ -99,24 +98,21 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                         ),
                     ),
                 ],
-                role="user",
             ),
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content="The capital of Germany is Berlin.",
-                role="assistant",
             ),
-            Msg(
+            UserMsg(
                 name="user",
                 content="What is the capital of Japan?",
-                role="user",
             ),
         ]
 
         # Messages with ToolResultBlock must use role="assistant" because the
         # system-role validator rejects non-text blocks.
         self.msgs_tools = [
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content=[
                     ToolCallBlock(
@@ -125,9 +121,8 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                         input='{"country": "Japan"}',
                     ),
                 ],
-                role="assistant",
             ),
-            Msg(
+            AssistantMsg(
                 name="tool",
                 content=[
                     ToolResultBlock(
@@ -142,12 +137,10 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                         state=ToolResultState.SUCCESS,
                     ),
                 ],
-                role="assistant",
             ),
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content="The capital of Japan is Tokyo.",
-                role="assistant",
             ),
         ]
 
@@ -352,7 +345,7 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
         """Base64-encoded image is inlined as a data URI."""
         fmt = DashScopeChatFormatter()
         msgs = [
-            Msg(
+            UserMsg(
                 name="user",
                 content=[
                     TextBlock(type="text", text="What's in this image?"),
@@ -364,7 +357,6 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                         ),
                     ),
                 ],
-                role="user",
             ),
         ]
         res = await fmt.format(msgs)
@@ -390,7 +382,7 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
         with patch.object(shortuuid, "uuid", return_value=_FIXED_ID):
             fmt = DashScopeChatFormatter()
             msgs = [
-                Msg(
+                AssistantMsg(
                     name="assistant",
                     content=[
                         ToolCallBlock(
@@ -399,9 +391,8 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                             input='{"city": "Tokyo"}',
                         ),
                     ],
-                    role="assistant",
                 ),
-                Msg(
+                AssistantMsg(
                     name="tool",
                     content=[
                         ToolResultBlock(
@@ -422,7 +413,6 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                             state=ToolResultState.SUCCESS,
                         ),
                     ],
-                    role="assistant",
                 ),
             ]
             res = await fmt.format(msgs)
@@ -449,13 +439,12 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
         absent from input_types."""
         fmt = DashScopeChatFormatter()
         msgs = [
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content=[
                     ThinkingBlock(thinking="inner thoughts"),
                     TextBlock(type="text", text="reply"),
                 ],
-                role="assistant",
             ),
         ]
         res = await fmt.format(msgs)
@@ -471,13 +460,12 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
             input_types=["text/plain", "application/x-thinking"],
         )
         msgs = [
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content=[
                     ThinkingBlock(thinking="inner thoughts"),
                     TextBlock(type="text", text="reply"),
                 ],
-                role="assistant",
             ),
         ]
         res = await fmt.format(msgs)
@@ -493,14 +481,13 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
             input_types=["text/plain", "application/x-thinking"],
         )
         msgs = [
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content=[
                     ThinkingBlock(thinking="part one"),
                     ThinkingBlock(thinking="part two"),
                     TextBlock(type="text", text="answer"),
                 ],
-                role="assistant",
             ),
         ]
         res = await fmt.format(msgs)
@@ -587,12 +574,11 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
             state=ToolResultState.SUCCESS,
         )
         msgs = [
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content=[ThinkingBlock(thinking="Need to check"), tc],
-                role="assistant",
             ),
-            Msg(name="tool", content=[tr], role="assistant"),
+            AssistantMsg(name="tool", content=[tr]),
         ]
         res = await fmt.format(msgs)
         asst_msgs = [m for m in res if m.get("role") == "assistant"]

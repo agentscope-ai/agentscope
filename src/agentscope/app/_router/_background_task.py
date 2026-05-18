@@ -46,7 +46,7 @@ async def list_background_tasks(
             session_id=task.session_id,
             agent_id=task.agent_id,
         )
-        for task in bg_manager._tasks.values()
+        for task in bg_manager.tasks.values()
         if task.session_id == session_id
     ]
     return BackgroundTaskListResponse(tasks=tasks, total=len(tasks))
@@ -84,7 +84,7 @@ async def cancel_background_task(
             404 if *task_id* is not found or does not belong to
             *session_id*.
     """
-    task = bg_manager._tasks.get(task_id)
+    task = bg_manager.tasks.get(task_id)
     if task is None or task.session_id != session_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -92,5 +92,5 @@ async def cancel_background_task(
             f"'{session_id}'.",
         )
 
-    bg_manager._tasks.pop(task_id, None)
+    bg_manager.tasks.pop(task_id, None)
     task.asyncio_task.cancel()
