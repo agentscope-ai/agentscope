@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The tracing decorators for agent, formatter, toolkit, chat and embedding
 models."""
+import asyncio
 import inspect
 from functools import wraps
 from typing import (
@@ -89,13 +90,13 @@ def _set_span_success_status(span: Span) -> None:
     span.end()
 
 
-def _set_span_error_status(span: Span, e: Exception) -> None:
+def _set_span_error_status(span: Span, e: BaseException) -> None:
     """Set the status of the span.
     Args:
         span (`Span`):
             The OpenTelemetry span to be used for tracing.
-        e (`Exception`):
-            The exception to be recorded.
+        e (`BaseException`):
+            The BaseException to be recorded.
     """
     from opentelemetry import trace as trace_api
 
@@ -155,7 +156,7 @@ async def _trace_async_generator_wrapper(
             last_chunk = chunk
             yield chunk
 
-    except Exception as e:
+    except (asyncio.CancelledError, Exception) as e:
         has_error = True
         _set_span_error_status(span, e)
         raise e from None
@@ -263,7 +264,7 @@ def trace(
                         _set_span_success_status(span)
                         return res
 
-                    except Exception as e:
+                    except (asyncio.CancelledError, Exception) as e:
                         _set_span_error_status(span, e)
                         raise e from None
 
@@ -356,9 +357,8 @@ def trace_toolkit(
                 # Return the wrapped generator
                 return _trace_async_generator_wrapper(res, span)
 
-            except Exception as e:
+            except (asyncio.CancelledError, Exception) as e:
                 _set_span_error_status(span, e)
-                span.end()
                 raise e from None
 
     return wrapper
@@ -426,7 +426,7 @@ def trace_reply(
                 _set_span_success_status(span)
                 return res
 
-            except Exception as e:
+            except (asyncio.CancelledError, Exception) as e:
                 _set_span_error_status(span, e)
                 raise e from None
 
@@ -486,7 +486,7 @@ def trace_embedding(
                 _set_span_success_status(span)
                 return res
 
-            except Exception as e:
+            except (asyncio.CancelledError, Exception) as e:
                 _set_span_error_status(span, e)
                 raise e from None
 
@@ -557,7 +557,7 @@ def trace_format(
                 _set_span_success_status(span)
                 return res
 
-            except Exception as e:
+            except (asyncio.CancelledError, Exception) as e:
                 _set_span_error_status(span, e)
                 raise e from None
 
@@ -639,7 +639,7 @@ def trace_llm(
                 _set_span_success_status(span)
                 return res
 
-            except Exception as e:
+            except (asyncio.CancelledError, Exception) as e:
                 _set_span_error_status(span, e)
                 raise e from None
 
