@@ -37,9 +37,13 @@ async def execute_shell_command(
         bufsize=0,
     )
 
+    communicate_task = asyncio.create_task(proc.communicate())
+
     try:
-        await asyncio.wait_for(proc.wait(), timeout=timeout)
-        stdout, stderr = await proc.communicate()
+        stdout, stderr = await asyncio.wait_for(
+            asyncio.shield(communicate_task),
+            timeout=timeout,
+        )
         stdout_str = stdout.decode("utf-8")
         stderr_str = stderr.decode("utf-8")
         returncode = proc.returncode
@@ -52,7 +56,7 @@ async def execute_shell_command(
         returncode = -1
         try:
             proc.terminate()
-            stdout, stderr = await proc.communicate()
+            stdout, stderr = await communicate_task
             stdout_str = stdout.decode("utf-8")
             stderr_str = stderr.decode("utf-8")
             if stderr_str:
