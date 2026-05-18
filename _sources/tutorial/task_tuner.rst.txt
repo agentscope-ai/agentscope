@@ -150,6 +150,8 @@ Below is an example workflow function using a ReAct agent to answer math questio
 
  .. code-block:: none
 
+    13:00:45 - LiteLLM:WARNING: common_utils.py:979 - litellm: could not pre-load bedrock-runtime response stream shape — Bedrock event-stream decoding will be unavailable. Error: No module named 'botocore'
+    13:00:45 - LiteLLM:WARNING: common_utils.py:24 - litellm: could not pre-load sagemaker-runtime response stream shape — SageMaker event-stream decoding will be unavailable. Error: No module named 'botocore'
     /opt/hostedtoolcache/Python/3.10.20/x64/lib/python3.10/site-packages/dspy/predict/avatar/signatures.py:12: DeprecationWarning: The 'prefix' argument in InputField/OutputField is deprecated and has no effect in DSPy. It will be removed in a future version.
       goal: str = dspy.InputField(
     /opt/hostedtoolcache/Python/3.10.20/x64/lib/python3.10/site-packages/dspy/predict/avatar/signatures.py:16: DeprecationWarning: The 'prefix' argument in InputField/OutputField is deprecated and has no effect in DSPy. It will be removed in a future version.
@@ -213,13 +215,13 @@ You can directly run this workflow function with a task dictionary and a ``DashS
 
     \[ 123 + 456 = 579 \]
 
-    So, 123 plus 456 is 579.
+    So, 123 plus 456 equals 579.
 
     Workflow response: To find the sum of 123 and 456, you simply add the two numbers together:
 
     \[ 123 + 456 = 579 \]
 
-    So, 123 plus 456 is 579.
+    So, 123 plus 456 equals 579.
 
 
 
@@ -353,7 +355,7 @@ Checkpoints and logs are automatically saved to the ``checkpoints/AgentScope`` d
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 12.922 seconds)
+   **Total running time of the script:** (0 minutes 4.592 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_tuner.py:
