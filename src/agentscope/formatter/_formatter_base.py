@@ -68,6 +68,9 @@ class FormatterBase:
                 second element is the corresponding block.
         """
 
+        if output is None:
+            return "", []
+
         if isinstance(output, str):
             return output, []
 
