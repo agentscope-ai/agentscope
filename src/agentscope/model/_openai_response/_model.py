@@ -5,7 +5,7 @@ from typing import Literal, Any, AsyncGenerator, List, TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
-from .._base import ChatModelBase
+from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ...credential import OpenAICredential
@@ -22,8 +22,6 @@ else:
     Response = Any
     ResponseStreamEvent = Any
     AsyncStream = Any
-
-_TOOL_CHOICE_LITERAL_MODES = ["auto", "none", "required"]
 
 
 class OpenAIResponseModel(ChatModelBase):
@@ -261,11 +259,19 @@ class OpenAIResponseModel(ChatModelBase):
                 if response_id is None:
                     response_id = getattr(resp, "id", None)
                 if resp.usage:
+                    u = resp.usage
+                    details = getattr(u, "input_tokens_details", None)
                     usage = ChatUsage(
-                        input_tokens=resp.usage.input_tokens,
-                        output_tokens=resp.usage.output_tokens,
+                        input_tokens=u.input_tokens,
+                        output_tokens=u.output_tokens,
                         time=(datetime.now() - start_datetime).total_seconds(),
-                        metadata=resp.usage,
+                        cache_input_tokens=getattr(
+                            details,
+                            "cached_tokens",
+                            0,
+                        )
+                        if details
+                        else 0,
                     )
                 # Attach reasoning item IDs from the completed response so the
                 # formatter can echo them back in multi-turn history.
@@ -382,11 +388,19 @@ class OpenAIResponseModel(ChatModelBase):
 
         usage = None
         if response.usage:
+            u = response.usage
+            details = getattr(u, "input_tokens_details", None)
             usage = ChatUsage(
-                input_tokens=response.usage.input_tokens,
-                output_tokens=response.usage.output_tokens,
+                input_tokens=u.input_tokens,
+                output_tokens=u.output_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
-                metadata=response.usage,
+                cache_input_tokens=getattr(
+                    details,
+                    "cached_tokens",
+                    0,
+                )
+                if details
+                else 0,
             )
 
         resp_kwargs: dict[str, Any] = {
@@ -405,12 +419,18 @@ class OpenAIResponseModel(ChatModelBase):
         tools: list[dict] | None,
         tool_choice: ToolChoice | None,
     ) -> tuple[list[dict] | None, str | dict | None]:
-        """Format tools and tool_choice for the Responses API.
+        """Validate, filter, and format tools and tool_choice for the
+        Responses API.
+
+        When ``tool_choice.tools`` is specified the schemas list is filtered
+        to only those tools. When ``tool_choice.mode`` is a specific tool name
+        (str) the model is forced to call exactly that tool without needing to
+        filter the list, preserving prompt-cache efficiency.
 
         Args:
-            tools (`list[dict] | None`):
+            tools (`list[dict] | None`, optional):
                 The raw tool schemas.
-            tool_choice (`ToolChoice | None`):
+            tool_choice (`ToolChoice | None`, optional):
                 The tool choice configuration.
 
         Returns:
@@ -418,7 +438,11 @@ class OpenAIResponseModel(ChatModelBase):
                 A tuple of ``(formatted_tools, formatted_tool_choice)``
                 ready for the Responses API.
         """
-        self._validate_tool_choice(tool_choice, tools)
+        if tool_choice and tools:
+            self._validate_tool_choice(tool_choice, tools)
+            if tool_choice.tools:
+                allowed = set(tool_choice.tools)
+                tools = [t for t in tools if t["function"]["name"] in allowed]
 
         fmt_tools = None
         if tools:
@@ -429,7 +453,9 @@ class OpenAIResponseModel(ChatModelBase):
         if not tool_choice:
             return fmt_tools, None
 
-        if tool_choice not in _TOOL_CHOICE_LITERAL_MODES:
-            return fmt_tools, {"type": "function", "name": tool_choice}
+        mode = tool_choice.mode
 
-        return fmt_tools, tool_choice
+        if mode not in _TOOL_CHOICE_LITERAL_MODES:
+            return fmt_tools, {"type": "function", "name": mode}
+
+        return fmt_tools, mode

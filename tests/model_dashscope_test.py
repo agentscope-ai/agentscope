@@ -8,12 +8,14 @@ import json
 from typing import Any
 from datetime import datetime
 from http import HTTPStatus
+import unittest
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock
 
 from agentscope.message import TextBlock, ToolCallBlock
 from agentscope.model import DashScopeChatModel
 from agentscope.credential import DashScopeCredential
+from agentscope.tool import ToolChoice
 
 
 # ---------------------------------------------------------------------------
@@ -115,3 +117,99 @@ class TestDashScopeModelParsing(IsolatedAsyncioTestCase):
                 self.start,
                 resp,
             )
+
+
+# ---------------------------------------------------------------------------
+# Shared _format_tools fixtures
+# ---------------------------------------------------------------------------
+
+_FT_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Get the weather",
+            "parameters": {
+                "type": "object",
+                "properties": {"city": {"type": "string"}},
+                "required": ["city"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_time",
+            "description": "Get the time",
+            "parameters": {
+                "type": "object",
+                "properties": {"timezone": {"type": "string"}},
+                "required": ["timezone"],
+            },
+        },
+    },
+]
+
+
+class TestDashScopeFormatTools(unittest.TestCase):
+    """Tests for DashScopeChatModel._format_tools."""
+
+    def setUp(self) -> None:
+        """Set up model instance."""
+        self.model = _make_model()
+
+    def test_auto_mode(self) -> None:
+        """Auto mode returns tools unchanged and string 'auto'."""
+        fmt_tools, fmt_choice = self.model._format_tools(
+            _FT_TOOLS,
+            ToolChoice(mode="auto"),
+        )
+        self.assertEqual(fmt_tools, _FT_TOOLS)
+        self.assertEqual(fmt_choice, "auto")
+
+    def test_none_mode(self) -> None:
+        """None mode returns tools unchanged and string 'none'."""
+        fmt_tools, fmt_choice = self.model._format_tools(
+            _FT_TOOLS,
+            ToolChoice(mode="none"),
+        )
+        self.assertEqual(fmt_tools, _FT_TOOLS)
+        self.assertEqual(fmt_choice, "none")
+
+    def test_required_mode_warns(self) -> None:
+        """Required mode emits a DeprecationWarning and falls back to auto."""
+        with self.assertWarns(DeprecationWarning):
+            fmt_tools, fmt_choice = self.model._format_tools(
+                _FT_TOOLS,
+                ToolChoice(mode="required"),
+            )
+        self.assertEqual(fmt_tools, _FT_TOOLS)
+        self.assertEqual(fmt_choice, "auto")
+
+    def test_str_mode_force_call(self) -> None:
+        """A specific tool name forces that tool call."""
+        fmt_tools, fmt_choice = self.model._format_tools(
+            _FT_TOOLS,
+            ToolChoice(mode="get_weather"),
+        )
+        self.assertEqual(fmt_tools, _FT_TOOLS)
+        self.assertEqual(
+            fmt_choice,
+            {"type": "function", "function": {"name": "get_weather"}},
+        )
+
+    def test_tools_filtered(self) -> None:
+        """When tool_choice.tools is set, only those tools are included."""
+        fmt_tools, fmt_choice = self.model._format_tools(
+            _FT_TOOLS,
+            ToolChoice(mode="auto", tools=["get_weather"]),
+        )
+        self.assertEqual(len(fmt_tools), 1)
+        self.assertEqual(fmt_tools[0]["function"]["name"], "get_weather")
+        self.assertEqual(fmt_choice, "auto")
+
+    def test_no_tool_choice(self) -> None:
+        """Without tool_choice, returns tools and None."""
+        fmt_tools, fmt_choice = self.model._format_tools(_FT_TOOLS, None)
+        self.assertEqual(fmt_tools, _FT_TOOLS)
+        self.assertIsNone(fmt_choice)
