@@ -129,11 +129,11 @@ class DashScopeChatModel(ChatModelBase):
         super().__init__(
             credential=credential,
             model=model,
+            parameters=parameters or self.Parameters(),
             stream=stream,
             max_retries=max_retries,
             context_size=context_size,
         )
-        self.parameters = parameters or self.Parameters()
         self.multimodality = multimodality
         self.formatter = formatter or DashScopeChatFormatter()
 

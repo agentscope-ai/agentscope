@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Schedule stop tool – removes a job from the scheduler."""
+"""Schedule stop tool – removes a job from the scheduler and storage."""
 from typing import Any
 
 from pydantic import BaseModel, Field
+from apscheduler.jobstores.base import JobLookupError
 
 from .....message import ToolResultState, TextBlock
 from .....permission import (
@@ -11,6 +12,7 @@ from .....permission import (
     PermissionBehavior,
 )
 from .....tool import ToolBase, ToolChunk
+from ....storage._base import StorageBase
 
 
 class _ScheduleStopParams(BaseModel):
@@ -24,15 +26,17 @@ class _ScheduleStopParams(BaseModel):
 class ScheduleStop(ToolBase):
     """The schedule stop tool.
 
-    Removes the given scheduled job from the scheduler so that it will no
-    longer be triggered. The job cannot be recovered after removal.
+    Permanently removes the given scheduled job from both the in-memory
+    APScheduler and the persistent storage.  The job cannot be recovered
+    after removal.
     """
 
     name: str = "ScheduleStop"
 
     description: str = (
-        "Stop (permanently remove) a scheduled job by its schedule ID. "
-        "After this call the job will no longer be executed."
+        "Stop (permanently remove) a scheduled task by its schedule ID. "
+        "After this call the task will no longer be executed and its record "
+        "will be deleted from storage."
     )
     input_schema: dict = _ScheduleStopParams.model_json_schema()
 
@@ -43,14 +47,25 @@ class ScheduleStop(ToolBase):
     is_mcp: bool = False
     mcp_name: str | None = None
 
-    def __init__(self, scheduler: Any) -> None:
+    def __init__(
+        self,
+        user_id: str,
+        scheduler: Any,
+        storage: StorageBase,
+    ) -> None:
         """Initialize the schedule stop tool.
 
         Args:
-            scheduler (`AsyncIOScheduler`):
-                The scheduler instance whose jobs can be removed.
+            user_id (`str`):
+                The authenticated user; used to scope the storage deletion.
+            scheduler (`Any`):
+                The ``AsyncIOScheduler`` instance whose job will be removed.
+            storage (`StorageBase`):
+                The storage backend used to delete the persisted record.
         """
+        self._user_id = user_id
         self._scheduler = scheduler
+        self._storage = storage
 
     async def check_permissions(
         self,
@@ -63,8 +78,8 @@ class ScheduleStop(ToolBase):
             message=f"{self.name} is always allowed to be called.",
         )
 
-    async def __call__(self, schedule_id: str) -> ToolChunk:
-        """Stop (remove) the scheduled job with the given ID.
+    async def __call__(self, schedule_id: str) -> ToolChunk:  # type: ignore[override]
+        """Stop (remove) the scheduled task with the given ID.
 
         Args:
             schedule_id (`str`):
@@ -74,17 +89,27 @@ class ScheduleStop(ToolBase):
             `ToolChunk`:
                 A chunk describing the result of the stop operation.
         """
-        from apscheduler.jobstores.base import JobLookupError
 
+        # Remove from the in-memory scheduler (best-effort; may already be
+        # absent if the job finished naturally or the server restarted)
         try:
             self._scheduler.remove_job(schedule_id)
         except JobLookupError:
+            pass
+
+        # Delete from persistent storage
+        deleted = await self._storage.delete_schedule(
+            self._user_id,
+            schedule_id,
+        )
+
+        if not deleted:
             return ToolChunk(
                 content=[
                     TextBlock(
                         text=(
                             f"ScheduleNotFoundError: Schedule with id "
-                            f"{schedule_id!r} not found."
+                            f"{schedule_id!r} not found in storage."
                         ),
                     ),
                 ],
@@ -96,7 +121,7 @@ class ScheduleStop(ToolBase):
                 TextBlock(
                     text=(
                         f"Schedule {schedule_id!r} has been stopped "
-                        f"and removed successfully."
+                        f"and permanently removed."
                     ),
                 ),
             ],

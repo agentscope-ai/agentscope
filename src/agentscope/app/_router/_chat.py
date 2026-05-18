@@ -10,8 +10,9 @@ from .._deps import (
     get_session_manager,
     get_storage,
     get_workspace_manager,
+    get_background_task_manager,
 )
-from .._manager import SessionManager, WorkspaceManagerBase
+from .._manager import SessionManager, WorkspaceManagerBase, BackgroundTaskManager
 from .._schema import ChatRequest
 from .._service import get_agent
 from ..storage import StorageBase
@@ -32,6 +33,7 @@ async def _stream_events(
     storage: StorageBase,
     session_manager: SessionManager,
     workspace_manager: WorkspaceManagerBase,
+    background_task_manager: BackgroundTaskManager,
 ) -> AsyncGenerator[str, None]:
     """Drive the agent and yield SSE-formatted AgentEvent frames.
 
@@ -45,6 +47,7 @@ async def _stream_events(
     agent = await get_agent(
         storage=storage,
         workspace_manager=workspace_manager,
+        background_task_manager=background_task_manager,
         user_id=user_id,
         agent_id=request.agent_id,
         session_id=request.session_id,
@@ -98,7 +101,7 @@ async def _stream_events(
                     agent.state.reply_id,
                     request.session_id,
                 )
-            else:
+            elif request.input:
                 # Apply the incoming event so that the persisted message
                 # reflects the updated tool-call states before streaming
                 # resumes (e.g. ASKING→ALLOWED/FINISHED for
@@ -142,6 +145,7 @@ async def chat(
     storage: StorageBase = Depends(get_storage),
     session_manager: SessionManager = Depends(get_session_manager),
     workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
+    background_task_manager: BackgroundTaskManager = Depends(get_background_task_manager)
 ) -> StreamingResponse:
     """Send a message to an agent and stream back the reply as SSE events.
 
@@ -171,6 +175,7 @@ async def chat(
             storage,
             session_manager,
             workspace_manager,
+            background_task_manager,
         ),
         media_type="text/event-stream",
         headers={

@@ -25,17 +25,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     - Shuts down the scheduler (waits for running jobs to finish).
     """
     async with app.state.storage:
-        app.state.session_manager = SessionManager()
+        session_manager = SessionManager()
+        app.state.session_manager = session_manager
         app.state.background_task_manager = BackgroundTaskManager()
 
-        scheduler: SchedulerManager = app.state.scheduler_manager
+        scheduler = SchedulerManager(
+            storage=app.state.storage,
+            session_manager=session_manager,
+        )
+        app.state.scheduler_manager = scheduler
         await scheduler.start()
 
         # Restore persisted schedules so they survive server restarts
         all_schedules = await app.state.storage.list_all_schedules()
         if all_schedules:
-            trigger_factory = app.state.trigger_factory
-            await scheduler.restore(all_schedules, trigger_factory)
+            await scheduler.restore(all_schedules)
 
         yield
 

@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 """The agent service layer, responsible for getting the agent class."""
+from fastapi import HTTPException
+
 from ._model import get_model
-from .._manager import WorkspaceManagerBase
+from .._middleware import ToolOffloadMiddleware
+from .._manager import WorkspaceManagerBase, BackgroundTaskManager
 from ..storage import StorageBase
 from ...agent import Agent
 from ...tool import Toolkit
@@ -10,6 +13,7 @@ from ...tool import Toolkit
 async def get_agent(
     storage: StorageBase,
     workspace_manager: WorkspaceManagerBase,
+    background_task_manager: BackgroundTaskManager,
     user_id: str,
     agent_id: str,
     session_id: str,
@@ -36,6 +40,14 @@ async def get_agent(
     # Step 2.1. Get the model instance
     # ====================================================================
     model_cfg = session_record.config.chat_model_config
+
+    if not model_cfg:
+        # Raise error to the frontend
+        raise HTTPException(
+            status_code=404,
+            detail=f"No model configuration found for agent {agent_id}",
+        )
+
     model = await get_model(user_id, model_cfg, storage)
 
     # ====================================================================
@@ -55,12 +67,15 @@ async def get_agent(
 
     # TODO: should be configurable
     from agentscope.tool import Bash, Read, Write, Edit
-
+    import os
     toolkit = Toolkit(
         tools=[Bash(), Read(), Write(), Edit()],
+        skills=[os.path.join(workspace.workdir, "skills", "pdf")],
     )
+
     for mcp_client in await workspace.list_mcps():
         await toolkit.register_mcp(mcp_client)
+
 
     return Agent(
         name=cfg.name,
@@ -70,5 +85,6 @@ async def get_agent(
         context_config=cfg.context_config,
         react_config=cfg.react_config,
         state=agent_state,
+        middlewares=[ToolOffloadMiddleware(background_task_manager)],
         # workspace=workspace,
     )

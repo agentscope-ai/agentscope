@@ -1144,50 +1144,14 @@ class Agent:
         | ToolResultEndEvent,
         None,
     ]:
-        """Execute tool call entry point (maybe wrapped by middleware)."""
-        if not self._acting_middlewares:
-            async for item in self._execute_tool_call_impl(tool_call):
-                yield item
-        else:
+        """Execute a single tool call with permission checking and context
+        management.
 
-            async def execute_chain(
-                index: int = 0,
-                tool_call: ToolCallBlock = tool_call,
-            ) -> AsyncGenerator:
-                if index >= len(self._acting_middlewares):
-                    async for item in self._execute_tool_call_impl(tool_call):
-                        yield item
-                else:
-                    mw = self._acting_middlewares[index]
-                    input_kwargs = {"tool_call": tool_call}
-
-                    async def next_handler(**kwargs: Any) -> AsyncGenerator:
-                        async for item in execute_chain(index + 1, **kwargs):
-                            yield item
-
-                    async for item in mw.on_acting(
-                        agent=self,
-                        input_kwargs=input_kwargs,
-                        next_handler=next_handler,
-                    ):
-                        yield item
-
-            async for item in execute_chain():
-                yield item
-
-    async def _execute_tool_call_impl(
-        self,
-        tool_call: ToolCallBlock,
-    ) -> AsyncGenerator[
-        RequireUserConfirmEvent
-        | RequireExternalExecutionEvent
-        | ToolResultStartEvent
-        | ToolResultTextDeltaEvent
-        | ToolResultDataDeltaEvent
-        | ToolResultEndEvent,
-        None,
-    ]:
-        """Execute a single tool call with permission checking.
+        This method handles the full tool call lifecycle: input validation,
+        permission checking, event emission, and context writes.  The raw
+        tool execution (``toolkit.call_tool``) is delegated to
+        :meth:`_acting`, which is the hook point for ``on_acting``
+        middleware.
 
         Args:
             tool_call (`ToolCallBlock`):
@@ -1197,8 +1161,7 @@ class Agent:
             `RequireUserConfirmEvent \
             | RequireExternalExecutionEvent \
             | ToolResultStartEvent \
-            | ToolResult \
-            | TextDeltaEvent \
+            | ToolResultTextDeltaEvent \
             | ToolResultDataDeltaEvent \
             | ToolResultEndEvent`:
                 The events generated during the tool call execution.
@@ -1322,10 +1285,10 @@ class Agent:
                 )
                 return
 
-            # Execute the tool call and yield the events.
-
-            res = self.toolkit.call_tool(tool_call, self.state)
-            async for chunk in res:
+            # ================================================================
+            # Step 4: Delegate raw execution to _acting (middleware hook point)
+            # ================================================================
+            async for chunk in self._acting(tool_call):
                 # The ToolResponse is the last and completed tool result here
                 if isinstance(chunk, ToolResponse):
                     tool_result_block = ToolResultBlock(
@@ -1338,7 +1301,7 @@ class Agent:
                     )
 
                     # ========================================================
-                    # Step 4: Truncate the tool result if exceed
+                    # Step 5: Truncate the tool result if exceed
                     # ========================================================
                     (
                         reserved_tool_result_block,
@@ -1389,6 +1352,7 @@ class Agent:
                     )
 
                 else:
+                    # Intermediate ToolChunk — convert to streaming events
                     async for evt in self._convert_tool_chunk_to_event(
                         tool_call.id,
                         chunk.content,
@@ -1400,6 +1364,87 @@ class Agent:
         raise ValueError(
             f"Invalid permission decision behavior: {decision.behavior}",
         )
+
+    async def _acting(
+        self,
+        tool_call: ToolCallBlock,
+    ) -> AsyncGenerator["ToolChunk | ToolResponse", None]:
+        """Raw tool execution entry point (maybe wrapped by middleware).
+
+        This method is the hook point for ``on_acting`` middleware.  It
+        delegates to :meth:`_acting_impl` which wraps
+        ``toolkit.call_tool`` directly.  Permission checking and context
+        writes are **not** part of this method — they are handled by
+        :meth:`_execute_tool_call` before and after this call.
+
+        Args:
+            tool_call (`ToolCallBlock`):
+                The tool call block to execute.
+
+        Yields:
+            `ToolChunk | ToolResponse`:
+                Intermediate :class:`~agentscope.tool.ToolChunk` objects
+                followed by a final :class:`~agentscope.tool.ToolResponse`.
+        """
+        if not self._acting_middlewares:
+            async for item in self._acting_impl(tool_call):
+                yield item
+        else:
+
+            async def execute_chain(
+                index: int = 0,
+                tool_call: ToolCallBlock = tool_call,
+            ) -> AsyncGenerator:
+                if index >= len(self._acting_middlewares):
+                    async for item in self._acting_impl(tool_call):
+                        yield item
+                else:
+                    mw = self._acting_middlewares[index]
+                    input_kwargs = {"tool_call": tool_call}
+
+                    async def next_handler(**kwargs: Any) -> AsyncGenerator:
+                        async for item in execute_chain(index + 1, **kwargs):
+                            yield item
+
+                    async for item in mw.on_acting(
+                        agent=self,
+                        input_kwargs=input_kwargs,
+                        next_handler=next_handler,
+                    ):
+                        yield item
+
+            async for item in execute_chain():
+                yield item
+
+    async def _acting_impl(
+        self,
+        tool_call: ToolCallBlock,
+    ) -> AsyncGenerator["ToolChunk | ToolResponse", None]:
+        """Core tool execution logic.
+
+        Wraps :meth:`~agentscope.tool.Toolkit.call_tool` and yields its
+        output unchanged.  Does **not** perform permission checking or
+        write to the agent context — those responsibilities belong to
+        :meth:`_execute_tool_call`.
+
+        .. note::
+            Tools with ``is_state_injected=True`` receive the live
+            ``agent.state`` object.  Offloading such tools to a background
+            task (via ``on_acting`` middleware) may cause concurrent state
+            mutations.  TODO: block background offloading for
+            state-injected tools.
+
+        Args:
+            tool_call (`ToolCallBlock`):
+                The tool call block to execute.
+
+        Yields:
+            `ToolChunk | ToolResponse`:
+                Intermediate :class:`~agentscope.tool.ToolChunk` objects
+                followed by a final :class:`~agentscope.tool.ToolResponse`.
+        """
+        async for chunk in self.toolkit.call_tool(tool_call, self.state):
+            yield chunk
 
     async def _handle_error_tool_call(
         self,

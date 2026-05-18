@@ -1,24 +1,5 @@
 # -*- coding: utf-8 -*-
 """The AGUI middleware class."""
-from ag_ui.core.events import (
-    BaseEvent as AGUIBaseEvent,
-    CustomEvent as AGUICustomEvent,
-    ReasoningMessageContentEvent as AGUIReasoningMessageContentEvent,
-    ReasoningMessageEndEvent as AGUIReasoningMessageEndEvent,
-    ReasoningMessageStartEvent as AGUIReasoningMessageStartEvent,
-    RunErrorEvent as AGUIRunErrorEvent,
-    RunFinishedEvent as AGUIRunFinishedEvent,
-    RunStartedEvent as AGUIRunStartedEvent,
-    StepFinishedEvent as AGUIStepFinishedEvent,
-    StepStartedEvent as AGUIStepStartedEvent,
-    TextMessageContentEvent as AGUITextMessageContentEvent,
-    TextMessageEndEvent as AGUITextMessageEndEvent,
-    TextMessageStartEvent as AGUITextMessageStartEvent,
-    ToolCallArgsEvent as AGUIToolCallArgsEvent,
-    ToolCallEndEvent as AGUIToolCallEndEvent,
-    ToolCallResultEvent as AGUIToolCallResultEvent,
-    ToolCallStartEvent as AGUIToolCallStartEvent,
-)
 from starlette.types import ASGIApp
 
 from ._base import ProtocolMiddlewareBase
@@ -82,8 +63,29 @@ class AGUIProtocolMiddleware(ProtocolMiddlewareBase):
     def _to_agui_event(  # noqa: C901
         self,
         event: AgentEvent,
-    ) -> AGUIBaseEvent:
+    ) -> "AGUIBaseEvent":
         """Convert an AgentScope event to an AGUI event."""
+
+        from ag_ui.core.events import (
+            BaseEvent as AGUIBaseEvent,
+            CustomEvent as AGUICustomEvent,
+            ReasoningMessageContentEvent as AGUIReasoningMessageContentEvent,
+            ReasoningMessageEndEvent as AGUIReasoningMessageEndEvent,
+            ReasoningMessageStartEvent as AGUIReasoningMessageStartEvent,
+            RunErrorEvent as AGUIRunErrorEvent,
+            RunFinishedEvent as AGUIRunFinishedEvent,
+            RunStartedEvent as AGUIRunStartedEvent,
+            StepFinishedEvent as AGUIStepFinishedEvent,
+            StepStartedEvent as AGUIStepStartedEvent,
+            TextMessageContentEvent as AGUITextMessageContentEvent,
+            TextMessageEndEvent as AGUITextMessageEndEvent,
+            TextMessageStartEvent as AGUITextMessageStartEvent,
+            ToolCallArgsEvent as AGUIToolCallArgsEvent,
+            ToolCallEndEvent as AGUIToolCallEndEvent,
+            ToolCallResultEvent as AGUIToolCallResultEvent,
+            ToolCallStartEvent as AGUIToolCallStartEvent,
+        )
+
 
         if isinstance(event, ReplyStartEvent):
             return AGUIRunStartedEvent(

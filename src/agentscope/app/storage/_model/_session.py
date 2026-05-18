@@ -1,10 +1,19 @@
 # -*- coding: utf-8 -*-
 """The session data class for storage."""
 from datetime import datetime
+from enum import Enum
+
 from pydantic import BaseModel, Field
 
 from ._base import _RecordBase
 from ....state import AgentState
+
+
+class SessionSource(str, Enum):
+    """The source that created the session."""
+
+    USER = "user"
+    SCHEDULE = "schedule"
 
 
 class ChatModelConfig(BaseModel):
@@ -47,6 +56,12 @@ class SessionRecord(_RecordBase):
 
     agent_id: str
     """The agent id."""
+
+    source: SessionSource = SessionSource.USER
+    """The source that created this session."""
+
+    source_schedule_id: str | None = None
+    """The source schedule Id."""
 
     config: SessionConfig
     """Session configuration (workspace, name, model)."""

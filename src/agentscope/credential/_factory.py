@@ -48,8 +48,8 @@ class CredentialFactory:
     @classmethod
     def _get_adapter(cls) -> TypeAdapter[CredentialBase]:
         if cls._adapter is None:
-            union = Annotated[
-                Union[tuple(cls._classes)],  # type: ignore[misc]
+            union = Annotated[  # type: ignore[valid-type]
+                Union[tuple(cls._classes)],
                 Field(discriminator="type"),
             ]
             cls._adapter = TypeAdapter(union)

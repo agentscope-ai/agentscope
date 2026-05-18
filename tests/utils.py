@@ -33,6 +33,9 @@ class MockCredential(CredentialBase):
 class MockModel(ChatModelBase):
     """A mock model for testing."""
 
+    class Parameters(BaseModel):
+        """The parameters."""
+
     def __init__(
         self,
         model: str = "mock-model",
@@ -44,6 +47,7 @@ class MockModel(ChatModelBase):
         super().__init__(
             credential=MockCredential(),
             model=model,
+            parameters=MockModel.Parameters(),
             context_size=context_size,
         )
         self.mock_chat_responses = mock_chat_responses or []

@@ -2,8 +2,12 @@
 """Shared FastAPI dependencies for the agentscope app."""
 from fastapi import Header, HTTPException, Request, status
 
-from ._manager import SessionManager, WorkspaceManagerBase
-from ._manager._scheduler import SchedulerManager
+from ._manager import (
+    BackgroundTaskManager,
+    SessionManager,
+    WorkspaceManagerBase,
+    SchedulerManager,
+)
 from .storage import StorageBase
 
 
@@ -91,3 +95,17 @@ async def get_workspace_manager(request: Request) -> WorkspaceManagerBase:
             detail="Workspace manager is not configured.",
         )
     return manager
+
+
+async def get_background_task_manager(
+    request: Request,
+) -> BackgroundTaskManager:
+    """Return the application-wide background task manager.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `BackgroundTaskManager`: The manager stored in ``app.state``.
+    """
+    return request.app.state.background_task_manager

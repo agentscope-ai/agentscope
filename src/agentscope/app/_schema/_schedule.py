@@ -11,25 +11,39 @@ class CreateScheduleRequest(BaseModel):
     """Request body for creating a new schedule."""
 
     name: str = Field(description="Display name of the schedule.")
+
     description: str = Field(default="", description="Optional description.")
+
     cron_expression: str = Field(
         description="Standard 5-field cron expression, e.g. '0 9 * * 1-5'.",
     )
-    agent_id: str = Field(description="Agent to run when the schedule fires.")
-    workspace_id: str = Field(
-        description="Workspace used when creating the triggered session.",
+
+    timezone: str = Field(
+        default="UTC",
+        description="IANA timezone name, e.g. 'America/New_York' or "
+        "'Asia/Shanghai'.",
     )
+
+    agent_id: str = Field(description="Agent to run when the schedule fires.")
+
     chat_model_config: ChatModelConfig = Field(
         description="Model configuration for the auto-created session.",
     )
-    input: dict | None = Field(
-        default=None,
-        description="Serialised Msg sent to the agent on each trigger.",
+
+    enable: bool = Field(
+        default=True,
+        description="Whether the schedule is active immediately after creation.",
     )
+
+    stateful: bool = Field(
+        default=False,
+        description="If True, consecutive executions share the same session "
+        "context.",
+    )
+
     permission_mode: PermissionMode = Field(
         default=PermissionMode.DONT_ASK,
-        description="Permission level for the agent during scheduled "
-        "execution.",
+        description="Permission level for the agent during scheduled execution.",
     )
 
 
@@ -44,21 +58,42 @@ class CreateScheduleResponse(BaseModel):
 class UpdateScheduleRequest(BaseModel):
     """Request body for partially updating a schedule.
 
-    Omit any field to keep its current value.
+    Omit any field to keep its current value.  Changing ``cron_expression``
+    or ``timezone`` will reschedule the APScheduler job immediately.
+    Changing ``enable`` to ``False`` removes the job from the scheduler
+    without deleting the record; setting it back to ``True`` re-registers it.
     """
 
     name: str | None = Field(default=None, description="New display name.")
+
     description: str | None = Field(
         default=None,
         description="New description.",
     )
+
     cron_expression: str | None = Field(
         default=None,
         description="New cron expression. Reschedules the task immediately.",
     )
-    input: dict | None = Field(
+
+    timezone: str | None = Field(
         default=None,
-        description="New trigger input. Pass an empty dict to clear.",
+        description="New IANA timezone name.",
+    )
+
+    enable: bool | None = Field(
+        default=None,
+        description="Set to False to pause the schedule without deleting it.",
+    )
+
+    stateful: bool | None = Field(
+        default=None,
+        description="Change whether executions share session context.",
+    )
+
+    permission_mode: PermissionMode | None = Field(
+        default=None,
+        description="New permission mode.",
     )
 
 

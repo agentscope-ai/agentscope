@@ -3,31 +3,43 @@
 import asyncio
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Coroutine, Any
+from typing import Any, Callable, Coroutine
 
 import shortuuid
 from pydantic import BaseModel, Field
 
-from agentscope.message import TextBlock, ToolResultState
-from agentscope.permission import (
+from ...message import TextBlock, ToolResultState
+from ...permission import (
     PermissionContext,
     PermissionDecision,
     PermissionBehavior,
 )
-from agentscope.tool import ToolBase, ToolChunk
+from ...tool import ToolBase, ToolChunk
 
 
 @dataclass
-class _BackgroundTask:
-    coroutine_task: Coroutine
-    """The background task coroutine."""
+class BackgroundTask:
+    """Metadata for a single background task.
+
+    Attributes:
+        asyncio_task (`asyncio.Task`):
+            The running asyncio task.
+        session_id (`str`):
+            The session id of the originating request.
+        agent_id (`str`):
+            The name of the agent that created the task.
+        id (`str`):
+            Auto-generated unique task identifier.
+    """
+
+    asyncio_task: asyncio.Task
+    """The running asyncio task."""
 
     session_id: str
     """The session id of the background task."""
 
     agent_id: str
-    """Who create the background task, incase one session has multiple agents.
-    """
+    """The agent that created the background task."""
 
     id: str = field(default_factory=shortuuid.uuid)
     """The background task id."""
@@ -42,14 +54,16 @@ class _TaskStopParams(BaseModel):
 
 
 class TaskStop(ToolBase):
-    """A tool to stop the background task."""
+    """A tool to stop a running background task."""
 
     name: str = "TaskStop"
+    """The tool name."""
 
-    description: str = """
-"""
+    description: str = "Stop a background task by its task id."
+    """The tool description."""
 
     input_schema: dict = _TaskStopParams.model_json_schema()
+    """The input schema."""
 
     is_concurrency_safe: bool = True
     is_read_only: bool = False
@@ -58,13 +72,13 @@ class TaskStop(ToolBase):
     is_mcp: bool = False
     mcp_name: str | None = None
 
-    def __init__(self, background_tasks: dict[str, _BackgroundTask]) -> None:
+    def __init__(self, background_tasks: dict[str, BackgroundTask]) -> None:
         """Initialize the TaskStop tool.
 
         Args:
-            background_tasks (`dict[str, _BackgroundTask]`):
+            background_tasks (`dict[str, BackgroundTask]`):
                 A reference to the background tasks managed by the
-                `BackgroundTaskManager`.
+                :class:`BackgroundTaskManager`.
         """
         self.background_tasks = background_tasks
 
@@ -73,7 +87,18 @@ class TaskStop(ToolBase):
         tool_input: dict[str, Any],
         context: PermissionContext,
     ) -> PermissionDecision:
-        """Check permission for the tool usage."""
+        """Check permission for the tool usage.
+
+        Args:
+            tool_input (`dict[str, Any]`):
+                The tool input parameters.
+            context (`PermissionContext`):
+                The permission context.
+
+        Returns:
+            `PermissionDecision`:
+                Always returns ALLOW.
+        """
         return PermissionDecision(
             behavior=PermissionBehavior.ALLOW,
             message=f"{self.name} is always allowed to be called.",
@@ -83,7 +108,7 @@ class TaskStop(ToolBase):
         """Stop the background task.
 
         Args:
-            task_id (str):
+            task_id (`str`):
                 The task id.
 
         Returns:
@@ -101,9 +126,9 @@ class TaskStop(ToolBase):
                 state=ToolResultState.ERROR,
             )
 
-        # Otherwise, stop and pop the task
+        # Cancel and pop the task
         task = self.background_tasks.pop(task_id)
-        task.coroutine_task.close()
+        task.asyncio_task.cancel()
         return ToolChunk(
             content=[TextBlock(text=f"Task {task_id} stopped successfully.")],
             state=ToolResultState.SUCCESS,
@@ -111,53 +136,91 @@ class TaskStop(ToolBase):
 
 
 class BackgroundTaskManager:
-    """The background task manager, responsible for managing background tasks
-    within the agent services."""
+    """Manages background asyncio task lifecycle within the agent services.
+
+    Responsibilities:
+
+    - **Task registry**: track running tasks so they can be cancelled via
+      :class:`TaskStop`.
+    - **Task scheduling**: convenience method for creating a task from a
+      plain coroutine with an optional completion callback.
+
+    Result routing (e.g. writing results back into agent context) is
+    intentionally **not** handled here — callers supply an ``on_complete``
+    callback and own that logic themselves.
+    """
 
     def __init__(self) -> None:
-        """Initialize the MCP manager."""
-        self._tasks: OrderedDict[str, _BackgroundTask] = OrderedDict()
+        """Initialise the background task manager."""
+        self._tasks: OrderedDict[str, BackgroundTask] = OrderedDict()
 
-    async def add_task(
+    async def register_task(
         self,
+        asyncio_task: asyncio.Task,
+        session_id: str,
         agent_id: str,
-        coroutine_task: Coroutine,
-        callback: Coroutine,
+        on_complete: Callable[[], Coroutine] | None = None,
     ) -> str:
-        """Create an async background task and return its id, when finished
-        the callback coroutine will be awaited.
+        """Register an already-running asyncio task and return its id.
+
+        A watcher coroutine is spawned that awaits *asyncio_task*; when it
+        finishes *on_complete* (if provided) is awaited and the task entry
+        is removed from the registry.
 
         Args:
+            asyncio_task (`asyncio.Task`):
+                The already-running task to register.
+            session_id (`str`):
+                The originating session id.
             agent_id (`str`):
-                The agent ID.
-            coroutine_task (`Coroutine`):
-                The coroutine to create the background task.
+                The name of the agent that owns the task.
+            on_complete (`Callable[[], Coroutine] | None`, optional):
+                An async callable invoked when the task finishes normally.
+                Not called when the task is cancelled.
 
         Returns:
             `str`:
-                The created background task ID.
+                The generated task ID.
         """
-        task = _BackgroundTask(
-            coroutine_task=coroutine_task,
-            session_id="",
+        bg_task = BackgroundTask(
+            asyncio_task=asyncio_task,
+            session_id=session_id,
             agent_id=agent_id,
         )
-        self._tasks[task.id] = task
+        task_id = bg_task.id
+        self._tasks[task_id] = bg_task
 
-        async def _run_task() -> None:
-            """Run the background task."""
+        async def _watch() -> None:
             try:
-                await task.coroutine_task
+                await asyncio_task
+            except asyncio.CancelledError:
+                return
+            except Exception:  # pylint: disable=broad-except
+                pass
             finally:
-                await callback()
-                # Remove the task from the manager when it's done
-                self._tasks.pop(task.id, None)
+                self._tasks.pop(task_id, None)
 
-        # Run the task without awaiting it, so it runs in the background
-        asyncio.create_task(_run_task())
+            if on_complete is not None:
+                await on_complete()
 
-        return task.id
+        asyncio.create_task(_watch())
+        return task_id
 
     async def list_tools(self) -> list[ToolBase]:
-        """List the background tasks related tools."""
+        """List the background tasks related tools.
+
+        Returns:
+            `list[ToolBase]`:
+                A list containing the :class:`TaskStop` tool.
+        """
         return [TaskStop(self._tasks)]
+
+    def cancel(self) -> None:
+        """Cancel all running background tasks on application shutdown.
+
+        Each task's asyncio task is cancelled.  The ``on_complete``
+        callback will **not** be invoked for cancelled tasks.
+        """
+        for bg_task in list(self._tasks.values()):
+            bg_task.asyncio_task.cancel()
+        self._tasks.clear()

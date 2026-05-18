@@ -2,7 +2,6 @@
 """The tool to list the scheduled jobs in the cron scheduler manager."""
 from typing import Any
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from pydantic import BaseModel
 
 from .....message import ToolResultState, TextBlock
@@ -12,6 +11,7 @@ from .....permission import (
     PermissionBehavior,
 )
 from .....tool import ToolBase, ToolChunk
+from ....storage import StorageBase
 
 
 class _ScheduleListParams(BaseModel):
@@ -19,12 +19,20 @@ class _ScheduleListParams(BaseModel):
 
 
 class ScheduleList(ToolBase):
-    """The schedule list tool."""
+    """The schedule list tool.
+
+    Lists all scheduled tasks owned by the current user.  Each entry is
+    fetched from storage (rich :class:`ScheduleData`) and augmented with
+    ``next_run_time`` from the in-memory APScheduler job when available.
+    """
 
     name: str = "ScheduleList"
 
-    description: str = """List all scheduled jobs.
-"""
+    description: str = (
+        "List all scheduled tasks for the current user. "
+        "Shows schedule ID, name, cron expression, timezone, next run time, "
+        "enabled/disabled status, and whether the schedule is stateful."
+    )
     input_schema: dict = _ScheduleListParams.model_json_schema()
 
     is_concurrency_safe: bool = True
@@ -34,14 +42,25 @@ class ScheduleList(ToolBase):
     is_mcp: bool = False
     mcp_name: str | None = None
 
-    def __init__(self, scheduler: AsyncIOScheduler) -> None:
-        """Initialize the schedule list.
+    def __init__(
+        self,
+        user_id: str,
+        scheduler: Any,
+        storage: StorageBase,
+    ) -> None:
+        """Initialize the schedule list tool.
 
         Args:
-            scheduler (`AsyncIOScheduler`):
-                The scheduler instance
+            user_id (`str`):
+                The authenticated user; used to scope the storage lookup.
+            scheduler (`Any`):
+                The ``AsyncIOScheduler`` instance for reading ``next_run_time``.
+            storage (`StorageBase`):
+                The storage backend that holds the persisted schedule records.
         """
+        self._user_id = user_id
         self._scheduler = scheduler
+        self._storage = storage
 
     async def check_permissions(
         self,
@@ -54,33 +73,43 @@ class ScheduleList(ToolBase):
             message=f"{self.name} is always allowed to be called.",
         )
 
-    async def __call__(self) -> ToolChunk:
-        """List all scheduled jobs."""
-        schedules = self._scheduler.get_jobs()
+    async def __call__(self) -> ToolChunk:  # type: ignore[override]
+        """List all scheduled tasks for the current user.
 
-        if not schedules:
+        Returns:
+            `ToolChunk`:
+                A chunk containing a formatted list of all scheduled tasks,
+                or a message indicating none exist.
+        """
+        records = await self._storage.list_schedules(self._user_id)
+
+        if not records:
             return ToolChunk(
-                content=[
-                    TextBlock(text="No scheduled jobs found."),
-                ],
+                content=[TextBlock(text="No scheduled tasks found.")],
                 state=ToolResultState.SUCCESS,
             )
 
-        # Format schedule information
-        schedule_info = []
-        for job in schedules:
-            info = f"ID: {job.id}\n"
-            info += f"Name: {job.name}\n"
-            info += f"Next run time: {job.next_run_time}\n"
-            info += f"Trigger: {job.trigger}\n"
-            schedule_info.append(info)
+        # Build a map of schedule_id -> next_run_time from the live scheduler
+        next_run_map: dict[str, str] = {
+            job.id: str(job.next_run_time)
+            for job in self._scheduler.get_jobs()
+        }
 
-        result_text = f"Found {len(schedules)} scheduled job(s):\n\n"
-        result_text += "\n---\n".join(schedule_info)
+        lines: list[str] = [f"Found {len(records)} scheduled task(s):\n"]
+        for record in records:
+            enabled_str = "enabled" if record.data.enable else "disabled"
+            next_run = next_run_map.get(record.id, "not in scheduler")
+            lines.append(
+                f"- [{enabled_str}] {record.data.name!r}  (ID: {record.id})\n"
+                f"  Cron:      {record.data.cron_expression}"
+                f" ({record.data.timezone})\n"
+                f"  Next run:  {next_run}\n"
+                f"  Stateful:  {record.data.stateful}"
+                f"  |  Agent: {record.agent_id}\n"
+                f"  Source:    {record.data.source.value}\n"
+            )
 
         return ToolChunk(
-            content=[
-                TextBlock(text=result_text),
-            ],
+            content=[TextBlock(text="\n".join(lines))],
             state=ToolResultState.SUCCESS,
         )

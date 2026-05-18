@@ -4,6 +4,11 @@ components and a configurable FastAPI app factory.
 """
 
 from ._app import create_app
+from ._middleware import (
+    ProtocolMiddlewareBase,
+    AGUIProtocolMiddleware,
+    ToolOffloadMiddleware,
+)
 from .storage import (
     RedisStorage,
     AgentRecord,
@@ -22,6 +27,9 @@ from ._manager import (
 
 __all__ = [
     "create_app",
+    "ProtocolMiddlewareBase",
+    "AGUIProtocolMiddleware",
+    "ToolOffloadMiddleware",
     "RedisStorage",
     "AgentRecord",
     "CredentialRecord",

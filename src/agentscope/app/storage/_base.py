@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=too-many-public-methods
 """The storage base class."""
 from abc import ABC, abstractmethod
 from typing import Any, Self
@@ -10,6 +11,7 @@ from ._model import (
     ScheduleRecord,
     SessionRecord,
     SessionConfig,
+    SessionSource,
 )
 from ...credential import CredentialBase
 from ...message import Msg
@@ -173,6 +175,7 @@ class StorageBase(ABC):
         config: SessionConfig,
         state: AgentState | None = None,
         session_id: str | None = None,
+        source: SessionSource = SessionSource.USER,
     ) -> SessionRecord:
         """Create or update a session for a (user, agent) pair.
 
@@ -187,6 +190,8 @@ class StorageBase(ABC):
             session_id (`str | None`, optional): If provided, update the
                 existing session with this id. If ``None``, create a new
                 session.
+            source (`SessionSource`, optional): The source that created this
+                session. Defaults to ``SessionSource.USER``.
 
         Returns:
             `SessionRecord`: The created or updated record.

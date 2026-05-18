@@ -8,8 +8,10 @@ from ._model import (
     CredentialRecord,
     ScheduleData,
     ScheduleRecord,
+    ScheduleSource,
     SessionConfig,
     SessionRecord,
+    SessionSource,
     ChatModelConfig,
     UserRecord,
 )
@@ -22,8 +24,10 @@ __all__ = [
     "CredentialRecord",
     "SessionConfig",
     "SessionRecord",
+    "SessionSource",
     "ChatModelConfig",
     "UserRecord",
     "ScheduleData",
     "ScheduleRecord",
+    "ScheduleSource",
 ]

@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 """AgentScope app factory."""
-from collections.abc import Callable
 from typing import Type
 
 from fastapi import FastAPI
 from fastapi.middleware import Middleware
 
 from ._lifespan import lifespan
-from ._manager import SchedulerManager, WorkspaceManagerBase
-from .router import (
+from ._manager import WorkspaceManagerBase
+from ._router import (
     agent_router,
+    background_task_router,
     chat_router,
     credential_router,
     model_router,
@@ -25,7 +25,6 @@ def create_app(
     storage: StorageBase,
     *,
     workspace_manager: WorkspaceManagerBase | None = None,
-    trigger_factory: Callable | None = None,
     extra_credentials: list[Type[CredentialBase]] | None = None,
     extra_middlewares: list[Middleware] | None = None,
     title: str = "AgentScope",
@@ -57,10 +56,6 @@ def create_app(
             on shutdown.  Pass a :class:`~agentscope.app._manager.
             LocalWorkspaceManager`
             for local-directory workspaces.
-        trigger_factory (`Callable | None`, optional):
-            A callable ``(ScheduleRecord) -> async () -> None`` used to
-            rebuild schedule triggers on startup restore.  When ``None``,
-            persisted schedules are not restored into the in-memory scheduler.
         extra_credentials (`list[Type[CredentialBase]] | None`, optional):
             Additional :class:`~agentscope.credential.CredentialBase`
             subclasses to register before the app starts.  Equivalent to
@@ -85,12 +80,11 @@ def create_app(
     # Attach shared state that lifespan and dependencies read from app.state
     app.state.storage = storage
     app.state.workspace_manager = workspace_manager
-    app.state.scheduler_manager = SchedulerManager()
-    app.state.trigger_factory = trigger_factory
 
     # Built-in routers
     for router in (
         agent_router,
+        background_task_router,
         chat_router,
         credential_router,
         schedule_router,

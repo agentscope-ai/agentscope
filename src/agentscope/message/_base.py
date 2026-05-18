@@ -256,7 +256,7 @@ class Msg(BaseModel):
                         "DataBlock %s not found, skipping.",
                         event.block_id,
                     )
-                else:
+                elif event.data:
                     block.source.data += event.data
 
             case EventType.DATA_BLOCK_END:

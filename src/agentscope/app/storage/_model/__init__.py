@@ -3,8 +3,13 @@
 
 from ._agent import AgentRecord
 from ._credential import CredentialRecord
-from ._schedule import ScheduleData, ScheduleRecord
-from ._session import SessionRecord, SessionConfig, ChatModelConfig
+from ._schedule import ScheduleData, ScheduleRecord, ScheduleSource
+from ._session import (
+    SessionRecord,
+    SessionConfig,
+    ChatModelConfig,
+    SessionSource,
+)
 from ._user import UserRecord
 
 __all__ = [
@@ -12,8 +17,10 @@ __all__ = [
     "CredentialRecord",
     "ScheduleData",
     "ScheduleRecord",
+    "ScheduleSource",
     "SessionConfig",
     "SessionRecord",
+    "SessionSource",
     "ChatModelConfig",
     "UserRecord",
 ]

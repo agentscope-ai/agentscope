@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=too-many-public-methods
 """The Redis storage implementation."""
 from datetime import datetime
 from typing import Any, TYPE_CHECKING, Self
@@ -12,6 +13,7 @@ from ._model import (
     ScheduleRecord,
     SessionRecord,
     SessionConfig,
+    SessionSource,
 )
 from ._utils import _dump_with_secrets
 from ...credential import CredentialBase
@@ -448,6 +450,7 @@ class RedisStorage(StorageBase):
         config: SessionConfig,
         state: AgentState | None = None,
         session_id: str | None = None,
+        source: SessionSource = SessionSource.USER,
     ) -> SessionRecord:
         """Create or update a session for a (user, agent) pair.
 
@@ -474,6 +477,7 @@ class RedisStorage(StorageBase):
             user_id=user_id,
             agent_id=agent_id,
             config=config,
+            source=source,
             state=state if state is not None else AgentState(),
         )
         key = self._key(

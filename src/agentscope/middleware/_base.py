@@ -112,17 +112,40 @@ class MiddlewareBase:
         input_kwargs: dict,
         next_handler: Callable[..., AsyncGenerator],
     ) -> AsyncGenerator:
-        """Hook for intercepting tool call execution.
+        """Hook for intercepting the raw tool execution.
+
+        This hook wraps **only** the ``toolkit.call_tool`` call — i.e. the
+        pure I/O execution layer.  Permission checking, input validation, and
+        context writes are handled by the agent **outside** this hook and are
+        therefore not visible here.
+
+        This separation makes it safe to offload the ``next_handler``
+        coroutine to a background task: it will never mutate agent context
+        on its own.
+
+        .. note::
+            Tools with ``is_state_injected=True`` receive the live
+            ``agent.state`` object.  Offloading such tools to a background
+            task may cause concurrent state mutations — guard against this
+            in your middleware implementation.
 
         Args:
-            agent: The Agent instance executing this middleware
-            input_kwargs: Dictionary containing:
-                - tool_call: ToolCallBlock
-            next_handler: Callable that executes the next middleware or
-            original method
+            agent (`Agent`):
+                The Agent instance executing this middleware.
+            input_kwargs (`dict`):
+                Dictionary containing:
+
+                - ``tool_call`` (``ToolCallBlock``): the tool call to execute.
+                  By the time this hook is invoked the tool call has already
+                  been validated and permitted.
+            next_handler (`Callable[..., AsyncGenerator]`):
+                Callable that executes the next middleware or
+                ``_acting_impl``.
 
         Yields:
-            Events from the tool execution process
+            `ToolChunk | ToolResponse`:
+                Intermediate ``ToolChunk`` objects followed by a final
+                ``ToolResponse`` produced by the tool.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not implement on_acting",

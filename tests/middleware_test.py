@@ -5,13 +5,18 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from typing import Any, AsyncGenerator, Callable, Union
 
 from utils import MockModel
-
+from pydantic import BaseModel
 from agentscope.event import AgentEvent
 from agentscope.agent import Agent
 from agentscope.middleware import MiddlewareBase
 from agentscope.model import ChatResponse
-from agentscope.message import TextBlock, UserMsg, Msg
-from agentscope.tool import Toolkit
+from agentscope.message import TextBlock, UserMsg, Msg, ToolCallBlock
+from agentscope.tool import Toolkit, ToolBase, ToolChunk
+from agentscope.permission import (
+    PermissionContext,
+    PermissionDecision,
+    PermissionBehavior,
+)
 
 
 class TestMiddleware(IsolatedAsyncioTestCase):
@@ -606,15 +611,69 @@ class TestMiddleware(IsolatedAsyncioTestCase):
         # Verify the model received tool_choice='none'
         self.assertIn("none", received_tool_choices)
 
-    async def test_on_acting_middleware_modify_input(self) -> None:
-        """Test that on_acting middleware can modify tool_call input."""
-        from agentscope.message import ToolCallBlock
+    async def test_on_acting_middleware_intercepts_tool_execution(
+        self,
+    ) -> None:
+        """Test that on_acting middleware intercepts raw tool execution.
 
-        # Track what tool_call the implementation receives
-        received_tool_calls = []
+        After the refactor, ``on_acting`` wraps only ``_acting_impl``
+        (i.e. ``toolkit.call_tool``).  Permission checking and context
+        writes are handled by ``_execute_tool_call`` *outside* the hook.
+        This test verifies that the middleware can observe and modify the
+        ``tool_call`` passed to the actual tool function.
+        """
 
-        class ModifyToolCallMiddleware(MiddlewareBase):
-            """Middleware that modifies the tool_call input."""
+        # ------------------------------------------------------------------ #
+        # A minimal tool that records the raw input it receives.              #
+        # ------------------------------------------------------------------ #
+        received_inputs: list[str] = []
+
+        class _EchoParams(BaseModel):
+            value: str
+
+        class EchoTool(ToolBase):
+            """Tool that echoes its input and records it."""
+
+            name: str = "echo"
+            description: str = "Echo the value."
+            input_schema: dict = _EchoParams.model_json_schema()
+            is_concurrency_safe: bool = True
+            is_read_only: bool = True
+            is_state_injected: bool = False
+            is_external_tool: bool = False
+            is_mcp: bool = False
+            mcp_name: str | None = None
+
+            async def check_permissions(
+                self,
+                tool_input: dict[str, Any],
+                context: PermissionContext,
+            ) -> PermissionDecision:
+                """Always allow."""
+                return PermissionDecision(
+                    behavior=PermissionBehavior.ALLOW,
+                    message="allowed",
+                )
+
+            async def __call__(
+                self,
+                value: str,
+            ) -> ToolChunk:
+                """Record the value and return it."""
+                received_inputs.append(value)
+                return ToolChunk(
+                    content=[TextBlock(text=f"echo:{value}")],
+                )
+
+        toolkit_with_tool = Toolkit(tools=[EchoTool()])
+
+        # ------------------------------------------------------------------ #
+        # Middleware that renames the tool_call.input before forwarding.      #
+        # ------------------------------------------------------------------ #
+        intercepted_tool_calls: list[str] = []
+
+        class ObserveActingMiddleware(MiddlewareBase):
+            """Middleware that records the tool_call seen at acting level."""
 
             async def on_acting(
                 self,
@@ -622,54 +681,57 @@ class TestMiddleware(IsolatedAsyncioTestCase):
                 input_kwargs: dict,
                 next_handler: Callable[..., AsyncGenerator],
             ) -> AsyncGenerator:
-                """Modify tool_call.input before execution."""
+                """Record the tool_call and forward to next handler."""
                 tool_call = input_kwargs["tool_call"]
-                # Create a modified tool call with different input
-                modified_tool_call = ToolCallBlock(
+                intercepted_tool_calls.append(tool_call.input)
+                # Modify the input before execution
+                import json
+
+                modified = ToolCallBlock(
                     id=tool_call.id,
                     name=tool_call.name,
-                    input='{"value": "MODIFIED"}',
+                    input=json.dumps({"value": "MODIFIED"}),
                     state=tool_call.state,
                 )
-                # Track what we're passing to next handler
-                received_tool_calls.append(modified_tool_call.input)
-                async for item in next_handler(tool_call=modified_tool_call):
-                    yield item
+                async for chunk in next_handler(tool_call=modified):
+                    yield chunk
 
-        middleware = ModifyToolCallMiddleware()
+        middleware = ObserveActingMiddleware()
+        self.mock_model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="done")],
+                    is_last=True,
+                ),
+            ],
+        )
 
-        # Create a mock agent with the middleware
         agent_instance = Agent(
             name="test_agent",
             system_prompt="test prompt",
             model=self.mock_model,
-            toolkit=self.toolkit,
+            toolkit=toolkit_with_tool,
             middlewares=[middleware],
         )
 
-        # Directly call _execute_tool_call to test the middleware chain
-        original_tool_call = ToolCallBlock(
+        # Call _execute_tool_call with a valid tool call.
+        tool_call = ToolCallBlock(
             id="call_1",
-            name="test_tool",
+            name="echo",
             input='{"value": "ORIGINAL"}',
         )
-
-        # Collect events from the middleware chain
         events = []
-        try:
-            # pylint: disable=protected-access
-            async for evt in agent_instance._execute_tool_call(
-                original_tool_call,
-            ):
-                events.append(evt)
-        except Exception:
-            # Expected to fail since tool doesn't exist, but we can still
-            # verify the middleware modified the input
-            pass
+        # pylint: disable=protected-access
+        async for evt in agent_instance._execute_tool_call(tool_call):
+            events.append(evt)
 
-        # Verify the middleware modified the tool_call.input
-        self.assertEqual(len(received_tool_calls), 1)
-        self.assertIn("MODIFIED", received_tool_calls[0])
+        # Middleware intercepted the tool call at execution level
+        self.assertEqual(len(intercepted_tool_calls), 1)
+        self.assertIn("ORIGINAL", intercepted_tool_calls[0])
+
+        # The tool actually received the MODIFIED value
+        self.assertEqual(len(received_inputs), 1)
+        self.assertEqual(received_inputs[0], "MODIFIED")
 
     async def test_on_model_call_middleware_modify_input(self) -> None:
         """Test that on_model_call middleware can modify messages and model."""

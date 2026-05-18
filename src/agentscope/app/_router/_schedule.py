@@ -13,25 +13,13 @@ from .._schema._schedule import (
     UpdateScheduleRequest,
 )
 from ..storage._base import StorageBase
-from ..storage._model._schedule import ScheduleData, ScheduleRecord
+from ..storage._model._schedule import ScheduleData, ScheduleRecord, ScheduleSource
 
 schedule_router = APIRouter(
     prefix="/schedule",
     tags=["schedule"],
     responses={404: {"description": "Not found"}},
 )
-
-
-def _build_trigger(record: ScheduleRecord, storage: StorageBase) -> callable:
-    async def trigger() -> None:
-        # TODO: implement chat trigger logic
-        # 1. upsert_session(record.user_id, record.data.agent_id,
-        #                   record.data.workspace_id, SessionData(...))
-        # 2. assemble Agent from storage
-        # 3. run agent with record.data.input
-        pass
-
-    return trigger
 
 
 @schedule_router.get(
@@ -43,15 +31,15 @@ async def list_schedules(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
 ) -> ScheduleListResponse:
-    """List all schedules.
+    """List all schedules owned by the current user.
 
     Args:
-        user_id (str): User ID
-        storage (StorageBase): Storage instance
+        user_id (`str`): Authenticated user ID.
+        storage (`StorageBase`): Storage instance.
 
     Returns:
         `ScheduleListResponse`:
-            The schedule list
+            Paginated list of schedule records.
     """
     schedules = await storage.list_schedules(user_id)
     return ScheduleListResponse(schedules=schedules, total=len(schedules))
@@ -69,7 +57,21 @@ async def create_schedule(
     storage: StorageBase = Depends(get_storage),
     scheduler: SchedulerManager = Depends(get_scheduler_manager),
 ) -> CreateScheduleResponse:
-    """Create a new schedule."""
+    """Create a new schedule and register it with the scheduler.
+
+    Args:
+        body (`CreateScheduleRequest`): Schedule configuration.
+        user_id (`str`): Authenticated user ID.
+        storage (`StorageBase`): Storage instance.
+        scheduler (`SchedulerManager`): Scheduler manager.
+
+    Returns:
+        `CreateScheduleResponse`:
+            The ID of the newly created schedule.
+
+    Raises:
+        `HTTPException`: 404 if the specified agent does not exist.
+    """
     agents = await storage.list_agent(user_id)
     if not any(a.data.id == body.agent_id for a in agents):
         raise HTTPException(
@@ -79,23 +81,24 @@ async def create_schedule(
 
     record = ScheduleRecord(
         user_id=user_id,
+        agent_id=body.agent_id,
         data=ScheduleData(
             name=body.name,
             description=body.description,
             cron_expression=body.cron_expression,
-            agent_id=body.agent_id,
-            workspace_id=body.workspace_id,
+            timezone=body.timezone,
+            enable=body.enable,
+            stateful=body.stateful,
+            permission_mode=body.permission_mode,
             chat_model_config=body.chat_model_config,
-            input=body.input,
+            source=ScheduleSource.USER,
         ),
     )
     await storage.upsert_schedule(user_id, record)
-    await scheduler.add_schedule(
-        _build_trigger(record, storage),
-        record.data.cron_expression,
-        name=record.data.name,
-        job_id=record.id,
-    )
+
+    if record.data.enable:
+        await scheduler.register_schedule(record)
+
     return CreateScheduleResponse(schedule_id=record.id)
 
 
@@ -111,7 +114,27 @@ async def update_schedule(
     storage: StorageBase = Depends(get_storage),
     scheduler: SchedulerManager = Depends(get_scheduler_manager),
 ) -> ScheduleRecord:
-    """Update a schedule."""
+    """Partially update a schedule.
+
+    Fields omitted from the request body keep their current values.
+    Changing ``cron_expression`` or ``timezone`` immediately reschedules the
+    APScheduler job.  Setting ``enable=False`` removes the job from the
+    scheduler without deleting the record.
+
+    Args:
+        schedule_id (`str`): ID of the schedule to update.
+        body (`UpdateScheduleRequest`): Fields to update.
+        user_id (`str`): Authenticated user ID.
+        storage (`StorageBase`): Storage instance.
+        scheduler (`SchedulerManager`): Scheduler manager.
+
+    Returns:
+        `ScheduleRecord`:
+            The updated schedule record.
+
+    Raises:
+        `HTTPException`: 404 if the schedule does not exist.
+    """
     existing = await storage.get_schedule(user_id, schedule_id)
     if existing is None:
         raise HTTPException(
@@ -126,16 +149,11 @@ async def update_schedule(
     )
     await storage.upsert_schedule(user_id, updated_record)
 
-    try:
-        await scheduler.remove_task(schedule_id)
-    except Exception:
-        pass
-    await scheduler.add_schedule(
-        _build_trigger(updated_record, storage),
-        updated_record.data.cron_expression,
-        name=updated_record.data.name,
-        job_id=updated_record.id,
-    )
+    # Always remove the existing job first; re-register only if still enabled.
+    await scheduler.remove_schedule(schedule_id)
+    if updated_record.data.enable:
+        await scheduler.register_schedule(updated_record)
+
     return updated_record
 
 
@@ -150,14 +168,23 @@ async def delete_schedule(
     storage: StorageBase = Depends(get_storage),
     scheduler: SchedulerManager = Depends(get_scheduler_manager),
 ) -> None:
-    """Delete a schedule."""
+    """Permanently delete a schedule.
+
+    Removes the record from storage and unregisters the APScheduler job.
+
+    Args:
+        schedule_id (`str`): ID of the schedule to delete.
+        user_id (`str`): Authenticated user ID.
+        storage (`StorageBase`): Storage instance.
+        scheduler (`SchedulerManager`): Scheduler manager.
+
+    Raises:
+        `HTTPException`: 404 if the schedule does not exist.
+    """
     deleted = await storage.delete_schedule(user_id, schedule_id)
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Schedule '{schedule_id}' not found.",
         )
-    try:
-        await scheduler.remove_task(schedule_id)
-    except Exception:
-        pass
+    await scheduler.remove_schedule(schedule_id)

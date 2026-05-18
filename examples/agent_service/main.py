@@ -38,7 +38,6 @@ app = create_app(
             ),
         ],
     ),
-    trigger_factory=None,
     extra_middlewares=[
         Middleware(
             CORSMiddleware,

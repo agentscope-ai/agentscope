@@ -57,6 +57,7 @@ class ChatModelBase:
         self,
         credential: CredentialBase,
         model: str,
+        parameters: BaseModel,
         stream: bool = True,
         max_retries: int = 3,
         context_size: int = 32768,
@@ -68,6 +69,8 @@ class ChatModelBase:
                 The API credential.
             model (`str`):
                 The model name.
+            parameters (`BaseModel`):
+                The model parameters.
             stream (`bool`, defaults to `True`):
                 Whether to enable streaming output for the LLM.
             max_retries (`int`, defaults to `3`):
@@ -77,6 +80,7 @@ class ChatModelBase:
         """
         self.credential = credential
         self.model = model
+        self.parameters = parameters
         self.stream = stream
         self.max_retries = max_retries
         self.context_size = context_size
