@@ -32,8 +32,7 @@ session, etc.).  Typical flow::
 
 Pool usage (RL rollout)::
 
-    manager.enable_pool(capacity=8)
-    await manager.warm_up_pool()
+    await manager.enable_pool(capacity=8)
     ws = await manager.acquire_from_pool()
     # ... rollout ...
     await manager.release_to_pool(ws)
@@ -45,9 +44,9 @@ import asyncio
 from abc import ABC, abstractmethod
 from typing import Any
 
-from .workspace_base import WorkspaceBase
-from .types import SerializedWorkspaceState
 from .._logging import logger
+from .types import SerializedWorkspaceState
+from .workspace_base import WorkspaceBase
 
 
 class WorkspaceManagerBase(ABC):
@@ -87,11 +86,11 @@ class WorkspaceManagerBase(ABC):
         """Initialize the manager (connect clients, warm pools, etc.)."""
 
     @abstractmethod
-    async def close(self) -> None:
-        """Close all managed workspaces and release resources.
+    async def _do_close(self) -> None:
+        """Backend-specific close actions.
 
-        Implementations MUST call ``await self._close_pool()`` and
-        ``await self._close_all_workspaces()`` to clean up.
+        Subclasses implement this to perform any additional cleanup
+        beyond pool and workspace teardown (e.g. close shared clients).
         """
 
     @abstractmethod
@@ -170,8 +169,18 @@ class WorkspaceManagerBase(ABC):
         """Return all tracked workspace IDs."""
         return list(self._workspaces.keys())
 
+    async def close(self) -> None:
+        """Close all managed workspaces, pool, and release resources.
+
+        Calls :meth:`_do_close` for backend-specific cleanup, then
+        tears down the pool and all tracked workspaces.
+        """
+        await self._do_close()
+        await self._close_pool()
+        await self._close_all_workspaces()
+
     async def _close_all_workspaces(self) -> None:
-        """Close all tracked (non-pool) workspaces. Call from ``close()``."""
+        """Close all tracked (non-pool) workspaces."""
         if not self._workspaces:
             return
         tasks = [ws.close() for ws in self._workspaces.values()]
@@ -190,12 +199,13 @@ class WorkspaceManagerBase(ABC):
     async def __aexit__(self, *exc: object) -> None:
         await self.close()
 
-    # ── pool: configuration ───────────────────────────────────────
+    # ── pool: configuration & lifecycle ───────────────────────────
 
-    def enable_pool(self, *, capacity: int = 4) -> "WorkspaceManagerBase":
-        """Enable warm-pool mode with ``capacity`` pre-created workspaces.
+    async def enable_pool(self, *, capacity: int = 4) -> None:
+        """Enable and warm the pool with ``capacity`` pre-created workspaces.
 
-        Returns ``self`` for chaining.
+        Idempotent — calling again after the pool is already enabled is
+        a no-op. Use :meth:`resize_pool` to adjust capacity.
 
         Raises:
             ValueError: If *capacity* is not a positive integer.
@@ -204,34 +214,15 @@ class WorkspaceManagerBase(ABC):
             raise ValueError(
                 f"Pool capacity must be positive, got {capacity}",
             )
-        self._pool_capacity = capacity
-        self._pool_enabled = True
-        return self
-
-    @property
-    def pool_enabled(self) -> bool:
-        """Whether :meth:`enable_pool` has been called."""
-        return self._pool_enabled
-
-    # ── pool: lifecycle ───────────────────────────────────────────
-
-    async def warm_up_pool(self) -> None:
-        """Pre-create ``capacity`` workspaces and fill the free queue.
-
-        Safe to call only once; raises if the pool already has workspaces.
-        """
-        if not self._pool_enabled:
-            raise RuntimeError("Call enable_pool() first")
         async with self._pool_lock:
-            if self._pool_workspaces:
-                raise RuntimeError(
-                    "Pool already warmed. Call resize_pool() to adjust size, "
-                    "or _close_pool() first to reset.",
-                )
+            if self._pool_enabled:
+                return
+            self._pool_capacity = capacity
             for _ in range(self._pool_capacity):
                 ws = await self._create_for_pool()
                 self._pool_workspaces[ws.workspace_id] = ws
                 await self._pool_free.put(ws.workspace_id)
+            self._pool_enabled = True
             logger.info(
                 "Pool: warmed %d workspaces",
                 self._pool_capacity,
@@ -244,11 +235,15 @@ class WorkspaceManagerBase(ABC):
     ) -> WorkspaceBase:
         """Acquire a free workspace from the pool.
 
-        Raises ``RuntimeError`` if no workspace is available within
-        the timeout.
+        Raises:
+            RuntimeError: If pool is not enabled or no workspace is
+                available within the timeout.
         """
-        if not self._pool_enabled:
-            raise RuntimeError("Pool not enabled")
+        async with self._pool_lock:
+            if not self._pool_enabled:
+                raise RuntimeError(
+                    "Pool not enabled. Call enable_pool() first.",
+                )
         try:
             ws_id = await asyncio.wait_for(
                 self._pool_free.get(),
@@ -258,15 +253,15 @@ class WorkspaceManagerBase(ABC):
             raise RuntimeError(
                 "acquire_from_pool timed out — no free workspace",
             ) from exc
-        self._pool_in_use.add(ws_id)
+        async with self._pool_lock:
+            self._pool_in_use.add(ws_id)
         return self._pool_workspaces[ws_id]
 
     async def release_to_pool(self, workspace: WorkspaceBase) -> None:
         """Return a workspace to the pool; replace it if dead.
 
-        Before returning a live workspace to the free queue, calls
-        :meth:`_reset_for_pool` to clear user-specific state (env vars,
-        temp files, MCP tool credentials, etc.).  If the reset fails the
+        Calls :meth:`workspace.reset()` to clear user-specific state
+        before returning it to the free queue. If the reset fails the
         workspace is destroyed and replaced.
         """
         ws_id = workspace.workspace_id
@@ -275,7 +270,7 @@ class WorkspaceManagerBase(ABC):
             alive = await workspace.is_alive()
             if alive:
                 try:
-                    await self._reset_for_pool(workspace)
+                    await workspace.reset()
                 except Exception as e:
                     logger.warning(
                         "Pool: reset failed for %s, replacing: %s",
@@ -286,10 +281,7 @@ class WorkspaceManagerBase(ABC):
             if alive:
                 await self._pool_free.put(ws_id)
             else:
-                self._pool_workspaces.pop(  # type: ignore[arg-type]
-                    ws_id,
-                    None,
-                )
+                self._pool_workspaces.pop(ws_id, None)
                 try:
                     await workspace.close()
                 except Exception:
@@ -298,7 +290,7 @@ class WorkspaceManagerBase(ABC):
                 self._pool_workspaces[new_ws.workspace_id] = new_ws
                 await self._pool_free.put(new_ws.workspace_id)
                 logger.info(
-                    "Pool: replaced dead workspace %s → %s",
+                    "Pool: replaced dead workspace %s -> %s",
                     ws_id,
                     new_ws.workspace_id,
                 )
@@ -308,12 +300,17 @@ class WorkspaceManagerBase(ABC):
 
         Raises:
             ValueError: If *new_size* is not positive.
+            RuntimeError: If pool is not enabled.
         """
         if new_size <= 0:
             raise ValueError(
                 f"Pool size must be positive, got {new_size}",
             )
         async with self._pool_lock:
+            if not self._pool_enabled:
+                raise RuntimeError(
+                    "Pool not enabled. Call enable_pool() first.",
+                )
             delta = new_size - self._pool_capacity
             self._pool_capacity = new_size
             if delta > 0:
@@ -325,10 +322,10 @@ class WorkspaceManagerBase(ABC):
                 for _ in range(-delta):
                     if not self._pool_free.empty():
                         ws_id = await self._pool_free.get()
-                        ws = self._pool_workspaces.pop(ws_id)
-                        if ws:
+                        if ws_id in self._pool_workspaces:
+                            removed = self._pool_workspaces.pop(ws_id)
                             try:
-                                await ws.close()
+                                await removed.close()
                             except Exception as e:
                                 logger.warning(
                                     "Pool: error closing workspace %s: %s",
@@ -354,32 +351,21 @@ class WorkspaceManagerBase(ABC):
         """
         return await self._do_create()
 
-    async def _reset_for_pool(self, workspace: WorkspaceBase) -> None:
-        """Reset a workspace to a clean state before returning it to the pool.
-
-        Override in subclasses to clear user-specific state such as
-        environment variables, temporary files, MCP tool credentials,
-        workspace files, etc.  Called by :meth:`release_to_pool` before
-        the workspace is made available to the next consumer.
-
-        The default implementation is a no-op.  Subclasses that manage
-        sensitive per-user state **should** override this.
-        """
-
     async def _close_pool(self) -> None:
-        """Close all pool workspaces. Call from ``close()``."""
-        if not self._pool_workspaces:
-            return
-        tasks = [ws.close() for ws in self._pool_workspaces.values()]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for r in results:
-            if isinstance(r, Exception):
-                logger.warning("Pool: error closing workspace: %s", r)
-        self._pool_workspaces.clear()
-        self._pool_in_use.clear()
-        while not self._pool_free.empty():
-            try:
-                self._pool_free.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-        self._pool_enabled = False
+        """Close all pool workspaces."""
+        async with self._pool_lock:
+            if not self._pool_workspaces:
+                return
+            tasks = [ws.close() for ws in self._pool_workspaces.values()]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for r in results:
+                if isinstance(r, Exception):
+                    logger.warning("Pool: error closing workspace: %s", r)
+            self._pool_workspaces.clear()
+            self._pool_in_use.clear()
+            while not self._pool_free.empty():
+                try:
+                    self._pool_free.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+            self._pool_enabled = False

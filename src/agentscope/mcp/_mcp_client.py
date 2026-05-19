@@ -1,17 +1,18 @@
 # -*- coding: utf-8 -*-
 """Unified MCP client implementation for AgentScope."""
+
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import mcp.types
-from mcp import ClientSession, stdio_client, StdioServerParameters
+from mcp import ClientSession, StdioServerParameters, stdio_client
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
-from pydantic import Field, BaseModel, PrivateAttr
+from pydantic import BaseModel, Field, PrivateAttr
 
-from ._config import StdioMCPConfig, HttpMCPConfig
 from .._logging import logger
+from ._config import HttpMCPConfig, StdioMCPConfig
 
 if TYPE_CHECKING:
     from ..tool import MCPTool
@@ -142,7 +143,7 @@ class MCPClient(BaseModel):
                 "follow_redirects": True,
                 "verify": config.verify,
             }
-            if timeout is not None:
+            if timeout:
                 kwargs["timeout"] = timeout
             if headers is not None:
                 kwargs["headers"] = headers
@@ -235,8 +236,7 @@ class MCPClient(BaseModel):
 
         if not self._is_connected:
             raise RuntimeError(
-                f"MCP '{self.name}' is not connected. "
-                "Call connect() first.",
+                f"MCP '{self.name}' is not connected. Call connect() first.",
             )
 
         try:
@@ -329,7 +329,7 @@ class MCPClient(BaseModel):
 
         if target_tool is None:
             raise ValueError(
-                f"Tool '{name}' not found in MCP server " f"'{self.name}'",
+                f"Tool '{name}' not found in MCP server '{self.name}'",
             )
 
         # Create MCPTool based on stateful/stateless
@@ -359,8 +359,7 @@ class MCPClient(BaseModel):
         """
         if not self._is_connected:
             raise RuntimeError(
-                f"MCP '{self.name}' is not connected. "
-                "Call connect() first.",
+                f"MCP '{self.name}' is not connected. Call connect() first.",
             )
         if not self._session:
             raise RuntimeError(

@@ -19,12 +19,12 @@ Usage::
 import os
 from typing import Any
 
-from .workspace_manager_base import WorkspaceManagerBase
-from .workspace_base import WorkspaceBase
+from .._logging import logger
+from ..mcp import MCPClient
 from .local_workspace import LocalWorkspace
 from .types import SerializedWorkspaceState
-from ..mcp import MCPClient
-from .._logging import logger
+from .workspace_base import WorkspaceBase
+from .workspace_manager_base import WorkspaceManagerBase
 
 
 class LocalWorkspaceManager(WorkspaceManagerBase):
@@ -48,8 +48,8 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
             self._base_dir,
         )
 
-    async def close(self) -> None:
-        await self._close_all_workspaces()
+    async def _do_close(self) -> None:
+        pass
 
     async def _do_create(self, **kwargs: Any) -> WorkspaceBase:
         workdir = kwargs.get("workdir")

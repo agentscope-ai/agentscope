@@ -18,16 +18,16 @@ import asyncio
 import json
 import uuid
 from abc import abstractmethod
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from ..._logging import logger
 
 if TYPE_CHECKING:
+    from ...mcp import MCPClient
     from ..config import MCPServerConfig
     from ..types import ExecutionResult
-    from ...mcp import MCPClient
 
 
 class _RestToolProxy:
@@ -62,10 +62,10 @@ class _RestToolProxy:
 class _RestGatewayClient:
     """Lightweight REST-based gateway client.
 
-    Presents the same interface that tests expect from ``MCPClient``
-    (``list_tools``, ``get_tool``, ``is_connected``) but communicates
-    with the in-container gateway via simple JSON REST calls instead
-    of MCP protocol.  This avoids issues with proxies that don't
+    Presents the same interface that the Toolkit expects from ``MCPClient``
+    (``list_tools``, ``get_tool``, ``is_connected``, ``close``) but
+    communicates with the in-container gateway via simple JSON REST calls
+    instead of MCP protocol. This avoids issues with proxies that don't
     support streaming HTTP / SSE connections (e.g. E2B).
     """
 
@@ -76,24 +76,17 @@ class _RestGatewayClient:
     ) -> None:
         self._base_url = base_url
         self._headers = headers
-        self._connected = True
-        self._cached_tools: list[dict[str, Any]] | None = None
 
     @property
     def is_connected(self) -> bool:
-        """Whether the client considers itself connected."""
-        return self._connected
+        """Always True — REST client is stateless."""
+        return True
 
     async def connect(self) -> None:
-        """Mark the client as connected."""
-        self._connected = True
+        """No-op for REST client."""
 
-    async def close(  # pylint: disable=unused-argument
-        self,
-        ignore_errors: bool = True,
-    ) -> None:
-        """Mark the client as disconnected."""
-        self._connected = False
+    async def close(self) -> None:
+        """No-op for REST client."""
 
     async def list_tools(self) -> list[Any]:
         """Fetch tool schemas from the gateway REST API."""
@@ -105,7 +98,6 @@ class _RestGatewayClient:
             )
             resp.raise_for_status()
         tools: list[dict[str, Any]] = resp.json()
-        self._cached_tools = tools
 
         try:
             import mcp.types as mtypes
@@ -121,16 +113,12 @@ class _RestGatewayClient:
         except ImportError:
             return list(tools)
 
-    def invalidate_cache(self) -> None:
-        """Clear the cached tool list so the next query re-fetches."""
-        self._cached_tools = None
-
     async def get_tool(self, name: str) -> _RestToolProxy:
         """Return a callable proxy for the named tool."""
-        if self._cached_tools is None:
-            await self.list_tools()
-        for t in self._cached_tools:
-            if t["name"] == name:
+        tools = await self.list_tools()
+        for t in tools:
+            t_name = t.name if hasattr(t, "name") else t.get("name")
+            if t_name == name:
                 return _RestToolProxy(
                     name=name,
                     base_url=self._base_url,
@@ -152,9 +140,9 @@ class GatewayMixin:
     # These attributes are initialised by the concrete workspace's
     # ``__init__`` — the mixin only reads/writes them.
     _gateway_token: str
-    _gateway_mcpc: "MCPClient | _RestGatewayClient | None"
+    _gateway_mcp_client: "MCPClient | _RestGatewayClient | None"
     _gateway_base_url: str
-    _mcp_servers: list[Any]
+    _mcp_servers: "list[MCPServerConfig]"
     _gateway_port: int
 
     # ── hooks for subclasses ──────────────────────────────────────
@@ -188,8 +176,8 @@ class GatewayMixin:
 
     async def list_mcps(self) -> list[Any]:
         """Return the gateway MCP client (if started) as a list."""
-        if self._gateway_mcpc:
-            return [self._gateway_mcpc]
+        if self._gateway_mcp_client:
+            return [self._gateway_mcp_client]
         return []
 
     async def add_mcp(self, config: "MCPServerConfig") -> None:
@@ -200,7 +188,7 @@ class GatewayMixin:
                 "the constructor or initialize the workspace first.",
             )
         body: dict[str, Any] = {"name": config.name}
-        if config.transport == "http":
+        if config.protocol == "http":
             body["transport"] = "http"
             body["url"] = config.url
         else:
@@ -216,7 +204,7 @@ class GatewayMixin:
 
         async with httpx.AsyncClient(verify=False) as client:
             resp = await client.post(
-                f"{self._gateway_base_url}/admin/add",
+                f"{self._gateway_base_url}/mcp/add",
                 json=body,
                 headers=headers,
                 timeout=30.0,
@@ -226,10 +214,9 @@ class GatewayMixin:
                     f"add_mcp failed ({resp.status_code}): {resp.text}",
                 )
 
-        if self._gateway_mcpc:
-            if isinstance(self._gateway_mcpc, _RestGatewayClient):
-                self._gateway_mcpc.invalidate_cache()
-            await self._gateway_mcpc.list_tools()
+        # Refresh tool list so new tools are discoverable
+        if self._gateway_mcp_client:
+            await self._gateway_mcp_client.list_tools()
 
         logger.info(
             "%s: added MCP %r",
@@ -248,7 +235,7 @@ class GatewayMixin:
 
         async with httpx.AsyncClient(verify=False) as client:
             resp = await client.post(
-                f"{self._gateway_base_url}/admin/remove",
+                f"{self._gateway_base_url}/mcp/remove",
                 json={"name": name},
                 headers=headers,
                 timeout=30.0,
@@ -258,10 +245,9 @@ class GatewayMixin:
                     f"remove_mcp failed ({resp.status_code}): {resp.text}",
                 )
 
-        if self._gateway_mcpc:
-            if isinstance(self._gateway_mcpc, _RestGatewayClient):
-                self._gateway_mcpc.invalidate_cache()
-            await self._gateway_mcpc.list_tools()
+        # Refresh tool list so removed tools are no longer visible
+        if self._gateway_mcp_client:
+            await self._gateway_mcp_client.list_tools()
 
         logger.info("%s: removed MCP %r", type(self).__name__, name)
 
@@ -316,9 +302,12 @@ class GatewayMixin:
 
         gw_headers = {**self._gw_platform_headers()}
         if self._gateway_token:
+            # The gateway uses Bearer token auth — the token is generated
+            # per-workspace and written into the gateway config. Requests
+            # from the host must include this token to authenticate.
             gw_headers["Authorization"] = f"Bearer {self._gateway_token}"
 
-        self._gateway_mcpc = _RestGatewayClient(
+        self._gateway_mcp_client = _RestGatewayClient(
             base_url=self._gateway_base_url,
             headers=gw_headers,
         )
@@ -330,7 +319,7 @@ class GatewayMixin:
         servers = []
         for s in self._mcp_servers:
             entry: dict[str, Any] = {"name": s.name}
-            if s.transport == "http":
+            if s.protocol == "http":
                 entry["transport"] = "http"
                 entry["url"] = s.url
             else:

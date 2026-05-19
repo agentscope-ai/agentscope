@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 class MCPServerConfig:
     """One MCP server to manage inside a workspace.
 
-    Supports two transport types:
+    Supports two transport protocol types:
 
     - ``"stdio"`` (default): spawn a local process via command + args.
     - ``"http"``: connect to an HTTP MCP server (SSE or Streamable HTTP).
@@ -18,7 +18,7 @@ class MCPServerConfig:
     """
 
     name: str
-    transport: str = "stdio"  # "stdio" | "http"
+    protocol: str = "stdio"  # "stdio" | "http"
 
     # stdio fields
     command: str = ""

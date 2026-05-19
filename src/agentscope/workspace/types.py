@@ -18,21 +18,6 @@ class ExecutionResult:
         return self.exit_code == 0
 
 
-@dataclass(frozen=True, slots=True)
-class InternalEndpoint:
-    """Host-accessible endpoint for a service running inside a container.
-
-    Attributes:
-        host: Hostname or IP address.
-        port: Port number.
-        is_tls_enabled: Whether TLS is active on this endpoint.
-    """
-
-    host: str
-    port: int
-    is_tls_enabled: bool = False
-
-
 @dataclass(slots=True)
 class SerializedWorkspaceState:
     """Serializable snapshot for workspace resume / reconnect.

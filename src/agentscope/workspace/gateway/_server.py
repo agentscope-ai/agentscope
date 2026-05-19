@@ -5,7 +5,7 @@ Reads a JSON config, connects to all configured MCP servers
 (stdio or HTTP) running inside the container, aggregates tools,
 and exposes a single Streamable-HTTP MCP endpoint for the host.
 
-Also exposes ``/admin/add`` and ``/admin/remove`` for dynamic
+Also exposes ``/mcp/add`` and ``/mcp/remove`` for dynamic
 MCP server management.
 
 Usage::
@@ -29,23 +29,23 @@ Config JSON schema::
 import argparse
 import asyncio
 import json
-from contextlib import AsyncExitStack
 from collections.abc import Awaitable, Callable
+from contextlib import AsyncExitStack
 from typing import Any
 
+import mcp.types as mtypes
 from mcp import ClientSession, StdioServerParameters, stdio_client
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.server.fastmcp import FastMCP
-import mcp.types as mtypes
 
 TOOL_NAME_SEPARATOR = "___"
 
 
-# ── upstream MCP client ───────────────────────────────────────────
+# ── MCP server client ─────────────────────────────────────────────
 
 
-class _UpstreamClient:
+class _MCPServerClient:
     """Persistent connection to one MCP server inside the container."""
 
     def __init__(self, name: str) -> None:
@@ -99,31 +99,32 @@ class _UpstreamClient:
 
 
 class _ToolRoute:
-    __slots__ = ("client", "original_name")
+    """Maps an exposed tool name to the upstream MCP server client.
 
-    def __init__(self, client: _UpstreamClient, original_name: str) -> None:
+    Attributes:
+        client: The MCP server client that owns this tool.
+        original_name: The tool's original name as registered on the
+            upstream MCP server (before any gateway-level renaming).
+    """
+
+    def __init__(self, client: _MCPServerClient, original_name: str) -> None:
         self.client = client
         self.original_name = original_name
 
 
 def _build_routes(
-    clients: list[_UpstreamClient],
+    clients: list[_MCPServerClient],
 ) -> tuple[dict[str, _ToolRoute], dict[str, mtypes.Tool]]:
-    """Build routes and tool schemas from connected clients."""
-    name_count: dict[str, int] = {}
-    for c in clients:
-        for t in c.tools:
-            name_count[t.name] = name_count.get(t.name, 0) + 1
+    """Build routes and tool schemas from connected clients.
 
+    All exposed tool names use the format ``server_name___tool_name``
+    to ensure a consistent naming convention regardless of conflicts.
+    """
     routes: dict[str, _ToolRoute] = {}
     schemas: dict[str, mtypes.Tool] = {}
     for c in clients:
         for t in c.tools:
-            exposed = (
-                f"{c.name}{TOOL_NAME_SEPARATOR}{t.name}"
-                if name_count[t.name] > 1
-                else t.name
-            )
+            exposed = f"{c.name}{TOOL_NAME_SEPARATOR}{t.name}"
             routes[exposed] = _ToolRoute(c, t.name)
             schemas[exposed] = t
     return routes, schemas
@@ -136,7 +137,7 @@ class _GatewayState:
     """Shared mutable state for the gateway; mutated by admin endpoints."""
 
     def __init__(self) -> None:
-        self.clients: list[_UpstreamClient] = []
+        self.clients: list[_MCPServerClient] = []
         self.routes: dict[str, _ToolRoute] = {}
         self.schemas: dict[str, mtypes.Tool] = {}
         self.server: FastMCP | None = None
@@ -160,7 +161,7 @@ async def _run(config_path: str, port: int) -> None:
     server_cfgs: list[dict[str, Any]] = config.get("servers", [])
 
     for cfg in server_cfgs:
-        c = _UpstreamClient(cfg["name"])
+        c = _MCPServerClient(cfg["name"])
         transport = cfg.get("transport", "stdio")
         if transport == "http":
             await c.connect_http(cfg["url"])
@@ -218,7 +219,7 @@ async def _run(config_path: str, port: int) -> None:
         """Liveness probe endpoint."""
         return PlainTextResponse("ok")
 
-    async def _admin_add(request: Request) -> JSONResponse:
+    async def _add_mcp(request: Request) -> JSONResponse:
         body = await request.json()
         name = body.get("name", "")
         if not name:
@@ -229,7 +230,7 @@ async def _run(config_path: str, port: int) -> None:
                     {"error": f"{name!r} already exists"},
                     status_code=409,
                 )
-        c = _UpstreamClient(name)
+        c = _MCPServerClient(name)
         transport = body.get("transport", "stdio")
         try:
             if transport == "http":
@@ -252,10 +253,10 @@ async def _run(config_path: str, port: int) -> None:
             {"ok": True, "tools": len(c.tools)},
         )
 
-    async def _admin_remove(request: Request) -> JSONResponse:
+    async def _remove_mcp(request: Request) -> JSONResponse:
         body = await request.json()
         name = body.get("name", "")
-        target: _UpstreamClient | None = None
+        target: _MCPServerClient | None = None
         for c in _state.clients:
             if c.name == name:
                 target = c
@@ -271,10 +272,10 @@ async def _run(config_path: str, port: int) -> None:
         _register_proxy_tools(server, _state)
         return JSONResponse({"ok": True})
 
-    async def _admin_list(
+    async def _list_mcp(
         request: Request,  # pylint: disable=unused-argument
     ) -> JSONResponse:
-        """List connected upstream MCP servers."""
+        """List connected MCP servers."""
         items = [
             {"name": c.name, "tools": len(c.tools)} for c in _state.clients
         ]
@@ -329,12 +330,12 @@ async def _run(config_path: str, port: int) -> None:
             )
 
     app.routes.insert(0, Route("/health", _health))
-    app.routes.insert(1, Route("/admin/add", _admin_add, methods=["POST"]))
+    app.routes.insert(1, Route("/mcp/add", _add_mcp, methods=["POST"]))
     app.routes.insert(
         2,
-        Route("/admin/remove", _admin_remove, methods=["POST"]),
+        Route("/mcp/remove", _remove_mcp, methods=["POST"]),
     )
-    app.routes.insert(3, Route("/admin/list", _admin_list))
+    app.routes.insert(3, Route("/mcp/list", _list_mcp))
     app.routes.insert(4, Route("/api/tools", _api_tools))
     app.routes.insert(
         5,

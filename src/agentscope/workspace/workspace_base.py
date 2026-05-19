@@ -24,7 +24,7 @@ Consumers:
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ..mcp import MCPClient
@@ -54,13 +54,24 @@ class WorkspaceBase(ABC):
     async def close(self) -> None:
         """Release all resources and connections."""
 
+    async def reset(self) -> None:
+        """Reset the workspace to a clean state.
+
+        Clears user-specific state such as session data, temporary files,
+        and dynamically added MCPs/skills. Called by the pool manager
+        before returning a workspace to the free queue.
+
+        The default implementation is a no-op. Subclasses that manage
+        per-user state should override this.
+        """
+
     async def is_alive(self) -> bool:
         """Check if the workspace is still operational.
 
         Override in container/sandbox backends to perform a real
         liveness check. Defaults to ``True`` for local workspaces.
         """
-        return True
+        return False
 
     async def __aenter__(self) -> "WorkspaceBase":
         await self.initialize()

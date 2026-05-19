@@ -17,8 +17,7 @@ Usage::
 
 Pool usage (RL rollout)::
 
-    manager.enable_pool(capacity=8)
-    await manager.warm_up_pool()
+    await manager.enable_pool(capacity=8)
 
     ws = await manager.acquire_from_pool()
     # ... rollout ...
@@ -27,12 +26,12 @@ Pool usage (RL rollout)::
 
 from typing import Any
 
-from .workspace_manager_base import WorkspaceManagerBase
-from .workspace_base import WorkspaceBase
-from .docker_workspace import DockerWorkspace
-from .config import MCPServerConfig
-from .types import SerializedWorkspaceState
 from .._logging import logger
+from .config import MCPServerConfig
+from .docker_workspace import DockerWorkspace
+from .types import SerializedWorkspaceState
+from .workspace_base import WorkspaceBase
+from .workspace_manager_base import WorkspaceManagerBase
 
 
 class DockerWorkspaceManager(WorkspaceManagerBase):
@@ -63,9 +62,8 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
             self._image,
         )
 
-    async def close(self) -> None:
-        await self._close_all_workspaces()
-        await self._close_pool()
+    async def _do_close(self) -> None:
+        pass
 
     async def _do_create(self, **kwargs: Any) -> WorkspaceBase:
         ws = DockerWorkspace(
@@ -113,7 +111,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
             mcp_cfgs.append(
                 MCPServerConfig(
                     name=s["name"],
-                    transport=s.get("transport", "stdio"),
+                    protocol=s.get("transport", "stdio"),
                     command=s.get("command", ""),
                     args=s.get("args", []),
                     url=s.get("url", ""),

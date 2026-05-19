@@ -20,10 +20,7 @@ import uuid
 from copy import deepcopy
 from typing import Any
 
-from .workspace_base import WorkspaceBase
-from .gateway import GatewayMixin
-from .config import MCPServerConfig
-from .types import ExecutionResult, SerializedWorkspaceState
+from .._logging import logger
 from ..mcp import MCPClient
 from ..message import (
     Base64Source,
@@ -35,7 +32,10 @@ from ..message import (
 )
 from ..skill import Skill
 from ..tool import ToolBase
-from .._logging import logger
+from .config import MCPServerConfig
+from .gateway import GatewayMixin
+from .types import ExecutionResult, SerializedWorkspaceState
+from .workspace_base import WorkspaceBase
 
 _DEFAULT_INSTRUCTIONS = """<workspace>
 You have access to an E2B cloud-sandbox workspace.
@@ -73,7 +73,7 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
         template: str = DEFAULT_TEMPLATE,
         api_key: str = "",
         domain: str = "",
-        timeout: int = DEFAULT_TIMEOUT,
+        timeout_seconds: int = DEFAULT_TIMEOUT,
         working_dir: str = DEFAULT_WORKING_DIR,
         mcp_servers: list[MCPServerConfig] | None = None,
         gateway_port: int = GATEWAY_PORT,
@@ -85,11 +85,11 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
         self._template = template
         self._api_key = api_key
         self._domain = domain
-        self._timeout = timeout
+        self._timeout_seconds = timeout_seconds
         self._working_dir = working_dir
-        self._mcp_servers = list(mcp_servers or [])
+        self._mcp_servers = mcp_servers or []
         self._gateway_port = gateway_port
-        self._env = dict(env or {})
+        self._env = env or {}
         self._metadata = dict(metadata or {})
         self._startup_commands = list(startup_commands or [])
         self._instructions = instructions
@@ -97,7 +97,7 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
         self._id = uuid.uuid4().hex[:12]
         self._sandbox: Any = None  # e2b.AsyncSandbox
         self._gateway_token = ""
-        self._gateway_mcpc: MCPClient | None = None
+        self._gateway_mcp_client: MCPClient | None = None
         self._gateway_base_url = ""
         self._started = False
 
@@ -120,7 +120,7 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
 
         create_kwargs: dict[str, Any] = {
             "template": self._template,
-            "timeout": self._timeout,
+            "timeout": self._timeout_seconds,
         }
         if self._api_key:
             create_kwargs["api_key"] = self._api_key
@@ -150,6 +150,15 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
 
         self._started = True
 
+    async def reset(self) -> None:
+        """Reset sandbox workspace to a clean state.
+
+        Clears session data and offloaded files inside the sandbox.
+        """
+        await self._exec(
+            f"rm -rf {self._working_dir}/sessions {self._working_dir}/data",
+        )
+
     async def is_alive(self) -> bool:
         if not self._sandbox or not self._started:
             return False
@@ -159,12 +168,12 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
             return False
 
     async def close(self) -> None:
-        if self._gateway_mcpc and self._gateway_mcpc.is_connected:
+        if self._gateway_mcp_client and self._gateway_mcp_client.is_connected:
             try:
-                await self._gateway_mcpc.close()
+                await self._gateway_mcp_client.close()
             except Exception:
                 pass
-            self._gateway_mcpc = None
+            self._gateway_mcp_client = None
 
         if self._sandbox:
             try:
@@ -329,11 +338,22 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
         logger.info("E2BWorkspace: added skill %r", dir_name)
 
     async def remove_skill(self, name: str) -> None:
-        dest = f"{self.SKILLS_DIR}/{shlex.quote(name)}"
+        skills = await self.list_skills()
+        target_dir: str | None = None
+        for skill in skills:
+            if skill.name == name:
+                target_dir = skill.dir
+                break
+        if target_dir is None:
+            available = [s.name for s in skills]
+            raise KeyError(
+                f"Skill {name!r} not found. Available: {available}",
+            )
+        dest = shlex.quote(target_dir)
         r = await self._exec(f"rm -rf {dest}")
         if not r.is_ok():
             raise RuntimeError(
-                f"Failed to remove skill: {r.stderr.decode()}",
+                f"Failed to remove skill {name!r}: {r.stderr.decode()}",
             )
         logger.info("E2BWorkspace: removed skill %r", name)
 
@@ -392,7 +412,6 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
                         )
                     raise
                 await asyncio.sleep(delay)
-                delay = min(delay * 1.5, 5.0)
         raise RuntimeError("unreachable")
 
     # ── GatewayMixin hooks ─────────────────────────────────────────

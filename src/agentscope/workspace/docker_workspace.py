@@ -26,13 +26,11 @@ import tarfile
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any
 
-from .workspace_base import WorkspaceBase
-from .gateway import GatewayMixin
-from .config import MCPServerConfig
-from .types import ExecutionResult, InternalEndpoint, SerializedWorkspaceState
+from .._logging import logger
 from ..mcp import MCPClient
 from ..message import (
     Base64Source,
@@ -44,7 +42,10 @@ from ..message import (
 )
 from ..skill import Skill
 from ..tool import ToolBase
-from .._logging import logger
+from .config import MCPServerConfig
+from .gateway import GatewayMixin
+from .types import ExecutionResult, SerializedWorkspaceState
+from .workspace_base import WorkspaceBase
 
 _EXECUTOR = ThreadPoolExecutor(
     max_workers=8,
@@ -65,6 +66,21 @@ and processes.
 └── sessions/    # offloaded context and tool results
 ```
 </workspace>"""
+
+
+@dataclass(frozen=True, slots=True)
+class InternalEndpoint:
+    """Host-accessible endpoint for a service running inside a container.
+
+    Attributes:
+        host: Hostname or IP address.
+        port: Port number.
+        is_tls_enabled: Whether TLS is active on this endpoint.
+    """
+
+    host: str
+    port: int
+    is_tls_enabled: bool = False
 
 
 class DockerWorkspace(GatewayMixin, WorkspaceBase):
@@ -98,12 +114,12 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
     ) -> None:
         self._image = image
         self._working_dir = working_dir
-        self._mcp_servers = list(mcp_servers or [])
+        self._mcp_servers = mcp_servers or []
         self._gateway_port = gateway_port
-        self._exposed_ports = list(exposed_ports or [])
-        self._volumes = dict(volumes or {})
-        self._env = dict(env or {})
-        self._startup_commands = list(startup_commands or [])
+        self._exposed_ports = exposed_ports or []
+        self._volumes = volumes or {}
+        self._env = env or {}
+        self._startup_commands = startup_commands or []
         self._instructions = instructions
 
         self._id = uuid.uuid4().hex[:12]
@@ -111,7 +127,7 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
         self._container: Any = None  # Container
         self._port_mapping: dict[int, int] = {}
         self._gateway_token = ""
-        self._gateway_mcpc: MCPClient | None = None
+        self._gateway_mcp_client: MCPClient | None = None
         self._gateway_base_url = ""
         self._started = False
 
@@ -213,6 +229,15 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
 
         self._started = True
 
+    async def reset(self) -> None:
+        """Reset container workspace to a clean state.
+
+        Clears session data and offloaded files inside the container.
+        """
+        await self._exec(
+            f"rm -rf {self._working_dir}/sessions {self._working_dir}/data",
+        )
+
     async def is_alive(self) -> bool:
         if not self._container:
             return False
@@ -224,12 +249,12 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
             return False
 
     async def close(self) -> None:
-        if self._gateway_mcpc and self._gateway_mcpc.is_connected:
+        if self._gateway_mcp_client and self._gateway_mcp_client.is_connected:
             try:
-                await self._gateway_mcpc.close()
+                await self._gateway_mcp_client.close()
             except Exception:
                 pass
-            self._gateway_mcpc = None
+            self._gateway_mcp_client = None
 
         if self._container:
             loop = asyncio.get_running_loop()
@@ -317,7 +342,7 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
         msgs: list[Msg],
         **kwargs: Any,
     ) -> str:
-        base = f"sessions/{session_id}"
+        base = f"{self._working_dir}/sessions/{session_id}"
         path = f"{base}/context.jsonl"
 
         copied = deepcopy(msgs)
@@ -352,7 +377,7 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
         tool_result: ToolResultBlock,
         **kwargs: Any,
     ) -> str:
-        base = f"sessions/{session_id}"
+        base = f"{self._working_dir}/sessions/{session_id}"
         path = f"{base}/tool_result-{tool_result.id}.txt"
 
         parts: list[str] = []
@@ -391,7 +416,6 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
             )
 
         dir_name = os.path.basename(os.path.abspath(skill_path))
-        dest = f"{self.SKILLS_DIR}/{dir_name}"
         await self._exec(f"mkdir -p {self.SKILLS_DIR}")
 
         # tar the local skill directory and put it into the container
@@ -409,10 +433,25 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
             self._container.put_archive(self.SKILLS_DIR, tar_data)
 
         await loop.run_in_executor(_EXECUTOR, _put)
-        logger.info("DockerWorkspace: added skill %r at %s", dir_name, dest)
+        logger.info(
+            "DockerWorkspace: added skill %r at %s",
+            dir_name,
+            f"{self.SKILLS_DIR}/{dir_name}",
+        )
 
     async def remove_skill(self, name: str) -> None:
-        dest = f"{self.SKILLS_DIR}/{shlex.quote(name)}"
+        skills = await self.list_skills()
+        target_dir: str | None = None
+        for skill in skills:
+            if skill.name == name:
+                target_dir = skill.dir
+                break
+        if target_dir is None:
+            available = [s.name for s in skills]
+            raise KeyError(
+                f"Skill {name!r} not found. Available: {available}",
+            )
+        dest = shlex.quote(target_dir)
         r = await self._exec(f"rm -rf {dest}")
         if not r.is_ok():
             raise RuntimeError(
@@ -435,7 +474,7 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
                 "mcp_servers": [
                     {
                         "name": s.name,
-                        "transport": s.transport,
+                        "protocol": s.protocol,
                         "command": s.command,
                         "args": s.args,
                         "url": s.url,
