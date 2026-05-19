@@ -11,11 +11,10 @@ Usage::
     )
     await manager.initialize()
 
-    ws = await manager.create_workspace()
-    # persist ws.workspace_id in your DB
+    ws = await manager.create_workspace("u1", "agent-42", "s1")
+    ws_id = ws.workspace_id
 
-    # later: look up by workspace_id
-    ws = manager.get_workspace(ws_id)
+    ws = await manager.get_workspace(ws_id)
 
 Pool usage (RL rollout)::
 
@@ -75,19 +74,39 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
     async def _do_close(self) -> None:
         pass
 
-    async def _do_create(self, **kwargs: Any) -> WorkspaceBase:
+    async def _do_create(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        **kwargs: Any,
+    ) -> WorkspaceBase:
         ws = E2BWorkspace(
             template=kwargs.get("template", self._template),
             api_key=kwargs.get("api_key", self._api_key),
             domain=kwargs.get("domain", self._domain),
-            timeout_seconds=kwargs.get("timeout", self._timeout_seconds),
-            working_dir=kwargs.get("working_dir", self._working_dir),
-            mcp_servers=list(
-                kwargs.get("mcp_servers", self._default_mcp_servers),
+            timeout_seconds=kwargs.get(
+                "timeout",
+                self._timeout_seconds,
             ),
-            gateway_port=kwargs.get("gateway_port", self._gateway_port),
+            working_dir=kwargs.get(
+                "working_dir",
+                self._working_dir,
+            ),
+            mcp_servers=list(
+                kwargs.get(
+                    "mcp_servers",
+                    self._default_mcp_servers,
+                ),
+            ),
+            gateway_port=kwargs.get(
+                "gateway_port",
+                self._gateway_port,
+            ),
             env=dict(kwargs.get("env", self._default_env)),
-            metadata=dict(kwargs.get("metadata", self._default_metadata)),
+            metadata=dict(
+                kwargs.get("metadata", self._default_metadata),
+            ),
             startup_commands=list(
                 kwargs.get(
                     "startup_commands",
@@ -115,20 +134,20 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
             "working_dir",
             E2BWorkspace.DEFAULT_WORKING_DIR,
         )
-        api_key = state.payload.get("api_key", self._api_key)
-        domain = state.payload.get("domain", self._domain)
 
-        connect_kwargs: dict[str, Any] = {"sandbox_id": sandbox_id}
-        if api_key:
-            connect_kwargs["api_key"] = api_key
-        if domain:
-            connect_kwargs["domain"] = domain
+        connect_kwargs: dict[str, Any] = {
+            "sandbox_id": sandbox_id,
+        }
+        if self._api_key:
+            connect_kwargs["api_key"] = self._api_key
+        if self._domain:
+            connect_kwargs["domain"] = self._domain
 
         sandbox = await AsyncSandbox.connect(**connect_kwargs)
 
         ws = E2BWorkspace(
-            api_key=api_key,
-            domain=domain,
+            api_key=self._api_key,
+            domain=self._domain,
             working_dir=working_dir,
             mcp_servers=list(self._default_mcp_servers),
             gateway_port=self._gateway_port,
@@ -145,4 +164,8 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         return ws
 
     async def _create_for_pool(self) -> WorkspaceBase:
-        return await self._do_create()
+        return await self._do_create(
+            user_id="__pool__",
+            agent_id="__pool__",
+            session_id="__pool__",
+        )

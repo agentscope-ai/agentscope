@@ -5,30 +5,17 @@ Manages creation, tracking, and destruction of workspace instances.
 Used by agent services (FastAPI, etc.) to share configuration and
 pool workspaces across requests.
 
-Agent service integration
-~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The manager owns the ``workspace_id → WorkspaceBase`` mapping in
-memory.  **Agent service** is responsible for persisting the
-``workspace_id`` alongside its own business keys (user, agent,
-session, etc.).  Typical flow::
+Typical flow::
 
     manager = DockerWorkspaceManager(image="my-image")
     await manager.initialize()
 
-    # ── first request: create ──────────────────────────────────
-    ws = await manager.create_workspace()
-    db.save(user_id, agent_id, session_id, ws.workspace_id)
+    ws = await manager.create_workspace(user_id, agent_id, session_id)
+    ws_id = ws.workspace_id          # caller persists this
 
-    # ── subsequent requests: look up ───────────────────────────
-    ws_id = db.load(user_id, agent_id, session_id)
-    ws = manager.get_workspace(ws_id)          # from memory
-    if ws is None:
-        state = db.load_workspace_state(ws_id)  # from DB
-        ws = await manager.restore(state)       # reconnect
-
-    # ── explicit lifecycle ─────────────────────────────────────
-    await manager.close_workspace(ws_id)        # when done
+    ws = await manager.get_workspace(ws_id)
+    await manager.close(ws_id)
 
 Pool usage (RL rollout)::
 
@@ -37,7 +24,7 @@ Pool usage (RL rollout)::
     # ... rollout ...
     await manager.release_to_pool(ws)
 
-    await manager.close()
+    await manager.close_all()
 """
 
 import asyncio
@@ -55,17 +42,13 @@ class WorkspaceManagerBase(ABC):
     Responsibilities:
 
     * **Create** workspaces via :meth:`create_workspace`.
-    * **Look up** live workspaces by ``workspace_id`` via
-      :meth:`get_workspace` (in-memory, O(1)).
+    * **Look up** live workspaces by ``workspace_id``
+      via :meth:`get_workspace` (in-memory, O(1)).
     * **Restore** workspaces from serialized state via
       :meth:`restore` (reconnect to a running container/sandbox).
-    * **Close** individual workspaces via :meth:`close_workspace`,
-      or all of them via :meth:`close`.
+    * **Close** individual workspaces via :meth:`close`,
+      or all of them via :meth:`close_all`.
     * Optionally manage a **warm pool** (call :meth:`enable_pool`).
-
-    The mapping from business keys ``(user_id, agent_id, session_id)``
-    to ``workspace_id`` is **not** managed here — that belongs to the
-    agent service / persistence layer.
     """
 
     def __init__(self) -> None:
@@ -83,7 +66,7 @@ class WorkspaceManagerBase(ABC):
 
     @abstractmethod
     async def initialize(self) -> None:
-        """Initialize the manager (connect clients, warm pools, etc.)."""
+        """Initialize the manager (connect clients, warm pools)."""
 
     @abstractmethod
     async def _do_close(self) -> None:
@@ -94,7 +77,13 @@ class WorkspaceManagerBase(ABC):
         """
 
     @abstractmethod
-    async def _do_create(self, **kwargs: Any) -> WorkspaceBase:
+    async def _do_create(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        **kwargs: Any,
+    ) -> WorkspaceBase:
         """Backend-specific workspace creation.
 
         Subclasses implement this to instantiate a concrete workspace
@@ -118,31 +107,47 @@ class WorkspaceManagerBase(ABC):
 
     # ── workspace CRUD (non-abstract) ──────────────────────────────
 
-    async def create_workspace(self, **kwargs: Any) -> WorkspaceBase:
+    async def create_workspace(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        **kwargs: Any,
+    ) -> WorkspaceBase:
         """Create a new workspace and track it.
 
-        Returns the initialized workspace.  The caller should persist
-        ``workspace.workspace_id`` for later retrieval.
+        ``(user_id, agent_id, session_id)`` are forwarded to the
+        backend for work-path isolation only.  The caller should
+        persist ``workspace.workspace_id`` for later retrieval.
         """
-        ws = await self._do_create(**kwargs)
+        ws = await self._do_create(
+            user_id,
+            agent_id,
+            session_id,
+            **kwargs,
+        )
         self._workspaces[ws.workspace_id] = ws
         logger.info(
-            "%s: created workspace %s",
+            "%s: created workspace %s for (%s, %s, %s)",
             type(self).__name__,
             ws.workspace_id,
+            user_id,
+            agent_id,
+            session_id,
         )
         return ws
 
-    def get_workspace(self, workspace_id: str) -> WorkspaceBase | None:
+    async def get_workspace(
+        self,
+        workspace_id: str,
+    ) -> WorkspaceBase | None:
         """Look up a live workspace by its ID.
 
-        Returns ``None`` if the workspace is not tracked (may have been
-        closed, or this manager instance restarted).  In that case the
-        caller should :meth:`restore` from persisted state.
+        Returns ``None`` if the workspace is not tracked.
         """
         return self._workspaces.get(workspace_id)
 
-    async def close_workspace(self, workspace_id: str) -> None:
+    async def close(self, workspace_id: str) -> None:
         """Close and un-track a single workspace.
 
         No-op if the workspace is not tracked.
@@ -150,6 +155,7 @@ class WorkspaceManagerBase(ABC):
         if workspace_id not in self._workspaces:
             return
         ws = self._workspaces.pop(workspace_id)
+
         try:
             await ws.close()
         except Exception as e:
@@ -169,7 +175,7 @@ class WorkspaceManagerBase(ABC):
         """Return all tracked workspace IDs."""
         return list(self._workspaces.keys())
 
-    async def close(self) -> None:
+    async def close_all(self) -> None:
         """Close all managed workspaces, pool, and release resources.
 
         Calls :meth:`_do_close` for backend-specific cleanup, then
@@ -197,12 +203,12 @@ class WorkspaceManagerBase(ABC):
         return self
 
     async def __aexit__(self, *exc: object) -> None:
-        await self.close()
+        await self.close_all()
 
     # ── pool: configuration & lifecycle ───────────────────────────
 
     async def enable_pool(self, *, capacity: int = 4) -> None:
-        """Enable and warm the pool with ``capacity`` pre-created workspaces.
+        """Enable and warm the pool with ``capacity`` workspaces.
 
         Idempotent — calling again after the pool is already enabled is
         a no-op. Use :meth:`resize_pool` to adjust capacity.
@@ -328,7 +334,7 @@ class WorkspaceManagerBase(ABC):
                                 await removed.close()
                             except Exception as e:
                                 logger.warning(
-                                    "Pool: error closing workspace %s: %s",
+                                    "Pool: error closing %s: %s",
                                     ws_id,
                                     e,
                                 )
@@ -349,7 +355,11 @@ class WorkspaceManagerBase(ABC):
         Defaults to calling :meth:`_do_create` with no overrides.
         Override in subclasses if pool workspaces need different config.
         """
-        return await self._do_create()
+        return await self._do_create(
+            user_id="__pool__",
+            agent_id="__pool__",
+            session_id="__pool__",
+        )
 
     async def _close_pool(self) -> None:
         """Close all pool workspaces."""
@@ -357,10 +367,16 @@ class WorkspaceManagerBase(ABC):
             if not self._pool_workspaces:
                 return
             tasks = [ws.close() for ws in self._pool_workspaces.values()]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            results = await asyncio.gather(
+                *tasks,
+                return_exceptions=True,
+            )
             for r in results:
                 if isinstance(r, Exception):
-                    logger.warning("Pool: error closing workspace: %s", r)
+                    logger.warning(
+                        "Pool: error closing workspace: %s",
+                        r,
+                    )
             self._pool_workspaces.clear()
             self._pool_in_use.clear()
             while not self._pool_free.empty():

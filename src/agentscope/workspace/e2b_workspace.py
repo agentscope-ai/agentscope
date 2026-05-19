@@ -360,15 +360,17 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
     # ── export state ───────────────────────────────────────────────
 
     async def export_state(self) -> SerializedWorkspaceState:
-        """Serialize workspace identity for later restore."""
+        """Serialize workspace identity for later restore.
+
+        Credentials (api_key, domain) are managed by the manager and
+        are intentionally excluded from the serialized state.
+        """
         return SerializedWorkspaceState(
             backend_type="e2b",
             payload={
                 "sandbox_id": self._sandbox.sandbox_id,
                 "workspace_id": self._id,
                 "working_dir": self._working_dir,
-                "api_key": self._api_key,
-                "domain": self._domain,
             },
         )
 

@@ -71,7 +71,7 @@ class WorkspaceBase(ABC):
         Override in container/sandbox backends to perform a real
         liveness check. Defaults to ``True`` for local workspaces.
         """
-        return False
+        return True
 
     async def __aenter__(self) -> "WorkspaceBase":
         await self.initialize()

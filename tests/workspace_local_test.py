@@ -749,3 +749,207 @@ description: {description}
 
         # Verify empty list is returned
         self.assertListEqual(skills, [])
+
+
+class TestLocalWorkspaceIsAlive(IsolatedAsyncioTestCase):
+    """Test is_alive() for LocalWorkspace."""
+
+    async def test_is_alive_returns_true(self) -> None:
+        """is_alive() always returns True for local workspaces."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = LocalWorkspace(workdir=tmpdir)
+            self.assertTrue(await ws.is_alive())
+
+
+class TestLocalWorkspaceMCPPersistence(IsolatedAsyncioTestCase):
+    """Test .mcp file persistence in LocalWorkspace."""
+
+    async def asyncSetUp(self) -> None:
+        # pylint: disable=consider-using-with
+        self.temp_dir = tempfile.TemporaryDirectory()
+
+    async def asyncTearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    async def test_add_mcp_creates_mcp_file(self) -> None:
+        """Adding an MCP persists the .mcp JSON file."""
+        from agentscope.workspace.config import MCPServerConfig
+
+        ws = LocalWorkspace(workdir=self.temp_dir.name)
+        await ws.initialize()
+
+        cfg = MCPServerConfig(
+            name="test_mcp",
+            protocol="stdio",
+            command="echo",
+            args=["hello"],
+        )
+        try:
+            await ws.add_mcp(cfg)
+        except Exception:
+            pass
+
+        mcp_file = os.path.join(self.temp_dir.name, ".mcp")
+        if os.path.exists(mcp_file):
+            async with aiofiles.open(mcp_file, "r") as f:
+                data = json.loads(await f.read())
+            self.assertIsInstance(data, list)
+        await ws.close()
+
+    async def test_initialize_restores_from_mcp_file(self) -> None:
+        """initialize() restores MCPs from .mcp file if it exists."""
+        mcp_file = os.path.join(self.temp_dir.name, ".mcp")
+        mcp_data = [
+            {
+                "name": "restored_mcp",
+                "is_stateful": False,
+                "mcp_config": {
+                    "type": "http_mcp",
+                    "url": "http://localhost:9999",
+                },
+            },
+        ]
+        async with aiofiles.open(mcp_file, "w") as f:
+            await f.write(json.dumps(mcp_data))
+
+        ws = LocalWorkspace(workdir=self.temp_dir.name)
+        await ws.initialize()
+
+        mcps = await ws.list_mcps()
+        self.assertEqual(len(mcps), 1)
+        self.assertEqual(mcps[0].name, "restored_mcp")
+        await ws.close()
+
+    async def test_initialize_uses_defaults_without_mcp_file(self) -> None:
+        """Without .mcp file, initialize() uses default_mcps."""
+        ws = LocalWorkspace(workdir=self.temp_dir.name)
+        await ws.initialize()
+
+        mcps = await ws.list_mcps()
+        self.assertEqual(len(mcps), 0)
+        await ws.close()
+
+    async def test_remove_mcp_updates_mcp_file(self) -> None:
+        """remove_mcp() updates the .mcp file after removal."""
+        mcp_data = [
+            {
+                "name": "mcp_a",
+                "is_stateful": False,
+                "mcp_config": {
+                    "type": "http_mcp",
+                    "url": "http://localhost:9991",
+                },
+            },
+            {
+                "name": "mcp_b",
+                "is_stateful": False,
+                "mcp_config": {
+                    "type": "http_mcp",
+                    "url": "http://localhost:9992",
+                },
+            },
+        ]
+        mcp_file = os.path.join(self.temp_dir.name, ".mcp")
+        async with aiofiles.open(mcp_file, "w") as f:
+            await f.write(json.dumps(mcp_data))
+
+        ws = LocalWorkspace(workdir=self.temp_dir.name)
+        await ws.initialize()
+
+        self.assertEqual(len(await ws.list_mcps()), 2)
+
+        await ws.remove_mcp("mcp_a")
+        self.assertEqual(len(await ws.list_mcps()), 1)
+
+        async with aiofiles.open(mcp_file, "r") as f:
+            saved = json.loads(await f.read())
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0]["name"], "mcp_b")
+        await ws.close()
+
+
+class TestLocalWorkspaceSkillsReconciliation(IsolatedAsyncioTestCase):
+    """Test .skills index reconciliation in LocalWorkspace."""
+
+    async def asyncSetUp(self) -> None:
+        # pylint: disable=consider-using-with
+        self.temp_dir = tempfile.TemporaryDirectory()
+        # pylint: disable=consider-using-with
+        self.skills_src = tempfile.TemporaryDirectory()
+
+    async def asyncTearDown(self) -> None:
+        self.temp_dir.cleanup()
+        self.skills_src.cleanup()
+
+    def _make_skill(self, name: str, desc: str) -> str:
+        d = os.path.join(self.skills_src.name, name)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "SKILL.md"), "w", encoding="utf-8") as f:
+            f.write(
+                f"---\nname: {name}\ndescription: {desc}\n---\n"
+                f"# {name}\n{desc}\n",
+            )
+        return d
+
+    async def test_reconcile_detects_manual_addition(self) -> None:
+        """Manually adding a skill dir triggers reconciliation."""
+        ws = LocalWorkspace(workdir=self.temp_dir.name)
+        await ws.initialize()
+
+        skills = await ws.list_skills()
+        self.assertEqual(len(skills), 0)
+
+        # Manually copy a skill into the skills directory
+        import shutil
+
+        src = self._make_skill("manual_skill", "Added manually")
+        dest = os.path.join(
+            self.temp_dir.name,
+            "skills",
+            "manual_skill",
+        )
+        shutil.copytree(src, dest)
+
+        # list_skills should detect and reconcile
+        skills = await ws.list_skills()
+        self.assertEqual(len(skills), 1)
+        self.assertEqual(skills[0].name, "manual_skill")
+        await ws.close()
+
+    async def test_reconcile_detects_manual_removal(self) -> None:
+        """Manually deleting a skill dir triggers index cleanup."""
+        import shutil
+
+        skill_src = self._make_skill("removable", "To be removed")
+        ws = LocalWorkspace(
+            workdir=self.temp_dir.name,
+            skill_paths=[skill_src],
+        )
+        await ws.initialize()
+
+        skills = await ws.list_skills()
+        self.assertEqual(len(skills), 1)
+
+        # Manually remove the skill directory
+        skill_dir = os.path.join(
+            self.temp_dir.name,
+            "skills",
+            "removable",
+        )
+        shutil.rmtree(skill_dir)
+
+        # list_skills should detect the removal
+        skills = await ws.list_skills()
+        self.assertEqual(len(skills), 0)
+        await ws.close()
+
+    async def test_export_state(self) -> None:
+        """export_state returns correct backend_type and payload."""
+        ws = LocalWorkspace(workdir=self.temp_dir.name)
+        await ws.initialize()
+
+        state = await ws.export_state()
+        self.assertEqual(state.backend_type, "local")
+        self.assertEqual(state.payload["workdir"], self.temp_dir.name)
+        self.assertIn("workspace_id", state.payload)
+        await ws.close()

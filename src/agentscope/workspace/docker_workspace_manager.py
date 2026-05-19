@@ -9,11 +9,10 @@ Usage::
     manager = DockerWorkspaceManager(image="my-agent-image:latest")
     await manager.initialize()
 
-    ws = await manager.create_workspace()
-    # persist ws.workspace_id in your DB
+    ws = await manager.create_workspace("u1", "agent-42", "s1")
+    ws_id = ws.workspace_id
 
-    # later: look up by workspace_id
-    ws = manager.get_workspace(ws_id)
+    ws = await manager.get_workspace(ws_id)
 
 Pool usage (RL rollout)::
 
@@ -65,17 +64,35 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
     async def _do_close(self) -> None:
         pass
 
-    async def _do_create(self, **kwargs: Any) -> WorkspaceBase:
+    async def _do_create(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        **kwargs: Any,
+    ) -> WorkspaceBase:
         ws = DockerWorkspace(
             image=kwargs.get("image", self._image),
-            working_dir=kwargs.get("working_dir", self._working_dir),
-            mcp_servers=list(
-                kwargs.get("mcp_servers", self._default_mcp_servers),
+            working_dir=kwargs.get(
+                "working_dir",
+                self._working_dir,
             ),
-            gateway_port=kwargs.get("gateway_port", self._gateway_port),
+            mcp_servers=list(
+                kwargs.get(
+                    "mcp_servers",
+                    self._default_mcp_servers,
+                ),
+            ),
+            gateway_port=kwargs.get(
+                "gateway_port",
+                self._gateway_port,
+            ),
             env=dict(kwargs.get("env", self._default_env)),
             startup_commands=list(
-                kwargs.get("startup_commands", self._default_startup_commands),
+                kwargs.get(
+                    "startup_commands",
+                    self._default_startup_commands,
+                ),
             ),
         )
         await ws.initialize()
@@ -161,4 +178,8 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         return ws
 
     async def _create_for_pool(self) -> WorkspaceBase:
-        return await self._do_create()
+        return await self._do_create(
+            user_id="__pool__",
+            agent_id="__pool__",
+            session_id="__pool__",
+        )
