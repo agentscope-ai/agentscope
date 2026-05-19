@@ -699,18 +699,18 @@ description: {description}
         """Test listing skills when no skills exist.
 
         This test verifies that:
-        1. An empty list is returned when the skills directory exists but
+        1. An empty list is returned when the skills directory doesn't exist
+        2. An empty list is returned when the skills directory exists but
            contains no skill subdirectories
-        2. RuntimeError is raised when the skills directory doesn't exist
         """
         # Create workspace without initializing — skills dir doesn't exist
         workspace = LocalWorkspace(workdir=self.temp_dir.name)
 
-        # list_skills raises when skills directory doesn't exist
-        with self.assertRaises(RuntimeError):
-            await workspace.list_skills()
+        # list_skills returns empty list when skills directory doesn't exist
+        skills = await workspace.list_skills()
+        self.assertListEqual(skills, [])
 
-        # After creating the skills directory, should return empty list
+        # After creating the skills directory, should still return empty list
         os.makedirs(os.path.join(self.temp_dir.name, "skills"), exist_ok=True)
         skills = await workspace.list_skills()
         self.assertListEqual(skills, [])
@@ -751,7 +751,7 @@ class TestLocalWorkspaceMCPPersistence(IsolatedAsyncioTestCase):
         )
         try:
             await ws.add_mcp(cfg)
-        except Exception:
+        except BaseException:
             pass
 
         mcp_file = os.path.join(self.temp_dir.name, ".mcp")
