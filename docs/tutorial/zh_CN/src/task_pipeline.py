@@ -107,6 +107,167 @@ asyncio.run(check_broadcast_message())
 # Alice 一无所知，因为他没有包含在 ``MsgHub`` 上下文中。
 #
 #
+# 基于 Topic 的消息路由过滤
+# ---------------------------
+#
+# MsgHub 支持基于 topic 的消息路由过滤，让订阅者能只接收自己关心的
+# 消息类型。这是通过 ``TopicFilter`` 类实现的，使用 ``fnmatch`` 进行
+# 通配符匹配。
+#
+#
+# 订阅指定 Topic
+# ~~~~~~~~~~~~~~~~~~~~~~~~~
+#
+# 使用 ``add_participant`` 方法的 ``topics`` 参数来订阅指定类型的消息：
+#
+# .. code-block:: python
+#
+#     from agentscope.pipeline import MsgHub
+#     from agentscope.message import Msg
+#
+#     # 创建 MsgHub
+#     hub = MsgHub(participants=[])
+#
+#     # 只订阅 task.* 相关的消息
+#     hub.add_participant(task_agent, topics=["task.*"])
+#
+#     # 只订阅 notify.* 相关的消息
+#     hub.add_participant(notify_agent, topics=["notify.*"])
+#
+#     # 订阅多个 topic 模式
+#     hub.add_participant(admin_agent, topics=["task.*", "notify.*", "system.*"])
+#
+#     # 不指定 topics（或 None）表示接收所有消息（向后兼容）
+#     hub.add_participant(all_agent, topics=None)
+#
+#
+# 消息端设置 Topic
+# ~~~~~~~~~~~~~~~~~~~~~~~~~
+#
+# 发送消息时可以通过 ``Msg`` 类的 ``topics`` 参数标记消息属于哪些 topic：
+#
+# .. code-block:: python
+#
+#     # 标记为 task.create 主题
+#     msg_task = Msg(
+#         name="System",
+#         content="New task created",
+#         role="system",
+#         topics=["task.create"],
+#     )
+#
+#     # 消息可以属于多个 topic
+#     msg_multi = Msg(
+#         name="System",
+#         content="Task completed and user notified",
+#         role="system",
+#         topics=["task.finish", "notify.user"],
+#     )
+#
+#     # 不设置 topics 或设置为 None，表示消息将被所有订阅者接收
+#     msg_broadcast = Msg(
+#         name="System",
+#         content="This will be received by everyone",
+#         role="system",
+#     )
+#
+#
+# Topic 匹配策略
+# ~~~~~~~~~~~~~~~~~~~~~~~~~
+#
+# TopicFilter 支持以下匹配策略：
+#
+# +-------------------------+-----------------------------------------+-------------------------+
+# | 策略类型                | 示例                                    | 说明                     |
+# +=========================+=========================================+=========================+
+# | **精确匹配**            | 消息: ["task.create"]                  | 只有 topic 完全相同时才 |
+# |                         | 订阅: ["task.create"]                   | 匹配                     |
+# +-------------------------+-----------------------------------------+-------------------------+
+# | **通配符匹配**          | 消息: ["task.create", "task.finish"]   | 使用 fnmatch 进行通配符 |
+# |                         | 订阅: ["task.*"]                        | 匹配，支持 * 和 ?        |
+# +-------------------------+-----------------------------------------+-------------------------+
+# | **多模式匹配**          | 消息: ["task.create", "notify.admin"]  | 消息或订阅者支持多个    |
+# |                         | 订阅: ["task.*", "notify.*"]           | topic，任一匹配即成功   |
+# +-------------------------+-----------------------------------------+-------------------------+
+# | **向后兼容（无 topics）**| 消息: topics=None                       | 消息无 topics → 被所有  |
+# |                         | 订阅: topics=None                       | 订阅者接收              |
+# |                         |                                         | 订阅者无 topics → 接收  |
+# |                         |                                         | 所有消息                 |
+# +-------------------------+-----------------------------------------+-------------------------+
+#
+#
+# 完整示例
+# ~~~~~~~~~~~~~~~~~~~~~~~~~
+#
+# .. code-block:: python
+#
+#     import asyncio
+#     from agentscope.message import Msg, TopicFilter
+#     from agentscope.pipeline import MsgHub
+#     from agentscope.agent import AgentBase
+#
+#
+#     class SimpleAgent(AgentBase):
+#         def __init__(self, name):
+#             super().__init__()
+#             self.name = name
+#             self.received = []
+#
+#         async def reply(self, x=None):
+#             return Msg(self.name, "reply", "assistant")
+#
+#         async def observe(self, msg):
+#             if msg:
+#                 if isinstance(msg, list):
+#                     self.received.extend(msg)
+#                 else:
+#                     self.received.append(msg)
+#
+#         async def handle_interrupt(self, *args, **kwargs):
+#             return Msg(self.name, "interrupted", "assistant")
+#
+#
+#     async def demo_topic_filter():
+#         # 创建智能体
+#         agent_task = SimpleAgent("TaskAgent")
+#         agent_notify = SimpleAgent("NotifyAgent")
+#         agent_all = SimpleAgent("AllAgent")
+#
+#         # 创建 MsgHub 并按 topic 订阅
+#         hub = MsgHub(participants=[])
+#         hub.add_participant(agent_task, topics=["task.*"])
+#         hub.add_participant(agent_notify, topics=["notify.*"])
+#         hub.add_participant(agent_all)  # 不指定 topics，接收所有消息
+#
+#         async with hub:
+#             # 发送 task.create 消息
+#             msg1 = Msg("System", "Task created", "system",
+#                       topics=["task.create"])
+#             await hub.broadcast(msg1)
+#
+#             # 发送 notify.user 消息
+#             msg2 = Msg("System", "User notified", "system",
+#                       topics=["notify.user"])
+#             await hub.broadcast(msg2)
+#
+#             # 发送无 topic 的消息（广播给所有人）
+#             msg3 = Msg("System", "Broadcast to all", "system")
+#             await hub.broadcast(msg3)
+#
+#         print(f"TaskAgent 收到: {len(agent_task.received)} 条消息")
+#         print(f"NotifyAgent 收到: {len(agent_notify.received)} 条消息")
+#         print(f"AllAgent 收到: {len(agent_all.received)} 条消息")
+#
+#
+#     asyncio.run(demo_topic_filter())
+#
+#
+# .. hint::
+#
+#     TopicFilter 使用 ``lru_cache`` 缓存匹配结果以提高性能。对于
+#     重复出现的 topic 组合，匹配会更快。
+#
+#
 # 动态管理
 # ---------------------------
 # 此外，``MsgHub`` 支持通过以下方法动态管理参与者：

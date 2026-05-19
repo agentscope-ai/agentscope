@@ -23,6 +23,7 @@ from ..message import (
     ToolResultBlock,
     ImageBlock,
     VideoBlock,
+    TopicFilter,
 )
 from ..types import AgentHookTypes
 
@@ -166,6 +167,11 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
         # `observe` method. The key is the MsgHub id, and the value is the
         # list of agents.
         self._subscribers: dict[str, list[AgentBase]] = {}
+
+        # The topics that each subscriber is interested in.
+        # Structure: {msghub_name: {subscriber_id: topics_list | None}}
+        # None or empty list means the subscriber receives all messages.
+        self._subscriber_topics: dict[str, dict[str, list[str] | None]] = {}
 
         # We add this variable in case developers want to disable the console
         # output of the agent, e.g., in a production environment.
@@ -474,15 +480,49 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
 
         Thinking blocks are stripped before broadcasting, since they represent
         the agent's internal reasoning and should not be visible to others.
+
+        Messages are filtered based on topics:
+        - If subscriber has no topics, receives all messages
+        - If message has no topics, received by all subscribers
+        - Otherwise, check if any message topic matches any subscriber topic pattern
         """
         if msg is None:
             return
 
         broadcast_msg = self._strip_thinking_blocks(msg)
 
-        for subscribers in self._subscribers.values():
+        for msghub_name, subscribers in self._subscribers.items():
+            subscriber_topics_map = self._subscriber_topics.get(msghub_name, {})
             for subscriber in subscribers:
-                await subscriber.observe(broadcast_msg)
+                sub_topics = subscriber_topics_map.get(subscriber.id, None)
+                if self._should_deliver(broadcast_msg, sub_topics):
+                    await subscriber.observe(broadcast_msg)
+
+    def _should_deliver(
+        self,
+        msg: Msg | list[Msg],
+        subscriber_topics: list[str] | None,
+    ) -> bool:
+        """Check if the message should be delivered to a subscriber.
+
+        Args:
+            msg: The message(s) to check.
+            subscriber_topics: The topics the subscriber is interested in.
+                None or empty list means all messages.
+
+        Returns:
+            True if the message should be delivered.
+        """
+        if subscriber_topics is None or len(subscriber_topics) == 0:
+            return True
+
+        if isinstance(msg, list):
+            for single_msg in msg:
+                if TopicFilter.matches(single_msg.topics, subscriber_topics):
+                    return True
+            return False
+
+        return TopicFilter.matches(msg.topics, subscriber_topics)
 
     @staticmethod
     def _strip_thinking_blocks(msg: Msg | list[Msg]) -> Msg | list[Msg]:
@@ -509,6 +549,7 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
             metadata=msg.metadata,
             timestamp=msg.timestamp,
             invocation_id=msg.invocation_id,
+            topics=msg.topics,
         )
         new_msg.id = msg.id
         return new_msg
@@ -702,17 +743,28 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
         self,
         msghub_name: str,
         subscribers: list["AgentBase"],
+        subscriber_topics: dict[str, list[str] | None] | None = None,
     ) -> None:
         """Reset the subscribers of the agent.
 
         Args:
             msghub_name (`str`):
                 The name of the MsgHub that manages the subscribers.
-            subscribers (`list[AgentBase]`):
+            subscribers (`list[AgentBase]):
                 A list of agents that will receive the reply message from
                 this agent via their `observe` method.
+            subscriber_topics (`dict[str, list[str] | None] | None`, optional):
+                A dictionary mapping subscriber agent IDs to their subscribed topics.
+                None or empty list means the subscriber receives all messages.
         """
         self._subscribers[msghub_name] = [_ for _ in subscribers if _ != self]
+
+        if subscriber_topics is None:
+            subscriber_topics = {}
+
+        self._subscriber_topics[msghub_name] = {}
+        for sub in self._subscribers[msghub_name]:
+            self._subscriber_topics[msghub_name][sub.id] = subscriber_topics.get(sub.id, None)
 
     def remove_subscribers(self, msghub_name: str) -> None:
         """Remove the msghub subscribers by the given msg hub name.
@@ -728,6 +780,9 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
             )
         else:
             self._subscribers.pop(msghub_name)
+
+        if msghub_name in self._subscriber_topics:
+            self._subscriber_topics.pop(msghub_name)
 
     @deprecated("Please use set_console_output_enabled() instead.")
     def disable_console_output(self) -> None:
