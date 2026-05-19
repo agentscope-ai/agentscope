@@ -3,6 +3,7 @@
 """Test cases for LocalWorkspace."""
 
 import base64
+import json
 import os
 import tempfile
 from dataclasses import asdict
