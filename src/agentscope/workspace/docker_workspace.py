@@ -579,8 +579,9 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
     async def _offload_data(self, data_block: DataBlock) -> DataBlock:
         h = hashlib.sha256(data_block.source.data.encode()).hexdigest()
         ext = mimetypes.guess_extension(data_block.source.media_type) or ".bin"
-        path = f"data/{h}{ext}"
-        await self._exec("mkdir -p data")
+        data_dir = f"{self._working_dir}/data"
+        path = f"{data_dir}/{h}{ext}"
+        await self._exec(f"mkdir -p {data_dir}")
         await self._write(path, base64.b64decode(data_block.source.data))
         from pydantic import AnyUrl
 
@@ -588,7 +589,7 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
             id=data_block.id,
             name=data_block.name,
             source=URLSource(
-                url=AnyUrl(f"file:///{path}"),
+                url=AnyUrl(f"file://{path}"),
                 media_type=data_block.source.media_type,
             ),
         )

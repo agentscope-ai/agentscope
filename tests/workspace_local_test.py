@@ -1,29 +1,29 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
 """Test cases for LocalWorkspace."""
-import os
-import json
+
 import base64
+import os
 import tempfile
-from unittest.async_case import IsolatedAsyncioTestCase
 from dataclasses import asdict
+from unittest.async_case import IsolatedAsyncioTestCase
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 
 import aiofiles
 
-from agentscope.workspace import LocalWorkspace
 from agentscope.message import (
-    Msg,
-    UserMsg,
     AssistantMsg,
-    DataBlock,
     Base64Source,
-    URLSource,
+    DataBlock,
+    Msg,
     TextBlock,
     ToolResultBlock,
     ToolResultState,
+    URLSource,
+    UserMsg,
 )
+from agentscope.workspace import LocalWorkspace
 
 
 class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
@@ -441,8 +441,7 @@ description: {description}
 
         This test verifies that:
         1. Skills are correctly copied from source paths to workspace
-        2. The .skills file is created with correct hash mappings
-        3. All skill files are preserved during copying
+        2. All skill files are preserved during copying
         """
         # Create test skills
         skill1_dir = self._create_test_skill(
@@ -489,27 +488,10 @@ description: {description}
             os.path.exists(os.path.join(skill2_target, "helper.py")),
         )
 
-        # Verify .skills file was created with correct new structure
-        skills_hash_file = os.path.join(skills_dir, ".skills")
-        self.assertTrue(os.path.exists(skills_hash_file))
-
-        async with aiofiles.open(skills_hash_file, "r") as f:
-            skills_data = json.loads(await f.read())
-
-        # Verify top-level structure
-        self.assertIn("skills_dir_mtime", skills_data)
-        self.assertIn("skills", skills_data)
-
-        skills_index = skills_data["skills"]
-        self.assertEqual(len(skills_index), 2)
-
-        # Verify each entry has the correct structure
-        self.assertIn("test_skill_1", skills_index)
-        self.assertIn("test_skill_2", skills_index)
-        self.assertDictEqual(
-            {k: v["skill_name"] for k, v in skills_index.items()},
-            {"test_skill_1": "test_skill_1", "test_skill_2": "test_skill_2"},
-        )
+        # Verify skills are discoverable via list_skills
+        skills = await workspace.list_skills()
+        skill_names = sorted(s.name for s in skills)
+        self.assertEqual(skill_names, ["test_skill_1", "test_skill_2"])
 
     async def test_initialize_skip_duplicate_skills(self) -> None:
         """Test that duplicate skills are not copied again.
@@ -517,7 +499,6 @@ description: {description}
         This test verifies that:
         1. Skills are copied on first initialization
         2. Running initialize again does not copy duplicate skills
-        3. The .skills file is not modified on second initialization
         """
         # Create test skill
         skill_dir = self._create_test_skill(
@@ -532,15 +513,6 @@ description: {description}
         )
         await workspace.initialize()
 
-        # Get the .skills file content after first initialization
-        skills_hash_file = os.path.join(
-            self.temp_dir.name,
-            "skills",
-            ".skills",
-        )
-        async with aiofiles.open(skills_hash_file, "r") as f:
-            hash_data_first = await f.read()
-
         # Get modification time of the skill directory
         skill_target = os.path.join(
             self.temp_dir.name,
@@ -552,14 +524,14 @@ description: {description}
         # Initialize again
         await workspace.initialize()
 
-        # Verify .skills file is unchanged
-        async with aiofiles.open(skills_hash_file, "r") as f:
-            hash_data_second = await f.read()
-        self.assertEqual(hash_data_first, hash_data_second)
-
-        # Verify skill directory was not modified
+        # Verify skill directory was not modified (not re-copied)
         mtime_second = os.path.getmtime(skill_target)
         self.assertEqual(mtime_first, mtime_second)
+
+        # Verify skill is still listed once
+        skills = await workspace.list_skills()
+        self.assertEqual(len(skills), 1)
+        self.assertEqual(skills[0].name, "test_skill_dup")
 
     async def test_initialize_deduplicate_skills(self) -> None:
         """Test that duplicate skills in skill_paths are deduplicated.
@@ -567,7 +539,6 @@ description: {description}
         This test verifies that:
         1. When skill_paths contains duplicates (same hash), only one is copied
         2. No concurrent copy conflicts occur
-        3. The .skills file contains only one entry for the duplicated skill
         """
         # Create a test skill
         skill_dir = self._create_test_skill(
@@ -589,21 +560,10 @@ description: {description}
         skill_target = os.path.join(skills_dir, "test_skill_dedup")
         self.assertTrue(os.path.exists(skill_target))
 
-        # Verify .skills file contains only one entry
-        skills_hash_file = os.path.join(skills_dir, ".skills")
-        self.assertTrue(os.path.exists(skills_hash_file))
-
-        async with aiofiles.open(skills_hash_file, "r") as f:
-            skills_data = json.loads(await f.read())
-
-        # Should have exactly one entry in the skills index
-        skills_index = skills_data["skills"]
-        self.assertEqual(len(skills_index), 1)
-        self.assertIn("test_skill_dedup", skills_index)
-        self.assertEqual(
-            skills_index["test_skill_dedup"]["skill_name"],
-            "test_skill_dedup",
-        )
+        # Verify only one skill is listed
+        skills = await workspace.list_skills()
+        self.assertEqual(len(skills), 1)
+        self.assertEqual(skills[0].name, "test_skill_dedup")
 
     async def test_initialize_invalid_skill(self) -> None:
         """Test handling of invalid skills.
@@ -738,16 +698,20 @@ description: {description}
         """Test listing skills when no skills exist.
 
         This test verifies that:
-        1. An empty list is returned when no skills are in the workspace
-        2. No errors are raised when the skills directory doesn't exist
+        1. An empty list is returned when the skills directory exists but
+           contains no skill subdirectories
+        2. RuntimeError is raised when the skills directory doesn't exist
         """
-        # Create workspace without initializing
+        # Create workspace without initializing — skills dir doesn't exist
         workspace = LocalWorkspace(workdir=self.temp_dir.name)
 
-        # List skills (should return empty list)
-        skills = await workspace.list_skills()
+        # list_skills raises when skills directory doesn't exist
+        with self.assertRaises(RuntimeError):
+            await workspace.list_skills()
 
-        # Verify empty list is returned
+        # After creating the skills directory, should return empty list
+        os.makedirs(os.path.join(self.temp_dir.name, "skills"), exist_ok=True)
+        skills = await workspace.list_skills()
         self.assertListEqual(skills, [])
 
 

@@ -254,6 +254,12 @@ class GatewayMixin:
     # ── gateway lifecycle (called from workspace.initialize) ──────
 
     async def _start_gateway(self) -> None:
+        """Start the gateway
+
+        The gateway uses Bearer token auth — the token is generated
+        per-workspace and written into the gateway config. Requests
+        from the host must include this token to authenticate."""
+
         self._gateway_token = uuid.uuid4().hex
 
         await self._ensure_gateway_python_deps()
@@ -302,9 +308,6 @@ class GatewayMixin:
 
         gw_headers = {**self._gw_platform_headers()}
         if self._gateway_token:
-            # The gateway uses Bearer token auth — the token is generated
-            # per-workspace and written into the gateway config. Requests
-            # from the host must include this token to authenticate.
             gw_headers["Authorization"] = f"Bearer {self._gateway_token}"
 
         self._gateway_mcp_client = _RestGatewayClient(
