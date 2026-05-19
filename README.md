@@ -97,9 +97,9 @@ The AgentScope Ecosystem
 
 Welcome to join our community on
 
-| [Discord](https://discord.gg/eYMpfnkG8h)                                                                                         | DingTalk                                                                  |
+| [Discord](https://discord.gg/eYMpfnkG8h)                                                                                         | [DingTalk](https://qr.dingtalk.com/action/joingroup?code=v1,k1,o2hkMdlJ96DZWRaWyBA5ONnFA8PcT4/ME6TZ5K4JHV4=&_dt_no_comment=1&origin=11)                                                              |
 |----------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------|
-| <img src="https://gw.alicdn.com/imgextra/i1/O1CN01hhD1mu1Dd3BWVUvxN_!!6000000000238-2-tps-400-400.png" width="100" height="100"> | <img src="./assets/images/dingtalk_qr_code.png" width="100" height="100"> |
+| <img src="https://gw.alicdn.com/imgextra/i1/O1CN01hhD1mu1Dd3BWVUvxN_!!6000000000238-2-tps-400-400.png" width="100" height="100"> | <img src="https://img.alicdn.com/imgextra/i2/O1CN01OToBwA1zkvm0tfpLC_!!6000000006753-2-tps-474-470.png" width="100" height="100"> |
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
