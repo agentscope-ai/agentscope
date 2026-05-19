@@ -834,7 +834,7 @@ class TestLocalWorkspaceMCPPersistence(IsolatedAsyncioTestCase):
 
 
 class TestLocalWorkspaceSkillsReconciliation(IsolatedAsyncioTestCase):
-    """Test .skills index reconciliation in LocalWorkspace."""
+    """Test skill directory scanning in LocalWorkspace."""
 
     async def asyncSetUp(self) -> None:
         # pylint: disable=consider-using-with
