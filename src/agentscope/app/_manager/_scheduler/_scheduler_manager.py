@@ -16,7 +16,7 @@ from ...storage import (
 )
 from .._background_task_manager import BackgroundTaskManager
 from .._session_manager import SessionManager
-from .._workspace_manager import WorkspaceManagerBase
+from ....workspace import WorkspaceManagerBase
 
 
 class SchedulerManager:

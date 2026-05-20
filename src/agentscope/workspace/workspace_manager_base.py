@@ -154,18 +154,32 @@ class WorkspaceManagerBase(ABC):
 
     async def get_workspace(
         self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
         workspace_id: str,
-    ) -> WorkspaceBase | None:
-        """Look up a live workspace by its ID.
+        **kwargs: Any,
+    ) -> WorkspaceBase:
+        """Look up a workspace by ID, creating it on cache miss.
 
         Args:
-            workspace_id: The ``workspace_id`` of the workspace
-                to retrieve.
+            user_id: Owning user identifier (used for creation).
+            agent_id: Agent identifier (used for workdir isolation).
+            session_id: Session identifier (used for creation).
+            workspace_id: Existing workspace identifier.
 
         Returns:
-            The workspace instance, or ``None`` if not tracked.
+            A live, initialised workspace instance.
         """
-        return self._workspaces.get(workspace_id)
+        ws = self._workspaces.get(workspace_id)
+        if ws is not None:
+            return ws
+        return await self.create_workspace(
+            user_id,
+            agent_id,
+            session_id,
+            **kwargs,
+        )
 
     async def close(self, workspace_id: str) -> None:
         """Close and un-track a single workspace.

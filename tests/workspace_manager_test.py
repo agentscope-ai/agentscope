@@ -48,13 +48,24 @@ class TestLocalWorkspaceManagerLifecycle(IsolatedAsyncioTestCase):
     async def test_get_workspace_by_id(self) -> None:
         """get_workspace finds workspace by workspace_id."""
         ws = await self.manager.create_workspace("u1", "agent1", "s1")
-        found = await self.manager.get_workspace(ws.workspace_id)
+        found = await self.manager.get_workspace(
+            "u1",
+            "agent1",
+            "s1",
+            ws.workspace_id,
+        )
         self.assertIs(found, ws)
 
-    async def test_get_workspace_nonexistent_returns_none(self) -> None:
-        """get_workspace returns None for unknown workspace."""
-        result = await self.manager.get_workspace("nonexistent-id")
-        self.assertIsNone(result)
+    async def test_get_workspace_nonexistent_creates_workspace(self) -> None:
+        """get_workspace creates a workspace for unknown workspace ID."""
+        result = await self.manager.get_workspace(
+            "u1",
+            "agent1",
+            "s1",
+            "nonexistent-id",
+        )
+        self.assertIsInstance(result, LocalWorkspace)
+        self.assertIn(result.workspace_id, self.manager._cache)
 
     async def test_close_single_workspace(self) -> None:
         """close(workspace_id) removes workspace from tracking."""
@@ -113,9 +124,12 @@ class TestLocalWorkspaceManagerTTL(IsolatedAsyncioTestCase):
 
         await asyncio.sleep(0.05)
 
-        # Eviction happens lazily; the old workspace_id is gone
-        result = await manager.get_workspace(wsid)
-        self.assertIsNone(result)
+        # Eviction happens lazily; the old workspace_id is gone and
+        # get_workspace creates a replacement.
+        result = await manager.get_workspace("u1", "agent1", "s1", wsid)
+        self.assertIsInstance(result, LocalWorkspace)
+        self.assertNotEqual(result.workspace_id, wsid)
+        self.assertNotIn(wsid, manager._cache)
 
         await manager.close_all()
 
@@ -129,7 +143,12 @@ class TestLocalWorkspaceManagerTTL(IsolatedAsyncioTestCase):
 
         ws = await manager.create_workspace("u1", "agent1", "s1")
 
-        result = await manager.get_workspace(ws.workspace_id)
+        result = await manager.get_workspace(
+            "u1",
+            "agent1",
+            "s1",
+            ws.workspace_id,
+        )
         self.assertIs(result, ws)
 
         await manager.close_all()
@@ -222,14 +241,20 @@ class TestWorkspaceManagerWorkspaceIsolation(IsolatedAsyncioTestCase):
     async def test_lookup_by_workspace_id(self) -> None:
         """Lookup by workspace_id works after create."""
         ws = await self.manager.create_workspace("u1", "a1", "s1")
-        found = await self.manager.get_workspace(ws.workspace_id)
+        found = await self.manager.get_workspace(
+            "u1",
+            "a1",
+            "s1",
+            ws.workspace_id,
+        )
         self.assertIs(found, ws)
 
-    async def test_close_removes_workspace(self) -> None:
-        """close() removes workspace from tracking."""
+    async def test_close_then_get_creates_workspace(self) -> None:
+        """get_workspace creates a replacement after close."""
         ws = await self.manager.create_workspace("u1", "a1", "s1")
         wsid = ws.workspace_id
         await self.manager.close(wsid)
 
-        found = await self.manager.get_workspace(wsid)
-        self.assertIsNone(found)
+        found = await self.manager.get_workspace("u1", "a1", "s1", wsid)
+        self.assertIsInstance(found, LocalWorkspace)
+        self.assertNotEqual(found.workspace_id, wsid)

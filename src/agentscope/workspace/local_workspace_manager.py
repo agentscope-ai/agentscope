@@ -130,9 +130,13 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
 
     async def get_workspace(
         self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
         workspace_id: str,
-    ) -> WorkspaceBase | None:
-        """Look up a workspace by its ID.
+        **kwargs: Any,
+    ) -> WorkspaceBase:
+        """Look up a workspace by its ID, creating it on cache miss.
 
         Performs TTL eviction before lookup.  If the workspace is in
         the local cache its last-access timestamp is refreshed.
@@ -149,7 +153,12 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
             if workspace_id in self._workspaces:
                 return self._workspaces[workspace_id]
 
-            return None
+        return await self.create_workspace(
+            user_id,
+            agent_id,
+            session_id,
+            **kwargs,
+        )
 
     async def close(self, workspace_id: str) -> None:
         """Close and evict a single workspace."""
