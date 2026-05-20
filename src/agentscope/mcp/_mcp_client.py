@@ -1,17 +1,18 @@
 # -*- coding: utf-8 -*-
 """Unified MCP client implementation for AgentScope."""
+
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import mcp.types
-from mcp import ClientSession, stdio_client, StdioServerParameters
+from mcp import ClientSession, StdioServerParameters, stdio_client
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
-from pydantic import Field, BaseModel, PrivateAttr
+from pydantic import BaseModel, Field, PrivateAttr
 
-from ._config import StdioMCPConfig, HttpMCPConfig
 from .._logging import logger
+from ._config import HttpMCPConfig, StdioMCPConfig
 
 if TYPE_CHECKING:
     from ..tool import MCPTool
@@ -132,20 +133,42 @@ class MCPClient(BaseModel):
         """Create an HTTP MCP client (SSE or streamable HTTP)."""
         config = self.mcp_config
 
+        # Build a custom httpx client factory when TLS verification is off
+        def _client_factory(
+            headers: dict[str, str] | None = None,
+            timeout: httpx.Timeout | None = None,
+            auth: httpx.Auth | None = None,
+        ) -> httpx.AsyncClient:
+            kwargs: dict[str, Any] = {
+                "follow_redirects": True,
+                "verify": config.verify,
+            }
+            if timeout:
+                kwargs["timeout"] = timeout
+            if headers is not None:
+                kwargs["headers"] = headers
+            if auth is not None:
+                kwargs["auth"] = auth
+            return httpx.AsyncClient(**kwargs)
+
         # Determine transport from URL
         if config.url.endswith("/sse") or config.url.endswith("/messages/"):
-            return sse_client(
-                url=config.url,
-                headers=config.headers,
-                timeout=config.timeout,
-            )
+            sse_kwargs: dict[str, Any] = {
+                "url": config.url,
+                "headers": config.headers,
+                "timeout": config.timeout or 30.0,
+            }
+            if not config.verify:
+                sse_kwargs["httpx_client_factory"] = _client_factory
+            return sse_client(**sse_kwargs)
 
         # StreamableHTTP transport
         http_client = None
-        if config.headers or config.timeout:
+        if config.headers or config.timeout or not config.verify:
             http_client = httpx.AsyncClient(
                 headers=config.headers,
                 timeout=config.timeout,
+                verify=config.verify,
             )
         return streamable_http_client(
             url=config.url,
@@ -213,8 +236,7 @@ class MCPClient(BaseModel):
 
         if not self._is_connected:
             raise RuntimeError(
-                f"MCP '{self.name}' is not connected. "
-                "Call connect() first.",
+                f"MCP '{self.name}' is not connected. Call connect() first.",
             )
 
         try:
@@ -307,7 +329,7 @@ class MCPClient(BaseModel):
 
         if target_tool is None:
             raise ValueError(
-                f"Tool '{name}' not found in MCP server " f"'{self.name}'",
+                f"Tool '{name}' not found in MCP server '{self.name}'",
             )
 
         # Create MCPTool based on stateful/stateless
@@ -337,8 +359,7 @@ class MCPClient(BaseModel):
         """
         if not self._is_connected:
             raise RuntimeError(
-                f"MCP '{self.name}' is not connected. "
-                "Call connect() first.",
+                f"MCP '{self.name}' is not connected. Call connect() first.",
             )
         if not self._session:
             raise RuntimeError(

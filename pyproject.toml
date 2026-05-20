@@ -68,13 +68,17 @@ service = [
 storage = [
     "redis",
 ]
+# ------------ Sandbox ------------
+sandbox = [
+    "docker>=7.0",
+    "e2b>=2.0",
+]
 # ------------ Full ------------
 full = [
     "agentscope[models]",
     "agentscope[service]",
     "agentscope[storage]",
 ]
-
 # ------------ Development ------------
 dev = [
     # Include full dependencies from local package
