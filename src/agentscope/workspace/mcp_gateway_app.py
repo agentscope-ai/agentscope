@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
-"""In-container MCP Gateway — runs *inside* a Docker / E2B container.
+"""In-workspace MCP Gateway — runs *inside* the workspace environment.
 
-Reads a JSON config, connects to all configured MCP servers
-(stdio or HTTP) running inside the container, aggregates tools,
-and exposes a single Streamable-HTTP MCP endpoint for the host.
+A ``WorkspaceWithMCP`` subclass copies this file into its workspace
+environment and executes it there.  The script reads a JSON config,
+connects to all configured MCP servers (stdio or HTTP), aggregates
+their tools, and exposes a single Streamable-HTTP MCP endpoint that
+the host can reach.
 
 Also exposes ``/mcp/add`` and ``/mcp/remove`` for dynamic
 MCP server management.
@@ -46,10 +48,10 @@ TOOL_NAME_SEPARATOR = "___"
 
 
 class _MCPServerClient:
-    """Persistent connection to one MCP server inside the container.
+    """Persistent connection to one MCP server inside the workspace.
 
     This intentionally duplicates a subset of ``agentscope.mcp.MCPClient``
-    because this script is copied into the container as a standalone file
+    because this script is copied into the workspace as a standalone file
     and ``agentscope`` is not installed there.
     """
 
@@ -441,9 +443,9 @@ def _register_proxy_tools(
 
 
 def main() -> None:
-    """CLI entry point for the in-container MCP gateway."""
+    """CLI entry point for the in-workspace MCP gateway."""
     parser = argparse.ArgumentParser(
-        description="In-container MCP Gateway",
+        description="In-workspace MCP Gateway",
     )
     parser.add_argument("--config", required=True)
     parser.add_argument("--port", type=int, default=5600)

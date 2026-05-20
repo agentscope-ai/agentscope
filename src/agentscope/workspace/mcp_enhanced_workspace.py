@@ -30,7 +30,6 @@ from .._logging import logger
 from .workspace_base import WorkspaceBase
 
 if TYPE_CHECKING:
-    from ..mcp import MCPClient
     from .config import MCPServerConfig
 
 
@@ -77,13 +76,13 @@ class _RestToolProxy:
 
 
 class _RestGatewayClient:
-    """Lightweight REST-based gateway client.
+    """Lightweight REST-based client for the in-workspace MCP gateway.
 
-    Presents the same interface shape used by ``Toolkit.register_mcp``
-    (``list_tools``, ``get_tool``, ``is_connected``, ``close``) but
-    communicates with the in-container gateway via JSON REST calls
-    instead of MCP protocol. This avoids issues with proxies that don't
-    support streaming HTTP / SSE connections (e.g. E2B).
+    Implements the same duck-type interface consumed by
+    ``Toolkit.register_mcp`` (``list_tools``, ``get_tool``,
+    ``is_connected``, ``close``) but communicates with the
+    in-workspace gateway via plain JSON REST calls instead of the
+    MCP protocol.
     """
 
     def __init__(
@@ -189,9 +188,7 @@ class WorkspaceWithMCP(WorkspaceBase):
         self._mcp_servers = list(mcp_servers or [])
         self._gateway_port = gateway_port
         self._gateway_token = ""
-        self._gateway_mcp_client: (
-            _RestGatewayClient | None
-        ) = None
+        self._gateway_mcp_client: _RestGatewayClient | None = None
         self._gateway_base_url = ""
 
     # ── hooks for subclasses ──────────────────────────────────────
