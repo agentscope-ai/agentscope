@@ -93,8 +93,6 @@ class DockerWorkspace(WorkspaceWithMCP):
         await workspace.close()
     """
 
-    _gateway_mcp_client: Any
-
     DEFAULT_IMAGE = "ubuntu:22.04"
     DEFAULT_WORKING_DIR = "/workspace"
     GATEWAY_PORT = 5600
@@ -242,10 +240,7 @@ class DockerWorkspace(WorkspaceWithMCP):
                     f"stdout: {r.stdout.decode(errors='replace')}",
                 )
 
-        # Start in-container gateway (if MCP servers configured)
-        if self._mcp_servers:
-            await self._start_gateway()
-
+        await super().initialize()
         self._started = True
 
     async def reset(self) -> None:
@@ -622,9 +617,6 @@ class DockerWorkspace(WorkspaceWithMCP):
         """Map container port to a localhost URL."""
         endpoint = self._resolve_port(port)
         return f"http://{endpoint.host}:{endpoint.port}"
-
-    # _start_gateway, _build_gateway_config, _wait_for_gateway,
-    # _ensure_gateway_python_deps are inherited from WorkspaceWithMCP.
 
     async def _offload_data(self, data_block: DataBlock) -> DataBlock:
         """Decode base64 data, save in container, return URL block.

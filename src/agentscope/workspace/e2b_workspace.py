@@ -60,8 +60,6 @@ class E2BWorkspace(WorkspaceWithMCP):
         await workspace.close()
     """
 
-    _gateway_mcp_client: Any
-
     DEFAULT_TEMPLATE = "base"
     DEFAULT_WORKING_DIR = "/home/user"
     DEFAULT_TIMEOUT = 300
@@ -166,9 +164,7 @@ class E2BWorkspace(WorkspaceWithMCP):
                     f"stdout: {r.stdout.decode(errors='replace')}",
                 )
 
-        if self._mcp_servers:
-            await self._start_gateway()
-
+        await super().initialize()
         self._started = True
 
     async def reset(self) -> None:
@@ -496,9 +492,6 @@ class E2BWorkspace(WorkspaceWithMCP):
         if token:
             return {"X-Access-Token": token}
         return {}
-
-    # _start_gateway, _build_gateway_config, _wait_for_gateway,
-    # _ensure_gateway_python_deps are inherited from WorkspaceWithMCP.
 
     async def _offload_data(self, data_block: DataBlock) -> DataBlock:
         """Decode base64 data, save in sandbox, return URL block.

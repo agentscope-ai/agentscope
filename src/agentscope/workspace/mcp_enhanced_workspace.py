@@ -1,19 +1,16 @@
 # -*- coding: utf-8 -*-
-"""WorkspaceWithMCP — workspace base for container/sandbox MCP backends.
+"""WorkspaceWithMCP — workspace base for MCP-enhanced workspaces.
 
-Inherits from :class:`WorkspaceBase` and adds in-container MCP gateway
-management.  Both :class:`DockerWorkspace` and :class:`E2BWorkspace`
-inherit from this class so that ``add_mcp``, ``remove_mcp``,
-``_start_gateway``, ``_wait_for_gateway``,
-``_ensure_gateway_python_deps``, ``_build_gateway_config``, and
-``list_mcps`` are defined once.
-
+Inherits from :class:`WorkspaceBase` and adds in-workspace MCP gateway
+management.
 Subclasses must implement:
 
-* ``_exec(command, *, timeout)`` — execute a shell command remotely
-  (inherited from :class:`WorkspaceBase`)
-* ``_write_remote(path, data)`` — write bytes to the remote filesystem
-* ``_resolve_base_url(port)`` — return the gateway's reachable base URL
+* ``_exec(command, *, timeout)`` — execute a shell command inside
+  the workspace (inherited from :class:`WorkspaceBase`)
+* ``_write_remote(path, data)`` — write bytes to the workspace
+  filesystem
+* ``_resolve_base_url(port)`` — return the gateway's reachable base
+  URL
 """
 
 from __future__ import annotations
@@ -25,7 +22,14 @@ from abc import abstractmethod
 from typing import TYPE_CHECKING, Any
 
 import httpx
+import mcp.types as _mcp_types
 
+from ..mcp import MCPClient
+from ..mcp._config import HttpMCPConfig
+from ..message import TextBlock, ToolResultState
+from ..permission import PermissionBehavior, PermissionDecision
+from ..tool._base import ToolBase
+from ..tool._response import ToolChunk
 from .._logging import logger
 from .workspace_base import WorkspaceBase
 
@@ -33,141 +37,165 @@ if TYPE_CHECKING:
     from .config import MCPServerConfig
 
 
-class _RestToolProxy:
-    """A callable that invokes a tool via the gateway REST API."""
+# ── REST-backed ToolBase / MCPClient implementations ─────────────
+
+
+class _RestMCPTool(ToolBase):
+    """ToolBase adapter that invokes a tool via the gateway REST API.
+
+    Mirrors the interface of :class:`MCPTool` (name mangling,
+    ``is_mcp``, permission checks, ``ToolChunk`` return) but
+    transports calls over plain HTTP POST to the in-workspace
+    gateway instead of an MCP session.
+    """
+
+    is_mcp: bool = True
+    is_state_injected: bool = False
 
     def __init__(
         self,
-        name: str,
+        mcp_name: str,
+        tool: _mcp_types.Tool,
         base_url: str,
         headers: dict[str, str],
     ) -> None:
-        """Create a REST-based tool proxy.
+        """Create a REST-backed MCP tool.
 
         Args:
-            name: Name of the tool on the gateway.
-            base_url: Gateway base URL (e.g.
-                ``http://127.0.0.1:5600``).
+            mcp_name: Logical MCP client name (used in the
+                ``mcp__<name>__<tool>`` mangled tool name).
+            tool: MCP tool schema returned by the gateway.
+            base_url: Gateway base URL.
             headers: HTTP headers (auth token, etc.).
         """
-        self._name = name
+        self.mcp_name = mcp_name
+        self.name = f"mcp__{mcp_name}__{tool.name}"
+        self.description = tool.description or ""
+        self.input_schema = {
+            "type": "object",
+            "properties": tool.inputSchema.get("properties", {}),
+            "required": tool.inputSchema.get("required", []),
+        }
+        self.is_concurrency_safe = False
+        self.is_external_tool = False
+        self.is_read_only = False
+        if tool.annotations and hasattr(tool.annotations, "readOnlyHint"):
+            self.is_read_only = tool.annotations.readOnlyHint or False
+
+        self._tool_name = tool.name
         self._base_url = base_url
         self._headers = headers
 
-    async def __call__(self, **kwargs: Any) -> Any:
-        """POST the tool call to the gateway and return its JSON result.
+    async def check_permissions(
+        self,
+        *_args: Any,
+        **_kwargs: Any,
+    ) -> PermissionDecision:
+        """Check permissions — same policy as :class:`MCPTool`."""
+        if self.is_read_only:
+            return PermissionDecision(
+                behavior=PermissionBehavior.ALLOW,
+                message="Read-only MCP tool. Allowing execution.",
+            )
+        return PermissionDecision(
+            behavior=PermissionBehavior.ASK,
+            message="MCP tools must be explicitly allowed by the user.",
+        )
 
-        The gateway returns JSON-serializable data from upstream MCP
-        tools, so the result is not guaranteed to be a string.
-        """
+    async def __call__(self, **kwargs: Any) -> ToolChunk:
+        """POST the tool call to the gateway and return a ToolChunk."""
         async with httpx.AsyncClient(verify=False) as client:
             resp = await client.post(
                 f"{self._base_url}/tools/call",
-                json={"name": self._name, "arguments": kwargs},
+                json={"name": self._tool_name, "arguments": kwargs},
                 headers=self._headers,
                 timeout=60.0,
             )
             if resp.status_code >= 400:
-                raise RuntimeError(
-                    f"tool call {self._name!r} failed "
-                    f"({resp.status_code}): {resp.text}",
+                return ToolChunk(
+                    content=[
+                        TextBlock(
+                            text=(
+                                f"tool call {self._tool_name!r} failed "
+                                f"({resp.status_code}): {resp.text}"
+                            ),
+                        ),
+                    ],
+                    state=ToolResultState.ERROR,
                 )
-            return resp.json().get("result")
+            result = resp.json().get("result", "")
+
+        return ToolChunk(
+            content=[TextBlock(text=str(result))],
+            state=ToolResultState.RUNNING,
+        )
 
 
-class _RestGatewayClient:
-    """Lightweight REST-based client for the in-workspace MCP gateway.
+class _RestGatewayClient(MCPClient):
+    """MCPClient subclass for the in-workspace MCP gateway."""
 
-    Implements the same duck-type interface consumed by
-    ``Toolkit.register_mcp`` (``list_tools``, ``get_tool``,
-    ``is_connected``, ``close``) but communicates with the
-    in-workspace gateway via plain JSON REST calls instead of the
-    MCP protocol.
-    """
+    def model_post_init(self, __context: Any) -> None:
+        """Skip MCP client init — the REST gateway is always reachable."""
+        self._is_connected = True
 
-    def __init__(
-        self,
-        base_url: str,
-        headers: dict[str, str],
-    ) -> None:
-        """Create a REST gateway client.
-
-        Args:
-            base_url: Gateway base URL (e.g.
-                ``http://127.0.0.1:5600``).
-            headers: HTTP headers sent with every request
-                (auth token, platform headers, etc.).
-        """
-        self._base_url = base_url
-        self._headers = headers
-
-    @property
-    def is_connected(self) -> bool:
-        """Always True — REST client is stateless."""
-        return True
-
-    async def connect(self) -> None:
-        """No-op for REST client."""
-
-    async def close(self) -> None:
-        """No-op for REST client."""
-
-    async def list_tools(self) -> list[Any]:
+    async def list_tools(self) -> list[_mcp_types.Tool]:
         """Fetch tool schemas from the gateway REST API."""
+        config: HttpMCPConfig = self.mcp_config  # type: ignore[assignment]
+        headers = dict(config.headers or {})
         async with httpx.AsyncClient(verify=False) as client:
             resp = await client.get(
-                f"{self._base_url}/tools/list",
-                headers=self._headers,
+                f"{config.url}/tools/list",
+                headers=headers,
                 timeout=30.0,
             )
             resp.raise_for_status()
         tools: list[dict[str, Any]] = resp.json()
+        result = [
+            _mcp_types.Tool(
+                name=t["name"],
+                description=t.get("description", ""),
+                inputSchema=t.get("inputSchema", {}),
+            )
+            for t in tools
+        ]
+        self._cached_tools = result
+        return result
 
-        try:
-            import mcp.types as mtypes
-
-            return [
-                mtypes.Tool(
-                    name=t["name"],
-                    description=t.get("description", ""),
-                    inputSchema=t.get("inputSchema", {}),
-                )
-                for t in tools
-            ]
-        except ImportError:
-            return list(tools)
-
-    async def get_tool(self, name: str) -> _RestToolProxy:
-        """Return a callable proxy for the named tool.
-
-        ``Toolkit.register_mcp`` calls ``get_tool`` after discovering
-        tool schemas with ``list_tools``.
+    async def get_tool(  # type: ignore[override]
+        self,
+        name: str,
+        execution_timeout: float | None = None,
+    ) -> _RestMCPTool:
+        """Return a :class:`_RestMCPTool` proxy for the named tool.
 
         Args:
             name: Exact tool name as registered on the gateway.
+            execution_timeout: Unused (kept for API compatibility).
         """
-        tools = await self.list_tools()
-        for t in tools:
-            t_name = t.name if hasattr(t, "name") else t.get("name")
-            if t_name == name:
-                return _RestToolProxy(
-                    name=name,
-                    base_url=self._base_url,
-                    headers=self._headers,
+        if self._cached_tools is None:
+            await self.list_tools()
+
+        config: HttpMCPConfig = self.mcp_config  # type: ignore[assignment]
+        headers = dict(config.headers or {})
+        for tool in self._cached_tools:  # type: ignore[union-attr]
+            if tool.name == name:
+                return _RestMCPTool(
+                    mcp_name=self.name,
+                    tool=tool,
+                    base_url=config.url,
+                    headers=headers,
                 )
         raise ValueError(f"Tool {name!r} not found")
 
 
 class WorkspaceWithMCP(WorkspaceBase):
-    """Intermediate base for container/sandbox workspaces with MCP.
+    """Intermediate base for MCP-enhanced workspaces."""
 
-    Inherits ``_exec`` from :class:`WorkspaceBase` (remains abstract
-    here — concrete subclasses like ``DockerWorkspace`` and
-    ``E2BWorkspace`` must provide the implementation).
-    """
-
+    # Class-level type annotations help mypy when running with
+    # ``--follow-imports=skip`` (used in pre-commit).  Actual values
+    # are always set in ``__init__``.
     _gateway_token: str
-    _gateway_mcp_client: Any
+    _gateway_mcp_client: _RestGatewayClient | None
     _gateway_base_url: str
     _mcp_servers: "list[MCPServerConfig]"
     _gateway_port: int
@@ -191,11 +219,18 @@ class WorkspaceWithMCP(WorkspaceBase):
         self._gateway_mcp_client: _RestGatewayClient | None = None
         self._gateway_base_url = ""
 
+    # ── lifecycle ─────────────────────────────────────────────────
+
+    async def initialize(self) -> None:
+        """Start the in-workspace MCP gateway if servers are configured."""
+        if self._mcp_servers:
+            await self._start_gateway()
+
     # ── hooks for subclasses ──────────────────────────────────────
 
     @abstractmethod
     async def _write_remote(self, path: str, data: bytes) -> None:
-        """Write *data* to *path* inside the container / sandbox."""
+        """Write *data* to *path* inside the workspace environment."""
 
     @abstractmethod
     async def _resolve_base_url(self, port: int) -> str:
@@ -349,18 +384,18 @@ class WorkspaceWithMCP(WorkspaceBase):
             )
             raise
 
-        # Authenticate subsequent REST calls using the RFC 6750
-        # Bearer token scheme.  The token was generated above and
-        # written into the gateway config; the in-container
-        # ``_TokenAuth`` middleware validates it on every request
-        # (except ``/health``).
         headers = {**self._platform_headers()}
         if self._gateway_token:
             headers["Authorization"] = f"Bearer {self._gateway_token}"
 
         self._gateway_mcp_client = _RestGatewayClient(
-            base_url=self._gateway_base_url,
-            headers=headers,
+            name="gateway",
+            is_stateful=False,
+            mcp_config=HttpMCPConfig(
+                url=self._gateway_base_url,
+                headers=headers,
+                verify=False,
+            ),
         )
         logger.info("%s: gateway connected (REST)", type(self).__name__)
 
