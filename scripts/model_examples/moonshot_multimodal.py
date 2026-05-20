@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Example of Kimi model multimodal (vision) calls using DataBlock."""
+"""Example of Moonshot model multimodal (vision) calls using DataBlock."""
 import asyncio
 import base64
 import os
@@ -13,8 +13,8 @@ from agentscope.message import (
     URLSource,
     Base64Source,
 )
-from agentscope.model import KimiChatModel
-from agentscope.credential import KimiCredential
+from agentscope.model import MoonshotChatModel
+from agentscope.credential import MoonshotCredential
 
 # A publicly accessible test image (a simple cat photo)
 TEST_IMAGE_URL = (
@@ -23,10 +23,10 @@ TEST_IMAGE_URL = (
 )
 
 
-async def example_multimodal() -> None:
+async def example_image_url() -> None:
     """Call kimi-k2.6 with an image URL and ask what is in the image."""
-    model = KimiChatModel(
-        credential=KimiCredential(
+    model = MoonshotChatModel(
+        credential=MoonshotCredential(
             api_key=os.environ["MOONSHOT_API_KEY"],
         ),
         model="kimi-k2.6",
@@ -58,16 +58,16 @@ async def example_multimodal() -> None:
     await stream_and_collect(await model(msgs))
 
 
-def _build_model() -> KimiChatModel:
-    return KimiChatModel(
-        credential=KimiCredential(api_key=os.environ["MOONSHOT_API_KEY"]),
+def _build_model() -> MoonshotChatModel:
+    return MoonshotChatModel(
+        credential=MoonshotCredential(api_key=os.environ["MOONSHOT_API_KEY"]),
         model="kimi-k2.6",
         stream=True,
         context_size=262_144,
     )
 
 
-async def example_local_path() -> None:
+async def example_image_local_path() -> None:
     """Call kimi-k2.6 with a local image using a ``file://`` URL.
 
     The formatter reads the file from disk and converts it to a base64 data
@@ -99,7 +99,7 @@ async def example_local_path() -> None:
     await stream_and_collect(await model(msgs))
 
 
-async def example_file_url() -> None:
+async def example_image_base64() -> None:
     """Call kimi-k2.6 with a local image using explicit base64 encoding.
 
     Use ``Base64Source`` when you already have the binary data in memory or
@@ -131,6 +131,6 @@ async def example_file_url() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(example_multimodal())
-    asyncio.run(example_local_path())
-    asyncio.run(example_file_url())
+    asyncio.run(example_image_url())
+    asyncio.run(example_image_local_path())
+    asyncio.run(example_image_base64())

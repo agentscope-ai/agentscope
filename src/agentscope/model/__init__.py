@@ -12,7 +12,7 @@ from ._gemini import GeminiChatModel
 from ._ollama import OllamaChatModel
 from ._openai_chat import OpenAIChatModel
 from ._xai import XAIChatModel
-from ._kimi import KimiChatModel
+from ._moonshot import MoonshotChatModel
 from ._openai_response import OpenAIResponseModel
 
 __all__ = [
@@ -28,6 +28,6 @@ __all__ = [
     "OllamaChatModel",
     "OpenAIChatModel",
     "XAIChatModel",
-    "KimiChatModel",
+    "MoonshotChatModel",
     "OpenAIResponseModel",
 ]

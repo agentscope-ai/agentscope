@@ -30,7 +30,10 @@ from ._openai_response_formatter import (
     OpenAIResponseFormatter,
     OpenAIResponseMultiAgentFormatter,
 )
-from ._kimi_formatter import KimiChatFormatter, KimiMultiAgentFormatter
+from ._moonshot_formatter import (
+    MoonshotChatFormatter,
+    MoonshotMultiAgentFormatter,
+)
 from ._xai_formatter import (
     XAIChatFormatter,
     XAIMultiAgentFormatter,
@@ -52,8 +55,8 @@ __all__ = [
     "DeepSeekMultiAgentFormatter",
     "OpenAIResponseFormatter",
     "OpenAIResponseMultiAgentFormatter",
-    "KimiChatFormatter",
-    "KimiMultiAgentFormatter",
+    "MoonshotChatFormatter",
+    "MoonshotMultiAgentFormatter",
     "XAIChatFormatter",
     "XAIMultiAgentFormatter",
 ]

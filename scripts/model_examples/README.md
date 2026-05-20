@@ -41,10 +41,10 @@ scripts/model_examples/
 ├── gemini_multimodal.py
 ├── gemini_multiagent_multimodal.py
 │
-├── kimi_call.py                    # Moonshot AI Kimi
-├── kimi_multiagent.py
-├── kimi_multimodal.py
-├── kimi_multiagent_multimodal.py
+├── moonshot_call.py                 # Moonshot AI (Kimi)
+├── moonshot_multiagent.py
+├── moonshot_multimodal.py
+├── moonshot_multiagent_multimodal.py
 │
 ├── xai_call.py                     # xAI Grok
 ├── xai_multiagent.py
@@ -80,7 +80,7 @@ scripts/model_examples/
 | `dashscope` | `DASHSCOPE_API_KEY` | Qwen series, supports `thinking_enable` |
 | `deepseek` | `DEEPSEEK_API_KEY` | Supports only `call` / `multiagent` (no multimodal) |
 | `gemini` | `GEMINI_API_KEY` | Gemini models, supports `thinking_budget` |
-| `kimi` | `MOONSHOT_API_KEY` | Moonshot AI kimi-k2.6, etc. |
+| `moonshot` | `MOONSHOT_API_KEY` | Moonshot AI kimi-k2.6, etc. |
 | `xai` | `XAI_API_KEY` | Grok models, supports `reasoning_effort` |
 | `ollama` | *(none – auto-detect)* | Local server, default `http://localhost:11434` |
 
@@ -212,7 +212,7 @@ Each script typically defines two or more async functions:
 
 - `example_simple_call()` – basic text call with streaming
 - `example_tool_call()` – two-round conversation with tool/function calling
-- `example_multimodal_call()` – image + text input (in `_multimodal.py` variants)
+- `example_image_url()` – image + text input (in `_multimodal.py` variants)
 
 ---
 

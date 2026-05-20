@@ -25,7 +25,7 @@ TEST_IMAGE_URL = (
 )
 
 
-async def example_multimodal() -> None:
+async def example_image_url() -> None:
     """Call llava:7b with an image URL and ask what is in the image.
 
     Requires `ollama pull llava` to be run first.
@@ -68,7 +68,7 @@ def _build_model() -> OllamaChatModel:
     )
 
 
-async def example_local_path() -> None:
+async def example_image_local_path() -> None:
     """Call llava:7b with a local image using a ``file://`` URL.
 
     The formatter reads the file from disk and converts it to base64.
@@ -99,7 +99,7 @@ async def example_local_path() -> None:
     await stream_and_collect(await model(msgs))
 
 
-async def example_file_url() -> None:
+async def example_image_base64() -> None:
     """Call llava:7b with a local image using explicit base64 encoding.
 
     Use ``Base64Source`` when you already have the binary data in memory or
@@ -131,6 +131,6 @@ async def example_file_url() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(example_multimodal())
-    asyncio.run(example_local_path())
-    asyncio.run(example_file_url())
+    asyncio.run(example_image_url())
+    asyncio.run(example_image_local_path())
+    asyncio.run(example_image_base64())

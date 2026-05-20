@@ -19,7 +19,7 @@ TEST_IMAGE_URL = (
 )
 
 
-async def example_multiagent_multimodal() -> None:
+async def example_multiagent_image_url() -> None:
     """Multi-agent conversation where Alice shares an image for the group."""
     formatter = XAIMultiAgentFormatter()
 
@@ -80,4 +80,4 @@ async def example_multiagent_multimodal() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(example_multiagent_multimodal())
+    asyncio.run(example_multiagent_image_url())

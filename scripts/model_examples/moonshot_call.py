@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Examples of Kimi (Moonshot AI) model calls."""
+"""Examples of Moonshot AI model calls."""
 import asyncio
 import json
 import os
@@ -11,8 +11,8 @@ from agentscope.message import (
     ToolResultBlock,
     ToolResultState,
 )
-from agentscope.model import KimiChatModel
-from agentscope.credential import KimiCredential
+from agentscope.model import MoonshotChatModel
+from agentscope.credential import MoonshotCredential
 from agentscope.tool import Toolkit, ToolChoice
 
 # ---------------------------------------------------------------------------
@@ -21,9 +21,9 @@ from agentscope.tool import Toolkit, ToolChoice
 
 
 async def example_simple_call() -> None:
-    """Call the Kimi model with a simple text message."""
-    model = KimiChatModel(
-        credential=KimiCredential(
+    """Call the Moonshot model with a simple text message."""
+    model = MoonshotChatModel(
+        credential=MoonshotCredential(
             api_key=os.environ["MOONSHOT_API_KEY"],
         ),
         model="kimi-k2.6",
@@ -61,13 +61,13 @@ def get_weather(city: str) -> str:
 
 
 async def example_tool_call() -> None:
-    """Call the Kimi model with tool calling enabled."""
+    """Call the Moonshot model with tool calling enabled."""
     toolkit = Toolkit()
     toolkit.register_function(get_weather)
     tools = toolkit.get_function_schemas()
 
-    model = KimiChatModel(
-        credential=KimiCredential(
+    model = MoonshotChatModel(
+        credential=MoonshotCredential(
             api_key=os.environ["MOONSHOT_API_KEY"],
         ),
         model="kimi-k2.6",

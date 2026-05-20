@@ -48,7 +48,7 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
             media_type="audio/mpeg",
         )
         self.image_url = str(_img_src.url)
-        audio_url = str(_aud_src.url)
+        self.audio_url = str(_aud_src.url)
 
         # --- Base64 fixtures ---
         self.image_b64 = "ZmFrZSBpbWFnZSBkYXRh"
@@ -93,7 +93,7 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                     ),
                     DataBlock(
                         source=URLSource(
-                            url=audio_url,
+                            url=self.audio_url,
                             media_type="audio/mpeg",
                         ),
                     ),
@@ -145,44 +145,78 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
         ]
 
         # ---------------------------------------------------------------
-        # Ground truth: DashScopeChatFormatter
-        #   - System/user/assistant content is always a list of dicts.
+        # Ground truth: DashScopeChatFormatter (OpenAI-compatible format)
+        #   - Content blocks use {"type": "text", "text": ...} format.
+        #   - Images use {"type": "image_url", "image_url": {"url": ...}}.
+        #   - Audio uses {"type": "input_audio", "input_audio": {...}}.
         #   - Tool-result content is a plain string.
         # ---------------------------------------------------------------
         self.gt_chat = [
             {
                 "role": "system",
-                "content": [{"text": "You're a helpful assistant."}],
+                "content": [
+                    {"type": "text", "text": "You're a helpful assistant."},
+                ],
             },
             {
                 "role": "user",
                 "content": [
-                    {"text": "What is the capital of France?"},
-                    {"image": self.image_url},
+                    {
+                        "type": "text",
+                        "text": "What is the capital of France?",
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": self.image_url},
+                    },
                 ],
             },
             {
                 "role": "assistant",
-                "content": [{"text": "The capital of France is Paris."}],
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "The capital of France is Paris.",
+                    },
+                ],
             },
             {
                 "role": "user",
                 "content": [
-                    {"text": "What is the capital of Germany?"},
-                    {"audio": audio_url},
+                    {
+                        "type": "text",
+                        "text": "What is the capital of Germany?",
+                    },
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": self.audio_url,
+                            "format": "mpeg",
+                        },
+                    },
                 ],
             },
             {
                 "role": "assistant",
-                "content": [{"text": "The capital of Germany is Berlin."}],
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "The capital of Germany is Berlin.",
+                    },
+                ],
             },
             {
                 "role": "user",
-                "content": [{"text": "What is the capital of Japan?"}],
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "What is the capital of Japan?",
+                    },
+                ],
             },
             {
                 "role": "assistant",
-                "content": [],
+                "content": None,
                 "tool_calls": [
                     {
                         "id": "call_1",
@@ -202,7 +236,12 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
             },
             {
                 "role": "assistant",
-                "content": [{"text": "The capital of Japan is Tokyo."}],
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "The capital of Japan is Tokyo.",
+                    },
+                ],
             },
         ]
 
@@ -215,18 +254,11 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
             DashScopeMultiAgentFormatter().conversation_history_prompt
         )
 
-        # The trailing assistant message ("The capital of Japan is Tokyo.")
-        # is always converted to a user <history> message by the multiagent
-        # formatter.  Whether it carries the full history_prompt prefix
-        # depends on whether an "agent_message" group appeared before it:
-        #   * is_first=False (conversation preceded the tool sequence):
-        #     only <history>...</history>
-        #   * is_first=True  (no prior agent_message, e.g. tools-only):
-        #     full history_prompt + <history>...</history>
         _gt_trailing_asst_nonfirst = {
             "role": "user",
             "content": [
                 {
+                    "type": "text",
                     "text": (
                         "<history>\n"
                         "assistant: The capital of Japan is Tokyo.\n"
@@ -239,6 +271,7 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
             "role": "user",
             "content": [
                 {
+                    "type": "text",
                     "text": (
                         _hist_prompt + "<history>\n"
                         "assistant: The capital of Japan is Tokyo.\n"
@@ -250,7 +283,7 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
 
         self._gt_tool_call = {
             "role": "assistant",
-            "content": [],
+            "content": None,
             "tool_calls": [
                 {
                     "id": "call_1",
@@ -278,32 +311,32 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                 "role": "user",
                 "content": [
                     {
+                        "type": "text",
                         "text": (
                             _hist_prompt + "<history>\n"
-                            "user: What is the capital of France?"
-                        ),
-                    },
-                    {"image": self.image_url},
-                    {
-                        "text": (
+                            "user: What is the capital of France?\n"
                             "assistant: The capital of France is Paris.\n"
-                            "user: What is the capital of Germany?"
-                        ),
-                    },
-                    {"audio": audio_url},
-                    {
-                        "text": (
+                            "user: What is the capital of Germany?\n"
                             "assistant: The capital of Germany is Berlin.\n"
                             "user: What is the capital of Japan?\n"
                             "</history>"
                         ),
                     },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": self.image_url},
+                    },
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": self.audio_url,
+                            "format": "mpeg",
+                        },
+                    },
                 ],
             },
             self._gt_tool_call,
             self._gt_tool_result,
-            # Trailing assistant message: is_first=False because conversation
-            # preceded the tool sequence.
             _gt_trailing_asst_nonfirst,
         ]
 
@@ -365,8 +398,11 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                 {
                     "role": "user",
                     "content": [
-                        {"text": "What's in this image?"},
-                        {"image": self.image_data_uri},
+                        {"type": "text", "text": "What's in this image?"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": self.image_data_uri},
+                        },
                     ],
                 },
             ],
@@ -430,7 +466,10 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
         # The promoted multimodal user message
         self.assertEqual(res[2]["role"], "user")
         image_blocks = [
-            b for b in res[2]["content"] if b.get("image") == self.image_url
+            b
+            for b in res[2]["content"]
+            if b.get("type") == "image_url"
+            and b.get("image_url", {}).get("url") == self.image_url
         ]
         self.assertEqual(len(image_blocks), 1)
 

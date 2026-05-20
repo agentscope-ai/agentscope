@@ -9,6 +9,8 @@ from ._base import CredentialBase
 if TYPE_CHECKING:
     from ..model import ChatModelBase
 
+_DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
 
 class DashScopeCredential(CredentialBase):
     """The credential for DashScope API."""
@@ -25,10 +27,12 @@ class DashScopeCredential(CredentialBase):
         title="API Key",
     )
 
-    base_http_api_url: str | None = Field(
-        default=None,
+    base_url: str = Field(
+        default=_DASHSCOPE_BASE_URL,
         title="API Base URL",
-        description="The base URL of the DashScope API.",
+        description=(
+            "The base URL for the DashScope OpenAI-compatible API endpoint."
+        ),
     )
 
     @classmethod

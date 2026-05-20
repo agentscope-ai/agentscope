@@ -16,21 +16,32 @@ from agentscope.message import (
 from agentscope.model import DashScopeChatModel
 from agentscope.credential import DashScopeCredential
 
-# A publicly accessible test image (a simple cat photo)
+# A publicly accessible test image
 TEST_IMAGE_URL = (
     "https://help-static-aliyun-doc.aliyuncs.com/file-manage"
     "-files/zh-CN/20241022/emyrja/dog_and_girl.jpeg"
 )
 
+# A publicly accessible test video
+TEST_VIDEO_URL = (
+    "https://help-static-aliyun-doc.aliyuncs.com/file-manage"
+    "-files/zh-CN/20241115/cqqkru/1.mp4"
+)
 
-async def example_multimodal() -> None:
+# A publicly accessible test audio
+TEST_AUDIO_URL = (
+    "https://help-static-aliyun-doc.aliyuncs.com/file-manage"
+    "-files/zh-CN/20250211/tixcef/cherry.wav"
+)
+
+
+async def example_image_url() -> None:
     """Call qwen3.5-plus with an image URL and ask what is in the image."""
     model = DashScopeChatModel(
         credential=DashScopeCredential(
             api_key=os.environ["DASHSCOPE_API_KEY"],
         ),
         model="qwen3.5-plus",
-        multimodality=True,
         stream=True,
         context_size=1_000_000,
     )
@@ -66,13 +77,12 @@ def _build_model() -> DashScopeChatModel:
             api_key=os.environ["DASHSCOPE_API_KEY"],
         ),
         model="qwen3.5-plus",
-        multimodality=True,
         stream=True,
         context_size=1_000_000,
     )
 
 
-async def example_local_path() -> None:
+async def example_image_local_path() -> None:
     """Call qwen3.5-plus with a local image using a ``file://`` URL.
 
     The formatter reads the file from disk and converts it to a base64 data
@@ -106,7 +116,7 @@ async def example_local_path() -> None:
     await stream_and_collect(await model(msgs))
 
 
-async def example_file_url() -> None:
+async def example_image_base64() -> None:
     """Call qwen3.5-plus with a local image using explicit base64 encoding.
 
     Use ``Base64Source`` when you already have the binary data in memory or
@@ -142,7 +152,78 @@ async def example_file_url() -> None:
     await stream_and_collect(await model(msgs))
 
 
+async def example_video() -> None:
+    """Call qwen3.5-plus with a video URL and ask what is in the video."""
+    model = _build_model()
+
+    video_block = DataBlock(
+        source=URLSource(
+            url=TEST_VIDEO_URL,
+            media_type="video/mp4",
+        ),
+    )
+
+    msgs = [
+        Msg(
+            name="user",
+            content=[
+                TextBlock(
+                    text="What is happening in this video? "
+                    "Describe it briefly.",
+                ),
+                video_block,
+            ],
+            role="user",
+        ),
+    ]
+
+    print("=== Multimodal Call (Video URL) ===")
+    await stream_and_collect(await model(msgs))
+
+
+async def example_audio() -> None:
+    """Call qwen3.5-omni-plus with an audio URL.
+
+    Audio understanding requires an Omni model (qwen3.5-omni-plus or
+    Qwen3-Omni-Flash). Omni models also require stream=True and the
+    ``modalities`` parameter.
+    """
+    model = DashScopeChatModel(
+        credential=DashScopeCredential(
+            api_key=os.environ["DASHSCOPE_API_KEY"],
+        ),
+        model="qwen3.5-omni-plus",
+        stream=True,
+        context_size=1_000_000,
+    )
+
+    audio_block = DataBlock(
+        source=URLSource(
+            url=TEST_AUDIO_URL,
+            media_type="audio/wav",
+        ),
+    )
+
+    msgs = [
+        Msg(
+            name="user",
+            content=[
+                TextBlock(text="What is being said in this audio clip?"),
+                audio_block,
+            ],
+            role="user",
+        ),
+    ]
+
+    print("=== Multimodal Call (Audio URL - Omni) ===")
+    await stream_and_collect(
+        await model(msgs, modalities=["text", "audio"]),
+    )
+
+
 if __name__ == "__main__":
-    asyncio.run(example_multimodal())
-    asyncio.run(example_local_path())
-    asyncio.run(example_file_url())
+    asyncio.run(example_image_url())
+    asyncio.run(example_image_local_path())
+    asyncio.run(example_image_base64())
+    asyncio.run(example_video())
+    asyncio.run(example_audio())

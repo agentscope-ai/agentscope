@@ -7,7 +7,6 @@ Formatter tests have been moved to tests/formatter_dashscope_test.py.
 import json
 from typing import Any
 from datetime import datetime
-from http import HTTPStatus
 import unittest
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock
@@ -28,7 +27,6 @@ def _make_model() -> Any:
         credential=DashScopeCredential(api_key="test"),
         model="qwen3-max",
         stream=False,
-        multimodality=True,
         max_retries=3,
         context_size=int(1500),
         parameters=DashScopeChatModel.Parameters(
@@ -56,29 +54,32 @@ class TestDashScopeModelParsing(IsolatedAsyncioTestCase):
         self,
         content: Any = None,
         tool_calls: Any = None,
+        reasoning_content: Any = None,
     ) -> "MagicMock":
-        """Build a minimal DashScope GenerationResponse mock."""
-        message = {}
-        if content is not None:
-            message["content"] = content
-        if tool_calls is not None:
-            message["tool_calls"] = tool_calls
+        """Build a minimal OpenAI ChatCompletion-style mock."""
+        message = MagicMock()
+        message.content = content
+        message.tool_calls = tool_calls
+        message.reasoning_content = reasoning_content
 
-        msg_mock = MagicMock()
-        msg_mock.get = lambda key, default=None: message.get(key, default)
+        choice = MagicMock()
+        choice.message = message
+
+        usage = MagicMock()
+        usage.prompt_tokens = 10
+        usage.completion_tokens = 5
+        usage.prompt_tokens_details = None
 
         resp = MagicMock()
-        resp.status_code = HTTPStatus.OK
-        resp.output.choices[0].message = msg_mock
-        resp.request_id = "req-1"
-        resp.usage.input_tokens = 10
-        resp.usage.output_tokens = 5
+        resp.id = "req-1"
+        resp.choices = [choice]
+        resp.usage = usage
         return resp
 
     async def test_parse_text_response(self) -> None:
         """Parsing a text response creates a TextBlock."""
         resp = self._mock_response(content="Hello!")
-        result = await self.model._parse_dashscope_generation_response(
+        result = self.model._parse_completion_response(
             self.start,
             resp,
         )
@@ -88,17 +89,13 @@ class TestDashScopeModelParsing(IsolatedAsyncioTestCase):
 
     async def test_parse_tool_call_response(self) -> None:
         """Parsing a tool-call response creates a ToolCallBlock."""
-        tool_calls = [
-            {
-                "id": "call-1",
-                "function": {
-                    "name": "get_weather",
-                    "arguments": '{"city":"Beijing"}',
-                },
-            },
-        ]
-        resp = self._mock_response(tool_calls=tool_calls)
-        result = await self.model._parse_dashscope_generation_response(
+        tc_mock = MagicMock()
+        tc_mock.id = "call-1"
+        tc_mock.function.name = "get_weather"
+        tc_mock.function.arguments = '{"city":"Beijing"}'
+
+        resp = self._mock_response(tool_calls=[tc_mock])
+        result = self.model._parse_completion_response(
             self.start,
             resp,
         )
@@ -107,16 +104,6 @@ class TestDashScopeModelParsing(IsolatedAsyncioTestCase):
         self.assertEqual(tcs[0].id, "call-1")
         self.assertEqual(tcs[0].name, "get_weather")
         self.assertEqual(json.loads(tcs[0].input)["city"], "Beijing")
-
-    async def test_parse_response_with_status_error(self) -> None:
-        """Non-OK status raises RuntimeError."""
-        resp = self._mock_response(content="text")
-        resp.status_code = HTTPStatus.BAD_REQUEST
-        with self.assertRaises(RuntimeError):
-            await self.model._parse_dashscope_generation_response(
-                self.start,
-                resp,
-            )
 
 
 # ---------------------------------------------------------------------------

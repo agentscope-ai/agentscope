@@ -1,36 +1,44 @@
 # -*- coding: utf-8 -*-
-"""The DashScope chat model class."""
-import uuid
+"""The DashScope chat model class (OpenAI-compatible implementation)."""
 import warnings
+from collections import OrderedDict
 from datetime import datetime
-from http import HTTPStatus
-from typing import Any, AsyncGenerator, Generator, List, Literal, TYPE_CHECKING
+from typing import Any, AsyncGenerator, List, Literal, TYPE_CHECKING
 
 from pydantic import BaseModel, Field
-from aioitertools import iter as giter
 
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ...credential import DashScopeCredential
 from ...formatter import FormatterBase, DashScopeChatFormatter
-from ...message import Msg, TextBlock, ThinkingBlock, ToolCallBlock
+from ...message import (
+    Msg,
+    TextBlock,
+    ThinkingBlock,
+    ToolCallBlock,
+    DataBlock,
+    Base64Source,
+)
 from ...tool import ToolChoice
 from ...tracing import trace_llm
 
-
 if TYPE_CHECKING:
-    from dashscope.api_entities.dashscope_response import GenerationResponse
-    from dashscope.api_entities.dashscope_response import (
-        MultiModalConversationResponse,
-    )
+    from openai.types.chat import ChatCompletion
+    from openai import AsyncStream
 else:
-    GenerationResponse = Any
-    MultiModalConversationResponse = Any
+    ChatCompletion = Any
+    AsyncStream = Any
 
 
 class DashScopeChatModel(ChatModelBase):
-    """The DashScope chat model."""
+    """The DashScope chat model (OpenAI-compatible implementation).
+
+    This implementation uses the OpenAI Python SDK to call DashScope's
+    OpenAI-compatible endpoint (``compatible-mode/v1``), which supports
+    both text-only and multimodal (image/video) inputs through the same
+    unified API.
+    """
 
     class Parameters(BaseModel):
         """The parameters for DashScope LLM API."""
@@ -96,7 +104,6 @@ class DashScopeChatModel(ChatModelBase):
         stream: bool = True,
         max_retries: int = 3,
         context_size: int = 131072,
-        multimodality: bool | None = None,
         formatter: FormatterBase | None = None,
     ) -> None:
         """Initialize the DashScope chat model.
@@ -116,11 +123,6 @@ class DashScopeChatModel(ChatModelBase):
                 The maximum number of retries for the DashScope API.
             context_size (`int`, defaults to `131072`):
                 The model context size used for context compression.
-            multimodality (`bool | None`, defaults to `None`):
-                Whether to call the MultiModalConversation API. ``True``
-                forces multimodal mode, ``False`` forces text-only mode,
-                and ``None`` auto-detects from the model name
-                (e.g. ``qvq`` or ``-vl`` suffix).
             formatter (`FormatterBase | None`, defaults to `None`):
                 The formatter that converts ``Msg`` objects to the format
                 required by the DashScope API. When ``None``, a
@@ -134,7 +136,6 @@ class DashScopeChatModel(ChatModelBase):
             max_retries=max_retries,
             context_size=context_size,
         )
-        self.multimodality = multimodality
         self.formatter = formatter or DashScopeChatFormatter()
 
     @trace_llm
@@ -146,371 +147,305 @@ class DashScopeChatModel(ChatModelBase):
         tool_choice: ToolChoice | None = None,
         **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
-        """Get the response from the dashscope
-        Generation/MultimodalConversation API by the given arguments.
-
-        .. note:: We unify the DashScope generation and multimodal conversation
-         APIs into one method, since they support similar arguments and share
-         the same functionality.
+        """Call the DashScope chat completions API via OpenAI-compatible
+        endpoint.
 
         Args:
-            messages (`list[Msg]`):
-                The Msg object that will be formatted and sent to the LLM API
-                as the conversation messages.
+            model_name (`str`):
+                The model name to use for this call.
+            messages (`list`):
+                The Msg objects that will be formatted and sent to the API.
             tools (`list[dict] | None`, default `None`):
                 The tools JSON schemas that the model can use.
             tool_choice (`ToolChoice | None`, default `None`):
                 Controls which (if any) tool is called by the model.
-                 Note: DashScope API only supports "auto" and "none", so
-                 "required" will be converted to "auto".
-                 For more details, please refer to
-                 https://help.aliyun.com/zh/model-studio/qwen-function-calling
             **kwargs (`Any`):
                 The keyword arguments for DashScope chat completions API,
-                e.g. `temperature`, `max_tokens`, `top_p`, etc. Please
-                refer to `DashScope documentation
-                <https://help.aliyun.com/zh/dashscope/developer-reference/api-details>`_
-                for more detailed arguments.
+                e.g. ``temperature``, ``max_tokens``, ``top_p``, etc.
         """
-        import dashscope
+        import openai
 
-        # 1. Format the messages to the format required by DashScope API
-        formatted_msg = await self.formatter.format(messages)
+        client = openai.AsyncClient(
+            api_key=self.credential.api_key.get_secret_value(),
+            base_url=self.credential.base_url,
+        )
 
-        # 2. Prepare the generation keyword arguments
-        kwargs = {
-            "messages": formatted_msg,
+        formatted_messages = await self.formatter.format(messages)
+
+        request_kwargs: dict[str, Any] = {
             "model": model_name,
+            "messages": formatted_messages,
             "stream": self.stream,
-            "result_format": "message",
-            # In agentscope, the `incremental_output` must be `True` when
-            # `self.stream` is True
-            "incremental_output": self.stream,
-            **kwargs,
         }
+
+        if self.parameters.max_tokens is not None:
+            request_kwargs["max_tokens"] = self.parameters.max_tokens
+
+        if self.parameters.temperature is not None:
+            request_kwargs["temperature"] = self.parameters.temperature
+
+        if self.parameters.top_p is not None:
+            request_kwargs["top_p"] = self.parameters.top_p
+
+        request_kwargs.update(kwargs)
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
         if fmt_tools is not None:
-            kwargs["tools"] = fmt_tools
+            request_kwargs["tools"] = fmt_tools
+            if not self.parameters.parallel_tool_calls:
+                request_kwargs["parallel_tool_calls"] = False
         if fmt_tool_choice is not None:
-            kwargs["tool_choice"] = fmt_tool_choice
+            request_kwargs["tool_choice"] = fmt_tool_choice
 
-        # thinking related options — map to DashScope API parameter names
-        kwargs["enable_thinking"] = self.parameters.thinking_enable
+        extra_body: dict[str, Any] = {}
+        if self.parameters.thinking_enable is not None:
+            extra_body["enable_thinking"] = self.parameters.thinking_enable
         if self.parameters.thinking_budget is not None:
-            kwargs["thinking_budget"] = self.parameters.thinking_budget
+            extra_body["thinking_budget"] = self.parameters.thinking_budget
+        if self.parameters.top_k is not None:
+            extra_body["top_k"] = self.parameters.top_k
 
-        # 3. Call the API and parse the response
-        start_datetime = datetime.now()
-        # Use MultiModalConversation API if multimodality is True, or if the
-        # model is multimodal based on the model name.
-        api_key = self.credential.api_key.get_secret_value()
-        if self.multimodality or (
-            self.multimodality is None
-            and (
-                "qvq" in model_name
-                or "-vl" in model_name
-                or "-omni" in model_name
-            )
-        ):
-            response = await dashscope.AioMultiModalConversation.call(
-                api_key=api_key,
-                **kwargs,
-            )
-
-        else:
-            response = await dashscope.aigc.generation.AioGeneration.call(
-                api_key=api_key,
-                **kwargs,
-            )
+        if extra_body:
+            request_kwargs.setdefault("extra_body", {})
+            request_kwargs["extra_body"].update(extra_body)
 
         if self.stream:
-            return self._parse_dashscope_stream_response(
+            request_kwargs["stream_options"] = {"include_usage": True}
+
+        start_datetime = datetime.now()
+        response = await client.chat.completions.create(**request_kwargs)
+
+        if self.stream:
+            audio_cfg = request_kwargs.get("audio")
+            audio_fmt = (
+                audio_cfg.get("format", "wav")
+                if isinstance(audio_cfg, dict)
+                else "wav"
+            )
+            return self._parse_stream_response(
                 start_datetime,
                 response,
+                audio_fmt,
             )
 
-        parsed_response = await self._parse_dashscope_generation_response(
-            start_datetime,
-            response,
-        )
+        return self._parse_completion_response(start_datetime, response)
 
-        return parsed_response
-
-    async def _parse_dashscope_stream_response(
+    async def _parse_stream_response(
         self,
         start_datetime: datetime,
-        response: AsyncGenerator[GenerationResponse, None]
-        | AsyncGenerator[MultiModalConversationResponse, None]
-        | Generator[MultiModalConversationResponse, None, None],
-    ) -> AsyncGenerator[ChatResponse, Any]:
-        """Given a DashScope streaming response generator, extract the content
-            blocks and usages from it and yield ChatResponse objects.
+        response: AsyncStream,
+        audio_format: str = "wav",
+    ) -> AsyncGenerator[ChatResponse, None]:
+        """Parse the DashScope streaming response (OpenAI-compatible format).
 
         Args:
             start_datetime (`datetime`):
                 The start datetime of the response generation.
-            response (
-                `AsyncGenerator[GenerationResponse, None] | \
-                AsyncGenerator[MultiModalConversationResponse, None] | \
-                Generator[MultiModalConversationResponse, None, None]`
-            ):
-                DashScope streaming response (async) generator
-                (GenerationResponse or MultiModalConversationResponse).
+            response (`AsyncStream`):
+                The OpenAI-compatible async stream object.
+            audio_format (`str`, defaults to ``"wav"``):
+                The audio format requested (used to set the media type on
+                the output ``DataBlock``).
 
-        Returns:
-            `AsyncGenerator[ChatResponse, Any]`:
-                An async generator that yields ChatResponse objects containing
-                the content blocks and usage information for each chunk in the
-                streaming response.
+        Yields:
+            `ChatResponse`:
+                Incremental ``ChatResponse`` objects with ``is_last=False``
+                followed by a final one with ``is_last=True``.
         """
-        # All delta should have the same block identifier
-        acc_text = TextBlock(text="")
-        acc_thinking = ThinkingBlock(thinking="")
-        acc_tool_calls = {}
         usage = None
         response_id: str | None = None
+        acc_text = TextBlock(text="")
+        acc_thinking = ThinkingBlock(thinking="")
+        acc_tool_calls: OrderedDict = OrderedDict()
+        acc_audio_data: str = ""
 
-        async for chunk in giter(response):
-            # The yield delta content blocks in the current chunk
-            delta_content: list = []
-
-            if chunk.status_code != HTTPStatus.OK:
-                raise RuntimeError(
-                    f"Failed to get response from DashScope API: {chunk}",
-                )
-
-            # Capture response_id from the first chunk if not already set
-            response_id = response_id or chunk.request_id
-
-            # The message field in the chunk
-            message = chunk.output.choices[0].message
-
-            # Update reasoning content
-            if isinstance(message.get("reasoning_content"), str):
-                acc_thinking.thinking += message["reasoning_content"]
-                delta_content.append(
-                    ThinkingBlock(
-                        id=acc_thinking.id,
-                        thinking=message["reasoning_content"],
-                    ),
-                )
-
-            # Update text content — skip empty strings to avoid
-            # spurious empty TextBlocks (DashScope often sends content=""
-            # in the first function-call chunk)
-            if isinstance(message.content, str) and message.content:
-                acc_text.text += message.content
-                delta_content.append(
-                    TextBlock(
-                        id=acc_text.id,
-                        text=message.content,
-                    ),
-                )
-            elif isinstance(message.content, list):
-                delta_text = "".join(
-                    [
-                        _["text"]
-                        for _ in message.content
-                        if isinstance(_, dict)
-                        and isinstance(_.get("text"), str)
-                    ],
-                )
-                acc_text.text += delta_text
-                delta_content.append(
-                    ThinkingBlock(id=acc_text.id, thinking=delta_text),
-                )
-
-            # Update tool calls
-            for tool_call in message.get("tool_calls") or []:
-                # Must be a dictionary
-                if not isinstance(tool_call, dict):
-                    continue
-
-                # Use the index to identify different tool calls
-                index = tool_call.get("index", 0)
-
-                # Initialize accumulator for a new tool call index
-                acc_tool_calls.setdefault(index, {})
-
-                # Avoid overwriting a valid id with an empty string.
-                # DashScope sometimes sends `"id": ""` in later argument
-                # chunks even though the real id was already received.
-                if tool_call.get("id") and tool_call["id"] != acc_tool_calls[
-                    index
-                ].get("id"):
-                    acc_tool_calls[index]["id"] = tool_call["id"]
-
-                # Arguments
-                if isinstance(tool_call.get("function"), dict):
-                    func = tool_call["function"]
-
-                    # Function name
-                    if "name" in func:
-                        acc_tool_calls[index]["name"] = func["name"]
-
-                    # Function input arguments
-                    if isinstance(func.get("arguments"), str):
-                        acc_tool_calls[index]["arguments"] = (
-                            acc_tool_calls[index].get("arguments", "")
-                            + func["arguments"]
-                        )
-
-                    # Append the tool call block for this chunk
-                    delta_content.append(
-                        ToolCallBlock(
-                            id=acc_tool_calls[index].get(
-                                "id",
-                                uuid.uuid4().hex,
-                            ),
-                            name=func.get("name", ""),
-                            input=func.get("arguments", ""),
-                        ),
+        async with response as stream:
+            async for chunk in stream:
+                if chunk.usage:
+                    u = chunk.usage
+                    ptd = getattr(u, "prompt_tokens_details", None)
+                    if ptd and hasattr(ptd, "cached_tokens"):
+                        cache_read = ptd.cached_tokens or 0
+                    else:
+                        cache_read = 0
+                    usage = ChatUsage(
+                        input_tokens=u.prompt_tokens or 0,
+                        output_tokens=u.completion_tokens or 0,
+                        time=(datetime.now() - start_datetime).total_seconds(),
+                        cache_input_tokens=cache_read,
                     )
 
-            # The chunk usage
-            if chunk.usage:
-                u = chunk.usage
-                ptd = u.get("prompt_tokens_details", None)
-                if isinstance(ptd, dict):
-                    cache_creation = ptd.get("cache_creation_input_tokens", 0)
-                    cache_read = ptd.get("cached_tokens", 0)
-                else:
-                    cache_creation = 0
-                    cache_read = u.get("cached_tokens", 0)
-                usage = ChatUsage(
-                    input_tokens=u.input_tokens,
-                    output_tokens=u.output_tokens,
-                    time=(datetime.now() - start_datetime).total_seconds(),
-                    cache_creation_input_tokens=cache_creation,
-                    cache_input_tokens=cache_read,
+                response_id = response_id or getattr(chunk, "id", None)
+
+                if not chunk.choices:
+                    continue
+
+                choice = chunk.choices[0]
+                delta = choice.delta
+
+                delta_thinking = (
+                    getattr(delta, "reasoning_content", None) or ""
                 )
+                delta_text = getattr(delta, "content", None) or ""
 
-            # Yield the chat response
-            yield ChatResponse(
-                id=response_id,
-                content=delta_content,
-                is_last=False,
-                usage=usage,
-            )
+                # Collect audio output from Omni models (delta.audio.data)
+                delta_audio = getattr(delta, "audio", None)
+                if delta_audio is not None:
+                    if isinstance(delta_audio, dict):
+                        audio_chunk = delta_audio.get("data", "")
+                    else:
+                        audio_chunk = getattr(delta_audio, "data", "") or ""
+                    if audio_chunk:
+                        acc_audio_data += audio_chunk
 
-        # Yield a final complete response with the accumulated content and
-        # final usage.  Thinking comes before text to preserve the natural
-        # generation order (reasoning first, then answer).
-        content = []
+                acc_thinking.thinking += delta_thinking
+                acc_text.text += delta_text
+
+                for tool_call in getattr(delta, "tool_calls", None) or []:
+                    idx = tool_call.index
+                    if idx in acc_tool_calls:
+                        if tool_call.function and tool_call.function.arguments:
+                            acc_tool_calls[idx][
+                                "input"
+                            ] += tool_call.function.arguments
+                    else:
+                        acc_tool_calls[idx] = {
+                            "id": tool_call.id or "",
+                            "name": (
+                                tool_call.function.name
+                                if tool_call.function
+                                else ""
+                            ),
+                            "input": (
+                                tool_call.function.arguments
+                                if tool_call.function
+                                else ""
+                            )
+                            or "",
+                        }
+
+                delta_contents: List[
+                    TextBlock | ToolCallBlock | ThinkingBlock
+                ] = []
+                if delta_thinking:
+                    delta_contents.append(
+                        ThinkingBlock(
+                            id=acc_thinking.id,
+                            thinking=delta_thinking,
+                        ),
+                    )
+                if delta_text:
+                    delta_contents.append(
+                        TextBlock(id=acc_text.id, text=delta_text),
+                    )
+
+                if delta_contents:
+                    _kwargs: dict[str, Any] = {
+                        "content": delta_contents,
+                        "usage": usage,
+                        "is_last": False,
+                    }
+                    if response_id:
+                        _kwargs["id"] = response_id
+                    yield ChatResponse(**_kwargs)
+
+        final_contents: List[
+            TextBlock | ToolCallBlock | ThinkingBlock | DataBlock
+        ] = []
         if acc_thinking.thinking:
-            content.append(acc_thinking)
-
+            final_contents.append(acc_thinking)
         if acc_text.text:
-            content.append(acc_text)
-
-        if acc_tool_calls:
-            content.extend(
+            final_contents.append(acc_text)
+        for tc in acc_tool_calls.values():
+            final_contents.append(
                 ToolCallBlock(
-                    id=tc.get("id", uuid.uuid4().hex),
-                    name=tc.get("name", ""),
-                    input=tc.get("arguments", "{}"),
-                )
-                for tc in acc_tool_calls.values()
+                    id=tc["id"],
+                    name=tc["name"],
+                    input=tc["input"],
+                ),
             )
-
-        yield ChatResponse(
-            id=response_id or uuid.uuid4().hex,
-            content=content,
-            is_last=True,
-            usage=usage,
-        )
-
-    async def _parse_dashscope_generation_response(
-        self,
-        start_datetime: datetime,
-        response: GenerationResponse | MultiModalConversationResponse,
-    ) -> ChatResponse:
-        """Given a DashScope GenerationResponse object, extract the content
-        blocks and usages from it.
-
-        Args:
-            start_datetime (`datetime`):
-                The start datetime of the response generation.
-            response (
-                `GenerationResponse | MultiModalConversationResponse`
-            ):
-                Dashscope GenerationResponse | MultiModalConversationResponse
-                object to parse.
-
-        Returns:
-            `ChatResponse`:
-                A ChatResponse object containing the content blocks and usage.
-        """
-        # Collect the content blocks from the response.
-        if response.status_code != HTTPStatus.OK:
-            raise RuntimeError(
-                f"Failed to get response from DashScope API: {response}",
-            )
-
-        content_blocks: List[TextBlock | ToolCallBlock] = []
-
-        message = response.output.choices[0].message
-
-        # The content and tool calls in the message
-        content, tool_calls = message.get("content"), message.get("tool_calls")
-
-        if isinstance(content, str):
-            content_blocks.append(TextBlock(text=content))
-
-        elif isinstance(content, list):
-            content_blocks.append(
-                TextBlock(
-                    text="".join(
-                        [
-                            _["text"]
-                            for _ in content
-                            if isinstance(_, dict)
-                            and isinstance(_.get("text"), str)
-                        ],
+        if acc_audio_data:
+            final_contents.append(
+                DataBlock(
+                    source=Base64Source(
+                        data=acc_audio_data,
+                        media_type=f"audio/{audio_format}",
                     ),
                 ),
             )
 
-        if isinstance(tool_calls, list):
-            for tool_call in tool_calls:
-                function = tool_call.get("function") or {}
-                name = function.get("name") or ""
-                input_ = function.get("arguments") or "{}"
+        _final_kwargs: dict[str, Any] = {
+            "content": final_contents,
+            "usage": usage,
+            "is_last": True,
+        }
+        if response_id:
+            _final_kwargs["id"] = response_id
+        yield ChatResponse(**_final_kwargs)
 
+    def _parse_completion_response(
+        self,
+        start_datetime: datetime,
+        response: ChatCompletion,
+    ) -> ChatResponse:
+        """Parse the DashScope non-streaming response (OpenAI-compatible
+        format).
+
+        Args:
+            start_datetime (`datetime`):
+                The start datetime of the response generation.
+            response (`ChatCompletion`):
+                The OpenAI-compatible chat completion object.
+
+        Returns:
+            `ChatResponse`:
+                A single ``ChatResponse`` with ``is_last=True``.
+        """
+        content_blocks: List[TextBlock | ToolCallBlock | ThinkingBlock] = []
+
+        if response.choices:
+            choice = response.choices[0]
+            reasoning = getattr(choice.message, "reasoning_content", None)
+            if isinstance(reasoning, str) and reasoning:
+                content_blocks.append(ThinkingBlock(thinking=reasoning))
+
+            if choice.message.content:
+                content_blocks.append(TextBlock(text=choice.message.content))
+
+            for tool_call in choice.message.tool_calls or []:
                 content_blocks.append(
                     ToolCallBlock(
-                        id=tool_call.get("id", uuid.uuid4().hex),
-                        name=name,
-                        input=input_,
+                        id=tool_call.id,
+                        name=tool_call.function.name,
+                        input=tool_call.function.arguments,
                     ),
                 )
 
-        # Usage information
         usage = None
         if response.usage:
             u = response.usage
-            ptd = u.get("prompt_tokens_details", None)
-            if isinstance(ptd, dict):
-                cache_creation = ptd.get("cache_creation_input_tokens", 0)
-                cache_read = ptd.get("cached_tokens", 0)
+            ptd = getattr(u, "prompt_tokens_details", None)
+            if ptd and hasattr(ptd, "cached_tokens"):
+                cache_read = ptd.cached_tokens or 0
             else:
-                cache_creation = 0
-                cache_read = u.get("cached_tokens", 0)
+                cache_read = 0
             usage = ChatUsage(
-                input_tokens=u.input_tokens,
-                output_tokens=u.output_tokens,
+                input_tokens=u.prompt_tokens,
+                output_tokens=u.completion_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
-                cache_creation_input_tokens=cache_creation,
                 cache_input_tokens=cache_read,
             )
 
-        return ChatResponse(
-            id=getattr(response, "request_id", uuid.uuid4().hex),
-            content=content_blocks,
-            is_last=True,
-            usage=usage,
-        )
+        resp_kwargs: dict[str, Any] = {
+            "content": content_blocks,
+            "is_last": True,
+            "usage": usage,
+        }
+        response_id = getattr(response, "id", None)
+        if response_id:
+            resp_kwargs["id"] = response_id
+
+        return ChatResponse(**resp_kwargs)
 
     def _format_tools(
         self,
@@ -519,12 +454,11 @@ class DashScopeChatModel(ChatModelBase):
     ) -> tuple[list[dict] | None, str | dict | None]:
         """Validate and format tools and tool_choice for DashScope.
 
-        DashScope only supports "auto" and "none" modes; "required" is
-        converted to "auto" with a warning. When ``tool_choice.tools``
-        is specified the schemas list is filtered to only those tools.
-        When ``tool_choice.mode`` is a specific tool name (str) the
-        model is forced to call exactly that tool without needing to
-        filter the list, preserving prompt-cache efficiency.
+        DashScope supports "auto", "none", and "required" modes in
+        OpenAI-compatible format. When ``tool_choice.tools`` is specified
+        the schemas list is filtered to only those tools. When
+        ``tool_choice.mode`` is a specific tool name (str) the model is
+        forced to call exactly that tool.
 
         Args:
             tools (`list[dict] | None`, optional):
@@ -563,7 +497,6 @@ class DashScopeChatModel(ChatModelBase):
         mode = tool_choice.mode
 
         if mode not in _TOOL_CHOICE_LITERAL_MODES:
-            # mode is a specific tool name — force call it
             return fmt_tools, {
                 "type": "function",
                 "function": {"name": mode},
@@ -571,9 +504,10 @@ class DashScopeChatModel(ChatModelBase):
 
         if mode == "required":
             warnings.warn(
-                f"'{mode}' is not supported by DashScope API. "
+                f"'{mode}' is not fully supported by DashScope API. "
                 "It will be converted to 'auto'.",
                 DeprecationWarning,
+                stacklevel=2,
             )
             return fmt_tools, "auto"
 

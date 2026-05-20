@@ -28,7 +28,6 @@ async def example_multiagent() -> None:
             api_key=os.environ["DASHSCOPE_API_KEY"],
         ),
         model="qwen3.5-plus",
-        multimodality=True,
         stream=True,
         context_size=1_000_000,
         formatter=formatter,

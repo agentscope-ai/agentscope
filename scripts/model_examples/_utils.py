@@ -2,7 +2,7 @@
 """Shared utility helpers for model-examples scripts."""
 from typing import AsyncGenerator
 
-from agentscope.message import TextBlock, ThinkingBlock
+from agentscope.message import TextBlock, ThinkingBlock, DataBlock
 from agentscope.model import ChatResponse
 
 
@@ -52,6 +52,17 @@ async def stream_and_collect(
             print(final_text)
     if in_thinking:
         print()
+    # Report audio output if present in the final chunk
+    if final is not None:
+        import base64 as _b64
+
+        for block in final.content:
+            if isinstance(block, DataBlock):
+                media = block.source.media_type
+                byte_size = len(_b64.b64decode(block.source.data))
+                print(
+                    f"[Audio output: {media}, " f"{byte_size} bytes]",
+                )
     print()
     assert final is not None
     return final

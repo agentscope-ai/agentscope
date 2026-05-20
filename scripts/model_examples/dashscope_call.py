@@ -27,7 +27,6 @@ async def example_simple_call() -> None:
             api_key=os.environ["DASHSCOPE_API_KEY"],
         ),
         model="qwen3.5-plus",
-        multimodality=True,
         stream=True,
         context_size=1_000_000,
         parameters=DashScopeChatModel.Parameters(thinking_enable=True),
@@ -77,7 +76,6 @@ async def example_tool_call() -> None:
         ),
         model="qwen3.5-plus",
         stream=True,
-        multimodality=True,
         context_size=1_000_000,
         parameters=DashScopeChatModel.Parameters(thinking_enable=True),
     )

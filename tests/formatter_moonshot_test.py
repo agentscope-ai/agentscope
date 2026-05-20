@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Comprehensive formatter unit tests for KimiChatFormatter and
-KimiMultiAgentFormatter, following the reference test style with exact
+"""Comprehensive formatter unit tests for MoonshotChatFormatter and
+MoonshotMultiAgentFormatter, following the reference test style with exact
 ground-truth comparisons.
 """
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.formatter import (
-    KimiChatFormatter,
-    KimiMultiAgentFormatter,
+    MoonshotChatFormatter,
+    MoonshotMultiAgentFormatter,
 )
 from agentscope.message import (
     TextBlock,
@@ -27,8 +27,8 @@ from agentscope.message import (
 _FIXED_ID = "TESTID1234567"
 
 
-class TestKimiFormatter(IsolatedAsyncioTestCase):
-    """Comprehensive tests for Kimi Chat and MultiAgent formatters."""
+class TestMoonshotFormatter(IsolatedAsyncioTestCase):
+    """Comprehensive tests for Moonshot Chat and MultiAgent formatters."""
 
     async def asyncSetUp(self) -> None:
         """Set up shared message fixtures and expected ground-truth dicts."""
@@ -119,7 +119,7 @@ class TestKimiFormatter(IsolatedAsyncioTestCase):
         ]
 
         # ---------------------------------------------------------------
-        # Ground truth: KimiChatFormatter
+        # Ground truth: MoonshotChatFormatter
         #   - Same as OpenAI except ALL assistant messages have an extra
         #     "reasoning_content" field (empty string when no ThinkingBlock).
         # ---------------------------------------------------------------
@@ -214,11 +214,13 @@ class TestKimiFormatter(IsolatedAsyncioTestCase):
         ]
 
         # ---------------------------------------------------------------
-        # Ground truth: KimiMultiAgentFormatter
+        # Ground truth: MoonshotMultiAgentFormatter
         #   - Same as OpenAI MultiAgent, but tool-sequence assistant messages
         #     carry "reasoning_content": "".
         # ---------------------------------------------------------------
-        _hist_prompt = KimiMultiAgentFormatter().conversation_history_prompt
+        _hist_prompt = (
+            MoonshotMultiAgentFormatter().conversation_history_prompt
+        )
 
         _conv_text = (
             "user: What is the capital of France?\n"
@@ -307,12 +309,12 @@ class TestKimiFormatter(IsolatedAsyncioTestCase):
         ]
 
     # -------------------------------------------------------------------
-    # KimiChatFormatter tests
+    # MoonshotChatFormatter tests
     # -------------------------------------------------------------------
 
     async def test_chat_formatter(self) -> None:
         """Chat formatter produces exact output for various subsets."""
-        fmt = KimiChatFormatter()
+        fmt = MoonshotChatFormatter()
         self.maxDiff = None
 
         # Full history
@@ -343,9 +345,9 @@ class TestKimiFormatter(IsolatedAsyncioTestCase):
     async def test_chat_formatter_thinking_to_reasoning_content(
         self,
     ) -> None:
-        """ThinkingBlock becomes reasoning_content in Kimi (Preserved
+        """ThinkingBlock becomes reasoning_content in Moonshot (Preserved
         Thinking)."""
-        fmt = KimiChatFormatter()
+        fmt = MoonshotChatFormatter()
         msgs = [
             AssistantMsg(
                 name="assistant",
@@ -368,7 +370,7 @@ class TestKimiFormatter(IsolatedAsyncioTestCase):
     ) -> None:
         """All assistant messages always have reasoning_content (even when
         empty)."""
-        fmt = KimiChatFormatter()
+        fmt = MoonshotChatFormatter()
         msgs = [
             AssistantMsg(
                 name="assistant",
@@ -382,7 +384,7 @@ class TestKimiFormatter(IsolatedAsyncioTestCase):
 
     async def test_chat_formatter_base64_image(self) -> None:
         """Base64-encoded image is inlined as a data URI."""
-        fmt = KimiChatFormatter()
+        fmt = MoonshotChatFormatter()
         msgs = [
             UserMsg(
                 name="user",
@@ -417,12 +419,12 @@ class TestKimiFormatter(IsolatedAsyncioTestCase):
         )
 
     # -------------------------------------------------------------------
-    # KimiMultiAgentFormatter tests
+    # MoonshotMultiAgentFormatter tests
     # -------------------------------------------------------------------
 
     async def test_multiagent_formatter(self) -> None:
         """MultiAgent formatter produces exact output for various subsets."""
-        fmt = KimiMultiAgentFormatter()
+        fmt = MoonshotMultiAgentFormatter()
         self.maxDiff = None
 
         # Full history

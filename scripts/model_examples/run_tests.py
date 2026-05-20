@@ -157,16 +157,16 @@ ALL_PROVIDERS: list[Provider] = [
         description="Google Gemini models",
     ),
     Provider(
-        name="kimi",
+        name="moonshot",
         env_var="MOONSHOT_API_KEY",
-        file_prefix="kimi",
+        file_prefix="moonshot",
         supported_tests=[
             "call",
             "multiagent",
             "multimodal",
             "multiagent_multimodal",
         ],
-        description="Moonshot AI Kimi models",
+        description="Moonshot AI (Kimi) models",
     ),
     Provider(
         name="xai",

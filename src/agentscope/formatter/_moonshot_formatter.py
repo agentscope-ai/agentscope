@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The Kimi (Moonshot AI) formatter for agentscope."""
+"""The Moonshot AI formatter for agentscope."""
 from typing import Any
 
 from pydantic import Field
@@ -18,13 +18,13 @@ from ..message import (
 )
 
 
-class KimiChatFormatter(_OpenAIFormatterBase):
-    """The Kimi formatter for chatbot scenario.
+class MoonshotChatFormatter(_OpenAIFormatterBase):
+    """The Moonshot AI formatter for chatbot scenario.
 
-    Kimi's API is OpenAI-compatible, but thinking models (``kimi-k2.6``,
+    Moonshot's API is OpenAI-compatible, but thinking models (``kimi-k2.6``,
     ``kimi-k2-thinking``) return a ``reasoning_content`` field alongside
     ``content`` in assistant messages.  This formatter preserves that field
-    when re-sending assistant messages back to the API so that Kimi's
+    when re-sending assistant messages back to the API so that the
     *Preserved Thinking* feature works correctly in multi-turn conversations.
     """
 
@@ -40,7 +40,7 @@ class KimiChatFormatter(_OpenAIFormatterBase):
         self,
         msgs: list[Msg],
     ) -> list[dict[str, Any]]:
-        """Format messages into the Kimi / OpenAI-compatible API format.
+        """Format messages into the Moonshot / OpenAI-compatible API format.
 
         Behaves identically to :class:`OpenAIChatFormatter` except that
         :class:`ThinkingBlock` content is placed into the ``reasoning_content``
@@ -66,8 +66,8 @@ class KimiChatFormatter(_OpenAIFormatterBase):
 
             for block in msg.get_content_blocks():
                 if isinstance(block, ThinkingBlock):
-                    # Preserve reasoning_content for Kimi's multi-turn
-                    # Preserved Thinking feature (kimi-k2.6 / kimi-k2-thinking)
+                    # Preserve reasoning_content for multi-turn
+                    # Preserved Thinking (kimi-k2.6 / kimi-k2-thinking)
                     reasoning_parts.append(block.thinking)
 
                 elif isinstance(block, TextBlock):
@@ -83,18 +83,18 @@ class KimiChatFormatter(_OpenAIFormatterBase):
 
                 elif isinstance(block, HintBlock):
                     if content_blocks or tool_calls:
-                        msg_kimi = {
+                        msg_moonshot = {
                             "role": msg.role,
                             "name": msg.name,
                             "content": content_blocks or None,
                         }
                         if reasoning_parts:
-                            msg_kimi["reasoning_content"] = "\n".join(
+                            msg_moonshot["reasoning_content"] = "\n".join(
                                 reasoning_parts,
                             )
                         if tool_calls:
-                            msg_kimi["tool_calls"] = tool_calls
-                        messages.append(msg_kimi)
+                            msg_moonshot["tool_calls"] = tool_calls
+                        messages.append(msg_moonshot)
                         content_blocks = []
                         reasoning_parts = []
                         tool_calls = []
@@ -141,38 +141,38 @@ class KimiChatFormatter(_OpenAIFormatterBase):
                         type(block),
                     )
 
-            msg_kimi = {
+            msg_moonshot = {
                 "role": msg.role,
                 "name": msg.name,
                 "content": content_blocks or None,
             }
 
-            # Kimi's Preserved Thinking requires `reasoning_content` on ALL
+            # Moonshot's Preserved Thinking requires `reasoning_content` on ALL
             # assistant messages in multi-turn conversations (None when no
             # thinking took place), so that the model can continue its chain
             # of thought correctly.
             if msg.role == "assistant":
-                msg_kimi["reasoning_content"] = (
+                msg_moonshot["reasoning_content"] = (
                     "\n".join(reasoning_parts) if reasoning_parts else ""
                 )
 
             if tool_calls:
-                msg_kimi["tool_calls"] = tool_calls
+                msg_moonshot["tool_calls"] = tool_calls
 
-            if msg_kimi["content"] or msg_kimi.get("tool_calls"):
-                messages.append(msg_kimi)
+            if msg_moonshot["content"] or msg_moonshot.get("tool_calls"):
+                messages.append(msg_moonshot)
 
             i += 1
 
         return messages
 
 
-class KimiMultiAgentFormatter(_OpenAIFormatterBase):
-    """Formatter for the Kimi (Moonshot AI) API in multi-agent conversations.
+class MoonshotMultiAgentFormatter(_OpenAIFormatterBase):
+    """Formatter for the Moonshot AI API in multi-agent conversations.
 
-    Kimi's API is OpenAI-compatible, so the multi-agent history collapsing
+    Moonshot's API is OpenAI-compatible, so the multi-agent history collapsing
     strategy is the same as :class:`OpenAIMultiAgentFormatter`.  Tool
-    sequences are delegated to :class:`KimiChatFormatter` so that
+    sequences are delegated to :class:`MoonshotChatFormatter` so that
     ``reasoning_content`` is preserved correctly for multi-turn
     *Preserved Thinking* conversations.
 
@@ -199,12 +199,12 @@ class KimiMultiAgentFormatter(_OpenAIFormatterBase):
     )
 
     async def format(self, msgs: list[Msg]) -> list[dict[str, Any]]:
-        """Format input messages into the Kimi API format for multi-agent
-        conversations.
+        """Format input messages into the Moonshot AI API format for
+        multi-agent conversations.
 
         Non-tool messages from all agents are collapsed into a single user
         message with ``<history></history>`` tags.  Tool call / result
-        sequences are delegated to :class:`KimiChatFormatter`.
+        sequences are delegated to :class:`MoonshotChatFormatter`.
 
         Args:
             msgs (`list[Msg]`):
@@ -228,7 +228,7 @@ class KimiMultiAgentFormatter(_OpenAIFormatterBase):
         async for typ, group in self._group_messages(msgs[start_index:]):
             if typ == "tool_sequence":
                 formatted_msgs.extend(
-                    await KimiChatFormatter(
+                    await MoonshotChatFormatter(
                         input_types=self.input_types,
                     ).format(group),
                 )
@@ -248,8 +248,8 @@ class KimiMultiAgentFormatter(_OpenAIFormatterBase):
         msgs: list[Msg],
     ) -> list[dict[str, Any]]:
         """Format a sequence of tool-related messages using
-        KimiChatFormatter."""
-        return await KimiChatFormatter(
+        MoonshotChatFormatter."""
+        return await MoonshotChatFormatter(
             input_types=self.input_types,
         ).format(msgs)
 
@@ -300,7 +300,7 @@ class KimiMultiAgentFormatter(_OpenAIFormatterBase):
 
     @staticmethod
     async def _format_system_message(msg: Msg) -> dict[str, Any]:
-        """Format a system message for the Kimi API."""
+        """Format a system message for the Moonshot AI API."""
         return {
             "role": "system",
             "content": msg.get_text_content(),
