@@ -12,6 +12,7 @@ from typing import (
     Sequence,
     Literal,
     List,
+    TYPE_CHECKING,
 )
 
 import jsonschema
@@ -50,7 +51,6 @@ from ..event import (
     ExceedMaxItersEvent,
 )
 from ..exception import AgentOrientedException
-from ..middleware import MiddlewareBase
 from ..model import (
     ChatResponse,
     ChatUsage,
@@ -82,6 +82,11 @@ from ..permission import (
     PermissionEngine,
     PermissionDecision,
 )
+
+if TYPE_CHECKING:
+    from ..middleware import MiddlewareBase
+else:
+    MiddlewareBase = Any
 
 
 class Agent:
