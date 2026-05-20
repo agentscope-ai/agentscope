@@ -138,12 +138,13 @@ class Agent:
 
     async def reply_stream(
         self,
-        msgs: Msg | list[Msg] | None = None,
-        event: UserConfirmResultEvent
+        inputs: Msg
+        | list[Msg]
+        | UserConfirmResultEvent
         | ExternalExecutionResultEvent
         | None = None,
     ) -> AsyncGenerator[AgentEvent, None]:
-        """Reply to the given message and stream agent events.
+        """Reply to the given inputs and stream agent events.
 
 
         **NOTE**:
@@ -154,7 +155,7 @@ class Agent:
          calls.
         """
         try:
-            async for chunk in self._reply(msgs=msgs, event=event):
+            async for chunk in self._reply(inputs=inputs):
                 if not isinstance(chunk, Msg):
                     yield chunk
         finally:
@@ -162,24 +163,26 @@ class Agent:
 
     async def reply(
         self,
-        msgs: Msg | list[Msg] | None = None,
-        event: UserConfirmResultEvent
+        inputs: Msg
+        | list[Msg]
+        | UserConfirmResultEvent
         | ExternalExecutionResultEvent
         | None = None,
     ) -> Msg:
-        """Reply to the given message, consuming all streamed events.
+        """Reply to the given inputs, consuming all streamed events.
 
         Args:
-            msgs (`Msg | list[Msg] | None`, optional):
-                The message(s) to reply to. Can be a single `Msg` object,
-                a list of `Msg` objects, or `None` if there are no new
-                messages.
-            event (`UserConfirmResultEvent | ExternalExecutionResultEvent | \
-            None`, optional):
-                The event to continue from, which should be the result of the
-                required outside interaction triggered by the previous reply.
-                If the previous reply does not trigger any outside
-                interaction, this should be `None`.
+            inputs (`Msg | list[Msg] | UserConfirmResultEvent | \
+            ExternalExecutionResultEvent | None`, optional):
+                The inputs that trigger this reply. It can be:
+
+                - a single `Msg` or a list of `Msg` objects to start a new
+                  reply,
+                - a `UserConfirmResultEvent` or
+                  `ExternalExecutionResultEvent` to continue from the
+                  outside interaction required by the previous reply,
+                - `None` if there is nothing new to feed in (e.g. just
+                  continue from the current state).
 
         Returns:
             `Msg`:
@@ -187,7 +190,7 @@ class Agent:
         """
         try:
             final_msg: Msg | None = None
-            async for evt_or_msg in self._reply(msgs=msgs, event=event):
+            async for evt_or_msg in self._reply(inputs=inputs):
                 if isinstance(evt_or_msg, Msg):
                     final_msg = evt_or_msg
             if final_msg is None:
@@ -386,30 +389,32 @@ class Agent:
 
     async def _reply(
         self,
-        msgs: Msg | list[Msg] | None = None,
-        event: UserConfirmResultEvent
+        inputs: Msg
+        | list[Msg]
+        | UserConfirmResultEvent
         | ExternalExecutionResultEvent
         | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
-        """Reply entry point (may be wrapped by middleware)."""
+        """Reply entry point (maybe wrapped by middleware)."""
         if not self._reply_middlewares:
-            async for item in self._reply_impl(msgs=msgs, event=event):
+            async for item in self._reply_impl(inputs=inputs):
                 yield item
         else:
 
             async def execute_chain(
                 index: int = 0,
-                msgs: Msg | list[Msg] | None = msgs,
-                event: UserConfirmResultEvent
+                inputs: Msg
+                | list[Msg]
+                | UserConfirmResultEvent
                 | ExternalExecutionResultEvent
-                | None = event,
+                | None = inputs,
             ) -> AsyncGenerator[AgentEvent | Msg, None]:
                 if index >= len(self._reply_middlewares):
-                    async for item in self._reply_impl(msgs=msgs, event=event):
+                    async for item in self._reply_impl(inputs=inputs):
                         yield item
                 else:
                     mw = self._reply_middlewares[index]
-                    input_kwargs = {"msgs": msgs, "event": event}
+                    input_kwargs = {"inputs": inputs}
 
                     async def next_handler(
                         **kwargs: Any,
@@ -429,12 +434,26 @@ class Agent:
 
     async def _reply_impl(
         self,
-        msgs: Msg | list[Msg] | None = None,
-        event: UserConfirmResultEvent
+        inputs: Msg
+        | list[Msg]
+        | UserConfirmResultEvent
         | ExternalExecutionResultEvent
         | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Core reply logic."""
+        # Dispatch the unified inputs by type into the legacy local variables
+        event: (UserConfirmResultEvent | ExternalExecutionResultEvent | None)
+        msgs: Msg | list[Msg] | None
+        if isinstance(
+            inputs,
+            (UserConfirmResultEvent, ExternalExecutionResultEvent),
+        ):
+            event = inputs
+            msgs = None
+        else:
+            event = None
+            msgs = inputs
+
         # ===================================================================
         # Step 1: Checking agent input:
         #  - if incoming event and agent is waiting for an event

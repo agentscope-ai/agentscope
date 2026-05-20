@@ -399,7 +399,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
         # Second call: resume with external execution result
         events = []
         async for event in self.agent.reply_stream(
-            event=external_result_event,
+            inputs=external_result_event,
         ):
             events.append(event.model_dump())
 
@@ -636,7 +636,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
         # Second call: resume with external execution result
         events = []
         async for event in self.agent.reply_stream(
-            event=external_result_event,
+            inputs=external_result_event,
         ):
             events.append(event.model_dump())
 
@@ -675,7 +675,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
 
         events = []
         async for evnt in self.agent.reply_stream(
-            event=external_result_event,
+            inputs=external_result_event,
         ):
             events.append(evnt.model_dump())
 
@@ -941,7 +941,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
         # Second call: resume with external execution result
         events = []
         async for event in self.agent.reply_stream(
-            event=external_result_event,
+            inputs=external_result_event,
         ):
             events.append(event.model_dump())
 
@@ -974,7 +974,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
 
         events = []
         async for event in self.agent.reply_stream(
-            event=external_result_event,
+            inputs=external_result_event,
         ):
             events.append(event.model_dump())
 
@@ -1241,7 +1241,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
 
         events = []
         async for event in self.agent.reply_stream(
-            event=external_result_event,
+            inputs=external_result_event,
         ):
             events.append(event.model_dump())
 

@@ -5,6 +5,7 @@ from collections.abc import Callable, Coroutine
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from ....message import UserMsg
 from ....tool import ToolBase
 from ...._logging import logger
 from ._tools import ScheduleCreate, ScheduleList, ScheduleStop, ScheduleView
@@ -13,7 +14,9 @@ from ...storage import (
     ScheduleRecord,
     ChatModelConfig,
 )
+from .._background_task_manager import BackgroundTaskManager
 from .._session_manager import SessionManager
+from .._workspace_manager import WorkspaceManagerBase
 
 
 class SchedulerManager:
@@ -30,6 +33,8 @@ class SchedulerManager:
         self,
         storage: StorageBase,
         session_manager: SessionManager,
+        background_task_manager: BackgroundTaskManager,
+        workspace_manager: WorkspaceManagerBase,
     ) -> None:
         """Initialize the scheduler manager.
 
@@ -38,9 +43,18 @@ class SchedulerManager:
                 The storage backend used for persistence and session creation.
             session_manager (`SessionManager`):
                 The session manager used when running agent chat sessions.
+            background_task_manager (`BackgroundTaskManager`):
+                The background task manager passed through to
+                :class:`ChatService` so triggered agents can offload
+                long-running tools.
+            workspace_manager (`WorkspaceManagerBase`):
+                The workspace manager passed through to :class:`ChatService`
+                so triggered agents get the configured toolkit and MCPs.
         """
         self._storage = storage
         self._session_manager = session_manager
+        self._background_task_manager = background_task_manager
+        self._workspace_manager = workspace_manager
         self._scheduler = AsyncIOScheduler()
 
     # ------------------------------------------------------------------
@@ -94,6 +108,8 @@ class SchedulerManager:
         #   _manager._scheduler → _service._chat → _manager
         storage = self._storage
         session_manager = self._session_manager
+        background_task_manager = self._background_task_manager
+        workspace_manager = self._workspace_manager
 
         async def _trigger() -> None:
             logger.info(
@@ -199,12 +215,16 @@ class SchedulerManager:
                     session.id,
                 )
 
-                # TODO: assemble input message from record
-                input_msg = None
+                input_msg = UserMsg(
+                    name=record.user_id,
+                    content=record.data.description,
+                )
 
                 chat_service = ChatService(
                     storage=storage,
                     session_manager=session_manager,
+                    background_task_manager=background_task_manager,
+                    workspace_manager=workspace_manager,
                 )
                 async for _ in chat_service.stream_chat(
                     user_id=record.user_id,

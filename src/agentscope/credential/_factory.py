@@ -8,7 +8,7 @@ from ._anthropic import AnthropicCredential
 from ._dashscope import DashScopeCredential
 from ._deepseek import DeepSeekCredential
 from ._gemini import GeminiCredential
-from ._kimi import KimiCredential
+from ._moonshot import MoonshotCredential
 from ._ollama import OllamaCredential
 from ._openai import OpenAICredential
 from ._xai import XAICredential
@@ -38,7 +38,7 @@ class CredentialFactory:
         DashScopeCredential,
         DeepSeekCredential,
         GeminiCredential,
-        KimiCredential,
+        MoonshotCredential,
         OllamaCredential,
         OpenAICredential,
         XAICredential,

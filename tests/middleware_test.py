@@ -499,18 +499,15 @@ class TestMiddleware(IsolatedAsyncioTestCase):
                 input_kwargs: dict,
                 next_handler: Callable[..., AsyncGenerator],
             ) -> AsyncGenerator:
-                """Modify msgs before passing to next handler."""
+                """Modify inputs before passing to next handler."""
                 # Modify the message content
-                msgs = input_kwargs["msgs"]
-                if isinstance(msgs, Msg):
+                inputs = input_kwargs["inputs"]
+                if isinstance(inputs, Msg):
                     modified_msg = UserMsg(
-                        name=msgs.name,
-                        content="MODIFIED: " + msgs.get_text_content(),
+                        name=inputs.name,
+                        content="MODIFIED: " + inputs.get_text_content(),
                     )
-                    async for item in next_handler(
-                        msgs=modified_msg,
-                        event=input_kwargs.get("event"),
-                    ):
+                    async for item in next_handler(inputs=modified_msg):
                         yield item
                 else:
                     async for item in next_handler(**input_kwargs):

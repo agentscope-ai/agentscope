@@ -393,7 +393,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
 
         # Second call: resume with user confirmation result
         events = []
-        async for event in self.agent.reply_stream(event=user_confirm_event):
+        async for event in self.agent.reply_stream(inputs=user_confirm_event):
             events.append(event.model_dump())
 
         # Verify events after resumption
@@ -660,7 +660,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
 
         # resume with user confirmation result
         events = []
-        async for event in self.agent.reply_stream(event=user_confirm_event):
+        async for event in self.agent.reply_stream(inputs=user_confirm_event):
             events.append(event.model_dump())
 
         # Verify events after resumption (sequential execution)
@@ -714,7 +714,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
 
         # Second call: resume with user confirmation result
         events = []
-        async for event in self.agent.reply_stream(event=user_confirm_event):
+        async for event in self.agent.reply_stream(inputs=user_confirm_event):
             events.append(event.model_dump())
 
         expected_events_resume_2 = [
@@ -1033,7 +1033,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
 
         # resume with user confirmation result
         events = []
-        async for event in self.agent.reply_stream(event=user_confirm_event):
+        async for event in self.agent.reply_stream(inputs=user_confirm_event):
             events.append(event.model_dump())
 
         # Verify events for tool call 1 after resumption
@@ -1065,7 +1065,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         )
 
         events = []
-        async for event in self.agent.reply_stream(event=user_confirm_event):
+        async for event in self.agent.reply_stream(inputs=user_confirm_event):
             events.append(event.model_dump())
 
         expected_events = [
@@ -1384,7 +1384,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         )
 
         events = []
-        async for event in self.agent.reply_stream(event=user_confirm_event):
+        async for event in self.agent.reply_stream(inputs=user_confirm_event):
             events.append(event.model_dump())
 
         tool_events = events[:6]

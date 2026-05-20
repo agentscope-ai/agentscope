@@ -71,9 +71,10 @@ class MiddlewareBase:
         Args:
             agent: The Agent instance executing this middleware
             input_kwargs: Dictionary containing:
-                - msgs: Msg | list[Msg] | None
-                - event: UserConfirmResultEvent |
-                ExternalExecutionResultEvent | None
+                - inputs: Msg | list[Msg] | UserConfirmResultEvent |
+                ExternalExecutionResultEvent | None — the unified inputs
+                that trigger this reply (new message(s), a resumption
+                event from a previous outside interaction, or None).
             next_handler: Callable that executes the next middleware or
              original method
 

@@ -444,7 +444,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         )
 
         events = []
-        async for event in self.agent.reply_stream(event=user_confirm_event):
+        async for event in self.agent.reply_stream(inputs=user_confirm_event):
             events.append(event.model_dump())
 
         expected_events_resume = self._get_require_external_execution_events(
@@ -493,7 +493,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
 
         events = []
         async for event in self.agent.reply_stream(
-            event=external_result_event,
+            inputs=external_result_event,
         ):
             events.append(event.model_dump())
 
@@ -669,7 +669,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         )
 
         events = []
-        async for event in self.agent.reply_stream(event=user_confirm_event):
+        async for event in self.agent.reply_stream(inputs=user_confirm_event):
             events.append(event.model_dump())
 
         expected_events_resume = self._get_require_external_execution_events(
@@ -725,7 +725,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
 
         events = []
         async for event in self.agent.reply_stream(
-            event=external_result_event,
+            inputs=external_result_event,
         ):
             events.append(event.model_dump())
 
@@ -800,7 +800,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         )
 
         events = []
-        async for event in self.agent.reply_stream(event=user_confirm_event):
+        async for event in self.agent.reply_stream(inputs=user_confirm_event):
             events.append(event.model_dump())
 
         expected_events_after_second_confirm = (
@@ -832,7 +832,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
 
         events = []
         async for event in self.agent.reply_stream(
-            event=external_result_event,
+            inputs=external_result_event,
         ):
             events.append(event.model_dump())
 
@@ -1039,7 +1039,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         )
 
         events = []
-        async for event in self.agent.reply_stream(event=user_confirm_event):
+        async for event in self.agent.reply_stream(inputs=user_confirm_event):
             events.append(event.model_dump())
 
         self.assertEqual(len(events), 4)
@@ -1124,7 +1124,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
 
         events = []
         async for event in self.agent.reply_stream(
-            event=external_result_event,
+            inputs=external_result_event,
         ):
             events.append(event.model_dump())
 

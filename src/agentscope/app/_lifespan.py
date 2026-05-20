@@ -32,6 +32,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         scheduler = SchedulerManager(
             storage=app.state.storage,
             session_manager=session_manager,
+            background_task_manager=app.state.background_task_manager,
+            workspace_manager=app.state.workspace_manager,
         )
         app.state.scheduler_manager = scheduler
         await scheduler.start()

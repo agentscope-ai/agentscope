@@ -17,40 +17,15 @@ from .._manager import (
     WorkspaceManagerBase,
     BackgroundTaskManager,
 )
-from .._middleware import ToolOffloadMiddleware
 from .._schema import ChatRequest
-from .._service import get_agent
+from .._service import ChatService
 from ..storage import StorageBase
-from ..._logging import logger
-from ...agent import Agent
-from ...event import ReplyStartEvent
-from ...message import Msg, AssistantMsg, ToolCallBlock, ToolCallState
 
 chat_router = APIRouter(
     prefix="/chat",
     tags=["chat"],
     responses={404: {"description": "Not found"}},
 )
-
-
-def _is_awaiting(agent: Agent) -> bool:
-    """Check if the agent is awaiting user confirmation or external execution.
-
-    Scans the last assistant message for tool calls in ASKING or SUBMITTED
-    state (without a corresponding result).
-    """
-    for msg in reversed(agent.state.context):
-        if msg.role != "assistant":
-            continue
-        for block in msg.content:
-            if isinstance(block, ToolCallBlock):
-                if block.state in (
-                    ToolCallState.ASKING,
-                    ToolCallState.SUBMITTED,
-                ):
-                    return True
-        break
-    return False
 
 
 async def _stream_events(
@@ -61,139 +36,29 @@ async def _stream_events(
     workspace_manager: WorkspaceManagerBase,
     background_task_manager: BackgroundTaskManager,
 ) -> AsyncGenerator[str, None]:
-    """Drive the agent and yield SSE-formatted AgentEvent frames.
+    """Encode :class:`~agentscope.event.AgentEvent` objects as SSE frames.
+
+    All execution + persistence lives in :class:`ChatService`; this is just
+    the HTTP-side encoder.
 
     Each yielded string is a complete SSE frame: ``data: <json>\\n\\n``.
-    Persists input messages and builds the reply Msg from events.
     """
-
-    # ------------------------------------------------------------------
-    # 1. Build middlewares
-    # ------------------------------------------------------------------
-    async def _retrigger(
-        sess_id: str,
-        ag_id: str,
-        uid: str,
-    ) -> None:
-        """Re-invoke the agent to process completed background results."""
-        retrigger_request = ChatRequest(
-            agent_id=ag_id,
-            session_id=sess_id,
-            input=None,
-        )
-        async for _ in _stream_events(
-            uid,
-            retrigger_request,
-            storage,
-            session_manager,
-            workspace_manager,
-            background_task_manager,
-        ):
-            pass
-
-    middlewares: list = [
-        ToolOffloadMiddleware(
-            background_task_manager,
-            user_id=user_id,
-            agent_id=request.agent_id,
-            session_manager=session_manager,
-            retrigger_fn=_retrigger,
-        ),
-    ]
-
-    # ------------------------------------------------------------------
-    # 2. Get the agent instance
-    # ------------------------------------------------------------------
-    agent = await get_agent(
+    service = ChatService(
         storage=storage,
+        session_manager=session_manager,
+        background_task_manager=background_task_manager,
         workspace_manager=workspace_manager,
+    )
+    async for event in service.stream_chat(
         user_id=user_id,
-        agent_id=request.agent_id,
         session_id=request.session_id,
-        middlewares=middlewares,
-    )
-
-    # ------------------------------------------------------------------
-    # 2. Run the agent inside the session manager context
-    # ------------------------------------------------------------------
-    async with session_manager.run(request.session_id) as run:
-        reply_msg: Msg | None = None
-
-        if request.input is None or isinstance(request.input, (Msg, list)):
-            # Case A: New reply (either user message(s), or background
-            # re-trigger with empty input)
-            if isinstance(request.input, (Msg, list)):
-                input_msgs = (
-                    [request.input]
-                    if isinstance(request.input, Msg)
-                    else request.input
-                )
-                for msg in input_msgs:
-                    await storage.upsert_message(
-                        user_id,
-                        request.session_id,
-                        msg,
-                    )
-
-            async for event in agent.reply_stream(msgs=request.input):
-                await run.publish(event)
-                yield f"data: {event.model_dump_json()}\n\n"
-                if isinstance(event, ReplyStartEvent):
-                    reply_msg = AssistantMsg(
-                        id=event.reply_id,
-                        name=event.name,
-                        content=[],
-                    )
-                elif reply_msg is not None:
-                    reply_msg.append_event(event)
-
-        else:
-            # Case B: Continuation (UserConfirmResult / ExternalExecResult)
-            reply_msg = await storage.get_message(
-                user_id,
-                request.session_id,
-                agent.state.reply_id,
-            )
-
-            if reply_msg is None:
-                logger.warning(
-                    "Reply message %r not found in storage for session %r; "
-                    "tool-call state changes from the incoming event will not "
-                    "be persisted.",
-                    agent.state.reply_id,
-                    request.session_id,
-                )
-            elif request.input:
-                # Apply the incoming event so that the persisted message
-                # reflects the updated tool-call states before streaming
-                # resumes (e.g. ASKING→ALLOWED/FINISHED for
-                # UserConfirmResultEvent, or appended ToolResultBlocks for
-                # ExternalExecutionResultEvent).
-                reply_msg.append_event(request.input)
-
-            async for event in agent.reply_stream(event=request.input):
-                await run.publish(event)
-                yield f"data: {event.model_dump_json()}\n\n"
-                if reply_msg is not None:
-                    reply_msg.append_event(event)
-
-        # Persist the reply Msg (upsert: overwrite if same id, append if new)
-        if reply_msg is not None:
-            await storage.upsert_message(
-                user_id,
-                request.session_id,
-                reply_msg,
-            )
-
-    # ------------------------------------------------------------------
-    # 3. Persist agent state
-    # ------------------------------------------------------------------
-    await storage.update_session_state(
-        user_id,
         agent_id=request.agent_id,
-        session_id=request.session_id,
-        state=agent.state,
-    )
+        input_msg=request.input,
+    ):
+        from ..._logging import logger
+
+        logger.info("发给前端事件：%s", event.type)
+        yield f"data: {event.model_dump_json()}\n\n"
 
 
 @chat_router.post(
@@ -227,6 +92,8 @@ async def chat(
             Injected session manager.
         workspace_manager (`WorkspaceManagerBase`):
             Injected workspace manager.
+        background_task_manager (`BackgroundTaskManager`):
+            Injected background task manager.
 
     Returns:
         `StreamingResponse`:
