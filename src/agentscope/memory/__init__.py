@@ -15,6 +15,10 @@ from ._long_term_memory import (
     ReMeTaskLongTermMemory,
     ReMeToolLongTermMemory,
 )
+from ._offloading import (
+    MemoryOffloadingBase,
+    InMemoryMemoryOffloading,
+)
 
 
 __all__ = [
@@ -30,4 +34,7 @@ __all__ = [
     "ReMePersonalLongTermMemory",
     "ReMeTaskLongTermMemory",
     "ReMeToolLongTermMemory",
+    # Memory offloading
+    "MemoryOffloadingBase",
+    "InMemoryMemoryOffloading",
 ]
