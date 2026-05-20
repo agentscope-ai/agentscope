@@ -125,4 +125,7 @@ class UserAgent(AgentBase):
         )
 
     async def observe(self, msg: Msg | list[Msg] | None) -> None:
-        """Observe the message(s) from the other agents or the environment."""
+        raise NotImplementedError(
+            f"The observe function is not implemented in "
+            f"{self.__class__.__name__}.",
+        )

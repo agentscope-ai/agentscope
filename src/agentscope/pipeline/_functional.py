@@ -165,10 +165,9 @@ async def stream_printing_messages(
     # Execute the agent asynchronously
     task = asyncio.create_task(coroutine_task)
 
-    if task.done():
-        await queue.put(end_signal)
-    else:
+    if not task.done():
         task.add_done_callback(lambda _: queue.put_nowait(end_signal))
+    await queue.put(end_signal)
 
     # Receive the messages from the agent's message queue
     while True:

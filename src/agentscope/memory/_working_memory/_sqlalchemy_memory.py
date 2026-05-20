@@ -592,8 +592,6 @@ class AsyncSQLAlchemyMemory(MemoryBase):
             if not msg_ids:
                 return 0
 
-            deleted_count = len(msg_ids)
-
             # Delete marks first
             await self.session.execute(
                 delete(self.MessageMarkTable).filter(
@@ -601,13 +599,14 @@ class AsyncSQLAlchemyMemory(MemoryBase):
                 ),
             )
 
-            # Then delete the messages
-            await self.session.execute(
+            # Then delete the messages and get actual count
+            result = await self.session.execute(
                 delete(self.MessageTable).filter(
                     self.MessageTable.session_id == self.session_id,
                     self.MessageTable.id.in_(msg_ids),
                 ),
             )
+            deleted_count = result.rowcount
 
             return deleted_count
 
@@ -639,8 +638,6 @@ class AsyncSQLAlchemyMemory(MemoryBase):
             return 0
 
         async with self._write_session():
-            deleted_count = len(composite_ids)
-
             # Delete related marks first (explicit cleanup for reliability)
             await self.session.execute(
                 delete(self.MessageMarkTable).filter(
@@ -648,13 +645,14 @@ class AsyncSQLAlchemyMemory(MemoryBase):
                 ),
             )
 
-            # Then delete the messages
-            await self.session.execute(
+            # Then delete the messages and get actual count
+            result = await self.session.execute(
                 delete(self.MessageTable).filter(
                     self.MessageTable.session_id == self.session_id,
                     self.MessageTable.id.in_(composite_ids),
                 ),
             )
+            deleted_count = result.rowcount
 
             return deleted_count
 
