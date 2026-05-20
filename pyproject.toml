@@ -87,6 +87,7 @@ dev = [
     "furo",
     "myst_parser",
     "matplotlib",
+    "fakeredis",
 ]
 
 [project.urls]
