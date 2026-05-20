@@ -17,18 +17,40 @@ from .._manager import (
     WorkspaceManagerBase,
     BackgroundTaskManager,
 )
+from .._middleware import ToolOffloadMiddleware
 from .._schema import ChatRequest
 from .._service import get_agent
 from ..storage import StorageBase
 from ..._logging import logger
+from ...agent import Agent
 from ...event import ReplyStartEvent
-from ...message import Msg, AssistantMsg
+from ...message import Msg, AssistantMsg, ToolCallBlock, ToolCallState
 
 chat_router = APIRouter(
     prefix="/chat",
     tags=["chat"],
     responses={404: {"description": "Not found"}},
 )
+
+
+def _is_awaiting(agent: Agent) -> bool:
+    """Check if the agent is awaiting user confirmation or external execution.
+
+    Scans the last assistant message for tool calls in ASKING or SUBMITTED
+    state (without a corresponding result).
+    """
+    for msg in reversed(agent.state.context):
+        if msg.role != "assistant":
+            continue
+        for block in msg.content:
+            if isinstance(block, ToolCallBlock):
+                if block.state in (
+                    ToolCallState.ASKING,
+                    ToolCallState.SUBMITTED,
+                ):
+                    return True
+        break
+    return False
 
 
 async def _stream_events(
@@ -46,15 +68,49 @@ async def _stream_events(
     """
 
     # ------------------------------------------------------------------
-    # 1. Get the agent instance
+    # 1. Build middlewares
+    # ------------------------------------------------------------------
+    async def _retrigger(
+        sess_id: str,
+        ag_id: str,
+        uid: str,
+    ) -> None:
+        """Re-invoke the agent to process completed background results."""
+        retrigger_request = ChatRequest(
+            agent_id=ag_id,
+            session_id=sess_id,
+            input=None,
+        )
+        async for _ in _stream_events(
+            uid,
+            retrigger_request,
+            storage,
+            session_manager,
+            workspace_manager,
+            background_task_manager,
+        ):
+            pass
+
+    middlewares: list = [
+        ToolOffloadMiddleware(
+            background_task_manager,
+            user_id=user_id,
+            agent_id=request.agent_id,
+            session_manager=session_manager,
+            retrigger_fn=_retrigger,
+        ),
+    ]
+
+    # ------------------------------------------------------------------
+    # 2. Get the agent instance
     # ------------------------------------------------------------------
     agent = await get_agent(
         storage=storage,
         workspace_manager=workspace_manager,
-        background_task_manager=background_task_manager,
         user_id=user_id,
         agent_id=request.agent_id,
         session_id=request.session_id,
+        middlewares=middlewares,
     )
 
     # ------------------------------------------------------------------
@@ -63,19 +119,21 @@ async def _stream_events(
     async with session_manager.run(request.session_id) as run:
         reply_msg: Msg | None = None
 
-        if isinstance(request.input, (Msg, list)):
-            # Case A: New user message(s)
-            input_msgs = (
-                [request.input]
-                if isinstance(request.input, Msg)
-                else request.input
-            )
-            for msg in input_msgs:
-                await storage.upsert_message(
-                    user_id,
-                    request.session_id,
-                    msg,
+        if request.input is None or isinstance(request.input, (Msg, list)):
+            # Case A: New reply (either user message(s), or background
+            # re-trigger with empty input)
+            if isinstance(request.input, (Msg, list)):
+                input_msgs = (
+                    [request.input]
+                    if isinstance(request.input, Msg)
+                    else request.input
                 )
+                for msg in input_msgs:
+                    await storage.upsert_message(
+                        user_id,
+                        request.session_id,
+                        msg,
+                    )
 
             async for event in agent.reply_stream(msgs=request.input):
                 await run.publish(event)

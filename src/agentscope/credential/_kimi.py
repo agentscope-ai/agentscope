@@ -2,7 +2,7 @@
 """The Kimi (Moonshot AI) credential."""
 from typing import Literal, Type, TYPE_CHECKING
 
-from pydantic import Field, SecretStr
+from pydantic import ConfigDict, Field, SecretStr
 
 from ._base import CredentialBase
 
@@ -14,6 +14,10 @@ _KIMI_BASE_URL = "https://api.moonshot.cn/v1"
 
 class KimiCredential(CredentialBase):
     """The Kimi (Moonshot AI) credential model."""
+
+    model_config = ConfigDict(
+        title="Kimi API",
+    )
 
     type: Literal["kimi_credential"] = "kimi_credential"
     """The credential type."""

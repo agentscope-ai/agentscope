@@ -3,20 +3,20 @@
 from fastapi import HTTPException
 
 from ._model import get_model
-from .._middleware import ToolOffloadMiddleware
-from .._manager import WorkspaceManagerBase, BackgroundTaskManager
+from .._manager import WorkspaceManagerBase
 from ..storage import StorageBase
 from ...agent import Agent
+from ...middleware import MiddlewareBase
 from ...tool import Toolkit
 
 
 async def get_agent(
     storage: StorageBase,
     workspace_manager: WorkspaceManagerBase,
-    background_task_manager: BackgroundTaskManager,
     user_id: str,
     agent_id: str,
     session_id: str,
+    middlewares: list[MiddlewareBase] | None = None,
 ) -> Agent:
     """Get the agent class for the given agent ID."""
 
@@ -54,6 +54,7 @@ async def get_agent(
     # Step 2.2. Get the session data, i.e. the agent state
     # ====================================================================
     agent_state = session_record.state
+    agent_state.session_id = session_id
 
     # ====================================================================
     # Step 2.3. Get the workspace from the manager
@@ -85,6 +86,6 @@ async def get_agent(
         context_config=cfg.context_config,
         react_config=cfg.react_config,
         state=agent_state,
-        middlewares=[ToolOffloadMiddleware(background_task_manager)],
+        middlewares=middlewares,
         # workspace=workspace,
     )

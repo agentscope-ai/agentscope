@@ -2,7 +2,7 @@
 """The DashScope credential."""
 from typing import Literal, Type, TYPE_CHECKING
 
-from pydantic import Field, SecretStr
+from pydantic import ConfigDict, Field, SecretStr
 
 from ._base import CredentialBase
 
@@ -12,6 +12,10 @@ if TYPE_CHECKING:
 
 class DashScopeCredential(CredentialBase):
     """The credential for DashScope API."""
+
+    model_config = ConfigDict(
+        title="DashScope API",
+    )
 
     type: Literal["dashscope_credential"] = "dashscope_credential"
     """The type of the credential."""

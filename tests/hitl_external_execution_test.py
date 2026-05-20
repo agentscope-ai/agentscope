@@ -362,6 +362,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                         "text": self.user_input_text,
                     },
                 ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -428,6 +429,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                         "text": self.user_input_text,
                     },
                 ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -589,6 +591,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                         "text": self.user_input_text,
                     },
                 ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -704,6 +707,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                         "text": self.user_input_text,
                     },
                 ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -892,6 +896,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                         "text": self.user_input_text,
                     },
                 ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -1002,6 +1007,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                         "text": self.user_input_text,
                     },
                 ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -1184,6 +1190,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                         "text": self.user_input_text,
                     },
                 ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -1269,6 +1276,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                         "text": self.user_input_text,
                     },
                 ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [

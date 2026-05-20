@@ -212,7 +212,9 @@ class Msg(BaseModel):
 
         if event.reply_id != self.id:
             logger.warning(
-                "Event reply_id %r does not match message id %r, skipping.",
+                "Event %s with reply_id %r does not match message id %r, "
+                "skipping.",
+                event.__class__.__name__,
                 event.reply_id,
                 self.id,
             )
@@ -407,15 +409,45 @@ def UserMsg(
     content: str | list[TextBlock | DataBlock],
     metadata: dict | None = None,
     created_at: str | None = None,
+    finished_at: str | None = None,
     id: str | None = None,  # pylint: disable=redefined-builtin
 ) -> Msg:
-    """Create a user message with role "user"."""
+    """Create a user message with role ``"user"``.
+
+    Args:
+        name (`str`):
+            The name of the sender.
+        content (`str | list[TextBlock | DataBlock]`):
+            The message content. A plain string will be automatically wrapped
+            in a :class:`TextBlock`. Only :class:`TextBlock` and
+            :class:`DataBlock` are allowed for user messages.
+        metadata (`dict | None`, optional):
+            Arbitrary key-value metadata attached to the message. Defaults to
+            an empty dict when not provided.
+        created_at (`str | None`, optional):
+            ISO-format timestamp for when the message was created. Defaults to
+            the current time when not provided.
+        finished_at (`str | None`, optional):
+            ISO-format timestamp for when the message was finished. Defaults to
+            the same value as ``created_at`` when not provided.
+        id (`str | None`, optional):
+            A unique identifier for the message. A random UUID hex string is
+            generated when not provided.
+
+    Returns:
+        `Msg`:
+            A :class:`Msg` instance with ``role="user"``.
+    """
+    created_at = created_at or datetime.now().isoformat()
+    if finished_at is None:
+        finished_at = created_at
     return Msg(
         name=name,
         content=_to_blocks(content),
         role="user",
         metadata=metadata or {},
-        created_at=created_at or datetime.now().isoformat(),
+        created_at=created_at,
+        finished_at=finished_at,
         id=id or uuid.uuid4().hex,
     )
 
@@ -425,15 +457,42 @@ def AssistantMsg(
     content: str | list[ContentBlock],
     metadata: dict | None = None,
     created_at: str | None = None,
+    finished_at: str | None = None,
     id: str | None = None,  # pylint: disable=redefined-builtin
 ) -> Msg:
-    """Create an assistant message with role "assistant"."""
+    """Create an assistant message with role ``"assistant"``.
+
+    Args:
+        name (`str`):
+            The name of the sender.
+        content (`str | list[ContentBlock]`):
+            The message content. A plain string will be automatically wrapped
+            in a :class:`TextBlock`. Any :class:`ContentBlock` subtype is
+            permitted for assistant messages.
+        metadata (`dict | None`, optional):
+            Arbitrary key-value metadata attached to the message. Defaults to
+            an empty dict when not provided.
+        created_at (`str | None`, optional):
+            ISO-format timestamp for when the message was created. Defaults to
+            the current time when not provided.
+        finished_at (`str | None`, optional):
+            ISO-format timestamp for when the message was finished. Not set by
+            default for assistant messages.
+        id (`str | None`, optional):
+            A unique identifier for the message. A random UUID hex string is
+            generated when not provided.
+
+    Returns:
+        `Msg`:
+            A :class:`Msg` instance with ``role="assistant"``.
+    """
     return Msg(
         name=name,
         content=_to_blocks(content),
         role="assistant",
         metadata=metadata or {},
         created_at=created_at or datetime.now().isoformat(),
+        finished_at=finished_at,
         id=id or uuid.uuid4().hex,
     )
 
@@ -443,12 +502,44 @@ def SystemMsg(
     content: str | list[TextBlock],
     metadata: dict | None = None,
     created_at: str | None = None,
+    finished_at: str | None = None,
+    id: str | None = None,  # pylint: disable=redefined-builtin
 ) -> Msg:
-    """Create a system message with role "system"."""
+    """Create a system message with role ``"system"``.
+
+    Args:
+        name (`str`):
+            The name of the sender.
+        content (`str | list[TextBlock]`):
+            The message content. A plain string will be automatically wrapped
+            in a :class:`TextBlock`. Only :class:`TextBlock` is allowed for
+            system messages.
+        metadata (`dict | None`, optional):
+            Arbitrary key-value metadata attached to the message. Defaults to
+            an empty dict when not provided.
+        created_at (`str | None`, optional):
+            ISO-format timestamp for when the message was created. Defaults to
+            the current time when not provided.
+        finished_at (`str | None`, optional):
+            ISO-format timestamp for when the message was finished. Defaults to
+            the same value as ``created_at`` when not provided.
+        id (`str | None`, optional):
+            A unique identifier for the message. A random UUID hex string is
+            generated when not provided.
+
+    Returns:
+        `Msg`:
+            A :class:`Msg` instance with ``role="system"``.
+    """
+    created_at = created_at or datetime.now().isoformat()
+    if finished_at is None:
+        finished_at = created_at
     return Msg(
         name=name,
         content=_to_blocks(content),
         role="system",
         metadata=metadata or {},
-        created_at=created_at or datetime.now().isoformat(),
+        created_at=created_at,
+        finished_at=finished_at,
+        id=id or uuid.uuid4().hex,
     )

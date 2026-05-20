@@ -158,6 +158,9 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
             content_blocks: list[dict] = []
             tool_calls = []
             thinking_parts: list[str] = []
+            # Collect tool result messages to append AFTER the assistant
+            # message, so the order is: assistant (tool_calls) → tool (result)
+            pending_tool_results: list[dict] = []
 
             for block in msg.get_content_blocks():
                 if isinstance(block, TextBlock):
@@ -209,8 +212,10 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                         multimodal_data,
                     ) = self.convert_tool_result_to_string(block.output)
 
-                    # First add the tool result message in DashScope API format
-                    formatted_msgs.append(
+                    # Defer appending the tool result message until after the
+                    # assistant message has been appended, so that tool_calls
+                    # always precede their corresponding tool results.
+                    pending_tool_results.append(
                         {
                             "role": "tool",
                             "tool_call_id": block.id,
@@ -249,6 +254,10 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
 
             if msg_dashscope["content"] or msg_dashscope.get("tool_calls"):
                 formatted_msgs.append(msg_dashscope)
+
+            # Append deferred tool result messages after the assistant message
+            # to ensure correct ordering: tool_calls → tool results.
+            formatted_msgs.extend(pending_tool_results)
 
             # Move to next message
             i += 1

@@ -2,7 +2,7 @@
 """The DeepSeek credential."""
 from typing import Literal, Type, TYPE_CHECKING
 
-from pydantic import Field, SecretStr
+from pydantic import ConfigDict, Field, SecretStr
 
 from ._base import CredentialBase
 
@@ -14,6 +14,10 @@ _DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
 class DeepSeekCredential(CredentialBase):
     """The DeepSeek credential model."""
+
+    model_config = ConfigDict(
+        title="DeepSeek API",
+    )
 
     type: Literal["deepseek_credential"] = "deepseek_credential"
     """The credential type."""

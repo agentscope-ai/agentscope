@@ -2,7 +2,7 @@
 """The Ollama credential."""
 from typing import Literal, Type, TYPE_CHECKING
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from ._base import CredentialBase
 
@@ -12,6 +12,10 @@ if TYPE_CHECKING:
 
 class OllamaCredential(CredentialBase):
     """The Ollama credential model (connection settings)."""
+
+    model_config = ConfigDict(
+        title="Ollama API",
+    )
 
     type: Literal["ollama_credential"] = "ollama_credential"
     """The credential type."""

@@ -2,7 +2,7 @@
 """The xAI credential."""
 from typing import Literal, Type, TYPE_CHECKING
 
-from pydantic import Field, SecretStr
+from pydantic import ConfigDict, Field, SecretStr
 
 from ._base import CredentialBase
 
@@ -12,6 +12,10 @@ if TYPE_CHECKING:
 
 class XAICredential(CredentialBase):
     """The xAI credential model."""
+
+    model_config = ConfigDict(
+        title="xAI API",
+    )
 
     type: Literal["xai_credential"] = "xai_credential"
     """The credential type."""

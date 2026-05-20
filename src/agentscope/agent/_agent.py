@@ -1962,10 +1962,19 @@ class Agent:
         ],
         _usage: ChatUsage | None = None,
     ) -> None:
-        """Save content blocks into the context."""
+        """Save content blocks into the context.
+
+        Newly created :class:`AssistantMsg` uses ``self.state.reply_id`` as
+        its id so that one reply corresponds to one message and the message
+        id matches the ``reply_id`` carried by streaming events.
+        """
         if len(self.state.context) == 0:
             self.state.context.append(
-                AssistantMsg(name=self.name, content=list(blocks)),
+                AssistantMsg(
+                    id=self.state.reply_id,
+                    name=self.name,
+                    content=list(blocks),
+                ),
             )
         else:
             last_msg = self.state.context[-1]
@@ -1977,6 +1986,7 @@ class Agent:
             else:
                 self.state.context.append(
                     AssistantMsg(
+                        id=self.state.reply_id,
                         name=self.name,
                         content=list(blocks),
                     ),

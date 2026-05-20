@@ -2,7 +2,7 @@
 """The Google Gemini credential."""
 from typing import Literal, Type, TYPE_CHECKING
 
-from pydantic import Field, SecretStr
+from pydantic import ConfigDict, Field, SecretStr
 
 from ._base import CredentialBase
 
@@ -12,6 +12,10 @@ if TYPE_CHECKING:
 
 class GeminiCredential(CredentialBase):
     """The Google Gemini credential model."""
+
+    model_config = ConfigDict(
+        title="Gemini API",
+    )
 
     type: Literal["gemini_credential"] = "gemini_credential"
     """The credential type."""

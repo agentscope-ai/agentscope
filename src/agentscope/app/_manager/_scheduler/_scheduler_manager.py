@@ -6,6 +6,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from ....tool import ToolBase
+from ...._logging import logger
 from ._tools import ScheduleCreate, ScheduleList, ScheduleStop, ScheduleView
 from ...storage import (
     StorageBase,
@@ -48,11 +49,15 @@ class SchedulerManager:
 
     async def start(self) -> None:
         """Start the underlying APScheduler."""
+        logger.info("SchedulerManager starting APScheduler")
         self._scheduler.start()
+        logger.info("SchedulerManager APScheduler started")
 
     async def shutdown(self) -> None:
         """Shut down the underlying APScheduler."""
+        logger.info("SchedulerManager shutting down APScheduler")
         self._scheduler.shutdown()
+        logger.info("SchedulerManager APScheduler shut down")
 
     # ------------------------------------------------------------------
     # Trigger construction
@@ -91,16 +96,26 @@ class SchedulerManager:
         session_manager = self._session_manager
 
         async def _trigger() -> None:
+            logger.info(
+                "[Schedule:%s(%s)] Trigger fired",
+                record.id,
+                record.data.name,
+            )
+
             if not record.data.enabled:
+                logger.info(
+                    "[Schedule:%s(%s)] Skipped — schedule disabled",
+                    record.id,
+                    record.data.name,
+                )
                 return
 
             # Lazy import to break circular dependency
             from ..._service._chat import ChatService  # noqa: PLC0415
-            from ...._logging import logger  # noqa: PLC0415
-            from ...permission._context import (
+            from ....permission._context import (
                 PermissionContext,
             )  # noqa: PLC0415
-            from ...state import AgentState  # noqa: PLC0415
+            from ....state import AgentState  # noqa: PLC0415
             from ...storage._model._session import (  # noqa: PLC0415
                 SessionConfig,
                 SessionSource,
@@ -108,17 +123,26 @@ class SchedulerManager:
 
             try:
                 if record.data.stateful:
-                    # Reuse a fixed session across all fires so conversation
-                    # context accumulates between executions.
                     stateful_session_id = f"{record.id}_stateful"
+                    logger.info(
+                        "[Schedule:%s(%s)] Stateful mode, "
+                        "looking up session %s",
+                        record.id,
+                        record.data.name,
+                        stateful_session_id,
+                    )
                     session = await storage.get_session(
                         record.user_id,
                         record.agent_id,
                         stateful_session_id,
                     )
                     if session is None:
-                        # First fire — create the session with the configured
-                        # permission mode.
+                        logger.info(
+                            "[Schedule:%s(%s)] First fire, "
+                            "creating stateful session",
+                            record.id,
+                            record.data.name,
+                        )
                         state = AgentState()
                         state.permission_context = PermissionContext(
                             mode=record.data.permission_mode,
@@ -136,9 +160,21 @@ class SchedulerManager:
                             source=SessionSource.SCHEDULE,
                             source_schedule_id=record.id,
                         )
+                    else:
+                        logger.info(
+                            "[Schedule:%s(%s)] Reusing existing "
+                            "stateful session %s",
+                            record.id,
+                            record.data.name,
+                            session.id,
+                        )
                 else:
-                    # Create a brand-new session for each trigger fire so
-                    # every execution starts from a clean state.
+                    logger.info(
+                        "[Schedule:%s(%s)] Non-stateful mode, "
+                        "creating fresh session",
+                        record.id,
+                        record.data.name,
+                    )
                     state = AgentState()
                     state.permission_context = PermissionContext(
                         mode=record.data.permission_mode,
@@ -155,11 +191,17 @@ class SchedulerManager:
                         source_schedule_id=record.id,
                     )
 
+                logger.info(
+                    "[Schedule:%s(%s)] Session ready: %s, "
+                    "starting chat execution",
+                    record.id,
+                    record.data.name,
+                    session.id,
+                )
+
                 # TODO: assemble input message from record
                 input_msg = None
 
-                # Drain the stream; events are published to the session bus
-                # and persisted by ChatService internally.
                 chat_service = ChatService(
                     storage=storage,
                     session_manager=session_manager,
@@ -172,9 +214,17 @@ class SchedulerManager:
                 ):
                     pass
 
+                logger.info(
+                    "[Schedule:%s(%s)] Chat execution completed "
+                    "for session %s",
+                    record.id,
+                    record.data.name,
+                    session.id,
+                )
+
             except Exception:
                 logger.exception(
-                    "Schedule %r (%r) trigger failed",
+                    "[Schedule:%s(%s)] Trigger failed",
                     record.id,
                     record.data.name,
                 )
@@ -200,6 +250,13 @@ class SchedulerManager:
             `str`:
                 The APScheduler job ID (equal to ``record.id``).
         """
+        logger.info(
+            "Registering schedule %s(%s) cron=%s tz=%s",
+            record.id,
+            record.data.name,
+            record.data.cron_expression,
+            record.data.timezone,
+        )
         trigger = self._build_trigger(record)
         job = self._scheduler.add_job(
             trigger,
@@ -209,6 +266,13 @@ class SchedulerManager:
             ),
             id=record.id,
             name=record.data.name,
+            misfire_grace_time=300,
+        )
+        logger.info(
+            "Schedule %s(%s) registered, next_run=%s",
+            record.id,
+            record.data.name,
+            job.next_run_time,
         )
         return job.id
 
@@ -221,10 +285,12 @@ class SchedulerManager:
         """
         from apscheduler.jobstores.base import JobLookupError
 
+        logger.info("Removing schedule job %s", job_id)
         try:
             self._scheduler.remove_job(job_id)
+            logger.info("Schedule job %s removed", job_id)
         except JobLookupError:
-            pass
+            logger.warning("Schedule job %s not found in APScheduler", job_id)
 
     async def restore(self, records: list[ScheduleRecord]) -> None:
         """Re-register persisted schedules on service startup.
@@ -235,9 +301,15 @@ class SchedulerManager:
             records (`list[ScheduleRecord]`):
                 All schedule records loaded from storage on startup.
         """
-        for record in records:
-            if record.data.enabled:
-                await self.register_schedule(record)
+        enabled = [r for r in records if r.data.enabled]
+        logger.info(
+            "Restoring schedules: %d total, %d enabled",
+            len(records),
+            len(enabled),
+        )
+        for record in enabled:
+            await self.register_schedule(record)
+        logger.info("Schedule restore complete")
 
     async def list_tasks(self) -> list[dict]:
         """Return a summary of all currently registered APScheduler jobs.

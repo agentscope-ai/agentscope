@@ -229,6 +229,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                         "text": "Hi",
                     },
                 ],
+                "finished_at": AnyString(),
             },
             {
                 **msg_base,
@@ -280,6 +281,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "metadata": {},
+                "finished_at": AnyString(),
             },
             {
                 **msg_base,
@@ -306,6 +308,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "metadata": {},
+                "finished_at": AnyString(),
             },
             {
                 **msg_base,
@@ -408,6 +411,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "metadata": {},
+                "finished_at": AnyString(),
             },
             {
                 **msg_base,
@@ -469,6 +473,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "metadata": {},
+                "finished_at": AnyString(),
             },
             {
                 **msg_base,
@@ -495,6 +500,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "metadata": {},
+                "finished_at": AnyString(),
             },
             {
                 **msg_base,
@@ -715,6 +721,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                         "text": "Test",
                     },
                 ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -959,6 +966,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                         "text": "Test",
                     },
                 ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -1239,6 +1247,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                         "text": "Test",
                     },
                 ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [

@@ -4,13 +4,14 @@ injects their results back into the agent context before the next reasoning
 step.
 """
 import asyncio
-from typing import AsyncGenerator, Callable
+from typing import Any, AsyncGenerator, Callable
 
 from ...middleware import MiddlewareBase
-from ...tool import ToolResponse
-from ...message import TextBlock, ToolResultState, UserMsg, Msg
+from ...tool import ToolChunk, ToolResponse
+from ...message import AssistantMsg, HintBlock, TextBlock, ToolResultState
 from ...agent import Agent
 from .._manager import BackgroundTaskManager
+from ..._logging import logger
 
 
 # Sentinel object used to signal end-of-stream in the drain queue.
@@ -28,10 +29,10 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
     2. Returns a synthetic :class:`~agentscope.tool.ToolResponse` to the
        agent immediately so the ReAct loop can continue without blocking.
     3. When the background task finishes the real tool result is pushed
-       into ``self._pending_messages`` via the ``on_complete`` callback.
-    4. Before the next :meth:`on_reasoning` call the pending messages are
-       injected into ``agent.state.context`` so the model is informed of
-       the completed background result.
+       into :class:`~agentscope.app.BackgroundTaskManager` result storage.
+    4. Before the next :meth:`on_reasoning` call the pending results are
+       pulled from the manager and injected into ``agent.state.context``
+       so the model is informed of the completed background result.
 
     .. note::
         Tools with ``is_state_injected=True`` receive the live
@@ -67,7 +68,11 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
     def __init__(
         self,
         bg_manager: "BackgroundTaskManager",
-        timeout_secs: float = 15.0,
+        timeout_secs: float = 10.0,
+        user_id: str = "",
+        agent_id: str = "",
+        session_manager: Any = None,
+        retrigger_fn: Callable[..., Any] | None = None,
     ) -> None:
         """Initialise the middleware.
 
@@ -76,42 +81,23 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 The application-level background task manager.
             timeout_secs (`float`, optional):
                 Timeout in seconds before a tool call is offloaded.
-                Defaults to ``15.0``.
+                Defaults to ``10.0``.
+            user_id (`str`, optional):
+                The user id for the current request.
+            agent_id (`str`, optional):
+                The agent record ID (not the display name).
+            session_manager:
+                The session manager, used to check if a session is active.
+            retrigger_fn:
+                Async callable ``(session_id, agent_id, user_id) -> None``
+                that triggers a new agent reply when the session is idle.
         """
         self._bg_manager = bg_manager
         self._timeout_secs = timeout_secs
-        # Pending result messages keyed by session_id.  Populated by the
-        # on_complete callback when a background tool finishes; drained by
-        # on_reasoning before each model call.
-        self._pending_messages: dict[str, list] = {}
-
-    # ------------------------------------------------------------------
-    # Internal pending-message helpers
-    # ------------------------------------------------------------------
-
-    def _push_pending_message(self, session_id: str, msg: Msg) -> None:
-        """Append *msg* to the pending queue for *session_id*.
-
-        Args:
-            session_id (`str`):
-                The target session.
-            msg (`Msg`):
-                The notification message to enqueue.
-        """
-        self._pending_messages.setdefault(session_id, []).append(msg)
-
-    def _pop_pending_messages(self, session_id: str) -> list:
-        """Return and clear all pending messages for *session_id*.
-
-        Args:
-            session_id (`str`):
-                The session to query.
-
-        Returns:
-            `list`:
-                Pending :class:`~agentscope.message.Msg` objects, or ``[]``.
-        """
-        return self._pending_messages.pop(session_id, [])
+        self._user_id = user_id
+        self._agent_id = agent_id
+        self._session_manager = session_manager
+        self._retrigger_fn = retrigger_fn
 
     # ------------------------------------------------------------------
     # Middleware hooks
@@ -125,10 +111,10 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
     ) -> AsyncGenerator:
         """Inject pending background results before reasoning.
 
-        Pops any :class:`~agentscope.message.Msg` objects that were pushed
-        by completed background tasks and appends them to
-        ``agent.state.context`` so that the language model sees the
-        background-task results in its next call.
+        Pops :class:`~agentscope.message.HintBlock` objects pushed by
+        completed background tasks and appends them to the last assistant
+        message in ``agent.state.context`` (or creates a new one with
+        ``state.reply_id`` if the last message is not from the agent).
 
         Args:
             agent (`Agent`):
@@ -141,8 +127,38 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         Yields:
             Events produced by the reasoning process.
         """
-        pending_msgs = self._pop_pending_messages(agent.state.session_id)
-        agent.state.context.extend(pending_msgs)
+        hint_blocks = self._bg_manager.pop_results(agent.state.session_id)
+        if hint_blocks:
+            logger.info(
+                "Injecting %d pending background result(s) into context: "
+                "session_id=%s, agent_id=%s",
+                len(hint_blocks),
+                agent.state.session_id,
+                agent.name,
+            )
+            if len(agent.state.context) > 0:
+                last_msg = agent.state.context[-1]
+                if (
+                    last_msg.role == "assistant"
+                    and last_msg.name == agent.name
+                ):
+                    last_msg.content.extend(hint_blocks)
+                else:
+                    agent.state.context.append(
+                        AssistantMsg(
+                            id=agent.state.reply_id,
+                            name=agent.name,
+                            content=list(hint_blocks),
+                        ),
+                    )
+            else:
+                agent.state.context.append(
+                    AssistantMsg(
+                        id=agent.state.reply_id,
+                        name=agent.name,
+                        content=list(hint_blocks),
+                    ),
+                )
 
         async for evt in next_handler(**input_kwargs):
             yield evt
@@ -203,6 +219,13 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             registered.tool.is_state_injected
             or registered.tool.is_external_tool
         ):
+            logger.info(
+                "Tool '%s' is state-injected or external, executing "
+                "synchronously: session_id=%s, agent_id=%s",
+                tool_call.name,
+                agent.state.session_id,
+                agent.name,
+            )
             async for item in next_handler(**input_kwargs):
                 yield item
             return
@@ -271,7 +294,16 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         # ----------------------------------------------------------------
         session_id = agent.state.session_id
         tool_name = tool_call.name
-        snapshot = list(pre_collected)  # items collected before timeout
+        snapshot = list(pre_collected)
+
+        logger.info(
+            "Tool '%s' timed out after %.1fs, offloading to background: "
+            "session_id=%s, agent_id=%s",
+            tool_name,
+            self._timeout_secs,
+            session_id,
+            agent.name,
+        )
 
         async def _on_complete() -> None:
             """Drain remaining queue items and push notification message."""
@@ -298,45 +330,85 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                     if isinstance(b, TextBlock)
                 ]
                 result_text = "\n".join(texts)
-                content = (
+                hint_text = (
                     f"<system-notification>\n"
                     f"Background task for tool '{tool_name}' has completed.\n"
                     f"Result:\n{result_text}\n"
                     f"</system-notification>"
                 )
             else:
-                content = (
+                hint_text = (
                     f"<system-notification>\n"
                     f"Background task for tool '{tool_name}' has completed "
                     f"with no result.\n"
                     f"</system-notification>"
                 )
 
-            self._push_pending_message(
+            logger.info(
+                "Background tool '%s' completed, pushing result to pending "
+                "hints: session_id=%s",
+                tool_name,
                 session_id,
-                UserMsg(name="system", content=content),
             )
+            self._bg_manager.push_result(
+                session_id,
+                HintBlock(hint=hint_text),
+            )
+
+            # Re-trigger the agent if the session is idle
+            if (
+                self._session_manager is not None
+                and self._retrigger_fn is not None
+                and not self._session_manager.is_running(session_id)
+            ):
+                logger.info(
+                    "Session idle after background tool '%s' completed, "
+                    "triggering re-invocation: session_id=%s, agent_id=%s",
+                    tool_name,
+                    session_id,
+                    self._agent_id,
+                )
+                asyncio.create_task(
+                    self._retrigger_fn(
+                        session_id,
+                        self._agent_id,
+                        self._user_id,
+                    ),
+                )
 
         task_id = await self._bg_manager.register_task(
             asyncio_task=drain_task,
             session_id=session_id,
-            agent_id=agent.name,
+            agent_id=self._agent_id,
+            user_id=self._user_id,
             on_complete=_on_complete,
         )
 
+        logger.info(
+            "Synthetic ToolResponse yielded for offloaded tool '%s': "
+            "task_id=%s, session_id=%s, agent_id=%s",
+            tool_name,
+            task_id,
+            session_id,
+            agent.name,
+        )
+
+        placeholder_text = (
+            f"<system-reminder>Tool '{tool_name}' is taking "
+            f"longer than expected and has been moved to the "
+            f"background (task_id={task_id}). "
+            f"You may continue with other tasks. "
+            f"The result will be injected into the context "
+            f"automatically when finished.</system-reminder>"
+        )
+
+        yield ToolChunk(
+            content=[TextBlock(text=placeholder_text)],
+            state=ToolResultState.SUCCESS,
+        )
+
         yield ToolResponse(
-            content=[
-                TextBlock(
-                    text=(
-                        f"Tool '{tool_name}' is taking longer than expected "
-                        f"and has been moved to the background "
-                        f"(task_id={task_id}). "
-                        f"You may continue with other tasks. "
-                        f"The result will be injected into the context "
-                        f"automatically when ready."
-                    ),
-                ),
-            ],
+            content=[TextBlock(text=placeholder_text)],
             state=ToolResultState.SUCCESS,
             id=tool_call.id,
         )

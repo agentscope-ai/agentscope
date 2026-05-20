@@ -14,7 +14,7 @@ class AnthropicCredential(CredentialBase):
     """The Anthropic credential model."""
 
     model_config = ConfigDict(
-        title="Anthropic Credential",
+        title="Anthropic API",
     )
 
     type: Literal["anthropic_credential"] = "anthropic_credential"

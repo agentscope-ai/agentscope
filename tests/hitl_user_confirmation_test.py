@@ -350,6 +350,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "text": self.user_input_text,
                     },
                 ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -423,6 +424,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "text": self.user_input_text,
                     },
                 ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -607,6 +609,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "text": self.user_input_text,
                     },
                 ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -740,6 +743,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "text": self.user_input_text,
                     },
                 ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -971,6 +975,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "text": self.user_input_text,
                     },
                 ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -1089,6 +1094,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "text": self.user_input_text,
                     },
                 ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -1314,6 +1320,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "text": self.user_input_text,
                     },
                 ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -1427,7 +1434,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             {
                 "id": AnyString(),
                 "created_at": AnyString(),
-                "finished_at": None,
+                "finished_at": AnyString(),
                 "metadata": {},
                 "name": "user",
                 "role": "user",

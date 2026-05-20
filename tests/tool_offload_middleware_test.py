@@ -11,7 +11,7 @@ from utils import MockModel
 
 from agentscope.agent import Agent
 from agentscope.app import BackgroundTaskManager, ToolOffloadMiddleware
-from agentscope.message import TextBlock, UserMsg, ToolCallBlock
+from agentscope.message import HintBlock, TextBlock, UserMsg, ToolCallBlock
 from agentscope.model import ChatResponse
 from agentscope.permission import (
     PermissionContext,
@@ -244,11 +244,11 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
     async def test_background_task_result_injected_into_context(
         self,
     ) -> None:
-        """After the background tool finishes, result is in pending
-        messages."""
+        """After the background tool finishes, the result is pushed to the
+        BackgroundTaskManager as a HintBlock."""
 
         toolkit = Toolkit(tools=[SlowTool()])
-        agent, middleware = self._make_agent(toolkit, timeout_secs=0.05)
+        agent, _ = self._make_agent(toolkit, timeout_secs=0.05)
 
         tool_call = ToolCallBlock(
             id="call_bg",
@@ -264,17 +264,17 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         # Wait long enough for the background tool (0.2s) to finish
         await asyncio.sleep(0.4)
 
-        # The pending message should now be available
-        pending = middleware._pop_pending_messages(
-            agent.state.session_id,
-        )
+        # The completed result should now be available on the manager
+        pending = self.bg_manager.pop_results(agent.state.session_id)
         self.assertEqual(len(pending), 1)
-        text = pending[0].content[0].text  # type: ignore[union-attr]
-        self.assertIn("SlowTool finished", text)
-        self.assertIn("<system-notification>", text)
+        self.assertIsInstance(pending[0], HintBlock)
+        hint_text = pending[0].hint
+        self.assertIn("SlowTool finished", hint_text)
+        self.assertIn("<system-notification>", hint_text)
 
     async def test_on_reasoning_injects_pending_messages(self) -> None:
-        """on_reasoning hook prepends pending messages to agent context."""
+        """on_reasoning hook injects pending HintBlocks into the agent
+        context as part of an assistant message."""
         session_id = "session_test_inject"
 
         self.mock_model.set_responses(
@@ -287,26 +287,29 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         )
 
         toolkit = Toolkit()
-        agent, middleware = self._make_agent(toolkit, timeout_secs=5.0)
+        agent, _ = self._make_agent(toolkit, timeout_secs=5.0)
 
-        # Pre-populate a pending message for the session
-        middleware._push_pending_message(
-            session_id,
-            UserMsg(name="system", content="Background result: done"),
-        )
-        # Override the agent's session_id
+        # Override the agent's session_id and pre-populate a pending hint
+        # for that session on the manager.
         agent.state.session_id = session_id
+        self.bg_manager.push_result(
+            session_id,
+            HintBlock(hint="Background result: done"),
+        )
 
         await agent.reply(UserMsg("user", "anything"))
 
-        # Context should contain the injected pending message
-        context_texts = [
-            m.content[0].text  # type: ignore[union-attr]
+        # Context should contain a HintBlock (injected before reasoning) on
+        # an assistant message authored by this agent.
+        injected_hints = [
+            block.hint
             for m in agent.state.context
-            if m.role == "user"
+            if m.role == "assistant" and m.name == agent.name
+            for block in m.content
+            if isinstance(block, HintBlock)
         ]
         self.assertTrue(
-            any("Background result" in t for t in context_texts),
+            any("Background result" in t for t in injected_hints),
         )
 
     async def test_task_stop_cancels_background_task(self) -> None:

@@ -15,6 +15,7 @@ from ...permission import (
     PermissionBehavior,
 )
 from ...tool import ToolBase, ToolChunk
+from ..._logging import logger
 
 
 @dataclass
@@ -28,6 +29,8 @@ class BackgroundTask:
             The session id of the originating request.
         agent_id (`str`):
             The name of the agent that created the task.
+        user_id (`str`):
+            The user id of the originating request.
         id (`str`):
             Auto-generated unique task identifier.
     """
@@ -40,6 +43,9 @@ class BackgroundTask:
 
     agent_id: str
     """The agent that created the background task."""
+
+    user_id: str
+    """The user id of the originating request."""
 
     id: str = field(default_factory=shortuuid.uuid)
     """The background task id."""
@@ -129,6 +135,13 @@ class TaskStop(ToolBase):
         # Cancel and pop the task
         task = self.background_tasks.pop(task_id)
         task.asyncio_task.cancel()
+        logger.info(
+            "Background task stopped via TaskStop tool: task_id=%s, "
+            "session_id=%s, agent_id=%s",
+            task_id,
+            task.session_id,
+            task.agent_id,
+        )
         return ToolChunk(
             content=[TextBlock(text=f"Task {task_id} stopped successfully.")],
             state=ToolResultState.SUCCESS,
@@ -144,21 +157,66 @@ class BackgroundTaskManager:
       :class:`TaskStop`.
     - **Task scheduling**: convenience method for creating a task from a
       plain coroutine with an optional completion callback.
-
-    Result routing (e.g. writing results back into agent context) is
-    intentionally **not** handled here — callers supply an ``on_complete``
-    callback and own that logic themselves.
+    - **Result storage**: completed task results are stored here so that
+      middleware can pull them on the next reasoning step.
     """
 
     def __init__(self) -> None:
         """Initialise the background task manager."""
         self.tasks: OrderedDict[str, BackgroundTask] = OrderedDict()
+        self._completed_results: dict[str, list[Any]] = {}
+
+    # ------------------------------------------------------------------
+    # Result storage API
+    # ------------------------------------------------------------------
+
+    def push_result(self, session_id: str, result: Any) -> None:
+        """Store a completed task result for *session_id*.
+
+        Args:
+            session_id (`str`):
+                The target session.
+            result (`Any`):
+                The result object (type determined by the producer).
+        """
+        self._completed_results.setdefault(session_id, []).append(result)
+
+    def pop_results(self, session_id: str) -> list[Any]:
+        """Return and clear all completed results for *session_id*.
+
+        Args:
+            session_id (`str`):
+                The session to query.
+
+        Returns:
+            `list[Any]`:
+                Accumulated results, or ``[]`` if none.
+        """
+        return self._completed_results.pop(session_id, [])
+
+    def has_results(self, session_id: str) -> bool:
+        """Check whether *session_id* has pending completed results.
+
+        Args:
+            session_id (`str`):
+                The session to check.
+
+        Returns:
+            `bool`:
+                ``True`` if there are unconsumed results.
+        """
+        return bool(self._completed_results.get(session_id))
+
+    # ------------------------------------------------------------------
+    # Task registration
+    # ------------------------------------------------------------------
 
     async def register_task(
         self,
         asyncio_task: asyncio.Task,
         session_id: str,
         agent_id: str,
+        user_id: str,
         on_complete: Callable[[], Coroutine] | None = None,
     ) -> str:
         """Register an already-running asyncio task and return its id.
@@ -174,6 +232,8 @@ class BackgroundTaskManager:
                 The originating session id.
             agent_id (`str`):
                 The name of the agent that owns the task.
+            user_id (`str`):
+                The user id of the originating request.
             on_complete (`Callable[[], Coroutine] | None`, optional):
                 An async callable invoked when the task finishes normally.
                 Not called when the task is cancelled.
@@ -186,20 +246,56 @@ class BackgroundTaskManager:
             asyncio_task=asyncio_task,
             session_id=session_id,
             agent_id=agent_id,
+            user_id=user_id,
         )
         task_id = bg_task.id
         self.tasks[task_id] = bg_task
+        logger.info(
+            "Background task registered: task_id=%s, session_id=%s, "
+            "agent_id=%s",
+            task_id,
+            session_id,
+            agent_id,
+        )
 
         async def _watch() -> None:
+            logger.info(
+                "Background task started: task_id=%s, session_id=%s, "
+                "agent_id=%s",
+                task_id,
+                session_id,
+                agent_id,
+            )
             try:
                 await asyncio_task
             except asyncio.CancelledError:
+                logger.info(
+                    "Background task cancelled: task_id=%s, session_id=%s, "
+                    "agent_id=%s",
+                    task_id,
+                    session_id,
+                    agent_id,
+                )
                 return
             except Exception:  # pylint: disable=broad-except
-                pass
+                logger.warning(
+                    "Background task failed with exception: task_id=%s, "
+                    "session_id=%s, agent_id=%s",
+                    task_id,
+                    session_id,
+                    agent_id,
+                    exc_info=True,
+                )
             finally:
                 self.tasks.pop(task_id, None)
 
+            logger.info(
+                "Background task completed: task_id=%s, session_id=%s, "
+                "agent_id=%s",
+                task_id,
+                session_id,
+                agent_id,
+            )
             if on_complete is not None:
                 await on_complete()
 
@@ -221,6 +317,18 @@ class BackgroundTaskManager:
         Each task's asyncio task is cancelled.  The ``on_complete``
         callback will **not** be invoked for cancelled tasks.
         """
+        count = len(self.tasks)
+        logger.info(
+            "Shutting down BackgroundTaskManager: cancelling %d task(s).",
+            count,
+        )
         for bg_task in list(self.tasks.values()):
+            logger.info(
+                "Cancelling background task on shutdown: task_id=%s, "
+                "session_id=%s, agent_id=%s",
+                bg_task.id,
+                bg_task.session_id,
+                bg_task.agent_id,
+            )
             bg_task.asyncio_task.cancel()
         self.tasks.clear()
