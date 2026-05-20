@@ -5,14 +5,13 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from .._deps import get_current_user_id, get_storage
-from .._schema._agent import (
-    AgentListResponse,
+from .._schema import (
+    ListAgentsResponse,
     CreateAgentRequest,
     CreateAgentResponse,
     UpdateAgentRequest,
 )
-from ..storage import StorageBase
-from ..storage._model._agent import AgentData, AgentRecord
+from ..storage import StorageBase, AgentData, AgentRecord
 
 agent_router = APIRouter(
     prefix="/agent",
@@ -23,24 +22,27 @@ agent_router = APIRouter(
 
 @agent_router.get(
     "/",
-    response_model=AgentListResponse,
+    response_model=ListAgentsResponse,
     summary="List all agents",
 )
 async def list_agents(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
-) -> AgentListResponse:
+) -> ListAgentsResponse:
     """Return all agent records belonging to the authenticated user.
 
     Args:
-        user_id (`str`): Injected authenticated user ID.
-        storage (`StorageBase`): Injected storage backend.
+        user_id (`str`):
+            Injected authenticated user ID.
+        storage (`StorageBase`):
+            Injected storage backend.
 
     Returns:
-        `AgentListResponse`: All agent records and their total count.
+        `ListAgentsResponse`:
+            All agent records and their total count.
     """
-    agents = await storage.list_agent(user_id)
-    return AgentListResponse(agents=agents, total=len(agents))
+    agents = await storage.list_agents(user_id)
+    return ListAgentsResponse(agents=agents, total=len(agents))
 
 
 @agent_router.post(
@@ -57,12 +59,16 @@ async def create_agent(
     """Create and persist a new agent configuration.
 
     Args:
-        body (`CreateAgentRequest`): Agent configuration to store.
-        user_id (`str`): Injected authenticated user ID.
-        storage (`StorageBase`): Injected storage backend.
+        body (`CreateAgentRequest`):
+            Agent configuration to store.
+        user_id (`str`):
+            Injected authenticated user ID.
+        storage (`StorageBase`):
+            Injected storage backend.
 
     Returns:
-        `CreateAgentResponse`: The server-assigned agent identifier.
+        `CreateAgentResponse`:
+            The server-assigned agent identifier.
     """
     record = AgentRecord(
         user_id=user_id,
@@ -106,7 +112,7 @@ async def update_agent(
         `HTTPException`: 404 if the agent does not exist or does not belong
             to the authenticated user.
     """
-    agents = await storage.list_agent(user_id)
+    agents = await storage.list_agents(user_id)
     existing = next((a for a in agents if a.id == agent_id), None)
     if existing is None:
         raise HTTPException(

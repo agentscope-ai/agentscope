@@ -68,11 +68,10 @@ async def get_agent(
 
     # TODO: should be configurable
     from agentscope.tool import Bash, Read, Write, Edit
-    import os
 
     toolkit = Toolkit(
         tools=[Bash(), Read(), Write(), Edit()],
-        skills=[os.path.join(workspace.workdir, "skills", "pdf")],
+        skills=[],
     )
 
     for mcp_client in await workspace.list_mcps():

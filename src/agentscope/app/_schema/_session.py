@@ -52,14 +52,14 @@ class UpdateSessionRequest(BaseModel):
     )
 
 
-class SessionListResponse(BaseModel):
+class ListSessionsResponse(BaseModel):
     """Response body for listing sessions."""
 
     sessions: list[SessionRecord] = Field(description="Session records.")
     total: int = Field(description="Total number of sessions.")
 
 
-class MessagesResponse(BaseModel):
+class ListMessagesResponse(BaseModel):
     """Response body for listing messages in a session."""
 
     messages: list = Field(description="Messages in chronological order.")

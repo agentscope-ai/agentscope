@@ -108,15 +108,15 @@ class StorageBase(ABC):
     async def upsert_agent(
         self,
         user_id: str,
-        agent_data: AgentRecord,
+        agent_record: AgentRecord,
     ) -> str:
         """Create an agent record in the storage.
 
         Args:
             user_id (`str`):
                 The user id.
-            agent_data (`AgentRecord`):
-                The agent data.
+            agent_record (`AgentRecord`):
+                The agent record.
 
         Returns:
             `str`:
@@ -124,7 +124,7 @@ class StorageBase(ABC):
         """
 
     @abstractmethod
-    async def list_agent(self, user_id: str) -> list[AgentRecord]:
+    async def list_agents(self, user_id: str) -> list[AgentRecord]:
         """List all agents for a given user.
 
         Args:

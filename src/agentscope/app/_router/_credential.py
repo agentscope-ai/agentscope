@@ -3,11 +3,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from .._deps import get_current_user_id, get_storage
-from .._schema._credential import (
+from .._schema import (
     CreateCredentialRequest,
     CreateCredentialResponse,
-    CredentialListResponse,
-    CredentialSchemasResponse,
+    ListCredentialsResponse,
+    ListCredentialSchemasResponse,
     UpdateCredentialRequest,
 )
 from ..storage import StorageBase, CredentialRecord
@@ -22,38 +22,43 @@ credential_router = APIRouter(
 
 @credential_router.get(
     "/schemas",
-    response_model=CredentialSchemasResponse,
+    response_model=ListCredentialSchemasResponse,
     summary="List JSON schemas for all credential types",
 )
-async def list_credential_schemas() -> CredentialSchemasResponse:
+async def list_credential_schemas() -> ListCredentialSchemasResponse:
     """Return JSON schemas for all registered credential types.
 
     Used by the frontend to render credential creation forms dynamically.
     """
 
-    return CredentialSchemasResponse(schemas=CredentialFactory.list_schemas())
+    return ListCredentialSchemasResponse(
+        schemas=CredentialFactory.list_schemas(),
+    )
 
 
 @credential_router.get(
     "/",
-    response_model=CredentialListResponse,
+    response_model=ListCredentialsResponse,
     summary="List all credentials",
 )
 async def list_credentials(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
-) -> CredentialListResponse:
+) -> ListCredentialsResponse:
     """Return all credential records belonging to the authenticated user.
 
     Args:
-        user_id (`str`): Injected authenticated user ID.
-        storage (`StorageBase`): Injected storage backend.
+        user_id (`str`):
+            Injected authenticated user ID.
+        storage (`StorageBase`):
+            Injected storage backend.
 
     Returns:
-        `CredentialListResponse`: All credential records and their total count.
+        `ListCredentialsResponse`:
+            All credential records and their total count.
     """
     credentials = await storage.list_credentials(user_id)
-    return CredentialListResponse(
+    return ListCredentialsResponse(
         credentials=credentials,
         total=len(credentials),
     )

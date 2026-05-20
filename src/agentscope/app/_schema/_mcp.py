@@ -116,7 +116,7 @@ class MCPResponse(MCPBase):
     )
 
 
-class MCPListResponse(BaseModel):
+class ListMCPsResponse(BaseModel):
     """Response model for listing MCP configurations."""
 
     mcps: list[MCPResponse] = Field(

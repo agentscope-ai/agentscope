@@ -217,12 +217,15 @@ class RedisStorage(StorageBase):
         record with a generated id is always created.
 
         Args:
-            user_id (`str`): The owner user id.
-            credential_data (`CredentialBase`): Input data containing an
-                optional `id` and the credential `data` dict.
+            user_id (`str`):
+                The owner user id.
+            credential_data (`CredentialBase`):
+                Input data containing an optional `id` and the credential
+                `data` dict.
 
         Returns:
-            `str`: The id of the created or updated credential record.
+            `str`:
+                The id of the created or updated credential record.
         """
         if not credential_data.name:
             credential_data.name = await self._generate_credential_name(
@@ -341,7 +344,11 @@ class RedisStorage(StorageBase):
         await self._client.srem(index_key, credential_id)
         return deleted > 0
 
-    async def upsert_agent(self, user_id: str, agent_data: AgentRecord) -> str:
+    async def upsert_agent(
+        self,
+        user_id: str,
+        agent_record: AgentRecord,
+    ) -> str:
         """Persist an agent record and register it in the user's agent index.
 
         The caller is responsible for constructing the full `AgentRecord`
@@ -349,24 +356,26 @@ class RedisStorage(StorageBase):
         will be overwritten.
 
         Args:
-            user_id (`str`): The owner user id.
-            agent_data (`AgentRecord`): The fully-populated agent record to
-                store.
+            user_id (`str`):
+                The owner user id.
+            agent_record (`AgentRecord`):
+                The fully-populated agent record to store.
 
         Returns:
-            `str`: The id of the stored agent record.
+            `str`:
+                The id of the stored agent record.
         """
         key = self._key(
             self.key_config.agent,
             user_id=user_id,
-            agent_id=agent_data.id,
+            agent_id=agent_record.id,
         )
         index_key = self._key(self.key_config.agent_index, user_id=user_id)
-        await self._set_with_ttl(key, agent_data.model_dump_json())
-        await self._client.sadd(index_key, agent_data.id)
-        return agent_data.id
+        await self._set_with_ttl(key, agent_record.model_dump_json())
+        await self._client.sadd(index_key, agent_record.id)
+        return agent_record.id
 
-    async def list_agent(self, user_id: str) -> list[AgentRecord]:
+    async def list_agents(self, user_id: str) -> list[AgentRecord]:
         """Return all agent records belonging to the given user.
 
         Reads the per-user agent index Set to obtain all ids, then fetches

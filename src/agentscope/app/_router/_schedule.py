@@ -9,7 +9,7 @@ from .._manager import SchedulerManager
 from .._schema import (
     CreateScheduleRequest,
     CreateScheduleResponse,
-    ScheduleListResponse,
+    ListSchedulesResponse,
     ScheduleSessionsResponse,
     UpdateScheduleRequest,
 )
@@ -29,13 +29,13 @@ schedule_router = APIRouter(
 
 @schedule_router.get(
     "/",
-    response_model=ScheduleListResponse,
+    response_model=ListSchedulesResponse,
     summary="List all schedules",
 )
 async def list_schedules(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
-) -> ScheduleListResponse:
+) -> ListSchedulesResponse:
     """List all schedules owned by the current user.
 
     Args:
@@ -43,11 +43,11 @@ async def list_schedules(
         storage (`StorageBase`): Storage instance.
 
     Returns:
-        `ScheduleListResponse`:
+        `ListSchedulesResponse`:
             Paginated list of schedule records.
     """
     schedules = await storage.list_schedules(user_id)
-    return ScheduleListResponse(schedules=schedules, total=len(schedules))
+    return ListSchedulesResponse(schedules=schedules, total=len(schedules))
 
 
 @schedule_router.post(
@@ -77,7 +77,7 @@ async def create_schedule(
     Raises:
         `HTTPException`: 404 if the specified agent does not exist.
     """
-    agents = await storage.list_agent(user_id)
+    agents = await storage.list_agents(user_id)
     if not any(a.id == body.agent_id for a in agents):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

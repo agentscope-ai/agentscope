@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from .._deps import get_background_task_manager, get_current_user_id
 from .._manager import BackgroundTaskManager
-from .._schema._background_task import (
+from .._schema import (
     BackgroundTaskInfo,
-    BackgroundTaskListResponse,
+    ListBackgroundTasksResponse,
 )
 
 background_task_router = APIRouter(
@@ -18,14 +18,14 @@ background_task_router = APIRouter(
 
 @background_task_router.get(
     "/{session_id}",
-    response_model=BackgroundTaskListResponse,
+    response_model=ListBackgroundTasksResponse,
     summary="List running background tasks for a session",
 )
 async def list_background_tasks(
     session_id: str,
     _: str = Depends(get_current_user_id),
     bg_manager: BackgroundTaskManager = Depends(get_background_task_manager),
-) -> BackgroundTaskListResponse:
+) -> ListBackgroundTasksResponse:
     """List all currently running background tasks for *session_id*.
 
     Args:
@@ -37,7 +37,7 @@ async def list_background_tasks(
             The application-wide background task manager.
 
     Returns:
-        `BackgroundTaskListResponse`:
+        `ListBackgroundTasksResponse`:
             Tasks belonging to *session_id* and their total count.
     """
     tasks = [
@@ -49,7 +49,7 @@ async def list_background_tasks(
         for task in bg_manager.tasks.values()
         if task.session_id == session_id
     ]
-    return BackgroundTaskListResponse(tasks=tasks, total=len(tasks))
+    return ListBackgroundTasksResponse(tasks=tasks, total=len(tasks))
 
 
 @background_task_router.delete(

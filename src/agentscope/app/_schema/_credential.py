@@ -25,7 +25,7 @@ class UpdateCredentialRequest(BaseModel):
     data: dict = Field(description="New credential payload.")
 
 
-class CredentialListResponse(BaseModel):
+class ListCredentialsResponse(BaseModel):
     """Response body for listing credentials."""
 
     credentials: list[CredentialRecord] = Field(
@@ -34,7 +34,7 @@ class CredentialListResponse(BaseModel):
     total: int = Field(description="Total number of credentials.")
 
 
-class CredentialSchemasResponse(BaseModel):
+class ListCredentialSchemasResponse(BaseModel):
     """Response body for listing credential type schemas."""
 
     schemas: list[dict] = Field(

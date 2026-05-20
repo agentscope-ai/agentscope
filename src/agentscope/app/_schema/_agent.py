@@ -51,7 +51,7 @@ class UpdateAgentRequest(BaseModel):
     )
 
 
-class AgentListResponse(BaseModel):
+class ListAgentsResponse(BaseModel):
     """Response body for listing agents."""
 
     agents: list[AgentRecord] = Field(description="Agent records.")

@@ -11,7 +11,7 @@ class BackgroundTaskInfo(BaseModel):
     agent_id: str = Field(description="Agent that triggered this task.")
 
 
-class BackgroundTaskListResponse(BaseModel):
+class ListBackgroundTasksResponse(BaseModel):
     """Response body for listing background tasks of a session."""
 
     tasks: list[BackgroundTaskInfo] = Field(

@@ -5,7 +5,7 @@ from pydantic import BaseModel, SecretStr
 
 
 def _dump_with_secrets(model: BaseModel) -> dict:
-    """Dump the BaseModel instance with secrets. Used for
+    """Dump the BaseModel instance with SecretStr fields. Used for
     storage.
 
     Args:

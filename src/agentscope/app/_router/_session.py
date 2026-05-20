@@ -6,11 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from .._deps import get_current_user_id, get_session_manager, get_storage
 from .._manager import SessionManager
-from .._schema._session import (
+from .._schema import (
     CreateSessionRequest,
     CreateSessionResponse,
-    MessagesResponse,
-    SessionListResponse,
+    ListMessagesResponse,
+    ListSessionsResponse,
     UpdateSessionRequest,
 )
 from ..storage import StorageBase, SessionConfig, SessionRecord
@@ -24,14 +24,14 @@ session_router = APIRouter(
 
 @session_router.get(
     "/",
-    response_model=SessionListResponse,
+    response_model=ListSessionsResponse,
     summary="List sessions for an agent",
 )
 async def list_sessions(
     agent_id: str = Query(description="Filter sessions by agent ID."),
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
-) -> SessionListResponse:
+) -> ListSessionsResponse:
     """Return all sessions belonging to the authenticated user for a given
     agent.
 
@@ -41,13 +41,13 @@ async def list_sessions(
         storage (`StorageBase`): Injected storage backend.
 
     Returns:
-        `SessionListResponse`: All matching session records and their count.
+        `ListSessionsResponse`: All matching session records and their count.
 
     Raises:
         `HTTPException`: 404 if the agent does not exist or does not belong
             to the authenticated user.
     """
-    agents = await storage.list_agent(user_id)
+    agents = await storage.list_agents(user_id)
     if not any(a.id == agent_id for a in agents):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -55,7 +55,7 @@ async def list_sessions(
         )
 
     sessions = await storage.list_sessions(user_id, agent_id)
-    return SessionListResponse(sessions=sessions, total=len(sessions))
+    return ListSessionsResponse(sessions=sessions, total=len(sessions))
 
 
 @session_router.post(
@@ -87,7 +87,7 @@ async def create_session(
         `HTTPException`: 404 if the agent or credential does not exist or
             does not belong to the authenticated user.
     """
-    agents = await storage.list_agent(user_id)
+    agents = await storage.list_agents(user_id)
     if not any(a.id == body.agent_id for a in agents):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -229,7 +229,7 @@ async def update_session(
 
 @session_router.get(
     "/{session_id}/messages",
-    response_model=MessagesResponse,
+    response_model=ListMessagesResponse,
     summary="List messages for a session",
 )
 async def list_messages(
@@ -240,7 +240,7 @@ async def list_messages(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     session_manager: SessionManager = Depends(get_session_manager),
-) -> MessagesResponse:
+) -> ListMessagesResponse:
     """Return persisted messages for a session.
 
     Args:
@@ -268,7 +268,7 @@ async def list_messages(
         offset=offset,
         limit=limit,
     )
-    return MessagesResponse(
+    return ListMessagesResponse(
         messages=messages,
         is_running=session_manager.is_running(session_id),
     )

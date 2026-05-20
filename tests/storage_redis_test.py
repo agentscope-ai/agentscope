@@ -141,14 +141,14 @@ class TestAgent(IsolatedAsyncioTestCase):
         """Create an agent and verify it is retrievable via list."""
         record = make_agent_record(self.user_id)
         agent_id = await self.storage.upsert_agent(self.user_id, record)
-        records = await self.storage.list_agent(self.user_id)
+        records = await self.storage.list_agents(self.user_id)
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].id, agent_id)
         self.assertEqual(records[0].data.name, "test-agent")
 
     async def test_list_empty(self) -> None:
         """Verify list returns empty when no records exist."""
-        records = await self.storage.list_agent(self.user_id)
+        records = await self.storage.list_agents(self.user_id)
         self.assertEqual(records, [])
 
     async def test_delete(self) -> None:
@@ -157,7 +157,7 @@ class TestAgent(IsolatedAsyncioTestCase):
         await self.storage.upsert_agent(self.user_id, record)
         result = await self.storage.delete_agent(self.user_id, record.id)
         self.assertTrue(result)
-        records = await self.storage.list_agent(self.user_id)
+        records = await self.storage.list_agents(self.user_id)
         self.assertEqual(records, [])
 
     async def test_delete_nonexistent(self) -> None:
@@ -168,7 +168,7 @@ class TestAgent(IsolatedAsyncioTestCase):
     async def test_user_isolation(self) -> None:
         """Verify different users cannot see each other's records."""
         await self.storage.upsert_agent("user-A", make_agent_record("user-A"))
-        records = await self.storage.list_agent("user-B")
+        records = await self.storage.list_agents("user-B")
         self.assertEqual(records, [])
 
 

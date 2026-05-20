@@ -6,14 +6,14 @@ from pydantic import BaseModel, Field
 from ...model import ModelCard
 
 
-class ListModelResponse(BaseModel):
+class ListModelsResponse(BaseModel):
     """List the candidate models response."""
 
     models: list[ModelCard] = Field(description="The candidate models.")
     total: int = Field(description="The total number of candidates.")
 
 
-class ListModelRequest(BaseModel):
+class ListModelsRequest(BaseModel):
     """List the candidate models request."""
 
     provider: str = Field(

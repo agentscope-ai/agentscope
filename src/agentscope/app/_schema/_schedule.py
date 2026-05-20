@@ -102,7 +102,7 @@ class UpdateScheduleRequest(BaseModel):
     )
 
 
-class ScheduleListResponse(BaseModel):
+class ListSchedulesResponse(BaseModel):
     """Response body for listing schedules."""
 
     schedules: list[ScheduleRecord] = Field(description="Schedule records.")

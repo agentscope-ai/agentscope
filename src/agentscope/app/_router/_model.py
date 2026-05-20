@@ -3,7 +3,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from .._schema import ListModelResponse, ListModelRequest
+from .._schema import ListModelsResponse, ListModelsRequest
 from ...credential import CredentialFactory
 
 model_router = APIRouter(
@@ -15,19 +15,19 @@ model_router = APIRouter(
 
 @model_router.get(
     "/",
-    response_model=ListModelResponse,
+    response_model=ListModelsResponse,
     summary="List all candidate models under the given credential type",
 )
 async def list_models(
-    body: ListModelRequest = Depends(),
-) -> ListModelResponse:
+    body: ListModelsRequest = Depends(),
+) -> ListModelsResponse:
     """Return all candidate models under the given credential type.
 
     Args:
-        body (ListModelRequest): The request body.
+        body (ListModelsRequest): The request body.
 
     Returns:
-        `ListModelResponse`: The response body.
+        `ListModelsResponse`: The response body.
     """
     credential_cls = CredentialFactory.get_credential_class(body.provider)
     if credential_cls is None:
@@ -37,4 +37,4 @@ async def list_models(
         )
 
     models = credential_cls.get_chat_model_class().list_models()
-    return ListModelResponse(models=models, total=len(models))
+    return ListModelsResponse(models=models, total=len(models))
