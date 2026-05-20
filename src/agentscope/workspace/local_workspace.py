@@ -159,6 +159,7 @@ class LocalWorkspace(WorkspaceBase):
         self._default_mcps: list[MCPClient] = list(default_mcps or [])
         self._mcps: list[MCPClient] = []
         self._offload_lock = asyncio.Lock()
+        self._skill_lock = asyncio.Lock()
 
     @property
     def workspace_id(self) -> str:
@@ -508,113 +509,43 @@ class LocalWorkspace(WorkspaceBase):
     # --- dynamic skill management ---
 
     async def add_skill(self, skill_path: str) -> None:
-        """Add a skill by copying its directory into the workspace."""
+        """Add a skill by copying its directory into the workspace.
+
+        This method is safe to call concurrently on the same workspace:
+        skill validation, duplicate detection, target-name allocation,
+        and copying are serialized by ``_skill_lock``.
+
+        Args:
+            skill_path: Absolute or relative path to the skill directory.
+
+        Raises:
+            ValueError: If the skill directory is invalid.
+        """
         skill_path = os.path.abspath(skill_path)
-        skills_dir = os.path.join(self._workdir, "skills")
-        os.makedirs(skills_dir, exist_ok=True)
+        async with self._skill_lock:
+            skills_dir = os.path.join(self._workdir, "skills")
+            os.makedirs(skills_dir, exist_ok=True)
 
-        result = await self._validate_and_hash_skill(skill_path)
-        if result is None:
-            raise ValueError(
-                f"Invalid skill at {skill_path!r}: missing or "
-                "malformed SKILL.md (requires 'name' and "
-                "'description' fields).",
-            )
-
-        _, raw_name, skill_hash = result
-
-        existing_hashes = await self._collect_existing_hashes(skills_dir)
-        if skill_hash in existing_hashes:
-            logger.info(
-                "Skill '%s' (hash: %s...) already exists, skipping",
-                raw_name,
-                skill_hash[:8],
-            )
-            return
-
-        existing_dir_names = await self._list_skill_dirs(skills_dir)
-
-        base_dir = _sanitize_dir_name(raw_name)
-        dir_name = base_dir
-        counter = 1
-        while dir_name in existing_dir_names:
-            dir_name = f"{base_dir}_{counter}"
-            counter += 1
-
-        dest_path = os.path.join(skills_dir, dir_name)
-
-        if not os.path.realpath(dest_path).startswith(
-            os.path.realpath(skills_dir) + os.sep,
-        ):
-            raise ValueError(
-                f"Skill path {skill_path!r} resolves outside skills_dir.",
-            )
-
-        await asyncio.to_thread(
-            shutil.copytree,
-            skill_path,
-            dest_path,
-            dirs_exist_ok=False,
-        )
-
-        logger.info(
-            "Added skill '%s' from %s to %s",
-            raw_name,
-            skill_path,
-            dest_path,
-        )
-
-    async def remove_skill(self, name: str) -> None:
-        """Remove a skill by its name (from SKILL.md front matter)."""
-        skills_dir = os.path.join(self._workdir, "skills")
-
-        if not await aiofiles.ospath.isdir(skills_dir):
-            logger.warning(
-                "Skills directory does not exist; cannot remove skill %r",
-                name,
-            )
-            return
-
-        skills = await self.list_skills()
-        target_dir: str | None = None
-        for skill in skills:
-            if skill.name == name:
-                target_dir = skill.dir
-                break
-
-        if target_dir is None:
-            logger.warning(
-                "Skill %r not found in workspace",
-                name,
-            )
-            return
-
-        if await aiofiles.ospath.isdir(target_dir):
-            await asyncio.to_thread(shutil.rmtree, target_dir)
-            logger.info("Removed skill '%s' from %s", name, target_dir)
-
-    # --- internal: initial skill seeding ---
-
-    async def _seed_initial_skills(self) -> None:
-        """Seed skills from ``skill_paths`` on first use."""
-        if not self._skill_paths:
-            return
-
-        skills_dir = os.path.join(self._workdir, "skills")
-        os.makedirs(skills_dir, exist_ok=True)
-
-        existing_hashes = await self._collect_existing_hashes(skills_dir)
-        existing_dir_names = await self._list_skill_dirs(skills_dir)
-
-        for skill_path in self._skill_paths:
             result = await self._validate_and_hash_skill(skill_path)
             if result is None:
-                continue
+                raise ValueError(
+                    f"Invalid skill at {skill_path!r}: missing or "
+                    "malformed SKILL.md (requires 'name' and "
+                    "'description' fields).",
+                )
 
             _, raw_name, skill_hash = result
 
+            existing_hashes = await self._collect_existing_hashes(skills_dir)
             if skill_hash in existing_hashes:
-                continue
+                logger.info(
+                    "Skill '%s' (hash: %s...) already exists, skipping",
+                    raw_name,
+                    skill_hash[:8],
+                )
+                return
+
+            existing_dir_names = await self._list_skill_dirs(skills_dir)
 
             base_dir = _sanitize_dir_name(raw_name)
             dir_name = base_dir
@@ -628,35 +559,124 @@ class LocalWorkspace(WorkspaceBase):
             if not os.path.realpath(dest_path).startswith(
                 os.path.realpath(skills_dir) + os.sep,
             ):
-                logger.warning(
-                    "Skill '%s' resolves outside skills_dir, skipping",
-                    raw_name,
+                raise ValueError(
+                    f"Skill path {skill_path!r} resolves outside skills_dir.",
                 )
-                continue
 
-            try:
-                await asyncio.to_thread(
-                    shutil.copytree,
-                    skill_path,
-                    dest_path,
-                    dirs_exist_ok=False,
-                )
-            except Exception as e:
-                logger.warning(
-                    "Failed to copy skill '%s' from %s: %s",
-                    raw_name,
-                    skill_path,
-                    e,
-                )
-                continue
+            await asyncio.to_thread(
+                shutil.copytree,
+                skill_path,
+                dest_path,
+                dirs_exist_ok=False,
+            )
 
-            existing_hashes.add(skill_hash)
-            existing_dir_names.add(dir_name)
             logger.info(
-                "Seeded skill '%s' from %s",
+                "Added skill '%s' from %s to %s",
                 raw_name,
                 skill_path,
+                dest_path,
             )
+
+    async def remove_skill(self, name: str) -> None:
+        """Remove a skill by its name (from SKILL.md front matter).
+
+        Args:
+            name: The ``name`` field from the skill's ``SKILL.md``
+                front matter.
+        """
+        async with self._skill_lock:
+            skills_dir = os.path.join(self._workdir, "skills")
+
+            if not await aiofiles.ospath.isdir(skills_dir):
+                logger.warning(
+                    "Skills directory does not exist; cannot remove skill %r",
+                    name,
+                )
+                return
+
+            skills = await self.list_skills()
+            target_dir: str | None = None
+            for skill in skills:
+                if skill.name == name:
+                    target_dir = skill.dir
+                    break
+
+            if target_dir is None:
+                logger.warning(
+                    "Skill %r not found in workspace",
+                    name,
+                )
+                return
+
+            if await aiofiles.ospath.isdir(target_dir):
+                await asyncio.to_thread(shutil.rmtree, target_dir)
+                logger.info("Removed skill '%s' from %s", name, target_dir)
+
+    # --- internal: initial skill seeding ---
+
+    async def _seed_initial_skills(self) -> None:
+        """Seed skills from ``skill_paths`` on first use."""
+        if not self._skill_paths:
+            return
+
+        async with self._skill_lock:
+            skills_dir = os.path.join(self._workdir, "skills")
+            os.makedirs(skills_dir, exist_ok=True)
+
+            existing_hashes = await self._collect_existing_hashes(skills_dir)
+            existing_dir_names = await self._list_skill_dirs(skills_dir)
+
+            for skill_path in self._skill_paths:
+                result = await self._validate_and_hash_skill(skill_path)
+                if result is None:
+                    continue
+
+                _, raw_name, skill_hash = result
+
+                if skill_hash in existing_hashes:
+                    continue
+
+                base_dir = _sanitize_dir_name(raw_name)
+                dir_name = base_dir
+                counter = 1
+                while dir_name in existing_dir_names:
+                    dir_name = f"{base_dir}_{counter}"
+                    counter += 1
+
+                dest_path = os.path.join(skills_dir, dir_name)
+
+                if not os.path.realpath(dest_path).startswith(
+                    os.path.realpath(skills_dir) + os.sep,
+                ):
+                    logger.warning(
+                        "Skill '%s' resolves outside skills_dir, skipping",
+                        raw_name,
+                    )
+                    continue
+
+                try:
+                    await asyncio.to_thread(
+                        shutil.copytree,
+                        skill_path,
+                        dest_path,
+                        dirs_exist_ok=False,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to copy skill '%s' from %s: %s",
+                        raw_name,
+                        skill_path,
+                        e,
+                    )
+                    continue
+
+                existing_hashes.add(skill_hash)
+                existing_dir_names.add(dir_name)
+                logger.info(
+                    "Seeded skill '%s' from %s",
+                    raw_name,
+                    skill_path,
+                )
 
     # --- internal: skill helpers ---
 

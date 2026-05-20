@@ -3,6 +3,7 @@
 """Test cases for LocalWorkspace."""
 
 import base64
+import asyncio
 import json
 import os
 import tempfile
@@ -565,6 +566,31 @@ description: {description}
         skills = await workspace.list_skills()
         self.assertEqual(len(skills), 1)
         self.assertEqual(skills[0].name, "test_skill_dedup")
+
+    async def test_concurrent_add_skill_is_deduplicated(self) -> None:
+        """Concurrent add_skill calls for the same skill install once."""
+        skill_dir = self._create_test_skill(
+            "concurrent_skill",
+            "A test skill for concurrent add_skill calls",
+        )
+        workspace = LocalWorkspace(workdir=self.temp_dir.name)
+        await workspace.initialize()
+
+        await asyncio.gather(
+            *(workspace.add_skill(skill_dir) for _ in range(8)),
+        )
+
+        skills = await workspace.list_skills()
+        self.assertEqual(len(skills), 1)
+        self.assertEqual(skills[0].name, "concurrent_skill")
+
+        skills_dir = os.path.join(self.temp_dir.name, "skills")
+        skill_dirs = [
+            d
+            for d in os.listdir(skills_dir)
+            if os.path.isdir(os.path.join(skills_dir, d))
+        ]
+        self.assertEqual(skill_dirs, ["concurrent_skill"])
 
     async def test_initialize_invalid_skill(self) -> None:
         """Test handling of invalid skills.
