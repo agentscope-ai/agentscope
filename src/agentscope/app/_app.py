@@ -1,9 +1,6 @@
 # -*- coding: utf-8 -*-
 """AgentScope app factory."""
-from typing import Type
-
-from fastapi import FastAPI
-from fastapi.middleware import Middleware
+from typing import Type, TYPE_CHECKING, Any
 
 from ._lifespan import lifespan
 from ._manager import WorkspaceManagerBase
@@ -19,6 +16,13 @@ from ._router import (
 )
 from .storage import StorageBase
 from ..credential import CredentialFactory, CredentialBase
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI
+    from fastapi.middleware import Middleware
+else:
+    FastAPI = Any
+    Middleware = Any
 
 
 def create_app(
@@ -71,6 +75,8 @@ def create_app(
     Returns:
         `FastAPI`: A fully configured application ready to serve requests.
     """
+    from fastapi import FastAPI
+
     # Register any user-supplied credential types before the app starts
     for cls in extra_credentials or []:
         CredentialFactory.register_credential(cls)
