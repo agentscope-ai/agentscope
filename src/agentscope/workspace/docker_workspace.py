@@ -31,7 +31,6 @@ from pathlib import PurePosixPath
 from typing import Any
 
 from .._logging import logger
-from ..mcp import MCPClient
 from ..message import (
     Base64Source,
     DataBlock,
@@ -43,7 +42,7 @@ from ..message import (
 from ..skill import Skill
 from ..tool import ToolBase
 from .config import MCPServerConfig
-from .gateway import GatewayMixin
+from .mcp_enhanced_workspace import WorkspaceWithMCP
 from .types import ExecutionResult, SerializedWorkspaceState
 
 _EXECUTOR = ThreadPoolExecutor(
@@ -82,7 +81,7 @@ class InternalEndpoint:
     is_tls_enabled: bool = False
 
 
-class DockerWorkspace(GatewayMixin):
+class DockerWorkspace(WorkspaceWithMCP):
     """Workspace backed by a Docker container.
 
     Usage::
@@ -93,6 +92,8 @@ class DockerWorkspace(GatewayMixin):
         # ... agent runs ...
         await workspace.close()
     """
+
+    _gateway_mcp_client: Any
 
     DEFAULT_IMAGE = "ubuntu:22.04"
     DEFAULT_WORKING_DIR = "/workspace"
@@ -130,10 +131,12 @@ class DockerWorkspace(GatewayMixin):
                 ``RuntimeError``.
             instructions: Custom system prompt fragment.
         """
+        super().__init__(
+            mcp_servers=mcp_servers,
+            gateway_port=gateway_port,
+        )
         self._image = image
         self._working_dir = working_dir
-        self._mcp_servers = mcp_servers or []
-        self._gateway_port = gateway_port
         self._exposed_ports = exposed_ports or []
         self._volumes = volumes or {}
         self._env = env or {}
@@ -144,9 +147,6 @@ class DockerWorkspace(GatewayMixin):
         self._client: Any = None  # docker.DockerClient
         self._container: Any = None  # Container
         self._port_mapping: dict[int, int] = {}
-        self._gateway_token = ""
-        self._gateway_mcp_client: MCPClient | None = None
-        self._gateway_base_url = ""
         self._started = False
 
     @property
@@ -314,7 +314,7 @@ class DockerWorkspace(GatewayMixin):
         """No built-in tools — all tools come via the MCP gateway."""
         return []
 
-    # list_mcps is provided by GatewayMixin
+    # list_mcps is provided by WorkspaceWithMCP
 
     # ── skill discovery ────────────────────────────────────────────
 
@@ -429,7 +429,7 @@ class DockerWorkspace(GatewayMixin):
         await self._write(path, "".join(parts).encode("utf-8"))
         return path
 
-    # add_mcp / remove_mcp are provided by GatewayMixin
+    # add_mcp / remove_mcp are provided by WorkspaceWithMCP
 
     # ── dynamic skill management (docker SDK) ─────────────────────
 
@@ -612,17 +612,19 @@ class DockerWorkspace(GatewayMixin):
             raise ValueError(f"port {port} is not exposed")
         return InternalEndpoint(host="127.0.0.1", port=host_port)
 
-    # ── GatewayMixin hooks ─────────────────────────────────────────
+    # ── WorkspaceWithMCP hooks ──────────────────────────────────────
 
-    async def _gw_write_remote(self, path: str, data: bytes) -> None:
+    async def _write_remote(self, path: str, data: bytes) -> None:
+        """Write bytes to a file inside the container."""
         await self._write(path, data)
 
-    async def _gw_resolve_base_url(self, port: int) -> str:
+    async def _resolve_base_url(self, port: int) -> str:
+        """Map container port to a localhost URL."""
         endpoint = self._resolve_port(port)
         return f"http://{endpoint.host}:{endpoint.port}"
 
-    # _start_gateway, _build_gw_config, _wait_for_gateway,
-    # _ensure_gateway_python_deps are inherited from GatewayMixin.
+    # _start_gateway, _build_gateway_config, _wait_for_gateway,
+    # _ensure_gateway_python_deps are inherited from WorkspaceWithMCP.
 
     async def _offload_data(self, data_block: DataBlock) -> DataBlock:
         """Decode base64 data, save in container, return URL block.

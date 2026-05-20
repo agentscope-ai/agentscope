@@ -46,7 +46,12 @@ TOOL_NAME_SEPARATOR = "___"
 
 
 class _MCPServerClient:
-    """Persistent connection to one MCP server inside the container."""
+    """Persistent connection to one MCP server inside the container.
+
+    This intentionally duplicates a subset of ``agentscope.mcp.MCPClient``
+    because this script is copied into the container as a standalone file
+    and ``agentscope`` is not installed there.
+    """
 
     def __init__(self, name: str) -> None:
         self.name = name
@@ -116,24 +121,6 @@ class _ToolRoute:
         self.original_name = original_name
 
 
-def _build_routes(
-    clients: list[_MCPServerClient],
-) -> tuple[dict[str, _ToolRoute], dict[str, mtypes.Tool]]:
-    """Build routes and tool schemas from connected clients.
-
-    All exposed tool names use the format ``server_name___tool_name``
-    to ensure a consistent naming convention regardless of conflicts.
-    """
-    routes: dict[str, _ToolRoute] = {}
-    schemas: dict[str, mtypes.Tool] = {}
-    for c in clients:
-        for t in c.tools:
-            exposed = f"{c.name}{TOOL_NAME_SEPARATOR}{t.name}"
-            routes[exposed] = _ToolRoute(c, t.name)
-            schemas[exposed] = t
-    return routes, schemas
-
-
 # ── gateway state (mutable at runtime) ────────────────────────────
 
 
@@ -147,8 +134,21 @@ class _GatewayState:
         self.server: FastMCP | None = None
 
     def rebuild(self) -> None:
-        """Rebuild the tool route table from all connected clients."""
-        self.routes, self.schemas = _build_routes(self.clients)
+        """Rebuild routes and tool schemas from all connected clients.
+
+        All exposed tool names use the format
+        ``server_name___tool_name`` to ensure a consistent naming
+        convention regardless of conflicts.
+        """
+        routes: dict[str, _ToolRoute] = {}
+        schemas: dict[str, mtypes.Tool] = {}
+        for c in self.clients:
+            for t in c.tools:
+                exposed = f"{c.name}{TOOL_NAME_SEPARATOR}{t.name}"
+                routes[exposed] = _ToolRoute(c, t.name)
+                schemas[exposed] = t
+        self.routes = routes
+        self.schemas = schemas
 
 
 _state = _GatewayState()
@@ -285,7 +285,7 @@ async def _run(config_path: str, port: int) -> None:
         ]
         return JSONResponse(items)
 
-    async def _api_tools(
+    async def _list_tools(
         request: Request,  # pylint: disable=unused-argument
     ) -> JSONResponse:
         """Return JSON list of all available tool schemas."""
@@ -300,7 +300,7 @@ async def _run(config_path: str, port: int) -> None:
             )
         return JSONResponse(tools)
 
-    async def _api_call(request: Request) -> JSONResponse:
+    async def _call_tool(request: Request) -> JSONResponse:
         body = await request.json()
         tool_name = body.get("name", "")
         arguments = body.get("arguments", {})
@@ -340,10 +340,10 @@ async def _run(config_path: str, port: int) -> None:
         Route("/mcp/remove", _remove_mcp, methods=["POST"]),
     )
     app.routes.insert(3, Route("/mcp/list", _list_mcp))
-    app.routes.insert(4, Route("/api/tools", _api_tools))
+    app.routes.insert(4, Route("/tools/list", _list_tools))
     app.routes.insert(
         5,
-        Route("/api/call", _api_call, methods=["POST"]),
+        Route("/tools/call", _call_tool, methods=["POST"]),
     )
 
     print(
@@ -420,8 +420,11 @@ def _register_proxy_tools(
 ) -> None:
     """(Re-)register proxy tool functions on the FastMCP server.
 
-    Clears previously registered tools first so that removed upstream
-    servers no longer expose stale tools.
+    Uses a **clear-and-rebuild** strategy: all previously registered
+    tools are removed first, then only the tools present in
+    ``state.schemas`` (which reflects the current set of connected
+    clients) are re-registered.  This guarantees that tools belonging
+    to a removed upstream server are no longer exposed.
     """
     # pylint: disable=protected-access
     server._tool_manager._tools.clear()

@@ -21,7 +21,6 @@ from copy import deepcopy
 from typing import Any
 
 from .._logging import logger
-from ..mcp import MCPClient
 from ..message import (
     Base64Source,
     DataBlock,
@@ -33,7 +32,7 @@ from ..message import (
 from ..skill import Skill
 from ..tool import ToolBase
 from .config import MCPServerConfig
-from .gateway import GatewayMixin
+from .mcp_enhanced_workspace import WorkspaceWithMCP
 from .types import ExecutionResult, SerializedWorkspaceState
 
 _DEFAULT_INSTRUCTIONS = """<workspace>
@@ -45,7 +44,7 @@ and processes.
 </workspace>"""
 
 
-class E2BWorkspace(GatewayMixin):
+class E2BWorkspace(WorkspaceWithMCP):
     """Workspace backed by an E2B cloud sandbox.
 
     Usage::
@@ -60,6 +59,8 @@ class E2BWorkspace(GatewayMixin):
         # ...
         await workspace.close()
     """
+
+    _gateway_mcp_client: Any
 
     DEFAULT_TEMPLATE = "base"
     DEFAULT_WORKING_DIR = "/home/user"
@@ -102,13 +103,15 @@ class E2BWorkspace(GatewayMixin):
                 creation.
             instructions: Custom system prompt fragment.
         """
+        super().__init__(
+            mcp_servers=mcp_servers,
+            gateway_port=gateway_port,
+        )
         self._template = template
         self._api_key = api_key
         self._domain = domain
         self._timeout_seconds = timeout_seconds
         self._working_dir = working_dir
-        self._mcp_servers = mcp_servers or []
-        self._gateway_port = gateway_port
         self._env = env or {}
         self._metadata = dict(metadata or {})
         self._startup_commands = list(startup_commands or [])
@@ -116,9 +119,6 @@ class E2BWorkspace(GatewayMixin):
 
         self._id = uuid.uuid4().hex[:12]
         self._sandbox: Any = None  # e2b.AsyncSandbox
-        self._gateway_token = ""
-        self._gateway_mcp_client: MCPClient | None = None
-        self._gateway_base_url = ""
         self._started = False
 
     @property
@@ -225,7 +225,7 @@ class E2BWorkspace(GatewayMixin):
         """No built-in tools — all tools come via the MCP gateway."""
         return []
 
-    # list_mcps is provided by GatewayMixin
+    # list_mcps is provided by WorkspaceWithMCP
 
     # ── skill discovery ────────────────────────────────────────────
 
@@ -345,7 +345,7 @@ class E2BWorkspace(GatewayMixin):
         )
         return path
 
-    # add_mcp / remove_mcp are provided by GatewayMixin
+    # add_mcp / remove_mcp are provided by WorkspaceWithMCP
 
     # ── dynamic skill management ───────────────────────────────────
 
@@ -464,9 +464,9 @@ class E2BWorkspace(GatewayMixin):
                 await asyncio.sleep(delay)
         raise RuntimeError("unreachable")
 
-    # ── GatewayMixin hooks ─────────────────────────────────────────
+    # ── WorkspaceWithMCP hooks ──────────────────────────────────────
 
-    async def _gw_write_remote(self, path: str, data: bytes) -> None:
+    async def _write_remote(self, path: str, data: bytes) -> None:
         """Write bytes to a file in the E2B sandbox.
 
         Args:
@@ -475,8 +475,8 @@ class E2BWorkspace(GatewayMixin):
         """
         await self._sandbox.files.write(path, data)
 
-    async def _gw_resolve_base_url(self, port: int) -> str:
-        """Return the HTTPS gateway URL via E2B's host resolution.
+    async def _resolve_base_url(self, port: int) -> str:
+        """Return the HTTPS URL via E2B's host resolution.
 
         Args:
             port: Container port to resolve.
@@ -484,7 +484,7 @@ class E2BWorkspace(GatewayMixin):
         host = self._sandbox.get_host(port)
         return f"https://{host}"
 
-    def _gw_platform_headers(self) -> dict[str, str]:
+    def _platform_headers(self) -> dict[str, str]:
         """Return the ``X-Access-Token`` header for E2B proxy auth."""
         if not self._sandbox:
             return {}
@@ -497,8 +497,8 @@ class E2BWorkspace(GatewayMixin):
             return {"X-Access-Token": token}
         return {}
 
-    # _start_gateway, _build_gw_config, _wait_for_gateway,
-    # _ensure_gateway_python_deps are inherited from GatewayMixin.
+    # _start_gateway, _build_gateway_config, _wait_for_gateway,
+    # _ensure_gateway_python_deps are inherited from WorkspaceWithMCP.
 
     async def _offload_data(self, data_block: DataBlock) -> DataBlock:
         """Decode base64 data, save in sandbox, return URL block.

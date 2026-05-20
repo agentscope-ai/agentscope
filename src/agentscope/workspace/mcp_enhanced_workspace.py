@@ -1,19 +1,19 @@
 # -*- coding: utf-8 -*-
-"""GatewayMixin — intermediate workspace base for container/sandbox backends.
+"""WorkspaceWithMCP — workspace base for container/sandbox MCP backends.
 
 Inherits from :class:`WorkspaceBase` and adds in-container MCP gateway
 management.  Both :class:`DockerWorkspace` and :class:`E2BWorkspace`
 inherit from this class so that ``add_mcp``, ``remove_mcp``,
 ``_start_gateway``, ``_wait_for_gateway``,
-``_ensure_gateway_python_deps``, ``_build_gw_config``, and
+``_ensure_gateway_python_deps``, ``_build_gateway_config``, and
 ``list_mcps`` are defined once.
 
 Subclasses must implement:
 
-* ``_exec(command, *, timeout)``   — execute a shell command remotely
+* ``_exec(command, *, timeout)`` — execute a shell command remotely
   (inherited from :class:`WorkspaceBase`)
-* ``_gw_write_remote(path, data)`` — write bytes to the remote filesystem
-* ``_gw_resolve_base_url(port)``   — return the gateway's reachable base URL
+* ``_write_remote(path, data)`` — write bytes to the remote filesystem
+* ``_resolve_base_url(port)`` — return the gateway's reachable base URL
 """
 
 from __future__ import annotations
@@ -26,12 +26,12 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from ..._logging import logger
-from ..workspace_base import WorkspaceBase
+from .._logging import logger
+from .workspace_base import WorkspaceBase
 
 if TYPE_CHECKING:
-    from ...mcp import MCPClient
-    from ..config import MCPServerConfig
+    from ..mcp import MCPClient
+    from .config import MCPServerConfig
 
 
 class _RestToolProxy:
@@ -55,11 +55,15 @@ class _RestToolProxy:
         self._base_url = base_url
         self._headers = headers
 
-    async def __call__(self, **kwargs: Any) -> str:
-        """POST the tool call to the gateway and return the result."""
+    async def __call__(self, **kwargs: Any) -> Any:
+        """POST the tool call to the gateway and return its JSON result.
+
+        The gateway returns JSON-serializable data from upstream MCP
+        tools, so the result is not guaranteed to be a string.
+        """
         async with httpx.AsyncClient(verify=False) as client:
             resp = await client.post(
-                f"{self._base_url}/api/call",
+                f"{self._base_url}/tools/call",
                 json={"name": self._name, "arguments": kwargs},
                 headers=self._headers,
                 timeout=60.0,
@@ -69,15 +73,15 @@ class _RestToolProxy:
                     f"tool call {self._name!r} failed "
                     f"({resp.status_code}): {resp.text}",
                 )
-            return resp.json().get("result", "")
+            return resp.json().get("result")
 
 
 class _RestGatewayClient:
     """Lightweight REST-based gateway client.
 
-    Presents the same interface that the Toolkit expects from ``MCPClient``
+    Presents the same interface shape used by ``Toolkit.register_mcp``
     (``list_tools``, ``get_tool``, ``is_connected``, ``close``) but
-    communicates with the in-container gateway via simple JSON REST calls
+    communicates with the in-container gateway via JSON REST calls
     instead of MCP protocol. This avoids issues with proxies that don't
     support streaming HTTP / SSE connections (e.g. E2B).
     """
@@ -113,7 +117,7 @@ class _RestGatewayClient:
         """Fetch tool schemas from the gateway REST API."""
         async with httpx.AsyncClient(verify=False) as client:
             resp = await client.get(
-                f"{self._base_url}/api/tools",
+                f"{self._base_url}/tools/list",
                 headers=self._headers,
                 timeout=30.0,
             )
@@ -137,6 +141,9 @@ class _RestGatewayClient:
     async def get_tool(self, name: str) -> _RestToolProxy:
         """Return a callable proxy for the named tool.
 
+        ``Toolkit.register_mcp`` calls ``get_tool`` after discovering
+        tool schemas with ``list_tools``.
+
         Args:
             name: Exact tool name as registered on the gateway.
         """
@@ -152,42 +159,52 @@ class _RestGatewayClient:
         raise ValueError(f"Tool {name!r} not found")
 
 
-class GatewayMixin(WorkspaceBase):
-    """Intermediate base for container/sandbox workspaces with MCP gateway.
+class WorkspaceWithMCP(WorkspaceBase):
+    """Intermediate base for container/sandbox workspaces with MCP.
 
     Inherits ``_exec`` from :class:`WorkspaceBase` (remains abstract
     here — concrete subclasses like ``DockerWorkspace`` and
     ``E2BWorkspace`` must provide the implementation).
-
-    Subclasses must also set the following instance attributes in
-    their ``__init__``:
-
-    * ``_mcp_servers: list[MCPServerConfig]``
-    * ``_gateway_port: int``
-    * ``_gateway_token: str``
-    * ``_gateway_mcp_client``
-    * ``_gateway_base_url: str``
     """
 
-    # These attributes are initialised by the concrete workspace's
-    # ``__init__`` — this class only reads/writes them.
     _gateway_token: str
-    _gateway_mcp_client: "MCPClient | _RestGatewayClient | None"
+    _gateway_mcp_client: Any
     _gateway_base_url: str
     _mcp_servers: "list[MCPServerConfig]"
     _gateway_port: int
 
+    def __init__(
+        self,
+        *,
+        mcp_servers: "list[MCPServerConfig] | None" = None,
+        gateway_port: int = 5600,
+    ) -> None:
+        """Initialise MCP gateway state for a workspace.
+
+        Args:
+            mcp_servers: MCP servers to run through the workspace
+                gateway.
+            gateway_port: Port that the in-workspace gateway listens on.
+        """
+        self._mcp_servers = list(mcp_servers or [])
+        self._gateway_port = gateway_port
+        self._gateway_token = ""
+        self._gateway_mcp_client: (
+            _RestGatewayClient | None
+        ) = None
+        self._gateway_base_url = ""
+
     # ── hooks for subclasses ──────────────────────────────────────
 
     @abstractmethod
-    async def _gw_write_remote(self, path: str, data: bytes) -> None:
+    async def _write_remote(self, path: str, data: bytes) -> None:
         """Write *data* to *path* inside the container / sandbox."""
 
     @abstractmethod
-    async def _gw_resolve_base_url(self, port: int) -> str:
+    async def _resolve_base_url(self, port: int) -> str:
         """Return the HTTP(S) base URL reachable from the host."""
 
-    def _gw_platform_headers(self) -> dict[str, str]:
+    def _platform_headers(self) -> dict[str, str]:
         """Extra HTTP headers required by the hosting platform.
 
         Override in subclasses that need platform-level auth to reach
@@ -225,7 +242,7 @@ class GatewayMixin(WorkspaceBase):
             if config.env:
                 body["env"] = dict(config.env)
 
-        headers: dict[str, str] = {**self._gw_platform_headers()}
+        headers: dict[str, str] = {**self._platform_headers()}
         if self._gateway_token:
             headers["Authorization"] = f"Bearer {self._gateway_token}"
 
@@ -241,7 +258,6 @@ class GatewayMixin(WorkspaceBase):
                     f"add_mcp failed ({resp.status_code}): {resp.text}",
                 )
 
-        # Refresh tool list so new tools are discoverable
         if self._gateway_mcp_client:
             await self._gateway_mcp_client.list_tools()
 
@@ -260,7 +276,7 @@ class GatewayMixin(WorkspaceBase):
         if not self._gateway_base_url:
             raise RuntimeError("Gateway not started")
 
-        headers: dict[str, str] = {**self._gw_platform_headers()}
+        headers: dict[str, str] = {**self._platform_headers()}
         if self._gateway_token:
             headers["Authorization"] = f"Bearer {self._gateway_token}"
 
@@ -276,7 +292,6 @@ class GatewayMixin(WorkspaceBase):
                     f"remove_mcp failed ({resp.status_code}): {resp.text}",
                 )
 
-        # Refresh tool list so removed tools are no longer visible
         if self._gateway_mcp_client:
             await self._gateway_mcp_client.list_tools()
 
@@ -285,42 +300,42 @@ class GatewayMixin(WorkspaceBase):
     # ── gateway lifecycle (called from workspace.initialize) ──────
 
     async def _start_gateway(self) -> None:
-        """Start the gateway
+        """Start the gateway.
 
         The gateway uses Bearer token auth — the token is generated
         per-workspace and written into the gateway config. Requests
-        from the host must include this token to authenticate."""
-
+        from the host must include this token to authenticate.
+        """
         self._gateway_token = uuid.uuid4().hex
 
         await self._ensure_gateway_python_deps()
 
-        gw_config = self._build_gw_config()
+        gateway_config = self._build_gateway_config()
         config_path = "/tmp/.agentscope_gw_config.json"  # noqa: S108
-        await self._gw_write_remote(
+        await self._write_remote(
             config_path,
-            json.dumps(gw_config).encode(),
+            json.dumps(gateway_config).encode(),
         )
 
         import importlib.resources as _res
 
-        gw_src = (
-            _res.files("agentscope.workspace.gateway")
-            .joinpath("_server.py")
+        gateway_src = (
+            _res.files("agentscope.workspace")
+            .joinpath("mcp_gateway_app.py")
             .read_text()
         )
-        gw_script = "/tmp/_in_container_gateway.py"  # noqa: S108
-        await self._gw_write_remote(gw_script, gw_src.encode())
+        gateway_script = "/tmp/_in_container_gateway.py"  # noqa: S108
+        await self._write_remote(gateway_script, gateway_src.encode())
 
         launch = (
             'PY="$(command -v python3 2>/dev/null || command -v python)"; '
-            f'nohup "$PY" -u {gw_script}'
+            f'nohup "$PY" -u {gateway_script}'
             f" --config {config_path} --port {self._gateway_port}"
             " > /tmp/gw.log 2>&1 &"
         )
         await self._exec(launch, timeout=5)
 
-        self._gateway_base_url = await self._gw_resolve_base_url(
+        self._gateway_base_url = await self._resolve_base_url(
             self._gateway_port,
         )
 
@@ -342,19 +357,19 @@ class GatewayMixin(WorkspaceBase):
         # written into the gateway config; the in-container
         # ``_TokenAuth`` middleware validates it on every request
         # (except ``/health``).
-        gw_headers = {**self._gw_platform_headers()}
+        headers = {**self._platform_headers()}
         if self._gateway_token:
-            gw_headers["Authorization"] = f"Bearer {self._gateway_token}"
+            headers["Authorization"] = f"Bearer {self._gateway_token}"
 
         self._gateway_mcp_client = _RestGatewayClient(
             base_url=self._gateway_base_url,
-            headers=gw_headers,
+            headers=headers,
         )
         logger.info("%s: gateway connected (REST)", type(self).__name__)
 
     # ── internal helpers ──────────────────────────────────────────
 
-    def _build_gw_config(self) -> dict[str, Any]:
+    def _build_gateway_config(self) -> dict[str, Any]:
         """Build the JSON config dict for the in-container gateway."""
         servers = []
         for s in self._mcp_servers:
@@ -389,13 +404,13 @@ class GatewayMixin(WorkspaceBase):
             RuntimeError: If the gateway does not become ready
                 within the retry budget.
         """
-        platform_hdrs = self._gw_platform_headers()
+        platform_headers = self._platform_headers()
         async with httpx.AsyncClient(verify=False) as client:
             for i in range(retries):
                 try:
                     resp = await client.get(
                         health_url,
-                        headers=platform_hdrs,
+                        headers=platform_headers,
                         timeout=2.0,
                     )
                     if resp.status_code == 200:
