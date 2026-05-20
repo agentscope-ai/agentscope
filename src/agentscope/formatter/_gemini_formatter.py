@@ -19,7 +19,6 @@ from ..message import (
     DataBlock,
     ToolCallBlock,
     ToolResultBlock,
-    UserMsg,
     URLSource,
     Base64Source,
 )
@@ -161,7 +160,17 @@ class GeminiChatFormatter(_GeminiFormatterBase):
                     parts.append({"thought": True, "text": block.thinking})
 
                 elif isinstance(block, HintBlock):
-                    pass  # Gemini does not support hint blocks
+                    if parts:
+                        role = "model" if msg.role == "assistant" else "user"
+                        messages.append({"role": role, "parts": parts})
+                        parts = []
+
+                    messages.append(
+                        {
+                            "role": "user",
+                            "parts": [{"text": block.hint}],
+                        },
+                    )
 
                 elif isinstance(block, DataBlock):
                     formatted = self._format_gemini_data_block(block)
@@ -180,6 +189,11 @@ class GeminiChatFormatter(_GeminiFormatterBase):
                     )
 
                 elif isinstance(block, ToolResultBlock):
+                    if parts:
+                        role = "model" if msg.role == "assistant" else "user"
+                        messages.append({"role": role, "parts": parts})
+                        parts = []
+
                     (
                         textual_output,
                         multimodal_data,
@@ -203,13 +217,20 @@ class GeminiChatFormatter(_GeminiFormatterBase):
                     )
 
                     if multimodal_data:
-                        msgs.insert(
-                            i + 1,
-                            UserMsg(
-                                name="system-reminder",
-                                content=multimodal_data,
-                            ),
-                        )
+                        promo_parts = []
+                        for item in multimodal_data:
+                            if isinstance(item, TextBlock):
+                                promo_parts.append({"text": item.text})
+                            elif isinstance(item, DataBlock):
+                                fmt_item = self._format_gemini_data_block(
+                                    item,
+                                )
+                                if fmt_item is not None:
+                                    promo_parts.append(fmt_item)
+                        if promo_parts:
+                            messages.append(
+                                {"role": "user", "parts": promo_parts},
+                            )
 
                 else:
                     logger.warning(

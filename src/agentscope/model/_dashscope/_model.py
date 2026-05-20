@@ -21,7 +21,6 @@ from ...message import (
     Base64Source,
 )
 from ...tool import ToolChoice
-from ...tracing import trace_llm
 
 if TYPE_CHECKING:
     from openai.types.chat import ChatCompletion
@@ -138,7 +137,6 @@ class DashScopeChatModel(ChatModelBase):
         )
         self.formatter = formatter or DashScopeChatFormatter()
 
-    @trace_llm
     async def _call_api(
         self,
         model_name: str,
@@ -301,13 +299,16 @@ class DashScopeChatModel(ChatModelBase):
                 acc_thinking.thinking += delta_thinking
                 acc_text.text += delta_text
 
+                delta_tool_call_blocks: List[ToolCallBlock] = []
                 for tool_call in getattr(delta, "tool_calls", None) or []:
                     idx = tool_call.index
+                    args = (
+                        tool_call.function.arguments
+                        if tool_call.function
+                        else ""
+                    ) or ""
                     if idx in acc_tool_calls:
-                        if tool_call.function and tool_call.function.arguments:
-                            acc_tool_calls[idx][
-                                "input"
-                            ] += tool_call.function.arguments
+                        acc_tool_calls[idx]["input"] += args
                     else:
                         acc_tool_calls[idx] = {
                             "id": tool_call.id or "",
@@ -316,13 +317,16 @@ class DashScopeChatModel(ChatModelBase):
                                 if tool_call.function
                                 else ""
                             ),
-                            "input": (
-                                tool_call.function.arguments
-                                if tool_call.function
-                                else ""
-                            )
-                            or "",
+                            "input": args,
                         }
+                    tc = acc_tool_calls[idx]
+                    delta_tool_call_blocks.append(
+                        ToolCallBlock(
+                            id=tc["id"],
+                            name=tc["name"],
+                            input=args,
+                        ),
+                    )
 
                 delta_contents: List[
                     TextBlock | ToolCallBlock | ThinkingBlock
@@ -338,6 +342,7 @@ class DashScopeChatModel(ChatModelBase):
                     delta_contents.append(
                         TextBlock(id=acc_text.id, text=delta_text),
                     )
+                delta_contents.extend(delta_tool_call_blocks)
 
                 if delta_contents:
                     _kwargs: dict[str, Any] = {

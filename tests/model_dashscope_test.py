@@ -1,20 +1,22 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
-"""Unit tests for DashScopeChatModel response parsing.
+"""Unit tests for DashScopeChatModel with mocked API responses.
 
-Formatter tests have been moved to tests/formatter_dashscope_test.py.
+Tests cover both non-streaming and streaming modes.
 """
-import json
 from typing import Any
-from datetime import datetime
 import unittest
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from agentscope.message import TextBlock, ToolCallBlock
+from utils import AnyString
+
+from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
 from agentscope.model import DashScopeChatModel
 from agentscope.credential import DashScopeCredential
 from agentscope.tool import ToolChoice
+
+A = AnyString()
 
 
 # ---------------------------------------------------------------------------
@@ -22,13 +24,13 @@ from agentscope.tool import ToolChoice
 # ---------------------------------------------------------------------------
 
 
-def _make_model() -> Any:
+def _make_model(stream: bool = False) -> Any:
     return DashScopeChatModel(
         credential=DashScopeCredential(api_key="test"),
         model="qwen3-max",
-        stream=False,
+        stream=stream,
         max_retries=3,
-        context_size=int(1500),
+        context_size=131_072,
         parameters=DashScopeChatModel.Parameters(
             max_tokens=1000,
             thinking_enable=True,
@@ -37,77 +39,381 @@ def _make_model() -> Any:
     )
 
 
+def _mock_completion(
+    text: Any = None,
+    tool_calls: Any = None,
+    reasoning: Any = None,
+    response_id: str = "req-1",
+) -> MagicMock:
+    """Build a mock non-streaming ChatCompletion response."""
+    msg = MagicMock()
+    msg.content = text
+    msg.reasoning_content = reasoning
+    msg.tool_calls = None
+
+    if tool_calls:
+        tc_mocks = []
+        for tc in tool_calls:
+            m = MagicMock()
+            m.id = tc["id"]
+            m.function.name = tc["name"]
+            m.function.arguments = tc["arguments"]
+            tc_mocks.append(m)
+        msg.tool_calls = tc_mocks
+
+    choice = MagicMock()
+    choice.message = msg
+
+    resp = MagicMock()
+    resp.id = response_id
+    resp.choices = [choice]
+    resp.usage = MagicMock()
+    resp.usage.prompt_tokens = 10
+    resp.usage.completion_tokens = 5
+    resp.usage.prompt_tokens_details = None
+    return resp
+
+
+def _make_stream_chunk(
+    delta_text: str | None = None,
+    delta_reasoning: str | None = None,
+    tool_calls: list | None = None,
+    response_id: str = "req-1",
+    usage: dict | None = None,
+    has_choices: bool = True,
+) -> MagicMock:
+    """Build a single mock streaming chunk."""
+    chunk = MagicMock()
+    chunk.id = response_id
+
+    if usage:
+        chunk.usage = MagicMock()
+        chunk.usage.prompt_tokens = usage.get("prompt_tokens", 0)
+        chunk.usage.completion_tokens = usage.get("completion_tokens", 0)
+        chunk.usage.prompt_tokens_details = None
+    else:
+        chunk.usage = None
+
+    if has_choices:
+        delta = MagicMock()
+        delta.content = delta_text
+        delta.reasoning_content = delta_reasoning
+        delta.tool_calls = tool_calls
+        delta.audio = None
+        choice = MagicMock()
+        choice.delta = delta
+        chunk.choices = [choice]
+    else:
+        chunk.choices = []
+
+    return chunk
+
+
+def _make_tool_call_delta(
+    index: int,
+    tc_id: str | None = None,
+    name: str | None = None,
+    arguments: str | None = None,
+) -> MagicMock:
+    tc = MagicMock()
+    tc.index = index
+    tc.id = tc_id
+    tc.function = MagicMock()
+    tc.function.name = name
+    tc.function.arguments = arguments
+    return tc
+
+
+class _MockAsyncStream:
+    """Mock async stream (context manager + async iterator)."""
+
+    def __init__(self, chunks: list) -> None:
+        self._chunks = chunks
+        self._index = 0
+
+    async def __aenter__(self) -> "_MockAsyncStream":
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        pass
+
+    def __aiter__(self) -> "_MockAsyncStream":
+        return self
+
+    async def __anext__(self) -> Any:
+        if self._index >= len(self._chunks):
+            raise StopAsyncIteration
+        chunk = self._chunks[self._index]
+        self._index += 1
+        return chunk
+
+
 # ---------------------------------------------------------------------------
-# Model response parsing tests
+# Non-streaming tests
 # ---------------------------------------------------------------------------
 
 
-class TestDashScopeModelParsing(IsolatedAsyncioTestCase):
-    """Unit tests for DashScopeChatModel response parsing."""
+class TestDashScopeNonStream(IsolatedAsyncioTestCase):
+    """Tests for DashScopeChatModel in non-streaming mode."""
 
     def setUp(self) -> None:
-        """Set up a fresh model instance and start time."""
-        self.model = _make_model()
-        self.start = datetime.now()
+        self.model = _make_model(stream=False)
 
-    def _mock_response(
+    @patch("openai.AsyncClient")
+    async def test_text_response(self, mock_client_cls: MagicMock) -> None:
+        """Non-stream text response returns a single ChatResponse."""
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello!"),
+        )
+        mock_client_cls.return_value.chat.completions.create = mock_create
+
+        result = await self.model([])
+
+        self.assertEqual(
+            (result.is_last, result.content),
+            (True, [TextBlock.model_construct(id=A, text="Hello!")]),
+        )
+        self.assertEqual(result.id, "req-1")
+
+    @patch("openai.AsyncClient")
+    async def test_tool_call_response(
         self,
-        content: Any = None,
-        tool_calls: Any = None,
-        reasoning_content: Any = None,
-    ) -> "MagicMock":
-        """Build a minimal OpenAI ChatCompletion-style mock."""
-        message = MagicMock()
-        message.content = content
-        message.tool_calls = tool_calls
-        message.reasoning_content = reasoning_content
-
-        choice = MagicMock()
-        choice.message = message
-
-        usage = MagicMock()
-        usage.prompt_tokens = 10
-        usage.completion_tokens = 5
-        usage.prompt_tokens_details = None
-
-        resp = MagicMock()
-        resp.id = "req-1"
-        resp.choices = [choice]
-        resp.usage = usage
-        return resp
-
-    async def test_parse_text_response(self) -> None:
-        """Parsing a text response creates a TextBlock."""
-        resp = self._mock_response(content="Hello!")
-        result = self.model._parse_completion_response(
-            self.start,
-            resp,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Non-stream tool call response creates ToolCallBlocks."""
+        mock_create = AsyncMock(
+            return_value=_mock_completion(
+                tool_calls=[
+                    {
+                        "id": "call-1",
+                        "name": "get_weather",
+                        "arguments": '{"city":"Hangzhou"}',
+                    },
+                ],
+            ),
         )
-        self.assertTrue(result.is_last)
-        texts = [b for b in result.content if isinstance(b, TextBlock)]
-        self.assertEqual(texts[0].text, "Hello!")
+        mock_client_cls.return_value.chat.completions.create = mock_create
 
-    async def test_parse_tool_call_response(self) -> None:
-        """Parsing a tool-call response creates a ToolCallBlock."""
-        tc_mock = MagicMock()
-        tc_mock.id = "call-1"
-        tc_mock.function.name = "get_weather"
-        tc_mock.function.arguments = '{"city":"Beijing"}'
+        result = await self.model([])
 
-        resp = self._mock_response(tool_calls=[tc_mock])
-        result = self.model._parse_completion_response(
-            self.start,
-            resp,
+        self.assertEqual(
+            (result.is_last, result.content),
+            (
+                True,
+                [
+                    ToolCallBlock(
+                        id="call-1",
+                        name="get_weather",
+                        input='{"city":"Hangzhou"}',
+                    ),
+                ],
+            ),
         )
-        tcs = [b for b in result.content if isinstance(b, ToolCallBlock)]
-        self.assertEqual(len(tcs), 1)
-        self.assertEqual(tcs[0].id, "call-1")
-        self.assertEqual(tcs[0].name, "get_weather")
-        self.assertEqual(json.loads(tcs[0].input)["city"], "Beijing")
+
+    @patch("openai.AsyncClient")
+    async def test_thinking_response(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Non-stream response with reasoning creates ThinkingBlock."""
+        mock_create = AsyncMock(
+            return_value=_mock_completion(
+                text="42",
+                reasoning="Reasoning step...",
+            ),
+        )
+        mock_client_cls.return_value.chat.completions.create = mock_create
+
+        result = await self.model([])
+
+        self.assertEqual(
+            (result.is_last, result.content),
+            (
+                True,
+                [
+                    ThinkingBlock.model_construct(
+                        id=A,
+                        thinking="Reasoning step...",
+                    ),
+                    TextBlock.model_construct(id=A, text="42"),
+                ],
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------
-# Shared _format_tools fixtures
+# Streaming tests
+# ---------------------------------------------------------------------------
+
+
+class TestDashScopeStream(IsolatedAsyncioTestCase):
+    """Tests for DashScopeChatModel in streaming mode."""
+
+    def setUp(self) -> None:
+        self.model = _make_model(stream=True)
+
+    @patch("openai.AsyncClient")
+    async def test_stream_text(self, mock_client_cls: MagicMock) -> None:
+        """Stream text yields n deltas + 1 final with full content."""
+        chunks = [
+            _make_stream_chunk(delta_text="Hello"),
+            _make_stream_chunk(delta_text=" world"),
+            _make_stream_chunk(
+                has_choices=False,
+                usage={"prompt_tokens": 10, "completion_tokens": 2},
+            ),
+        ]
+        mock_create = AsyncMock(return_value=_MockAsyncStream(chunks))
+        mock_client_cls.return_value.chat.completions.create = mock_create
+
+        gen = await self.model([])
+        responses = [r async for r in gen]
+
+        self.assertListEqual(
+            [(r.is_last, r.content) for r in responses],
+            [
+                (False, [TextBlock.model_construct(id=A, text="Hello")]),
+                (False, [TextBlock.model_construct(id=A, text=" world")]),
+                (True, [TextBlock.model_construct(id=A, text="Hello world")]),
+            ],
+        )
+
+    @patch("openai.AsyncClient")
+    async def test_stream_thinking_and_text(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Stream reasoning + text yields deltas then accumulated final."""
+        chunks = [
+            _make_stream_chunk(delta_reasoning="Think"),
+            _make_stream_chunk(delta_reasoning="ing"),
+            _make_stream_chunk(delta_text="Answer"),
+            _make_stream_chunk(
+                has_choices=False,
+                usage={"prompt_tokens": 10, "completion_tokens": 5},
+            ),
+        ]
+        mock_create = AsyncMock(return_value=_MockAsyncStream(chunks))
+        mock_client_cls.return_value.chat.completions.create = mock_create
+
+        gen = await self.model([])
+        responses = [r async for r in gen]
+
+        self.assertListEqual(
+            [(r.is_last, r.content) for r in responses],
+            [
+                (
+                    False,
+                    [ThinkingBlock.model_construct(id=A, thinking="Think")],
+                ),
+                (False, [ThinkingBlock.model_construct(id=A, thinking="ing")]),
+                (False, [TextBlock.model_construct(id=A, text="Answer")]),
+                (
+                    True,
+                    [
+                        ThinkingBlock.model_construct(
+                            id=A,
+                            thinking="Thinking",
+                        ),
+                        TextBlock.model_construct(id=A, text="Answer"),
+                    ],
+                ),
+            ],
+        )
+
+    @patch("openai.AsyncClient")
+    async def test_stream_tool_calls(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Stream tool call chunks accumulate into final ToolCallBlock."""
+        chunks = [
+            _make_stream_chunk(
+                tool_calls=[
+                    _make_tool_call_delta(0, "call-1", "search", '{"q":'),
+                ],
+            ),
+            _make_stream_chunk(
+                tool_calls=[
+                    _make_tool_call_delta(0, None, None, '"hello"}'),
+                ],
+            ),
+            _make_stream_chunk(
+                has_choices=False,
+                usage={"prompt_tokens": 10, "completion_tokens": 5},
+            ),
+        ]
+        mock_create = AsyncMock(return_value=_MockAsyncStream(chunks))
+        mock_client_cls.return_value.chat.completions.create = mock_create
+
+        gen = await self.model([])
+        responses = [r async for r in gen]
+
+        self.assertListEqual(
+            [(r.is_last, r.content) for r in responses],
+            [
+                (
+                    False,
+                    [
+                        ToolCallBlock(
+                            id="call-1",
+                            name="search",
+                            input='{"q":',
+                        ),
+                    ],
+                ),
+                (
+                    False,
+                    [
+                        ToolCallBlock(
+                            id="call-1",
+                            name="search",
+                            input='"hello"}',
+                        ),
+                    ],
+                ),
+                (
+                    True,
+                    [
+                        ToolCallBlock(
+                            id="call-1",
+                            name="search",
+                            input='{"q":"hello"}',
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+    @patch("openai.AsyncClient")
+    async def test_stream_usage(self, mock_client_cls: MagicMock) -> None:
+        """Stream usage chunk attaches token counts to final response."""
+        chunks = [
+            _make_stream_chunk(delta_text="X"),
+            _make_stream_chunk(
+                has_choices=False,
+                usage={"prompt_tokens": 50, "completion_tokens": 10},
+            ),
+        ]
+        mock_create = AsyncMock(return_value=_MockAsyncStream(chunks))
+        mock_client_cls.return_value.chat.completions.create = mock_create
+
+        gen = await self.model([])
+        responses = [r async for r in gen]
+
+        self.assertListEqual(
+            [(r.is_last, r.content) for r in responses],
+            [
+                (False, [TextBlock.model_construct(id=A, text="X")]),
+                (True, [TextBlock.model_construct(id=A, text="X")]),
+            ],
+        )
+        self.assertEqual(responses[-1].usage.input_tokens, 50)
+        self.assertEqual(responses[-1].usage.output_tokens, 10)
+
+
+# ---------------------------------------------------------------------------
+# _format_tools tests
 # ---------------------------------------------------------------------------
 
 _FT_TOOLS = [

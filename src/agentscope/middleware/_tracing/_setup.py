@@ -44,6 +44,6 @@ def _get_tracer() -> Tracer:
         `Tracer`: The tracer with the name "agentscope" and version.
     """
     from opentelemetry import trace
-    from .._version import __version__
+    from ..._version import __version__
 
     return trace.get_tracer("agentscope", __version__)

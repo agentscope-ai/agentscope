@@ -4,8 +4,8 @@ XAIMultiAgentFormatter (xAI), following the reference test style.
 
 Because these formatters return xai_sdk protobuf Message objects (not plain
 dicts), a lightweight xai_sdk stub is built at module load so that tests run
-without the real package.  Assertions check mock object attributes
-(role, args, kwargs, tool_calls, etc.) rather than plain-dict equality.
+without the real package.  The stub objects support __eq__ and __repr__ so
+full assertListEqual comparisons work.
 """
 import sys
 from typing import Any
@@ -15,15 +15,92 @@ from unittest.mock import MagicMock
 
 from agentscope.formatter import XAIChatFormatter, XAIMultiAgentFormatter
 from agentscope.message import (
+    UserMsg,
+    AssistantMsg,
+    SystemMsg,
     TextBlock,
     ToolCallBlock,
     ToolResultBlock,
     ThinkingBlock,
     ToolResultState,
-    AssistantMsg,
-    UserMsg,
-    SystemMsg,
+    HintBlock,
 )
+
+
+# ---------------------------------------------------------------------------
+# Comparable stub objects for xai_sdk protobuf messages.
+# ---------------------------------------------------------------------------
+
+
+class _StubMessage:
+    """Comparable stub for xai_sdk.chat.{user,assistant,system,tool_result}."""
+
+    def __init__(
+        self,
+        role: str,
+        args: tuple = (),
+        kwargs: dict | None = None,
+    ) -> None:
+        self.role = role
+        self.args = args
+        self.kwargs = kwargs or {}
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, _StubMessage):
+            return NotImplemented
+        return (
+            self.role == other.role
+            and self.args == other.args
+            and self.kwargs == other.kwargs
+        )
+
+    def __repr__(self) -> str:
+        parts = [f"role={self.role!r}", f"args={self.args!r}"]
+        if self.kwargs:
+            parts.append(f"kwargs={self.kwargs!r}")
+        return f"_StubMessage({', '.join(parts)})"
+
+
+class _StubImage:
+    """Comparable stub for xai_sdk.chat.image()."""
+
+    def __init__(self, url: str) -> None:
+        self.type = "image"
+        self.url = url
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, _StubImage):
+            return NotImplemented
+        return self.url == other.url
+
+    def __repr__(self) -> str:
+        return f"_StubImage(url={self.url!r})"
+
+
+def user(*args: Any) -> _StubMessage:
+    """Create a comparable stub user message."""
+    return _StubMessage(role="user", args=args)
+
+
+def assistant(*args: Any) -> _StubMessage:
+    """Create a comparable stub assistant message."""
+    return _StubMessage(role="assistant", args=args)
+
+
+def system(*args: Any) -> _StubMessage:
+    """Create a comparable stub system message."""
+    return _StubMessage(role="system", args=args)
+
+
+def tool_result(*args: Any, **kwargs: Any) -> _StubMessage:
+    """Create a comparable stub tool_result message."""
+    return _StubMessage(role="tool", args=args, kwargs=kwargs)
+
+
+def image(url: str) -> _StubImage:
+    """Create a comparable stub image object."""
+    return _StubImage(url=url)
+
 
 # ---------------------------------------------------------------------------
 # Build a lightweight xai_sdk stub so tests run without the real package.
@@ -61,13 +138,15 @@ def _build_xai_sdk_stub() -> None:
             return item
 
     class _FunctionSpec:
-        name: str = ""
-        arguments: str = ""
+        def __init__(self) -> None:
+            self.name = ""
+            self.arguments = ""
 
     class _ToolCallProto:
-        id: str = ""
-        type: int = 0
-        function = _FunctionSpec()
+        def __init__(self) -> None:
+            self.id = ""
+            self.type = 0
+            self.function = _FunctionSpec()
 
     class _ContentPart:
         text: str = ""
@@ -82,15 +161,11 @@ def _build_xai_sdk_stub() -> None:
 
     xai_chat = ModuleType("xai_sdk.chat")
     xai_chat.chat_pb2 = chat_pb2
-    xai_chat.user = lambda *args: MagicMock(role="user", args=args)
-    xai_chat.assistant = lambda *args: MagicMock(role="assistant", args=args)
-    xai_chat.system = lambda *args: MagicMock(role="system", args=args)
-    xai_chat.tool_result = lambda *args, **kw: MagicMock(
-        role="tool",
-        args=args,
-        kwargs=kw,
-    )
-    xai_chat.image = lambda url: MagicMock(type="image", url=url)
+    xai_chat.user = user
+    xai_chat.assistant = assistant
+    xai_chat.system = system
+    xai_chat.tool_result = tool_result
+    xai_chat.image = image
 
     xai_sdk = ModuleType("xai_sdk")
     xai_sdk.chat = xai_chat
@@ -107,8 +182,9 @@ _build_xai_sdk_stub()
 class TestXAIFormatter(IsolatedAsyncioTestCase):
     """Comprehensive tests for XAI Chat and MultiAgent formatters.
 
-    The formatter returns proto/mock objects rather than dicts, so assertions
-    inspect mock attributes (role, args, kwargs, tool_calls, etc.).
+    The stub objects support __eq__, so full assertListEqual works for
+    user/assistant/system/tool_result messages.  Tool-call messages use
+    _MessageProto which is checked via attribute assertions.
     """
 
     async def asyncSetUp(self) -> None:
@@ -151,27 +227,16 @@ class TestXAIFormatter(IsolatedAsyncioTestCase):
                         name="get_capital",
                         input='{"country": "Japan"}',
                     ),
-                ],
-            ),
-            AssistantMsg(
-                name="tool",
-                content=[
                     ToolResultBlock(
                         id="call_1",
                         name="get_capital",
                         output=[
-                            TextBlock(
-                                type="text",
-                                text="The capital of Japan is Tokyo.",
-                            ),
+                            TextBlock(text="The capital of Japan is Tokyo."),
                         ],
                         state=ToolResultState.SUCCESS,
                     ),
+                    TextBlock(text="The capital of Japan is Tokyo."),
                 ],
-            ),
-            AssistantMsg(
-                name="assistant",
-                content="The capital of Japan is Tokyo.",
             ),
         ]
 
@@ -184,20 +249,28 @@ class TestXAIFormatter(IsolatedAsyncioTestCase):
     # -------------------------------------------------------------------
 
     async def test_chat_formatter_system_message(self) -> None:
-        """System message becomes a system() proto."""
+        """System message becomes a system() stub."""
         fmt = XAIChatFormatter()
         res = await fmt.format(self.msgs_system)
-        self.assertEqual(len(res), 1)
-        self.assertEqual(res[0].role, "system")
-        self.assertIn("You're a helpful assistant.", res[0].args)
+        self.assertListEqual(
+            [system("You're a helpful assistant.")],
+            res,
+        )
 
     async def test_chat_formatter_user_assistant(self) -> None:
         """User and assistant text messages are passed through correctly."""
         fmt = XAIChatFormatter()
         res = await fmt.format(self.msgs_conversation)
-        roles = [m.role for m in res]
-        self.assertEqual(roles.count("user"), 3)
-        self.assertEqual(roles.count("assistant"), 2)
+        self.assertListEqual(
+            [
+                user("What is the capital of France?"),
+                assistant("The capital of France is Paris."),
+                user("What is the capital of Germany?"),
+                assistant("The capital of Germany is Berlin."),
+                user("What is the capital of Japan?"),
+            ],
+            res,
+        )
 
     async def test_chat_formatter_tool_call(self) -> None:
         """Assistant tool call becomes a _MessageProto with tool_calls set."""
@@ -211,25 +284,29 @@ class TestXAIFormatter(IsolatedAsyncioTestCase):
             for m in res
             if hasattr(m, "tool_calls") and len(m.tool_calls) > 0
         ]
-        self.assertEqual(len(tool_call_msgs), 1)
+        self.assertListEqual(
+            [len(tool_call_msgs)],
+            [1],
+        )
         tc = tool_call_msgs[0].tool_calls[0]
-        self.assertEqual(tc.id, "call_1")
-        self.assertEqual(tc.function.name, "get_capital")
-        self.assertIn('"country"', tc.function.arguments)
+        self.assertListEqual(
+            [tc.id, tc.function.name, tc.function.arguments],
+            ["call_1", "get_capital", '{"country": "Japan"}'],
+        )
 
     async def test_chat_formatter_tool_result(self) -> None:
-        """Tool result becomes a tool_result() proto with the right id."""
+        """Tool result becomes a tool_result() stub with the right id."""
         fmt = XAIChatFormatter()
         res = await fmt.format(self.msgs_tools)
         tool_msgs = [m for m in res if m.role == "tool"]
-        self.assertEqual(len(tool_msgs), 1)
-        self.assertEqual(
-            tool_msgs[0].kwargs.get("tool_call_id"),
-            "call_1",
-        )
-        self.assertIn(
-            "The capital of Japan is Tokyo.",
-            tool_msgs[0].args,
+        self.assertListEqual(
+            tool_msgs,
+            [
+                tool_result(
+                    "The capital of Japan is Tokyo.",
+                    tool_call_id="call_1",
+                ),
+            ],
         )
 
     async def test_chat_formatter_thinking_dropped(self) -> None:
@@ -241,14 +318,12 @@ class TestXAIFormatter(IsolatedAsyncioTestCase):
                 name="assistant",
                 content=[
                     ThinkingBlock(thinking="inner thoughts"),
-                    TextBlock(type="text", text="reply"),
+                    TextBlock(text="reply"),
                 ],
             ),
         ]
         res = await fmt.format(msgs)
-        # thinking block is silently skipped for assistant text path
-        self.assertEqual(len(res), 1)
-        self.assertEqual(res[0].role, "assistant")
+        self.assertListEqual([assistant("reply")], res)
 
     async def test_chat_formatter_empty(self) -> None:
         """Empty input returns empty list."""
@@ -261,26 +336,32 @@ class TestXAIFormatter(IsolatedAsyncioTestCase):
     # -------------------------------------------------------------------
 
     async def test_multiagent_formatter_system_message(self) -> None:
-        """System message is passed through as a system() proto."""
+        """System message is passed through as a system() stub."""
         fmt = XAIMultiAgentFormatter()
         res = await fmt.format(
             [*self.msgs_system, *self.msgs_conversation],
         )
-        self.assertEqual(res[0].role, "system")
-        self.assertIn("You're a helpful assistant.", res[0].args)
+        self.assertEqual(res[0], system("You're a helpful assistant."))
 
     async def test_multiagent_formatter_conversation_history(self) -> None:
         """Non-tool agent messages are collapsed into a user() history
-        proto."""
+        stub."""
         fmt = XAIMultiAgentFormatter()
         res = await fmt.format(self.msgs_conversation)
-        self.assertEqual(len(res), 1)
-        self.assertEqual(res[0].role, "user")
-        hist_text = res[0].args[0]
-        self.assertIn("<history>", hist_text)
-        self.assertIn("</history>", hist_text)
-        self.assertIn("user: What is the capital of France?", hist_text)
-        self.assertIn("assistant: The capital of France is Paris.", hist_text)
+        self.assertListEqual(
+            [
+                user(
+                    self._hist_prompt + "<history>\n"
+                    "user: What is the capital of France?\n"
+                    "assistant: The capital of France is Paris.\n"
+                    "user: What is the capital of Germany?\n"
+                    "assistant: The capital of Germany is Berlin.\n"
+                    "user: What is the capital of Japan?\n"
+                    "</history>",
+                ),
+            ],
+            res,
+        )
 
     async def test_multiagent_formatter_first_group_has_hist_prompt(
         self,
@@ -290,50 +371,190 @@ class TestXAIFormatter(IsolatedAsyncioTestCase):
         fmt = XAIMultiAgentFormatter()
         res = await fmt.format(self.msgs_conversation)
         hist_text = res[0].args[0]
-        self.assertTrue(hist_text.startswith(self._hist_prompt))
+        self.assertListEqual(
+            [hist_text.startswith(self._hist_prompt)],
+            [True],
+        )
 
     async def test_multiagent_formatter_full_history(self) -> None:
         """Full history produces system + conv_history + tool_call +
-        tool_result + trailing."""
+        tool_result + trailing assistant."""
         fmt = XAIMultiAgentFormatter()
         res = await fmt.format(
             [*self.msgs_system, *self.msgs_conversation, *self.msgs_tools],
         )
         roles = [m.role for m in res]
-        self.assertIn("system", roles)
-        self.assertIn("user", roles)
-        self.assertIn("tool", roles)
+        self.assertListEqual(
+            sorted(r for r in roles if isinstance(r, str)),
+            sorted(["system", "user", "tool", "assistant"]),
+        )
 
     async def test_multiagent_formatter_tools_only_is_first(self) -> None:
-        """When only tools are given, trailing agent uses is_first=True
-        history."""
+        """When only tools are given, trailing text is formatted as
+        assistant."""
         fmt = XAIMultiAgentFormatter()
         res = await fmt.format(self.msgs_tools)
-        # tool_call proto, tool_result proto, trailing user history
-        trailing = [m for m in res if m.role == "user"]
-        self.assertEqual(len(trailing), 1)
-        hist_text = trailing[0].args[0]
-        self.assertIn(self._hist_prompt, hist_text)
-        self.assertIn("assistant: The capital of Japan is Tokyo.", hist_text)
+        trailing = [m for m in res if m.role == "assistant"]
+        self.assertListEqual([len(trailing)], [1])
 
-    async def test_multiagent_formatter_nonfirst_trailing_no_hist_prompt(
+    async def test_multiagent_formatter_nonfirst_trailing_is_assistant(
         self,
     ) -> None:
-        """Trailing agent after a conversation group uses is_first=False
-        (no prompt)."""
+        """Trailing text after a tool sequence is formatted as assistant."""
         fmt = XAIMultiAgentFormatter()
         res = await fmt.format(
             [*self.msgs_conversation, *self.msgs_tools],
         )
-        user_msgs = [m for m in res if m.role == "user"]
-        # First is conversation history (is_first=True), last is trailing
-        # (is_first=False)
-        trailing_text = user_msgs[-1].args[0]
-        self.assertNotIn(self._hist_prompt, trailing_text)
-        self.assertIn("<history>", trailing_text)
+        trailing = [m for m in res if m.role == "assistant"]
+        self.assertListEqual([len(trailing)], [1])
 
     async def test_multiagent_formatter_empty(self) -> None:
         """Empty input returns empty list."""
         fmt = XAIMultiAgentFormatter()
         res = await fmt.format([])
         self.assertListEqual([], res)
+
+    async def test_chat_formatter_complex_multi_step(self) -> None:
+        """Complex multi-step sequence with interleaved thinking, text,
+        tool calls, and tool results."""
+        fmt = XAIChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ThinkingBlock(thinking="thinking_1"),
+                    TextBlock(text="text_1"),
+                    ToolCallBlock(
+                        id="call_1",
+                        name="func_1",
+                        input='{"arg": "value1"}',
+                    ),
+                    ToolCallBlock(
+                        id="call_2",
+                        name="func_2",
+                        input='{"arg": "value2"}',
+                    ),
+                    ToolResultBlock(
+                        id="call_1",
+                        name="func_1",
+                        output=[TextBlock(text="result_1")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ToolResultBlock(
+                        id="call_2",
+                        name="func_2",
+                        output=[TextBlock(text="result_2")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ThinkingBlock(thinking="thinking_2"),
+                    TextBlock(text="text_2"),
+                    ToolCallBlock(
+                        id="call_3",
+                        name="func_3",
+                        input='{"arg": "value3"}',
+                    ),
+                    ToolResultBlock(
+                        id="call_3",
+                        name="func_3",
+                        output=[TextBlock(text="result_3")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ToolCallBlock(
+                        id="call_4",
+                        name="func_4",
+                        input='{"arg": "value4"}',
+                    ),
+                    ToolResultBlock(
+                        id="call_4",
+                        name="func_4",
+                        output=[TextBlock(text="result_4")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ThinkingBlock(thinking="thinking_3"),
+                    TextBlock(text="text_3"),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+
+        # First message: proto with text_1 content + 2 tool_calls
+        self.assertTrue(hasattr(res[0], "tool_calls"))
+        self.assertEqual(len(res[0].tool_calls), 2)
+        self.assertEqual(len(res[0].content), 1)
+        self.assertEqual(res[0].tool_calls[0].id, "call_1")
+        self.assertEqual(res[0].tool_calls[0].function.name, "func_1")
+        self.assertEqual(
+            res[0].tool_calls[0].function.arguments,
+            '{"arg": "value1"}',
+        )
+        self.assertEqual(res[0].tool_calls[1].id, "call_2")
+        self.assertEqual(res[0].tool_calls[1].function.name, "func_2")
+        self.assertEqual(
+            res[0].tool_calls[1].function.arguments,
+            '{"arg": "value2"}',
+        )
+
+        # Tool results
+        self.assertEqual(
+            res[1],
+            tool_result("result_1", tool_call_id="call_1"),
+        )
+        self.assertEqual(
+            res[2],
+            tool_result("result_2", tool_call_id="call_2"),
+        )
+
+        # Second proto: text_2 + 1 tool_call
+        self.assertTrue(hasattr(res[3], "tool_calls"))
+        self.assertEqual(len(res[3].tool_calls), 1)
+        self.assertEqual(len(res[3].content), 1)
+        self.assertEqual(res[3].tool_calls[0].id, "call_3")
+        self.assertEqual(res[3].tool_calls[0].function.name, "func_3")
+
+        # Tool result for call_3
+        self.assertEqual(
+            res[4],
+            tool_result("result_3", tool_call_id="call_3"),
+        )
+
+        # Third proto: no content + 1 tool_call
+        self.assertTrue(hasattr(res[5], "tool_calls"))
+        self.assertEqual(len(res[5].tool_calls), 1)
+        self.assertEqual(len(res[5].content), 0)
+        self.assertEqual(res[5].tool_calls[0].id, "call_4")
+        self.assertEqual(res[5].tool_calls[0].function.name, "func_4")
+
+        # Tool result for call_4
+        self.assertEqual(
+            res[6],
+            tool_result("result_4", tool_call_id="call_4"),
+        )
+
+        # Final assistant text
+        self.assertEqual(res[7], assistant("text_3"))
+
+        # Total 8 items
+        self.assertEqual(len(res), 8)
+
+    async def test_chat_formatter_hint_block(self) -> None:
+        """HintBlock flushes preceding content and becomes a user message."""
+        fmt = XAIChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    TextBlock(text="Let me think about that."),
+                    HintBlock(hint="Remember to be concise."),
+                    TextBlock(text="Here is my answer."),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                assistant("Let me think about that."),
+                user("Remember to be concise."),
+                assistant("Here is my answer."),
+            ],
+            res,
+        )

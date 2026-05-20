@@ -139,7 +139,20 @@ class OllamaChatFormatter(_OllamaFormatterBase):
                     content_parts.append(block.text)
 
                 elif isinstance(block, HintBlock):
-                    pass  # Ollama does not support hint blocks
+                    if content_parts or images:
+                        msg_flush = {
+                            "role": msg.role,
+                            "content": "\n".join(content_parts),
+                        }
+                        if images:
+                            msg_flush["images"] = images
+                        messages.append(msg_flush)
+                        content_parts = []
+                        images = []
+
+                    messages.append(
+                        {"role": "user", "content": block.hint},
+                    )
 
                 elif isinstance(block, DataBlock):
                     formatted_image = self._format_ollama_data_block(block)
@@ -176,6 +189,17 @@ class OllamaChatFormatter(_OllamaFormatterBase):
                     images = []
 
                 elif isinstance(block, ToolResultBlock):
+                    if content_parts or images:
+                        msg_flush = {
+                            "role": msg.role,
+                            "content": "\n".join(content_parts),
+                        }
+                        if images:
+                            msg_flush["images"] = images
+                        messages.append(msg_flush)
+                        content_parts = []
+                        images = []
+
                     (
                         textual_output,
                         multimodal_data,

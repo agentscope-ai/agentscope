@@ -19,7 +19,6 @@ from ..message import (
     DataBlock,
     ToolCallBlock,
     Base64Source,
-    UserMsg,
     HintBlock,
 )
 
@@ -269,16 +268,30 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                         content_blocks.append(formatted_block)
 
                 elif isinstance(block, HintBlock):
-                    if content_blocks or tool_calls:
+                    if content_blocks or tool_calls or thinking_parts:
                         msg_openai: dict[str, Any] = {
                             "role": msg.role,
                             "content": content_blocks or None,
                         }
                         if tool_calls:
                             msg_openai["tool_calls"] = tool_calls
+                        if thinking_parts:
+                            msg_openai["reasoning_content"] = "\n".join(
+                                thinking_parts,
+                            )
                         formatted_msgs.append(msg_openai)
                         content_blocks = []
                         tool_calls = []
+                        thinking_parts = []
+
+                    formatted_msgs.append(
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": block.hint},
+                            ],
+                        },
+                    )
 
                 elif isinstance(block, ToolCallBlock):
                     tool_calls.append(
@@ -297,6 +310,22 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                         thinking_parts.append(block.thinking)
 
                 elif isinstance(block, ToolResultBlock):
+                    if content_blocks or tool_calls or thinking_parts:
+                        msg_flush: dict[str, Any] = {
+                            "role": msg.role,
+                            "content": content_blocks or None,
+                        }
+                        if tool_calls:
+                            msg_flush["tool_calls"] = tool_calls
+                        if thinking_parts:
+                            msg_flush["reasoning_content"] = "\n".join(
+                                thinking_parts,
+                            )
+                        formatted_msgs.append(msg_flush)
+                        content_blocks = []
+                        tool_calls = []
+                        thinking_parts = []
+
                     (
                         textual_output,
                         multimodal_data,
@@ -312,13 +341,26 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                     )
 
                     if multimodal_data:
-                        msgs.insert(
-                            i + 1,
-                            UserMsg(
-                                name="system-reminder",
-                                content=multimodal_data,
-                            ),
-                        )
+                        promo_content = []
+                        for item in multimodal_data:
+                            if isinstance(item, TextBlock):
+                                promo_content.append(
+                                    {"type": "text", "text": item.text},
+                                )
+                            elif isinstance(item, DataBlock):
+                                fmt_item = self._format_dashscope_data_block(
+                                    item,
+                                    role="user",
+                                )
+                                if fmt_item is not None:
+                                    promo_content.append(fmt_item)
+                        if promo_content:
+                            formatted_msgs.append(
+                                {
+                                    "role": "user",
+                                    "content": promo_content,
+                                },
+                            )
 
                 else:
                     logger.warning(
@@ -337,7 +379,11 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
             if thinking_parts:
                 msg_dashscope["reasoning_content"] = "\n".join(thinking_parts)
 
-            if msg_dashscope["content"] or msg_dashscope.get("tool_calls"):
+            if (
+                msg_dashscope["content"]
+                or msg_dashscope.get("tool_calls")
+                or msg_dashscope.get("reasoning_content")
+            ):
                 formatted_msgs.append(msg_dashscope)
 
             i += 1

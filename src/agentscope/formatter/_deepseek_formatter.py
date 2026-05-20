@@ -60,7 +60,35 @@ class DeepSeekChatFormatter(FormatterBase):
                     reasoning_content_blocks.append(block.thinking)
 
                 elif isinstance(block, HintBlock):
-                    pass  # DeepSeek does not support hint blocks
+                    if (
+                        content_blocks
+                        or tool_calls
+                        or reasoning_content_blocks
+                    ):
+                        content_text = "\n".join(
+                            b.get("text", "") for b in content_blocks
+                        )
+                        msg_flush_hint: dict[str, Any] = {
+                            "role": msg.role,
+                            "content": content_text
+                            or (None if tool_calls else ""),
+                        }
+                        if msg.role == "assistant":
+                            msg_flush_hint["reasoning_content"] = (
+                                "\n".join(reasoning_content_blocks)
+                                if reasoning_content_blocks
+                                else ""
+                            )
+                        if tool_calls:
+                            msg_flush_hint["tool_calls"] = tool_calls
+                        messages.append(msg_flush_hint)
+                        content_blocks = []
+                        reasoning_content_blocks = []
+                        tool_calls = []
+
+                    messages.append(
+                        {"role": "user", "content": block.hint},
+                    )
 
                 elif isinstance(block, ToolCallBlock):
                     tool_calls.append(
@@ -75,6 +103,32 @@ class DeepSeekChatFormatter(FormatterBase):
                     )
 
                 elif isinstance(block, ToolResultBlock):
+                    if (
+                        content_blocks
+                        or tool_calls
+                        or reasoning_content_blocks
+                    ):
+                        content_text = "\n".join(
+                            b.get("text", "") for b in content_blocks
+                        )
+                        msg_flush: dict[str, Any] = {
+                            "role": msg.role,
+                            "content": content_text
+                            or (None if tool_calls else ""),
+                        }
+                        if msg.role == "assistant":
+                            msg_flush["reasoning_content"] = (
+                                "\n".join(reasoning_content_blocks)
+                                if reasoning_content_blocks
+                                else ""
+                            )
+                        if tool_calls:
+                            msg_flush["tool_calls"] = tool_calls
+                        messages.append(msg_flush)
+                        content_blocks = []
+                        reasoning_content_blocks = []
+                        tool_calls = []
+
                     textual_output, _ = self.convert_tool_result_to_string(
                         block.output,
                     )
@@ -115,7 +169,11 @@ class DeepSeekChatFormatter(FormatterBase):
             if tool_calls:
                 msg_deepseek["tool_calls"] = tool_calls
 
-            if msg_deepseek["content"] or msg_deepseek.get("tool_calls"):
+            if (
+                msg_deepseek["content"]
+                or msg_deepseek.get("tool_calls")
+                or reasoning_content_blocks
+            ):
                 messages.append(msg_deepseek)
 
         return messages

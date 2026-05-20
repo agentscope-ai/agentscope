@@ -4,23 +4,28 @@ GeminiMultiAgentFormatter, following the reference test style with exact
 ground-truth comparisons.
 """
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from agentscope.formatter import (
     GeminiChatFormatter,
     GeminiMultiAgentFormatter,
 )
 from agentscope.message import (
+    UserMsg,
+    AssistantMsg,
+    SystemMsg,
     TextBlock,
     DataBlock,
     ToolCallBlock,
     ToolResultBlock,
+    ToolResultState,
     Base64Source,
     ThinkingBlock,
-    AssistantMsg,
-    UserMsg,
-    SystemMsg,
-    ToolResultState,
+    HintBlock,
 )
+
+
+_FIXED_ID = "TESTID1234567"
 
 
 class TestGeminiFormatter(IsolatedAsyncioTestCase):
@@ -28,7 +33,7 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         """Set up shared message fixtures and expected ground-truth dicts."""
-        image_b64 = "ZmFrZSBpbWFnZSBkYXRh"
+        self.image_b64 = "ZmFrZSBpbWFnZSBkYXRh"
 
         # ---------------------------------------------------------------
         # Message fixtures
@@ -45,14 +50,10 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
             UserMsg(
                 name="user",
                 content=[
-                    TextBlock(
-                        type="text",
-                        text="What is the capital of France?",
-                    ),
+                    TextBlock(text="What is the capital of France?"),
                     DataBlock(
                         source=Base64Source(
-                            type="base64",
-                            data=image_b64,
+                            data=self.image_b64,
                             media_type="image/png",
                         ),
                     ),
@@ -85,32 +86,21 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                         name="get_capital",
                         input='{"country": "Japan"}',
                     ),
-                ],
-            ),
-            AssistantMsg(
-                name="tool",
-                content=[
                     ToolResultBlock(
                         id="call_1",
                         name="get_capital",
                         output=[
-                            TextBlock(
-                                type="text",
-                                text="The capital of Japan is Tokyo.",
-                            ),
+                            TextBlock(text="The capital of Japan is Tokyo."),
                         ],
                         state=ToolResultState.SUCCESS,
                     ),
+                    TextBlock(text="The capital of Japan is Tokyo."),
                 ],
-            ),
-            AssistantMsg(
-                name="assistant",
-                content="The capital of Japan is Tokyo.",
             ),
         ]
 
         _inline_img = {
-            "inline_data": {"data": image_b64, "mime_type": "image/png"},
+            "inline_data": {"data": self.image_b64, "mime_type": "image/png"},
         }
 
         # ---------------------------------------------------------------
@@ -192,28 +182,10 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
         # ---------------------------------------------------------------
         _hist_prompt = GeminiMultiAgentFormatter().conversation_history_prompt
 
-        _gt_trailing_asst_nonfirst = {
-            "role": "user",
+        self._gt_trailing_asst = {
+            "role": "model",
             "parts": [
-                {
-                    "text": (
-                        "<history>\n"
-                        "assistant: The capital of Japan is Tokyo.\n"
-                        "</history>"
-                    ),
-                },
-            ],
-        }
-        self._gt_trailing_asst_first = {
-            "role": "user",
-            "parts": [
-                {
-                    "text": (
-                        _hist_prompt + "<history>\n"
-                        "assistant: The capital of Japan is Tokyo.\n"
-                        "</history>"
-                    ),
-                },
+                {"text": "The capital of Japan is Tokyo."},
             ],
         }
 
@@ -272,7 +244,7 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
             },
             self._gt_tool_call,
             self._gt_tool_result,
-            _gt_trailing_asst_nonfirst,
+            self._gt_trailing_asst,
         ]
 
     # -------------------------------------------------------------------
@@ -282,7 +254,6 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
     async def test_chat_formatter(self) -> None:
         """Chat formatter produces exact output for various subsets."""
         fmt = GeminiChatFormatter()
-        self.maxDiff = None
 
         # Full history
         res = await fmt.format(
@@ -295,15 +266,16 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
         self.assertListEqual(self.gt_chat[1:], res)
 
         # Without conversation
+        n_tools_gt = len(self.gt_chat) - 1 - len(self.msgs_conversation)
         res = await fmt.format([*self.msgs_system, *self.msgs_tools])
         self.assertListEqual(
-            [self.gt_chat[0]] + self.gt_chat[-len(self.msgs_tools) :],
+            [self.gt_chat[0]] + self.gt_chat[-n_tools_gt:],
             res,
         )
 
         # Without tools
         res = await fmt.format([*self.msgs_system, *self.msgs_conversation])
-        self.assertListEqual(self.gt_chat[: -len(self.msgs_tools)], res)
+        self.assertListEqual(self.gt_chat[:-n_tools_gt], res)
 
         # Empty
         res = await fmt.format([])
@@ -317,17 +289,127 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                 name="assistant",
                 content=[
                     ThinkingBlock(thinking="inner thoughts"),
-                    TextBlock(type="text", text="reply"),
+                    TextBlock(text="reply"),
                 ],
             ),
         ]
         res = await fmt.format(msgs)
-        self.assertEqual(len(res), 1)
-        thinking_parts = [
-            p for p in res[0]["parts"] if p.get("thought") is True
+        self.assertListEqual(
+            [
+                {
+                    "role": "model",
+                    "parts": [
+                        {"thought": True, "text": "inner thoughts"},
+                        {"text": "reply"},
+                    ],
+                },
+            ],
+            res,
+        )
+
+    @patch(
+        "agentscope.formatter._formatter_base.shortuuid.uuid",
+        return_value=_FIXED_ID,
+    )
+    async def test_chat_formatter_base64_image_in_tool_result(
+        self,
+        _mock_uuid: object,
+    ) -> None:
+        """Base64 images in tool results are promoted to a follow-up user
+        message."""
+        fmt = GeminiChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_img",
+                        name="get_map",
+                        input='{"city": "Tokyo"}',
+                    ),
+                    ToolResultBlock(
+                        id="call_img",
+                        name="get_map",
+                        output=[
+                            TextBlock(text="Here is the map."),
+                            DataBlock(
+                                source=Base64Source(
+                                    data=self.image_b64,
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    TextBlock(text="Here is the map of Tokyo."),
+                ],
+            ),
         ]
-        self.assertEqual(len(thinking_parts), 1)
-        self.assertEqual(thinking_parts[0]["text"], "inner thoughts")
+        res = await fmt.format(msgs)
+
+        expected_tool_output = (
+            "Here is the map.\n"
+            f"<system-reminder>A(n) image file is returned "
+            f"and will be presented to you with the identifier "
+            f"[{_FIXED_ID}].</system-reminder>"
+        )
+        self.assertListEqual(
+            [
+                {
+                    "role": "model",
+                    "parts": [
+                        {
+                            "function_call": {
+                                "id": "call_img",
+                                "name": "get_map",
+                                "args": {"city": "Tokyo"},
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "function_response": {
+                                "id": "call_img",
+                                "name": "get_map",
+                                "response": {"output": expected_tool_output},
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "text": (
+                                "<system-reminder>The multimodal data "
+                                "and their identifiers are listed as "
+                                "follows:"
+                            ),
+                        },
+                        {
+                            "text": f"- {_FIXED_ID} (image file): ",
+                        },
+                        {
+                            "inline_data": {
+                                "data": self.image_b64,
+                                "mime_type": "image/png",
+                            },
+                        },
+                        {"text": "</system-reminder>"},
+                    ],
+                },
+                {
+                    "role": "model",
+                    "parts": [
+                        {"text": "Here is the map of Tokyo."},
+                    ],
+                },
+            ],
+            res,
+        )
 
     # -------------------------------------------------------------------
     # GeminiMultiAgentFormatter tests
@@ -336,7 +418,6 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
     async def test_multiagent_formatter(self) -> None:
         """MultiAgent formatter produces exact output for various subsets."""
         fmt = GeminiMultiAgentFormatter()
-        self.maxDiff = None
 
         # Full history
         res = await fmt.format(
@@ -360,25 +441,25 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
         res = await fmt.format(self.msgs_conversation)
         self.assertListEqual([self.gt_multiagent[1]], res)
 
-        # Tools only — is_first=True for trailing assistant
+        # Tools only
         res = await fmt.format(self.msgs_tools)
         self.assertListEqual(
             [
                 self._gt_tool_call,
                 self._gt_tool_result,
-                self._gt_trailing_asst_first,
+                self._gt_trailing_asst,
             ],
             res,
         )
 
-        # System + tools — same is_first=True for trailing assistant
+        # System + tools
         res = await fmt.format([*self.msgs_system, *self.msgs_tools])
         self.assertListEqual(
             [
                 self.gt_multiagent[0],
                 self._gt_tool_call,
                 self._gt_tool_result,
-                self._gt_trailing_asst_first,
+                self._gt_trailing_asst,
             ],
             res,
         )
@@ -386,3 +467,211 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
         # Empty
         res = await fmt.format([])
         self.assertListEqual([], res)
+
+    async def test_chat_formatter_complex_multi_step(self) -> None:
+        """Complex multi-step sequence with interleaved thinking, text,
+        tool calls, and tool results."""
+        fmt = GeminiChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ThinkingBlock(thinking="thinking_1"),
+                    TextBlock(text="text_1"),
+                    ToolCallBlock(
+                        id="call_1",
+                        name="func_1",
+                        input='{"arg": "value1"}',
+                    ),
+                    ToolCallBlock(
+                        id="call_2",
+                        name="func_2",
+                        input='{"arg": "value2"}',
+                    ),
+                    ToolResultBlock(
+                        id="call_1",
+                        name="func_1",
+                        output=[TextBlock(text="result_1")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ToolResultBlock(
+                        id="call_2",
+                        name="func_2",
+                        output=[TextBlock(text="result_2")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ThinkingBlock(thinking="thinking_2"),
+                    TextBlock(text="text_2"),
+                    ToolCallBlock(
+                        id="call_3",
+                        name="func_3",
+                        input='{"arg": "value3"}',
+                    ),
+                    ToolResultBlock(
+                        id="call_3",
+                        name="func_3",
+                        output=[TextBlock(text="result_3")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ToolCallBlock(
+                        id="call_4",
+                        name="func_4",
+                        input='{"arg": "value4"}',
+                    ),
+                    ToolResultBlock(
+                        id="call_4",
+                        name="func_4",
+                        output=[TextBlock(text="result_4")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ThinkingBlock(thinking="thinking_3"),
+                    TextBlock(text="text_3"),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "model",
+                    "parts": [
+                        {"thought": True, "text": "thinking_1"},
+                        {"text": "text_1"},
+                        {
+                            "function_call": {
+                                "id": "call_1",
+                                "name": "func_1",
+                                "args": {"arg": "value1"},
+                            },
+                        },
+                        {
+                            "function_call": {
+                                "id": "call_2",
+                                "name": "func_2",
+                                "args": {"arg": "value2"},
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "function_response": {
+                                "id": "call_1",
+                                "name": "func_1",
+                                "response": {"output": "result_1"},
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "function_response": {
+                                "id": "call_2",
+                                "name": "func_2",
+                                "response": {"output": "result_2"},
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "model",
+                    "parts": [
+                        {"thought": True, "text": "thinking_2"},
+                        {"text": "text_2"},
+                        {
+                            "function_call": {
+                                "id": "call_3",
+                                "name": "func_3",
+                                "args": {"arg": "value3"},
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "function_response": {
+                                "id": "call_3",
+                                "name": "func_3",
+                                "response": {"output": "result_3"},
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "model",
+                    "parts": [
+                        {
+                            "function_call": {
+                                "id": "call_4",
+                                "name": "func_4",
+                                "args": {"arg": "value4"},
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "function_response": {
+                                "id": "call_4",
+                                "name": "func_4",
+                                "response": {"output": "result_4"},
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "model",
+                    "parts": [
+                        {"thought": True, "text": "thinking_3"},
+                        {"text": "text_3"},
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_hint_block(self) -> None:
+        """HintBlock flushes preceding content and becomes a user message."""
+        fmt = GeminiChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    TextBlock(text="Let me think about that."),
+                    HintBlock(hint="Remember to be concise."),
+                    TextBlock(text="Here is my answer."),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "model",
+                    "parts": [
+                        {"text": "Let me think about that."},
+                    ],
+                },
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": "Remember to be concise."},
+                    ],
+                },
+                {
+                    "role": "model",
+                    "parts": [
+                        {"text": "Here is my answer."},
+                    ],
+                },
+            ],
+            res,
+        )

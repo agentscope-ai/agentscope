@@ -10,17 +10,17 @@ from agentscope.formatter import (
     AnthropicMultiAgentFormatter,
 )
 from agentscope.message import (
-    Msg,
+    UserMsg,
+    AssistantMsg,
+    SystemMsg,
     TextBlock,
     DataBlock,
     ToolCallBlock,
     ToolResultBlock,
+    ToolResultState,
     Base64Source,
     ThinkingBlock,
-    SystemMsg,
-    UserMsg,
-    AssistantMsg,
-    ToolResultState,
+    HintBlock,
 )
 
 
@@ -74,27 +74,16 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
                         name="get_capital",
                         input='{"country": "Japan"}',
                     ),
-                ],
-            ),
-            AssistantMsg(
-                name="tool",
-                content=[
                     ToolResultBlock(
                         id="call_1",
                         name="get_capital",
                         output=[
-                            TextBlock(
-                                type="text",
-                                text="The capital of Japan is Tokyo.",
-                            ),
+                            TextBlock(text="The capital of Japan is Tokyo."),
                         ],
                         state=ToolResultState.SUCCESS,
                     ),
+                    TextBlock(text="The capital of Japan is Tokyo."),
                 ],
-            ),
-            AssistantMsg(
-                name="assistant",
-                content="The capital of Japan is Tokyo.",
             ),
         ]
 
@@ -213,27 +202,12 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
             "user: What is the capital of Japan?"
         )
 
-        # is_first=False: no wrapping (Anthropic only wraps on first group)
-        _gt_trailing_asst_nonfirst = {
-            "role": "user",
+        self._gt_trailing_asst = {
+            "role": "assistant",
             "content": [
                 {
                     "type": "text",
-                    "text": "assistant: The capital of Japan is Tokyo.",
-                },
-            ],
-        }
-        # is_first=True: full wrapping with hist_prompt
-        self._gt_trailing_asst_first = {
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": (
-                        _hist_prompt + "<history>\n"
-                        "assistant: The capital of Japan is Tokyo.\n"
-                        "</history>"
-                    ),
+                    "text": "The capital of Japan is Tokyo.",
                 },
             ],
         }
@@ -288,7 +262,7 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
             },
             self._gt_tool_call,
             self._gt_tool_result,
-            _gt_trailing_asst_nonfirst,
+            self._gt_trailing_asst,
         ]
 
     # -------------------------------------------------------------------
@@ -298,7 +272,6 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
     async def test_chat_formatter(self) -> None:
         """Chat formatter produces exact output for various subsets."""
         fmt = AnthropicChatFormatter()
-        self.maxDiff = None
 
         # Full history
         res = await fmt.format(
@@ -311,15 +284,16 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
         self.assertListEqual(self.gt_chat[1:], res)
 
         # Without conversation
+        n_tools_gt = len(self.gt_chat) - 1 - len(self.msgs_conversation)
         res = await fmt.format([*self.msgs_system, *self.msgs_tools])
         self.assertListEqual(
-            [self.gt_chat[0]] + self.gt_chat[-len(self.msgs_tools) :],
+            [self.gt_chat[0]] + self.gt_chat[-n_tools_gt:],
             res,
         )
 
         # Without tools
         res = await fmt.format([*self.msgs_system, *self.msgs_conversation])
-        self.assertListEqual(self.gt_chat[: -len(self.msgs_tools)], res)
+        self.assertListEqual(self.gt_chat[:-n_tools_gt], res)
 
         # Empty
         res = await fmt.format([])
@@ -329,19 +303,17 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
         """Base64-encoded image is formatted as Anthropic image source."""
         fmt = AnthropicChatFormatter()
         msgs = [
-            Msg(
+            UserMsg(
                 name="user",
                 content=[
-                    TextBlock(type="text", text="What's in this image?"),
+                    TextBlock(text="What's in this image?"),
                     DataBlock(
                         source=Base64Source(
-                            type="base64",
                             data=self.image_b64,
                             media_type="image/png",
                         ),
                     ),
                 ],
-                role="user",
             ),
         ]
         res = await fmt.format(msgs)
@@ -369,23 +341,31 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
         """ThinkingBlock is passed back as a thinking content block."""
         fmt = AnthropicChatFormatter()
         msgs = [
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content=[
                     ThinkingBlock(thinking="inner thoughts"),
-                    TextBlock(type="text", text="reply"),
+                    TextBlock(text="reply"),
                 ],
-                role="assistant",
             ),
         ]
         res = await fmt.format(msgs)
-        self.assertEqual(len(res), 1)
-        thinking_blocks = [
-            b for b in res[0]["content"] if b.get("type") == "thinking"
-        ]
-        self.assertEqual(len(thinking_blocks), 1)
-        self.assertEqual(thinking_blocks[0]["thinking"], "inner thoughts")
-        self.assertEqual(thinking_blocks[0]["signature"], "")
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "thinking",
+                            "thinking": "inner thoughts",
+                            "signature": "",
+                        },
+                        {"type": "text", "text": "reply"},
+                    ],
+                },
+            ],
+            res,
+        )
 
     async def test_chat_formatter_tool_result_role_forced_to_user(
         self,
@@ -395,24 +375,22 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
         res = await fmt.format(
             [*self.msgs_system, *self.msgs_conversation, *self.msgs_tools],
         )
-        tool_results = [
-            m
+        tool_result_roles = [
+            m["role"]
             for m in res
             if any(
                 b.get("type") == "tool_result"
                 for b in (m.get("content") or [])
             )
         ]
-        self.assertTrue(len(tool_results) > 0)
-        for tr in tool_results:
-            self.assertEqual(tr["role"], "user")
+        self.assertListEqual(tool_result_roles, ["user"])
 
     async def test_chat_formatter_tool_result_with_image(self) -> None:
         """Tool result containing an image DataBlock inlines the image in the
         tool_result content without crashing on TextBlock system-reminders."""
         fmt = AnthropicChatFormatter()
         msgs = [
-            Msg(
+            AssistantMsg(
                 name="assistant",
                 content=[
                     ToolCallBlock(
@@ -420,17 +398,11 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
                         name="get_chart",
                         input="{}",
                     ),
-                ],
-                role="assistant",
-            ),
-            Msg(
-                name="tool",
-                content=[
                     ToolResultBlock(
                         id="call_img",
                         name="get_chart",
                         output=[
-                            TextBlock(type="text", text="Here is the chart."),
+                            TextBlock(text="Here is the chart."),
                             DataBlock(
                                 source=Base64Source(
                                     data=self.image_b64,
@@ -440,32 +412,59 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
                         ],
                         state=ToolResultState.SUCCESS,
                     ),
+                    TextBlock(text="Here is the chart analysis."),
                 ],
-                role="assistant",
             ),
         ]
         res = await fmt.format(msgs)
-        # There should be 2 messages: the tool_call and the tool_result
-        self.assertEqual(len(res), 2)
-        # Find the tool_result message
-        tool_result_msg = next(
-            m
-            for m in res
-            if any(
-                b.get("type") == "tool_result"
-                for b in (m.get("content") or [])
-            )
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call_img",
+                            "name": "get_chart",
+                            "input": {},
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_img",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "Here is the chart.",
+                                },
+                                {
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": "image/png",
+                                        "data": self.image_b64,
+                                    },
+                                },
+                            ],
+                        },
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Here is the chart analysis.",
+                        },
+                    ],
+                },
+            ],
+            res,
         )
-        self.assertEqual(tool_result_msg["role"], "user")
-        tr_content = next(
-            b
-            for b in tool_result_msg["content"]
-            if b.get("type") == "tool_result"
-        )["content"]
-        # The content should have a text part and an image part
-        types = [b.get("type") for b in tr_content]
-        self.assertIn("text", types)
-        self.assertIn("image", types)
 
     # -------------------------------------------------------------------
     # AnthropicMultiAgentFormatter tests
@@ -474,7 +473,6 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
     async def test_multiagent_formatter(self) -> None:
         """MultiAgent formatter produces exact output for various subsets."""
         fmt = AnthropicMultiAgentFormatter()
-        self.maxDiff = None
 
         # Full history
         res = await fmt.format(
@@ -498,25 +496,25 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
         res = await fmt.format(self.msgs_conversation)
         self.assertListEqual([self.gt_multiagent[1]], res)
 
-        # Tools only — is_first=True for trailing assistant
+        # Tools only
         res = await fmt.format(self.msgs_tools)
         self.assertListEqual(
             [
                 self._gt_tool_call,
                 self._gt_tool_result,
-                self._gt_trailing_asst_first,
+                self._gt_trailing_asst,
             ],
             res,
         )
 
-        # System + tools (no conversation) — same is_first=True
+        # System + tools (no conversation)
         res = await fmt.format([*self.msgs_system, *self.msgs_tools])
         self.assertListEqual(
             [
                 self.gt_multiagent[0],
                 self._gt_tool_call,
                 self._gt_tool_result,
-                self._gt_trailing_asst_first,
+                self._gt_trailing_asst,
             ],
             res,
         )
@@ -524,3 +522,219 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
         # Empty
         res = await fmt.format([])
         self.assertListEqual([], res)
+
+    async def test_chat_formatter_complex_multi_step(self) -> None:
+        """Complex multi-step sequence with interleaved thinking, text,
+        tool calls, and tool results."""
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ThinkingBlock(thinking="thinking_1"),
+                    TextBlock(text="text_1"),
+                    ToolCallBlock(
+                        id="call_1",
+                        name="func_1",
+                        input='{"arg": "value1"}',
+                    ),
+                    ToolCallBlock(
+                        id="call_2",
+                        name="func_2",
+                        input='{"arg": "value2"}',
+                    ),
+                    ToolResultBlock(
+                        id="call_1",
+                        name="func_1",
+                        output=[TextBlock(text="result_1")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ToolResultBlock(
+                        id="call_2",
+                        name="func_2",
+                        output=[TextBlock(text="result_2")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ThinkingBlock(thinking="thinking_2"),
+                    TextBlock(text="text_2"),
+                    ToolCallBlock(
+                        id="call_3",
+                        name="func_3",
+                        input='{"arg": "value3"}',
+                    ),
+                    ToolResultBlock(
+                        id="call_3",
+                        name="func_3",
+                        output=[TextBlock(text="result_3")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ToolCallBlock(
+                        id="call_4",
+                        name="func_4",
+                        input='{"arg": "value4"}',
+                    ),
+                    ToolResultBlock(
+                        id="call_4",
+                        name="func_4",
+                        output=[TextBlock(text="result_4")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ThinkingBlock(thinking="thinking_3"),
+                    TextBlock(text="text_3"),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "thinking",
+                            "thinking": "thinking_1",
+                            "signature": "",
+                        },
+                        {"type": "text", "text": "text_1"},
+                        {
+                            "type": "tool_use",
+                            "id": "call_1",
+                            "name": "func_1",
+                            "input": {"arg": "value1"},
+                        },
+                        {
+                            "type": "tool_use",
+                            "id": "call_2",
+                            "name": "func_2",
+                            "input": {"arg": "value2"},
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_1",
+                            "content": [
+                                {"type": "text", "text": "result_1"},
+                            ],
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_2",
+                            "content": [
+                                {"type": "text", "text": "result_2"},
+                            ],
+                        },
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "thinking",
+                            "thinking": "thinking_2",
+                            "signature": "",
+                        },
+                        {"type": "text", "text": "text_2"},
+                        {
+                            "type": "tool_use",
+                            "id": "call_3",
+                            "name": "func_3",
+                            "input": {"arg": "value3"},
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_3",
+                            "content": [
+                                {"type": "text", "text": "result_3"},
+                            ],
+                        },
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call_4",
+                            "name": "func_4",
+                            "input": {"arg": "value4"},
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_4",
+                            "content": [
+                                {"type": "text", "text": "result_4"},
+                            ],
+                        },
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "thinking",
+                            "thinking": "thinking_3",
+                            "signature": "",
+                        },
+                        {"type": "text", "text": "text_3"},
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_hint_block(self) -> None:
+        """HintBlock flushes preceding content and becomes a user message."""
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    TextBlock(text="Let me think about that."),
+                    HintBlock(hint="Remember to be concise."),
+                    TextBlock(text="Here is my answer."),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "Let me think about that."},
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Remember to be concise."},
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "Here is my answer."},
+                    ],
+                },
+            ],
+            res,
+        )

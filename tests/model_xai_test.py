@@ -1,26 +1,25 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
-"""Unit tests for XAIChatModel (xAI) response parsing.
+"""Unit tests for XAIChatModel with mocked API responses.
 
-Formatter tests have been moved to tests/formatter_xai_test.py.
+Tests cover both non-streaming and streaming modes.
+XAI uses xai_sdk with chat.stream() for streaming.
 """
-import json
 import sys
 from typing import Any
-from datetime import datetime
 from types import ModuleType
 import unittest
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from agentscope.message import (
-    TextBlock,
-    ToolCallBlock,
-    ThinkingBlock,
-)
+from utils import AnyString
+
+from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
 from agentscope.model import XAIChatModel
 from agentscope.credential import XAICredential
 from agentscope.tool import ToolChoice
+
+A = AnyString()
 
 
 # ---------------------------------------------------------------------------
@@ -33,7 +32,6 @@ def _build_xai_sdk_stub() -> None:
     if "xai_sdk" in sys.modules:
         return
 
-    # chat_pb2 stub -----------------------------------------------------------
     chat_pb2 = ModuleType("xai_sdk.chat.chat_pb2")
 
     class _EnumHelper:
@@ -84,7 +82,6 @@ def _build_xai_sdk_stub() -> None:
 
     chat_pb2.Message = _MessageProto
 
-    # xai_sdk.chat stub -------------------------------------------------------
     xai_chat = ModuleType("xai_sdk.chat")
     xai_chat.chat_pb2 = chat_pb2
     xai_chat.user = lambda *args: MagicMock(role="user", args=args)
@@ -97,7 +94,6 @@ def _build_xai_sdk_stub() -> None:
     )
     xai_chat.image = lambda url: MagicMock(type="image", url=url)
 
-    # xai_sdk stub ------------------------------------------------------------
     xai_sdk = ModuleType("xai_sdk")
     xai_sdk.chat = xai_chat
     xai_sdk.AsyncClient = MagicMock()
@@ -109,102 +105,335 @@ def _build_xai_sdk_stub() -> None:
 
 _build_xai_sdk_stub()
 
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_model() -> Any:
+def _make_model(stream: bool = False) -> Any:
     return XAIChatModel(
         credential=XAICredential(api_key="test"),
         model="grok-3",
-        stream=False,
+        stream=stream,
         context_size=131_072,
     )
 
 
+def _mock_completion(
+    text: str = "",
+    reasoning: str = "",
+    tool_calls: list | None = None,
+    response_id: str = "xai-resp-1",
+) -> MagicMock:
+    """Build a mock xAI non-streaming response."""
+    resp = MagicMock()
+    resp.id = response_id
+    resp.content = text
+    resp.reasoning_content = reasoning
+    resp.tool_calls = None
+    resp.usage = None
+
+    if tool_calls:
+        tc_mocks = []
+        for tc in tool_calls:
+            m = MagicMock()
+            m.id = tc["id"]
+            m.function.name = tc["name"]
+            m.function.arguments = tc["arguments"]
+            tc_mocks.append(m)
+        resp.tool_calls = tc_mocks
+
+    return resp
+
+
+class _MockStreamChunk:
+    """A single chunk from xai chat.stream()."""
+
+    def __init__(
+        self,
+        content: str = "",
+        reasoning_content: str = "",
+    ) -> None:
+        self.content = content
+        self.reasoning_content = reasoning_content
+
+
+class _MockChatStream:
+    """Mock xai_sdk chat session with stream() and sample()."""
+
+    def __init__(
+        self,
+        stream_items: list | None = None,
+        sample_response: Any = None,
+    ) -> None:
+        self._stream_items = stream_items or []
+        self._sample_response = sample_response
+        self._appended: list = []
+
+    def append(self, msg: Any) -> None:
+        """Append a message to the conversation."""
+        self._appended.append(msg)
+
+    async def sample(self) -> Any:
+        """Return the pre-configured sample response."""
+        return self._sample_response
+
+    def stream(self) -> "_MockStreamIterator":
+        """Return an async iterator over pre-configured stream items."""
+        return _MockStreamIterator(self._stream_items)
+
+
+class _MockStreamIterator:
+    """Async iterator for (response, chunk) pairs from xai stream."""
+
+    def __init__(self, items: list) -> None:
+        self._items = items
+        self._index = 0
+
+    def __aiter__(self) -> "_MockStreamIterator":
+        return self
+
+    async def __anext__(self) -> tuple:
+        if self._index >= len(self._items):
+            raise StopAsyncIteration
+        item = self._items[self._index]
+        self._index += 1
+        return item
+
+
 # ---------------------------------------------------------------------------
-# Model response parsing tests
+# Non-streaming tests
 # ---------------------------------------------------------------------------
 
 
-class TestXAIModelParsing(IsolatedAsyncioTestCase):
-    """Unit tests for XAIChatModel response parsing."""
+class TestXAINonStream(IsolatedAsyncioTestCase):
+    """Tests for XAIChatModel in non-streaming mode."""
 
     def setUp(self) -> None:
-        """Set up a fresh model instance and start time."""
-        self.model = _make_model()
-        self.start = datetime.now()
+        self.model = _make_model(stream=False)
 
-    def _mock_response(
+    @patch("xai_sdk.AsyncClient")
+    async def test_text_response(self, mock_client_cls: MagicMock) -> None:
+        """Non-stream text response returns a single ChatResponse."""
+        mock_chat = _MockChatStream(
+            sample_response=_mock_completion(text="Hello!"),
+        )
+        mock_client_cls.return_value.chat.create.return_value = mock_chat
+        mock_client_cls.return_value.close = AsyncMock()
+
+        result = await self.model([])
+
+        self.assertEqual(
+            (result.is_last, result.content),
+            (True, [TextBlock.model_construct(id=A, text="Hello!")]),
+        )
+        self.assertEqual(result.id, "xai-resp-1")
+
+    @patch("xai_sdk.AsyncClient")
+    async def test_tool_call_response(
         self,
-        text: Any = None,
-        tool_calls: Any = None,
-        reasoning: Any = None,
-    ) -> "MagicMock":
-        """Build a mock xAI API response object."""
-        resp = MagicMock()
-        resp.id = "xai-resp-1"
-        resp.content = text or ""
-        resp.reasoning_content = reasoning or ""
-        resp.tool_calls = None
-        resp.usage = None
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Parsing a tool-call response creates a ToolCallBlock."""
+        mock_chat = _MockChatStream(
+            sample_response=_mock_completion(
+                tool_calls=[
+                    {
+                        "id": "call-1",
+                        "name": "get_weather",
+                        "arguments": '{"city":"NY"}',
+                    },
+                ],
+            ),
+        )
+        mock_client_cls.return_value.chat.create.return_value = mock_chat
+        mock_client_cls.return_value.close = AsyncMock()
 
-        if tool_calls:
-            tc_mocks = []
-            for tc in tool_calls:
-                m = MagicMock()
-                m.id = tc["id"]
-                m.function.name = tc["name"]
-                m.function.arguments = tc["arguments"]
-                tc_mocks.append(m)
-            resp.tool_calls = tc_mocks
+        result = await self.model([])
 
-        return resp
+        self.assertEqual(
+            (result.is_last, result.content),
+            (
+                True,
+                [
+                    ToolCallBlock(
+                        id="call-1",
+                        name="get_weather",
+                        input='{"city":"NY"}',
+                    ),
+                ],
+            ),
+        )
 
-    def test_parse_text_response(self) -> None:
-        """Parsing a text response creates a TextBlock."""
-        resp = self._mock_response(text="Hello!")
-        result = self.model._parse_completion_response(self.start, resp)
-        self.assertTrue(result.is_last)
-        texts = [b for b in result.content if isinstance(b, TextBlock)]
-        self.assertEqual(texts[0].text, "Hello!")
+    @patch("xai_sdk.AsyncClient")
+    async def test_thinking_response(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Non-stream reasoning plus text returns ThinkingBlock then
+        TextBlock."""
+        mock_chat = _MockChatStream(
+            sample_response=_mock_completion(
+                text="Answer",
+                reasoning="Deep thinking...",
+            ),
+        )
+        mock_client_cls.return_value.chat.create.return_value = mock_chat
+        mock_client_cls.return_value.close = AsyncMock()
 
-    def test_parse_tool_call_response(self) -> None:
-        """Parsing a tool call response creates a ToolCallBlock."""
-        resp = self._mock_response(
+        result = await self.model([])
+
+        self.assertEqual(
+            (result.is_last, result.content),
+            (
+                True,
+                [
+                    ThinkingBlock.model_construct(
+                        id=A,
+                        thinking="Deep thinking...",
+                    ),
+                    TextBlock.model_construct(id=A, text="Answer"),
+                ],
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Streaming tests
+# ---------------------------------------------------------------------------
+
+
+class TestXAIStream(IsolatedAsyncioTestCase):
+    """Tests for XAIChatModel in streaming mode."""
+
+    def setUp(self) -> None:
+        self.model = _make_model(stream=True)
+
+    @patch("xai_sdk.AsyncClient")
+    async def test_stream_text(self, mock_client_cls: MagicMock) -> None:
+        """Stream text yields deltas then final with full content."""
+        final_response = _mock_completion(text="Hello world")
+        final_response.tool_calls = None
+        final_response.usage = MagicMock()
+        final_response.usage.prompt_tokens = 10
+        final_response.usage.completion_tokens = 5
+        final_response.usage.cached_prompt_text_tokens = 0
+
+        stream_items = [
+            (final_response, _MockStreamChunk(content="Hello")),
+            (final_response, _MockStreamChunk(content=" world")),
+        ]
+        mock_chat = _MockChatStream(stream_items=stream_items)
+        mock_client_cls.return_value.chat.create.return_value = mock_chat
+        mock_client_cls.return_value.close = AsyncMock()
+
+        gen = await self.model([])
+        responses = [r async for r in gen]
+
+        self.assertListEqual(
+            [(r.is_last, r.content) for r in responses],
+            [
+                (False, [TextBlock.model_construct(id=A, text="Hello")]),
+                (False, [TextBlock.model_construct(id=A, text=" world")]),
+                (True, [TextBlock.model_construct(id=A, text="Hello world")]),
+            ],
+        )
+
+    @patch("xai_sdk.AsyncClient")
+    async def test_stream_thinking_and_text(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Stream reasoning and text deltas then final with accumulated
+        content."""
+        final_response = _mock_completion(text="")
+        final_response.tool_calls = None
+        final_response.usage = MagicMock()
+        final_response.usage.prompt_tokens = 10
+        final_response.usage.completion_tokens = 5
+        final_response.usage.cached_prompt_text_tokens = 0
+
+        stream_items = [
+            (final_response, _MockStreamChunk(reasoning_content="Think")),
+            (final_response, _MockStreamChunk(content="Answer")),
+        ]
+        mock_chat = _MockChatStream(stream_items=stream_items)
+        mock_client_cls.return_value.chat.create.return_value = mock_chat
+        mock_client_cls.return_value.close = AsyncMock()
+
+        gen = await self.model([])
+        responses = [r async for r in gen]
+
+        self.assertListEqual(
+            [(r.is_last, r.content) for r in responses],
+            [
+                (
+                    False,
+                    [ThinkingBlock.model_construct(id=A, thinking="Think")],
+                ),
+                (False, [TextBlock.model_construct(id=A, text="Answer")]),
+                (
+                    True,
+                    [
+                        ThinkingBlock.model_construct(id=A, thinking="Think"),
+                        TextBlock.model_construct(id=A, text="Answer"),
+                    ],
+                ),
+            ],
+        )
+
+    @patch("xai_sdk.AsyncClient")
+    async def test_stream_tool_calls_in_final(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Stream text delta then final adds tool calls from last_response."""
+        final_response = _mock_completion(
             tool_calls=[
                 {
                     "id": "call-1",
-                    "name": "get_weather",
-                    "arguments": '{"city":"Beijing"}',
+                    "name": "search",
+                    "arguments": '{"q":"test"}',
                 },
             ],
         )
-        result = self.model._parse_completion_response(self.start, resp)
-        tcs = [b for b in result.content if isinstance(b, ToolCallBlock)]
-        self.assertEqual(len(tcs), 1)
-        self.assertEqual(tcs[0].id, "call-1")
-        self.assertEqual(tcs[0].name, "get_weather")
-        self.assertEqual(json.loads(tcs[0].input)["city"], "Beijing")
+        final_response.usage = MagicMock()
+        final_response.usage.prompt_tokens = 10
+        final_response.usage.completion_tokens = 5
+        final_response.usage.cached_prompt_text_tokens = 0
 
-    def test_parse_thinking_response(self) -> None:
-        """Parsing a response with reasoning creates a ThinkingBlock."""
-        resp = self._mock_response(text="Answer", reasoning="Let me think...")
-        result = self.model._parse_completion_response(self.start, resp)
-        thinkings = [b for b in result.content if isinstance(b, ThinkingBlock)]
-        self.assertEqual(len(thinkings), 1)
-        self.assertEqual(thinkings[0].thinking, "Let me think...")
+        stream_items = [
+            (final_response, _MockStreamChunk(content="I'll search")),
+        ]
+        mock_chat = _MockChatStream(stream_items=stream_items)
+        mock_client_cls.return_value.chat.create.return_value = mock_chat
+        mock_client_cls.return_value.close = AsyncMock()
 
-    def test_response_id_set(self) -> None:
-        """The response ID from the API is stored in the ChatResponse."""
-        resp = self._mock_response(text="Hi")
-        result = self.model._parse_completion_response(self.start, resp)
-        self.assertEqual(result.id, "xai-resp-1")
+        gen = await self.model([])
+        responses = [r async for r in gen]
+
+        self.assertListEqual(
+            [(r.is_last, r.content) for r in responses],
+            [
+                (False, [TextBlock.model_construct(id=A, text="I'll search")]),
+                (
+                    True,
+                    [
+                        TextBlock.model_construct(id=A, text="I'll search"),
+                        ToolCallBlock(
+                            id="call-1",
+                            name="search",
+                            input='{"q":"test"}',
+                        ),
+                    ],
+                ),
+            ],
+        )
 
 
 # ---------------------------------------------------------------------------
-# Shared _format_tools fixtures
+# _format_tools tests
 # ---------------------------------------------------------------------------
 
 _FT_TOOLS = [
@@ -242,13 +471,10 @@ def _extend_xai_stub_for_tools() -> None:
         return
 
     class _RequiredTool:
-        """Minimal stub for xai_sdk.chat.required_tool(name)."""
-
         def __init__(self, tool_name: str) -> None:
             self.tool_name = tool_name
 
         def __eq__(self, other: object) -> bool:
-            """Compare by tool_name."""
             return (
                 isinstance(other, _RequiredTool)
                 and self.tool_name == other.tool_name
@@ -259,7 +485,6 @@ def _extend_xai_stub_for_tools() -> None:
         description: str = "",
         parameters: Any = None,
     ) -> MagicMock:
-        """Minimal stub for xai_sdk.chat.tool(name, ...)."""
         m = MagicMock()
         m.name = name
         m.description = description
@@ -277,18 +502,17 @@ class TestXAIFormatTools(unittest.TestCase):
     """Tests for XAIChatModel._format_tools."""
 
     def setUp(self) -> None:
-        """Set up model instance."""
         self.model = _make_model()
 
     def test_no_tool_choice(self) -> None:
-        """Without tool_choice, returns xai_sdk tools and None."""
+        """All tools are returned when tool_choice is None."""
         fmt_tools, fmt_choice = self.model._format_tools(_FT_TOOLS, None)
         self.assertIsNotNone(fmt_tools)
         self.assertEqual(len(fmt_tools), 2)
         self.assertIsNone(fmt_choice)
 
     def test_auto_mode(self) -> None:
-        """Auto mode returns xai_sdk tools and string 'auto'."""
+        """Auto mode passes tools through with choice 'auto'."""
         fmt_tools, fmt_choice = self.model._format_tools(
             _FT_TOOLS,
             ToolChoice(mode="auto"),
@@ -297,7 +521,7 @@ class TestXAIFormatTools(unittest.TestCase):
         self.assertEqual(fmt_choice, "auto")
 
     def test_none_mode(self) -> None:
-        """None mode returns xai_sdk tools and string 'none'."""
+        """None mode passes tools through with choice 'none'."""
         fmt_tools, fmt_choice = self.model._format_tools(
             _FT_TOOLS,
             ToolChoice(mode="none"),
@@ -306,7 +530,7 @@ class TestXAIFormatTools(unittest.TestCase):
         self.assertEqual(fmt_choice, "none")
 
     def test_str_mode_force_call(self) -> None:
-        """A specific tool name returns a required_tool stub object."""
+        """String mode forces a required_tool for the named function."""
         fmt_tools, fmt_choice = self.model._format_tools(
             _FT_TOOLS,
             ToolChoice(mode="get_weather"),
@@ -315,7 +539,7 @@ class TestXAIFormatTools(unittest.TestCase):
         self.assertEqual(fmt_choice.tool_name, "get_weather")
 
     def test_tools_filtered(self) -> None:
-        """When tool_choice.tools is set, only those tools are included."""
+        """ToolChoice with tools list filters to matching function names."""
         fmt_tools, fmt_choice = self.model._format_tools(
             _FT_TOOLS,
             ToolChoice(mode="auto", tools=["get_weather"]),

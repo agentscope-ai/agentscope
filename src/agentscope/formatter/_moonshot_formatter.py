@@ -14,7 +14,6 @@ from ..message import (
     HintBlock,
     ToolCallBlock,
     ToolResultBlock,
-    UserMsg,
 )
 
 
@@ -82,15 +81,17 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
                         content_blocks.append(formatted)
 
                 elif isinstance(block, HintBlock):
-                    if content_blocks or tool_calls:
+                    if content_blocks or tool_calls or reasoning_parts:
                         msg_moonshot = {
                             "role": msg.role,
                             "name": msg.name,
                             "content": content_blocks or None,
                         }
-                        if reasoning_parts:
-                            msg_moonshot["reasoning_content"] = "\n".join(
-                                reasoning_parts,
+                        if msg.role == "assistant":
+                            msg_moonshot["reasoning_content"] = (
+                                "\n".join(reasoning_parts)
+                                if reasoning_parts
+                                else ""
                             )
                         if tool_calls:
                             msg_moonshot["tool_calls"] = tool_calls
@@ -98,6 +99,15 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
                         content_blocks = []
                         reasoning_parts = []
                         tool_calls = []
+
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": block.hint},
+                            ],
+                        },
+                    )
 
                 elif isinstance(block, ToolCallBlock):
                     tool_calls.append(
@@ -112,6 +122,25 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
                     )
 
                 elif isinstance(block, ToolResultBlock):
+                    if content_blocks or tool_calls or reasoning_parts:
+                        msg_flush = {
+                            "role": msg.role,
+                            "name": msg.name,
+                            "content": content_blocks or None,
+                        }
+                        if msg.role == "assistant":
+                            msg_flush["reasoning_content"] = (
+                                "\n".join(reasoning_parts)
+                                if reasoning_parts
+                                else ""
+                            )
+                        if tool_calls:
+                            msg_flush["tool_calls"] = tool_calls
+                        messages.append(msg_flush)
+                        content_blocks = []
+                        reasoning_parts = []
+                        tool_calls = []
+
                     (
                         textual_output,
                         multimodal_data,
@@ -127,13 +156,27 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
                     )
 
                     if multimodal_data:
-                        msgs.insert(
-                            i + 1,
-                            UserMsg(
-                                name="system-reminder",
-                                content=multimodal_data,
-                            ),
-                        )
+                        promo_content = []
+                        for item in multimodal_data:
+                            if isinstance(item, TextBlock):
+                                promo_content.append(
+                                    {"type": "text", "text": item.text},
+                                )
+                            elif isinstance(item, DataBlock):
+                                fmt_item = self._format_openai_data_block(
+                                    item,
+                                    role="user",
+                                )
+                                if fmt_item is not None:
+                                    promo_content.append(fmt_item)
+                        if promo_content:
+                            messages.append(
+                                {
+                                    "role": "user",
+                                    "name": "system-reminder",
+                                    "content": promo_content,
+                                },
+                            )
 
                 else:
                     logger.warning(
@@ -159,7 +202,11 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
             if tool_calls:
                 msg_moonshot["tool_calls"] = tool_calls
 
-            if msg_moonshot["content"] or msg_moonshot.get("tool_calls"):
+            if (
+                msg_moonshot["content"]
+                or msg_moonshot.get("tool_calls")
+                or reasoning_parts
+            ):
                 messages.append(msg_moonshot)
 
             i += 1

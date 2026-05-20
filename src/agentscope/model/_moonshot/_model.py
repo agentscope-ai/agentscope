@@ -11,9 +11,8 @@ from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ...credential import MoonshotCredential
 from ...formatter import FormatterBase, MoonshotChatFormatter
-from ...message import ThinkingBlock, ToolCallBlock, TextBlock
+from ...message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
 from ...tool import ToolChoice
-from ...tracing import trace_llm
 
 if TYPE_CHECKING:
     from openai.types.chat import ChatCompletion
@@ -97,11 +96,10 @@ class MoonshotChatModel(ChatModelBase):
         )
         self.formatter = formatter or MoonshotChatFormatter()
 
-    @trace_llm
     async def _call_api(
         self,
         model_name: str,
-        messages: list[Any],
+        messages: list[Msg],
         tools: list[dict] | None = None,
         tool_choice: ToolChoice | None = None,
         **generate_kwargs: Any,
@@ -245,25 +243,37 @@ class MoonshotChatModel(ChatModelBase):
                 delta_text = getattr(delta, "content", None) or ""
                 acc_text.text += delta_text
 
+                delta_tool_call_blocks: List[ToolCallBlock] = []
                 for tool_call in getattr(delta, "tool_calls", None) or []:
                     idx = tool_call.index
+                    args = tool_call.function.arguments or ""
                     if idx in acc_tool_calls:
-                        if tool_call.function.arguments is not None:
-                            acc_tool_calls[idx][
-                                "input"
-                            ] += tool_call.function.arguments
+                        acc_tool_calls[idx]["input"] += args
                     else:
                         acc_tool_calls[idx] = {
                             "id": tool_call.id,
                             "name": tool_call.function.name,
-                            "input": tool_call.function.arguments or "",
+                            "input": args,
                         }
+                    tc = acc_tool_calls[idx]
+                    delta_tool_call_blocks.append(
+                        ToolCallBlock(
+                            id=tc["id"],
+                            name=tc["name"],
+                            input=args,
+                        ),
+                    )
 
+                delta_contents: List[TextBlock | ToolCallBlock] = []
                 if delta_text:
+                    delta_contents.append(
+                        TextBlock(id=acc_text.id, text=delta_text),
+                    )
+                delta_contents.extend(delta_tool_call_blocks)
+
+                if delta_contents:
                     _text_kwargs: dict[str, Any] = {
-                        "content": [
-                            TextBlock(id=acc_text.id, text=delta_text),
-                        ],
+                        "content": delta_contents,
                         "usage": usage,
                         "is_last": False,
                     }

@@ -9,14 +9,15 @@ from agentscope.formatter import (
     DeepSeekMultiAgentFormatter,
 )
 from agentscope.message import (
+    UserMsg,
+    AssistantMsg,
+    SystemMsg,
     TextBlock,
     ToolCallBlock,
     ToolResultBlock,
-    ThinkingBlock,
-    AssistantMsg,
-    UserMsg,
-    SystemMsg,
     ToolResultState,
+    ThinkingBlock,
+    HintBlock,
 )
 
 
@@ -66,27 +67,16 @@ class TestDeepSeekFormatter(IsolatedAsyncioTestCase):
                         name="get_capital",
                         input='{"country": "Japan"}',
                     ),
-                ],
-            ),
-            AssistantMsg(
-                name="tool",
-                content=[
                     ToolResultBlock(
                         id="call_1",
                         name="get_capital",
                         output=[
-                            TextBlock(
-                                type="text",
-                                text="The capital of Japan is Tokyo.",
-                            ),
+                            TextBlock(text="The capital of Japan is Tokyo."),
                         ],
                         state=ToolResultState.SUCCESS,
                     ),
+                    TextBlock(text="The capital of Japan is Tokyo."),
                 ],
-            ),
-            AssistantMsg(
-                name="assistant",
-                content="The capital of Japan is Tokyo.",
             ),
         ]
 
@@ -142,21 +132,10 @@ class TestDeepSeekFormatter(IsolatedAsyncioTestCase):
         # History is a plain string (not a list) with <history> tags.
         # The trailing assistant message (is_first=False) is wrapped in a
         # minimal <history> block without the full prompt prefix.
-        _gt_trailing_asst_nonfirst = {
-            "role": "user",
-            "content": (
-                "<history>\n"
-                "assistant: The capital of Japan is Tokyo.\n"
-                "</history>"
-            ),
-        }
-        self._gt_trailing_asst_first = {
-            "role": "user",
-            "content": (
-                _hist_prompt + "<history>\n"
-                "assistant: The capital of Japan is Tokyo.\n"
-                "</history>"
-            ),
+        self._gt_trailing_asst = {
+            "role": "assistant",
+            "content": "The capital of Japan is Tokyo.",
+            "reasoning_content": "",
         }
         self._gt_tool_call = {
             "role": "assistant",
@@ -196,7 +175,7 @@ class TestDeepSeekFormatter(IsolatedAsyncioTestCase):
             },
             self._gt_tool_call,
             self._gt_tool_result,
-            _gt_trailing_asst_nonfirst,
+            self._gt_trailing_asst,
         ]
 
     # ------------------------------------------------------------------
@@ -206,7 +185,6 @@ class TestDeepSeekFormatter(IsolatedAsyncioTestCase):
     async def test_chat_formatter(self) -> None:
         """Chat formatter produces exact output for various subsets."""
         fmt = DeepSeekChatFormatter()
-        self.maxDiff = None
 
         # Full history
         res = await fmt.format(
@@ -219,15 +197,16 @@ class TestDeepSeekFormatter(IsolatedAsyncioTestCase):
         self.assertListEqual(self.gt_chat[1:], res)
 
         # Without conversation
+        n_tools_gt = len(self.gt_chat) - 1 - len(self.msgs_conversation)
         res = await fmt.format([*self.msgs_system, *self.msgs_tools])
         self.assertListEqual(
-            [self.gt_chat[0]] + self.gt_chat[-len(self.msgs_tools) :],
+            [self.gt_chat[0]] + self.gt_chat[-n_tools_gt:],
             res,
         )
 
         # Without tools
         res = await fmt.format([*self.msgs_system, *self.msgs_conversation])
-        self.assertListEqual(self.gt_chat[: -len(self.msgs_tools)], res)
+        self.assertListEqual(self.gt_chat[:-n_tools_gt], res)
 
         # Empty
         self.assertListEqual([], await fmt.format([]))
@@ -239,8 +218,16 @@ class TestDeepSeekFormatter(IsolatedAsyncioTestCase):
         fmt = DeepSeekChatFormatter()
         msgs = [AssistantMsg(name="assistant", content="Answer")]
         res = await fmt.format(msgs)
-        self.assertIn("reasoning_content", res[0])
-        self.assertEqual(res[0]["reasoning_content"], "")
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": "Answer",
+                    "reasoning_content": "",
+                },
+            ],
+            res,
+        )
 
     async def test_chat_formatter_thinking_block(self) -> None:
         """ThinkingBlock is placed into reasoning_content."""
@@ -250,13 +237,21 @@ class TestDeepSeekFormatter(IsolatedAsyncioTestCase):
                 name="assistant",
                 content=[
                     ThinkingBlock(thinking="Let me think..."),
-                    TextBlock(type="text", text="Answer"),
+                    TextBlock(text="Answer"),
                 ],
             ),
         ]
         res = await fmt.format(msgs)
-        self.assertEqual(res[0]["reasoning_content"], "Let me think...")
-        self.assertEqual(res[0]["content"], "Answer")
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": "Answer",
+                    "reasoning_content": "Let me think...",
+                },
+            ],
+            res,
+        )
 
     # ------------------------------------------------------------------
     # DeepSeekMultiAgentFormatter tests
@@ -265,7 +260,6 @@ class TestDeepSeekFormatter(IsolatedAsyncioTestCase):
     async def test_multiagent_formatter(self) -> None:
         """MultiAgent formatter produces exact output for various subsets."""
         fmt = DeepSeekMultiAgentFormatter()
-        self.maxDiff = None
 
         # Full
         res = await fmt.format(
@@ -289,28 +283,212 @@ class TestDeepSeekFormatter(IsolatedAsyncioTestCase):
         res = await fmt.format(self.msgs_conversation)
         self.assertListEqual([self.gt_multiagent[1]], res)
 
-        # Tools only (is_first=True for trailing assistant)
+        # Tools only
         res = await fmt.format(self.msgs_tools)
         self.assertListEqual(
             [
                 self._gt_tool_call,
                 self._gt_tool_result,
-                self._gt_trailing_asst_first,
+                self._gt_trailing_asst,
             ],
             res,
         )
 
-        # System + tools (is_first=True for trailing assistant)
+        # System + tools
         res = await fmt.format([*self.msgs_system, *self.msgs_tools])
         self.assertListEqual(
             [
                 self.gt_multiagent[0],
                 self._gt_tool_call,
                 self._gt_tool_result,
-                self._gt_trailing_asst_first,
+                self._gt_trailing_asst,
             ],
             res,
         )
 
         # Empty
         self.assertListEqual([], await fmt.format([]))
+
+    async def test_chat_formatter_complex_multi_step(self) -> None:
+        """Complex multi-step sequence with interleaved thinking, text,
+        tool calls, and tool results."""
+        fmt = DeepSeekChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ThinkingBlock(thinking="thinking_1"),
+                    TextBlock(text="text_1"),
+                    ToolCallBlock(
+                        id="call_1",
+                        name="func_1",
+                        input='{"arg": "value1"}',
+                    ),
+                    ToolCallBlock(
+                        id="call_2",
+                        name="func_2",
+                        input='{"arg": "value2"}',
+                    ),
+                    ToolResultBlock(
+                        id="call_1",
+                        name="func_1",
+                        output=[TextBlock(text="result_1")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ToolResultBlock(
+                        id="call_2",
+                        name="func_2",
+                        output=[TextBlock(text="result_2")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ThinkingBlock(thinking="thinking_2"),
+                    TextBlock(text="text_2"),
+                    ToolCallBlock(
+                        id="call_3",
+                        name="func_3",
+                        input='{"arg": "value3"}',
+                    ),
+                    ToolResultBlock(
+                        id="call_3",
+                        name="func_3",
+                        output=[TextBlock(text="result_3")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ToolCallBlock(
+                        id="call_4",
+                        name="func_4",
+                        input='{"arg": "value4"}',
+                    ),
+                    ToolResultBlock(
+                        id="call_4",
+                        name="func_4",
+                        output=[TextBlock(text="result_4")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ThinkingBlock(thinking="thinking_3"),
+                    TextBlock(text="text_3"),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": "text_1",
+                    "reasoning_content": "thinking_1",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "func_1",
+                                "arguments": '{"arg": "value1"}',
+                            },
+                        },
+                        {
+                            "id": "call_2",
+                            "type": "function",
+                            "function": {
+                                "name": "func_2",
+                                "arguments": '{"arg": "value2"}',
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_1",
+                    "content": "result_1",
+                    "name": "func_1",
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_2",
+                    "content": "result_2",
+                    "name": "func_2",
+                },
+                {
+                    "role": "assistant",
+                    "content": "text_2",
+                    "reasoning_content": "thinking_2",
+                    "tool_calls": [
+                        {
+                            "id": "call_3",
+                            "type": "function",
+                            "function": {
+                                "name": "func_3",
+                                "arguments": '{"arg": "value3"}',
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_3",
+                    "content": "result_3",
+                    "name": "func_3",
+                },
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "reasoning_content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_4",
+                            "type": "function",
+                            "function": {
+                                "name": "func_4",
+                                "arguments": '{"arg": "value4"}',
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_4",
+                    "content": "result_4",
+                    "name": "func_4",
+                },
+                {
+                    "role": "assistant",
+                    "content": "text_3",
+                    "reasoning_content": "thinking_3",
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_hint_block(self) -> None:
+        """HintBlock flushes preceding content and becomes a user message."""
+        fmt = DeepSeekChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    TextBlock(text="Let me think about that."),
+                    HintBlock(hint="Remember to be concise."),
+                    TextBlock(text="Here is my answer."),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": "Let me think about that.",
+                    "reasoning_content": "",
+                },
+                {
+                    "role": "user",
+                    "content": "Remember to be concise.",
+                },
+                {
+                    "role": "assistant",
+                    "content": "Here is my answer.",
+                    "reasoning_content": "",
+                },
+            ],
+            res,
+        )

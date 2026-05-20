@@ -21,7 +21,6 @@ from ..message import (
     ToolResultBlock,
     HintBlock,
     ThinkingBlock,
-    UserMsg,
 )
 
 
@@ -244,9 +243,6 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                         content_blocks.append(formatted)
 
                 elif isinstance(block, HintBlock):
-                    # Insert a new user message with the hint content right
-                    # after the current message, and go on processing the
-                    # rest of the blocks in the current message
                     if content_blocks or tool_calls:
                         msg_openai = {
                             "role": msg.role,
@@ -258,6 +254,15 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                         messages.append(msg_openai)
                         content_blocks = []
                         tool_calls = []
+
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": block.hint},
+                            ],
+                        },
+                    )
 
                 elif isinstance(block, ToolCallBlock):
                     tool_calls.append(
@@ -272,6 +277,18 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                     )
 
                 elif isinstance(block, ToolResultBlock):
+                    if content_blocks or tool_calls:
+                        msg_openai_flush = {
+                            "role": msg.role,
+                            "name": msg.name,
+                            "content": content_blocks or None,
+                        }
+                        if tool_calls:
+                            msg_openai_flush["tool_calls"] = tool_calls
+                        messages.append(msg_openai_flush)
+                        content_blocks = []
+                        tool_calls = []
+
                     (
                         textual_output,
                         multimodal_data,
@@ -287,13 +304,27 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                     )
 
                     if multimodal_data:
-                        msgs.insert(
-                            i + 1,
-                            UserMsg(
-                                name="system-reminder",
-                                content=multimodal_data,
-                            ),
-                        )
+                        promo_content = []
+                        for item in multimodal_data:
+                            if isinstance(item, TextBlock):
+                                promo_content.append(
+                                    {"type": "text", "text": item.text},
+                                )
+                            elif isinstance(item, DataBlock):
+                                fmt_item = self._format_openai_data_block(
+                                    item,
+                                    role="user",
+                                )
+                                if fmt_item is not None:
+                                    promo_content.append(fmt_item)
+                        if promo_content:
+                            messages.append(
+                                {
+                                    "role": "user",
+                                    "name": "system-reminder",
+                                    "content": promo_content,
+                                },
+                            )
 
                 elif isinstance(block, ThinkingBlock):
                     # OpenAI API does not accept reasoning/thinking content

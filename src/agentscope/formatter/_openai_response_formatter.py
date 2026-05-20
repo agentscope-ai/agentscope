@@ -15,7 +15,6 @@ from ..message import (
     ToolResultBlock,
     HintBlock,
     ThinkingBlock,
-    UserMsg,
 )
 
 
@@ -119,7 +118,18 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                         content_parts.append(formatted)
 
                 elif isinstance(block, HintBlock):
-                    if content_parts:
+                    if function_calls:
+                        if content_parts:
+                            items.append(
+                                {
+                                    "role": msg.role,
+                                    "content": content_parts,
+                                },
+                            )
+                            content_parts = []
+                        items.extend(function_calls)
+                        function_calls = []
+                    elif content_parts:
                         items.append(
                             {
                                 "role": msg.role,
@@ -127,6 +137,18 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                             },
                         )
                         content_parts = []
+
+                    items.append(
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "input_text",
+                                    "text": block.hint,
+                                },
+                            ],
+                        },
+                    )
 
                 elif isinstance(block, ThinkingBlock):
                     # When reasoning_item_id is present the block originated
@@ -186,6 +208,26 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                     )
 
                 elif isinstance(block, ToolResultBlock):
+                    if function_calls:
+                        if content_parts:
+                            items.append(
+                                {
+                                    "role": msg.role,
+                                    "content": content_parts,
+                                },
+                            )
+                            content_parts = []
+                        items.extend(function_calls)
+                        function_calls = []
+                    elif content_parts:
+                        items.append(
+                            {
+                                "role": msg.role,
+                                "content": content_parts,
+                            },
+                        )
+                        content_parts = []
+
                     (
                         textual_output,
                         multimodal_data,
@@ -200,13 +242,29 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                     )
 
                     if multimodal_data:
-                        msgs.insert(
-                            i + 1,
-                            UserMsg(
-                                name="system-reminder",
-                                content=multimodal_data,
-                            ),
-                        )
+                        promo_content = []
+                        for item in multimodal_data:
+                            if isinstance(item, TextBlock):
+                                promo_content.append(
+                                    {
+                                        "type": "input_text",
+                                        "text": item.text,
+                                    },
+                                )
+                            elif isinstance(item, DataBlock):
+                                fmt_item = self._format_response_data_block(
+                                    item,
+                                    role="user",
+                                )
+                                if fmt_item is not None:
+                                    promo_content.append(fmt_item)
+                        if promo_content:
+                            items.append(
+                                {
+                                    "role": "user",
+                                    "content": promo_content,
+                                },
+                            )
 
                 else:
                     logger.warning(

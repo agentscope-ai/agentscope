@@ -446,7 +446,6 @@ class Toolkit:
             ", ".join(to_removed),
         )
 
-    # @trace_toolkit
     async def call_tool(
         self,
         tool_call: ToolCallBlock,
@@ -863,10 +862,8 @@ AsyncGenerator[ToolResponse, None]] | AsyncGenerator[ToolResponse, None]]`):
                 dict currently includes ``tool_call`` (ToolCallBlock), and may
                 include additional context in future versions.
 
-        .. note:: The middleware chain is applied inside the
-        `call_tool_function` via the `@apply_middlewares` decorator. This
-        ensures that the `@trace_toolkit` decorator remains at the outermost
-        layer for complete observability.
+        .. note:: Tracing is now handled by ``TracingMiddleware`` at the
+        agent level rather than a ``@trace_toolkit`` decorator.
         """
         # Simply append the middleware to the list
         # The @apply_middlewares decorator will handle the execution

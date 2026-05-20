@@ -46,6 +46,7 @@ class XAIChatFormatter(FormatterBase):
         ),
     )
 
+    # pylint: disable=too-many-statements, too-many-branches
     async def format(
         self,
         msgs: list[Msg],
@@ -82,12 +83,6 @@ class XAIChatFormatter(FormatterBase):
             blocks = msg.get_content_blocks()
 
             text_blocks = [b for b in blocks if isinstance(b, TextBlock)]
-            tool_call_blocks = [
-                b for b in blocks if isinstance(b, ToolCallBlock)
-            ]
-            tool_result_blocks = [
-                b for b in blocks if isinstance(b, ToolResultBlock)
-            ]
 
             if msg.role == "system":
                 text = "\n".join(b.text for b in text_blocks)
@@ -96,8 +91,13 @@ class XAIChatFormatter(FormatterBase):
             elif msg.role == "user":
                 content_args: list = []
                 for block in blocks:
-                    if isinstance(block, (HintBlock, ThinkingBlock)):
+                    if isinstance(block, ThinkingBlock):
                         pass
+                    elif isinstance(block, HintBlock):
+                        if content_args:
+                            xai_messages.append(user(*content_args))
+                            content_args = []
+                        xai_messages.append(user(block.hint))
                     elif isinstance(block, TextBlock):
                         content_args.append(block.text)
                     elif isinstance(block, DataBlock):
@@ -146,29 +146,102 @@ class XAIChatFormatter(FormatterBase):
                     xai_messages.append(user(*content_args))
 
             elif msg.role == "assistant":
-                if tool_result_blocks:
-                    # Convert each ToolResultBlock to a tool_result message.
-                    for tr_block in tool_result_blocks:
+                pending_text: list[TextBlock] = []
+                pending_tool_calls: list[ToolCallBlock] = []
+
+                for block in blocks:
+                    if isinstance(block, ToolResultBlock):
+                        # Convert each ToolResultBlock to a tool_result
+                        # message.
+                        if pending_tool_calls:
+                            msg_proto = chat_pb2.Message()
+                            msg_proto.role = chat_pb2.MessageRole.Value(
+                                "ROLE_ASSISTANT",
+                            )
+                            if pending_text:
+                                c = msg_proto.content.add()
+                                c.text = "\n".join(
+                                    b.text for b in pending_text
+                                )
+                                pending_text = []
+                            for tc in pending_tool_calls:
+                                proto_tc = msg_proto.tool_calls.add()
+                                proto_tc.id = tc.id
+                                proto_tc.type = chat_pb2.ToolCallType.Value(
+                                    "TOOL_CALL_TYPE_CLIENT_SIDE_TOOL",
+                                )
+                                proto_tc.function.name = tc.name
+                                proto_tc.function.arguments = tc.input
+                            xai_messages.append(msg_proto)
+                            pending_tool_calls = []
+                        elif pending_text:
+                            text = "\n".join(b.text for b in pending_text)
+                            if text:
+                                xai_messages.append(assistant(text))
+                            pending_text = []
+
                         output_text = self._extract_result_text(
-                            tr_block.output,
+                            block.output,
                         )
                         xai_messages.append(
                             tool_result(
                                 output_text,
-                                tool_call_id=tr_block.id,
+                                tool_call_id=block.id,
                             ),
                         )
 
-                elif tool_call_blocks:
+                    elif isinstance(block, ToolCallBlock):
+                        pending_tool_calls.append(block)
+
+                    elif isinstance(block, TextBlock):
+                        pending_text.append(block)
+
+                    elif isinstance(block, ThinkingBlock):
+                        pass
+
+                    elif isinstance(block, HintBlock):
+                        if pending_tool_calls or pending_text:
+                            if pending_tool_calls:
+                                msg_proto = chat_pb2.Message()
+                                msg_proto.role = chat_pb2.MessageRole.Value(
+                                    "ROLE_ASSISTANT",
+                                )
+                                if pending_text:
+                                    c = msg_proto.content.add()
+                                    c.text = "\n".join(
+                                        b.text for b in pending_text
+                                    )
+                                    pending_text = []
+                                for tc in pending_tool_calls:
+                                    proto_tc = msg_proto.tool_calls.add()
+                                    proto_tc.id = tc.id
+                                    proto_tc.type = (
+                                        chat_pb2.ToolCallType.Value(
+                                            "TOOL_CALL_TYPE_CLIENT_SIDE_TOOL",
+                                        )
+                                    )
+                                    proto_tc.function.name = tc.name
+                                    proto_tc.function.arguments = tc.input
+                                xai_messages.append(msg_proto)
+                                pending_tool_calls = []
+                            elif pending_text:
+                                text = "\n".join(b.text for b in pending_text)
+                                if text:
+                                    xai_messages.append(assistant(text))
+                                pending_text = []
+                        xai_messages.append(user(block.hint))
+
+                if pending_tool_calls:
                     # Assistant turn that triggered tool calls (history).
                     msg_proto = chat_pb2.Message()
                     msg_proto.role = chat_pb2.MessageRole.Value(
                         "ROLE_ASSISTANT",
                     )
-                    if text_blocks:
+                    if pending_text:
                         c = msg_proto.content.add()
-                        c.text = "\n".join(b.text for b in text_blocks)
-                    for tc in tool_call_blocks:
+                        c.text = "\n".join(b.text for b in pending_text)
+                        pending_text = []
+                    for tc in pending_tool_calls:
                         proto_tc = msg_proto.tool_calls.add()
                         proto_tc.id = tc.id
                         proto_tc.type = chat_pb2.ToolCallType.Value(
@@ -177,10 +250,9 @@ class XAIChatFormatter(FormatterBase):
                         proto_tc.function.name = tc.name
                         proto_tc.function.arguments = tc.input
                     xai_messages.append(msg_proto)
-
-                else:
+                elif pending_text:
                     # Regular assistant text message.
-                    text = "\n".join(b.text for b in text_blocks)
+                    text = "\n".join(b.text for b in pending_text)
                     if text:
                         xai_messages.append(assistant(text))
 
