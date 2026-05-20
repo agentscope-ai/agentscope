@@ -109,6 +109,10 @@ class _ToolRoute:
 
     def __init__(self, client: _MCPServerClient, original_name: str) -> None:
         self.client = client
+        #: The tool's upstream name before gateway-level prefixing.
+        #: When the host calls ``server___tool``, the gateway uses
+        #: ``original_name`` (i.e. just ``tool``) to invoke the real
+        #: tool on the upstream MCP server via ``session.call_tool``.
         self.original_name = original_name
 
 

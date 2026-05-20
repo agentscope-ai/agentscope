@@ -45,7 +45,6 @@ from ..tool import ToolBase
 from .config import MCPServerConfig
 from .gateway import GatewayMixin
 from .types import ExecutionResult, SerializedWorkspaceState
-from .workspace_base import WorkspaceBase
 
 _EXECUTOR = ThreadPoolExecutor(
     max_workers=8,
@@ -83,7 +82,7 @@ class InternalEndpoint:
     is_tls_enabled: bool = False
 
 
-class DockerWorkspace(GatewayMixin, WorkspaceBase):
+class DockerWorkspace(GatewayMixin):
     """Workspace backed by a Docker container.
 
     Usage::
@@ -112,6 +111,25 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
         startup_commands: list[str] | None = None,
         instructions: str = _DEFAULT_INSTRUCTIONS,
     ) -> None:
+        """Create a Docker-container workspace.
+
+        Args:
+            image: Docker image to use for the container.
+            working_dir: Working directory inside the container.
+            mcp_servers: MCP servers to run inside the container
+                via the in-container gateway.
+            gateway_port: Port the in-container MCP gateway
+                listens on.
+            exposed_ports: Additional container ports to expose
+                to the host.
+            volumes: Host-to-container volume mounts
+                (``{host_path: container_path}``).
+            env: Environment variables set inside the container.
+            startup_commands: Shell commands run after container
+                creation (before gateway starts).  Failures raise
+                ``RuntimeError``.
+            instructions: Custom system prompt fragment.
+        """
         self._image = image
         self._working_dir = working_dir
         self._mcp_servers = mcp_servers or []
@@ -143,6 +161,7 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
     # ── lifecycle ──────────────────────────────────────────────────
 
     async def initialize(self) -> None:
+        """Provision container, run startup commands, start gateway."""
         if self._started:
             return
 
@@ -239,6 +258,7 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
         )
 
     async def is_alive(self) -> bool:
+        """``True`` if the Docker container is still running."""
         if not self._container:
             return False
         try:
@@ -249,6 +269,7 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
             return False
 
     async def close(self) -> None:
+        """Kill and remove the Docker container; release resources."""
         if self._gateway_mcp_client and self._gateway_mcp_client.is_connected:
             try:
                 await self._gateway_mcp_client.close()
@@ -284,11 +305,13 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
     # ── instructions ───────────────────────────────────────────────
 
     async def get_instructions(self) -> str:
+        """Return the workspace-specific system prompt fragment."""
         return self._instructions
 
     # ── tool & MCP discovery ───────────────────────────────────────
 
     async def list_tools(self) -> list[ToolBase]:
+        """No built-in tools — all tools come via the MCP gateway."""
         return []
 
     # list_mcps is provided by GatewayMixin
@@ -296,6 +319,7 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
     # ── skill discovery ────────────────────────────────────────────
 
     async def list_skills(self) -> list["Skill"]:
+        """Discover skills by scanning ``SKILLS_DIR`` inside the container."""
         import frontmatter as fm
 
         r = await self._exec(
@@ -342,6 +366,8 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
         msgs: list[Msg],
         **kwargs: Any,
     ) -> str:
+        """Offload context to a JSONL file inside the container."""
+        # Absolute path — _working_dir defaults to /workspace
         base = f"{self._working_dir}/sessions/{session_id}"
         path = f"{base}/context.jsonl"
 
@@ -377,6 +403,7 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
         tool_result: ToolResultBlock,
         **kwargs: Any,
     ) -> str:
+        """Persist a tool result inside the container."""
         base = f"{self._working_dir}/sessions/{session_id}"
         path = f"{base}/tool_result-{tool_result.id}.txt"
 
@@ -407,6 +434,7 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
     # ── dynamic skill management (docker SDK) ─────────────────────
 
     async def add_skill(self, skill_path: str) -> None:
+        """Copy a local skill directory into the container via tar archive."""
         import os
 
         skill_md = os.path.join(skill_path, "SKILL.md")
@@ -440,6 +468,7 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
         )
 
     async def remove_skill(self, name: str) -> None:
+        """Remove a skill directory from the container by name."""
         skills = await self.list_skills()
         target_dir: str | None = None
         for skill in skills:
@@ -492,6 +521,13 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
         *,
         timeout: float | None = None,
     ) -> ExecutionResult:
+        """Execute a shell command inside the Docker container.
+
+        Args:
+            command: Shell command string to execute.
+            timeout: Maximum seconds to wait. ``None`` means
+                no limit.
+        """
         loop = asyncio.get_running_loop()
 
         def _run() -> ExecutionResult:
@@ -516,6 +552,11 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
         )
 
     async def _read(self, path: str) -> bytes:
+        """Read a file from the container, returning raw bytes.
+
+        Args:
+            path: Absolute or relative path inside the container.
+        """
         p = PurePosixPath(path)
         if not p.is_absolute():
             p = PurePosixPath(self._working_dir) / p
@@ -535,6 +576,12 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
         return await loop.run_in_executor(_EXECUTOR, _do)
 
     async def _write(self, path: str, data: bytes) -> None:
+        """Write raw bytes to a file inside the container.
+
+        Args:
+            path: Absolute or relative path inside the container.
+            data: Raw bytes to write.
+        """
         p = PurePosixPath(path)
         if not p.is_absolute():
             p = PurePosixPath(self._working_dir) / p
@@ -559,6 +606,7 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
         await loop.run_in_executor(_EXECUTOR, _do)
 
     def _resolve_port(self, port: int) -> InternalEndpoint:
+        """Map a container port to its host-side endpoint."""
         host_port = self._port_mapping.get(port)
         if not host_port:
             raise ValueError(f"port {port} is not exposed")
@@ -577,6 +625,11 @@ class DockerWorkspace(GatewayMixin, WorkspaceBase):
     # _ensure_gateway_python_deps are inherited from GatewayMixin.
 
     async def _offload_data(self, data_block: DataBlock) -> DataBlock:
+        """Decode base64 data, save in container, return URL block.
+
+        Args:
+            data_block: A :class:`DataBlock` with base64 source.
+        """
         h = hashlib.sha256(data_block.source.data.encode()).hexdigest()
         ext = mimetypes.guess_extension(data_block.source.media_type) or ".bin"
         data_dir = f"{self._working_dir}/data"

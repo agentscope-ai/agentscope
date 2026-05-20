@@ -89,6 +89,12 @@ class WorkspaceManagerBase(ABC):
         Subclasses implement this to instantiate a concrete workspace
         (DockerWorkspace, E2BWorkspace, etc.) with appropriate defaults.
         The returned workspace must already be initialized.
+
+        Args:
+            user_id: Owning user identifier.
+            agent_id: Agent identifier (used for workdir
+                isolation in some backends).
+            session_id: Session identifier.
         """
 
     @abstractmethod
@@ -119,6 +125,15 @@ class WorkspaceManagerBase(ABC):
         ``(user_id, agent_id, session_id)`` are forwarded to the
         backend for work-path isolation only.  The caller should
         persist ``workspace.workspace_id`` for later retrieval.
+
+        Args:
+            user_id: Owning user identifier.
+            agent_id: Agent identifier (used for workdir
+                isolation in some backends).
+            session_id: Session identifier.
+
+        Returns:
+            The newly created and initialised workspace.
         """
         ws = await self._do_create(
             user_id,
@@ -143,14 +158,21 @@ class WorkspaceManagerBase(ABC):
     ) -> WorkspaceBase | None:
         """Look up a live workspace by its ID.
 
-        Returns ``None`` if the workspace is not tracked.
+        Args:
+            workspace_id: The ``workspace_id`` of the workspace
+                to retrieve.
+
+        Returns:
+            The workspace instance, or ``None`` if not tracked.
         """
         return self._workspaces.get(workspace_id)
 
     async def close(self, workspace_id: str) -> None:
         """Close and un-track a single workspace.
 
-        No-op if the workspace is not tracked.
+        Args:
+            workspace_id: The workspace to close. No-op if the
+                workspace is not tracked.
         """
         if workspace_id not in self._workspaces:
             return
@@ -269,6 +291,9 @@ class WorkspaceManagerBase(ABC):
         Calls :meth:`workspace.reset()` to clear user-specific state
         before returning it to the free queue. If the reset fails the
         workspace is destroyed and replaced.
+
+        Args:
+            workspace: The workspace to release back to the pool.
         """
         ws_id = workspace.workspace_id
         async with self._pool_lock:

@@ -75,6 +75,11 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
         self,
         now: float,
     ) -> list[LocalWorkspace]:
+        """Remove and return workspaces that have exceeded TTL.
+
+        Args:
+            now: Current monotonic timestamp.
+        """
         expired_ids = [
             wid for wid, (_, ts) in self._cache.items() if now - ts > self._ttl
         ]

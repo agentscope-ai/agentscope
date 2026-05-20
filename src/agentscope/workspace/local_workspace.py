@@ -58,7 +58,7 @@ from ..tool import (
     Write,
 )
 from .config import MCPServerConfig
-from .types import SerializedWorkspaceState
+from .types import ExecutionResult, SerializedWorkspaceState
 from .workspace_base import WorkspaceBase
 
 
@@ -66,6 +66,7 @@ from .workspace_base import WorkspaceBase
 
 
 def _sanitize_dir_name(name: str) -> str:
+    """Replace non-word characters (except CJK) with underscores."""
     return re.sub(r"[^\w一-鿿-]", "_", name)
 
 
@@ -134,6 +135,21 @@ class LocalWorkspace(WorkspaceBase):
         default_mcps: list[MCPClient] | None = None,
         instructions: str = _DEFAULT_INSTRUCTIONS,
     ) -> None:
+        """Create a new local workspace.
+
+        Args:
+            workdir: Absolute path to the workspace root directory.
+                Created automatically if it does not exist.
+            skill_paths: Local directories to seed as skills on
+                first initialisation.  Each must contain a
+                ``SKILL.md`` with ``name`` and ``description``
+                fields in its YAML front matter.
+            default_mcps: MCP clients to use when no persisted
+                ``.mcp`` file exists.  On subsequent initialisations
+                the workspace restores MCPs from ``.mcp`` instead.
+            instructions: System-prompt fragment injected into the
+                agent's context.  Supports ``{workdir}`` placeholder.
+        """
         self._id = uuid.uuid4().hex[:12]
         self._workdir = os.path.abspath(workdir)
         self._skill_paths = list(
@@ -193,26 +209,70 @@ class LocalWorkspace(WorkspaceBase):
             await asyncio.to_thread(shutil.rmtree, data_dir)
 
     async def is_alive(self) -> bool:
+        """Always ``True`` — a local directory is always available."""
         return True
 
     async def close(self) -> None:
+        """Close all stateful / stdio MCP client connections."""
         for mcp in self._mcps:
             if (
                 mcp.is_stateful or mcp.mcp_config.type == "stdio_mcp"
             ) and mcp.is_connected:
                 await mcp.close()
 
+    async def _exec(
+        self,
+        command: str,
+        *,
+        timeout: float | None = None,
+    ) -> ExecutionResult:
+        """Run a shell command on the host as a subprocess.
+
+        Args:
+            command: Shell command string to execute.
+            timeout: Maximum seconds to wait. ``None`` means
+                no limit.
+        """
+        try:
+            proc = await asyncio.wait_for(
+                asyncio.create_subprocess_shell(
+                    command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=self._workdir,
+                ),
+                timeout=timeout,
+            )
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            return ExecutionResult(
+                exit_code=-1,
+                stdout=b"",
+                stderr=b"timed out",
+            )
+        return ExecutionResult(
+            exit_code=proc.returncode or 0,
+            stdout=stdout or b"",
+            stderr=stderr or b"",
+        )
+
     # --- instructions ---
 
     async def get_instructions(self) -> str:
+        """Return the workspace-specific system prompt fragment."""
         return self._instructions.format(workdir=self._workdir)
 
     # --- tool discovery ---
 
     async def list_tools(self) -> list[ToolBase]:
+        """Return built-in host-side tools (Bash, Edit, etc.)."""
         return [Bash(), Edit(), Glob(), Grep(), Read(), Write()]
 
     async def list_mcps(self) -> list[MCPClient]:
+        """Return the current list of MCP clients."""
         return list(self._mcps)
 
     # --- MCP persistence ---
@@ -241,7 +301,14 @@ class LocalWorkspace(WorkspaceBase):
             )
 
     async def add_mcp(self, config: MCPServerConfig) -> None:
-        """Add an MCP server from config, connect, and persist."""
+        """Add an MCP server from config, connect, and persist.
+
+        Args:
+            config: MCP server configuration to add.
+
+        Raises:
+            ValueError: If an MCP with the same name already exists.
+        """
         from ..mcp import HttpMCPConfig, StdioMCPConfig
 
         for existing in self._mcps:
@@ -275,7 +342,14 @@ class LocalWorkspace(WorkspaceBase):
         logger.info("LocalWorkspace: added MCP %r", config.name)
 
     async def remove_mcp(self, name: str) -> None:
-        """Remove an MCP client by name, disconnect, and persist."""
+        """Remove an MCP client by name, disconnect, and persist.
+
+        Args:
+            name: Name of the MCP server to remove.
+
+        Raises:
+            KeyError: If no MCP with the given name exists.
+        """
         for i, mcp in enumerate(self._mcps):
             if mcp.name == name:
                 if mcp.is_connected:
@@ -287,9 +361,9 @@ class LocalWorkspace(WorkspaceBase):
                     name,
                 )
                 return
+        avail = [m.name for m in self._mcps]
         raise KeyError(
-            f"MCP {name!r} not found. "
-            f"Available: {[m.name for m in self._mcps]}",
+            f"MCP {name!r} not found. Available: {avail}",
         )
 
     # --- skill discovery ---
@@ -337,6 +411,7 @@ class LocalWorkspace(WorkspaceBase):
         msgs: list[Msg],
         **kwargs: Any,
     ) -> str:
+        """Offload conversation context to a JSONL file on disk."""
         path = os.path.join(
             self._workdir,
             "sessions",
@@ -378,6 +453,11 @@ class LocalWorkspace(WorkspaceBase):
         tool_result: ToolResultBlock,
         **kwargs: Any,
     ) -> str:
+        """Persist a tool result to a text file on disk.
+
+        Returns:
+            The absolute file path of the written result.
+        """
         path = os.path.join(
             self._workdir,
             "sessions",
@@ -581,7 +661,11 @@ class LocalWorkspace(WorkspaceBase):
     # --- internal: skill helpers ---
 
     async def _list_skill_dirs(self, skills_dir: str) -> set[str]:
-        """Return the set of subdirectory names inside skills_dir."""
+        """Return the set of subdirectory names inside *skills_dir*.
+
+        Args:
+            skills_dir: Absolute path to the skills directory.
+        """
 
         def _scan() -> set[str]:
             return {
@@ -594,7 +678,11 @@ class LocalWorkspace(WorkspaceBase):
         return await asyncio.to_thread(_scan)
 
     async def _collect_existing_hashes(self, skills_dir: str) -> set[str]:
-        """Compute content hashes of all existing skills."""
+        """Compute content hashes of all existing skills.
+
+        Args:
+            skills_dir: Absolute path to the skills directory.
+        """
         dir_names = await self._list_skill_dirs(skills_dir)
         hashes: set[str] = set()
         for d in dir_names:
@@ -617,7 +705,12 @@ class LocalWorkspace(WorkspaceBase):
     ) -> tuple[str, str, str] | None:
         """Validate a skill directory and compute its content hash.
 
-        Returns (skill_path, skill_name, skill_hash) or None.
+        Args:
+            skill_path: Absolute path to the skill directory.
+
+        Returns:
+            ``(skill_path, skill_name, skill_hash)`` on success,
+            or ``None`` if validation fails.
         """
         skill_md_path = os.path.join(skill_path, "SKILL.md")
 
@@ -665,7 +758,12 @@ class LocalWorkspace(WorkspaceBase):
         self,
         skill_dir: str,
     ) -> Skill | None:
-        """Load a single Skill from its directory."""
+        """Load a single Skill from its directory.
+
+        Args:
+            skill_dir: Absolute path to a skill subdirectory
+                containing ``SKILL.md``.
+        """
         skill_md_path = os.path.join(skill_dir, "SKILL.md")
 
         try:
@@ -708,6 +806,12 @@ class LocalWorkspace(WorkspaceBase):
         self,
         data_block: DataBlock,
     ) -> DataBlock:
+        """Decode base64 data, save to ``data/``, return URL block.
+
+        Args:
+            data_block: A :class:`DataBlock` with a
+                :class:`Base64Source`.
+        """
         if isinstance(data_block.source, URLSource):
             return data_block
         h = hashlib.sha256(

@@ -51,6 +51,24 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         default_metadata: dict[str, str] | None = None,
         default_startup_commands: list[str] | None = None,
     ) -> None:
+        """Create an E2B workspace manager.
+
+        Args:
+            template: Default E2B sandbox template.
+            api_key: E2B API key (shared across all workspaces).
+            domain: Optional E2B API domain override.
+            timeout_seconds: Default sandbox auto-shutdown timeout.
+            working_dir: Default working directory inside sandboxes.
+            default_mcp_servers: MCP servers configured in every
+                new workspace.
+            gateway_port: Default gateway port for new workspaces.
+            default_env: Environment variables set in every new
+                sandbox.
+            default_metadata: Metadata attached to every new
+                sandbox.
+            default_startup_commands: Shell commands run in every
+                new sandbox after creation.
+        """
         super().__init__()
         self._template = template
         self._api_key = api_key
@@ -66,13 +84,14 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         )
 
     async def initialize(self) -> None:
+        """Log readiness (E2B API client is created lazily)."""
         logger.info(
             "E2BWorkspaceManager: initialized (template=%s)",
             self._template,
         )
 
     async def _do_close(self) -> None:
-        pass
+        """No manager-level resources to release."""
 
     async def _do_create(
         self,
@@ -81,6 +100,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         session_id: str,
         **kwargs: Any,
     ) -> WorkspaceBase:
+        """Create and initialise a new :class:`E2BWorkspace`."""
         ws = E2BWorkspace(
             template=kwargs.get("template", self._template),
             api_key=kwargs.get("api_key", self._api_key),

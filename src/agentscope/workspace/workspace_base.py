@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from ..skill import Skill
     from ..tool import ToolBase
     from .config import MCPServerConfig
+    from .types import ExecutionResult
 
 
 class WorkspaceBase(ABC):
@@ -73,6 +74,28 @@ class WorkspaceBase(ABC):
         """
         return True
 
+    @abstractmethod
+    async def _exec(
+        self,
+        command: str,
+        *,
+        timeout: float | None = None,
+    ) -> "ExecutionResult":
+        """Execute a shell command inside the workspace environment.
+
+        For local workspaces this runs a subprocess on the host; for
+        container/sandbox workspaces the command runs remotely.
+
+        Args:
+            command: Shell command string to execute.
+            timeout: Maximum seconds to wait before aborting.
+                ``None`` means no limit.
+
+        Returns:
+            An :class:`ExecutionResult` with exit code, stdout,
+            and stderr.
+        """
+
     async def __aenter__(self) -> "WorkspaceBase":
         await self.initialize()
         return self
@@ -111,6 +134,11 @@ class WorkspaceBase(ABC):
     ) -> str:
         """Persist compressed context for agentic retrieval.
 
+        Args:
+            session_id: Unique session identifier used to
+                partition offloaded data.
+            msgs: Conversation messages to offload.
+
         Returns:
             Path or identifier for the offloaded data.
         """
@@ -124,6 +152,11 @@ class WorkspaceBase(ABC):
     ) -> str:
         """Persist a tool result for agentic retrieval.
 
+        Args:
+            session_id: Unique session identifier used to
+                partition offloaded data.
+            tool_result: The tool result block to offload.
+
         Returns:
             Path or identifier for the offloaded data.
         """
@@ -132,11 +165,20 @@ class WorkspaceBase(ABC):
 
     @abstractmethod
     async def add_mcp(self, config: "MCPServerConfig") -> None:
-        """Dynamically register a new MCP server."""
+        """Dynamically register a new MCP server.
+
+        Args:
+            config: Configuration describing the MCP server to
+                add (name, protocol, command/url, etc.).
+        """
 
     @abstractmethod
     async def remove_mcp(self, name: str) -> None:
-        """Dynamically remove an MCP server by name."""
+        """Dynamically remove an MCP server by name.
+
+        Args:
+            name: Name of the MCP server to remove.
+        """
 
     # ── for User: dynamic skill management ─────────────────────────
 
@@ -144,10 +186,19 @@ class WorkspaceBase(ABC):
     async def add_skill(self, skill_path: str) -> None:
         """Add a skill from a local directory path.
 
-        The directory must contain a ``SKILL.md`` with ``name`` and
-        ``description`` in its YAML front matter.
+        The directory must contain a ``SKILL.md`` with ``name``
+        and ``description`` in its YAML front matter.
+
+        Args:
+            skill_path: Absolute or relative path to the skill
+                directory on the local filesystem.
         """
 
     @abstractmethod
     async def remove_skill(self, name: str) -> None:
-        """Remove a skill by its agent-facing name."""
+        """Remove a skill by its agent-facing name.
+
+        Args:
+            name: The ``name`` field from the skill's
+                ``SKILL.md`` front matter.
+        """

@@ -45,6 +45,19 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         default_env: dict[str, str] | None = None,
         default_startup_commands: list[str] | None = None,
     ) -> None:
+        """Create a Docker workspace manager.
+
+        Args:
+            image: Default Docker image for new workspaces.
+            working_dir: Default working directory inside containers.
+            default_mcp_servers: MCP servers configured in every
+                new workspace.
+            gateway_port: Default gateway port for new workspaces.
+            default_env: Environment variables set in every new
+                container.
+            default_startup_commands: Shell commands run in every
+                new container after creation.
+        """
         super().__init__()
         self._image = image
         self._working_dir = working_dir
@@ -56,13 +69,14 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         )
 
     async def initialize(self) -> None:
+        """Log readiness (Docker client is created lazily per-workspace)."""
         logger.info(
             "DockerWorkspaceManager: initialized (image=%s)",
             self._image,
         )
 
     async def _do_close(self) -> None:
-        pass
+        """No manager-level resources to release."""
 
     async def _do_create(
         self,
@@ -71,6 +85,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         session_id: str,
         **kwargs: Any,
     ) -> WorkspaceBase:
+        """Create and initialise a new :class:`DockerWorkspace`."""
         ws = DockerWorkspace(
             image=kwargs.get("image", self._image),
             working_dir=kwargs.get(

@@ -35,7 +35,6 @@ from ..tool import ToolBase
 from .config import MCPServerConfig
 from .gateway import GatewayMixin
 from .types import ExecutionResult, SerializedWorkspaceState
-from .workspace_base import WorkspaceBase
 
 _DEFAULT_INSTRUCTIONS = """<workspace>
 You have access to an E2B cloud-sandbox workspace.
@@ -46,7 +45,7 @@ and processes.
 </workspace>"""
 
 
-class E2BWorkspace(GatewayMixin, WorkspaceBase):
+class E2BWorkspace(GatewayMixin):
     """Workspace backed by an E2B cloud sandbox.
 
     Usage::
@@ -82,6 +81,27 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
         startup_commands: list[str] | None = None,
         instructions: str = _DEFAULT_INSTRUCTIONS,
     ) -> None:
+        """Create an E2B cloud-sandbox workspace.
+
+        Args:
+            template: E2B sandbox template name.
+            api_key: E2B API key.  Can also be set via the
+                ``E2B_API_KEY`` environment variable.
+            domain: Optional E2B API domain override.
+            timeout_seconds: Sandbox auto-shutdown timeout in
+                seconds.
+            working_dir: Working directory inside the sandbox.
+            mcp_servers: MCP servers to run inside the sandbox
+                via the in-sandbox gateway.
+            gateway_port: Port the in-sandbox MCP gateway listens
+                on.
+            env: Environment variables set inside the sandbox.
+            metadata: Metadata attached to the sandbox for
+                external tracking.
+            startup_commands: Shell commands run after sandbox
+                creation.
+            instructions: Custom system prompt fragment.
+        """
         self._template = template
         self._api_key = api_key
         self._domain = domain
@@ -113,6 +133,7 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
     # ── lifecycle ──────────────────────────────────────────────────
 
     async def initialize(self) -> None:
+        """Provision the E2B sandbox, run startup commands, start gateway."""
         if self._started:
             return
 
@@ -160,6 +181,14 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
         )
 
     async def is_alive(self) -> bool:
+        """Check infrastructure-level liveness of the sandbox.
+
+        Returns ``True`` if the underlying E2B sandbox process is
+        still running.  This is a *resource-level* health check — it
+        does **not** verify that MCP servers or skills are functional.
+        A sandbox with no MCP servers configured is still considered
+        alive as long as the sandbox process itself is running.
+        """
         if not self._sandbox or not self._started:
             return False
         try:
@@ -168,6 +197,7 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
             return False
 
     async def close(self) -> None:
+        """Kill the E2B sandbox and release resources."""
         if self._gateway_mcp_client and self._gateway_mcp_client.is_connected:
             try:
                 await self._gateway_mcp_client.close()
@@ -186,11 +216,13 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
     # ── instructions ───────────────────────────────────────────────
 
     async def get_instructions(self) -> str:
+        """Return the workspace-specific system prompt fragment."""
         return self._instructions
 
     # ── tool & MCP discovery ───────────────────────────────────────
 
     async def list_tools(self) -> list[ToolBase]:
+        """No built-in tools — all tools come via the MCP gateway."""
         return []
 
     # list_mcps is provided by GatewayMixin
@@ -198,6 +230,7 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
     # ── skill discovery ────────────────────────────────────────────
 
     async def list_skills(self) -> list[Skill]:
+        """Discover skills by scanning ``SKILLS_DIR`` inside the sandbox."""
         import frontmatter as fm
 
         r = await self._exec(
@@ -243,6 +276,7 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
         msgs: list[Msg],
         **kwargs: Any,
     ) -> str:
+        """Offload conversation context to a JSONL file inside the sandbox."""
         base = f"sessions/{session_id}"
         path = f"{self._working_dir}/{base}/context.jsonl"
 
@@ -282,6 +316,7 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
         tool_result: ToolResultBlock,
         **kwargs: Any,
     ) -> str:
+        """Persist a tool result inside the sandbox."""
         base = f"sessions/{session_id}"
         path = f"{self._working_dir}/{base}/tool_result-{tool_result.id}.txt"
 
@@ -315,6 +350,7 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
     # ── dynamic skill management ───────────────────────────────────
 
     async def add_skill(self, skill_path: str) -> None:
+        """Copy a local skill directory into the sandbox via file write."""
         import os
 
         skill_md = os.path.join(skill_path, "SKILL.md")
@@ -326,6 +362,10 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
         dir_name = os.path.basename(os.path.abspath(skill_path))
         await self._exec(f"mkdir -p {self.SKILLS_DIR}")
 
+        # Example paths (given skill_path="/tmp/my_skill"):
+        #   local  = /tmp/my_skill/utils/helper.py
+        #   rel    = utils/helper.py
+        #   remote = /home/user/skills/my_skill/utils/helper.py
         for root, _dirs, files in os.walk(skill_path):
             for fname in files:
                 local = os.path.join(root, fname)
@@ -338,6 +378,7 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
         logger.info("E2BWorkspace: added skill %r", dir_name)
 
     async def remove_skill(self, name: str) -> None:
+        """Remove a skill directory from the sandbox by name."""
         skills = await self.list_skills()
         target_dir: str | None = None
         for skill in skills:
@@ -382,6 +423,13 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
         *,
         timeout: float | None = None,
     ) -> ExecutionResult:
+        """Execute a shell command inside the E2B sandbox (with retry).
+
+        Args:
+            command: Shell command string to execute.
+            timeout: Maximum seconds to wait. ``None`` means
+                no limit.
+        """
         run_kwargs: dict[str, Any] = {"cwd": self._working_dir}
         if timeout is not None:
             run_kwargs["timeout"] = timeout
@@ -419,13 +467,25 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
     # ── GatewayMixin hooks ─────────────────────────────────────────
 
     async def _gw_write_remote(self, path: str, data: bytes) -> None:
+        """Write bytes to a file in the E2B sandbox.
+
+        Args:
+            path: Absolute path inside the sandbox.
+            data: Raw bytes to write.
+        """
         await self._sandbox.files.write(path, data)
 
     async def _gw_resolve_base_url(self, port: int) -> str:
+        """Return the HTTPS gateway URL via E2B's host resolution.
+
+        Args:
+            port: Container port to resolve.
+        """
         host = self._sandbox.get_host(port)
         return f"https://{host}"
 
     def _gw_platform_headers(self) -> dict[str, str]:
+        """Return the ``X-Access-Token`` header for E2B proxy auth."""
         if not self._sandbox:
             return {}
         token = getattr(
@@ -441,6 +501,11 @@ class E2BWorkspace(GatewayMixin, WorkspaceBase):
     # _ensure_gateway_python_deps are inherited from GatewayMixin.
 
     async def _offload_data(self, data_block: DataBlock) -> DataBlock:
+        """Decode base64 data, save in sandbox, return URL block.
+
+        Args:
+            data_block: A :class:`DataBlock` with base64 source.
+        """
         h = hashlib.sha256(data_block.source.data.encode()).hexdigest()
         ext = mimetypes.guess_extension(data_block.source.media_type) or ".bin"
         path = f"{self._working_dir}/data/{h}{ext}"
