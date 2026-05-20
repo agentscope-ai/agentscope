@@ -55,9 +55,6 @@ async def _stream_events(
         agent_id=request.agent_id,
         input_msg=request.input,
     ):
-        from ..._logging import logger
-
-        logger.info("发给前端事件：%s", event.type)
         yield f"data: {event.model_dump_json()}\n\n"
 
 
