@@ -400,17 +400,21 @@ asyncio.run(solve_problem())
 
         py_file = pathlib.Path(
             test_file_path.parent,
-            f"code_act_script_{time.time_ns}.py",
+            f"code_act_script_{time.time_ns()}.py",
         )
-        with open(py_file, "w", encoding="utf-8") as wfh:
-            wfh.write(txt)
 
-        r = subprocess.run(
-            ["python", str(py_file)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        stdout_str = r.stdout.decode("utf-8") if r.stdout else ""
-        print(f"{str(py_file)}, captured result:|{stdout_str}|")
-        self.assertTrue("The temperature of Hangzhou is " in stdout_str)
+        try:
+            with open(py_file, "w", encoding="utf-8") as wfh:
+                wfh.write(txt)
+
+            r = subprocess.run(
+                ["python", str(py_file)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            stdout_str = r.stdout.decode("utf-8") if r.stdout else ""
+            print(f"{str(py_file)}, captured result:|{stdout_str}|")
+            self.assertTrue("The temperature of Hangzhou is " in stdout_str)
+        finally:
+            py_file.unlink(missing_ok=True)
