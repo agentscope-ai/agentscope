@@ -84,6 +84,15 @@ class MCPClient(BaseModel):
         description="The MCP server configuration.",
     )
 
+    enable_tools: list[str] | None = None
+    """The tools enabled in this MCP, which will be returned in the
+    `list_tools` function. If `None`, all tools from the MCP server will be
+    returned."""
+
+    disable_tools: list[str] | None = None
+    """The tools disabled in this MCP, which will be filtered out in the
+    `list_tools` function."""
+
     # Private attributes
     _client: Any = PrivateAttr(default=None)
     _session: ClientSession | None = PrivateAttr(default=None)
@@ -106,6 +115,32 @@ class MCPClient(BaseModel):
         if self.mcp_config.type == "stdio_mcp" and not self.is_stateful:
             raise ValueError(
                 "STDIO MCP must be stateful (is_stateful=True).",
+            )
+
+        # Check arguments for self.enable_tools and disable_tools
+        if self.enable_tools is not None:
+            assert isinstance(self.enable_tools, list) and all(
+                isinstance(_, str) for _ in self.enable_tools
+            ), (
+                "Enable functions should be a list of strings, but got "
+                f"{self.enable_tools}."
+            )
+
+        if self.disable_tools is not None:
+            assert isinstance(self.disable_tools, list) and all(
+                isinstance(_, str) for _ in self.disable_tools
+            ), (
+                "Disable functions should be a list of strings, but got "
+                f"{self.disable_tools}."
+            )
+
+        if self.enable_tools is not None and self.disable_tools is not None:
+            intersection = set(self.enable_tools).intersection(
+                set(self.disable_tools),
+            )
+            assert len(intersection) == 0, (
+                f"The functions in enable_tools and disable_tools "
+                f"should not overlap, but got {intersection}."
             )
 
         # Initialize the underlying client
@@ -241,14 +276,18 @@ class MCPClient(BaseModel):
             return self._create_http_client()
 
     async def list_tools(self) -> list[mcp.types.Tool]:
-        """List all available tools from the MCP server.
+        """List available tools from the MCP server. If `enable_tools` and
+        `disable_tools` are not `None` in the constructor, the returned
+        tools will be filtered accordingly.
 
         Returns:
-            List of available MCP tools.
+            `list[mcp.types.Tool]`
+                List of available MCP tools.
 
         Raises:
             RuntimeError: If not connected (for stateful connections).
         """
+        available_tools: list[mcp.types.Tool] = []
         if not self.is_stateful:
             # Stateless: create temporary session
             async with self._get_client_gen() as cli:
@@ -260,13 +299,26 @@ class MCPClient(BaseModel):
                     await session.initialize()
                     res = await session.list_tools()
                     self._cached_tools = res.tools
-                    return res.tools
+                    available_tools = res.tools
         else:
             # Stateful: use existing session
             self._validate_connection()
             res = await self._session.list_tools()
             self._cached_tools = res.tools
-            return res.tools
+            available_tools = res.tools
+
+        # Filter tools based on enable_tools and disable_tools
+        if self.enable_tools is not None:
+            available_tools = [
+                tool
+                for tool in available_tools
+                if tool.name in self.enable_tools
+            ]
+        if self.disable_tools is not None:
+            available_tools = [
+                _ for _ in available_tools if _ not in self.disable_tools
+            ]
+        return available_tools
 
     async def get_tool(
         self,

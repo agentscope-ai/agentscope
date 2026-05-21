@@ -21,6 +21,7 @@ from ._task import (
     TaskList,
     TaskCreate,
 )
+from ._tool_group import ToolGroup
 
 __all__ = [
     # Basic tool related types and functions
@@ -28,6 +29,7 @@ __all__ = [
     "Function",
     "ToolBase",
     "MCPTool",
+    "ToolGroup",
     "Toolkit",
     "ToolChunk",
     "ToolResponse",

@@ -15,7 +15,9 @@ from typing import (
 
 import jsonschema
 
-from ._config import ContextConfig, ReActConfig, ModelConfig
+from ._config import ContextConfig, ReActConfig, ModelConfig, ToolConfig
+from ..mcp import MCPClient
+from ..skill import SkillLoaderBase
 from ..state import AgentState
 from ._utils import _ToolCallBatch
 from .._logging import logger
@@ -74,13 +76,15 @@ from ..tool import (
     Toolkit,
     ToolChunk,
     ToolChoice,
-    ToolResponse,
+    ToolResponse, ToolBase, ToolGroup, TaskCreate, TaskUpdate, TaskGet,
+    TaskList,
 )
 from ..permission import (
     PermissionBehavior,
     PermissionEngine,
     PermissionDecision,
 )
+from ..workspace import WorkspaceBase
 
 
 class Agent:
@@ -91,24 +95,82 @@ class Agent:
         name: str,
         system_prompt: str,
         model: ChatModelBase,
-        toolkit: Toolkit,
+        workspace: WorkspaceBase | None = None,
         middlewares: list[MiddlewareBase] | None = None,
         state: AgentState | None = None,
+        # The tools into the agent
+        tools: list[ToolBase] | None = None,
+        skills: list[SkillLoaderBase | str] | None = None,
+        mcps: list[MCPClient] | None = None,
+        tool_groups: list[ToolGroup] | None = None,
+        # The agent configurations
         model_config: ModelConfig = ModelConfig(),
         context_config: ContextConfig = ContextConfig(),
         react_config: ReActConfig = ReActConfig(),
+        tool_config: ToolConfig = ToolConfig(),
     ) -> None:
+        """Initialize the agent class in AgentScope.
+
+        Args:
+            name (`str`):
+                The agent identifier.
+            system_prompt (`str`):
+                The agent's system prompt. Additional instructions may be appended to it dynamically during operation.
+            model (`ChatModelBase`):
+                The chat model/llm used for this agent.
+            workspace (`WorkspaceBase | None`, optional):
+                The agent's workspace for context offloading and providing
+                resource access.
+            middlewares (`list[MiddlewareBase] | None`):
+                Middlewares applied to the agent to modify its behavior
+                without altering its source code. Supported hook points
+                include: reply, reasoning, acting, model call, and system
+                prompt retrieval.
+            state (`AgentState`):
+                The agent state. A new state will be created if not provided.
+            model_config (`ModelConfig`):
+                The additional chat model configuration including fallback
+                model and retries.
+            context_config (`CompressionConfig`):
+                The context config for context compression and tool result
+                compression.
+            react_config (`ReActConfig`):
+                The config for the reasoning-acting loop.
+        """
         self.name = name
         self._system_prompt = system_prompt
         self.model = model
-        self.toolkit = toolkit
         self.state = state or AgentState()
 
         self.model_config = model_config
         self.context_config = context_config
         self.react_config = react_config
 
+        # The permission engine
         self._engine = PermissionEngine(self.state.permission_context)
+
+        # The workspace
+        self.workspace = workspace
+
+        # ====================================================================
+        # The Tool-related logics
+        # ====================================================================
+        tools = tools or []
+        if tool_config.task_tools:
+            tools.extend(
+                [
+                    TaskCreate(),
+                    TaskUpdate(),
+                    TaskGet(),
+                    TaskList(),
+                ]
+            )
+        self.toolkit = Toolkit(
+            tools=tools,
+            skills=skills,
+            mcps=mcps,
+            tool_groups=tool_groups,
+        )
 
         # ====================================================================
         # The Middleware-related attributes
@@ -371,6 +433,18 @@ class Agent:
 
         # Update the summary
         self.state.summary = cfg.summary_template.format(**res.content)
+
+        if self.workspace:
+            path = await self.workspace.offload_context(
+                self.state.session_id,
+                msgs=msgs_to_compress,
+            )
+
+            self.state.summary += (
+                f"\n<system-reminder>The compressed context is offloaded to "
+                f"'{path}', you can refer to it when needed.</system-reminder>"
+            )
+
         # Update the context
         self.state.context = msgs_to_reserve
 
@@ -390,7 +464,7 @@ class Agent:
         | ExternalExecutionResultEvent
         | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
-        """Reply entry point (may be wrapped by middleware)."""
+        """Reply entry point (maybe wrapped by middleware)."""
         if not self._reply_middlewares:
             async for item in self._reply_impl(msgs=msgs, event=event):
                 yield item
@@ -1353,8 +1427,21 @@ class Agent:
                         reminder = (
                             "\n<<<TRUNCATED>>>\n<system-reminder>The "
                             "remaining content has been omitted for "
-                            "limited context.</system-reminder>"
+                            "limited context.{offload_reminder}</system-reminder>"
                         )
+
+                        offload_reminder = ""
+                        if self.workspace:
+                            path = await self.workspace.offload_tool_result(
+                                self.state.session_id,
+                                offload_tool_result_block,
+                            )
+
+                            offload_reminder = f" You can refer to the file in '{path}' for the truncated content if needed."
+
+                        reminder.format(offload_reminder=offload_reminder)
+
+                        # Insert the reminder to the tool result output
                         if isinstance(reserved_tool_result_block.output, str):
                             reserved_tool_result_block.output += reminder
 
@@ -1372,8 +1459,6 @@ class Agent:
                             reserved_tool_result_block.output += [
                                 TextBlock(text=reminder),
                             ]
-
-                        # TODO: offload the tool result
 
                     self._save_to_context([reserved_tool_result_block])
                     # Ends the tool call lifecycle.

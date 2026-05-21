@@ -108,7 +108,9 @@ class Toolkit:
         self,
         tools: list[ToolBase] | None = None,
         skills: list[str | SkillLoaderBase] | None = None,
-        meta_tool_response_template: str = DEFAULT_META_TOOL_RESPONSE_TEMPLATE,
+        mcps: list[str | MCPClient] | None = None,
+        tool_groups: list[ToolGroup] | None = None,
+        meta_tool_response_template: str | None = None,
         skill_viewer_enabled: bool = True,
         skill_instruction_template: str = DEFAULT_SKILL_INSTRUCTION,
     ) -> None:
@@ -119,6 +121,10 @@ class Toolkit:
                 The tool objects that implement the ToolProtocol interface.
             skills (`list[str] | None`, optional):
                 The agent skill directories to be registered.
+            mcps (`list[str] | None`, optional):
+                The mcp clients to be registered.
+            tool_groups (`list[ToolGroup] | None`, optional):
+                The tool groups to be registered.
             meta_tool_response_template (`str`, optional):
                 The template for meta tool responses.
             skill_viewer_enabled (`bool`, defaults to `True`):

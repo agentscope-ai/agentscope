@@ -153,22 +153,6 @@ class RegisteredTool:
         return function_schema
 
 
-@dataclass
-class ToolGroup:
-    """The tool group abstraction that provides a higher level of organization
-    for tools."""
-
-    name: str
-    """The group name, which will be used in the reset function as the group
-    identifier."""
-    description: str
-    """The description of the tool group to tell the agent what the tool
-    group is about."""
-    instructions: str | None = None
-    """The instructions that will be contained when this tool group is
-    activated."""
-
-
 # The function types that can be registered as tools in AgentScope.
 Function: TypeAlias = (
     # Sync function
