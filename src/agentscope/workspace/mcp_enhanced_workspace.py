@@ -194,11 +194,6 @@ class WorkspaceWithMCP(WorkspaceBase):
     # Class-level type annotations help mypy when running with
     # ``--follow-imports=skip`` (used in pre-commit).  Actual values
     # are always set in ``__init__``.
-    _gateway_token: str
-    _gateway_mcp_client: _RestGatewayClient | None
-    _gateway_base_url: str
-    _mcp_servers: "list[MCPServerConfig]"
-    _gateway_port: int
 
     def __init__(
         self,
