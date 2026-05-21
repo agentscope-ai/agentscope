@@ -6,8 +6,10 @@ from .code_act_tool_call_server import (
     ToolCallRequest,
 )
 
+from .code_act_client import remote_tool_call
 
 __all__ = [
     "CodeActToolCallServer",
     "ToolCallRequest",
+    "remote_tool_call",
 ]

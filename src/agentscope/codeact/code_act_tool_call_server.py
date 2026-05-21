@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """HTTP server for running CodeAct tools."""
-
 import asyncio
 import logging
 import uuid
@@ -16,6 +15,7 @@ from ..tool._toolkit import Toolkit
 
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 class ToolCallRequest(BaseModel):
@@ -65,7 +65,7 @@ class CodeActToolCallServer:
                     requst.tool_name,
                     requst.tool_args,
                 )
-
+                # result: async_generator
                 result = await self._toolkit.call_tool_function(
                     ToolUseBlock(
                         type="tool_use",
@@ -87,9 +87,9 @@ class CodeActToolCallServer:
                         False,
                     ):
                         # Only return the structured output
-                        structured_output = (
-                            tool_response.metadata.get("structured_output")
-                            or {}
+                        structured_output = tool_response.metadata.get(
+                            "structured_output",
+                            {},
                         )
                         return JSONResponse(content=structured_output)
 
