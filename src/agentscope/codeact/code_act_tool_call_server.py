@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """HTTP server for running CodeAct tools."""
 
-import ast
 import asyncio
 import logging
 import uuid
@@ -72,19 +71,26 @@ class CodeActToolCallServer:
                         type="tool_use",
                         id=request_id,
                         name=requst.tool_name,
-                        input=requst.tool_args or {})
+                        input=requst.tool_args or {},
+                    ),
                 )
 
                 # Refer to the tool call result handling logic of ReActAgent
                 # ToolResponse object
                 async for tool_response in result:
                     if tool_response.is_interrupted:
-                        raise ValueError('tool call is interrupted.')
+                        raise ValueError("tool call is interrupted.")
 
-                    # Return message if generate_response is called successfully
-                    if tool_response.metadata and tool_response.metadata.get("success", False):
+                    # Return message if generate_response is successful
+                    if tool_response.metadata and tool_response.metadata.get(
+                        "success",
+                        False,
+                    ):
                         # Only return the structured output
-                        structured_output = tool_response.metadata.get("structured_output") or {}
+                        structured_output = (
+                            tool_response.metadata.get("structured_output")
+                            or {}
+                        )
                         return JSONResponse(content=structured_output)
 
                 return JSONResponse(content={})

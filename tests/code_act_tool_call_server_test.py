@@ -26,56 +26,63 @@ class TestCodeActRunToolServer(IsolatedAsyncioTestCase):
     @staticmethod
     def _create_dummy_toolkit() -> Toolkit:
         def succeed_with_compelete_metadata(txt: str) -> ToolResponse:
-            """ metadata is complete. succeeded. valid structured output"""
+            """metadata is complete. succeeded. valid structured output"""
             return ToolResponse(
                 content=[TextBlock(type="text", text=f"foo {txt}")],
                 metadata={
-                    'success': True,
-                    'structured_output': {'key1':'some_value', 'key2': 123}
-                }
+                    "success": True,
+                    "structured_output": {"key1": "some_value", "key2": 123},
+                },
             )
 
         def fail_with_compelete_metadata(value: int) -> ToolResponse:
             return ToolResponse(
                 content=[TextBlock(type="text", text=str(2 * value))],
                 metadata={
-                    'success': False,
-                    'structured_output': {'you_wont_see_me': 123}
-                }
+                    "success": False,
+                    "structured_output": {"you_wont_see_me": 123},
+                },
             )
 
         def succeed_with_empty_structured_output(value: float) -> ToolResponse:
             return ToolResponse(
                 content=[TextBlock(type="text", text=str(3.0 * value))],
                 metadata={
-                    'success': True,
-                    'structured_output': {}
-                }
+                    "success": True,
+                    "structured_output": {},
+                },
             )
 
         def succeed_without_structured_output(value: float) -> ToolResponse:
             return ToolResponse(
                 content=[TextBlock(type="text", text=str(3.0 * value))],
                 metadata={
-                    'success': True
-                }
+                    "success": True,
+                },
             )
 
         def no_metadata_in_response() -> ToolResponse:
             return ToolResponse(
-                content=[TextBlock(type="text", text="metadata is not set")]
+                content=[TextBlock(type="text", text="metadata is not set")],
             )
 
         def always_interrupted(txt: str) -> ToolResponse:
             return ToolResponse(
-                content=[TextBlock(type="text", text="metadata is not set")],
-                is_interrupted=True
+                content=[
+                    TextBlock(
+                        type="text",
+                        text=f"metadata is not set. {txt} is unused.",
+                    ),
+                ],
+                is_interrupted=True,
             )
 
         tk = Toolkit()
         tk.register_tool_function(tool_func=succeed_with_compelete_metadata)
         tk.register_tool_function(tool_func=fail_with_compelete_metadata)
-        tk.register_tool_function(tool_func=succeed_with_empty_structured_output)
+        tk.register_tool_function(
+            tool_func=succeed_with_empty_structured_output,
+        )
         tk.register_tool_function(tool_func=succeed_without_structured_output)
         tk.register_tool_function(tool_func=no_metadata_in_response)
         tk.register_tool_function(tool_func=always_interrupted)
@@ -93,7 +100,10 @@ class TestCodeActRunToolServer(IsolatedAsyncioTestCase):
 
         cls._port = port
         toolkit = cls._create_dummy_toolkit()
-        cls._code_act_server = CodeActToolCallServer(port=port, toolkit=toolkit)
+        cls._code_act_server = CodeActToolCallServer(
+            port=port,
+            toolkit=toolkit,
+        )
         asyncio.run(cls._code_act_server.start())
 
     async def _calling_tool_on_server(
@@ -106,27 +116,44 @@ class TestCodeActRunToolServer(IsolatedAsyncioTestCase):
         payload = {"tool_name": tool_name, "tool_args": tool_args or {}}
         async with httpx.AsyncClient() as client:
             response = await client.post(url, json=payload)
-            print(f'tool name:|{tool_name}|, args:|{tool_args}|, response.json:|{response.json()}|')
+            print(
+                f"tool name:|{tool_name}|, args:|{tool_args}|, "
+                f"response.json:|{response.json()}|",
+            )
             return response.json()
 
     async def test_happy_case(self) -> None:
         """Tool call succeeded with structured output"""
-        rs = await self._calling_tool_on_server("succeed_with_compelete_metadata", {"txt": "Foo Bar"})
-        self.assertEqual(rs, {'key1':'some_value', 'key2': 123})
+        rs = await self._calling_tool_on_server(
+            "succeed_with_compelete_metadata",
+            {"txt": "Foo Bar"},
+        )
+        self.assertEqual(rs, {"key1": "some_value", "key2": 123})
 
     async def test_failed_tool_call(self) -> None:
         """Tool call finished with success flag set to False"""
-        rs = await self._calling_tool_on_server("fail_with_compelete_metadata", {"value": 3})
+        rs = await self._calling_tool_on_server(
+            "fail_with_compelete_metadata",
+            {"value": 3},
+        )
         self.assertEqual(rs, {})
 
-    async def test_succeeded_tool_call_with_empty_structured_output(self) -> None:
+    async def test_succeeded_tool_call_with_empty_structured_output(
+        self,
+    ) -> None:
         """Tool call finished successfully but with empty structured output"""
-        rs = await self._calling_tool_on_server("succeed_with_empty_structured_output", {"value": 3})
+        rs = await self._calling_tool_on_server(
+            "succeed_with_empty_structured_output",
+            {"value": 3},
+        )
         self.assertEqual(rs, {})
 
     async def test_succeeded_tool_call_without_structured_output(self) -> None:
-        """Tool call finished successfully but without structured output attribute"""
-        rs = await self._calling_tool_on_server("succeed_without_structured_output", {"value": 3.3})
+        """Tool call finished successfully but no structured output"""
+        rs = await self._calling_tool_on_server(
+            "succeed_without_structured_output",
+            {"value": 3.3},
+        )
         self.assertEqual(rs, {})
 
     async def test_tool_call_without_metadata_in_response(self) -> None:
@@ -136,5 +163,8 @@ class TestCodeActRunToolServer(IsolatedAsyncioTestCase):
 
     async def test_interrupted_tool_call(self) -> None:
         """Tool call is interrupted"""
-        rs = await self._calling_tool_on_server("always_interrupted", {"txt": "Foo Bar"})
-        self.assertTrue('tool call is interrupted.' in rs['detail'])
+        rs = await self._calling_tool_on_server(
+            "always_interrupted",
+            {"txt": "Foo Bar"},
+        )
+        self.assertTrue("tool call is interrupted." in rs["detail"])
