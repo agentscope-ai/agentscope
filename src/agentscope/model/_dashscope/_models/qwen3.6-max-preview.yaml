@@ -1,0 +1,16 @@
+name: qwen3.6-max-preview
+label: Qwen3.6-Max-Preview
+status: active
+
+input_types:
+  - text/plain
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 240000
+output_size: 64000
+
+parameter_overrides:
+  max_tokens: {"maximum": 64000}

@@ -26,6 +26,18 @@ from ._deepseek_formatter import (
     DeepSeekChatFormatter,
     DeepSeekMultiAgentFormatter,
 )
+from ._openai_response_formatter import (
+    OpenAIResponseFormatter,
+    OpenAIResponseMultiAgentFormatter,
+)
+from ._moonshot_formatter import (
+    MoonshotChatFormatter,
+    MoonshotMultiAgentFormatter,
+)
+from ._xai_formatter import (
+    XAIChatFormatter,
+    XAIMultiAgentFormatter,
+)
 
 __all__ = [
     "FormatterBase",
@@ -41,4 +53,10 @@ __all__ = [
     "OllamaMultiAgentFormatter",
     "DeepSeekChatFormatter",
     "DeepSeekMultiAgentFormatter",
+    "OpenAIResponseFormatter",
+    "OpenAIResponseMultiAgentFormatter",
+    "MoonshotChatFormatter",
+    "MoonshotMultiAgentFormatter",
+    "XAIChatFormatter",
+    "XAIMultiAgentFormatter",
 ]

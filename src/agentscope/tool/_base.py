@@ -82,8 +82,7 @@ class ToolBase(ABC):
     ) -> bool:
         """Check if a permission rule matches the tool input.
 
-        .. note:: This is an optional method. The default implementation
-        mirrors Claude Code's behavior: a rule with no content (``None``)
+        .. note:: This is an optional method. A rule with no content (``None``)
         is a tool-name-level rule that matches every invocation; a rule
         with content requires the tool to override this method with its
         own matching logic, otherwise it returns ``False``.
@@ -115,8 +114,7 @@ class ToolBase(ABC):
     ) -> List[PermissionRule]:
         """Generate suggested permission rules for the tool input.
 
-        .. note:: The default implementation mirrors Claude Code's MCP tool
-        behavior: suggest a single tool-name-level rule (``rule_content=None``)
+        .. note:: Suggest a single tool-name-level rule (``rule_content=None``)
         that allows all invocations of this tool. Tools can override this to
         provide finer-grained suggestions.
 

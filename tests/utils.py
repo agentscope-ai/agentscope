@@ -4,10 +4,9 @@ from typing import Any, AsyncGenerator, Type
 
 from pydantic import BaseModel
 
-from agentscope.formatter import DashScopeChatFormatter
+from agentscope.credential import CredentialBase
 from agentscope.message import Msg
-from agentscope.model import ChatModelBase, ChatResponse
-from agentscope.model._model_response import StructuredResponse
+from agentscope.model import ChatModelBase, ChatResponse, StructuredResponse
 
 
 class AnyString:
@@ -22,21 +21,37 @@ class AnyString:
         return "<AnyString>"
 
 
+class MockCredential(CredentialBase):
+    """The mock credential class."""
+
+    @classmethod
+    def get_chat_model_class(cls) -> Type["ChatModelBase"]:
+        """Return the mock model class."""
+        return MockModel
+
+
 class MockModel(ChatModelBase):
     """A mock model for testing."""
 
-    def __init__(self, context_length: int = 10000) -> None:
+    class Parameters(BaseModel):
+        """The parameters."""
+
+    def __init__(
+        self,
+        model: str = "mock-model",
+        context_size: int = 1000,
+        mock_chat_responses: list | None = None,
+        mock_structured_response: Any = None,
+    ) -> None:
         """Initialize the mock model."""
         super().__init__(
-            model_name="mock-model",
-            stream=True,
-            context_length=context_length,
-            max_retries=0,
-            fallback_model_name=None,
-            formatter=DashScopeChatFormatter(),
+            credential=MockCredential(),
+            model=model,
+            parameters=MockModel.Parameters(),
+            context_size=context_size,
         )
-        self.mock_chat_responses = []
-        self.mock_structured_response = None
+        self.mock_chat_responses = mock_chat_responses or []
+        self.mock_structured_response = mock_structured_response
         self.cnt = 0
 
     def set_responses(

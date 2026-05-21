@@ -2,10 +2,12 @@
 """Google Gemini API formatter in agentscope."""
 import base64
 import fnmatch
+import json
 from abc import ABC
 from typing import Any
 
 import requests
+from pydantic import Field
 
 from ._formatter_base import FormatterBase
 from .._logging import logger
@@ -17,7 +19,6 @@ from ..message import (
     DataBlock,
     ToolCallBlock,
     ToolResultBlock,
-    UserMsg,
     URLSource,
     Base64Source,
 )
@@ -26,8 +27,6 @@ from ..message import (
 class _GeminiFormatterBase(FormatterBase, ABC):
     """Base class for Gemini formatters, providing shared data block
     formatting logic."""
-
-    supported_input_media_types: list[str]
 
     def _format_gemini_data_block(
         self,
@@ -82,7 +81,7 @@ class _GeminiFormatterBase(FormatterBase, ABC):
                 },
             }
         elif isinstance(source, URLSource):
-            url = source.url
+            url = str(source.url)
             if url.startswith("file://"):
                 # Local file - read and convert to base64
                 file_path = url.removeprefix("file://")
@@ -115,14 +114,18 @@ class GeminiChatFormatter(_GeminiFormatterBase):
     entities in the conversation.
     """
 
-    def __init__(
-        self,
-        supported_input_media_types: list[str] | None = None,
-    ) -> None:
-        super().__init__(
-            supported_input_media_types=supported_input_media_types
-            or ["image/*", "audio/*", "video/*"],
-        )
+    input_types: list[str] = Field(
+        default_factory=lambda: [
+            "text/plain",
+            "image/*",
+            "audio/*",
+            "video/*",
+        ],
+        description=(
+            "The supported input types. "
+            'Defaults to ``["text/plain", "image/*", "audio/*", "video/*"]``.'
+        ),
+    )
 
     async def format(
         self,
@@ -151,10 +154,23 @@ class GeminiChatFormatter(_GeminiFormatterBase):
                     parts.append({"text": block.text})
 
                 elif isinstance(block, ThinkingBlock):
-                    parts.append({"text": block.thinking})
+                    # Gemini API requires `thought: true` to mark a part as a
+                    # thinking/reasoning block so the model can distinguish it
+                    # from normal text and maintain reasoning continuity.
+                    parts.append({"thought": True, "text": block.thinking})
 
                 elif isinstance(block, HintBlock):
-                    pass  # Gemini does not support hint blocks
+                    if parts:
+                        role = "model" if msg.role == "assistant" else "user"
+                        messages.append({"role": role, "parts": parts})
+                        parts = []
+
+                    messages.append(
+                        {
+                            "role": "user",
+                            "parts": [{"text": block.hint}],
+                        },
+                    )
 
                 elif isinstance(block, DataBlock):
                     formatted = self._format_gemini_data_block(block)
@@ -165,15 +181,19 @@ class GeminiChatFormatter(_GeminiFormatterBase):
                     parts.append(
                         {
                             "function_call": {
-                                "id": None,
+                                "id": block.id,
                                 "name": block.name,
-                                "args": block.input,
+                                "args": json.loads(block.input or "{}"),
                             },
-                            "thought_signature": block.id,
                         },
                     )
 
                 elif isinstance(block, ToolResultBlock):
+                    if parts:
+                        role = "model" if msg.role == "assistant" else "user"
+                        messages.append({"role": role, "parts": parts})
+                        parts = []
+
                     (
                         textual_output,
                         multimodal_data,
@@ -197,13 +217,20 @@ class GeminiChatFormatter(_GeminiFormatterBase):
                     )
 
                     if multimodal_data:
-                        msgs.insert(
-                            i + 1,
-                            UserMsg(
-                                name="system-reminder",
-                                content=multimodal_data,
-                            ),
-                        )
+                        promo_parts = []
+                        for item in multimodal_data:
+                            if isinstance(item, TextBlock):
+                                promo_parts.append({"text": item.text})
+                            elif isinstance(item, DataBlock):
+                                fmt_item = self._format_gemini_data_block(
+                                    item,
+                                )
+                                if fmt_item is not None:
+                                    promo_parts.append(fmt_item)
+                        if promo_parts:
+                            messages.append(
+                                {"role": "user", "parts": promo_parts},
+                            )
 
                 else:
                     logger.warning(
@@ -246,29 +273,27 @@ class GeminiMultiAgentFormatter(_GeminiFormatterBase):
 
     """
 
-    def __init__(
-        self,
-        conversation_history_prompt: str = (
+    conversation_history_prompt: str = Field(
+        default=(
             "# Conversation History\n"
             "The content between <history></history> tags contains "
             "your conversation history\n"
         ),
-        supported_input_media_types: list[str] | None = None,
-    ) -> None:
-        """Initialize the Gemini multi-agent formatter.
+        description="The prompt to use for the conversation history section.",
+    )
 
-        Args:
-            conversation_history_prompt (`str`):
-                The prompt to be used for the conversation history section.
-            supported_input_media_types (`list[str] | None`, optional):
-                The list of supported input media types. Defaults to
-                ``["image/*", "audio/*", "video/*"]``.
-        """
-        super().__init__(
-            supported_input_media_types=supported_input_media_types
-            or ["image/*", "audio/*", "video/*"],
-        )
-        self.conversation_history_prompt = conversation_history_prompt
+    input_types: list[str] = Field(
+        default_factory=lambda: [
+            "text/plain",
+            "image/*",
+            "audio/*",
+            "video/*",
+        ],
+        description=(
+            "The supported input types. "
+            'Defaults to ``["text/plain", "image/*", "audio/*", "video/*"]``.'
+        ),
+    )
 
     async def format(self, msgs: list[Msg]) -> list[dict[str, Any]]:
         """Format input messages into the structure required by the Gemini
@@ -308,7 +333,7 @@ class GeminiMultiAgentFormatter(_GeminiFormatterBase):
         """Given a sequence of tool call/result messages, format them into
         the required format for the Gemini API."""
         return await GeminiChatFormatter(
-            supported_input_media_types=self.supported_input_media_types,
+            input_types=self.input_types,
         ).format(msgs)
 
     async def _format_agent_message(

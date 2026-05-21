@@ -179,6 +179,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
         return {
             "id": AnyString(),
             "created_at": AnyString(),
+            "finished_at": None,
             "metadata": {},
             "name": "Friday",
             "role": "assistant",
@@ -252,6 +253,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                         "name": name,
                         "input": tool_input,
                         "state": "submitted",
+                        "suggested_rules": [],
                     },
                 ],
             },
@@ -353,7 +355,14 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": self.user_input_text,
+                    },
+                ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -363,6 +372,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_1,
                         "state": "submitted",
+                        "suggested_rules": [],
                     },
                 ],
             },
@@ -389,7 +399,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
         # Second call: resume with external execution result
         events = []
         async for event in self.agent.reply_stream(
-            event=external_result_event,
+            inputs=external_result_event,
         ):
             events.append(event.model_dump())
 
@@ -412,7 +422,14 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": self.user_input_text,
+                    },
+                ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -422,6 +439,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_1,
                         "state": "finished",
+                        "suggested_rules": [],
                     },
                     {
                         "type": "tool_result",
@@ -566,7 +584,14 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": self.user_input_text,
+                    },
+                ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -576,6 +601,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_1,
                         "state": "submitted",
+                        "suggested_rules": [],
                     },
                     {
                         "type": "tool_call",
@@ -583,6 +609,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_2,
                         "state": "pending",
+                        "suggested_rules": [],
                     },
                 ],
             },
@@ -609,7 +636,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
         # Second call: resume with external execution result
         events = []
         async for event in self.agent.reply_stream(
-            event=external_result_event,
+            inputs=external_result_event,
         ):
             events.append(event.model_dump())
 
@@ -648,7 +675,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
 
         events = []
         async for evnt in self.agent.reply_stream(
-            event=external_result_event,
+            inputs=external_result_event,
         ):
             events.append(evnt.model_dump())
 
@@ -673,7 +700,14 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": self.user_input_text,
+                    },
+                ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -683,6 +717,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_1,
                         "state": "finished",
+                        "suggested_rules": [],
                     },
                     {
                         "type": "tool_call",
@@ -690,6 +725,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_2,
                         "state": "finished",
+                        "suggested_rules": [],
                     },
                     {
                         "type": "tool_result",
@@ -853,7 +889,14 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": self.user_input_text,
+                    },
+                ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -863,6 +906,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_1,
                         "state": "submitted",
+                        "suggested_rules": [],
                     },
                     {
                         "type": "tool_call",
@@ -870,6 +914,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_2,
                         "state": "submitted",
+                        "suggested_rules": [],
                     },
                 ],
             },
@@ -896,7 +941,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
         # Second call: resume with external execution result
         events = []
         async for event in self.agent.reply_stream(
-            event=external_result_event,
+            inputs=external_result_event,
         ):
             events.append(event.model_dump())
 
@@ -929,7 +974,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
 
         events = []
         async for event in self.agent.reply_stream(
-            event=external_result_event,
+            inputs=external_result_event,
         ):
             events.append(event.model_dump())
 
@@ -955,7 +1000,14 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": self.user_input_text,
+                    },
+                ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -965,6 +1017,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_1,
                         "state": "finished",
+                        "suggested_rules": [],
                     },
                     {
                         "type": "tool_call",
@@ -972,6 +1025,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_2,
                         "state": "finished",
+                        "suggested_rules": [],
                     },
                     {
                         "type": "tool_result",
@@ -1129,7 +1183,14 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": self.user_input_text,
+                    },
+                ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -1139,6 +1200,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_1,
                         "state": "submitted",
+                        "suggested_rules": [],
                     },
                     {
                         "type": "tool_call",
@@ -1146,6 +1208,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_2,
                         "state": "submitted",
+                        "suggested_rules": [],
                     },
                 ],
             },
@@ -1178,7 +1241,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
 
         events = []
         async for event in self.agent.reply_stream(
-            event=external_result_event,
+            inputs=external_result_event,
         ):
             events.append(event.model_dump())
 
@@ -1206,7 +1269,14 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": self.user_input_text,
+                    },
+                ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -1216,6 +1286,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_1,
                         "state": "finished",
+                        "suggested_rules": [],
                     },
                     {
                         "type": "tool_call",
@@ -1223,6 +1294,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_2,
                         "state": "finished",
+                        "suggested_rules": [],
                     },
                     {
                         "type": "tool_result",

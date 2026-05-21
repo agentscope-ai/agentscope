@@ -2,10 +2,12 @@
 """The Anthropic formatter module."""
 import base64
 import fnmatch
+import json
 from abc import ABC
 from typing import Any
 
 import requests
+from pydantic import Field
 
 from ._formatter_base import FormatterBase
 from .._logging import logger
@@ -25,8 +27,6 @@ from ..message import (
 class _AnthropicFormatterBase(FormatterBase, ABC):
     """Mixin for formatting Anthropic formatters to avoid duplication between
     AnthropicChatFormatter and AnthropicMultiAgentFormatter."""
-
-    supported_input_media_types: list[str]
 
     async def _format_messages(
         self,
@@ -51,22 +51,60 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
         self.assert_list_of_msgs(msgs)
 
         messages: list[dict] = []
-        for msg in msgs:
+        for msg in msgs:  # pylint: disable=too-many-nested-blocks
             content_blocks: list = []
+            has_tool_result = False
 
             for block in msg.get_content_blocks():
+                if (
+                    has_tool_result
+                    and content_blocks
+                    and not isinstance(
+                        block,
+                        ToolResultBlock,
+                    )
+                ):
+                    messages.append(
+                        {"role": "user", "content": content_blocks},
+                    )
+                    content_blocks = []
+                    has_tool_result = False
+
                 if isinstance(block, TextBlock):
                     content_blocks.append(
                         {"type": "text", "text": block.text},
                     )
 
                 elif isinstance(block, ThinkingBlock):
+                    # Anthropic requires the signature to be passed back in
+                    # subsequent requests so the API can verify the thinking
+                    # block.  signature is stored as an extra field and may be
+                    # absent on blocks from other providers.
                     content_blocks.append(
-                        {"type": "thinking", "thinking": block.thinking},
+                        {
+                            "type": "thinking",
+                            "thinking": block.thinking,
+                            "signature": getattr(block, "signature", "") or "",
+                        },
                     )
 
                 elif isinstance(block, HintBlock):
-                    pass  # Anthropic does not support hint blocks
+                    if content_blocks:
+                        role = "user" if has_tool_result else msg.role
+                        messages.append(
+                            {"role": role, "content": content_blocks},
+                        )
+                        content_blocks = []
+                        has_tool_result = False
+
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": block.hint},
+                            ],
+                        },
+                    )
 
                 elif isinstance(block, DataBlock):
                     formatted_block = self._format_anthropic_data_block(block)
@@ -79,75 +117,64 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                             "type": "tool_use",
                             "id": block.id,
                             "name": block.name,
-                            "input": block.input,
+                            # Anthropic API expects input as a dict, not a
+                            # JSON string.
+                            "input": json.loads(block.input or "{}"),
                         },
                     )
 
                 elif isinstance(block, ToolResultBlock):
-                    (
-                        textual_output,
-                        multimodal_data,
-                    ) = self.convert_tool_result_to_string(block.output)
+                    if content_blocks:
+                        role = "user" if has_tool_result else msg.role
+                        messages.append(
+                            {"role": role, "content": content_blocks},
+                        )
+                        content_blocks = []
 
-                    tool_result_content = []
-                    if textual_output:
+                    tool_result_content: list[dict] = []
+                    output = block.output
+                    if isinstance(output, str):
                         tool_result_content.append(
-                            {"type": "text", "text": textual_output},
+                            {"type": "text", "text": output},
                         )
-
-                    for data_block in multimodal_data:
-                        formatted_block = self._format_anthropic_data_block(
-                            data_block,
-                        )
-                        if formatted_block:
-                            tool_result_content.append(formatted_block)
-
-                    # If there's multimodal data, promote to UserMsg
-                    if multimodal_data:
-                        # Add tool result first
-                        content_blocks.append(
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": block.id,
-                                "content": tool_result_content,
-                            },
-                        )
-
-                        # Flush current message
-                        if content_blocks:
-                            messages.append(
-                                {
-                                    "role": msg.role,
-                                    "content": content_blocks,
-                                },
-                            )
-                            content_blocks = []
-
-                        # Insert UserMsg with multimodal data
-                        user_content = []
-                        for data_block in multimodal_data:
-                            formatted_block = (
-                                self._format_anthropic_data_block(data_block)
-                            )
-                            if formatted_block:
-                                user_content.append(formatted_block)
-
-                        if user_content:
-                            messages.append(
-                                {
-                                    "role": "user",
-                                    "content": user_content,
-                                },
-                            )
                     else:
-                        # No multimodal data, just add tool result
-                        content_blocks.append(
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": block.id,
-                                "content": tool_result_content,
-                            },
-                        )
+                        for out_block in output:
+                            if isinstance(out_block, TextBlock):
+                                tool_result_content.append(
+                                    {"type": "text", "text": out_block.text},
+                                )
+                            elif isinstance(out_block, DataBlock):
+                                fmt_block = self._format_anthropic_data_block(
+                                    out_block,
+                                )
+                                if fmt_block:
+                                    tool_result_content.append(fmt_block)
+                                else:
+                                    source = out_block.source
+                                    main_type = source.media_type.split("/")[0]
+                                    if isinstance(source, URLSource):
+                                        fallback = (
+                                            f"[{main_type} file returned, "
+                                            f"URL: {source.url}]"
+                                        )
+                                    else:
+                                        fallback = (
+                                            f"[{main_type} file returned, "
+                                            f"type: {source.media_type}]"
+                                        )
+                                    tool_result_content.append(
+                                        {"type": "text", "text": fallback},
+                                    )
+
+                    content_blocks.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": tool_result_content,
+                        },
+                    )
+                    # Anthropic requires tool_result to be in a "user" message.
+                    has_tool_result = True
 
                 else:
                     logger.warning(
@@ -156,9 +183,12 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                     )
 
             if content_blocks:
+                # Anthropic requires `tool_result` blocks to be in a `user`
+                # message regardless of the containing Msg's role.
+                role = "user" if has_tool_result else msg.role
                 messages.append(
                     {
-                        "role": msg.role,
+                        "role": role,
                         "content": content_blocks,
                     },
                 )
@@ -228,7 +258,7 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                 },
             }
         elif isinstance(source, URLSource):
-            url = source.url
+            url = str(source.url)
             if url.startswith("file://"):
                 # Local file - read and convert to base64
                 file_path = url.removeprefix("file://")
@@ -265,21 +295,13 @@ class AnthropicChatFormatter(_AnthropicFormatterBase):
     entities in the conversation.
     """
 
-    def __init__(
-        self,
-        supported_input_media_types: list[str] | None = None,
-    ) -> None:
-        """Initialize the Anthropic chat formatter.
-
-        Args:
-            supported_input_media_types (`list[str] | None`, optional):
-                The list of supported input media types. Defaults to
-                ``["image/*"]``.
-        """
-        super().__init__(
-            supported_input_media_types=supported_input_media_types
-            or ["image/*"],
-        )
+    input_types: list[str] = Field(
+        default_factory=lambda: ["text/plain", "image/*"],
+        description=(
+            "The supported input types. "
+            'Defaults to ``["text/plain", "image/*"]``.'
+        ),
+    )
 
     async def format(
         self,
@@ -309,29 +331,22 @@ class AnthropicMultiAgentFormatter(_AnthropicFormatterBase):
     a user and an agent are involved.
     """
 
-    def __init__(
-        self,
-        conversation_history_prompt: str = (
+    conversation_history_prompt: str = Field(
+        default=(
             "# Conversation History\n"
             "The content between <history></history> tags contains "
             "your conversation history\n"
         ),
-        supported_input_media_types: list[str] | None = None,
-    ) -> None:
-        """Initialize the Anthropic multi-agent formatter.
+        description="The prompt to use for the conversation history section.",
+    )
 
-        Args:
-            conversation_history_prompt (`str`):
-                The prompt to use for the conversation history section.
-            supported_input_media_types (`list[str] | None`, optional):
-                The list of supported input media types. Defaults to
-                ``["image/*"]``.
-        """
-        super().__init__(
-            supported_input_media_types=supported_input_media_types
-            or ["image/*"],
-        )
-        self.conversation_history_prompt = conversation_history_prompt
+    input_types: list[str] = Field(
+        default_factory=lambda: ["text/plain", "image/*"],
+        description=(
+            "The supported input types. "
+            'Defaults to ``["text/plain", "image/*"]``.'
+        ),
+    )
 
     async def format(self, msgs: list[Msg]) -> list[dict[str, Any]]:
         """Format input messages into the structure required by the Anthropic

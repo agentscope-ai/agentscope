@@ -23,7 +23,6 @@ class _ToolkitTaskTestBase(IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         """Set up shared test fixtures."""
-        self.maxDiff = None
         self.agent_state = AgentState()
         self.toolkit = Toolkit(
             tools=[

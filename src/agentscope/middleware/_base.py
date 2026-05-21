@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from ..model import ChatResponse
 
 
-class MiddlewareBase:
+class MiddlewareBase:  # pylint: disable=unused-argument
     """Base class for all middleware implementations.
 
     Middleware provides interception mechanisms at 5 key execution points
@@ -71,18 +71,20 @@ class MiddlewareBase:
         Args:
             agent: The Agent instance executing this middleware
             input_kwargs: Dictionary containing:
-                - msgs: Msg | list[Msg] | None
-                - event: UserConfirmResultEvent |
-                ExternalExecutionResultEvent | None
+                - inputs: Msg | list[Msg] | UserConfirmResultEvent |
+                ExternalExecutionResultEvent | None — the unified inputs
+                that trigger this reply (new message(s), a resumption
+                event from a previous outside interaction, or None).
             next_handler: Callable that executes the next middleware or
              original method
 
         Yields:
             AgentEvent | Msg: Events from the reply process
         """
-        raise NotImplementedError(
+        raise RuntimeError(
             f"{type(self).__name__} does not implement on_reply",
         )
+        yield  # pylint: disable=unreachable
 
     async def on_reasoning(
         self,
@@ -95,16 +97,17 @@ class MiddlewareBase:
         Args:
             agent: The Agent instance executing this middleware
             input_kwargs: Dictionary containing:
-                - tool_choice: ToolChoice (default "auto")
+                - tool_choice: ToolChoice (default None)
             next_handler: Callable that executes the next middleware or
             original method
 
         Yields:
             Various events from the reasoning process
         """
-        raise NotImplementedError(
+        raise RuntimeError(
             f"{type(self).__name__} does not implement on_reasoning",
         )
+        yield  # pylint: disable=unreachable
 
     async def on_acting(
         self,
@@ -112,21 +115,45 @@ class MiddlewareBase:
         input_kwargs: dict,
         next_handler: Callable[..., AsyncGenerator],
     ) -> AsyncGenerator:
-        """Hook for intercepting tool call execution.
+        """Hook for intercepting the raw tool execution.
+
+        This hook wraps **only** the ``toolkit.call_tool`` call — i.e. the
+        pure I/O execution layer.  Permission checking, input validation, and
+        context writes are handled by the agent **outside** this hook and are
+        therefore not visible here.
+
+        This separation makes it safe to offload the ``next_handler``
+        coroutine to a background task: it will never mutate agent context
+        on its own.
+
+        .. note::
+            Tools with ``is_state_injected=True`` receive the live
+            ``agent.state`` object.  Offloading such tools to a background
+            task may cause concurrent state mutations — guard against this
+            in your middleware implementation.
 
         Args:
-            agent: The Agent instance executing this middleware
-            input_kwargs: Dictionary containing:
-                - tool_call: ToolCallBlock
-            next_handler: Callable that executes the next middleware or
-            original method
+            agent (`Agent`):
+                The Agent instance executing this middleware.
+            input_kwargs (`dict`):
+                Dictionary containing:
+
+                - ``tool_call`` (``ToolCallBlock``): the tool call to execute.
+                  By the time this hook is invoked the tool call has already
+                  been validated and permitted.
+            next_handler (`Callable[..., AsyncGenerator]`):
+                Callable that executes the next middleware or
+                ``_acting_impl``.
 
         Yields:
-            Events from the tool execution process
+            `ToolChunk | ToolResponse`:
+                Intermediate ``ToolChunk`` objects followed by a final
+                ``ToolResponse`` produced by the tool.
         """
-        raise NotImplementedError(
+        raise RuntimeError(
             f"{type(self).__name__} does not implement on_acting",
         )
+        yield  # pylint: disable=unreachable
 
     async def on_model_call(
         self,
@@ -152,7 +179,7 @@ class MiddlewareBase:
         Returns:
             ChatResponse or AsyncGenerator[ChatResponse, None]
         """
-        raise NotImplementedError(
+        raise RuntimeError(
             f"{type(self).__name__} does not implement on_model_call",
         )
 
@@ -174,6 +201,6 @@ class MiddlewareBase:
         Returns:
             str: The transformed system prompt
         """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not implement " f"on_system_prompt",
+        raise RuntimeError(
+            f"{type(self).__name__} does not implement on_system_prompt",
         )

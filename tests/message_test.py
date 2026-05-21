@@ -15,6 +15,7 @@ from agentscope.message import (
     Msg,
     ToolCallBlock,
     ToolResultBlock,
+    ToolResultState,
 )
 
 
@@ -31,9 +32,16 @@ class MessageTest(IsolatedAsyncioTestCase):
                 "id": AnyString(),
                 "name": "user",
                 "role": "user",
-                "content": "hello world",
+                "content": [
+                    {
+                        "id": AnyString(),
+                        "text": "hello world",
+                        "type": "text",
+                    },
+                ],
                 "metadata": {},
                 "created_at": AnyString(),
+                "finished_at": AnyString(),
             },
         )
 
@@ -54,6 +62,7 @@ class MessageTest(IsolatedAsyncioTestCase):
                 ],
                 "metadata": {},
                 "created_at": AnyString(),
+                "finished_at": AnyString(),
             },
         )
 
@@ -108,6 +117,7 @@ class MessageTest(IsolatedAsyncioTestCase):
                 ],
                 "metadata": {},
                 "created_at": AnyString(),
+                "finished_at": AnyString(),
             },
         )
 
@@ -131,6 +141,7 @@ class MessageTest(IsolatedAsyncioTestCase):
                 ],
                 "metadata": {},
                 "created_at": AnyString(),
+                "finished_at": None,
             },
         )
 
@@ -150,6 +161,7 @@ class MessageTest(IsolatedAsyncioTestCase):
                 ],
                 "metadata": {},
                 "created_at": AnyString(),
+                "finished_at": None,
             },
         )
 
@@ -189,7 +201,7 @@ class MessageTest(IsolatedAsyncioTestCase):
                         id="1",
                         name="tool",
                         output="result",
-                        state="success",
+                        state=ToolResultState.SUCCESS,
                     ),
                 ],
             )
@@ -243,7 +255,7 @@ class MessageTest(IsolatedAsyncioTestCase):
                         id="1",
                         name="tool",
                         output="result",
-                        state="success",
+                        state=ToolResultState.SUCCESS,
                     ),
                 ],
             )

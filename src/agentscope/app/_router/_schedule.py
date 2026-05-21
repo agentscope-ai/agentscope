@@ -1,0 +1,231 @@
+# -*- coding: utf-8 -*-
+"""Schedule router — CRUD endpoints for scheduled agent tasks."""
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, status
+
+from .._deps import get_current_user_id, get_scheduler_manager, get_storage
+from .._manager import SchedulerManager
+from .._schema import (
+    CreateScheduleRequest,
+    CreateScheduleResponse,
+    ListSchedulesResponse,
+    ScheduleSessionsResponse,
+    UpdateScheduleRequest,
+)
+from ..storage import (
+    StorageBase,
+    ScheduleData,
+    ScheduleRecord,
+    ScheduleSource,
+)
+
+schedule_router = APIRouter(
+    prefix="/schedule",
+    tags=["schedule"],
+    responses={404: {"description": "Not found"}},
+)
+
+
+@schedule_router.get(
+    "/",
+    response_model=ListSchedulesResponse,
+    summary="List all schedules",
+)
+async def list_schedules(
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+) -> ListSchedulesResponse:
+    """List all schedules owned by the current user.
+
+    Args:
+        user_id (`str`): Authenticated user ID.
+        storage (`StorageBase`): Storage instance.
+
+    Returns:
+        `ListSchedulesResponse`:
+            Paginated list of schedule records.
+    """
+    schedules = await storage.list_schedules(user_id)
+    return ListSchedulesResponse(schedules=schedules, total=len(schedules))
+
+
+@schedule_router.post(
+    "/",
+    response_model=CreateScheduleResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a new schedule",
+)
+async def create_schedule(
+    body: CreateScheduleRequest,
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+    scheduler: SchedulerManager = Depends(get_scheduler_manager),
+) -> CreateScheduleResponse:
+    """Create a new schedule and register it with the scheduler.
+
+    Args:
+        body (`CreateScheduleRequest`): Schedule configuration.
+        user_id (`str`): Authenticated user ID.
+        storage (`StorageBase`): Storage instance.
+        scheduler (`SchedulerManager`): Scheduler manager.
+
+    Returns:
+        `CreateScheduleResponse`:
+            The ID of the newly created schedule.
+
+    Raises:
+        `HTTPException`: 404 if the specified agent does not exist.
+    """
+    agents = await storage.list_agents(user_id)
+    if not any(a.id == body.agent_id for a in agents):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent '{body.agent_id}' not found.",
+        )
+
+    record = ScheduleRecord(
+        user_id=user_id,
+        agent_id=body.agent_id,
+        data=ScheduleData(
+            name=body.name,
+            description=body.description,
+            cron_expression=body.cron_expression,
+            timezone=body.timezone,
+            enabled=body.enabled,
+            stateful=body.stateful,
+            permission_mode=body.permission_mode,
+            chat_model_config=body.chat_model_config,
+            source=ScheduleSource.USER,
+            started_at=datetime.now(),
+        ),
+    )
+    await storage.upsert_schedule(user_id, record)
+
+    if record.data.enabled:
+        await scheduler.register_schedule(record)
+
+    return CreateScheduleResponse(schedule_id=record.id)
+
+
+@schedule_router.patch(
+    "/{schedule_id}",
+    response_model=ScheduleRecord,
+    summary="Update a schedule",
+)
+async def update_schedule(
+    schedule_id: str,
+    body: UpdateScheduleRequest,
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+    scheduler: SchedulerManager = Depends(get_scheduler_manager),
+) -> ScheduleRecord:
+    """Partially update a schedule.
+
+    Fields omitted from the request body keep their current values.
+    Changing ``cron_expression`` or ``timezone`` immediately reschedules the
+    APScheduler job.  Setting ``enable=False`` removes the job from the
+    scheduler without deleting the record.
+
+    Args:
+        schedule_id (`str`): ID of the schedule to update.
+        body (`UpdateScheduleRequest`): Fields to update.
+        user_id (`str`): Authenticated user ID.
+        storage (`StorageBase`): Storage instance.
+        scheduler (`SchedulerManager`): Scheduler manager.
+
+    Returns:
+        `ScheduleRecord`:
+            The updated schedule record.
+
+    Raises:
+        `HTTPException`: 404 if the schedule does not exist.
+    """
+    existing = await storage.get_schedule(user_id, schedule_id)
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Schedule '{schedule_id}' not found.",
+        )
+
+    updates = body.model_dump(exclude_none=True)
+    updated_data = existing.data.model_copy(update=updates)
+    updated_record = existing.model_copy(
+        update={"data": updated_data, "updated_at": datetime.now()},
+    )
+    await storage.upsert_schedule(user_id, updated_record)
+
+    # Always remove the existing job first; re-register only if still enabled.
+    await scheduler.remove_schedule(schedule_id)
+    if updated_record.data.enabled:
+        await scheduler.register_schedule(updated_record)
+
+    return updated_record
+
+
+@schedule_router.delete(
+    "/{schedule_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a schedule",
+)
+async def delete_schedule(
+    schedule_id: str,
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+    scheduler: SchedulerManager = Depends(get_scheduler_manager),
+) -> None:
+    """Permanently delete a schedule.
+
+    Removes the record from storage and unregisters the APScheduler job.
+
+    Args:
+        schedule_id (`str`): ID of the schedule to delete.
+        user_id (`str`): Authenticated user ID.
+        storage (`StorageBase`): Storage instance.
+        scheduler (`SchedulerManager`): Scheduler manager.
+
+    Raises:
+        `HTTPException`: 404 if the schedule does not exist.
+    """
+    deleted = await storage.delete_schedule(user_id, schedule_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Schedule '{schedule_id}' not found.",
+        )
+    await scheduler.remove_schedule(schedule_id)
+
+
+@schedule_router.get(
+    "/{schedule_id}/sessions",
+    response_model=ScheduleSessionsResponse,
+    summary="List execution sessions for a schedule",
+)
+async def list_schedule_sessions(
+    schedule_id: str,
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+) -> ScheduleSessionsResponse:
+    """Return all sessions triggered by a given schedule.
+
+    Args:
+        schedule_id (`str`): ID of the schedule.
+        user_id (`str`): Authenticated user ID.
+        storage (`StorageBase`): Storage instance.
+
+    Returns:
+        `ScheduleSessionsResponse`:
+            List of execution sessions ordered by creation time (newest first).
+
+    Raises:
+        `HTTPException`: 404 if the schedule does not exist.
+    """
+    existing = await storage.get_schedule(user_id, schedule_id)
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Schedule '{schedule_id}' not found.",
+        )
+
+    sessions = await storage.list_sessions_by_schedule(user_id, schedule_id)
+    return ScheduleSessionsResponse(sessions=sessions, total=len(sessions))

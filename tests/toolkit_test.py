@@ -852,7 +852,6 @@ class ToolGroupTest(IsolatedAsyncioTestCase):
             group_name="group_1",
             description="Group 1",
         )
-        self.maxDiff = None
 
         # The group is created successfully
         self.assertEqual(len(toolkit.groups), 1)
