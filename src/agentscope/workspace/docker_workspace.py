@@ -3,16 +3,16 @@
 
 Architecture (from diagram 2):
 
-- Container lifecycle (initialize/close) via **docker SDK**.
+- Container lifecycle (initialize/close) via **aiodocker**.
 - MCP operations (list_mcps, add_mcp, remove_mcp) via **HTTP** to the
   in-container MCP gateway.
-- Skill operations (add_skill, remove_skill) via **docker SDK**
+- Skill operations (add_skill, remove_skill) via **aiodocker**
   (file copy / exec).
-- Offload operations via **docker SDK** (exec + write).
+- Offload operations via **aiodocker** (exec + write).
 
-Requires ``docker`` (docker-py)::
+Requires ``aiodocker``::
 
-    pip install docker
+    pip install aiodocker
 """
 
 import asyncio
@@ -23,12 +23,12 @@ import mimetypes
 import posixpath
 import shlex
 import tarfile
-import uuid
-from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, ClassVar
+
+from pydantic import Field, PrivateAttr
 
 from .._logging import logger
 from ..message import (
@@ -41,14 +41,8 @@ from ..message import (
 )
 from ..skill import Skill
 from ..tool import ToolBase
-from .config import MCPServerConfig
 from .mcp_enhanced_workspace import WorkspaceWithMCP
 from .types import ExecutionResult, SerializedWorkspaceState
-
-_EXECUTOR = ThreadPoolExecutor(
-    max_workers=8,
-    thread_name_prefix="agentscope-docker-ws",
-)
 
 _DEFAULT_INSTRUCTIONS = """<workspace>
 You have access to a Docker-based workspace.
@@ -84,6 +78,31 @@ class InternalEndpoint:
 class DockerWorkspace(WorkspaceWithMCP):
     """Workspace backed by a Docker container.
 
+    All operations (exec, file I/O, skill management) are performed
+    inside the container via **aiodocker**.  MCP servers run inside
+    the container and are accessed through an HTTP gateway.
+
+    Args:
+        image: Docker image to use for the container.
+            Defaults to ``"ubuntu:22.04"``.
+        working_dir: Working directory inside the container.
+            Defaults to ``"/workspace"``.
+        exposed_ports: Additional container ports to expose to the
+            host (the gateway port is always included).
+        volumes: Host-to-container volume bindings as
+            ``{host_path: container_path}``.
+        env: Environment variables to set inside the container
+            as ``{key: value}``.
+        startup_commands: Shell commands to run inside the container
+            after creation (before the MCP gateway starts).  A
+            non-zero exit code from any command aborts initialization.
+        instructions: Workspace-specific system prompt fragment
+            returned by :meth:`get_instructions`.
+        mcp_servers: MCP server configurations (inherited from
+            :class:`WorkspaceWithMCP`).
+        gateway_port: MCP gateway port (inherited from
+            :class:`WorkspaceWithMCP`).  Defaults to ``5600``.
+
     Usage::
 
         workspace = DockerWorkspace(image="my-image:latest")
@@ -93,63 +112,28 @@ class DockerWorkspace(WorkspaceWithMCP):
         await workspace.close()
     """
 
-    DEFAULT_IMAGE = "ubuntu:22.04"
-    DEFAULT_WORKING_DIR = "/workspace"
-    GATEWAY_PORT = 5600
-    SKILLS_DIR = "/workspace/skills"
+    # ── class-level constants ─────────────────────────────────────
 
-    def __init__(
-        self,
-        image: str = DEFAULT_IMAGE,
-        working_dir: str = DEFAULT_WORKING_DIR,
-        mcp_servers: list[MCPServerConfig] | None = None,
-        gateway_port: int = GATEWAY_PORT,
-        exposed_ports: list[int] | None = None,
-        volumes: dict[str, str] | None = None,
-        env: dict[str, str] | None = None,
-        startup_commands: list[str] | None = None,
-        instructions: str = _DEFAULT_INSTRUCTIONS,
-    ) -> None:
-        """Create a Docker-container workspace.
+    DEFAULT_IMAGE: ClassVar[str] = "ubuntu:22.04"
+    DEFAULT_WORKING_DIR: ClassVar[str] = "/workspace"
+    GATEWAY_PORT: ClassVar[int] = 5600
+    SKILLS_DIR: ClassVar[str] = "/workspace/skills"
 
-        Args:
-            image: Docker image to use for the container.
-            working_dir: Working directory inside the container.
-            mcp_servers: MCP servers to run inside the container
-                via the in-container gateway.
-            gateway_port: Port the in-container MCP gateway
-                listens on.
-            exposed_ports: Additional container ports to expose
-                to the host.
-            volumes: Host-to-container volume mounts
-                (``{host_path: container_path}``).
-            env: Environment variables set inside the container.
-            startup_commands: Shell commands run after container
-                creation (before gateway starts).  Failures raise
-                ``RuntimeError``.
-            instructions: Custom system prompt fragment.
-        """
-        super().__init__(
-            mcp_servers=mcp_servers,
-            gateway_port=gateway_port,
-        )
-        self._image = image
-        self._working_dir = working_dir
-        self._exposed_ports = exposed_ports or []
-        self._volumes = volumes or {}
-        self._env = env or {}
-        self._startup_commands = startup_commands or []
-        self._instructions = instructions
+    # ── serializable configuration fields ─────────────────────────
 
-        self._id = uuid.uuid4().hex[:12]
-        self._client: Any = None  # docker.DockerClient
-        self._container: Any = None  # Container
-        self._port_mapping: dict[int, int] = {}
-        self._started = False
+    image: str = DEFAULT_IMAGE
+    working_dir: str = DEFAULT_WORKING_DIR
+    exposed_ports: list[int] = Field(default_factory=list)
+    volumes: dict[str, str] = Field(default_factory=dict)
+    env: dict[str, str] = Field(default_factory=dict)
+    startup_commands: list[str] = Field(default_factory=list)
+    instructions: str = _DEFAULT_INSTRUCTIONS
 
-    @property
-    def workspace_id(self) -> str:
-        return self._id
+    # ── runtime state (excluded from serialisation) ───────────────
+
+    _client: Any = PrivateAttr(default=None)  # aiodocker.Docker
+    _container: Any = PrivateAttr(default=None)  # aiodocker.DockerContainer
+    _port_mapping: dict[int, int] = PrivateAttr(default_factory=dict)
 
     @property
     def container_id(self) -> str | None:
@@ -163,74 +147,75 @@ class DockerWorkspace(WorkspaceWithMCP):
         if self._started:
             return
 
-        import docker
-        import docker.errors as docker_errors
+        import aiodocker
 
-        loop = asyncio.get_running_loop()
-        self._client = docker.from_env()
+        self._client = aiodocker.Docker()
 
         # Pull image if needed
         try:
-            await loop.run_in_executor(
-                _EXECUTOR,
-                lambda: self._client.images.get(self._image),
-            )
-        except docker_errors.ImageNotFound:
-            repo, _, tag = self._image.partition(":")
-            await loop.run_in_executor(
-                _EXECUTOR,
-                lambda: self._client.images.pull(repo, tag=tag or None),
+            await self._client.images.inspect(self.image)
+        except aiodocker.exceptions.DockerError:
+            repo, _, tag = self.image.partition(":")
+            await self._client.images.pull(
+                from_image=repo,
+                tag=tag or "latest",
             )
 
         # Collect ports to expose (include gateway port)
-        ports = list(self._exposed_ports)
-        if self._gateway_port not in ports:
-            ports.append(self._gateway_port)
+        ports = list(self.exposed_ports)
+        if self.gateway_port not in ports:
+            ports.append(self.gateway_port)
 
-        create_kwargs: dict[str, Any] = {
-            "image": self._image,
-            "command": ["sleep", "infinity"],
-            "detach": True,
-            "working_dir": self._working_dir,
-            "name": f"as_ws_{self._id}",
-            "labels": {
+        # Build container config for aiodocker
+        config: dict[str, Any] = {
+            "Image": self.image,
+            "Cmd": ["sleep", "infinity"],
+            "WorkingDir": self.working_dir,
+            "Labels": {
                 "agentscope.workspace": "true",
-                "agentscope.workspace.id": self._id,
+                "agentscope.workspace.id": self.workspace_id,
             },
         }
-        if self._env:
-            create_kwargs["environment"] = self._env
-        if self._volumes:
-            create_kwargs["volumes"] = {
-                src: {"bind": dst, "mode": "rw"}
-                for src, dst in self._volumes.items()
-            }
-        if ports:
-            create_kwargs["ports"] = {
-                f"{p}/tcp": ("127.0.0.1", None) for p in ports
-            }
+        if self.env:
+            config["Env"] = [f"{k}={v}" for k, v in self.env.items()]
 
-        self._container = await loop.run_in_executor(
-            _EXECUTOR,
-            lambda: self._client.containers.create(**create_kwargs),
+        # ExposedPorts
+        if ports:
+            config["ExposedPorts"] = {f"{p}/tcp": {} for p in ports}
+
+        # HostConfig
+        host_config: dict[str, Any] = {}
+        if self.volumes:
+            host_config["Binds"] = [
+                f"{src}:{dst}:rw" for src, dst in self.volumes.items()
+            ]
+        if ports:
+            host_config["PortBindings"] = {
+                f"{p}/tcp": [{"HostIp": "127.0.0.1", "HostPort": ""}]
+                for p in ports
+            }
+        config["HostConfig"] = host_config
+
+        self._container = await self._client.containers.create_or_replace(
+            name=f"as_ws_{self.workspace_id}",
+            config=config,
         )
-        await loop.run_in_executor(_EXECUTOR, self._container.start)
+        await self._container.start()
 
         # Resolve port mapping
         if ports:
-            await loop.run_in_executor(_EXECUTOR, self._container.reload)
-            attrs = getattr(self._container, "attrs", {}) or {}
-            ports_info = attrs.get("NetworkSettings", {}).get("Ports", {})
+            info = await self._container.show()
+            ports_info = info.get("NetworkSettings", {}).get("Ports", {})
             for p in ports:
                 bindings = ports_info.get(f"{p}/tcp", [])
                 if bindings:
                     self._port_mapping[p] = int(bindings[0]["HostPort"])
 
         # Create working dir
-        await self._exec(f"mkdir -p {self._working_dir}")
+        await self._exec(f"mkdir -p {self.working_dir}")
 
         # Run startup commands
-        for cmd in self._startup_commands:
+        for cmd in self.startup_commands:
             r = await self._exec(cmd)
             if not r.is_ok():
                 raise RuntimeError(
@@ -249,7 +234,7 @@ class DockerWorkspace(WorkspaceWithMCP):
         Clears session data and offloaded files inside the container.
         """
         await self._exec(
-            f"rm -rf {self._working_dir}/sessions {self._working_dir}/data",
+            f"rm -rf {self.working_dir}/sessions {self.working_dir}/data",
         )
 
     async def is_alive(self) -> bool:
@@ -257,9 +242,9 @@ class DockerWorkspace(WorkspaceWithMCP):
         if not self._container:
             return False
         try:
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(_EXECUTOR, self._container.reload)
-            return self._container.status == "running"
+            info = await self._container.show()
+            state = info.get("State", {})
+            return state.get("Running", False)
         except Exception:
             return False
 
@@ -273,27 +258,18 @@ class DockerWorkspace(WorkspaceWithMCP):
             self._gateway_mcp_client = None
 
         if self._container:
-            loop = asyncio.get_running_loop()
-            import docker.errors as docker_errors
-
             try:
-                await loop.run_in_executor(
-                    _EXECUTOR,
-                    self._container.kill,
-                )
-            except docker_errors.APIError:
+                await self._container.kill()
+            except Exception:
                 pass
             try:
-                await loop.run_in_executor(
-                    _EXECUTOR,
-                    lambda: self._container.remove(force=True),
-                )
-            except docker_errors.APIError:
+                await self._container.delete(force=True)
+            except Exception:
                 pass
             self._container = None
 
         if self._client:
-            self._client.close()
+            await self._client.close()
             self._client = None
         self._started = False
 
@@ -301,7 +277,7 @@ class DockerWorkspace(WorkspaceWithMCP):
 
     async def get_instructions(self) -> str:
         """Return the workspace-specific system prompt fragment."""
-        return self._instructions
+        return self.instructions
 
     # ── tool & MCP discovery ───────────────────────────────────────
 
@@ -362,8 +338,7 @@ class DockerWorkspace(WorkspaceWithMCP):
         **kwargs: Any,
     ) -> str:
         """Offload context to a JSONL file inside the container."""
-        # Absolute path — _working_dir defaults to /workspace
-        base = f"{self._working_dir}/sessions/{session_id}"
+        base = f"{self.working_dir}/sessions/{session_id}"
         path = f"{base}/context.jsonl"
 
         copied = deepcopy(msgs)
@@ -399,7 +374,7 @@ class DockerWorkspace(WorkspaceWithMCP):
         **kwargs: Any,
     ) -> str:
         """Persist a tool result inside the container."""
-        base = f"{self._working_dir}/sessions/{session_id}"
+        base = f"{self.working_dir}/sessions/{session_id}"
         path = f"{base}/tool_result-{tool_result.id}.txt"
 
         parts: list[str] = []
@@ -426,7 +401,7 @@ class DockerWorkspace(WorkspaceWithMCP):
 
     # add_mcp / remove_mcp are provided by WorkspaceWithMCP
 
-    # ── dynamic skill management (docker SDK) ─────────────────────
+    # ── dynamic skill management (aiodocker) ─────────────────────
 
     async def add_skill(self, skill_path: str) -> None:
         """Copy a local skill directory into the container via tar archive."""
@@ -442,20 +417,12 @@ class DockerWorkspace(WorkspaceWithMCP):
         await self._exec(f"mkdir -p {self.SKILLS_DIR}")
 
         # tar the local skill directory and put it into the container
-        loop = asyncio.get_running_loop()
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tf:
+            tf.add(skill_path, arcname=dir_name)
+        tar_data = buf.getvalue()
 
-        def _tar_dir() -> bytes:
-            buf = io.BytesIO()
-            with tarfile.open(fileobj=buf, mode="w") as tf:
-                tf.add(skill_path, arcname=dir_name)
-            return buf.getvalue()
-
-        tar_data = await loop.run_in_executor(_EXECUTOR, _tar_dir)
-
-        def _put() -> None:
-            self._container.put_archive(self.SKILLS_DIR, tar_data)
-
-        await loop.run_in_executor(_EXECUTOR, _put)
+        await self._container.put_archive(self.SKILLS_DIR, tar_data)
         logger.info(
             "DockerWorkspace: added skill %r at %s",
             dir_name,
@@ -491,20 +458,11 @@ class DockerWorkspace(WorkspaceWithMCP):
             backend_type="docker",
             payload={
                 "container_id": self._container.id,
-                "workspace_id": self._id,
-                "working_dir": self._working_dir,
-                "image": self._image,
-                "gateway_port": self._gateway_port,
-                "mcp_servers": [
-                    {
-                        "name": s.name,
-                        "protocol": s.protocol,
-                        "command": s.command,
-                        "args": s.args,
-                        "url": s.url,
-                    }
-                    for s in self._mcp_servers
-                ],
+                "workspace_id": self.workspace_id,
+                "working_dir": self.working_dir,
+                "image": self.image,
+                "gateway_port": self.gateway_port,
+                "mcp_servers": [s.model_dump() for s in self.mcp_servers],
             },
         )
 
@@ -523,28 +481,47 @@ class DockerWorkspace(WorkspaceWithMCP):
             timeout: Maximum seconds to wait. ``None`` means
                 no limit.
         """
-        loop = asyncio.get_running_loop()
 
-        def _run() -> ExecutionResult:
-            result = self._container.exec_run(
-                ["sh", "-c", command],
-                demux=True,
-                workdir=self._working_dir,
+        async def _run() -> ExecutionResult:
+            exec_obj = await self._container.exec(
+                cmd=["sh", "-c", command],
+                workdir=self.working_dir,
             )
-            stdout, stderr = result.output
-            code = result.exit_code if result.exit_code is not None else -1
+            stream = exec_obj.start()
+            stdout_parts: list[bytes] = []
+            stderr_parts: list[bytes] = []
+            async for msg in stream:
+                # aiodocker streams may return (stream_type, data) or
+                # just data depending on tty setting
+                if isinstance(msg, tuple):
+                    stream_type, data = msg
+                    if stream_type == 1:
+                        stdout_parts.append(data)
+                    else:
+                        stderr_parts.append(data)
+                else:
+                    stdout_parts.append(msg)
+
+            inspect = await exec_obj.inspect()
+            code = inspect.get("ExitCode", -1)
+            if code is None:
+                code = -1
             return ExecutionResult(
                 exit_code=code,
-                stdout=stdout or b"",
-                stderr=stderr or b"",
+                stdout=b"".join(stdout_parts),
+                stderr=b"".join(stderr_parts),
             )
 
         if timeout is None:
-            return await loop.run_in_executor(_EXECUTOR, _run)
-        return await asyncio.wait_for(
-            loop.run_in_executor(_EXECUTOR, _run),
-            timeout=timeout,
-        )
+            return await _run()
+        try:
+            return await asyncio.wait_for(_run(), timeout=timeout)
+        except asyncio.TimeoutError:
+            return ExecutionResult(
+                exit_code=-1,
+                stdout=b"",
+                stderr=b"timed out",
+            )
 
     async def _read(self, path: str) -> bytes:
         """Read a file from the container, returning raw bytes.
@@ -554,21 +531,26 @@ class DockerWorkspace(WorkspaceWithMCP):
         """
         p = PurePosixPath(path)
         if not p.is_absolute():
-            p = PurePosixPath(self._working_dir) / p
-        loop = asyncio.get_running_loop()
+            p = PurePosixPath(self.working_dir) / p
 
-        def _do() -> bytes:
-            bits, _ = self._container.get_archive(str(p))
-            raw = b"".join(bits)
-            with tarfile.open(fileobj=io.BytesIO(raw), mode="r") as tf:
-                for member in tf.getmembers():
-                    if member.isfile():
-                        f = tf.extractfile(member)
-                        if f:
-                            return f.read()
-            raise FileNotFoundError(f"not found in container: {path}")
+        tar_stream = await self._container.get_archive(str(p))
+        # aiodocker get_archive returns a dict with 'data' (tar bytes)
+        # or an async generator depending on version
+        if isinstance(tar_stream, dict):
+            raw = tar_stream["data"]
+        else:
+            chunks: list[bytes] = []
+            async for chunk in tar_stream:
+                chunks.append(chunk)
+            raw = b"".join(chunks)
 
-        return await loop.run_in_executor(_EXECUTOR, _do)
+        with tarfile.open(fileobj=io.BytesIO(raw), mode="r") as tf:
+            for member in tf.getmembers():
+                if member.isfile():
+                    f = tf.extractfile(member)
+                    if f:
+                        return f.read()
+        raise FileNotFoundError(f"not found in container: {path}")
 
     async def _write(self, path: str, data: bytes) -> None:
         """Write raw bytes to a file inside the container.
@@ -579,26 +561,20 @@ class DockerWorkspace(WorkspaceWithMCP):
         """
         p = PurePosixPath(path)
         if not p.is_absolute():
-            p = PurePosixPath(self._working_dir) / p
-        loop = asyncio.get_running_loop()
+            p = PurePosixPath(self.working_dir) / p
 
-        await loop.run_in_executor(
-            _EXECUTOR,
-            lambda: self._container.exec_run(
-                ["mkdir", "-p", str(p.parent)],
-            ),
-        )
+        # Ensure parent directory exists
+        await self._exec(f"mkdir -p {shlex.quote(str(p.parent))}")
 
-        def _do() -> None:
-            buf = io.BytesIO()
-            with tarfile.open(fileobj=buf, mode="w") as tf:
-                info = tarfile.TarInfo(name=p.name)
-                info.size = len(data)
-                tf.addfile(info, io.BytesIO(data))
-            buf.seek(0)
-            self._container.put_archive(str(p.parent), buf.getvalue())
+        # Build tar archive with the file
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tf:
+            info = tarfile.TarInfo(name=p.name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+        buf.seek(0)
 
-        await loop.run_in_executor(_EXECUTOR, _do)
+        await self._container.put_archive(str(p.parent), buf.getvalue())
 
     def _resolve_port(self, port: int) -> InternalEndpoint:
         """Map a container port to its host-side endpoint."""
@@ -626,7 +602,7 @@ class DockerWorkspace(WorkspaceWithMCP):
         """
         h = hashlib.sha256(data_block.source.data.encode()).hexdigest()
         ext = mimetypes.guess_extension(data_block.source.media_type) or ".bin"
-        data_dir = f"{self._working_dir}/data"
+        data_dir = f"{self.working_dir}/data"
         path = f"{data_dir}/{h}{ext}"
         await self._exec(f"mkdir -p {data_dir}")
         await self._write(path, base64.b64decode(data_block.source.data))

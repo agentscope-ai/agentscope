@@ -165,9 +165,13 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
         async with self._lock:
             if workspace_id in self._cache:
                 ws, _ = self._cache.pop(workspace_id)
+                # Remove from parent tracking to prevent double-close
+                # in super().close().
+                self._workspaces.pop(workspace_id, None)
                 await ws.close()
+                return
 
-        # Also clean up parent tracking
+        # Fall back to parent tracking if not in local cache.
         await super().close(workspace_id)
 
     async def close_all(self) -> None:

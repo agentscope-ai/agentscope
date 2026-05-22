@@ -19,23 +19,20 @@ import asyncio
 import json
 import uuid
 from abc import abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import httpx
 import mcp.types as _mcp_types
+from pydantic import Field, PrivateAttr
 
+from .._logging import logger
 from ..mcp import MCPClient
 from ..mcp._config import HttpMCPConfig
 from ..message import TextBlock, ToolResultState
 from ..permission import PermissionBehavior, PermissionDecision
 from ..tool._base import ToolBase
 from ..tool._response import ToolChunk
-from .._logging import logger
 from .workspace_base import WorkspaceBase
-
-if TYPE_CHECKING:
-    from .config import MCPServerConfig
-
 
 # ── REST-backed ToolBase / MCPClient implementations ─────────────
 
@@ -189,36 +186,34 @@ class _RestGatewayClient(MCPClient):
 
 
 class WorkspaceWithMCP(WorkspaceBase):
-    """Intermediate base for MCP-enhanced workspaces."""
+    """Intermediate base for MCP-enhanced workspaces.
 
-    # Class-level type annotations help mypy when running with
-    # ``--follow-imports=skip`` (used in pre-commit).  Actual values
-    # are always set in ``__init__``.
+    Adds in-workspace MCP gateway management on top of
+    :class:`WorkspaceBase`.  Subclasses (``DockerWorkspace``,
+    ``E2BWorkspace``) inherit MCP operations (``list_mcps``,
+    ``add_mcp``, ``remove_mcp``) without reimplementing them.
 
-    def __init__(
-        self,
-        *,
-        mcp_servers: "list[MCPServerConfig] | None" = None,
-        gateway_port: int = 5600,
-    ) -> None:
-        """Initialise MCP gateway state for a workspace.
+    Args:
+        mcp_servers: List of :class:`MCPClient` instances describing
+            the MCP servers to start inside the workspace gateway.
+            Defaults to an empty list (no MCP servers).
+        gateway_port: TCP port the in-workspace MCP gateway listens
+            on.  Defaults to ``5600``.
+    """
 
-        Args:
-            mcp_servers: MCP servers to run through the workspace
-                gateway.
-            gateway_port: Port that the in-workspace gateway listens on.
-        """
-        self._mcp_servers = list(mcp_servers or [])
-        self._gateway_port = gateway_port
-        self._gateway_token = ""
-        self._gateway_mcp_client: _RestGatewayClient | None = None
-        self._gateway_base_url = ""
+    mcp_servers: list[MCPClient] = Field(default_factory=list)
+    gateway_port: int = Field(default=5600)
+
+    # Runtime state (excluded from serialisation)
+    _gateway_token: str = PrivateAttr(default="")
+    _gateway_mcp_client: _RestGatewayClient | None = PrivateAttr(default=None)
+    _gateway_base_url: str = PrivateAttr(default="")
 
     # ── lifecycle ─────────────────────────────────────────────────
 
     async def initialize(self) -> None:
         """Start the in-workspace MCP gateway if servers are configured."""
-        if self._mcp_servers:
+        if self.mcp_servers:
             await self._start_gateway()
 
     # ── hooks for subclasses ──────────────────────────────────────
@@ -247,27 +242,32 @@ class WorkspaceWithMCP(WorkspaceBase):
             return [self._gateway_mcp_client]
         return []
 
-    async def add_mcp(self, config: "MCPServerConfig") -> None:
+    async def add_mcp(self, mcp_client: MCPClient) -> None:
         """Register a new MCP server via the gateway admin API.
 
         Args:
-            config: MCP server configuration to add.
+            mcp_client: An :class:`MCPClient` instance to add.
+
+        Raises:
+            ValueError: If an MCP with the same name already exists.
+            RuntimeError: If the gateway is not started or the request
+                fails for other reasons.
         """
         if not self._gateway_base_url:
             raise RuntimeError(
                 "Gateway not started. Either configure mcp_servers in "
                 "the constructor or initialize the workspace first.",
             )
-        body: dict[str, Any] = {"name": config.name}
-        if config.protocol == "http":
+        body: dict[str, Any] = {"name": mcp_client.name}
+        if isinstance(mcp_client.mcp_config, HttpMCPConfig):
             body["transport"] = "http"
-            body["url"] = config.url
+            body["url"] = mcp_client.mcp_config.url
         else:
             body["transport"] = "stdio"
-            body["command"] = config.command
-            body["args"] = list(config.args or [])
-            if config.env:
-                body["env"] = dict(config.env)
+            body["command"] = mcp_client.mcp_config.command
+            body["args"] = list(mcp_client.mcp_config.args or [])
+            if mcp_client.mcp_config.env:
+                body["env"] = dict(mcp_client.mcp_config.env)
 
         headers: dict[str, str] = {**self._platform_headers()}
         if self._gateway_token:
@@ -280,6 +280,11 @@ class WorkspaceWithMCP(WorkspaceBase):
                 headers=headers,
                 timeout=30.0,
             )
+            if resp.status_code == 409:
+                raise ValueError(
+                    f"MCP {mcp_client.name!r} already exists. "
+                    "Remove it first or use a different name.",
+                )
             if resp.status_code >= 400:
                 raise RuntimeError(
                     f"add_mcp failed ({resp.status_code}): {resp.text}",
@@ -291,7 +296,7 @@ class WorkspaceWithMCP(WorkspaceBase):
         logger.info(
             "%s: added MCP %r",
             type(self).__name__,
-            config.name,
+            mcp_client.name,
         )
 
     async def remove_mcp(self, name: str) -> None:
@@ -357,13 +362,13 @@ class WorkspaceWithMCP(WorkspaceBase):
         launch = (
             'PY="$(command -v python3 2>/dev/null || command -v python)"; '
             f'nohup "$PY" -u {gateway_script}'
-            f" --config {config_path} --port {self._gateway_port}"
+            f" --config {config_path} --port {self.gateway_port}"
             " > /tmp/gw.log 2>&1 &"
         )
         await self._exec(launch, timeout=5)
 
         self._gateway_base_url = await self._resolve_base_url(
-            self._gateway_port,
+            self.gateway_port,
         )
 
         try:
@@ -399,17 +404,17 @@ class WorkspaceWithMCP(WorkspaceBase):
     def _build_gateway_config(self) -> dict[str, Any]:
         """Build the JSON config dict for the in-container gateway."""
         servers = []
-        for s in self._mcp_servers:
+        for s in self.mcp_servers:
             entry: dict[str, Any] = {"name": s.name}
-            if s.protocol == "http":
+            if isinstance(s.mcp_config, HttpMCPConfig):
                 entry["transport"] = "http"
-                entry["url"] = s.url
+                entry["url"] = s.mcp_config.url
             else:
                 entry["transport"] = "stdio"
-                entry["command"] = s.command
-                entry["args"] = list(s.args or [])
-                if s.env:
-                    entry["env"] = dict(s.env)
+                entry["command"] = s.mcp_config.command
+                entry["args"] = list(s.mcp_config.args or [])
+                if s.mcp_config.env:
+                    entry["env"] = dict(s.mcp_config.env)
             servers.append(entry)
         return {"token": self._gateway_token, "servers": servers}
 

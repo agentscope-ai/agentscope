@@ -31,6 +31,7 @@ Config JSON schema::
 import argparse
 import asyncio
 import json
+import keyword
 from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
 from typing import Any
@@ -385,7 +386,17 @@ def _make_proxy(
     """
     input_schema = tool_schema.inputSchema or {}
     properties = input_schema.get("properties", {})
-    param_names = [k for k in properties if k.isidentifier()]
+
+    # Build mapping: original_name -> safe_param_name
+    # Python keywords (class, import, etc.) get a trailing underscore.
+    name_map: dict[str, str] = {}
+    for k in properties:
+        if not k.isidentifier():
+            continue
+        if keyword.iskeyword(k):
+            name_map[k] = k + "_"
+        else:
+            name_map[k] = k
 
     async def _do_call(arguments: dict) -> str:
         if not route.client.session:
@@ -404,9 +415,13 @@ def _make_proxy(
                 parts.append(str(c))
         return "\n".join(parts)
 
-    if param_names:
-        sig = ", ".join(param_names)
-        pack = "{" + ", ".join(f"'{p}': {p}" for p in param_names) + "}"
+    if name_map:
+        sig = ", ".join(name_map.values())
+        pack = (
+            "{"
+            + ", ".join(f"'{orig}': {safe}" for orig, safe in name_map.items())
+            + "}"
+        )
         body = f"async def proxy({sig}):\n    return await _do_call({pack})\n"
     else:
         body = "async def proxy():\n    return await _do_call({})\n"

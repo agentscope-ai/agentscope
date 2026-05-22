@@ -18,7 +18,6 @@ Two workspace managers (for agent-service deployments):
 - :class:`DockerWorkspaceManager`
 """
 
-from .config import MCPServerConfig
 from .docker_workspace import InternalEndpoint
 from .local_workspace import LocalWorkspace
 from .local_workspace_manager import LocalWorkspaceManager
@@ -31,8 +30,6 @@ __all__ = [
     "WorkspaceBase",
     # implementations
     "LocalWorkspace",
-    # config
-    "MCPServerConfig",
     # types
     "ExecutionResult",
     "InternalEndpoint",

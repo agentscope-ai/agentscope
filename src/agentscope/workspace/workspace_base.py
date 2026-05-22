@@ -23,27 +23,41 @@ Consumers:
 - **Developer** — manages lifecycle via ``initialize`` / ``close``.
 """
 
-from abc import ABC, abstractmethod
+import uuid
+from abc import abstractmethod
 from typing import TYPE_CHECKING, Any
+
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 if TYPE_CHECKING:
     from ..mcp import MCPClient
     from ..message import Msg, ToolResultBlock
     from ..skill import Skill
     from ..tool import ToolBase
-    from .config import MCPServerConfig
     from .types import ExecutionResult
 
 
-class WorkspaceBase(ABC):
-    """Abstract base class for all workspace implementations."""
+class WorkspaceBase(BaseModel):
+    """Abstract base class for all workspace implementations.
+
+    Serializable configuration fields are declared as pydantic Fields.
+    Runtime state (connections, clients, etc.) uses PrivateAttr and is
+    excluded from serialisation.  Use ``model_dump()`` /
+    ``model_validate()`` for export/restore of workspace configuration.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     # ── identity ──────────────────────────────────────────────────
 
-    @property
-    @abstractmethod
-    def workspace_id(self) -> str:
-        """Unique identifier for this workspace instance."""
+    workspace_id: str = Field(
+        default_factory=lambda: uuid.uuid4().hex[:12],
+        description="Unique identifier for this workspace instance.",
+    )
+
+    # ── runtime state (excluded from serialisation) ───────────────
+
+    _started: bool = PrivateAttr(default=False)
 
     # ── lifecycle (developer) ──────────────────────────────────────
 
@@ -164,12 +178,15 @@ class WorkspaceBase(ABC):
     # ── for User: dynamic MCP management ───────────────────────────
 
     @abstractmethod
-    async def add_mcp(self, config: "MCPServerConfig") -> None:
+    async def add_mcp(self, mcp_client: "MCPClient") -> None:
         """Dynamically register a new MCP server.
 
         Args:
-            config: Configuration describing the MCP server to
-                add (name, protocol, command/url, etc.).
+            mcp_client: An :class:`MCPClient` instance describing
+                the MCP server to add.
+
+        Raises:
+            ValueError: If an MCP with the same name already exists.
         """
 
     @abstractmethod
@@ -201,4 +218,7 @@ class WorkspaceBase(ABC):
         Args:
             name: The ``name`` field from the skill's
                 ``SKILL.md`` front matter.
+
+        Raises:
+            KeyError: If the skill is not found in the workspace.
         """

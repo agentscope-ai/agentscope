@@ -26,7 +26,8 @@ Pool usage (RL rollout)::
 from typing import Any
 
 from .._logging import logger
-from .config import MCPServerConfig
+from ..mcp import MCPClient
+from ..mcp._config import HttpMCPConfig, StdioMCPConfig
 from .docker_workspace import DockerWorkspace
 from .types import SerializedWorkspaceState
 from .workspace_base import WorkspaceBase
@@ -40,7 +41,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         self,
         image: str = DockerWorkspace.DEFAULT_IMAGE,
         working_dir: str = DockerWorkspace.DEFAULT_WORKING_DIR,
-        default_mcp_servers: list[MCPServerConfig] | None = None,
+        default_mcp_servers: list[MCPClient] | None = None,
         gateway_port: int = DockerWorkspace.GATEWAY_PORT,
         default_env: dict[str, str] | None = None,
         default_startup_commands: list[str] | None = None,
@@ -50,7 +51,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         Args:
             image: Default Docker image for new workspaces.
             working_dir: Default working directory inside containers.
-            default_mcp_servers: MCP servers configured in every
+            default_mcp_servers: MCP clients configured in every
                 new workspace.
             gateway_port: Default gateway port for new workspaces.
             default_env: Environment variables set in every new
@@ -121,8 +122,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
 
         Reconnects to an existing container by its container_id.
         """
-        import docker
-        import docker.errors as docker_errors
+        import aiodocker
 
         container_id = state.payload.get("container_id")
         if not container_id:
@@ -138,15 +138,20 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         image = state.payload.get("image", self._image)
         gw_port = state.payload.get("gateway_port", self._gateway_port)
 
-        mcp_cfgs = []
+        mcp_cfgs: list[MCPClient] = []
         for s in state.payload.get("mcp_servers", []):
-            mcp_cfgs.append(
-                MCPServerConfig(
-                    name=s["name"],
-                    protocol=s.get("transport", "stdio"),
+            if s.get("transport") == "http":
+                cfg = HttpMCPConfig(url=s.get("url", ""))
+            else:
+                cfg = StdioMCPConfig(
                     command=s.get("command", ""),
-                    args=s.get("args", []),
-                    url=s.get("url", ""),
+                    args=s.get("args") or None,
+                )
+            mcp_cfgs.append(
+                MCPClient(
+                    name=s["name"],
+                    is_stateful=True,
+                    mcp_config=cfg,
                 ),
             )
 
@@ -157,38 +162,39 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
             gateway_port=gw_port,
         )
 
-        client = docker.from_env()
+        client = aiodocker.Docker()
         try:
-            container = client.containers.get(container_id)
-        except docker_errors.NotFound as e:
-            client.close()
+            container = await client.containers.get(container_id)
+        except aiodocker.exceptions.DockerError as e:
+            await client.close()
             raise ValueError(
                 f"Container {container_id} not found",
             ) from e
 
-        if container.status != "running":
-            container.start()
+        info = await container.show()
+        if not info.get("State", {}).get("Running", False):
+            await container.start()
 
         ws._client = client
         ws._container = container
-        ws._id = ws_id or ws._id
+        if ws_id:
+            ws.workspace_id = ws_id
 
-        container.reload()
-        attrs = getattr(container, "attrs", {}) or {}
-        ports_info = attrs.get("NetworkSettings", {}).get("Ports", {})
+        info = await container.show()
+        ports_info = info.get("NetworkSettings", {}).get("Ports", {})
         if gw_port:
             bindings = ports_info.get(f"{gw_port}/tcp", [])
             if bindings:
                 ws._port_mapping[gw_port] = int(bindings[0]["HostPort"])
 
-        if ws._mcp_servers:
+        if ws.mcp_servers:
             await ws._start_gateway()
 
         ws._started = True
         self._workspaces[ws.workspace_id] = ws
         logger.info(
             "DockerWorkspaceManager: restored workspace %s",
-            ws._id,
+            ws.workspace_id,
         )
         return ws
 

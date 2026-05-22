@@ -16,9 +16,10 @@ import hashlib
 import mimetypes
 import posixpath
 import shlex
-import uuid
 from copy import deepcopy
-from typing import Any
+from typing import Any, ClassVar
+
+from pydantic import Field, PrivateAttr
 
 from .._logging import logger
 from ..message import (
@@ -31,7 +32,6 @@ from ..message import (
 )
 from ..skill import Skill
 from ..tool import ToolBase
-from .config import MCPServerConfig
 from .mcp_enhanced_workspace import WorkspaceWithMCP
 from .types import ExecutionResult, SerializedWorkspaceState
 
@@ -47,6 +47,36 @@ and processes.
 class E2BWorkspace(WorkspaceWithMCP):
     """Workspace backed by an E2B cloud sandbox.
 
+    Similar to :class:`DockerWorkspace` but uses the E2B SDK
+    (``e2b.AsyncSandbox``) as the compute backend.  The MCP gateway
+    runs inside the sandbox and is accessed over HTTPS via E2B's
+    proxy.
+
+    Args:
+        template: E2B sandbox template identifier.
+            Defaults to ``"base"``.
+        api_key: E2B API key for authentication.  If empty, the
+            SDK falls back to the ``E2B_API_KEY`` environment
+            variable.
+        domain: Optional custom E2B domain.
+        timeout_seconds: Sandbox keep-alive timeout in seconds.
+            Defaults to ``300``.
+        working_dir: Working directory inside the sandbox.
+            Defaults to ``"/home/user"``.
+        env: Environment variables to set inside the sandbox
+            as ``{key: value}``.
+        metadata: Arbitrary metadata attached to the sandbox
+            instance as ``{key: value}``.
+        startup_commands: Shell commands to run inside the sandbox
+            after creation (before the MCP gateway starts).  A
+            non-zero exit code from any command aborts initialization.
+        instructions: Workspace-specific system prompt fragment
+            returned by :meth:`get_instructions`.
+        mcp_servers: MCP server configurations (inherited from
+            :class:`WorkspaceWithMCP`).
+        gateway_port: MCP gateway port (inherited from
+            :class:`WorkspaceWithMCP`).  Defaults to ``5600``.
+
     Usage::
 
         workspace = E2BWorkspace(
@@ -60,68 +90,29 @@ class E2BWorkspace(WorkspaceWithMCP):
         await workspace.close()
     """
 
-    DEFAULT_TEMPLATE = "base"
-    DEFAULT_WORKING_DIR = "/home/user"
-    DEFAULT_TIMEOUT = 300
-    GATEWAY_PORT = 5600
-    SKILLS_DIR = "/home/user/skills"
+    # ── class-level constants ─────────────────────────────────────
 
-    def __init__(
-        self,
-        template: str = DEFAULT_TEMPLATE,
-        api_key: str = "",
-        domain: str = "",
-        timeout_seconds: int = DEFAULT_TIMEOUT,
-        working_dir: str = DEFAULT_WORKING_DIR,
-        mcp_servers: list[MCPServerConfig] | None = None,
-        gateway_port: int = GATEWAY_PORT,
-        env: dict[str, str] | None = None,
-        metadata: dict[str, str] | None = None,
-        startup_commands: list[str] | None = None,
-        instructions: str = _DEFAULT_INSTRUCTIONS,
-    ) -> None:
-        """Create an E2B cloud-sandbox workspace.
+    DEFAULT_TEMPLATE: ClassVar[str] = "base"
+    DEFAULT_WORKING_DIR: ClassVar[str] = "/home/user"
+    DEFAULT_TIMEOUT: ClassVar[int] = 300
+    GATEWAY_PORT: ClassVar[int] = 5600
+    SKILLS_DIR: ClassVar[str] = "/home/user/skills"
 
-        Args:
-            template: E2B sandbox template name.
-            api_key: E2B API key.  Can also be set via the
-                ``E2B_API_KEY`` environment variable.
-            domain: Optional E2B API domain override.
-            timeout_seconds: Sandbox auto-shutdown timeout in
-                seconds.
-            working_dir: Working directory inside the sandbox.
-            mcp_servers: MCP servers to run inside the sandbox
-                via the in-sandbox gateway.
-            gateway_port: Port the in-sandbox MCP gateway listens
-                on.
-            env: Environment variables set inside the sandbox.
-            metadata: Metadata attached to the sandbox for
-                external tracking.
-            startup_commands: Shell commands run after sandbox
-                creation.
-            instructions: Custom system prompt fragment.
-        """
-        super().__init__(
-            mcp_servers=mcp_servers,
-            gateway_port=gateway_port,
-        )
-        self._template = template
-        self._api_key = api_key
-        self._domain = domain
-        self._timeout_seconds = timeout_seconds
-        self._working_dir = working_dir
-        self._env = env or {}
-        self._metadata = dict(metadata or {})
-        self._startup_commands = list(startup_commands or [])
-        self._instructions = instructions
+    # ── serializable configuration fields ─────────────────────────
 
-        self._id = uuid.uuid4().hex[:12]
-        self._sandbox: Any = None  # e2b.AsyncSandbox
-        self._started = False
+    template: str = DEFAULT_TEMPLATE
+    api_key: str = ""
+    domain: str = ""
+    timeout_seconds: int = DEFAULT_TIMEOUT
+    working_dir: str = DEFAULT_WORKING_DIR
+    env: dict[str, str] = Field(default_factory=dict)
+    metadata: dict[str, str] = Field(default_factory=dict)
+    startup_commands: list[str] = Field(default_factory=list)
+    instructions: str = _DEFAULT_INSTRUCTIONS
 
-    @property
-    def workspace_id(self) -> str:
-        return self._id
+    # ── runtime state (excluded from serialisation) ───────────────
+
+    _sandbox: Any = PrivateAttr(default=None)  # e2b.AsyncSandbox
 
     @property
     def sandbox_id(self) -> str | None:
@@ -138,23 +129,23 @@ class E2BWorkspace(WorkspaceWithMCP):
         from e2b import AsyncSandbox
 
         create_kwargs: dict[str, Any] = {
-            "template": self._template,
-            "timeout": self._timeout_seconds,
+            "template": self.template,
+            "timeout": self.timeout_seconds,
         }
-        if self._api_key:
-            create_kwargs["api_key"] = self._api_key
-        if self._domain:
-            create_kwargs["domain"] = self._domain
-        if self._metadata:
-            create_kwargs["metadata"] = self._metadata
-        if self._env:
-            create_kwargs["envs"] = self._env
+        if self.api_key:
+            create_kwargs["api_key"] = self.api_key
+        if self.domain:
+            create_kwargs["domain"] = self.domain
+        if self.metadata:
+            create_kwargs["metadata"] = self.metadata
+        if self.env:
+            create_kwargs["envs"] = self.env
 
         self._sandbox = await AsyncSandbox.create(**create_kwargs)
 
-        await self._exec(f"mkdir -p {self._working_dir}")
+        await self._exec(f"mkdir -p {self.working_dir}")
 
-        for cmd in self._startup_commands:
+        for cmd in self.startup_commands:
             r = await self._exec(cmd)
             if not r.is_ok():
                 raise RuntimeError(
@@ -173,7 +164,7 @@ class E2BWorkspace(WorkspaceWithMCP):
         Clears session data and offloaded files inside the sandbox.
         """
         await self._exec(
-            f"rm -rf {self._working_dir}/sessions {self._working_dir}/data",
+            f"rm -rf {self.working_dir}/sessions {self.working_dir}/data",
         )
 
     async def is_alive(self) -> bool:
@@ -213,7 +204,7 @@ class E2BWorkspace(WorkspaceWithMCP):
 
     async def get_instructions(self) -> str:
         """Return the workspace-specific system prompt fragment."""
-        return self._instructions
+        return self.instructions
 
     # ── tool & MCP discovery ───────────────────────────────────────
 
@@ -274,7 +265,7 @@ class E2BWorkspace(WorkspaceWithMCP):
     ) -> str:
         """Offload conversation context to a JSONL file inside the sandbox."""
         base = f"sessions/{session_id}"
-        path = f"{self._working_dir}/{base}/context.jsonl"
+        path = f"{self.working_dir}/{base}/context.jsonl"
 
         copied = deepcopy(msgs)
         lines: list[str] = []
@@ -292,7 +283,7 @@ class E2BWorkspace(WorkspaceWithMCP):
             lines.append(msg.model_dump_json())
 
         payload = "\n".join(lines) + "\n"
-        await self._exec(f"mkdir -p {self._working_dir}/{base}")
+        await self._exec(f"mkdir -p {self.working_dir}/{base}")
 
         existing = b""
         try:
@@ -314,7 +305,7 @@ class E2BWorkspace(WorkspaceWithMCP):
     ) -> str:
         """Persist a tool result inside the sandbox."""
         base = f"sessions/{session_id}"
-        path = f"{self._working_dir}/{base}/tool_result-{tool_result.id}.txt"
+        path = f"{self.working_dir}/{base}/tool_result-{tool_result.id}.txt"
 
         parts: list[str] = []
         if isinstance(tool_result.output, str):
@@ -334,7 +325,7 @@ class E2BWorkspace(WorkspaceWithMCP):
                         f"media_type='{block.source.media_type}'/>",
                     )
 
-        await self._exec(f"mkdir -p {self._working_dir}/{base}")
+        await self._exec(f"mkdir -p {self.working_dir}/{base}")
         await self._sandbox.files.write(
             path,
             "".join(parts).encode("utf-8"),
@@ -358,10 +349,6 @@ class E2BWorkspace(WorkspaceWithMCP):
         dir_name = os.path.basename(os.path.abspath(skill_path))
         await self._exec(f"mkdir -p {self.SKILLS_DIR}")
 
-        # Example paths (given skill_path="/tmp/my_skill"):
-        #   local  = /tmp/my_skill/utils/helper.py
-        #   rel    = utils/helper.py
-        #   remote = /home/user/skills/my_skill/utils/helper.py
         for root, _dirs, files in os.walk(skill_path):
             for fname in files:
                 local = os.path.join(root, fname)
@@ -406,8 +393,8 @@ class E2BWorkspace(WorkspaceWithMCP):
             backend_type="e2b",
             payload={
                 "sandbox_id": self._sandbox.sandbox_id,
-                "workspace_id": self._id,
-                "working_dir": self._working_dir,
+                "workspace_id": self.workspace_id,
+                "working_dir": self.working_dir,
             },
         )
 
@@ -426,7 +413,7 @@ class E2BWorkspace(WorkspaceWithMCP):
             timeout: Maximum seconds to wait. ``None`` means
                 no limit.
         """
-        run_kwargs: dict[str, Any] = {"cwd": self._working_dir}
+        run_kwargs: dict[str, Any] = {"cwd": self.working_dir}
         if timeout is not None:
             run_kwargs["timeout"] = timeout
 
@@ -501,8 +488,8 @@ class E2BWorkspace(WorkspaceWithMCP):
         """
         h = hashlib.sha256(data_block.source.data.encode()).hexdigest()
         ext = mimetypes.guess_extension(data_block.source.media_type) or ".bin"
-        path = f"{self._working_dir}/data/{h}{ext}"
-        await self._exec(f"mkdir -p {self._working_dir}/data")
+        path = f"{self.working_dir}/data/{h}{ext}"
+        await self._exec(f"mkdir -p {self.working_dir}/data")
         await self._sandbox.files.write(
             path,
             base64.b64decode(data_block.source.data),

@@ -2,8 +2,8 @@
 # pylint: disable=protected-access
 """Test cases for LocalWorkspace."""
 
-import base64
 import asyncio
+import base64
 import json
 import os
 import tempfile
@@ -764,19 +764,22 @@ class TestLocalWorkspaceMCPPersistence(IsolatedAsyncioTestCase):
 
     async def test_add_mcp_creates_mcp_file(self) -> None:
         """Adding an MCP persists the .mcp JSON file."""
-        from agentscope.workspace.config import MCPServerConfig
+        from agentscope.mcp import MCPClient
+        from agentscope.mcp._config import StdioMCPConfig
 
         ws = LocalWorkspace(workdir=self.temp_dir.name)
         await ws.initialize()
 
-        cfg = MCPServerConfig(
+        client = MCPClient(
             name="test_mcp",
-            protocol="stdio",
-            command="echo",
-            args=["hello"],
+            is_stateful=True,
+            mcp_config=StdioMCPConfig(
+                command="echo",
+                args=["hello"],
+            ),
         )
         try:
-            await ws.add_mcp(cfg)
+            await ws.add_mcp(client)
         except BaseException:
             pass
 
