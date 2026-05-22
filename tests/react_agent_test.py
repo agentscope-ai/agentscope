@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from agentscope.agent import ReActAgent
 from agentscope.formatter import DashScopeChatFormatter
 from agentscope.memory import InMemoryMemory
-from agentscope.message import TextBlock, ToolUseBlock, Msg
+from agentscope.message import ThinkingBlock, TextBlock, ToolUseBlock, Msg
 from agentscope.model import ChatModelBase, ChatResponse
 from agentscope.tool import Toolkit
 
@@ -95,6 +95,57 @@ async def post_acting_hook(
 
 class ReActAgentTest(IsolatedAsyncioTestCase):
     """Test class for ReActAgent."""
+
+    async def test_react_agent_keeps_looping_for_thinking_only_reasoning(self) -> None:
+        """Thinking-only reasoning should not terminate the ReAct loop."""
+
+        class ThinkingOnlyThenTextModel(ChatModelBase):
+            def __init__(self) -> None:
+                super().__init__("thinking_then_text", stream=False)
+                self.call_count = 0
+
+            async def __call__(
+                self,
+                _messages: list[dict],
+                **kwargs: Any,
+            ) -> ChatResponse:
+                self.call_count += 1
+                if self.call_count == 1:
+                    return ChatResponse(
+                        content=[
+                            ThinkingBlock(
+                                type="thinking",
+                                thinking="Let me think a bit longer.",
+                            ),
+                        ],
+                    )
+                return ChatResponse(
+                    content=[TextBlock(type="text", text="Final visible answer")],
+                )
+
+        model = ThinkingOnlyThenTextModel()
+        agent = ReActAgent(
+            name="Friday",
+            sys_prompt="You are a helpful assistant named Friday.",
+            model=model,
+            formatter=DashScopeChatFormatter(),
+            memory=InMemoryMemory(),
+            toolkit=Toolkit(),
+            max_iters=3,
+        )
+
+        reply = await agent()
+
+        self.assertEqual(
+            model.call_count,
+            2,
+            "Agent should continue reasoning after a thinking-only model turn.",
+        )
+        self.assertTrue(
+            reply.has_content_blocks("text"),
+            "Final reply should contain user-visible text.",
+        )
+        self.assertEqual(reply.get_text_content(), "Final visible answer")
 
     async def test_react_agent(self) -> None:
         """Test the ReActAgent class"""

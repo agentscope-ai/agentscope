@@ -511,11 +511,13 @@ class ReActAgent(ReActAgentBase):
                     await self.print(msg_hint)
 
             elif not msg_reasoning.has_content_blocks("tool_use"):
-                # Exit the loop when no structured output is required (or
-                # already satisfied) and only text response is generated
-                msg_reasoning.metadata = structured_output
-                reply_msg = msg_reasoning
-                break
+                # Exit the loop only when the reasoning step produced
+                # user-visible text. Thinking-only turns should continue so the
+                # model can produce text or tool calls in a later iteration.
+                if msg_reasoning.has_content_blocks("text"):
+                    msg_reasoning.metadata = structured_output
+                    reply_msg = msg_reasoning
+                    break
 
         # When the maximum iterations are reached
         # and no reply message is generated
