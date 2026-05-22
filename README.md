@@ -316,7 +316,6 @@ asyncio.run(multi_agent_conversation())
 
 - [Tutorial](https://doc.agentscope.io/tutorial/)
 - [FAQ](https://doc.agentscope.io/tutorial/faq.html)
-- [API Docs](https://doc.agentscope.io/api/agentscope.html)
 
 ## More Examples & Samples
 

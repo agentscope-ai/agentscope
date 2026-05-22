@@ -311,7 +311,6 @@ asyncio.run(multi_agent_conversation())
 
 - [教程](https://doc.agentscope.io/zh_CN/tutorial/)
 - [常见问题](https://doc.agentscope.io/zh_CN/tutorial/faq.html)
-- [API 文档](https://doc.agentscope.io/zh_CN/api/agentscope.html)
 
 ## 更多样例
 
