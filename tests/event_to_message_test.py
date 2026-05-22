@@ -17,6 +17,7 @@ Coverage
 * RequireExternalExecutionEvent → SUBMITTED state
 * ExternalExecutionResultEvent  → ToolResultBlock appended directly
 * ToolResultBlock data output   : base-64 delta + URL delta / end (ERROR)
+* ModelCallEndEvent (×2) → usage initialized then accumulated
 * ReplyEndEvent → finished_at stamped
 * Wrong reply_id → event silently skipped
 * Missing block  → warning, no crash
@@ -32,6 +33,7 @@ from agentscope.event import (
     DataBlockEndEvent,
     DataBlockStartEvent,
     ExternalExecutionResultEvent,
+    ModelCallEndEvent,
     ReplyEndEvent,
     RequireExternalExecutionEvent,
     RequireUserConfirmEvent,
@@ -153,7 +155,11 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
         )
         _created_at = self.msg.created_at
 
-        def _base(content: list, finished_at: str | None = None) -> dict:
+        def _base(
+            content: list,
+            finished_at: str | None = None,
+            usage: dict | None = None,
+        ) -> dict:
             """Return the expected model_dump() of self.msg."""
             return {
                 "name": "TestAgent",
@@ -163,6 +169,7 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
                 "created_at": _created_at,
                 "finished_at": finished_at,
                 "content": content,
+                "usage": usage,
             }
 
         # ================================================================
@@ -649,7 +656,8 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
         )
 
         # ================================================================
-        # Stage 8 – ReplyEndEvent
+        # Stage 8 – ModelCallEndEvent (first call: usage initialized;
+        #          second call: usage accumulated)
         # ================================================================
         _final_content = _s7b_prefix + [
             _trb(
@@ -666,12 +674,39 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
                 "error",
             ),
         ]
+        ev_model_call_end_1 = ModelCallEndEvent(
+            reply_id=_REPLY_ID,
+            input_tokens=10,
+            output_tokens=20,
+        )
+        gt_model_call_end_1 = _base(
+            _final_content,
+            usage={"input_tokens": 10, "output_tokens": 20},
+        )
+
+        ev_model_call_end_2 = ModelCallEndEvent(
+            reply_id=_REPLY_ID,
+            input_tokens=5,
+            output_tokens=8,
+        )
+        gt_model_call_end_2 = _base(
+            _final_content,
+            usage={"input_tokens": 15, "output_tokens": 28},
+        )
+
+        # ================================================================
+        # Stage 9 – ReplyEndEvent
+        # ================================================================
         ev_reply_end = ReplyEndEvent(
             reply_id=_REPLY_ID,
             session_id=_SESSION_ID,
             created_at=_FIXED_END_TS,
         )
-        gt_reply_end = _base(_final_content, finished_at=_FIXED_END_TS)
+        gt_reply_end = _base(
+            _final_content,
+            finished_at=_FIXED_END_TS,
+            usage={"input_tokens": 15, "output_tokens": 28},
+        )
 
         # ================================================================
         # Assemble the two parallel lists
@@ -720,7 +755,10 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             ev_res_img_b64,
             ev_res_img_url,
             ev_res_img_end,
-            # Stage 8: REPLY_END
+            # Stage 8: MODEL_CALL_END (init + accumulate)
+            ev_model_call_end_1,
+            ev_model_call_end_2,
+            # Stage 9: REPLY_END
             ev_reply_end,
         ]
         self.ground_truths = [
@@ -768,6 +806,9 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             gt_res_img_url,
             gt_res_img_end,
             # Stage 8
+            gt_model_call_end_1,
+            gt_model_call_end_2,
+            # Stage 9
             gt_reply_end,
         ]
 

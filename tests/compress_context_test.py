@@ -153,6 +153,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                         },
                     ],
                     "metadata": {},
+                    "usage": None,
                 },
                 {
                     "id": "2",
@@ -168,6 +169,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                         },
                     ],
                     "metadata": {},
+                    "usage": None,
                 },
             ],
         )
@@ -188,6 +190,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                         },
                     ],
                     "metadata": {},
+                    "usage": None,
                 },
                 {
                     "id": "3",
@@ -203,6 +206,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                         },
                     ],
                     "metadata": {},
+                    "usage": None,
                 },
             ],
         )
@@ -248,6 +252,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                         },
                     ],
                     "metadata": {},
+                    "usage": None,
                 },
                 {
                     "id": "2",
@@ -268,6 +273,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                         },
                     ],
                     "metadata": {},
+                    "usage": None,
                 },
             ],
         )
@@ -288,6 +294,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                         },
                     ],
                     "metadata": {},
+                    "usage": None,
                 },
             ],
         )
@@ -332,6 +339,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                         },
                     ],
                     "metadata": {},
+                    "usage": None,
                 },
                 {
                     "id": "2",
@@ -347,6 +355,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                         },
                     ],
                     "metadata": {},
+                    "usage": None,
                 },
             ],
         )
@@ -367,6 +376,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                         },
                     ],
                     "metadata": {},
+                    "usage": None,
                 },
                 {
                     "id": "3",
@@ -382,6 +392,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                         },
                     ],
                     "metadata": {},
+                    "usage": None,
                 },
             ],
         )
@@ -426,6 +437,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                         },
                     ],
                     "metadata": {},
+                    "usage": None,
                 },
             ],
         )
@@ -451,6 +463,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                         },
                     ],
                     "metadata": {},
+                    "usage": None,
                 },
                 {
                     "id": "3",
@@ -466,6 +479,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                         },
                     ],
                     "metadata": {},
+                    "usage": None,
                 },
             ],
         )
@@ -518,6 +532,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                         },
                     ],
                     "metadata": {},
+                    "usage": None,
                 },
                 {
                     "id": "3",
@@ -533,6 +548,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                         },
                     ],
                     "metadata": {},
+                    "usage": None,
                 },
             ],
         )
@@ -621,6 +637,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                         },
                     ],
                     "metadata": {},
+                    "usage": None,
                 },
                 {
                     "id": "3",
@@ -636,6 +653,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                         },
                     ],
                     "metadata": {},
+                    "usage": None,
                 },
             ],
         )

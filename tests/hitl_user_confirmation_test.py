@@ -231,6 +231,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             "metadata": {},
             "name": "Friday",
             "role": "assistant",
+            "usage": None,
         }
 
     async def test_single_user_confirmation(self) -> None:
@@ -1440,6 +1441,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "text": self.user_input_text,
                     },
                 ],
+                "usage": None,
             },
         )
 

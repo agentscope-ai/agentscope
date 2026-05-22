@@ -70,6 +70,7 @@ from ..message import (
     URLSource,
     ToolCallState,
     ToolResultState,
+    Usage,
 )
 from ..tool import (
     Toolkit,
@@ -792,10 +793,20 @@ class Agent:
         if not any(
             isinstance(_, ToolCallBlock) for _ in completed_response.content
         ):
+            last_ctx = self._get_last_msg()
+            final_usage = (
+                Usage(
+                    input_tokens=last_ctx.usage.input_tokens,
+                    output_tokens=last_ctx.usage.output_tokens,
+                )
+                if last_ctx is not None and last_ctx.usage is not None
+                else None
+            )
             yield AssistantMsg(
                 id=self.state.reply_id,
                 name=self.name,
                 content=list(completed_response.content),
+                usage=final_usage,
             )
 
     async def _check_incoming_event(
@@ -2053,7 +2064,7 @@ class Agent:
             | ToolResultBlock
             | DataBlock
         ],
-        _usage: ChatUsage | None = None,
+        usage: ChatUsage | None = None,
     ) -> None:
         """Save content blocks into the context.
 
@@ -2061,12 +2072,22 @@ class Agent:
         its id so that one reply corresponds to one message and the message
         id matches the ``reply_id`` carried by streaming events.
         """
+        msg_usage = (
+            Usage(
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+            )
+            if usage is not None
+            else None
+        )
+
         if len(self.state.context) == 0:
             self.state.context.append(
                 AssistantMsg(
                     id=self.state.reply_id,
                     name=self.name,
                     content=list(blocks),
+                    usage=msg_usage,
                 ),
             )
         else:
@@ -2075,13 +2096,19 @@ class Agent:
                 if isinstance(last_msg.content, str):
                     last_msg.content = [TextBlock(text=last_msg.content)]
                 last_msg.content.extend(blocks)
-                # TODO: Merge usage if needed
+                if msg_usage is not None:
+                    if last_msg.usage is None:
+                        last_msg.usage = msg_usage
+                    else:
+                        last_msg.usage.input_tokens += msg_usage.input_tokens
+                        last_msg.usage.output_tokens += msg_usage.output_tokens
             else:
                 self.state.context.append(
                     AssistantMsg(
                         id=self.state.reply_id,
                         name=self.name,
                         content=list(blocks),
+                        usage=msg_usage,
                     ),
                 )
 

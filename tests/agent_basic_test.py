@@ -124,6 +124,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             "metadata": {},
             "name": "Friday",
             "role": "assistant",
+            "usage": None,
         }
 
     async def test_streaming_reasoning(self) -> None:
@@ -264,6 +265,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "finished_at": None,
                 "id": AnyString(),
                 "metadata": {},
+                "usage": None,
             },
         )
 
@@ -456,6 +458,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "finished_at": None,
                 "id": AnyString(),
                 "metadata": {},
+                "usage": None,
             },
         )
 

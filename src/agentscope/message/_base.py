@@ -53,6 +53,15 @@ def _to_blocks(content: str | list) -> list:
     return content
 
 
+class Usage(BaseModel):
+    """The token usage information of a message."""
+
+    input_tokens: int
+    """The number of input tokens."""
+    output_tokens: int
+    """The number of output tokens."""
+
+
 class Msg(BaseModel):
     """The message class in AgentScope, responsible for information storage
     and transmission among different agents."""
@@ -71,6 +80,8 @@ class Msg(BaseModel):
     """The creation time of the message"""
     finished_at: str | None = Field(default=None)
     """The finished time of the message"""
+    usage: Usage | None = Field(default=None)
+    """The token usage information of the message"""
 
     @model_validator(mode="after")
     def validate_role_content(self) -> Self:
@@ -199,7 +210,10 @@ class Msg(BaseModel):
     def append_event(self, event: AgentEvent) -> Self:
         """Update the message by applying a streaming event.
 
-        Only ``self.content`` and ``self.finished_at`` are ever modified.
+        Mutates ``self.content``, ``self.finished_at``, and ``self.usage``:
+        content blocks are appended/updated by block-level events,
+        ``finished_at`` is stamped by ``REPLY_END``, and ``usage`` is
+        initialized then accumulated across each ``MODEL_CALL_END``.
         Events whose ``reply_id`` does not match ``self.id`` are skipped with
         a warning. Block-level delta/end events whose target block cannot be
         found are also skipped with a warning.
@@ -223,6 +237,16 @@ class Msg(BaseModel):
         match event.type:
             case EventType.REPLY_END:
                 self.finished_at = event.created_at
+
+            case EventType.MODEL_CALL_END:
+                if self.usage is None:
+                    self.usage = Usage(
+                        input_tokens=event.input_tokens,
+                        output_tokens=event.output_tokens,
+                    )
+                else:
+                    self.usage.input_tokens += event.input_tokens
+                    self.usage.output_tokens += event.output_tokens
 
             case EventType.TEXT_BLOCK_START:
                 self.content.append(TextBlock(id=event.block_id, text=""))
@@ -459,6 +483,7 @@ def AssistantMsg(
     created_at: str | None = None,
     finished_at: str | None = None,
     id: str | None = None,  # pylint: disable=redefined-builtin
+    usage: Usage | None = None,
 ) -> Msg:
     """Create an assistant message with role ``"assistant"``.
 
@@ -481,6 +506,8 @@ def AssistantMsg(
         id (`str | None`, optional):
             A unique identifier for the message. A random UUID hex string is
             generated when not provided.
+        usage (`Usage | None`, optional):
+            The token usage information of the message.
 
     Returns:
         `Msg`:
@@ -494,6 +521,7 @@ def AssistantMsg(
         created_at=created_at or datetime.now().isoformat(),
         finished_at=finished_at,
         id=id or uuid.uuid4().hex,
+        usage=usage,
     )
 
 

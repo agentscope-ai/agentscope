@@ -182,6 +182,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             "metadata": {},
             "name": "Friday",
             "role": "assistant",
+            "usage": None,
         }
 
     def _get_tool_call_events(

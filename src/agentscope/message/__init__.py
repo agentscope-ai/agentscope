@@ -15,7 +15,7 @@ from ._block import (
     Base64Source,
     URLSource,
 )
-from ._base import Msg, UserMsg, AssistantMsg, SystemMsg
+from ._base import Msg, UserMsg, AssistantMsg, SystemMsg, Usage
 
 
 __all__ = [
@@ -35,4 +35,5 @@ __all__ = [
     "UserMsg",
     "AssistantMsg",
     "SystemMsg",
+    "Usage",
 ]

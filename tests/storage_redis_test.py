@@ -15,7 +15,7 @@ from agentscope.app.storage import (
     SessionSource,
 )
 from agentscope.credential import OllamaCredential
-from agentscope.app.storage._model._agent import AgentData
+from agentscope.app.storage import AgentData
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.message import UserMsg, AssistantMsg, TextBlock
 

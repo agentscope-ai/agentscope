@@ -42,6 +42,7 @@ class MessageTest(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "created_at": AnyString(),
                 "finished_at": AnyString(),
+                "usage": None,
             },
         )
 
@@ -63,6 +64,7 @@ class MessageTest(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "created_at": AnyString(),
                 "finished_at": AnyString(),
+                "usage": None,
             },
         )
 
@@ -118,6 +120,7 @@ class MessageTest(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "created_at": AnyString(),
                 "finished_at": AnyString(),
+                "usage": None,
             },
         )
 
@@ -142,6 +145,7 @@ class MessageTest(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "created_at": AnyString(),
                 "finished_at": None,
+                "usage": None,
             },
         )
 
@@ -162,6 +166,7 @@ class MessageTest(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "created_at": AnyString(),
                 "finished_at": None,
+                "usage": None,
             },
         )
 
