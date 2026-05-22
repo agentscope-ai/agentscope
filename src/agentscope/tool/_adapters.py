@@ -26,7 +26,7 @@ from ..message import (
 )
 
 
-class _FunctionTool(ToolBase):
+class FunctionTool(ToolBase):
     """Adapter to convert a Python function to ToolProtocol.
 
     This class wraps a regular Python function and makes it compatible with

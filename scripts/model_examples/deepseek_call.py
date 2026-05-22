@@ -19,7 +19,8 @@ from agentscope.message import (
 )
 from agentscope.model import DeepSeekChatModel
 from agentscope.credential import DeepSeekCredential
-from agentscope.tool import Toolkit, ToolChoice
+from agentscope.tool import Toolkit, ToolChoice, FunctionTool
+
 
 # ---------------------------------------------------------------------------
 # Example 1: Simple user message (streaming, with chain-of-thought)
@@ -72,8 +73,7 @@ async def example_tool_call() -> None:
     Uses deepseek-v4-flash (non-reasoning) for tool calling, since
     deepseek-reasoner has limited tool call support.
     """
-    toolkit = Toolkit()
-    toolkit.register_function(get_weather)
+    toolkit = Toolkit(tools=[FunctionTool(get_weather)])
     tools = await toolkit.get_tool_schemas()
 
     model = DeepSeekChatModel(

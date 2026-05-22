@@ -14,7 +14,8 @@ from agentscope.message import (
 )
 from agentscope.model import DashScopeChatModel
 from agentscope.credential import DashScopeCredential
-from agentscope.tool import Toolkit, ToolChoice
+from agentscope.tool import Toolkit, ToolChoice, FunctionTool
+
 
 # ---------------------------------------------------------------------------
 # Example 1: Simple user message (streaming)
@@ -67,8 +68,7 @@ async def example_tool_call() -> None:
 
     Uses qwen3-max which supports both thinking mode and tool calling.
     """
-    toolkit = Toolkit()
-    toolkit.register_function(get_weather)
+    toolkit = Toolkit(tools=[FunctionTool(get_weather)])
     tools = await toolkit.get_tool_schemas()
 
     model = DashScopeChatModel(

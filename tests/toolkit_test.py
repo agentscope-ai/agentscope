@@ -6,7 +6,7 @@ from typing import Any, AsyncGenerator, Generator
 from unittest import TestCase
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.tool._adapters import _FunctionTool
+
 from utils import AnyString
 
 from agentscope.state import AgentState
@@ -22,6 +22,7 @@ from agentscope.tool import (
     ToolChunk,
     ToolResponse,
     ToolGroup,
+    FunctionTool,
 )
 from agentscope.permission import (
     PermissionDecision,
@@ -438,7 +439,7 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
             )
 
         toolkit = Toolkit(
-            tools=[_FunctionTool(add_numbers)],
+            tools=[FunctionTool(add_numbers)],
         )
 
         # Test schema
@@ -538,10 +539,10 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
 
         toolkit = Toolkit(
             tools=[
-                _FunctionTool(
-                    func=count_to_n
-                )
-            ]
+                FunctionTool(
+                    func=count_to_n,
+                ),
+            ],
         )
 
         # Test schema
@@ -638,7 +639,7 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
             )
 
         toolkit = Toolkit(
-            tools=[_FunctionTool(multiply_numbers)]
+            tools=[FunctionTool(multiply_numbers)],
         )
 
         # Test schema
@@ -741,7 +742,7 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 )
 
         toolkit = Toolkit(
-            tools=[_FunctionTool(generate_sequence)],
+            tools=[FunctionTool(generate_sequence)],
         )
 
         # Test schema
