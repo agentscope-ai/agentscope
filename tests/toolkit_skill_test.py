@@ -80,6 +80,7 @@ class ToolkitSkillTest(IsolatedAsyncioTestCase):
 
             self.assertEqual(
                 result,
+                # pylint: disable=line-too-long
                 f"""<agent-skills>
 Skills are a collection of instructions, scripts, and resources to extend your capabilities.
 
