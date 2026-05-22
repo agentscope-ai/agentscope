@@ -4,7 +4,10 @@
 import os
 import json
 import base64
+import hashlib
 import tempfile
+from pathlib import Path
+from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 from dataclasses import asdict
 from urllib.parse import urlparse
@@ -12,6 +15,11 @@ from urllib.request import url2pathname
 
 import aiofiles
 
+from agentscope.agent import Agent, ContextConfig
+from agentscope.model import ChatResponse, StructuredResponse
+from agentscope.state import AgentState
+from agentscope.tool import Toolkit, ToolBase, ToolChunk
+from agentscope.permission import PermissionDecision, PermissionBehavior
 from agentscope.workspace import LocalWorkspace
 from agentscope.message import (
     Msg,
@@ -23,7 +31,54 @@ from agentscope.message import (
     TextBlock,
     ToolResultBlock,
     ToolResultState,
+    ToolCallBlock,
 )
+from utils import AnyString, MockModel
+
+
+class _LongResultTool(ToolBase):
+    """A mock tool that returns a long string result for offload testing."""
+
+    name: str = "long_result_tool"
+    description: str = "A tool that returns a long string."
+    input_schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {},
+        "required": [],
+    }
+    is_concurrency_safe: bool = True
+    is_read_only: bool = True
+    is_external_tool: bool = False
+    is_mcp: bool = False
+
+    async def check_permissions(
+        self,
+        *_args: Any,
+        **_kwargs: Any,
+    ) -> PermissionDecision:
+        """Always allow."""
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            decision_reason="Mock tool always allows",
+            message="Mock tool always allows",
+        )
+
+    async def __call__(self, **_kwargs: Any) -> ToolChunk:
+        """Return a long string result followed by a base64 data block, so we
+        can also verify base64 data offloading."""
+        return ToolChunk(
+            content=[
+                TextBlock(text="0" * 30000),
+                DataBlock(
+                    name="fake_image.png",
+                    source=Base64Source(
+                        data="AAECAwQF",
+                        media_type="image/png",
+                    ),
+                ),
+            ],
+            state=ToolResultState.SUCCESS,
+        )
 
 
 class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
@@ -749,3 +804,388 @@ description: {description}
 
         # Verify empty list is returned
         self.assertListEqual(skills, [])
+
+
+class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
+    """Test the local workspace class offloading with the agent."""
+
+    async def test_offload_tool_result(self) -> None:
+        """Test integration with the agent when offloading tool result.
+
+        This test verifies that:
+        1. A long tool result is split into a reserved part (kept in context)
+           and an offloaded part (written to disk).
+        2. The reserved tool result block in the context is truncated and
+           contains a system reminder pointing to the offload file.
+        3. The offloaded file contains the truncated remainder.
+        4. A second reply with a fresh tool call produces a new offload file.
+        """
+        with tempfile.TemporaryDirectory() as workdir:
+            session_id = "test_session"
+            model = MockModel(stream=False)
+            agent = Agent(
+                name="Friday",
+                system_prompt="You're a helpful assistant named Friday.",
+                model=model,
+                toolkit=Toolkit(
+                    tools=[_LongResultTool()],
+                ),
+                context_config=ContextConfig(
+                    tool_result_limit=50,
+                ),
+                offloader=LocalWorkspace(
+                    workdir=workdir,
+                ),
+                state=AgentState(session_id=session_id),
+            )
+
+            model.set_responses(
+                mock_responses=[
+                    [
+                        ChatResponse(
+                            content=[
+                                ToolCallBlock(
+                                    id="1",
+                                    name="long_result_tool",
+                                    input="{}",
+                                ),
+                            ],
+                            is_last=True,
+                        ),
+                    ],
+                    [
+                        ChatResponse(
+                            content=[
+                                TextBlock(text="End_1."),
+                            ],
+                            is_last=True,
+                        ),
+                    ],
+                ],
+            )
+
+            # 测试运行
+            await agent.reply()
+
+            # === Assert offload file content ===
+            offload_path_1 = os.path.join(
+                workdir,
+                "sessions",
+                session_id,
+                "tool_result-1.txt",
+            )
+            self.assertTrue(os.path.exists(offload_path_1))
+            async with aiofiles.open(offload_path_1, "r") as f:
+                offload_content = await f.read()
+
+            # The base64 payload is hashed with sha256 and persisted under
+            # `{workdir}/data/{hash}.{ext}` with the decoded bytes.
+            b64_data = "AAECAwQF"
+            data_hash = hashlib.sha256(b64_data.encode()).hexdigest()
+            data_file_path = os.path.join(
+                workdir,
+                "data",
+                f"{data_hash}.png",
+            )
+            self.assertTrue(os.path.exists(data_file_path))
+            async with aiofiles.open(data_file_path, "rb") as f:
+                self.assertEqual(await f.read(), base64.b64decode(b64_data))
+
+            # The full text is "0" * 30000 followed by a base64 DataBlock;
+            # tool_result_limit=50 reserves ~200 chars of text in context, the
+            # remaining 29800 chars + the DataBlock placeholder are offloaded.
+            data_url = Path(data_file_path).as_uri()
+            expected_offload_content = (
+                "0" * 29800 + f"<data url='{data_url}' name='fake_image.png' "
+                f"media_type='image/png'/>"
+            )
+            self.assertEqual(offload_content, expected_offload_content)
+
+            # === Assert context content ===
+            reminder_1 = (
+                "\n<<<TRUNCATED>>>\n<system-reminder>The remaining content "
+                "has been omitted for limited context. You can refer to the "
+                f"file in '{offload_path_1}' for the truncated content if "
+                "needed.</system-reminder>"
+            )
+            expected_first_msg = {
+                "id": AnyString(),
+                "name": "Friday",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_call",
+                        "id": "1",
+                        "name": "long_result_tool",
+                        "input": "{}",
+                        "state": "finished",
+                        "suggested_rules": [],
+                    },
+                    {
+                        "type": "tool_result",
+                        "id": "1",
+                        "name": "long_result_tool",
+                        "output": [
+                            {
+                                "type": "text",
+                                "text": "0" * 200 + reminder_1,
+                                "id": AnyString(),
+                            },
+                        ],
+                        "state": "success",
+                    },
+                    {
+                        "type": "text",
+                        "text": "End_1.",
+                        "id": AnyString(),
+                    },
+                ],
+                "metadata": {},
+                "created_at": AnyString(),
+                "finished_at": None,
+                "usage": None,
+            }
+            self.assertListEqual(
+                [_.model_dump() for _ in agent.state.context],
+                [expected_first_msg],
+            )
+
+    async def test_offload_context(self) -> None:
+        """Test integration with the agent when offloading context.
+
+        This test triggers context compression twice in the same session and
+        verifies that:
+        1. The offload file ``context.jsonl`` is appended to (not
+           overwritten) across the two compressions.
+        2. When the compressed context contains a base64-encoded
+           ``DataBlock``, the binary payload is persisted to a separate
+           data file and the offloaded JSON line references that file via a
+           ``URLSource`` instead of embedding the base64 inline.
+        3. ``agent.state.summary`` is rewritten on every compression and
+           ends with a system-reminder pointing to the offload file.
+        4. ``agent.state.context`` only retains the latest assistant reply.
+
+        Note: compression triggers based on ``model.context_size`` together
+        with the default ``ContextConfig.trigger_ratio`` (0.8) — we set
+        ``context_size=100`` here so the threshold is just 80 tokens, and a
+        ~500-byte user message (~125 tokens) is enough to trigger
+        compression on each reply. The default ``ContextConfig`` is used.
+        """
+        with tempfile.TemporaryDirectory() as workdir:
+            session_id = "test_session_ctx"
+            model = MockModel(stream=False, context_size=100)
+            agent = Agent(
+                name="Friday",
+                system_prompt="You're Friday.",
+                model=model,
+                toolkit=Toolkit(),
+                offloader=LocalWorkspace(workdir=workdir),
+                state=AgentState(session_id=session_id),
+            )
+
+            # The mock structured response is reused across both compression
+            # calls (same summary fields each time).
+            model.set_structured_response(
+                StructuredResponse(
+                    content={
+                        "task_overview": "TASK",
+                        "current_state": "STATE",
+                        "important_discoveries": "DISCOVERIES",
+                        "next_steps": "NEXT",
+                        "context_to_preserve": "PRESERVE",
+                    },
+                ),
+            )
+
+            # Each reply yields a single final-text response (no tool calls).
+            model.set_responses(
+                mock_responses=[
+                    ChatResponse(
+                        content=[TextBlock(text="End_1.")],
+                        is_last=True,
+                    ),
+                    ChatResponse(
+                        content=[TextBlock(text="End_2.")],
+                        is_last=True,
+                    ),
+                ],
+            )
+
+            offload_path = os.path.join(
+                workdir,
+                "sessions",
+                session_id,
+                "context.jsonl",
+            )
+
+            # ===== First reply =====
+            # Build user_msg_a with **fixed** random fields (msg id, the
+            # content-block ids, timestamps) so the offloaded JSONL is a
+            # fully deterministic string we can assert against literally.
+            #
+            # Putting the DataBlock FIRST (before the long TextBlock) makes
+            # the boundary split include both blocks on the compress side,
+            # so the very first compression offloads a multimodal message —
+            # the DataBlock is rewritten to a URLSource alongside the
+            # original TextBlock, exercising the multimodal offload path.
+            b64_data = "AAECAwQF"
+            user_msg_a = UserMsg(
+                name="user",
+                content=[
+                    DataBlock(
+                        id="data_block_a",
+                        name="fake_image_a.png",
+                        source=Base64Source(
+                            data=b64_data,
+                            media_type="image/png",
+                        ),
+                    ),
+                    TextBlock(id="text_block_a", text="A" * 500),
+                ],
+                id="msg_a",
+                created_at="2026-01-01T00:00:00",
+                finished_at="2026-01-01T00:00:00",
+            )
+            await agent.reply(user_msg_a)
+
+            self.assertTrue(os.path.exists(offload_path))
+            async with aiofiles.open(offload_path, "r") as f:
+                content_after_first = await f.read()
+
+            # The DataBlock is persisted to ``{workdir}/data/`` as soon as
+            # it is included in an offloaded line — this happens during the
+            # first compression because both blocks land on the compress
+            # side of the boundary split.
+            data_hash = hashlib.sha256(b64_data.encode()).hexdigest()
+            data_file_path = os.path.join(
+                workdir,
+                "data",
+                f"{data_hash}.png",
+            )
+            self.assertTrue(os.path.exists(data_file_path))
+            async with aiofiles.open(data_file_path, "rb") as f:
+                self.assertEqual(await f.read(), base64.b64decode(b64_data))
+
+            # The single offloaded line carries user_msg_a with the
+            # DataBlock's source rewritten from ``Base64Source`` to
+            # ``URLSource`` (pointing at the persisted data file) while the
+            # TextBlock is preserved as-is. The expected JSONL is written
+            # literally so a developer can read off exactly what gets
+            # persisted; only the temp-dir-dependent file URL is
+            # interpolated via ``data_url``.
+            data_url = Path(data_file_path).as_uri()
+            expected_user_msg_a_offloaded_json = (
+                '{"name":"user","content":['
+                '{"type":"data","id":"data_block_a","source":'
+                '{"type":"url","url":"' + data_url + '",'
+                '"media_type":"image/png"},"name":"fake_image_a.png"},'
+                '{"type":"text","text":"' + "A" * 500 + '",'
+                '"id":"text_block_a"}'
+                '],"role":"user","id":"msg_a","metadata":{},'
+                '"created_at":"2026-01-01T00:00:00",'
+                '"finished_at":"2026-01-01T00:00:00","usage":null}'
+            )
+            self.assertEqual(
+                content_after_first,
+                expected_user_msg_a_offloaded_json + "\n",
+            )
+
+            # ``state.context`` after the first compression is empty
+            # (msgs_to_reserve is empty since both content blocks of
+            # user_msg_a went to the compress side). After reasoning,
+            # ``state.context[0]`` is the assistant's "End_1." reply. The
+            # assistant fields (msg id, text-block id, timestamps) are
+            # generated by the agent — we capture them here and substitute
+            # them into the expected string.
+            assistant_1 = agent.state.context[0]
+
+            # ===== Second reply =====
+            user_msg_b = UserMsg(
+                name="user",
+                content=[
+                    TextBlock(id="text_block_b", text="B" * 500),
+                ],
+                id="msg_b",
+                created_at="2026-01-02T00:00:00",
+                finished_at="2026-01-02T00:00:00",
+            )
+            await agent.reply(user_msg_b)
+
+            async with aiofiles.open(offload_path, "r") as f:
+                content_after_second = await f.read()
+
+            # The second compression offloads ``assistant_1`` and
+            # ``user_msg_b``. The file is appended to (mode="a"), so it
+            # now contains 3 lines: the multimodal user_msg_a from the
+            # first compression, plus assistant_1 and user_msg_b from the
+            # second.
+            expected_assistant_1_json = (
+                '{"name":"Friday","content":['
+                '{"type":"text","text":"End_1.","id":"'
+                + assistant_1.content[0].id
+                + '"}'
+                '],"role":"assistant","id":"' + assistant_1.id + '",'
+                '"metadata":{},"created_at":"' + assistant_1.created_at + '",'
+                '"finished_at":null,"usage":null}'
+            )
+            expected_user_msg_b_json = (
+                '{"name":"user","content":['
+                '{"type":"text","text":"' + "B" * 500 + '",'
+                '"id":"text_block_b"}'
+                '],"role":"user","id":"msg_b","metadata":{},'
+                '"created_at":"2026-01-02T00:00:00",'
+                '"finished_at":"2026-01-02T00:00:00","usage":null}'
+            )
+            self.assertEqual(
+                content_after_second,
+                expected_user_msg_a_offloaded_json
+                + "\n"
+                + expected_assistant_1_json
+                + "\n"
+                + expected_user_msg_b_json
+                + "\n",
+            )
+
+            # ``state.summary`` is rewritten on every compression, so the
+            # final value is just one rendering of the summary template plus
+            # one offload pointer (both compressions wrote to the same file).
+            expected_summary = (
+                "<system-info>Here is a summary of your previous work\n"
+                "# Task Overview\n"
+                "TASK\n\n"
+                "# Current State\n"
+                "STATE\n\n"
+                "# Important Discoveries\n"
+                "DISCOVERIES\n\n"
+                "# Next Steps\n"
+                "NEXT\n\n"
+                "# Context to Preserve\n"
+                "PRESERVE</system-info>\n"
+                f"<system-reminder>The compressed context is offloaded "
+                f"to '{offload_path}', you can refer to it when needed."
+                f"</system-reminder>"
+            )
+            self.assertEqual(agent.state.summary, expected_summary)
+
+            # ``state.context`` only retains the latest assistant text;
+            # everything else has been offloaded.
+            expected_second_assistant = {
+                "id": AnyString(),
+                "name": "Friday",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "End_2.",
+                        "id": AnyString(),
+                    },
+                ],
+                "metadata": {},
+                "created_at": AnyString(),
+                "finished_at": None,
+                "usage": None,
+            }
+            self.assertListEqual(
+                [_.model_dump() for _ in agent.state.context],
+                [expected_second_assistant],
+            )

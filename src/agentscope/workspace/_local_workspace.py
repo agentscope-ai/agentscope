@@ -519,6 +519,17 @@ class LocalWorkspace(WorkspaceBase):
             f"tool_result-{tool_result.id}.txt",
         )
 
+        # Avoid filename conflict
+        index = 1
+        while os.path.exists(path):
+            path = os.path.join(
+                self.workdir,
+                "sessions",
+                session_id,
+                f"tool_result-{tool_result.id}({index}).txt",
+            )
+            index += 1
+
         res_strs = []
         if isinstance(tool_result.output, str):
             res_strs.append(tool_result.output)

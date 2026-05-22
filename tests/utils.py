@@ -40,6 +40,7 @@ class MockModel(ChatModelBase):
     def __init__(
         self,
         model: str = "mock-model",
+        stream: bool = True,
         context_size: int = 1000,
         mock_chat_responses: list | None = None,
         mock_structured_response: Any = None,
@@ -48,6 +49,7 @@ class MockModel(ChatModelBase):
         super().__init__(
             credential=MockCredential(),
             model=model,
+            stream=stream,
             parameters=MockModel.Parameters(),
             context_size=context_size,
         )
