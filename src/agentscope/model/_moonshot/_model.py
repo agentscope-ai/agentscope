@@ -35,6 +35,16 @@ class MoonshotChatModel(ChatModelBase):
             gt=0,
         )
 
+        thinking_enable: bool = Field(
+            default=False,
+            title="Thinking",
+            description=(
+                "Whether to enable thinking mode. For kimi-k2-thinking, "
+                "thinking is always enabled. For kimi-k2.6, thinking is "
+                "enabled by default but can be disabled."
+            ),
+        )
+
         temperature: float | None = Field(
             default=None,
             title="Temperature",
@@ -149,6 +159,13 @@ class MoonshotChatModel(ChatModelBase):
             kwargs["top_p"] = self.parameters.top_p
 
         kwargs.update(generate_kwargs)
+
+        thinking_type = (
+            "enabled" if self.parameters.thinking_enable else "disabled"
+        )
+        kwargs.setdefault("extra_body", {})
+        kwargs["extra_body"].setdefault("thinking", {})
+        kwargs["extra_body"]["thinking"].setdefault("type", thinking_type)
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 

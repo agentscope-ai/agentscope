@@ -36,11 +36,15 @@ async def example_multiagent_image_url() -> None:
     msgs = [
         Msg(
             name="system",
-            content=(
-                "You are a helpful moderator in a group chat. "
-                "Summarize what the image shows and what the participants "
-                "said."
-            ),
+            content=[
+                TextBlock(
+                    text=(
+                        "You are a helpful moderator in a group chat. "
+                        "Summarize what the image shows and what the "
+                        "participants said."
+                    ),
+                ),
+            ],
             role="system",
         ),
         Msg(
@@ -55,18 +59,24 @@ async def example_multiagent_image_url() -> None:
         ),
         Msg(
             name="bob",
-            content="Aww, that's adorable! Where was this taken?",
+            content=[
+                TextBlock(text="Aww, that's adorable! Where was this taken?"),
+            ],
             role="assistant",
         ),
         Msg(
             name="alice",
-            content="At the local park yesterday.",
+            content=[TextBlock(text="At the local park yesterday.")],
             role="user",
         ),
         Msg(
             name="moderator",
-            content="Please summarize the image content and the "
-            "conversation in one paragraph.",
+            content=[
+                TextBlock(
+                    text="Please summarize the image content and the "
+                    "conversation in one paragraph.",
+                ),
+            ],
             role="user",
         ),
     ]

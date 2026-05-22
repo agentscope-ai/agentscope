@@ -161,12 +161,15 @@ class MCPTool(ToolBase):
         self.name = f"mcp__{self.mcp_name}__{tool.name}"
         self.description = tool.description or ""
 
-        # Extract input schema
-        self.input_schema = {
-            "type": "object",
-            "properties": tool.inputSchema.get("properties", {}),
-            "required": tool.inputSchema.get("required", []),
-        }
+        # Preserve the full inputSchema (including $defs, anyOf, oneOf, etc.)
+        # rather than only copying "properties" and "required", which would
+        # silently drop any nested type definitions that the LLM needs to
+        # resolve $ref pointers.
+        _schema = dict(tool.inputSchema) if tool.inputSchema else {}
+        _schema.setdefault("type", "object")
+        _schema.setdefault("properties", {})
+        _schema.setdefault("required", [])
+        self.input_schema = _schema
 
         # By default
         self.is_concurrency_safe = False

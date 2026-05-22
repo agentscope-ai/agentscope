@@ -520,6 +520,32 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
         self.assertEqual(responses[-1].usage.cache_input_tokens, 50)
 
 
+class TestDeepSeekModelParameters(unittest.TestCase):
+    """Tests for DeepSeekChatModel.Parameters."""
+
+    def test_thinking_enable_stored_on_model(self) -> None:
+        """thinking_enable is accessible through model.parameters."""
+        model = DeepSeekChatModel(
+            credential=DeepSeekCredential(api_key="test"),
+            model="deepseek-reasoner",
+            stream=False,
+            context_size=65_536,
+            parameters=DeepSeekChatModel.Parameters(thinking_enable=True),
+        )
+        self.assertTrue(model.parameters.thinking_enable)
+
+    def test_reasoning_effort_stored_on_model(self) -> None:
+        """reasoning_effort is accessible through model.parameters."""
+        model = DeepSeekChatModel(
+            credential=DeepSeekCredential(api_key="test"),
+            model="deepseek-reasoner",
+            stream=False,
+            context_size=65_536,
+            parameters=DeepSeekChatModel.Parameters(reasoning_effort="max"),
+        )
+        self.assertEqual(model.parameters.reasoning_effort, "max")
+
+
 # ---------------------------------------------------------------------------
 # Shared _format_tools fixtures
 # ---------------------------------------------------------------------------

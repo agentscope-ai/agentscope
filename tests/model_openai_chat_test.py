@@ -14,7 +14,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from utils import AnyString
 
-from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
+from agentscope.message import (
+    TextBlock,
+    ToolCallBlock,
+    ThinkingBlock,
+    DataBlock,
+    Base64Source,
+)
 from agentscope.model import OpenAIChatModel
 from agentscope.credential import OpenAICredential
 from agentscope.tool import ToolChoice
@@ -41,12 +47,14 @@ def _mock_completion(
     tool_calls: Any = None,
     reasoning: Any = None,
     response_id: str = "resp-1",
+    audio: dict | None = None,
 ) -> MagicMock:
     """Build a mock non-streaming ChatCompletion response."""
     msg = MagicMock()
     msg.content = text
     msg.reasoning_content = reasoning
     msg.reasoning = None
+    msg.audio = audio
     msg.tool_calls = None
 
     if tool_calls:
@@ -78,6 +86,7 @@ def _make_stream_chunk(
     response_id: str = "resp-1",
     usage: dict | None = None,
     has_choices: bool = True,
+    delta_audio: dict | None = None,
 ) -> MagicMock:
     """Build a single mock streaming chunk."""
     chunk = MagicMock()
@@ -96,6 +105,7 @@ def _make_stream_chunk(
         delta.content = delta_text
         delta.reasoning_content = delta_reasoning
         delta.reasoning = None
+        delta.audio = delta_audio
         delta.tool_calls = tool_calls
         choice = MagicMock()
         choice.delta = delta
@@ -202,6 +212,47 @@ class TestOpenAIChatNonStream(IsolatedAsyncioTestCase):
                         id="call-1",
                         name="get_weather",
                         input='{"city":"Beijing"}',
+                    ),
+                ],
+            ),
+        )
+
+    @patch("openai.AsyncClient")
+    async def test_audio_response(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Non-stream audio-only output yields transcript TextBlock + audio
+        DataBlock."""
+        mock_create = AsyncMock(
+            return_value=_mock_completion(
+                text=None,
+                audio={
+                    "data": "QUJDREVG",
+                    "transcript": "Hello from audio.",
+                },
+            ),
+        )
+        mock_client_cls.return_value.chat.completions.create = mock_create
+
+        result = await self.model([])
+
+        self.assertEqual(
+            (result.is_last, result.content),
+            (
+                True,
+                [
+                    TextBlock.model_construct(
+                        id=A,
+                        text="Hello from audio.",
+                    ),
+                    DataBlock.model_construct(
+                        id=A,
+                        source=Base64Source.model_construct(
+                            type="base64",
+                            media_type="audio/wav",
+                            data="QUJDREVG",
+                        ),
                     ),
                 ],
             ),
@@ -420,6 +471,81 @@ class TestOpenAIChatStream(IsolatedAsyncioTestCase):
         )
         self.assertEqual(responses[-1].usage.input_tokens, 100)
         self.assertEqual(responses[-1].usage.output_tokens, 20)
+
+    @patch("openai.AsyncClient")
+    async def test_stream_audio_response(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Stream audio deltas accumulate into a final DataBlock with the
+        concatenated base64 payload and a transcript TextBlock."""
+        chunks = [
+            _make_stream_chunk(
+                delta_audio={"data": "AAAA", "transcript": "Hello"},
+            ),
+            _make_stream_chunk(
+                delta_audio={"data": "BBBB", "transcript": " world"},
+            ),
+            _make_stream_chunk(
+                delta_audio={"data": "CCCC", "transcript": "!"},
+            ),
+            _make_stream_chunk(
+                has_choices=False,
+                usage={"prompt_tokens": 10, "completion_tokens": 6},
+            ),
+        ]
+        mock_create = AsyncMock(return_value=_MockAsyncStream(chunks))
+        mock_client_cls.return_value.chat.completions.create = mock_create
+
+        gen = await self.model([])
+        responses = [r async for r in gen]
+
+        # Only the final response carries the assembled audio content; the
+        # per-chunk deltas have no text/thinking/tool_call so no delta
+        # ChatResponse is yielded mid-stream.
+        self.assertEqual(len(responses), 1)
+        final = responses[0]
+        self.assertTrue(final.is_last)
+        self.assertEqual(
+            final.content,
+            [
+                TextBlock.model_construct(id=A, text="Hello world!"),
+                DataBlock.model_construct(
+                    id=A,
+                    source=Base64Source.model_construct(
+                        type="base64",
+                        media_type="audio/wav",
+                        data="AAAABBBBCCCC",
+                    ),
+                ),
+            ],
+        )
+
+
+class TestOpenAIChatModelParameters(unittest.TestCase):
+    """Tests for OpenAIChatModel.Parameters."""
+
+    def test_reasoning_effort_stored_on_model(self) -> None:
+        """reasoning_effort is accessible through model.parameters."""
+        model = OpenAIChatModel(
+            credential=OpenAICredential(api_key="test"),
+            model="o3",
+            stream=False,
+            context_size=200_000,
+            parameters=OpenAIChatModel.Parameters(reasoning_effort="low"),
+        )
+        self.assertEqual(model.parameters.reasoning_effort, "low")
+
+    def test_thinking_enable_stored_on_model(self) -> None:
+        """thinking_enable is accessible through model.parameters."""
+        model = OpenAIChatModel(
+            credential=OpenAICredential(api_key="test"),
+            model="o3",
+            stream=False,
+            context_size=200_000,
+            parameters=OpenAIChatModel.Parameters(thinking_enable=True),
+        )
+        self.assertTrue(model.parameters.thinking_enable)
 
 
 # ---------------------------------------------------------------------------

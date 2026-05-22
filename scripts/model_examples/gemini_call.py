@@ -7,6 +7,7 @@ import os
 from _utils import stream_and_collect
 from agentscope.message import (
     Msg,
+    TextBlock,
     ToolCallBlock,
     ToolResultBlock,
     ToolResultState,
@@ -38,7 +39,7 @@ async def example_simple_call() -> None:
     msgs = [
         Msg(
             name="user",
-            content="What is 1 + 1? Answer briefly.",
+            content=[TextBlock(text="What is 1 + 1? Answer briefly.")],
             role="user",
         ),
     ]
@@ -86,7 +87,7 @@ async def example_tool_call() -> None:
     msgs = [
         Msg(
             name="user",
-            content="What is the weather in Guangzhou?",
+            content=[TextBlock(text="What is the weather in Guangzhou?")],
             role="user",
         ),
     ]

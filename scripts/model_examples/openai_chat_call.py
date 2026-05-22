@@ -7,6 +7,7 @@ import os
 from _utils import stream_and_collect
 from agentscope.message import (
     Msg,
+    TextBlock,
     ToolCallBlock,
     ToolResultBlock,
     ToolResultState,
@@ -26,15 +27,18 @@ async def example_simple_call() -> None:
         credential=OpenAICredential(
             api_key=os.environ["OPENAI_API_KEY"],
         ),
-        model="gpt-4.1",
+        model="o4-mini",
         stream=True,
-        context_size=1_047_576,
+        context_size=200_000,
+        parameters=OpenAIChatModel.Parameters(
+            reasoning_effort="low",
+        ),
     )
 
     msgs = [
         Msg(
             name="user",
-            content="What is 1 + 1? Answer briefly.",
+            content=[TextBlock(text="What is 1 + 1? Answer briefly.")],
             role="user",
         ),
     ]
@@ -70,15 +74,18 @@ async def example_tool_call() -> None:
         credential=OpenAICredential(
             api_key=os.environ["OPENAI_API_KEY"],
         ),
-        model="gpt-4.1",
+        model="o4-mini",
         stream=True,
-        context_size=1_047_576,
+        context_size=200_000,
+        parameters=OpenAIChatModel.Parameters(
+            reasoning_effort="low",
+        ),
     )
 
     msgs = [
         Msg(
             name="user",
-            content="What is the weather in Chengdu?",
+            content=[TextBlock(text="What is the weather in Chengdu?")],
             role="user",
         ),
     ]

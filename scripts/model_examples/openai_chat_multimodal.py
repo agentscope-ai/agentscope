@@ -22,6 +22,12 @@ TEST_IMAGE_URL = (
     "-files/zh-CN/20241022/emyrja/dog_and_girl.jpeg"
 )
 
+# A publicly accessible test audio
+TEST_AUDIO_URL = (
+    "https://help-static-aliyun-doc.aliyuncs.com/file-manage"
+    "-files/zh-CN/20250211/tixcef/cherry.wav"
+)
+
 
 async def example_image_url() -> None:
     """Call gpt-4.1 with an image URL and ask what is in the image."""
@@ -130,7 +136,59 @@ async def example_image_base64() -> None:
     await stream_and_collect(await model(msgs))
 
 
+async def example_audio() -> None:
+    """Call gpt-audio-mini with an audio URL.
+
+    Audio understanding requires an audio-capable model such as
+    ``gpt-audio-mini``.  The formatter converts the audio source
+    to the ``input_audio`` format expected by the Chat Completions API.
+    """
+    model = OpenAIChatModel(
+        credential=OpenAICredential(
+            api_key=os.environ["OPENAI_API_KEY"],
+        ),
+        model="gpt-audio-mini",
+        stream=True,
+    )
+
+    audio_block = DataBlock(
+        source=URLSource(
+            url=TEST_AUDIO_URL,
+            media_type="audio/wav",
+        ),
+    )
+
+    msgs = [
+        Msg(
+            name="user",
+            content=[
+                TextBlock(text="What is being said in this audio clip?"),
+                audio_block,
+            ],
+            role="user",
+        ),
+    ]
+
+    print("=== Multimodal Call (Audio Input and Output) ===")
+    response = await stream_and_collect(
+        await model(
+            msgs,
+            modalities=["text", "audio"],
+            audio={"voice": "alloy", "format": "pcm16"},
+        ),
+    )
+
+    # Save audio if present
+    for block in response.content:
+        if isinstance(block, DataBlock) and block.source.media_type.startswith(
+            "audio/",
+        ):
+            audio_bytes = base64.b64decode(block.source.data)
+            print(f"  Audio received: {len(audio_bytes)} bytes")
+
+
 if __name__ == "__main__":
     asyncio.run(example_image_url())
     asyncio.run(example_image_local_path())
     asyncio.run(example_image_base64())
+    asyncio.run(example_audio())

@@ -11,7 +11,14 @@ from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ...credential import OpenAICredential
 from ...formatter import FormatterBase, OpenAIChatFormatter
-from ...message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
+from ...message import (
+    Msg,
+    ThinkingBlock,
+    ToolCallBlock,
+    TextBlock,
+    DataBlock,
+    Base64Source,
+)
 from ...tool import ToolChoice
 
 if TYPE_CHECKING:
@@ -39,9 +46,22 @@ class OpenAIChatModel(ChatModelBase):
             default=False,
             title="Thinking",
             description=(
-                "Whether to enable reasoning output. Note: for the OpenAI "
-                "Chat Completions API, reasoning is controlled by model "
-                "selection (e.g. o3, o4-mini) rather than an API parameter."
+                "Whether to enable reasoning for reasoning models "
+                "(e.g. o3, o4-mini, gpt-5.5). Use reasoning_effort to "
+                "control the depth of reasoning."
+            ),
+        )
+
+        reasoning_effort: (
+            Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None
+        ) = Field(
+            default=None,
+            title="Reasoning Effort",
+            description=(
+                "Controls the depth of reasoning for reasoning models "
+                "(e.g. o3, o4-mini, gpt-5.5). Supported values are "
+                "model-dependent and may include: none, minimal, low, "
+                "medium, high, xhigh."
             ),
         )
 
@@ -165,6 +185,12 @@ class OpenAIChatModel(ChatModelBase):
         if self.parameters.top_p is not None:
             kwargs["top_p"] = self.parameters.top_p
 
+        if (
+            self.parameters.thinking_enable
+            and self.parameters.reasoning_effort
+        ):
+            kwargs["reasoning_effort"] = self.parameters.reasoning_effort
+
         kwargs.update(generate_kwargs)
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
@@ -183,15 +209,31 @@ class OpenAIChatModel(ChatModelBase):
         start_datetime = datetime.now()
         response = await client.chat.completions.create(**kwargs)
 
-        if self.stream:
-            return self._parse_stream_response(start_datetime, response)
+        audio_cfg = kwargs.get("audio")
+        audio_fmt = (
+            audio_cfg.get("format", "wav")
+            if isinstance(audio_cfg, dict)
+            else "wav"
+        )
 
-        return self._parse_completion_response(start_datetime, response)
+        if self.stream:
+            return self._parse_stream_response(
+                start_datetime,
+                response,
+                audio_fmt,
+            )
+
+        return self._parse_completion_response(
+            start_datetime,
+            response,
+            audio_fmt,
+        )
 
     async def _parse_stream_response(
         self,
         start_datetime: datetime,
         response: AsyncStream,
+        audio_format: str = "wav",
     ) -> AsyncGenerator[ChatResponse, None]:
         """Parse the OpenAI Chat streaming response.
 
@@ -200,6 +242,9 @@ class OpenAIChatModel(ChatModelBase):
                 The start datetime of the response generation.
             response (`AsyncStream`):
                 The OpenAI async stream object.
+            audio_format (`str`, defaults to ``"wav"``):
+                The audio format requested (used to set the media type on
+                the output ``DataBlock``).
 
         Yields:
             `ChatResponse`:
@@ -212,6 +257,8 @@ class OpenAIChatModel(ChatModelBase):
         acc_text = TextBlock(text="")
         acc_thinking = ThinkingBlock(thinking="")
         acc_tool_calls: OrderedDict = OrderedDict()
+        acc_audio_data: str = ""
+        acc_audio_transcript: str = ""
 
         async with response as stream:
             async for chunk in stream:
@@ -247,6 +294,23 @@ class OpenAIChatModel(ChatModelBase):
                     delta_thinking = ""
 
                 delta_text = getattr(delta, "content", None) or ""
+
+                # Collect audio output (delta.audio.data /
+                # delta.audio.transcript)
+                delta_audio = getattr(delta, "audio", None)
+                if delta_audio is not None:
+                    if isinstance(delta_audio, dict):
+                        audio_chunk = delta_audio.get("data", "")
+                        transcript_chunk = delta_audio.get("transcript", "")
+                    else:
+                        audio_chunk = getattr(delta_audio, "data", "") or ""
+                        transcript_chunk = (
+                            getattr(delta_audio, "transcript", "") or ""
+                        )
+                    if audio_chunk:
+                        acc_audio_data += audio_chunk
+                    if transcript_chunk:
+                        acc_audio_transcript += transcript_chunk
 
                 acc_thinking.thinking += delta_thinking
                 acc_text.text += delta_text
@@ -298,14 +362,27 @@ class OpenAIChatModel(ChatModelBase):
                         _kwargs["id"] = response_id
                     yield ChatResponse(**_kwargs)
 
-        final_contents: List[TextBlock | ToolCallBlock | ThinkingBlock] = []
+        final_contents: List[
+            TextBlock | ToolCallBlock | ThinkingBlock | DataBlock
+        ] = []
         if acc_thinking.thinking:
             final_contents.append(acc_thinking)
         if acc_text.text:
             final_contents.append(acc_text)
+        elif acc_audio_transcript:
+            final_contents.append(TextBlock(text=acc_audio_transcript))
         for tc in acc_tool_calls.values():
             final_contents.append(
                 ToolCallBlock(id=tc["id"], name=tc["name"], input=tc["input"]),
+            )
+        if acc_audio_data:
+            final_contents.append(
+                DataBlock(
+                    source=Base64Source(
+                        data=acc_audio_data,
+                        media_type=f"audio/{audio_format}",
+                    ),
+                ),
             )
 
         _final_kwargs: dict[str, Any] = {
@@ -321,6 +398,7 @@ class OpenAIChatModel(ChatModelBase):
         self,
         start_datetime: datetime,
         response: ChatCompletion,
+        audio_format: str = "wav",
     ) -> ChatResponse:
         """Parse the OpenAI Chat non-streaming response.
 
@@ -329,12 +407,17 @@ class OpenAIChatModel(ChatModelBase):
                 The start datetime of the response generation.
             response (`ChatCompletion`):
                 The OpenAI chat completion object.
+            audio_format (`str`, defaults to ``"wav"``):
+                The audio format requested (used to set the media type on
+                the output ``DataBlock``).
 
         Returns:
             `ChatResponse`:
                 A single ``ChatResponse`` with ``is_last=True``.
         """
-        content_blocks: List[TextBlock | ToolCallBlock | ThinkingBlock] = []
+        content_blocks: List[
+            TextBlock | ToolCallBlock | ThinkingBlock | DataBlock
+        ] = []
 
         if response.choices:
             choice = response.choices[0]
@@ -346,6 +429,30 @@ class OpenAIChatModel(ChatModelBase):
 
             if choice.message.content:
                 content_blocks.append(TextBlock(text=choice.message.content))
+
+            # Extract audio output (message.audio.data /
+            # message.audio.transcript)
+            audio_obj = getattr(choice.message, "audio", None)
+            if audio_obj is not None:
+                if isinstance(audio_obj, dict):
+                    audio_data = audio_obj.get("data", "")
+                    audio_transcript = audio_obj.get("transcript", "")
+                else:
+                    audio_data = getattr(audio_obj, "data", "") or ""
+                    audio_transcript = (
+                        getattr(audio_obj, "transcript", "") or ""
+                    )
+                if not choice.message.content and audio_transcript:
+                    content_blocks.append(TextBlock(text=audio_transcript))
+                if audio_data:
+                    content_blocks.append(
+                        DataBlock(
+                            source=Base64Source(
+                                data=audio_data,
+                                media_type=f"audio/{audio_format}",
+                            ),
+                        ),
+                    )
 
             for tool_call in choice.message.tool_calls or []:
                 content_blocks.append(

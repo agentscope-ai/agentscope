@@ -210,6 +210,34 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
         )
 
 
+class TestOpenAIResponseModelParameters(unittest.TestCase):
+    """Tests for OpenAIResponseModel.Parameters."""
+
+    def test_thinking_enable_stored_on_model(self) -> None:
+        """thinking_enable is accessible through model.parameters."""
+        model = OpenAIResponseModel(
+            credential=OpenAICredential(api_key="test"),
+            model="o4-mini",
+            stream=False,
+            context_size=200_000,
+            parameters=OpenAIResponseModel.Parameters(thinking_enable=True),
+        )
+        self.assertTrue(model.parameters.thinking_enable)
+
+    def test_reasoning_effort_stored_on_model(self) -> None:
+        """reasoning_effort is accessible through model.parameters."""
+        model = OpenAIResponseModel(
+            credential=OpenAICredential(api_key="test"),
+            model="o4-mini",
+            stream=False,
+            context_size=200_000,
+            parameters=OpenAIResponseModel.Parameters(
+                reasoning_effort="high",
+            ),
+        )
+        self.assertEqual(model.parameters.reasoning_effort, "high")
+
+
 # ---------------------------------------------------------------------------
 # Streaming tests
 # ---------------------------------------------------------------------------
@@ -511,14 +539,22 @@ class TestOpenAIResponseFormatTools(unittest.TestCase):
         )
 
     def test_tools_filtered(self) -> None:
-        """ToolChoice with tools list filters to matching function names."""
+        """ToolChoice with tools list keeps the full tools schema and
+        narrows the callable subset via ``allowed_tools`` to preserve
+        prompt cache hits."""
         fmt_tools, fmt_choice = self.model._format_tools(
             _FT_TOOLS,
             ToolChoice(mode="auto", tools=["get_weather"]),
         )
-        self.assertEqual(len(fmt_tools), 1)
-        self.assertEqual(fmt_tools[0]["name"], "get_weather")
-        self.assertEqual(fmt_choice, "auto")
+        self.assertListEqual(fmt_tools, _FT_TOOLS_RESPONSE)
+        self.assertEqual(
+            fmt_choice,
+            {
+                "type": "allowed_tools",
+                "mode": "auto",
+                "tools": [{"type": "function", "name": "get_weather"}],
+            },
+        )
 
     def test_no_tool_choice(self) -> None:
         """Tools are converted when tool_choice is None."""

@@ -432,6 +432,32 @@ class TestXAIStream(IsolatedAsyncioTestCase):
         )
 
 
+class TestXAIModelParameters(unittest.TestCase):
+    """Tests for XAIChatModel.Parameters."""
+
+    def test_thinking_enable_stored_on_model(self) -> None:
+        """thinking_enable is accessible through model.parameters."""
+        model = XAIChatModel(
+            credential=XAICredential(api_key="test"),
+            model="grok-3-mini",
+            stream=False,
+            context_size=131_072,
+            parameters=XAIChatModel.Parameters(thinking_enable=True),
+        )
+        self.assertTrue(model.parameters.thinking_enable)
+
+    def test_reasoning_effort_stored_on_model(self) -> None:
+        """reasoning_effort is accessible through model.parameters."""
+        model = XAIChatModel(
+            credential=XAICredential(api_key="test"),
+            model="grok-3-mini",
+            stream=False,
+            context_size=131_072,
+            parameters=XAIChatModel.Parameters(reasoning_effort="high"),
+        )
+        self.assertEqual(model.parameters.reasoning_effort, "high")
+
+
 # ---------------------------------------------------------------------------
 # _format_tools tests
 # ---------------------------------------------------------------------------

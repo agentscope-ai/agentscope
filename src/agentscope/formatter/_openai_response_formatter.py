@@ -27,10 +27,11 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
     """
 
     input_types: list[str] = Field(
-        default_factory=lambda: ["text/plain", "image/*", "audio/*"],
+        default_factory=lambda: ["text/plain", "image/*"],
         description=(
             "The supported input types. "
-            'Defaults to ``["text/plain", "image/*", "audio/*"]``.'
+            'Defaults to ``["text/plain", "image/*"]``. '
+            "Audio is not supported by the Responses API."
         ),
     )
 
@@ -40,6 +41,14 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
         role: str = "user",
     ) -> dict[str, Any] | None:
         """Format a DataBlock into the Response API format.
+
+        The Responses API uses different content types from the Chat
+        Completions API:
+
+        * ``image_url`` → ``input_image``
+        * ``input_audio`` → skipped (the Responses API does not support
+          audio input yet; use Chat Completions API instead). See
+          https://developers.openai.com/api/docs/guides/audio
 
         Args:
             block (`DataBlock`):
@@ -52,6 +61,20 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
                 A dictionary in the Responses API format, or ``None`` when the
                 block type is unsupported.
         """
+        # Intercept audio blocks before the generic formatter rejects them
+        # with a less helpful "Unsupported media type" warning. The Responses
+        # API does not support audio input yet; use Chat Completions API with
+        # an audio-capable model instead.
+        # https://developers.openai.com/api/docs/guides/audio
+        media_type = getattr(block.source, "media_type", "") or ""
+        if media_type.split("/", 1)[0] == "audio":
+            logger.warning(
+                "Audio input is not supported by the OpenAI Responses API. "
+                "Use OpenAIChatModel with an audio-capable model instead. "
+                "This audio block will be skipped.",
+            )
+            return None
+
         base_result = self._format_openai_data_block(block, role)
         if base_result is None:
             return None

@@ -39,9 +39,20 @@ class DeepSeekChatModel(ChatModelBase):
             default=False,
             title="Thinking",
             description=(
-                "Whether to enable thinking. Note: for the DeepSeek API, "
-                "thinking mode is selected by choosing the deepseek-reasoner "
-                "model rather than an API parameter."
+                "Whether to enable thinking mode. When enabled, the model "
+                "outputs a chain-of-thought reasoning before the final "
+                "answer via the reasoning_content field."
+            ),
+        )
+
+        reasoning_effort: Literal["high", "max"] | None = Field(
+            default=None,
+            title="Reasoning Effort",
+            description=(
+                "Controls the depth of reasoning in thinking mode. "
+                "Supported values: high (default), max. "
+                "For compatibility, low/medium map to high, "
+                "xhigh maps to max."
             ),
         )
 
@@ -158,7 +169,17 @@ class DeepSeekChatModel(ChatModelBase):
         if self.parameters.top_p is not None:
             kwargs["top_p"] = self.parameters.top_p
 
+        if self.parameters.reasoning_effort is not None:
+            kwargs["reasoning_effort"] = self.parameters.reasoning_effort
+
         kwargs.update(generate_kwargs)
+
+        thinking_type = (
+            "enabled" if self.parameters.thinking_enable else "disabled"
+        )
+        kwargs.setdefault("extra_body", {})
+        kwargs["extra_body"].setdefault("thinking", {})
+        kwargs["extra_body"]["thinking"].setdefault("type", thinking_type)
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 

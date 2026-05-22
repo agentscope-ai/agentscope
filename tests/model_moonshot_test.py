@@ -232,6 +232,21 @@ class TestMoonshotNonStream(IsolatedAsyncioTestCase):
         )
 
 
+class TestKimiModelParameters(unittest.TestCase):
+    """Tests for MoonshotChatModel.Parameters."""
+
+    def test_thinking_enable_stored_on_model(self) -> None:
+        """thinking_enable is accessible through model.parameters."""
+        model = MoonshotChatModel(
+            credential=MoonshotCredential(api_key="test"),
+            model="kimi-k2-5",
+            stream=False,
+            context_size=131_072,
+            parameters=MoonshotChatModel.Parameters(thinking_enable=True),
+        )
+        self.assertTrue(model.parameters.thinking_enable)
+
+
 # ---------------------------------------------------------------------------
 # Streaming tests
 # ---------------------------------------------------------------------------

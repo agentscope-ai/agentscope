@@ -46,6 +46,16 @@ class XAIChatModel(ChatModelBase):
         )
         """The maximum number of tokens to generate."""
 
+        thinking_enable: bool = Field(
+            default=False,
+            title="Thinking",
+            description=(
+                "Whether to enable reasoning for models that support "
+                "extended thinking (e.g. ``grok-3-mini``). Use "
+                "reasoning_effort to control the depth of reasoning."
+            ),
+        )
+
         reasoning_effort: Literal["low", "medium", "high"] | None = Field(
             default=None,
             title="Reasoning Effort",
@@ -57,7 +67,6 @@ class XAIChatModel(ChatModelBase):
                 "reasoning."
             ),
         )
-        """Reasoning effort level for xAI reasoning models."""
 
         temperature: float | None = Field(
             default=None,
@@ -167,7 +176,10 @@ class XAIChatModel(ChatModelBase):
             create_kwargs["temperature"] = self.parameters.temperature
         if self.parameters.top_p is not None:
             create_kwargs["top_p"] = self.parameters.top_p
-        if self.parameters.reasoning_effort is not None:
+        if (
+            self.parameters.thinking_enable
+            and self.parameters.reasoning_effort
+        ):
             create_kwargs[
                 "reasoning_effort"
             ] = self.parameters.reasoning_effort

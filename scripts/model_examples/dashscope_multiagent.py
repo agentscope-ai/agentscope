@@ -10,7 +10,7 @@ import os
 
 from _utils import stream_and_collect
 from agentscope.formatter import DashScopeMultiAgentFormatter
-from agentscope.message import Msg
+from agentscope.message import Msg, TextBlock
 from agentscope.model import DashScopeChatModel
 from agentscope.credential import DashScopeCredential
 
@@ -37,32 +37,57 @@ async def example_multiagent() -> None:
     msgs = [
         Msg(
             name="system",
-            content="You are a helpful moderator. Summarize the conversation.",
+            content=[
+                TextBlock(
+                    text="You are a helpful moderator. Summarize the "
+                    "conversation.",
+                ),
+            ],
             role="system",
         ),
         Msg(
             name="alice",
-            content="Hi Bob! What do you think about the weather today?",
+            content=[
+                TextBlock(
+                    text="Hi Bob! What do you think about the weather today?",
+                ),
+            ],
             role="user",
         ),
         Msg(
             name="bob",
-            content="It's quite sunny and warm, Alice. Perfect for a walk!",
+            content=[
+                TextBlock(
+                    text="It's quite sunny and warm, Alice. Perfect for a "
+                    "walk!",
+                ),
+            ],
             role="assistant",
         ),
         Msg(
             name="alice",
-            content="Agreed! I might head to the park later.",
+            content=[
+                TextBlock(text="Agreed! I might head to the park later."),
+            ],
             role="user",
         ),
         Msg(
             name="bob",
-            content="Great idea. I'll join you if I finish work early.",
+            content=[
+                TextBlock(
+                    text="Great idea. I'll join you if I finish work early.",
+                ),
+            ],
             role="assistant",
         ),
         Msg(
             name="moderator",
-            content="Please summarize the conversation above in one sentence.",
+            content=[
+                TextBlock(
+                    text="Please summarize the conversation above in one "
+                    "sentence.",
+                ),
+            ],
             role="user",
         ),
     ]

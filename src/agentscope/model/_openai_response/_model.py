@@ -22,6 +22,9 @@ else:
     ResponseStreamEvent = Any
     AsyncStream = Any
 
+# kwargs accepted by Chat Completions but NOT by the Responses API.
+_RESPONSES_UNSUPPORTED_KWARGS = frozenset({"modalities", "audio"})
+
 
 class OpenAIResponseModel(ChatModelBase):
     """The OpenAI Responses API chat model.
@@ -42,12 +45,26 @@ class OpenAIResponseModel(ChatModelBase):
             gt=0,
         )
 
-        reasoning_effort: Literal["low", "medium", "high"] | None = Field(
+        thinking_enable: bool = Field(
+            default=False,
+            title="Thinking",
+            description=(
+                "Whether to enable reasoning for reasoning models "
+                "(e.g. o3, o4-mini, gpt-5.5). Use reasoning_effort to "
+                "control the depth of reasoning."
+            ),
+        )
+
+        reasoning_effort: (
+            Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None
+        ) = Field(
             default=None,
             title="Reasoning Effort",
             description=(
-                "The reasoning effort level for reasoning models "
-                "(e.g. o3, o4-mini)."
+                "Controls the depth of reasoning for reasoning models "
+                "(e.g. o3, o4-mini, gpt-5.5). Supported values are "
+                "model-dependent and may include: none, minimal, low, "
+                "medium, high, xhigh."
             ),
         )
 
@@ -154,12 +171,26 @@ class OpenAIResponseModel(ChatModelBase):
         if self.parameters.temperature is not None:
             api_kwargs["temperature"] = self.parameters.temperature
 
-        if self.parameters.reasoning_effort is not None:
+        if (
+            self.parameters.thinking_enable
+            and self.parameters.reasoning_effort
+        ):
             api_kwargs["reasoning"] = {
                 "effort": self.parameters.reasoning_effort,
             }
 
-        api_kwargs.update(generate_kwargs)
+        # The Responses API does not yet support audio output
+        # (modalities / audio params).  Strip them so callers that
+        # mistakenly pass Chat-Completions-style audio kwargs don't
+        # trigger a TypeError.
+        # https://developers.openai.com/api/docs/guides/migrate-to-responses
+        api_kwargs.update(
+            {
+                k: v
+                for k, v in generate_kwargs.items()
+                if k not in _RESPONSES_UNSUPPORTED_KWARGS
+            },
+        )
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
         if fmt_tools is not None:
@@ -426,13 +457,12 @@ class OpenAIResponseModel(ChatModelBase):
         tools: list[dict] | None,
         tool_choice: ToolChoice | None,
     ) -> tuple[list[dict] | None, str | dict | None]:
-        """Validate, filter, and format tools and tool_choice for the
-        Responses API.
+        """Validate and format tools and tool_choice for the Responses API.
 
-        When ``tool_choice.tools`` is specified the schemas list is filtered
-        to only those tools. When ``tool_choice.mode`` is a specific tool name
-        (str) the model is forced to call exactly that tool without needing to
-        filter the list, preserving prompt-cache efficiency.
+        The full ``tools`` list is always sent unchanged to maximise prompt
+        cache hits.  When ``tool_choice.tools`` restricts the callable
+        subset, the ``allowed_tools`` tool_choice format is used instead of
+        filtering the schemas list.
 
         Args:
             tools (`list[dict] | None`, optional):
@@ -447,9 +477,6 @@ class OpenAIResponseModel(ChatModelBase):
         """
         if tool_choice and tools:
             self._validate_tool_choice(tool_choice, tools)
-            if tool_choice.tools:
-                allowed = set(tool_choice.tools)
-                tools = [t for t in tools if t["function"]["name"] in allowed]
 
         fmt_tools = None
         if tools:
@@ -464,5 +491,15 @@ class OpenAIResponseModel(ChatModelBase):
 
         if mode not in _TOOL_CHOICE_LITERAL_MODES:
             return fmt_tools, {"type": "function", "name": mode}
+
+        if tool_choice.tools:
+            return fmt_tools, {
+                "type": "allowed_tools",
+                "mode": mode,
+                "tools": [
+                    {"type": "function", "name": name}
+                    for name in tool_choice.tools
+                ],
+            }
 
         return fmt_tools, mode
