@@ -5,6 +5,7 @@ from typing import Any
 from pydantic import Field, create_model
 from jinja2 import Template
 
+from .._tool_group import ToolGroup
 from ...permission import (
     PermissionContext,
     PermissionDecision,
@@ -12,7 +13,6 @@ from ...permission import (
 )
 from .._response import ToolChunk
 from .._base import ToolBase
-from .._types import ToolGroup
 from ...exception import DeveloperOrientedException
 from ...message import TextBlock
 from ...state import AgentState
@@ -47,7 +47,7 @@ class ResetTools(ToolBase):
 
     def __init__(
         self,
-        groups: dict[str, ToolGroup],
+        groups: list[ToolGroup],
         response_template: str,
     ) -> None:
         """Initialize the meta tool with the current tool groups."""
@@ -59,10 +59,10 @@ class ResetTools(ToolBase):
         """Dynamically generate the input schema based on the current
         available tool groups."""
         fields = {}
-        for group_name, group in self.groups.items():
-            if group_name == "basic":
+        for group in self.groups:
+            if group.name == "basic":
                 continue
-            fields[group_name] = (
+            fields[group.name] = (
                 bool,
                 Field(
                     default=False,
@@ -118,9 +118,7 @@ class ResetTools(ToolBase):
         _agent_state.tool_context.activated_groups.extend(to_activate)
 
         template = Template(self.response_template)
-        activated_groups = [
-            self.groups[_] for _ in to_activate if _ in self.groups
-        ]
+        activated_groups = [_ for _ in self.groups if _.name in to_activate]
         return ToolChunk(
             content=[
                 TextBlock(

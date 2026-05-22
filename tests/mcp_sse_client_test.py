@@ -113,7 +113,11 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
         # Register MCPTool via Toolkit constructor
         toolkit_with_mcp = Toolkit(tools=[mcp_tool_1])
 
-        schemas = toolkit_with_mcp.get_function_schemas()
+        schemas = await toolkit_with_mcp.get_tool_schemas()
+        from utils import compare_by_printing
+
+        compare_by_printing(schemas, self.schemas)
+
         self.assertListEqual(
             schemas,
             self.schemas,
@@ -149,12 +153,12 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
         )
 
         self.toolkit.clear()
-        self.assertDictEqual(self.toolkit.tools, {})
+        self.assertListEqual(self.toolkit.tool_groups, [])
 
         # Try to add the mcp client
-        await self.toolkit.register_mcp(stateless_client)
+        self.toolkit = Toolkit(mcps=[stateless_client])
         self.assertListEqual(
-            self.toolkit.get_function_schemas(),
+            await self.toolkit.get_tool_schemas(),
             self.schemas,
         )
 
@@ -200,8 +204,15 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
         # with toolkit - Register MCPTool via Toolkit constructor
         toolkit_with_mcp = Toolkit(tools=[mcp_tool_1])
 
+        from utils import compare_by_printing
+
+        compare_by_printing(
+            await toolkit_with_mcp.get_tool_schemas(),
+            self.schemas,
+        )
+
         self.assertListEqual(
-            toolkit_with_mcp.get_function_schemas(),
+            await toolkit_with_mcp.get_tool_schemas(),
             self.schemas,
         )
 
@@ -236,11 +247,11 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
 
         # mcp client level test
         self.toolkit.clear()
-        self.assertDictEqual(self.toolkit.tools, {})
+        self.assertListEqual(self.toolkit.tool_groups, [])
 
-        await self.toolkit.register_mcp(stateful_client)
+        self.toolkit = Toolkit(mcps=[stateful_client])
         self.assertListEqual(
-            self.toolkit.get_function_schemas(),
+            await self.toolkit.get_tool_schemas(),
             self.schemas,
         )
 

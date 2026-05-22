@@ -16,7 +16,7 @@ class WorkspaceBase(BaseModel):
     """Abstract base class representing the execution environment of an agent.
 
     Inherits from ``BaseModel`` so that each workspace instance is directly
-    serialisable via ``model_dump()`` / ``model_validate()``.  The ``type``
+    serializable via ``model_dump()`` / ``model_validate()``.  The ``type``
     discriminator field enables the manager to reconstruct the correct
     subclass from ``WorkspaceRecord.data`` without a separate factory.
 

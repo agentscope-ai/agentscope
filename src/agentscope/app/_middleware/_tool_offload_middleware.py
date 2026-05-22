@@ -214,10 +214,9 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         # - is_external_tool: external tools wait for a human/external system
         #   to push a result back; offloading them makes no sense because the
         #   agent would lose track of the pending confirmation.
-        registered = agent.toolkit.tools.get(tool_call.name)
-        if registered is not None and (
-            registered.tool.is_state_injected
-            or registered.tool.is_external_tool
+        tool = await agent.toolkit.get_tool(tool_call.name)
+        if tool is not None and (
+            tool.is_state_injected or tool.is_external_tool
         ):
             logger.info(
                 "Tool '%s' is state-injected or external, executing "

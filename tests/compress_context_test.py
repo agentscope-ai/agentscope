@@ -603,6 +603,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
 # Context to Preserve
 5</system-info>""",
         )
+
         self.assertListEqual(
             [_.model_dump() for _ in agent.state.context],
             [

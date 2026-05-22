@@ -71,7 +71,7 @@ async def get_agent(
 
     toolkit = Toolkit(
         tools=[Bash(), Read(), Write(), Edit()],
-        skills=[],
+        skills_or_loaders=[],
     )
 
     for mcp_client in await workspace.list_mcps():

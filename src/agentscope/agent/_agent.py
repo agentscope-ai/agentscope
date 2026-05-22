@@ -17,9 +17,7 @@ from typing import (
 
 import jsonschema
 
-from ._config import ContextConfig, ReActConfig, ModelConfig, ToolConfig
-from ..mcp import MCPClient
-from ..skill import SkillLoaderBase
+from ._config import ContextConfig, ReActConfig, ModelConfig
 from ..state import AgentState
 from ._utils import _ToolCallBatch
 from .._logging import logger
@@ -77,15 +75,14 @@ from ..tool import (
     Toolkit,
     ToolChunk,
     ToolChoice,
-    ToolResponse, ToolBase, ToolGroup, TaskCreate, TaskUpdate, TaskGet,
-    TaskList,
+    ToolResponse,
 )
 from ..permission import (
     PermissionBehavior,
     PermissionEngine,
     PermissionDecision,
 )
-from ..workspace import WorkspaceBase
+from ..workspace import Offloader
 
 if TYPE_CHECKING:
     from ..middleware import MiddlewareBase
@@ -101,19 +98,14 @@ class Agent:
         name: str,
         system_prompt: str,
         model: ChatModelBase,
-        workspace: WorkspaceBase | None = None,
+        toolkit: Toolkit | None = None,
         middlewares: list[MiddlewareBase] | None = None,
         state: AgentState | None = None,
-        # The tools into the agent
-        tools: list[ToolBase] | None = None,
-        skills: list[SkillLoaderBase | str] | None = None,
-        mcps: list[MCPClient] | None = None,
-        tool_groups: list[ToolGroup] | None = None,
+        offloader: Offloader | None = None,
         # The agent configurations
         model_config: ModelConfig = ModelConfig(),
         context_config: ContextConfig = ContextConfig(),
         react_config: ReActConfig = ReActConfig(),
-        tool_config: ToolConfig = ToolConfig(),
     ) -> None:
         """Initialize the agent class in AgentScope.
 
@@ -121,12 +113,13 @@ class Agent:
             name (`str`):
                 The agent identifier.
             system_prompt (`str`):
-                The agent's system prompt. Additional instructions may be appended to it dynamically during operation.
+                The agent's system prompt. Additional instructions may be
+                appended to it dynamically during operation.
             model (`ChatModelBase`):
                 The chat model/llm used for this agent.
-            workspace (`WorkspaceBase | None`, optional):
-                The agent's workspace for context offloading and providing
-                resource access.
+            toolkit (`Toolkit | None`, optional):
+                The toolkit used for registering tools, MCPs and skills as the
+                sole source.
             middlewares (`list[MiddlewareBase] | None`):
                 Middlewares applied to the agent to modify its behavior
                 without altering its source code. Supported hook points
@@ -134,6 +127,9 @@ class Agent:
                 prompt retrieval.
             state (`AgentState`):
                 The agent state. A new state will be created if not provided.
+            offloader (`OffloadProtocol | None`, optional):
+                The context offloader. If provided, the compressed context and
+                tool result will be offloaded.
             model_config (`ModelConfig`):
                 The additional chat model configuration including fallback
                 model and retries.
@@ -155,28 +151,13 @@ class Agent:
         # The permission engine
         self._engine = PermissionEngine(self.state.permission_context)
 
-        # The workspace
-        self.workspace = workspace
+        # The offloader/workspace
+        self.offloader = offloader
 
         # ====================================================================
         # The Tool-related logics
         # ====================================================================
-        tools = tools or []
-        if tool_config.task_tools:
-            tools.extend(
-                [
-                    TaskCreate(),
-                    TaskUpdate(),
-                    TaskGet(),
-                    TaskList(),
-                ]
-            )
-        self.toolkit = Toolkit(
-            tools=tools,
-            skills=skills,
-            mcps=mcps,
-            tool_groups=tool_groups,
-        )
+        self.toolkit = toolkit or Toolkit()
 
         # ====================================================================
         # The Middleware-related attributes
@@ -443,8 +424,8 @@ class Agent:
         # Update the summary
         self.state.summary = cfg.summary_template.format(**res.content)
 
-        if self.workspace:
-            path = await self.workspace.offload_context(
+        if self.offloader:
+            path = await self.offloader.offload_context(
                 self.state.session_id,
                 msgs=msgs_to_compress,
             )
@@ -677,7 +658,7 @@ class Agent:
         | Msg,
         None,
     ]:
-        """Reasoning entry point (may be wrapped by middleware)."""
+        """Reasoning entry point (maybe wrapped by middleware)."""
         if not self._reasoning_middlewares:
             async for item in self._reasoning_impl(tool_choice=tool_choice):
                 yield item
@@ -1049,14 +1030,11 @@ class Agent:
         # concurrently or not
         batches: list[_ToolCallBatch] = []
         for tool_call in tool_calls:
-            registered_tool = self.toolkit.tools.get(tool_call.name)
+            tool = await self.toolkit.get_tool(tool_call.name)
 
             # Treat unregistered or unavailable tools as concurrent tools since
             # it will not generate side effects and be blocked with acting
-            if (
-                registered_tool is None
-                or registered_tool.tool.is_concurrency_safe
-            ):
+            if tool is None or tool.is_concurrency_safe:
                 if len(batches) == 0 or batches[-1].type != "concurrent":
                     batches.append(
                         _ToolCallBatch(
@@ -1272,7 +1250,7 @@ class Agent:
         # ===================================================================
         try:
             # Check if the tool is available
-            tool = self.toolkit.check_tool_available(
+            tool = await self.toolkit.check_tool_available(
                 tool_call.name,
                 self.state.tool_context.activated_groups,
             )
@@ -1416,17 +1394,21 @@ class Agent:
                         reminder = (
                             "\n<<<TRUNCATED>>>\n<system-reminder>The "
                             "remaining content has been omitted for "
-                            "limited context.{offload_reminder}</system-reminder>"
+                            "limited context.{offload_reminder}"
+                            "</system-reminder>"
                         )
 
                         offload_reminder = ""
-                        if self.workspace:
-                            path = await self.workspace.offload_tool_result(
+                        if self.offloader:
+                            path = await self.offloader.offload_tool_result(
                                 self.state.session_id,
                                 offload_tool_result_block,
                             )
 
-                            offload_reminder = f" You can refer to the file in '{path}' for the truncated content if needed."
+                            offload_reminder = (
+                                f" You can refer to the file in '{path}' "
+                                f"for the truncated content if needed."
+                            )
 
                         reminder.format(offload_reminder=offload_reminder)
 
@@ -1924,7 +1906,7 @@ class Agent:
         messages.extend(self.state.context)
 
         # Get the tools schemas
-        tools = self.toolkit.get_function_schemas(
+        tools = await self.toolkit.get_tool_schemas(
             self.state.tool_context.activated_groups,
         )
 

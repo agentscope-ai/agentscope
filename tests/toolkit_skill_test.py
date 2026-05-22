@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """Test cases for Toolkit skill-related functionality."""
 import json
-import warnings
+import os
+import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString
 
-from agentscope.skill import SkillLoaderBase, LocalSkillLoader, Skill
+from agentscope.skill import SkillLoaderBase, Skill
 from agentscope.tool import Toolkit, ToolChunk, ToolResponse
 from agentscope.message import ToolCallBlock
 from agentscope.state import AgentState
@@ -41,37 +42,67 @@ class MockSkillLoader(SkillLoaderBase):
 class ToolkitSkillTest(IsolatedAsyncioTestCase):
     """Test cases for Toolkit skill functionality."""
 
-    async def test_init_with_skill_loader(self) -> None:
-        """Test that Toolkit accepts SkillLoaderBase instances in
-        constructor."""
-        loader = MockSkillLoader([_make_skill("skill_a")])
-        toolkit = Toolkit(skills=[loader])
+    async def test_init_with_various_types(self) -> None:
+        """Test Toolkit initialization with str path, SkillLoaderBase, and
+        direct Skill objects, then assert get_skill_instructions output."""
+        with tempfile.TemporaryDirectory() as skill_dir:
+            # Create a minimal SKILL.md so LocalSkillLoader can load it
+            skill_md_path = os.path.join(skill_dir, "SKILL.md")
+            with open(skill_md_path, "w", encoding="utf-8") as f:
+                f.write(
+                    "---\n"
+                    "name: path_skill\n"
+                    "description: A skill loaded from a path\n"
+                    "---\n\n"
+                    "# Path Skill\n",
+                )
 
-        self.assertEqual(len(toolkit.skills), 1)
-        self.assertIs(toolkit.skills[0], loader)
+            loader_skill = _make_skill(
+                "loader_skill",
+                description="A skill from loader",
+                dir_="/loader/dir",
+            )
+            direct_skill = _make_skill(
+                "direct_skill",
+                description="A directly provided skill",
+                dir_="/direct/dir",
+            )
 
-    async def test_init_with_string_path(self) -> None:
-        """Test that Toolkit wraps string paths in LocalSkillLoader."""
+            toolkit = Toolkit(
+                skills_or_loaders=[
+                    skill_dir,  # str -> LocalSkillLoader
+                    MockSkillLoader([loader_skill]),  # SkillLoaderBase
+                    direct_skill,  # Skill directly
+                ],
+            )
 
-        toolkit = Toolkit(skills=["/some/path"])
+            result = await toolkit.get_skill_instructions()
 
-        self.assertEqual(len(toolkit.skills), 1)
-        self.assertIsInstance(toolkit.skills[0], LocalSkillLoader)
+            self.assertEqual(
+                result,
+                f"""<agent-skills>
+Skills are a collection of instructions, scripts, and resources to extend your capabilities.
 
-    async def test_init_with_mixed_skills(self) -> None:
-        """Test that Toolkit handles mixed string and loader inputs."""
+**IMPORTANT**: Skills are NOT tools, and you cannot call a skill directly. To use a skill, you MUST use the `Skill` tool to read the skill's full instructions, and then follow those instructions to use the tools and resources provided by the skill.
 
-        loader = MockSkillLoader([_make_skill("skill_b")])
-        toolkit = Toolkit(skills=["/some/path", loader])
-
-        self.assertEqual(len(toolkit.skills), 2)
-        self.assertIsInstance(toolkit.skills[0], LocalSkillLoader)
-        self.assertIs(toolkit.skills[1], loader)
-
-    async def test_init_with_invalid_skill_type(self) -> None:
-        """Test that Toolkit raises TypeError for invalid skill types."""
-        with self.assertRaises(TypeError):
-            Toolkit(skills=[123])  # type: ignore
+# Available Skills:
+<skill>
+<name>path_skill</name>
+<description>A skill loaded from a path</description>
+<dir>{skill_dir}</dir>
+</skill>
+<skill>
+<name>loader_skill</name>
+<description>A skill from loader</description>
+<dir>/loader/dir</dir>
+</skill>
+<skill>
+<name>direct_skill</name>
+<description>A directly provided skill</description>
+<dir>/direct/dir</dir>
+</skill>
+</agent-skills>""",  # noqa: E501
+            )
 
     async def test_get_skill_instructions_no_skills(self) -> None:
         """Test that get_skill_instructions returns None when no skills
@@ -80,81 +111,41 @@ class ToolkitSkillTest(IsolatedAsyncioTestCase):
         result = await toolkit.get_skill_instructions()
         self.assertIsNone(result)
 
-    async def test_get_skill_instructions_with_skills(self) -> None:
-        """Test that get_skill_instructions returns correct prompt."""
-        skill = _make_skill(
-            "my_skill",
-            description="Does something useful",
-            dir_="/skills/my_skill",
-        )
-        loader = MockSkillLoader([skill])
-        toolkit = Toolkit(skills=[loader])
-
-        result = await toolkit.get_skill_instructions()
-
-        self.assertIsNotNone(result)
-        self.assertIn("my_skill", result)
-        self.assertIn("Does something useful", result)
-        self.assertIn("/skills/my_skill", result)
-
     async def test_get_skill_instructions_multiple_loaders(self) -> None:
         """Test that get_skill_instructions aggregates skills from multiple
         loaders."""
         loader1 = MockSkillLoader([_make_skill("skill_x")])
         loader2 = MockSkillLoader([_make_skill("skill_y")])
-        toolkit = Toolkit(skills=[loader1, loader2])
+        toolkit = Toolkit(skills_or_loaders=[loader1, loader2])
 
         result = await toolkit.get_skill_instructions()
 
-        self.assertIsNotNone(result)
-        self.assertIn("skill_x", result)
-        self.assertIn("skill_y", result)
+        self.assertEqual(
+            result,
+            # pylint: disable=line-too-long
+            """<agent-skills>
+Skills are a collection of instructions, scripts, and resources to extend your capabilities.
 
-    async def test_duplicate_skill_name_renamed(self) -> None:
-        """Test that duplicate skill names are renamed with a numeric
-        suffix."""
-        loader1 = MockSkillLoader(
-            [_make_skill("duplicate_skill", dir_="/dir1")],
+**IMPORTANT**: Skills are NOT tools, and you cannot call a skill directly. To use a skill, you MUST use the `Skill` tool to read the skill's full instructions, and then follow those instructions to use the tools and resources provided by the skill.
+
+# Available Skills:
+<skill>
+<name>skill_x</name>
+<description>desc</description>
+<dir>/tmp</dir>
+</skill>
+<skill>
+<name>skill_y</name>
+<description>desc</description>
+<dir>/tmp</dir>
+</skill>
+</agent-skills>""",  # noqa: E501
         )
-        loader2 = MockSkillLoader(
-            [_make_skill("duplicate_skill", dir_="/dir2")],
-        )
-        toolkit = Toolkit(skills=[loader1, loader2])
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            result = await toolkit.get_skill_instructions()
-
-        self.assertIsNotNone(result)
-        self.assertIn("duplicate_skill", result)
-        self.assertIn("duplicate_skill_1", result)
-
-        # A warning should have been issued
-        self.assertTrue(
-            any("duplicate_skill" in str(w.message) for w in caught),
-            "Expected a warning about duplicate skill name",
-        )
-
-    async def test_duplicate_skill_name_multiple_conflicts(self) -> None:
-        """Test that multiple duplicates get incrementing suffixes."""
-        loader1 = MockSkillLoader([_make_skill("dup", dir_="/dir1")])
-        loader2 = MockSkillLoader([_make_skill("dup", dir_="/dir2")])
-        loader3 = MockSkillLoader([_make_skill("dup", dir_="/dir3")])
-        toolkit = Toolkit(skills=[loader1, loader2, loader3])
-
-        with warnings.catch_warnings(record=True):
-            warnings.simplefilter("always")
-            result = await toolkit.get_skill_instructions()
-
-        self.assertIsNotNone(result)
-        self.assertIn("dup", result)
-        self.assertIn("dup_1", result)
-        self.assertIn("dup_2", result)
 
     async def test_get_skill_instructions_empty_loader(self) -> None:
         """Test that an empty loader contributes no skills."""
         loader = MockSkillLoader([])
-        toolkit = Toolkit(skills=[loader])
+        toolkit = Toolkit(skills_or_loaders=[loader])
 
         result = await toolkit.get_skill_instructions()
         self.assertIsNone(result)
@@ -168,9 +159,9 @@ class ToolkitSkillViewerTest(IsolatedAsyncioTestCase):
         function schemas."""
         skill = _make_skill("test_skill", description="A test skill")
         loader = MockSkillLoader([skill])
-        toolkit = Toolkit(skills=[loader])
+        toolkit = Toolkit(skills_or_loaders=[loader])
 
-        schemas = toolkit.get_function_schemas()
+        schemas = await toolkit.get_tool_schemas()
 
         self.assertListEqual(
             schemas,
@@ -211,7 +202,7 @@ class ToolkitSkillViewerTest(IsolatedAsyncioTestCase):
         )
         skill.markdown = "# My Skill\nThis is the skill content."
         loader = MockSkillLoader([skill])
-        toolkit = Toolkit(skills=[loader])
+        toolkit = Toolkit(skills_or_loaders=[loader])
 
         tool_call = ToolCallBlock(
             id="test_call_1",
@@ -267,7 +258,7 @@ class ToolkitSkillViewerTest(IsolatedAsyncioTestCase):
         """Test calling SkillViewer with a non-existent skill."""
         skill = _make_skill("existing_skill")
         loader = MockSkillLoader([skill])
-        toolkit = Toolkit(skills=[loader])
+        toolkit = Toolkit(skills_or_loaders=[loader])
 
         tool_call = ToolCallBlock(
             id="test_call_2",

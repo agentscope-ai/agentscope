@@ -14,9 +14,10 @@ from ._config import StdioMCPConfig, HttpMCPConfig
 from .._logging import logger
 
 if TYPE_CHECKING:
-    from ..tool import MCPTool
+    from ..tool import MCPTool, ToolBase
 else:
     MCPTool = Any
+    ToolBase = Any
 
 
 class MCPClient(BaseModel):
@@ -92,6 +93,9 @@ class MCPClient(BaseModel):
     disable_tools: list[str] | None = None
     """The tools disabled in this MCP, which will be filtered out in the
     `list_tools` function."""
+
+    execution_timeout: float | None = None
+    """The execution timeout in seconds for calling the tools from this MCP."""
 
     # Private attributes
     _client: Any = PrivateAttr(default=None)
@@ -275,13 +279,13 @@ class MCPClient(BaseModel):
         else:
             return self._create_http_client()
 
-    async def list_tools(self) -> list[mcp.types.Tool]:
+    async def list_tools(self) -> list[ToolBase]:
         """List available tools from the MCP server. If `enable_tools` and
         `disable_tools` are not `None` in the constructor, the returned
         tools will be filtered accordingly.
 
         Returns:
-            `list[mcp.types.Tool]`
+            `list[ToolBase]`:
                 List of available MCP tools.
 
         Raises:
@@ -318,12 +322,12 @@ class MCPClient(BaseModel):
             available_tools = [
                 _ for _ in available_tools if _ not in self.disable_tools
             ]
-        return available_tools
+
+        return [await self.get_tool(_.name) for _ in available_tools]
 
     async def get_tool(
         self,
         name: str,
-        execution_timeout: float | None = None,
     ) -> MCPTool:
         """Get a tool by name from the MCP server.
 
@@ -333,8 +337,6 @@ class MCPClient(BaseModel):
 
         Args:
             name: The name of the tool function to get.
-            execution_timeout: The preset timeout in seconds for calling
-                the tool function.
 
         Returns:
             A tool object that implements ToolProtocol.
@@ -369,7 +371,7 @@ class MCPClient(BaseModel):
                 mcp_name=self.name,
                 tool=target_tool,
                 client_gen=self._get_client_gen,
-                timeout=execution_timeout,
+                timeout=self.execution_timeout,
             )
         else:
             # Stateful: pass session
@@ -378,7 +380,7 @@ class MCPClient(BaseModel):
                 mcp_name=self.name,
                 tool=target_tool,
                 session=self._session,
-                timeout=execution_timeout,
+                timeout=self.execution_timeout,
             )
 
     def _validate_connection(self) -> None:

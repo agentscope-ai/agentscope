@@ -4,6 +4,8 @@
 import json
 from typing import Any, AsyncGenerator, Generator
 from unittest.async_case import IsolatedAsyncioTestCase
+
+from agentscope.tool._adapters import _FunctionTool
 from utils import AnyString
 
 from agentscope.state import AgentState
@@ -18,6 +20,7 @@ from agentscope.tool import (
     ToolBase,
     ToolChunk,
     ToolResponse,
+    ToolGroup,
 )
 from agentscope.permission import (
     PermissionDecision,
@@ -139,12 +142,12 @@ class ToolkitTest(IsolatedAsyncioTestCase):
         toolkit = Toolkit()
 
         # No tools
-        schemas = toolkit.get_function_schemas()
+        schemas = await toolkit.get_tool_schemas()
         self.assertEqual(len(schemas), 0)
 
         # Initialize the toolkit with tools
         toolkit = Toolkit(tools=[Tool1(), Tool2()])
-        schemas = toolkit.get_function_schemas()
+        schemas = await toolkit.get_tool_schemas()
         self.assertListEqual(
             schemas,
             [
@@ -433,11 +436,12 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 content=[TextBlock(text=f"Result: {result}")],
             )
 
-        toolkit = Toolkit()
-        toolkit.register_function(add_numbers, group="basic")
+        toolkit = Toolkit(
+            tools=[_FunctionTool(add_numbers)],
+        )
 
         # Test schema
-        schemas = toolkit.get_function_schemas()
+        schemas = await toolkit.get_tool_schemas()
         self.assertEqual(len(schemas), 1)
         self.assertDictEqual(
             schemas[0],
@@ -531,11 +535,16 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                     content=[TextBlock(text=str(i))],
                 )
 
-        toolkit = Toolkit()
-        toolkit.register_function(count_to_n, group="basic")
+        toolkit = Toolkit(
+            tools=[
+                _FunctionTool(
+                    func=count_to_n
+                )
+            ]
+        )
 
         # Test schema
-        schemas = toolkit.get_function_schemas()
+        schemas = await toolkit.get_tool_schemas()
         self.assertEqual(len(schemas), 1)
         self.assertDictEqual(
             schemas[0],
@@ -627,11 +636,12 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 content=[TextBlock(text=f"Product: {result}")],
             )
 
-        toolkit = Toolkit()
-        toolkit.register_function(multiply_numbers, group="basic")
+        toolkit = Toolkit(
+            tools=[_FunctionTool(multiply_numbers)]
+        )
 
         # Test schema
-        schemas = toolkit.get_function_schemas()
+        schemas = await toolkit.get_tool_schemas()
         self.assertEqual(len(schemas), 1)
         self.assertDictEqual(
             schemas[0],
@@ -729,11 +739,12 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                     content=[TextBlock(text=f"Number: {i}")],
                 )
 
-        toolkit = Toolkit()
-        toolkit.register_function(generate_sequence, group="basic")
+        toolkit = Toolkit(
+            tools=[_FunctionTool(generate_sequence)],
+        )
 
         # Test schema
-        schemas = toolkit.get_function_schemas()
+        schemas = await toolkit.get_tool_schemas()
         self.assertEqual(len(schemas), 1)
         self.assertDictEqual(
             schemas[0],
@@ -844,19 +855,22 @@ class ToolGroupTest(IsolatedAsyncioTestCase):
         toolkit = Toolkit()
 
         # Test meta tool when no groups exist
-        schemas = toolkit.get_function_schemas()
+        schemas = await toolkit.get_tool_schemas()
         self.assertEqual(len(schemas), 0)
 
-        # Without tools
-        toolkit.create_tool_group(
-            group_name="group_1",
-            description="Group 1",
+        toolkit = Toolkit(
+            tool_groups=[
+                ToolGroup(
+                    name="group_1",
+                    description="Group 1",
+                ),
+            ],
         )
 
         # The group is created successfully
-        self.assertEqual(len(toolkit.groups), 1)
+        self.assertEqual(len(toolkit.tool_groups), 2)
         # The builtin meta tool is activated
-        schemas = toolkit.get_function_schemas()
+        schemas = await toolkit.get_tool_schemas()
 
         self.assertListEqual(
             schemas,
@@ -883,21 +897,37 @@ class ToolGroupTest(IsolatedAsyncioTestCase):
 
         # Name conflict
         with self.assertRaises(ValueError):
-            toolkit.create_tool_group(
-                group_name="group_1",
-                description="xxx",
+            Toolkit(
+                tool_groups=[
+                    ToolGroup(
+                        name="group_2",
+                        description="Group 2",
+                    ),
+                    ToolGroup(
+                        name="group_2",
+                        description="Group 2",
+                    ),
+                ],
             )
 
         # A new group with tools
-        toolkit.create_tool_group(
-            group_name="group_2",
-            description="Group 2",
-            instructions="This is group 2.",
-            tools=[Tool1(), Tool2()],
+        toolkit = Toolkit(
+            tool_groups=[
+                ToolGroup(
+                    name="group_1",
+                    description="Group 1",
+                ),
+                ToolGroup(
+                    name="group_2",
+                    description="Group 2",
+                    tools=[Tool1(), Tool2()],
+                    instructions="This is group 2.",
+                ),
+            ],
         )
 
-        self.assertEqual(len(toolkit.groups), 2)
-        schemas = toolkit.get_function_schemas()
+        self.assertEqual(len(toolkit.tool_groups), 3)
+        schemas = await toolkit.get_tool_schemas()
         self.assertListEqual(
             schemas,
             [
@@ -942,7 +972,6 @@ class ToolGroupTest(IsolatedAsyncioTestCase):
 
         chunk = await anext(res)
         self.assertIsInstance(chunk, ToolResponse)
-
         self.assertDictEqual(
             chunk.model_dump(),
             {
@@ -985,7 +1014,7 @@ The tool instructions are a collection of suggestions, rules and notifications a
                     {
                         "type": "text",
                         "id": AnyString(),
-                        "text": """The currently activated tool group(s): group_2, group_1.
+                        "text": """The currently activated tool group(s): group_1, group_2.
 <tool-instructions>
 The tool instructions are a collection of suggestions, rules and notifications about how to use the tools in the activated groups.
 <group name="group_2">This is group 2.</group>

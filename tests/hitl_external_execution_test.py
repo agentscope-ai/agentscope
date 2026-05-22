@@ -12,7 +12,6 @@ from agentscope.tool import (
     ToolBase,
     Toolkit,
     ToolChunk,
-    RegisteredTool,
 )
 from agentscope.permission import (
     PermissionDecision,
@@ -270,9 +269,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
         """
         # Register external tool
         ext_tool = MockExternalSequentialTool()
-        self.agent.toolkit.tools[ext_tool.name] = RegisteredTool(
-            tool=ext_tool,
-            group="basic",
+        self.agent.toolkit = Toolkit(
+            tools=[ext_tool],
         )
 
         # Set up mock response with tool call (no final text response)
@@ -480,9 +478,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
         """
         # Register external sequential tool
         ext_tool = MockExternalSequentialTool()
-        self.agent.toolkit.tools[ext_tool.name] = RegisteredTool(
-            tool=ext_tool,
-            group="basic",
+        self.agent.toolkit = Toolkit(
+            tools=[ext_tool],
         )
 
         # Set up mock response with multiple tool calls
@@ -779,9 +776,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
         """
         # Register external concurrent tool
         ext_tool = MockExternalConcurrentTool()
-        self.agent.toolkit.tools[ext_tool.name] = RegisteredTool(
-            tool=ext_tool,
-            group="basic",
+        self.agent.toolkit = Toolkit(
+            tools=[ext_tool],
         )
 
         # Set up mock response with multiple tool calls
@@ -1078,9 +1074,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
         4. Continue reasoning only after both results are applied
         """
         ext_tool = MockExternalConcurrentTool()
-        self.agent.toolkit.tools[ext_tool.name] = RegisteredTool(
-            tool=ext_tool,
-            group="basic",
+        self.agent.toolkit = Toolkit(
+            tools=[ext_tool],
         )
 
         self.model.set_responses(

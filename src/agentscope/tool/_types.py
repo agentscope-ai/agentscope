@@ -53,7 +53,7 @@ class RegisteredTool:
                     f"Invalid input_schema: {self.tool.input_schema}. ",
                 )
 
-    def get_function_schema(
+    def get_tool_schema(
         self,
         extended_model: Type[BaseModel] | None = None,
     ) -> dict:
@@ -174,6 +174,8 @@ Function: TypeAlias = (
     Callable[..., Coroutine[Any, Any, Generator[ToolChunk, None, None]]]
 )
 
+ToolChoiceMode: TypeAlias = Literal["auto", "none", "required"] | str | None
+
 
 class ToolChoice(BaseModel):
     """The tool choice configuration.
@@ -199,5 +201,5 @@ class ToolChoice(BaseModel):
             avoids schema-list changes that would invalidate prompt caches.
     """
 
-    mode: Literal["auto", "none", "required"] | str
+    mode: Literal["auto", "none", "required"] | str | None = None
     tools: list[str] | None = None

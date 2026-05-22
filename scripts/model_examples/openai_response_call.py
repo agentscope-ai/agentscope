@@ -70,7 +70,7 @@ async def example_tool_call() -> None:
     """Call the OpenAI Response model with tool calling enabled."""
     toolkit = Toolkit()
     toolkit.register_function(get_weather)
-    tools = toolkit.get_function_schemas()
+    tools = await toolkit.get_tool_schemas()
 
     model = OpenAIResponseModel(
         credential=OpenAICredential(

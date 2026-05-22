@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=redefined-builtin
 """The basic test of the agent class."""
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
@@ -12,7 +11,6 @@ from agentscope.tool import (
     ToolBase,
     Toolkit,
     ToolChunk,
-    RegisteredTool,
 )
 from agentscope.permission import (
     PermissionDecision,
@@ -51,6 +49,7 @@ class MockSequentialTool(ToolBase):
             message="Mock tool always allows",
         )
 
+    # pylint: disable=redefined-builtin
     async def __call__(self, input: str, **kwargs: Any) -> ToolChunk:
         """Execute the tool."""
         return ToolChunk(
@@ -87,6 +86,7 @@ class MockConcurrentTool(ToolBase):
             message="Mock tool always allows",
         )
 
+    # pylint: disable=redefined-builtin
     async def __call__(self, input: str, **kwargs: Any) -> ToolChunk:
         """Execute the tool."""
         return ToolChunk(
@@ -533,10 +533,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         """
         # Register sequential tools
         seq_tool = MockSequentialTool()
-        self.agent.toolkit.tools[seq_tool.name] = RegisteredTool(
-            tool=seq_tool,
-            group="basic",
-        )
+        self.agent.toolkit = Toolkit(tools=[seq_tool])
 
         # Create tool call IDs
         tool_call_id_1 = "tool_call_1"
@@ -800,9 +797,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         # Register concurrent tools
         conc_tool = MockConcurrentTool()
 
-        self.agent.toolkit.tools[conc_tool.name] = RegisteredTool(
-            tool=conc_tool,
-            group="basic",
+        self.agent.toolkit = Toolkit(
+            tools=[conc_tool],
         )
 
         # Create tool call IDs
@@ -1039,14 +1035,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         seq_tool = MockSequentialTool()
         conc_tool = MockConcurrentTool()
 
-        self.agent.toolkit.tools[seq_tool.name] = RegisteredTool(
-            tool=seq_tool,
-            group="basic",
-        )
-
-        self.agent.toolkit.tools[conc_tool.name] = RegisteredTool(
-            tool=conc_tool,
-            group="basic",
+        self.agent.toolkit = Toolkit(
+            tools=[seq_tool, conc_tool],
         )
 
         # Create tool call IDs

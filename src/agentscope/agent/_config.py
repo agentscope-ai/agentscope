@@ -182,20 +182,3 @@ Skills are a collection of instructions, scripts, and resources to extend your c
 </skill>{% endfor %}
 </agent-skills>
 """  # noqa: E501
-
-
-class ToolConfig(BaseModel):
-    """The tool configuration for the agent."""
-
-    skill_viewer: bool = True
-    """If enable the builtin skill viewer."""
-
-    task_tools: bool = True
-    """If enable the builtin task tools, including TaskCreate, TaskGet, 
-    TaskList, and TaskUpdate."""
-
-    meta_tool_response_template: str = DEFAULT_META_TOOL_RESPONSE_TEMPLATE
-    """The meta tool response template."""
-
-    skill_instruction_template: str = DEFAULT_META_TOOL_RESPONSE_TEMPLATE
-    """The skill instruction template."""

@@ -2,8 +2,6 @@
 """The cron scheduler manager class."""
 from collections.abc import Callable, Coroutine
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
 
 from ....message import UserMsg
 from ....tool import ToolBase
@@ -51,6 +49,8 @@ class SchedulerManager:
                 The workspace manager passed through to :class:`ChatService`
                 so triggered agents get the configured toolkit and MCPs.
         """
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
         self._storage = storage
         self._session_manager = session_manager
         self._background_task_manager = background_task_manager
@@ -270,6 +270,9 @@ class SchedulerManager:
             `str`:
                 The APScheduler job ID (equal to ``record.id``).
         """
+
+        from apscheduler.triggers.cron import CronTrigger
+
         logger.info(
             "Registering schedule %s(%s) cron=%s tz=%s",
             record.id,
@@ -277,6 +280,7 @@ class SchedulerManager:
             record.data.cron_expression,
             record.data.timezone,
         )
+
         trigger = self._build_trigger(record)
         job = self._scheduler.add_job(
             trigger,

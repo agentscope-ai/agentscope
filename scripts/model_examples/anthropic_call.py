@@ -68,7 +68,7 @@ async def example_tool_call() -> None:
     """Call the Anthropic model with tool calling enabled."""
     toolkit = Toolkit()
     toolkit.register_function(get_weather)
-    tools = toolkit.get_function_schemas()
+    tools = await toolkit.get_tool_schemas()
 
     model = AnthropicChatModel(
         credential=AnthropicCredential(

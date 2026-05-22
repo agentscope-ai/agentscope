@@ -68,7 +68,7 @@ async def example_tool_call() -> None:
     """
     toolkit = Toolkit()
     toolkit.register_function(get_weather)
-    tools = toolkit.get_function_schemas()
+    tools = await toolkit.get_tool_schemas()
 
     model = DashScopeChatModel(
         credential=DashScopeCredential(

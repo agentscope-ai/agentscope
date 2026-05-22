@@ -1,15 +1,13 @@
 # -*- coding: utf-8 -*-
-"""The tool group class in AgentScope for serialization."""
-
-from typing import Any, Literal
-from pydantic import BaseModel, Field
+"""The tool group class."""
+from typing import Literal
 
 from ..mcp import MCPClient
 from ._base import ToolBase
-from ._registry import ToolRegistry
+from ..skill import SkillLoaderBase, Skill, LocalSkillLoader
 
 
-class ToolGroup(BaseModel):
+class ToolGroup:
     """A group of related tools, mcps, and skills that an agent can activate,
     deactivate and use together. The tool group is activated by the meta tool
     `ResetTools`.
@@ -19,103 +17,79 @@ class ToolGroup(BaseModel):
     deserialization, you need to register the child class first.
     """
 
-    name: Literal["basic"] | str = Field(
-        title="Group Name",
-        description="The name of the tool group.",
-    )
+    name: Literal["basic"] | str
     """Note the "basic" group is special and represents the default tool group
     that will be always be activated for the agent."""
 
-    description: str = Field(
-        title="Group Description",
-        description="The description of the tool group.",
-    )
+    description: str
     """A description of the tool group from an agent-oriented perspective,
     outlining its capabilities and the conditions under which it should be
     activated."""
 
-    instructions: str | None = Field(
-        default=None,
-        title="Group Instructions",
-        description="The instructions that will be contained when this tool "
-        "group is activated.",
-    )
+    instructions: str | None
     """Instructions included in the meta tool's result upon activation of
     this tool group, guiding the agent on how to properly use the meta tool."""
 
-    tools: list[ToolBase] | None = Field(
-        default=None,
-        title="Tools",
-        description="The tools in this group.",
-    )
+    tools: list[ToolBase]
     """The tools in this group."""
 
-    skills: list[str] | None = Field(
-        default=None,
-        title="Skills",
-        description="The skills in this group.",
-    )
+    skills_or_loaders: list[Skill | SkillLoaderBase]
     """The skills in this group."""
 
-    mcps: list[MCPClient] | None = Field(
-        default=None,
-        title="MCP Clients",
-        description="The mcps in this group, whose tools will be attached to "
-        "this group.",
-    )
+    mcps: list[MCPClient]
     """The mcps in this group."""
 
-    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
-        """Override model_dump to serialize tools using ToolRegistry.
-
-        Returns:
-            `dict[str, Any]`:
-                The serialized tool group configuration.
-        """
-        data = super().model_dump(**kwargs)
-
-        # Serialize tools using ToolRegistry
-        if self.tools:
-            data["tools"] = [
-                ToolRegistry.serialize_tool(tool) for tool in self.tools
-            ]
-
-        # Serialize MCPs (save their configuration)
-        if self.mcps:
-            data["mcps"] = [
-                mcp.to_config() if hasattr(mcp, "to_config") else {}
-                for mcp in self.mcps
-            ]
-
-        return data
-
-    @classmethod
-    def model_validate(cls, obj: Any, **kwargs: Any) -> "ToolGroup":
-        """Override model_validate to deserialize tools using ToolRegistry.
+    def __init__(
+        self,
+        name: Literal["basic"] | str,
+        description: str | None = None,
+        instructions: str | None = None,
+        tools: list[ToolBase] | None = None,
+        skills_or_loaders: list[str | Skill | SkillLoaderBase] | None = None,
+        mcps: list[MCPClient] | None = None,
+    ) -> None:
+        """Initialize the tool group.
 
         Args:
-            obj (`Any`):
-                The object to validate and deserialize.
-
-        Returns:
-            `ToolGroup`:
-                The deserialized tool group instance.
+            name (`Literal["basic"] | str):
+                The name of the tool group.
+            description (`str | None`):
+                The description of the tool group.
+            instructions (`str | None`, optional):
+                Instructions included in the meta tool's result upon
+                activation of this tool group, guiding the agent on how to
+                properly use the meta tool.
+            tools (`list[ToolBase] | None`, optional):
+                The tools in this group.
+            skills_or_loaders (`list[str | Skill | SkillLoaderBase] | None`, \
+            optional):
+                The skill paths, data, and loaders to access skills in this
+                group.
+            mcps (`list[MCPClient] | None`, optional):
+                The mcps in this group.
         """
-        if isinstance(obj, dict):
-            # Deserialize tools using ToolRegistry
-            if "tools" in obj and obj["tools"]:
-                obj["tools"] = [
-                    ToolRegistry.deserialize_tool(tool_config)
-                    for tool_config in obj["tools"]
-                ]
+        self.name = name
+        self.description = description
+        self.instructions = instructions
+        self.tools = tools or []
+        self.mcps = mcps or []
 
-            # Deserialize MCPs
-            if "mcps" in obj and obj["mcps"]:
-                obj["mcps"] = [
-                    MCPClient.from_config(mcp_config)
-                    if hasattr(MCPClient, "from_config")
-                    else MCPClient(**mcp_config)
-                    for mcp_config in obj["mcps"]
-                ]
+        # Skill
+        self.skills_or_loaders = []
+        for _ in skills_or_loaders or []:
+            if isinstance(_, str):
+                self.skills_or_loaders.append(LocalSkillLoader(directory=_))
 
-        return super().model_validate(obj, **kwargs)
+            if isinstance(_, (Skill, SkillLoaderBase)):
+                self.skills_or_loaders.append(_)
+
+    async def list_skills(self) -> list[Skill]:
+        """List all the skills in this tool group."""
+        skills = []
+        for skill_or_loader in self.skills_or_loaders:
+            if isinstance(skill_or_loader, Skill):
+                skills.append(skill_or_loader)
+            elif isinstance(skill_or_loader, SkillLoaderBase):
+                skills.extend(await skill_or_loader.list_skills())
+
+        return skills

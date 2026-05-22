@@ -7,6 +7,7 @@ from pydantic import Field
 
 from ._base import WorkspaceBase
 from ._local_workspace import LocalWorkspace
+from ._offload_protocol import Offloader
 
 AnyWorkspace = Annotated[Union[LocalWorkspace], Field(discriminator="type")]
 
@@ -14,4 +15,5 @@ __all__ = [
     "AnyWorkspace",
     "WorkspaceBase",
     "LocalWorkspace",
+    "Offloader",
 ]

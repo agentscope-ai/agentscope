@@ -19,14 +19,14 @@ class ChatUsage(DictMixin):
     time: float
     """The time used in seconds."""
 
-    type: Literal["chat"] = field(default_factory=lambda: "chat")
-    """The type of the usage, must be `chat`."""
-
     cache_creation_input_tokens: int = field(default_factory=lambda: 0)
     """The number of input tokens used to create the prompt cache."""
 
     cache_input_tokens: int = field(default_factory=lambda: 0)
     """The number of input tokens read from the prompt cache."""
+
+    type: Literal["chat"] = field(default_factory=lambda: "chat")
+    """The type of the usage, must be `chat`."""
 
     metadata: dict[str, Any] | None = field(default_factory=lambda: None)
     """Optional metadata associated with the usage."""

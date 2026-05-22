@@ -11,7 +11,6 @@ from agentscope.tool import (
     ToolBase,
     Toolkit,
     ToolChunk,
-    RegisteredTool,
 )
 from agentscope.permission import (
     PermissionDecision,
@@ -245,9 +244,8 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         """
         # Register user confirm tool
         confirm_tool = MockUserConfirmSequentialTool()
-        self.agent.toolkit.tools[confirm_tool.name] = RegisteredTool(
-            tool=confirm_tool,
-            group="basic",
+        self.agent.toolkit = Toolkit(
+            tools=[confirm_tool],
         )
 
         # Set up mock response with tool call (no final text response)
@@ -482,9 +480,8 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         """
         # Register user confirm sequential tool
         confirm_tool = MockUserConfirmSequentialTool()
-        self.agent.toolkit.tools[confirm_tool.name] = RegisteredTool(
-            tool=confirm_tool,
-            group="basic",
+        self.agent.toolkit = Toolkit(
+            tools=[confirm_tool],
         )
 
         # Set up mock response with multiple tool calls
@@ -829,9 +826,8 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         """
         # Register user confirm concurrent tool
         confirm_tool = MockUserConfirmConcurrentTool()
-        self.agent.toolkit.tools[confirm_tool.name] = RegisteredTool(
-            tool=confirm_tool,
-            group="basic",
+        self.agent.toolkit = Toolkit(
+            tools=[confirm_tool],
         )
 
         # Set up mock response with multiple tool calls
@@ -1179,9 +1175,8 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         4. Execute both tools and continue reasoning after both complete
         """
         confirm_tool = MockUserConfirmConcurrentTool()
-        self.agent.toolkit.tools[confirm_tool.name] = RegisteredTool(
-            tool=confirm_tool,
-            group="basic",
+        self.agent.toolkit = Toolkit(
+            tools=[confirm_tool],
         )
 
         self.model.set_responses(
