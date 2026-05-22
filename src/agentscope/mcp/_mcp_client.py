@@ -320,7 +320,7 @@ class MCPClient(BaseModel):
             ]
         if self.disable_tools is not None:
             available_tools = [
-                _ for _ in available_tools if _ not in self.disable_tools
+                _ for _ in available_tools if _.name not in self.disable_tools
             ]
 
         return [await self.get_tool(_.name) for _ in available_tools]

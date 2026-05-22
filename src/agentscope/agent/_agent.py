@@ -127,7 +127,7 @@ class Agent:
                 prompt retrieval.
             state (`AgentState`):
                 The agent state. A new state will be created if not provided.
-            offloader (`OffloadProtocol | None`, optional):
+            offloader (`Offloader | None`, optional):
                 The context offloader. If provided, the compressed context and
                 tool result will be offloaded.
             model_config (`ModelConfig`):
@@ -1410,7 +1410,9 @@ class Agent:
                                 f"for the truncated content if needed."
                             )
 
-                        reminder.format(offload_reminder=offload_reminder)
+                        reminder = reminder.format(
+                            offload_reminder=offload_reminder,
+                        )
 
                         # Insert the reminder to the tool result output
                         if isinstance(reserved_tool_result_block.output, str):

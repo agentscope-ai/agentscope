@@ -145,9 +145,6 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
         toolkit_with_mcp = Toolkit(tools=[mcp_tool_1])
 
         schemas = await toolkit_with_mcp.get_tool_schemas()
-        from utils import compare_by_printing
-
-        compare_by_printing(schemas, self.schemas)
 
         self.assertListEqual(
             schemas,
@@ -235,13 +232,6 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
         # with toolkit - Register MCPTool via Toolkit constructor
         toolkit_with_mcp = Toolkit(tools=[mcp_tool_1])
 
-        from utils import compare_by_printing
-
-        compare_by_printing(
-            await toolkit_with_mcp.get_tool_schemas(),
-            self.schemas,
-        )
-
         self.assertListEqual(
             await toolkit_with_mcp.get_tool_schemas(),
             self.schemas,
@@ -296,7 +286,7 @@ class SseSchemaDefsPreservationTest(IsolatedAsyncioTestCase):
     These tests start a real FastMCP server that exposes a tool whose
     parameter is a Pydantic sub-model.  FastMCP generates an inputSchema with
     ``$defs`` for the sub-model.  We verify that the schema returned by
-    ``Toolkit.get_function_schemas()`` preserves those ``$defs`` and that
+    ``await toolkit.get_tool_schemas()`` preserves those ``$defs`` and that
     Pydantic-generated ``title`` fields inside ``$defs`` are stripped.
     """
 
@@ -359,7 +349,7 @@ class SseSchemaDefsPreservationTest(IsolatedAsyncioTestCase):
 
         Expected behaviour (after fix):
             - ``MCPTool.input_schema`` contains ``$defs._ItemConfig``
-            - ``Toolkit.get_function_schemas()`` output contains ``$defs``
+            - ``await toolkit.get_tool_schemas()`` output contains ``$defs``
               with the ref resolved and Pydantic titles stripped.
         """
         client = MCPClient(
@@ -380,7 +370,7 @@ class SseSchemaDefsPreservationTest(IsolatedAsyncioTestCase):
             "MCPTool.input_schema must preserve $defs from inputSchema",
         )
 
-        # 2. get_function_schemas() must preserve $defs and strip titles
+        # 2. get_tool_schemas() must preserve $defs and strip titles
         toolkit = Toolkit(tools=[mcp_tool])
-        schemas = toolkit.get_function_schemas()
+        schemas = await toolkit.get_tool_schemas()
         self.assertListEqual(schemas, self.schemas)

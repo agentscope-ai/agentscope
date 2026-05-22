@@ -250,7 +250,7 @@ class Toolkit:
 
         if tool_call.name not in available_tools:
             all_tools = await self._get_available_tools(
-                groups=[_ for _ in self.tool_groups if _.name != "basic"],
+                groups=[_.name for _ in self.tool_groups],
             )
             # Not activate
             if tool_call.name in all_tools:
@@ -596,4 +596,4 @@ class Toolkit:
 
     def clear(self) -> None:
         """Clear the registered tools, skills and MCPs."""
-        self.tool_groups = []
+        self.tool_groups.clear()

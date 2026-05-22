@@ -80,8 +80,14 @@ class ToolGroup:
             if isinstance(_, str):
                 self.skills_or_loaders.append(LocalSkillLoader(directory=_))
 
-            if isinstance(_, (Skill, SkillLoaderBase)):
+            elif isinstance(_, (Skill, SkillLoaderBase)):
                 self.skills_or_loaders.append(_)
+
+            else:
+                raise TypeError(
+                    f"Invalid skill or loader: {_}. Must be a skill, "
+                    f"skill loader, or directory path.",
+                )
 
     async def list_skills(self) -> list[Skill]:
         """List all the skills in this tool group."""
