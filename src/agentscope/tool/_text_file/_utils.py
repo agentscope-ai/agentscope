@@ -3,6 +3,59 @@
 from ...exception import ToolInvalidArgumentsError
 
 
+def _validate_path(file_path: str) -> str:
+    """Validate the file path to prevent path traversal attacks.
+
+    The function ensures the resolved path stays within the current working
+    directory or any explicitly allowed absolute base directory set via the
+    ``AGENTSCOPE_WORKSPACE`` environment variable.
+
+    Args:
+        file_path (`str`):
+            The file path to validate. Absolute paths are rejected unless the
+            path is contained within ``AGENTSCOPE_WORKSPACE``.
+
+    Returns:
+        `str`:
+            The validated, normalised file path string.
+
+    Raises:
+        ToolInvalidArgumentsError: If the path is an absolute path outside
+            the allowed workspace, or if path traversal is detected.
+    """
+    import os
+    from pathlib import Path
+
+    workspace_env = os.environ.get("AGENTSCOPE_WORKSPACE", "./workspace")
+    if workspace_env:
+        base = Path(workspace_env).resolve()
+    else:
+        base = Path.cwd()
+
+    # Reject absolute paths that attempt to bypass the workspace
+    if os.path.isabs(file_path):
+        resolved = Path(file_path).resolve()
+        try:
+            resolved.relative_to(base)
+        except ValueError as exc:
+            raise ToolInvalidArgumentsError(
+                f"SecurityError: Absolute path '{file_path}' is outside "
+                f"the allowed workspace '{base}'.",
+            ) from exc
+        return str(resolved)
+
+    # For relative paths, resolve against base and check containment
+    resolved = (base / file_path).resolve()
+    try:
+        resolved.relative_to(base)
+    except ValueError as exc:
+        raise ToolInvalidArgumentsError(
+            f"SecurityError: Path traversal detected in '{file_path}'. "
+            f"File operations are restricted to '{base}'.",
+        ) from exc
+    return str(resolved)
+
+
 def _calculate_view_ranges(
     old_n_lines: int,
     new_n_lines: int,

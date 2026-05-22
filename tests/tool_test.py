@@ -359,6 +359,80 @@ print("456")"""
             "not in the valid range [1, 66].",
         )
 
+    async def test_path_traversal_security(self) -> None:
+        """Test that path traversal attacks are blocked (CWE-22 fix)."""
+        with tempfile.TemporaryDirectory() as workspace:
+            os.environ["AGENTSCOPE_WORKSPACE"] = workspace
+            safe_file = os.path.join(workspace, "safe.txt")
+            with open(safe_file, "w", encoding="utf-8") as f:
+                f.write("safe content\n")
+
+            # --- view_text_file ---
+
+            # Normal relative path: allowed
+            res = await view_text_file("safe.txt")
+            self.assertIn("safe content", res.content[0]["text"])
+
+            # Path traversal via relative path: blocked
+            res = await view_text_file("../../etc/passwd")
+            self.assertIn("SecurityError", res.content[0]["text"])
+
+            # Absolute path outside workspace: blocked
+            res = await view_text_file("/etc/passwd")
+            self.assertIn("SecurityError", res.content[0]["text"])
+
+            # Absolute path inside workspace: allowed
+            res = await view_text_file(safe_file)
+            self.assertIn("safe content", res.content[0]["text"])
+
+            # Tilde path (~/) outside workspace: blocked
+            tilde_path = f"~/.agentscope_traversal_test_{shortuuid.uuid()}.txt"
+            res = await view_text_file(tilde_path)
+            self.assertIn("SecurityError", res.content[0]["text"])
+
+            # --- write_text_file ---
+
+            # Path traversal write: blocked
+            res = await write_text_file(
+                "../../tmp/pwned.txt",
+                "PWNED",
+                None,
+            )
+            self.assertIn("SecurityError", res.content[0]["text"])
+            self.assertFalse(os.path.exists("/tmp/pwned.txt"))
+
+            # Absolute path outside workspace write: blocked
+            res = await write_text_file("/tmp/backdoor.py", "evil", None)
+            self.assertIn("SecurityError", res.content[0]["text"])
+            self.assertFalse(os.path.exists("/tmp/backdoor.py"))
+
+            # Normal write inside workspace: allowed
+            res = await write_text_file("new_file.txt", "hello\n", None)
+            self.assertIn("successfully", res.content[0]["text"])
+            self.assertTrue(
+                os.path.exists(os.path.join(workspace, "new_file.txt")),
+            )
+
+            # --- insert_text_file ---
+
+            # Path traversal insert: blocked
+            res = await insert_text_file(
+                "../../tmp/insert_pwned.txt",
+                "PWNED",
+                1,
+            )
+            self.assertIn("SecurityError", res.content[0]["text"])
+
+            # Absolute path outside workspace insert: blocked
+            res = await insert_text_file("/tmp/insert_evil.txt", "evil", 1)
+            self.assertIn("SecurityError", res.content[0]["text"])
+
+            # Normal insert inside workspace: allowed
+            res = await insert_text_file("safe.txt", "inserted", 1)
+            self.assertIn("successfully", res.content[0]["text"])
+
+        del os.environ["AGENTSCOPE_WORKSPACE"]
+
     def tearDown(self) -> None:
         """Clean up after tests."""
         if os.path.exists(self.path_file):

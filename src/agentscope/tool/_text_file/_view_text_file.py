@@ -26,7 +26,20 @@ async def view_text_file(
         `ToolResponse`:
             The tool response containing the file content or an error message.
     """
-    file_path = os.path.expanduser(file_path)
+    from ._utils import _validate_path
+
+    try:
+        file_path = _validate_path(os.path.expanduser(file_path))
+    except ToolInvalidArgumentsError as e:
+        return ToolResponse(
+            content=[
+                TextBlock(
+                    type="text",
+                    text=e.message,
+                ),
+            ],
+        )
+
     if not os.path.exists(file_path):
         return ToolResponse(
             content=[
