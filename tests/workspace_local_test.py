@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 from urllib.request import url2pathname
 
 import aiofiles
-
+from utils import AnyString, MockModel
 from agentscope.agent import Agent, ContextConfig
 from agentscope.model import ChatResponse, StructuredResponse
 from agentscope.state import AgentState
@@ -33,7 +33,6 @@ from agentscope.message import (
     ToolResultState,
     ToolCallBlock,
 )
-from utils import AnyString, MockModel
 
 
 class _LongResultTool(ToolBase):
