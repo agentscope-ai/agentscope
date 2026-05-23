@@ -16,25 +16,19 @@
 
 ---
 
-### Q3: Does the ReAct agent support dynamic Pydantic models for structured output?
+### Q3: Does AgentScope support the MCP (Model Control Protocol)?
 
-**A**: Yes! AgentScope implements **dynamic JSON Schema generation** with Pydantic validation. See the documentation: [Structured Output](https://doc.agentscope.io/tutorial/task_agent.html#structured-output).
-
----
-
-### Q4: Does AgentScope support the MCP (Model Control Protocol)?
-
-**A**: Yes. AgentScope is compatible with the standard MCP protocol for integrating external tools and services. Tutorial reference: [MCP User Guide](https://doc.agentscope.io/zh_CN/tutorial/task_mcp.html).
+**A**: Yes. AgentScope is compatible with the standard MCP protocol for integrating external tools and services. Tutorial reference: [MCP User Guide](https://docs.agentscope.io).
 
 ---
 
-### Q5: Are there community-developed AgentScope applications beyond the official examples?
+### Q4: Are there community-developed AgentScope applications beyond the official examples?
 
 **A**: Yes! Check out the [agentscope-samples](https://github.com/agentscope-ai/agentscope-samples) repository, which contains community-contributed examples including Werewolf, debates, intelligent customer service, and more.
 
 ---
 
-### Q6: What is the difference between model fine-tuning and memory retrieval?
+### Q5: What is the difference between model fine-tuning and memory retrieval?
 
 **A**:
 
@@ -45,7 +39,7 @@
 
 ---
 
-### Q7: What is the relationship between AgentScope-Java and Spring AI Alibaba?
+### Q6: What is the relationship between AgentScope-Java and Spring AI Alibaba?
 
 **A**:
 
@@ -56,6 +50,6 @@
 
 ---
 
-### Q8: Can AgentScope be used with AI coding assistants like Cursor or Claude Code?
+### Q7: Can AgentScope be used with AI coding assistants like Cursor or Claude Code?
 
-**A**: Absolutely! AgentScope has a clean code structure and comprehensive documentation, making it well-suited for use with AI coding assistants. It is recommended to provide AgentScope source code or tutorials (located in `docs/tutorial/en/src/`) as context to the AI for better results.
+**A**: Absolutely! AgentScope has a clean code structure and comprehensive documentation, making it well-suited for use with AI coding assistants. It is recommended to provide AgentScope source code or tutorials as context to the AI for better results.

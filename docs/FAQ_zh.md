@@ -16,25 +16,19 @@
 
 ---
 
-### Q3：ReAct 智能体是否支持动态 Pydantic 模型进行结构化输出？
+### Q3：AgentScope 是否支持 MCP（Model Control Protocol）协议？
 
-**A**：支持！AgentScope 已实现 **动态 JSON Schema 生成**，并利用 Pydantic 进行校验。详见文档：[结构化输出](https://doc.agentscope.io/tutorial/task_agent.html#structured-output)。
-
----
-
-### Q4：AgentScope 是否支持 MCP（Model Control Protocol）协议？
-
-**A**：支持。AgentScope 兼容标准 MCP 协议，可用于对接外部工具或服务。教程参考：[MCP 使用指南](https://doc.agentscope.io/zh_CN/tutorial/task_mcp.html)。
+**A**：支持。AgentScope 兼容标准 MCP 协议，可用于对接外部工具或服务。教程参考：[MCP 使用指南](https://docs.agentscope.io)。
 
 ---
 
-### Q5：除了官方示例，是否有社区开发的 AgentScope 应用？
+### Q4：除了官方示例，是否有社区开发的 AgentScope 应用？
 
 **A**：有！可查看 [agentscope-samples](https://github.com/agentscope-ai/agentscope-samples) 仓库，其中包含社区贡献的狼人杀、辩论、智能客服等多种场景示例。
 
 ---
 
-### Q6：模型微调和记忆召回有什么区别？
+### Q5：模型微调和记忆召回有什么区别？
 
 **A**：
 
@@ -45,7 +39,7 @@
 
 ---
 
-### Q7：AgentScope-Java 和 Spring AI Alibaba 是什么关系？
+### Q6：AgentScope-Java 和 Spring AI Alibaba 是什么关系？
 
 **A**：
 
@@ -56,7 +50,7 @@
 
 ---
 
-### Q8：能否配合 Cursor、Claude Code 等 AI 编程助手使用 AgentScope？
+### Q7：能否配合 Cursor、Claude Code 等 AI 编程助手使用 AgentScope？
 
-**A**：完全可以！AgentScope 代码结构清晰、文档完善，非常适合与 AI 编程助手配合。建议将 AgentScope 源码或教程（位于 `docs/tutorial/en/src/`）作为上下文提供给 AI，效果更佳。
+**A**：完全可以！AgentScope 代码结构清晰、文档完善，非常适合与 AI 编程助手配合。建议将 AgentScope 源码或教程作为上下文提供给 AI，效果更佳。
 
