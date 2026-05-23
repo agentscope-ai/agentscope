@@ -13,8 +13,7 @@ class ToolGroup:
     `ResetTools`.
 
     In high-code scenarios, the tools argument accepts any child classes for
-    ToolBase class, and the tool groups supports serialization. To support
-    deserialization, you need to register the child class first.
+    ToolBase class, and the tool groups supports serialization.
     """
 
     name: Literal["basic"] | str
@@ -68,8 +67,15 @@ class ToolGroup:
             mcps (`list[MCPClient] | None`, optional):
                 The mcps in this group.
         """
+        if name != "basic" and description is None:
+            raise ValueError(
+                f"The tool group description is required for tool group "
+                f"'{name}' (Only the 'basic' tool group can have an optional "
+                f"description).",
+            )
+
         self.name = name
-        self.description = description
+        self.description = description or ""
         self.instructions = instructions
         self.tools = tools or []
         self.mcps = mcps or []

@@ -97,12 +97,13 @@ class Toolkit:
 
         Args:
             tools (`list[ToolBase] | None`, optional):
-                The tool objects that implement the ToolProtocol interface.
+                The tool objects that belong to the "basic" tool group.
             skills_or_loaders (`list[str | Skill | SkillLoaderBase] | None`, \
             optional):
-                The agent skill directories to be registered.
+                The agent skill directories to be registered in the "base"
+                tool group.
             mcps (`list[MCPClient] | None`, optional):
-                The mcp clients to be registered.
+                The mcp clients to be registered in the "base" tool group.
             tool_groups (`list[ToolGroup] | None`, optional):
                 The tool groups to be registered.
             meta_tool_response_template (`str`, optional):
@@ -389,8 +390,7 @@ class Toolkit:
         groups: list[str] | None = None,
     ) -> dict[str, Skill]:
         """A unified method to collect all skills from the registered skill
-        loaders. Including the name conflict handling for skills with the
-        same name.
+        loaders.
 
         Args:
             groups (`list[str] | None`, optional):

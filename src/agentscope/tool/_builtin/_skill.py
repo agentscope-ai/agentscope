@@ -2,6 +2,7 @@
 """The builtin skill viewer tool."""
 from typing import Any, Callable, Awaitable
 
+from ...exception import DeveloperOrientedException
 from ...permission import (
     PermissionContext,
     PermissionDecision,
@@ -11,6 +12,7 @@ from .._response import ToolChunk
 from .._base import ToolBase
 from ...skill import Skill
 from ...message import TextBlock, ToolResultState
+from ...state import AgentState
 
 
 class SkillViewer(ToolBase):
@@ -45,7 +47,7 @@ class SkillViewer(ToolBase):
     is_external_tool: bool = False
     """The skill viewer is not an external tool."""
 
-    is_state_injected: bool = False
+    is_state_injected: bool = True
     """The skill viewer doesn't require state injection."""
 
     is_read_only: bool = True
@@ -80,7 +82,11 @@ class SkillViewer(ToolBase):
             message="The skill viewer is always allowed to be called.",
         )
 
-    async def __call__(self, skill: str) -> ToolChunk:
+    async def __call__(
+        self,
+        skill: str,
+        _agent_state: AgentState,
+    ) -> ToolChunk:
         """View the details of the skill with the given name.
 
         Args:
@@ -91,8 +97,16 @@ class SkillViewer(ToolBase):
             `ToolChunk`:
                 The details of the skill.
         """
+        if not isinstance(_agent_state, AgentState):
+            raise DeveloperOrientedException(
+                f"Expected AgentState but got {type(_agent_state)} "
+                "instead for the Skill viewer tool.",
+            )
 
-        skills = await self._get_skills_method()
+        # View the activated skills
+        skills = await self._get_skills_method(
+            _agent_state.tool_context.activated_groups,
+        )
         target_skill = skills.get(skill)
         if not target_skill:
             return ToolChunk(

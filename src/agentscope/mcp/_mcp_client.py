@@ -123,29 +123,32 @@ class MCPClient(BaseModel):
 
         # Check arguments for self.enable_tools and disable_tools
         if self.enable_tools is not None:
-            assert isinstance(self.enable_tools, list) and all(
-                isinstance(_, str) for _ in self.enable_tools
-            ), (
-                "Enable functions should be a list of strings, but got "
-                f"{self.enable_tools}."
-            )
+            if not isinstance(self.enable_tools, list) or any(
+                not isinstance(_, str) for _ in self.enable_tools
+            ):
+                raise ValueError(
+                    "Enable functions should be a list of strings, but got "
+                    f"{self.enable_tools}.",
+                )
 
         if self.disable_tools is not None:
-            assert isinstance(self.disable_tools, list) and all(
-                isinstance(_, str) for _ in self.disable_tools
-            ), (
-                "Disable functions should be a list of strings, but got "
-                f"{self.disable_tools}."
-            )
+            if not isinstance(self.disable_tools, list) or any(
+                not isinstance(_, str) for _ in self.disable_tools
+            ):
+                raise ValueError(
+                    "Disable functions should be a list of strings, but got "
+                    f"{self.disable_tools}.",
+                )
 
         if self.enable_tools is not None and self.disable_tools is not None:
             intersection = set(self.enable_tools).intersection(
                 set(self.disable_tools),
             )
-            assert len(intersection) == 0, (
-                f"The functions in enable_tools and disable_tools "
-                f"should not overlap, but got {intersection}."
-            )
+            if len(intersection) != 0:
+                raise ValueError(
+                    f"The functions in enable_tools and disable_tools "
+                    f"should not overlap, but got {intersection}.",
+                )
 
         # Initialize the underlying client
         self._initialize_client()

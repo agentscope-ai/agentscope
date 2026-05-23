@@ -863,7 +863,6 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 ],
             )
 
-            # 测试运行
             await agent.reply()
 
             # === Assert offload file content ===

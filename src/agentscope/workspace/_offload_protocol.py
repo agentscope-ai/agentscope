@@ -14,7 +14,18 @@ class Offloader(Protocol):
         msgs: list[Msg],
         **kwargs: Any,
     ) -> str:
-        """Offload compressed context to workspace-accessible storage."""
+        """Offload compressed context to workspace-accessible storage.
+
+        Args:
+            session_id (`str`):
+                The session id.
+            msgs (`list[Msg]`):
+                The messages to offload.
+
+        Returns:
+            `str`:
+                The offloaded context reference.
+        """
 
     async def offload_tool_result(
         self,
@@ -22,4 +33,15 @@ class Offloader(Protocol):
         tool_result: ToolResultBlock,
         **kwargs: Any,
     ) -> str:
-        """Offload a tool result to workspace-accessible storage."""
+        """Offload a tool result to workspace-accessible storage.
+
+        Args:
+            session_id (`str`):
+                The session id.
+            tool_result (`ToolResultBlock`):
+                The tool result.
+
+        Returns:
+            `str`:
+                The offloaded context reference.
+        """

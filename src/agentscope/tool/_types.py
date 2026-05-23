@@ -174,8 +174,6 @@ Function: TypeAlias = (
     Callable[..., Coroutine[Any, Any, Generator[ToolChunk, None, None]]]
 )
 
-ToolChoiceMode: TypeAlias = Literal["auto", "none", "required"] | str | None
-
 
 class ToolChoice(BaseModel):
     """The tool choice configuration.
@@ -201,5 +199,5 @@ class ToolChoice(BaseModel):
             avoids schema-list changes that would invalidate prompt caches.
     """
 
-    mode: Literal["auto", "none", "required"] | str | None = None
+    mode: Literal["auto", "none", "required"] | str
     tools: list[str] | None = None
