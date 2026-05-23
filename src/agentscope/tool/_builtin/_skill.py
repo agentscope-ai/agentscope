@@ -48,7 +48,8 @@ class SkillViewer(ToolBase):
     """The skill viewer is not an external tool."""
 
     is_state_injected: bool = True
-    """The skill viewer doesn't require state injection."""
+    """The skill viewer require state injection to access the activated tool
+    group."""
 
     is_read_only: bool = True
     """The skill viewer is read-only."""

@@ -100,10 +100,10 @@ class Toolkit:
                 The tool objects that belong to the "basic" tool group.
             skills_or_loaders (`list[str | Skill | SkillLoaderBase] | None`, \
             optional):
-                The agent skill directories to be registered in the "base"
+                The agent skill directories to be registered in the "basic"
                 tool group.
             mcps (`list[MCPClient] | None`, optional):
-                The mcp clients to be registered in the "base" tool group.
+                The mcp clients to be registered in the "basic" tool group.
             tool_groups (`list[ToolGroup] | None`, optional):
                 The tool groups to be registered.
             meta_tool_response_template (`str`, optional):

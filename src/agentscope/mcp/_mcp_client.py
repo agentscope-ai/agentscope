@@ -127,7 +127,7 @@ class MCPClient(BaseModel):
                 not isinstance(_, str) for _ in self.enable_tools
             ):
                 raise ValueError(
-                    "Enable functions should be a list of strings, but got "
+                    "Enable tools should be a list of strings, but got "
                     f"{self.enable_tools}.",
                 )
 
@@ -136,7 +136,7 @@ class MCPClient(BaseModel):
                 not isinstance(_, str) for _ in self.disable_tools
             ):
                 raise ValueError(
-                    "Disable functions should be a list of strings, but got "
+                    "Disable tools should be a list of strings, but got "
                     f"{self.disable_tools}.",
                 )
 
@@ -146,7 +146,7 @@ class MCPClient(BaseModel):
             )
             if len(intersection) != 0:
                 raise ValueError(
-                    f"The functions in enable_tools and disable_tools "
+                    f"The tools in enable_tools and disable_tools "
                     f"should not overlap, but got {intersection}.",
                 )
 
