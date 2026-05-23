@@ -27,6 +27,47 @@ from ._model_response import ChatResponse
 from ..tracing import trace_llm
 from ..types import JSONSerializableObject
 
+
+def _extract_cached_tokens_from_gemini(usage_metadata: Any) -> int | None:
+    """Extract cached input tokens from Gemini usage metadata safely.
+
+    Gemini API returns cached_content_token_count in usage_metadata when
+    context caching is used.
+
+    Args:
+        usage_metadata: The usage metadata object from Gemini API response.
+
+    Returns:
+        Number of cached tokens if available (including 0), None if
+        the field is not reported by the API.
+    """
+    if usage_metadata is None:
+        return None
+
+    # Use sentinel to distinguish between 0 (reported) and missing
+    sentinel = object()
+
+    # Try cached_content_token_count (snake_case)
+    cached_tokens = getattr(
+        usage_metadata,
+        "cached_content_token_count",
+        sentinel,
+    )
+    if cached_tokens is not sentinel:
+        return cached_tokens
+
+    # Alternative: check cachedContentTokenCount (camelCase for JSON)
+    cached_tokens = getattr(
+        usage_metadata,
+        "cachedContentTokenCount",
+        sentinel,
+    )
+    if cached_tokens is not sentinel:
+        return cached_tokens
+
+    return None
+
+
 if TYPE_CHECKING:
     from google.genai.types import GenerateContentResponse
 else:
@@ -330,6 +371,9 @@ class GeminiChatModel(ChatModelBase):
                 input_tokens=prompt_tokens,
                 output_tokens=total_tokens - prompt_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
+                cached_tokens=_extract_cached_tokens_from_gemini(
+                    usage_metadata,
+                ),
             )
         return None
 
