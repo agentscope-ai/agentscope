@@ -23,8 +23,8 @@ import os
 import time
 from typing import Any
 
-from .._logging import logger
-from ..mcp import MCPClient
+from agentscope._logging import logger
+from agentscope.mcp import MCPClient
 from .local_workspace import LocalWorkspace
 from .types import SerializedWorkspaceState
 from .workspace_base import WorkspaceBase

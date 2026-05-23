@@ -13,8 +13,6 @@ Subclasses must implement:
   URL
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import uuid
@@ -26,13 +24,11 @@ import mcp.types as _mcp_types
 from pydantic import Field, PrivateAttr
 
 from .._logging import logger
-from ..mcp import MCPClient
-from ..mcp._config import HttpMCPConfig
+from ..mcp import MCPClient, HttpMCPConfig
 from ..message import TextBlock, ToolResultState
 from ..permission import PermissionBehavior, PermissionDecision
-from ..tool._base import ToolBase
-from ..tool._response import ToolChunk
-from .workspace_base import WorkspaceBase
+from ..tool import ToolBase, ToolChunk
+from ._workspace_base import WorkspaceBase
 
 # ── REST-backed ToolBase / MCPClient implementations ─────────────
 

@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from ..message import Msg, ToolResultBlock
     from ..skill import Skill
     from ..tool import ToolBase
-    from .types import ExecutionResult
+    from ._types import ExecutionResult
 
 
 class WorkspaceBase(BaseModel):

@@ -31,7 +31,7 @@ import asyncio
 from abc import ABC, abstractmethod
 from typing import Any
 
-from .._logging import logger
+from agentscope._logging import logger
 from .types import SerializedWorkspaceState
 from .workspace_base import WorkspaceBase
 

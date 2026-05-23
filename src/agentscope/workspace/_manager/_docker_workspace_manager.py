@@ -25,9 +25,9 @@ Pool usage (RL rollout)::
 
 from typing import Any
 
-from .._logging import logger
-from ..mcp import MCPClient
-from ..mcp._config import HttpMCPConfig, StdioMCPConfig
+from agentscope._logging import logger
+from agentscope.mcp import MCPClient
+from agentscope.mcp._config import HttpMCPConfig, StdioMCPConfig
 from .docker_workspace import DockerWorkspace
 from .types import SerializedWorkspaceState
 from .workspace_base import WorkspaceBase

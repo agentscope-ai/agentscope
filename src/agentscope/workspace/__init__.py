@@ -18,12 +18,16 @@ Two workspace managers (for agent-service deployments):
 - :class:`DockerWorkspaceManager`
 """
 
-from .docker_workspace import InternalEndpoint
-from .local_workspace import LocalWorkspace
-from .local_workspace_manager import LocalWorkspaceManager
-from .types import ExecutionResult, SerializedWorkspaceState
-from .workspace_base import WorkspaceBase
-from .workspace_manager_base import WorkspaceManagerBase
+from ._docker_workspace import InternalEndpoint
+from ._local_workspace import LocalWorkspace
+from ._types import ExecutionResult, SerializedWorkspaceState
+from ._workspace_base import WorkspaceBase
+from ._manager import (
+    WorkspaceManagerBase,
+    LocalWorkspaceManager,
+    DockerWorkspaceManager,
+    E2BWorkspaceManager,
+)
 
 __all__ = [
     # base
@@ -38,32 +42,3 @@ __all__ = [
     "WorkspaceManagerBase",
     "LocalWorkspaceManager",
 ]
-
-# Optional imports — don't fail if docker/e2b not installed
-try:
-    from .docker_workspace import DockerWorkspace
-
-    __all__.append("DockerWorkspace")
-except ImportError:
-    DockerWorkspace = None  # type: ignore[assignment,misc]
-
-try:
-    from .docker_workspace_manager import DockerWorkspaceManager
-
-    __all__.append("DockerWorkspaceManager")
-except ImportError:
-    DockerWorkspaceManager = None  # type: ignore[assignment,misc]
-
-try:
-    from .e2b_workspace import E2BWorkspace
-
-    __all__.append("E2BWorkspace")
-except ImportError:
-    E2BWorkspace = None  # type: ignore[assignment,misc]
-
-try:
-    from .e2b_workspace_manager import E2BWorkspaceManager
-
-    __all__.append("E2BWorkspaceManager")
-except ImportError:
-    E2BWorkspaceManager = None  # type: ignore[assignment,misc]

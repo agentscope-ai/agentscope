@@ -27,8 +27,8 @@ Pool usage (RL rollout)::
 
 from typing import Any
 
-from .._logging import logger
-from ..mcp import MCPClient
+from agentscope._logging import logger
+from agentscope.mcp import MCPClient
 from .e2b_workspace import E2BWorkspace
 from .types import SerializedWorkspaceState
 from .workspace_base import WorkspaceBase

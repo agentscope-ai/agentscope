@@ -56,8 +56,8 @@ from ..tool import (
     ToolBase,
     Write,
 )
-from .types import ExecutionResult, SerializedWorkspaceState
-from .workspace_base import WorkspaceBase
+from ._types import ExecutionResult, SerializedWorkspaceState
+from ._workspace_base import WorkspaceBase
 
 # --- helpers ---
 

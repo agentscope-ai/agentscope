@@ -41,8 +41,8 @@ from ..message import (
 )
 from ..skill import Skill
 from ..tool import ToolBase
-from .mcp_enhanced_workspace import WorkspaceWithMCP
-from .types import ExecutionResult, SerializedWorkspaceState
+from ._mcp_enhanced_workspace import WorkspaceWithMCP
+from ._types import ExecutionResult, SerializedWorkspaceState
 
 _DEFAULT_INSTRUCTIONS = """<workspace>
 You have access to a Docker-based workspace.
