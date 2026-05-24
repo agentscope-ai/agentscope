@@ -54,7 +54,6 @@ from agentscope.permission import PermissionBehavior, PermissionDecision
 from agentscope.tool import ToolBase, ToolChunk
 from agentscope.workspace import DockerWorkspace
 from agentscope.workspace._docker._make_dockerfile import (
-    CONTAINER_DATA_DIR,
     CONTAINER_SESSIONS_DIR,
     CONTAINER_SKILLS_DIR,
 )
@@ -239,7 +238,8 @@ class TestDockerWorkspaceOffload(IsolatedAsyncioTestCase):
             self.assertIsNotNone(Msg.model_validate_json(line))
 
     async def test_offload_context_with_datablock(self) -> None:
-        """DataBlock(Base64Source) is rewritten to URLSource on a separate file.
+        """DataBlock(Base64Source) is rewritten to URLSource on a
+        separate file.
 
         Verifies:
         1. The decoded payload lands on disk under ``<workdir>/data/``

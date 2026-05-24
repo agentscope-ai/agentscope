@@ -137,9 +137,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
             next ``get_workspace`` caller).
         """
         expired_ids = [
-            wid
-            for wid, (_, ts) in self._cache.items()
-            if now - ts > self._ttl
+            wid for wid, (_, ts) in self._cache.items() if now - ts > self._ttl
         ]
         evicted: list[E2BWorkspace] = []
         for wid in expired_ids:

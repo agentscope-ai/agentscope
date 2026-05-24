@@ -118,9 +118,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
             the next ``get_workspace`` caller).
         """
         expired_ids = [
-            wid
-            for wid, (_, ts) in self._cache.items()
-            if now - ts > self._ttl
+            wid for wid, (_, ts) in self._cache.items() if now - ts > self._ttl
         ]
         evicted: list[DockerWorkspace] = []
         for wid in expired_ids:
