@@ -1,0 +1,12 @@
+# TODO(release): when agentscope is on PyPI, drop this whole block and use
+# Dockerfile.install_pypi.template instead. Copying the source tree is a
+# transitional dev-only path so the in-container gateway can `import agentscope`.
+COPY agentscope_src /tmp/agentscope_src
+# ``--no-deps``: the gateway only imports ``agentscope.mcp.MCPClient``,
+# whose transitive needs (mcp, pydantic, httpx, fastapi) are already
+# installed via requirements.txt above. Skipping agentscope's full
+# dependency tree avoids dragging in heavy/Rust-built packages
+# (ripgrep, tree_sitter, opentelemetry, anthropic/openai SDKs, …)
+# which would otherwise require a C/Rust toolchain in the slim image.
+RUN uv pip install --no-deps /tmp/agentscope_src \
+ && rm -rf /tmp/agentscope_src

@@ -15,7 +15,7 @@ from typing import Any, Literal, TypedDict
 import aiofiles
 import aiofiles.ospath
 import frontmatter
-from pydantic import AnyUrl, Field, PrivateAttr, field_validator
+from pydantic import AnyUrl
 
 from ._base import WorkspaceBase
 from ..mcp import MCPClient
@@ -127,33 +127,64 @@ class LocalWorkspace(WorkspaceBase):
         ├── skills/       # skill subdirectories
         └── sessions/     # per-session context and tool-result files
 
-    ``workdir`` and ``type`` are the only fields serialised to
-    ``WorkspaceRecord.data``.  ``default_mcps`` and ``skill_paths`` are
-    service-level defaults that are excluded from serialisation.
+    Args:
+        workdir: Filesystem path to the workspace root. Created on
+            demand. Always resolved to an absolute path.
+        workspace_id: Existing workspace identifier to adopt. ``None``
+            generates a fresh UUID.
+        default_mcps: MCP clients seeded into a brand-new workspace.
+            Ignored on subsequent restarts that already have a
+            persisted ``<workdir>/.mcp`` file.
+        skill_paths: Local skill directories seeded into
+            ``<workdir>/skills`` on first :meth:`initialize`.
+        instructions: System-prompt fragment template returned by
+            :meth:`get_instructions`. Supports the ``{workdir}``
+            placeholder.
+
+    ``default_mcps`` and ``skill_paths`` are seed-time inputs and are
+    not retained as instance state past :meth:`initialize`.
     """  # noqa: E501
 
     type: Literal["local"] = "local"
-    workdir: str
 
-    # Excluded from model_dump() — service-level defaults, not user state
-    default_mcps: list[MCPClient] = Field(default_factory=list, exclude=True)
-    skill_paths: list[str] = Field(default_factory=list, exclude=True)
+    def __init__(
+        self,
+        *,
+        workdir: str,
+        workspace_id: str | None = None,
+        default_mcps: list[MCPClient] | None = None,
+        skill_paths: list[str] | None = None,
+        instructions: str = _DEFAULT_WORKSPACE_INSTRUCTIONS,
+    ) -> None:
+        """Construct a :class:`LocalWorkspace`.
 
-    # Runtime state — not Pydantic fields
-    _mcps: list[MCPClient] = PrivateAttr(default_factory=list)
-    _instructions: str = PrivateAttr(default=_DEFAULT_WORKSPACE_INSTRUCTIONS)
+        The workspace is *not* started here; call :meth:`initialize`
+        (or use the workspace as an ``async`` context manager).
 
-    @field_validator("workdir", mode="before")
-    @classmethod
-    def _normalise_workdir(cls, v: str) -> str:
-        return os.path.abspath(v)
+        See the class docstring for the full argument set.
+        """
+        super().__init__(workspace_id=workspace_id)
+
+        # ── serializable config ─────────────────────────────────
+        self.workdir = os.path.abspath(workdir)
+        self.instructions = instructions
+
+        # ── seed-only ───────────────────────────────────────────
+        self.default_mcps: list[MCPClient] = list(default_mcps or [])
+        self.skill_paths: list[str] = list(skill_paths or [])
+
+        # ── runtime state ───────────────────────────────────────
+        self._mcps: list[MCPClient] = []
 
     async def initialize(self) -> None:
         """Initialise the workspace.
 
         MCP state is restored from ``.mcp`` if it exists; otherwise
-        ``default_mcps`` are used.  ``skill_paths`` are seeded on first use.
+        ``default_mcps`` are used and persisted so the next start picks
+        them up from disk. ``skill_paths`` are seeded on first use.
         """
+        os.makedirs(self.workdir, exist_ok=True)
+
         # Restore or seed MCPs
         mcp_file = os.path.join(self.workdir, ".mcp")
         if await aiofiles.ospath.exists(mcp_file):
@@ -164,6 +195,7 @@ class LocalWorkspace(WorkspaceBase):
                 ]
         else:
             self._mcps = list(self.default_mcps)
+            await self._save_mcp_file()
 
         for mcp in self._mcps:
             if mcp.is_stateful and not mcp.is_connected:
@@ -267,7 +299,7 @@ class LocalWorkspace(WorkspaceBase):
 
     async def get_instructions(self) -> str:
         """Get the workspace instructions."""
-        return self._instructions.format(workdir=self.workdir)
+        return self.instructions.format(workdir=self.workdir)
 
     async def _load_skills_file(self, skills_dir: str) -> _SkillsFile:
         """Load the .skills index file, returning an empty structure if absent.
@@ -803,31 +835,31 @@ class LocalWorkspace(WorkspaceBase):
         except Exception as e:
             logger.warning("Failed to save .mcp to %s: %s", mcp_file, str(e))
 
-    async def add_mcp(self, mcp: MCPClient) -> None:
+    async def add_mcp(self, mcp_client: MCPClient) -> None:
         """Add an MCP client, connect it if stateful, and persist.
 
         Args:
-            mcp: The MCP client to add.
+            mcp_client: The MCP client to add.
         """
-        if mcp.is_stateful and not mcp.is_connected:
-            await mcp.connect()
-        self._mcps.append(mcp)
+        if mcp_client.is_stateful and not mcp_client.is_connected:
+            await mcp_client.connect()
+        self._mcps.append(mcp_client)
         await self._save_mcp_file()
 
-    async def remove_mcp(self, mcp_name: str) -> None:
+    async def remove_mcp(self, name: str) -> None:
         """Remove an MCP client by name, disconnecting it if stateful.
 
         Args:
-            mcp_name: The ``name`` field of the client to remove.
+            name: The ``name`` field of the client to remove.
         """
         for i, mcp in enumerate(self._mcps):
-            if mcp.name == mcp_name:
+            if mcp.name == name:
                 if mcp.is_stateful and mcp.is_connected:
                     await mcp.close()
                 self._mcps.pop(i)
                 await self._save_mcp_file()
                 return
-        logger.warning("MCP client %r not found in workspace", mcp_name)
+        logger.warning("MCP client %r not found in workspace", name)
 
     async def add_skill(self, skill_path: str) -> None:
         """Add a skill to the workspace by copying from the given path.
@@ -921,7 +953,7 @@ class LocalWorkspace(WorkspaceBase):
         )
         await self._save_skills_file(skills_dir, skills_file)
 
-    async def remove_skill(self, skill_name: str) -> None:
+    async def remove_skill(self, name: str) -> None:
         """Remove a skill from the workspace by its agent-facing name.
 
         The skill directory is deleted from disk and the ``.skills`` index is
@@ -929,7 +961,7 @@ class LocalWorkspace(WorkspaceBase):
         logged and the method returns without error.
 
         Args:
-            skill_name (`str`):
+            name (`str`):
                 The agent-facing name of the skill to remove (as stored in the
                 ``.skills`` index, i.e. the ``name`` field from ``SKILL.md``
                 possibly with a numeric suffix for de-duplication).
@@ -939,7 +971,7 @@ class LocalWorkspace(WorkspaceBase):
         if not await aiofiles.ospath.isdir(skills_dir):
             logger.warning(
                 "Skills directory does not exist; cannot remove skill %r",
-                skill_name,
+                name,
             )
             return
 
@@ -948,12 +980,12 @@ class LocalWorkspace(WorkspaceBase):
 
         target_dir: str | None = None
         for dir_name, entry in existing.items():
-            if entry["skill_name"] == skill_name:
+            if entry["skill_name"] == name:
                 target_dir = dir_name
                 break
 
         if target_dir is None:
-            logger.warning("Skill %r not found in workspace", skill_name)
+            logger.warning("Skill %r not found in workspace", name)
             return
 
         skill_dir_path = os.path.join(skills_dir, target_dir)
@@ -961,7 +993,7 @@ class LocalWorkspace(WorkspaceBase):
             await asyncio.to_thread(shutil.rmtree, skill_dir_path)
             logger.info(
                 "Removed skill '%s' from %s",
-                skill_name,
+                name,
                 skill_dir_path,
             )
         else:

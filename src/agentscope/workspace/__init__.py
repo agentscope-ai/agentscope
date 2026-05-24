@@ -1,19 +1,18 @@
 # -*- coding: utf-8 -*-
 """The workspace module in agentscope."""
 
-from typing import Annotated, Union
-
-from pydantic import Field
 
 from ._base import WorkspaceBase
 from ._local_workspace import LocalWorkspace
 from ._offload_protocol import Offloader
+from ._docker import DockerWorkspace
+from ._e2b import E2BWorkspace
 
-AnyWorkspace = Annotated[Union[LocalWorkspace], Field(discriminator="type")]
 
 __all__ = [
-    "AnyWorkspace",
     "WorkspaceBase",
     "LocalWorkspace",
+    "DockerWorkspace",
+    "E2BWorkspace",
     "Offloader",
 ]

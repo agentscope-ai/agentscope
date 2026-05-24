@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """The tool group class."""
-from typing import Literal
+from typing import Literal, Sequence
 
 from ..mcp import MCPClient
 from ._base import ToolBase
@@ -44,7 +44,8 @@ class ToolGroup:
         description: str | None = None,
         instructions: str | None = None,
         tools: list[ToolBase] | None = None,
-        skills_or_loaders: list[str | Skill | SkillLoaderBase] | None = None,
+        skills_or_loaders: Sequence[str | Skill | SkillLoaderBase]
+        | None = None,
         mcps: list[MCPClient] | None = None,
     ) -> None:
         """Initialize the tool group.

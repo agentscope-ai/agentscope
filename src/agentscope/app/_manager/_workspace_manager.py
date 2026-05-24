@@ -107,7 +107,12 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
 
             # Workdir is deterministic for local workspaces — no storage needed
             workdir = os.path.join(self._basedir, agent_id)
-            ws = LocalWorkspace(workdir=workdir, skill_paths=self._skill_paths)
+            ws = LocalWorkspace(
+                workspace_id=workspace_id,
+                workdir=workdir,
+                default_mcps=self._default_mcps,
+                skill_paths=self._skill_paths,
+            )
             await ws.initialize()
             self._cache[workspace_id] = (ws, now)
             return ws
@@ -128,7 +133,7 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
                 skill_paths=self._skill_paths,
             )
             await ws.initialize()
-            self._cache[ws.id] = (ws, time.monotonic())
+            self._cache[ws.workspace_id] = (ws, time.monotonic())
             return ws
 
     async def close(self, workspace_id: str) -> None:

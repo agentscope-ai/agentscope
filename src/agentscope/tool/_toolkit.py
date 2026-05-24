@@ -7,6 +7,7 @@ from typing import (
     AsyncGenerator,
     Type,
     Generator,
+    Sequence,
 )
 
 import mcp
@@ -87,7 +88,8 @@ class Toolkit:
     def __init__(
         self,
         tools: list[ToolBase] | None = None,
-        skills_or_loaders: list[str | Skill | SkillLoaderBase] | None = None,
+        skills_or_loaders: Sequence[str | Skill | SkillLoaderBase]
+        | None = None,
         mcps: list[MCPClient] | None = None,
         tool_groups: list[ToolGroup] | None = None,
         meta_tool_response_template: str = DEFAULT_META_TOOL_RESPONSE_TEMPLATE,

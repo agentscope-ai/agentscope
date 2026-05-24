@@ -1,0 +1,1 @@
+FROM node:{node_version}-slim AS node_stage

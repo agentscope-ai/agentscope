@@ -1,0 +1,45 @@
+# syntax=docker/dockerfile:1.6
+{node_from_block}FROM {base_image}
+
+# Install uv via Astral's official shell installer.
+# We use this rather than ``COPY --from=ghcr.io/astral-sh/uv`` to avoid
+# depending on GitHub Container Registry at build time (the GHCR blob CDN
+# has been observed to time out from some networks). ``curl`` and
+# ``ca-certificates`` are not present in ``python:*-slim`` so we apt them
+# in first, then drop the apt cache to keep the layer small.
+# ``UV_INSTALL_DIR`` redirects the installer's default ``~/.local/bin``
+# target to ``/usr/local/bin`` so ``uv`` lands directly on PATH;
+# ``INSTALLER_NO_MODIFY_PATH=1`` suppresses the installer's attempt to
+# patch shell rc files (we don't need it — PATH already covers it).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && curl -LsSf https://astral.sh/uv/install.sh \
+        | env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 sh
+
+{node_copy_block}ENV UV_PROJECT_ENVIRONMENT={gateway_home}/.venv \
+    UV_LINK_MODE=copy \
+    PATH={gateway_home}/.venv/bin:$PATH
+WORKDIR {gateway_home}
+RUN uv venv {gateway_home}/.venv
+
+# TODO(release): once agentscope ships an extra such as `agentscope[gateway]`
+# bundling fastapi/uvicorn/mcp, drop requirements.txt and fold these pins into
+# the install step below — keeping a single `uv pip install agentscope[gateway]`.
+COPY requirements.txt {gateway_home}/requirements.txt
+# Note: aiodocker drives the legacy build endpoint, which does not
+# support BuildKit cache mounts (``--mount=type=cache,...``). uv's
+# in-package cache still works for single-build deduping; we just lose
+# inter-build layer cache reuse — acceptable since the image tag hash
+# already gates re-builds at the layer level.
+RUN uv pip install -r {gateway_home}/requirements.txt
+
+{install_agentscope_block}
+# Standalone gateway script. We invoke this directly (not via
+# ``python -m``) so Python does not auto-import
+# ``agentscope.workspace.__init__`` and pull in its heavy module
+# graph (skill, tool, …). The script imports only
+# ``agentscope.mcp.MCPClient``.
+COPY _mcp_gateway_app.py {gateway_home}/_mcp_gateway_app.py
+
+WORKDIR {container_workdir}

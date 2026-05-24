@@ -66,25 +66,18 @@ async def get_agent(
         session_record.config.workspace_id,
     )
 
-    # TODO: should be configurable
-    from agentscope.tool import Bash, Read, Write, Edit
-
-    toolkit = Toolkit(
-        tools=[Bash(), Read(), Write(), Edit()],
-        skills_or_loaders=[],
-    )
-
-    for mcp_client in await workspace.list_mcps():
-        await toolkit.register_mcp(mcp_client)
-
     return Agent(
         name=cfg.name,
         system_prompt=cfg.system_prompt,
         model=model,
-        toolkit=toolkit,
+        toolkit=Toolkit(
+            tools=await workspace.list_tools(),
+            skills_or_loaders=await workspace.list_skills(),
+            mcps=await workspace.list_mcps(),
+        ),
         context_config=cfg.context_config,
         react_config=cfg.react_config,
         state=agent_state,
         middlewares=middlewares,
-        # workspace=workspace,
+        offloader=workspace,
     )

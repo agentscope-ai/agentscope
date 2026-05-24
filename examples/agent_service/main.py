@@ -18,7 +18,10 @@ app = create_app(
         # connection_pool=fakeredis.aioredis.FakeRedis().connection_pool,
     ),
     workspace_manager=LocalWorkspaceManager(
-        basedir="/Users/david/Documents/Python/agents/agentscope_2/workdir",
+        basedir=os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "workspaces",
+        ),
         default_mcps=[
             MCPClient(
                 name="browser-use",

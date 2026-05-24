@@ -3,6 +3,8 @@
 application-wide resources."""
 
 from ._background_task_manager import BackgroundTaskManager
+from ._docker_workspace_manager import DockerWorkspaceManager
+from ._e2b_workspace_manager import E2BWorkspaceManager
 from ._scheduler import SchedulerManager
 from ._session_manager import SessionManager
 from ._workspace_manager import WorkspaceManagerBase, LocalWorkspaceManager
@@ -10,6 +12,8 @@ from ._workspace_manager import WorkspaceManagerBase, LocalWorkspaceManager
 
 __all__ = [
     "BackgroundTaskManager",
+    "DockerWorkspaceManager",
+    "E2BWorkspaceManager",
     "LocalWorkspaceManager",
     "SchedulerManager",
     "SessionManager",
