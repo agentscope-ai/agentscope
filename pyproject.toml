@@ -68,11 +68,17 @@ service = [
 storage = [
     "redis",
 ]
+# ------------ Workspace -----------
+workspace = [
+    "aiodocker",
+    "e2b",
+]
 # ------------ Full ------------
 full = [
     "agentscope[models]",
     "agentscope[service]",
     "agentscope[storage]",
+    "agentscope[workspace]",
 ]
 
 # ------------ Development ------------
