@@ -481,9 +481,11 @@ class GatewayClient:
                 :meth:`make_client`.
             timeout: Default HTTP timeout in seconds, applied to the
                 shared :class:`httpx.AsyncClient` (see
-                :meth:`_client`). Individual tool calls can override
-                this via :meth:`GatewayMCPClient.get_tool`'s
-                ``execution_timeout``.
+                :meth:`_client`) and propagated to every derived
+                :class:`GatewayMCPClient` via :meth:`make_client`.
+                There is no per-call override path; per-tool execution
+                timeouts live on :attr:`MCPClient.execution_timeout`
+                and are honoured upstream inside the gateway.
             extra_headers: Default headers applied to every request
                 through the shared httpx client (in addition to the
                 per-call bearer). :class:`E2BWorkspace` uses this to

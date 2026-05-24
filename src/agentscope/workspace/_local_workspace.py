@@ -588,16 +588,16 @@ class LocalWorkspace(WorkspaceBase):
         return path
 
     async def close(self) -> None:
-        """Close the workspace and clean up resources.
+        """Close every stateful MCP attached to this workspace.
 
-        For LocalWorkspace, this is a no-op as there are no persistent
-        connections or resources to clean up.
+        ``LocalWorkspace`` itself owns no resources (the workdir is
+        the persistence layer and is left untouched), but stdio /
+        stateful HTTP MCPs hold long-lived sessions that have to be
+        closed explicitly. Stateless HTTP MCPs are skipped — they
+        spin up an ad-hoc session per call and have nothing to close.
         """
-        # Close the MCP connection
         for mcp in self._mcps:
-            if (
-                mcp.is_stateful or mcp.mcp_config.type == "stdio_mcp"
-            ) and mcp.is_connected:
+            if mcp.is_stateful and mcp.is_connected:
                 await mcp.close()
 
     async def list_tools(self) -> list[ToolBase]:

@@ -154,7 +154,15 @@ class MCPClient(BaseModel):
         self._initialize_client()
 
     def _initialize_client(self) -> None:
-        """Initialize the underlying MCP client based on config type."""
+        """Pre-build the stdio client context manager.
+
+        Only the stdio transport is materialised at construction time —
+        ``StdioServerParameters`` carry process-launch details that are
+        cheap to bind upfront. HTTP transports are built lazily inside
+        :meth:`connect` (or per-call inside :meth:`_get_client_gen` for
+        stateless mode), since each ``streamable_http_client`` /
+        ``sse_client`` is a one-shot context manager.
+        """
         if self.mcp_config.type == "stdio_mcp":
             config = self.mcp_config
             self._client = stdio_client(

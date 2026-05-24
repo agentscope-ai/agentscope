@@ -36,10 +36,17 @@ from ..tool import ToolBase
 class WorkspaceBase:
     """Abstract base class for all workspace implementations.
 
-    Serializable configuration fields are declared as pydantic Fields.
-    Runtime state (connections, clients, etc.) uses PrivateAttr and is
-    excluded from serialisation.  Use ``model_dump()`` /
-    ``model_validate()`` for export/restore of workspace configuration.
+    Subclasses provide concrete behaviour for one execution backend
+    (local filesystem, Docker container, E2B sandbox). The base class
+    only fixes the lifecycle contract (``initialize`` / ``close`` /
+    ``reset``), the ``async with`` protocol, and the discovery /
+    offload / add-remove method signatures consumed by ``Agent`` and
+    by the workspace manager layer.
+
+    State held on the base class is intentionally minimal:
+    ``workspace_id`` (stable identifier, generated if not given) and
+    ``is_alive`` (lifecycle flag). All backend-specific state lives on
+    the subclass.
     """
 
     workspace_id: str

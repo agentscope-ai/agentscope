@@ -299,10 +299,12 @@ class E2BWorkspace(WorkspaceBase):
             c.name: c for c in await self._gateway.list_mcps()
         }
 
-        # Persist MCPs and seed skills only when we just bootstrapped
-        # (i.e. there was no .mcp on disk, and we used default_mcps).
-        # ``_restore_or_seed_mcps`` left ``self._mcps`` populated; the
-        # save makes the next restart a "restore" path.
+        # Persist the MCP set unconditionally so a freshly seeded
+        # ``self._mcps`` (default_mcps path) is rewritten as the
+        # canonical ``.mcp`` for the next restart, and a restored set
+        # is round-tripped harmlessly. ``_seed_skills`` itself is
+        # idempotent — it short-circuits when the sandbox-side
+        # ``skills/`` already has entries.
         await self._save_mcp_file()
         await self._seed_skills()
 
