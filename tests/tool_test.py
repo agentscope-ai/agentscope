@@ -95,6 +95,22 @@ print("456")"""
             actual,
         )
 
+        # large output should not deadlock on pipe buffers
+        large_output_code = "import sys; sys.stdout.write('x' * 131072)"
+        res = await execute_python_code(
+            code=large_output_code,
+            timeout=5,
+        )
+        actual = res.content[0]["text"]
+        self.assertTrue(
+            actual.startswith("<returncode>0</returncode><stdout>"),
+        )
+        self.assertIn("</stdout><stderr></stderr>", actual)
+        stdout_payload = actual.split("<stdout>", 1)[1].split("</stdout>", 1)[
+            0
+        ]
+        self.assertEqual(131072, len(stdout_payload))
+
     async def test_execute_shell_command(self) -> None:
         """Test executing shell command."""
         # empty output
