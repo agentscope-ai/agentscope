@@ -171,7 +171,7 @@ class AnthropicChatFormatter(TruncatedFormatterBase):
                 elif typ == "tool_result":
                     output = block.get("output")
                     if output is None:
-                        content_value = [{"type": "text", "text": None}]
+                        content_value = [{"type": "text", "text": ""}]
                     elif isinstance(output, list):
                         content_value = [
                             _format_anthropic_image_block(item)
@@ -207,7 +207,7 @@ class AnthropicChatFormatter(TruncatedFormatterBase):
 
             msg_anthropic = {
                 "role": role,
-                "content": content_blocks or None,
+                "content": content_blocks,
             }
 
             # When both content and tool_calls are None, skipped
