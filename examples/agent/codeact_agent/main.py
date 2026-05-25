@@ -14,9 +14,7 @@ from agentscope.model import DashScopeChatModel
 from agentscope.tool import (
     Toolkit,
     ToolResponse,
-    execute_shell_command,
     execute_python_code,
-    view_text_file,
 )
 
 
@@ -79,8 +77,11 @@ Define an async Python function named `solve_problem` in your code. It does not 
 Step 3.
 In `solve_problem` function, you must only call `remote_tool_call` function, whenever you need to call a function.
 
-You have 2 functions in your toolkit: get_fahrenheit_temperature and convert_fahrenheit_to_celsius.
-You must only use the names and arguments of these 2 functions as the arguments of the remote_tool_call function.
+You have several tools in your toolkit: (_TOOL_SCHEMA_STR_PLACEHOLDER). Make sure you understand the structures and keys of their return values.
+
+You must only use the names and arguments of these tools as the arguments of the remote_tool_call function.
+
+Print out every return value from remote_tool_call.
 
 Step 4.
 Make sure your code now contains `remote_tool_call` function and `solve_problem` function. Add a async `solve_problem` function call in your code as the execution point.
@@ -168,12 +169,15 @@ async def main() -> None:
         return
 
     toolkit = Toolkit()
-
-    toolkit.register_tool_function(execute_shell_command)
     toolkit.register_tool_function(execute_python_code)
-    toolkit.register_tool_function(view_text_file)
     toolkit.register_tool_function(get_fahrenheit_temperature)
     toolkit.register_tool_function(convert_fahrenheit_to_celsius)
+
+    tool_names = [d["function"]["name"] for d in toolkit.get_json_schemas()]
+    sys_prompt = _CODE_ACT_SYS_PROMPT.replace(
+        "_TOOL_SCHEMA_STR_PLACEHOLDER",
+        ", ".join(tool_names),
+    )
 
     port = _find_free_port()
     # Put the server here just for demo purpose.
