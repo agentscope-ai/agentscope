@@ -380,7 +380,7 @@ We can see that a "[instance-pre-reply]" and a "[cls-pre-reply]" are added to th
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 0.002 seconds)
+   **Total running time of the script:** (0 minutes 0.003 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_hook.py:
