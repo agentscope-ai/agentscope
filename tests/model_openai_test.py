@@ -418,6 +418,66 @@ class TestOpenAIChatModel(IsolatedAsyncioTestCase):
             expected_content = [TextBlock(type="text", text="Hello there!")]
             self.assertEqual(final_response.content, expected_content)
 
+    def _make_model(
+        self,
+        model_name: str = "gpt-4",
+        base_url: str | None = None,
+        stream: bool = False,
+    ) -> OpenAIChatModel:
+        """Create an OpenAIChatModel with mocked client and given base_url."""
+        with patch("openai.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value = mock_client
+            model = OpenAIChatModel(
+                model_name=model_name,
+                api_key="test_key",
+                stream=stream,
+            )
+            model.client = mock_client
+            model.client.base_url = base_url
+            return model
+
+    # pylint: disable=protected-access
+    async def test_structured_via_tool_call_drops_tool_choice(
+        self,
+    ) -> None:
+        """On an unsupported provider, tool_choice must be removed and a
+        warning logged, while tools still carry the schema tool."""
+        model = self._make_model(
+            model_name="deepseek-v4-pro",
+            base_url="https://api.deepseek.com",
+            stream=False,
+        )
+        # Force fallback path so __call__ skips response_format entirely.
+        model._structured_output_fallback = True
+
+        mock_response = self._create_mock_response_with_tools(
+            "",
+            [
+                {
+                    "id": "call_1",
+                    "name": "generate_structured_output",
+                    "arguments": '{"name": "John", "age": 30}',
+                },
+            ],
+        )
+        model.client.chat.completions.create = AsyncMock(
+            return_value=mock_response,
+        )
+
+        await model(
+            [{"role": "user", "content": "Generate a person"}],
+            structured_model=SampleModel,
+        )
+
+        call_args = model.client.chat.completions.create.call_args[1]
+        self.assertIn("tools", call_args)
+        self.assertNotIn("tool_choice", call_args)
+        self.assertEqual(
+            call_args["tools"][0]["function"]["name"],
+            "generate_structured_output",
+        )
+
     def _create_stream_mock(self, chunks_data: list) -> Any:
         """Create a mock stream with proper async context management."""
 

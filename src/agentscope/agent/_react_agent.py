@@ -28,6 +28,7 @@ from ..token import TokenCounterBase
 from ..tool import Toolkit, ToolResponse
 from ..tracing import trace_reply
 from ..tts import TTSModelBase
+from .._utils._common import _supports_structured_tool_choice
 
 
 class _QueryRewriteModel(BaseModel):
@@ -373,7 +374,7 @@ class ReActAgent(ReActAgentBase):
             return self._sys_prompt
 
     @trace_reply
-    async def reply(  # pylint: disable=too-many-branches
+    async def reply(  # pylint: disable=too-many-branches,too-many-statements
         self,
         msg: Msg | list[Msg] | None = None,
         structured_model: Type[BaseModel] | None = None,
@@ -420,7 +421,8 @@ class ReActAgent(ReActAgentBase):
                 self.finish_function_name,
                 structured_model,
             )
-            tool_choice = "required"
+            if _supports_structured_tool_choice(self.model.model_name):
+                tool_choice = "required"
         else:
             # Remove generate_response tool if no structured output is required
             self.toolkit.remove_tool_function(self.finish_function_name)
@@ -505,7 +507,10 @@ class ReActAgent(ReActAgentBase):
                     )
                     await self.memory.add(msg_hint, marks=_MemoryMark.HINT)
                     # Require tool call in the next reasoning step
-                    tool_choice = "required"
+                    if _supports_structured_tool_choice(self.model.model_name):
+                        tool_choice = "required"
+                    else:
+                        tool_choice = None
 
                 if msg_hint and self.print_hint_msg:
                     await self.print(msg_hint)

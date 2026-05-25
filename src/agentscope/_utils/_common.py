@@ -27,6 +27,8 @@ if typing.TYPE_CHECKING:
 else:
     Tool = "mcp.types.Tool"
 
+_STRUCTURED_TOOL_CHOICE_UNSUPPORTED_PROVIDERS = ("deepseek", "glm", "kimi")
+
 
 def _json_loads_with_repair(
     json_str: str,
@@ -504,3 +506,22 @@ def _resample_pcm_delta(
     resampled_base64 = base64.b64encode(resampled_bytes).decode("utf-8")
 
     return resampled_base64
+
+
+def _supports_structured_tool_choice(model_name: str) -> bool:
+    """Whether the current provider supports forcing a specific tool.
+
+    Args:
+        model_name (`str`):
+            The model name to check for provider support.
+
+    Returns:
+        `bool`:
+            True if the provider supports structured tool choice,
+            False otherwise.
+    """
+    model_name = model_name.lower()
+    for provider in _STRUCTURED_TOOL_CHOICE_UNSUPPORTED_PROVIDERS:
+        if provider in model_name:
+            return False
+    return True
