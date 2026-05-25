@@ -29,6 +29,11 @@ from ._deepseek_formatter import (
 )
 from ._a2a_formatter import A2AChatFormatter
 
+from ._openai_response_formatter import (
+    OpenAIResponseChatFormatter,
+    OpenAIResponseMultiAgentFormatter,
+)
+
 __all__ = [
     "FormatterBase",
     "TruncatedFormatterBase",
@@ -45,4 +50,6 @@ __all__ = [
     "DeepSeekChatFormatter",
     "DeepSeekMultiAgentFormatter",
     "A2AChatFormatter",
+    "OpenAIResponseChatFormatter",
+    "OpenAIResponseMultiAgentFormatter",
 ]
