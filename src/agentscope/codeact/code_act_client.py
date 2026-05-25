@@ -3,8 +3,6 @@
 
 
 async def remote_tool_call(
-    server_host: str,
-    server_port: int,
     tool_name: str,
     tool_args: dict | None = None,
     timeout: float = 60,
@@ -13,10 +11,6 @@ async def remote_tool_call(
     the structured output.
 
     Args:
-        server_host (`str`):
-            The host address of the CodeActToolCallServer.
-        server_port (`int`):
-            The port of the CodeActToolCallServer.
         tool_name (`str`):
             The name of the tool function to call.
         tool_args (`dict | None`, optional):
@@ -29,8 +23,11 @@ async def remote_tool_call(
             The output returned by the server, or an empty dict on error.
     """
     import httpx
+    import os
 
-    url = f"http://{server_host}:{server_port}/call_tool"
+    server_port = os.environ["CODE_ACT_TOOL_CALL_SERVER_PORT"]
+    # the address of CodeActToolCallServer instance
+    url = f"http://localhost:{server_port}/call_tool"
     payload = {"tool_name": tool_name, "tool_args": tool_args or {}}
 
     try:

@@ -82,21 +82,13 @@ In `solve_problem` function, you must only call `remote_tool_call` function, whe
 You have 2 functions in your toolkit: get_fahrenheit_temperature and convert_fahrenheit_to_celsius.
 You must only use the names and arguments of these 2 functions as the arguments of the remote_tool_call function.
 
-Step 3.
-In `solve_problem` function, first use remote_tool_call to call get_fahrenheit_temperature, to get the response. Extract the fahrenheit value from the response.
-Then use this fahrenheit value as the tool argument of convert_fahrenheit_to_celsius function, use remote_tool_call to call convert_fahrenheit_to_celsius. Extract the celsius value from the response.
-
 Step 4.
-In `solve_problem` write a sentence saying "The current temperature is X C.", replace the 'X' with the celsius value you extracted from Step 3. Return this sentence.
+Make sure your code now contains `remote_tool_call` function and `solve_problem` function. Add a async `solve_problem` function call in your code as the execution point.
 
 Step 5.
-Make sure your code now contains `remote_tool_call` function and `solve_problem` function. Add a `solve_problem` function call in your code as the execution point.
-
-Step 6.
 Execute your code by using the `execute_python_code` tool in your toolkit, and collect the returned value. Return this value to user.
 
-When user does not specify the scale of the temperature, or explicitly asks for reading in celsius, return celsius value to the user by following instruction step 1 throught step 6.
-When user asks for fahrenheit reading explicitly, just do the remote get_fahrenheit_temperature call, and return the fahrenheit reading to the user directly.
+Return celsius temperature reading by default. Otherwise return either celsius or fahrenheit value depending on what temperature scale user explicitly mentions in the message.
 """  # noqa: E501
 
 

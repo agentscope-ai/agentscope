@@ -4,6 +4,7 @@ import asyncio
 import socket
 from unittest.async_case import IsolatedAsyncioTestCase
 import time
+import os
 
 from agentscope.codeact.code_act_tool_call_server import CodeActToolCallServer
 from agentscope.codeact.code_act_client import remote_tool_call
@@ -178,13 +179,12 @@ class TestRemoteToolCall(IsolatedAsyncioTestCase):
             port=cls._port,
             toolkit=toolkit,
         )
+        os.environ["CODE_ACT_TOOL_CALL_SERVER_PORT"] = str(cls._port)
         asyncio.run(cls._code_act_server.start())
 
     async def test_happy_case(self) -> None:
         """Successful tool call returns structured output"""
         rs = await remote_tool_call(
-            server_host="localhost",
-            server_port=self._port,
             tool_name="succeed_with_compelete_metadata",
             tool_args={"txt": "hello"},
         )
@@ -193,8 +193,6 @@ class TestRemoteToolCall(IsolatedAsyncioTestCase):
     async def test_failed_tool_call(self) -> None:
         """Tool with success=False returns empty dict"""
         rs = await remote_tool_call(
-            server_host="localhost",
-            server_port=self._port,
             tool_name="fail_with_compelete_metadata",
             tool_args={"value": 3},
         )
@@ -203,8 +201,6 @@ class TestRemoteToolCall(IsolatedAsyncioTestCase):
     async def test_empty_structured_output(self) -> None:
         """Tool succeeds but structured_output is empty"""
         rs = await remote_tool_call(
-            server_host="localhost",
-            server_port=self._port,
             tool_name="succeed_with_empty_structured_output",
             tool_args={"value": 3},
         )
@@ -213,8 +209,6 @@ class TestRemoteToolCall(IsolatedAsyncioTestCase):
     async def test_no_structured_output_key(self) -> None:
         """Tool succeeds but metadata has no structured_output key"""
         rs = await remote_tool_call(
-            server_host="localhost",
-            server_port=self._port,
             tool_name="succeed_without_structured_output",
             tool_args={"value": 3.3},
         )
@@ -223,8 +217,6 @@ class TestRemoteToolCall(IsolatedAsyncioTestCase):
     async def test_no_metadata(self) -> None:
         """Tool response has no metadata at all"""
         rs = await remote_tool_call(
-            server_host="localhost",
-            server_port=self._port,
             tool_name="no_metadata_in_response",
         )
         self.assertEqual(rs, {})
@@ -233,8 +225,6 @@ class TestRemoteToolCall(IsolatedAsyncioTestCase):
         """Interrupted tool call returns error detail"""
         with self.assertRaises(Exception):
             await remote_tool_call(
-                server_host="localhost",
-                server_port=self._port,
                 tool_name="always_interrupted",
                 tool_args={"txt": "test"},
             )
@@ -243,8 +233,6 @@ class TestRemoteToolCall(IsolatedAsyncioTestCase):
         """Calling a nonexistent tool returns empty dict (tool not found
         yields empty response from the server)"""
         rs = await remote_tool_call(
-            server_host="localhost",
-            server_port=self._port,
             tool_name="does_not_exist",
             tool_args={},
         )
@@ -253,8 +241,6 @@ class TestRemoteToolCall(IsolatedAsyncioTestCase):
     async def test_default_tool_args(self) -> None:
         """tool_args defaults to empty dict when not provided"""
         rs = await remote_tool_call(
-            server_host="localhost",
-            server_port=self._port,
             tool_name="no_metadata_in_response",
         )
         self.assertEqual(rs, {})
@@ -262,8 +248,6 @@ class TestRemoteToolCall(IsolatedAsyncioTestCase):
     async def test_custom_timeout(self) -> None:
         """Custom timeout parameter is accepted without error"""
         rs = await remote_tool_call(
-            server_host="localhost",
-            server_port=self._port,
             tool_name="succeed_with_compelete_metadata",
             tool_args={"txt": "timeout test"},
             timeout=120,
@@ -272,14 +256,16 @@ class TestRemoteToolCall(IsolatedAsyncioTestCase):
 
     async def test_connection_refused(self) -> None:
         """Connecting to a non-listening port raises an error"""
-        with self.assertRaises(Exception):
-            await remote_tool_call(
-                server_host="localhost",
-                server_port=1,
-                tool_name="succeed_with_compelete_metadata",
-                tool_args={"txt": "fail"},
-                timeout=2,
-            )
+        os.environ["CODE_ACT_TOOL_CALL_SERVER_PORT"] = "1"
+        try:
+            with self.assertRaises(Exception):
+                await remote_tool_call(
+                    tool_name="succeed_with_compelete_metadata",
+                    tool_args={"txt": "fail"},
+                    timeout=2,
+                )
+        finally:
+            os.environ["CODE_ACT_TOOL_CALL_SERVER_PORT"] = str(self._port)
 
 
 def _create_temperature_toolkit() -> Toolkit:
@@ -362,12 +348,8 @@ class TestCodeActExecution(IsolatedAsyncioTestCase):
 # The code only uses tools of the agent to solve user problem.
 #
 # User: Tell me the temperature of Hangzhou city in Celsius degree.
-injected_port = INJECTED_PORT_PLACEHOLDER
-
 async def solve_problem():
     temperature_result = await remote_tool_call(
-        server_host="localhost",
-        server_port=injected_port,
         tool_name="get_fahrenheit_temperature",
         tool_args={"city": "hangzhou"},
         timeout=120,
@@ -379,8 +361,6 @@ async def solve_problem():
     print(f'temperature_in_fahrenheit:{temperature_in_fahrenheit}')
 
     conversion_result = await remote_tool_call(
-        server_host="localhost",
-        server_port=injected_port,
         tool_name="convert_fahrenheit_to_celsius",
         tool_args={"fahrenheit": temperature_in_fahrenheit},
         timeout=120,
@@ -396,7 +376,7 @@ import asyncio
 asyncio.run(solve_problem())
 """
 
-        txt = txt.replace("INJECTED_PORT_PLACEHOLDER", str(self._port))
+        os.environ["CODE_ACT_TOOL_CALL_SERVER_PORT"] = str(self._port)
 
         py_file = pathlib.Path(
             test_file_path.parent,
