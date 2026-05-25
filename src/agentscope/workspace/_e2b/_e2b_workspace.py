@@ -82,14 +82,16 @@ from ._bootstrap import (
     SANDBOX_SESSIONS_DIR,
     SANDBOX_SKILLS_DIR,
     SANDBOX_WORKDIR,
-    agentscope_version,
     bootstrap_commands,
     build_source_tarball,
-    is_released_install,
     log_bootstrap_attempt,
-    read_gateway_script_bytes,
     render_install_agentscope_cmd_dev,
     render_install_agentscope_cmd_released,
+)
+from .._utils import (
+    _agentscope_version,
+    _is_released_install,
+    _read_gateway_script_bytes,
 )
 
 
@@ -141,35 +143,6 @@ class _ExecResult:
 class E2BWorkspace(WorkspaceBase):
     """Workspace backed by an E2B cloud sandbox.
 
-    Args:
-        workspace_id: Stable identifier; doubles as the value stored
-            in the sandbox's ``agentscope.workspace.id`` metadata for
-            later reattachment. ``None`` generates a fresh UUID.
-        template: E2B template id. Defaults to ``"base"`` — the
-            stock Ubuntu image with python3 + curl, which is enough
-            for the bootstrap to install uv on top.
-        api_key: E2B API key. ``""`` falls back to the
-            ``E2B_API_KEY`` env var.
-        domain: Optional custom E2B domain (self-hosted etc.).
-        timeout_seconds: Sandbox keep-alive timeout passed to
-            ``create`` / ``connect``.
-        gateway_port: TCP port the in-sandbox gateway listens on.
-        env: Environment variables baked into the sandbox at create
-            time (``envs`` parameter on the SDK side).
-        sandbox_metadata: Extra metadata merged with
-            ``{METADATA_WORKSPACE_ID_KEY: workspace_id}``. Useful for
-            attaching ``user_id`` / ``agent_id`` for E2B dashboard
-            filtering.
-        extra_pip: Extra Python packages to install into the gateway
-            venv during bootstrap.
-        instructions: System-prompt fragment template returned by
-            :meth:`get_instructions`.
-        default_mcps: Initial MCPs registered on first
-            :meth:`initialize`. Subsequent restarts read
-            ``$workdir/.mcp`` instead.
-        skill_paths: Local skill directories seeded into
-            ``$workdir/skills`` on first :meth:`initialize`.
-
     ``default_mcps`` and ``skill_paths`` are seed-time inputs and are
     not retained as instance state past :meth:`initialize`.
     """
@@ -195,7 +168,45 @@ class E2BWorkspace(WorkspaceBase):
         The sandbox is *not* started here; call :meth:`initialize`
         (or use the workspace as an ``async`` context manager).
 
-        See the class docstring for the full argument set.
+        Args:
+            workspace_id (`str | None`, optional):
+                Stable identifier; doubles as the value stored in the
+                sandbox's ``agentscope.workspace.id`` metadata for
+                later reattachment. ``None`` generates a fresh UUID.
+            template (`str`, defaults to `DEFAULT_TEMPLATE`):
+                E2B template id. Defaults to ``"base"`` — the stock
+                Ubuntu image with python3 + curl, which is enough for
+                the bootstrap to install uv on top.
+            api_key (`str`, defaults to `""`):
+                E2B API key. ``""`` falls back to the ``E2B_API_KEY``
+                env var.
+            domain (`str`, defaults to `""`):
+                Optional custom E2B domain (self-hosted etc.).
+            timeout_seconds (`int`, defaults to `DEFAULT_TIMEOUT`):
+                Sandbox keep-alive timeout passed to ``create`` /
+                ``connect``.
+            gateway_port (`int`, defaults to `DEFAULT_GATEWAY_PORT`):
+                TCP port the in-sandbox gateway listens on.
+            env (`dict[str, str] | None`, optional):
+                Environment variables baked into the sandbox at
+                create time (``envs`` parameter on the SDK side).
+            sandbox_metadata (`dict[str, str] | None`, optional):
+                Extra metadata merged with
+                ``{METADATA_WORKSPACE_ID_KEY: workspace_id}``. Useful
+                for attaching ``user_id`` / ``agent_id`` for E2B
+                dashboard filtering.
+            extra_pip (`list[str] | None`, optional):
+                Extra Python packages to install into the gateway
+                venv during bootstrap.
+            instructions (`str`, defaults to `_DEFAULT_INSTRUCTIONS`):
+                System-prompt fragment template returned by
+                :meth:`get_instructions`.
+            default_mcps (`list[MCPClient] | None`, optional):
+                Initial MCPs registered on first :meth:`initialize`.
+                Subsequent restarts read ``$workdir/.mcp`` instead.
+            skill_paths (`list[str] | None`, optional):
+                Local skill directories seeded into
+                ``$workdir/skills`` on first :meth:`initialize`.
         """
         super().__init__(workspace_id=workspace_id)
 
@@ -269,6 +280,14 @@ class E2BWorkspace(WorkspaceBase):
         # safe because every step is idempotent (mkdir -p, uv venv,
         # uv pip install).
         if not await self._sandbox.files.exists(GATEWAY_SCRIPT):
+            # ``_exec`` pins ``cwd=SANDBOX_WORKDIR`` so the very first
+            # bootstrap command (which itself is ``mkdir -p``) would
+            # fail before it ran when the dir does not yet exist.
+            # Create it directly via the SDK with no cwd to break the
+            # chicken-and-egg.
+            await self._sandbox.commands.run(
+                f"mkdir -p {shlex.quote(SANDBOX_WORKDIR)}",
+            )
             await self._run_bootstrap()
 
         self._mcps = await self._restore_or_seed_mcps()
@@ -311,14 +330,39 @@ class E2BWorkspace(WorkspaceBase):
         self.is_alive = True
 
     async def reset(self) -> None:
-        """Wipe per-session state inside the sandbox.
+        """Return the workspace to an empty state.
 
-        Removes ``sessions/`` and ``data/`` but preserves ``.mcp`` and
-        ``skills/``, mirroring :meth:`DockerWorkspace.reset`.
+        Mirrors :meth:`DockerWorkspace.reset`: deregisters every MCP
+        from the gateway, clears the local handles, and wipes
+        ``.mcp``, ``skills/``, ``sessions/``, and ``data/`` inside the
+        sandbox. The gateway process keeps running with no upstream
+        MCPs. ``default_mcps`` / ``skill_paths`` are not re-seeded.
         """
-        await self._exec(
-            f"rm -rf {SANDBOX_SESSIONS_DIR} {SANDBOX_DATA_DIR}",
-        )
+        async with self._mcp_lock, self._skill_lock:
+            for gw_client in list(self._gateway_clients.values()):
+                try:
+                    await gw_client.close()
+                except Exception as e:
+                    logger.warning(
+                        "MCP %r close failed during reset: %s",
+                        gw_client.name,
+                        e,
+                    )
+            self._gateway_clients.clear()
+            self._mcps = []
+
+            paths = [
+                SANDBOX_SESSIONS_DIR,
+                SANDBOX_DATA_DIR,
+                SANDBOX_SKILLS_DIR,
+            ]
+            await self._exec(
+                "rm -rf " + " ".join(shlex.quote(p) for p in paths),
+            )
+
+            # Rewrite ``.mcp`` to an empty list so a future restart does
+            # not fall back to ``default_mcps``.
+            await self._save_mcp_file()
 
     async def close(self) -> None:
         """Pause the sandbox and release host-side resources.
@@ -527,7 +571,6 @@ class E2BWorkspace(WorkspaceBase):
         self,
         session_id: str,
         msgs: list[Msg],
-        **_: Any,
     ) -> str:
         """Persist a batch of messages as JSONL inside the sandbox.
 
@@ -570,7 +613,6 @@ class E2BWorkspace(WorkspaceBase):
         self,
         session_id: str,
         tool_result: ToolResultBlock,
-        **_: Any,
     ) -> str:
         """Persist a single tool result as a flat text file."""
         base = f"{SANDBOX_SESSIONS_DIR}/{session_id}"
@@ -611,6 +653,12 @@ class E2BWorkspace(WorkspaceBase):
         running + paused pair after an unclean shutdown) we attach to
         the newest by ``started_at`` and log a warning — manual
         cleanup is left to the operator.
+
+        Always blocks until the sandbox's envd answers
+        :meth:`AsyncSandbox.is_running` so the caller can issue
+        ``commands`` / ``files`` calls without hitting transient
+        "not yet routable" errors — typical on a paused sandbox that
+        has just been auto-resumed via ``connect``.
         """
         existing = await self._find_existing_sandbox(AsyncSandbox)
 
@@ -621,22 +669,59 @@ class E2BWorkspace(WorkspaceBase):
                 timeout=self.timeout_seconds,
                 **api_opts,
             )
-            return
+        else:
+            merged_metadata = {
+                METADATA_WORKSPACE_ID_KEY: self.workspace_id,
+                **self.sandbox_metadata,
+            }
+            create_kwargs: dict[str, Any] = {
+                "template": self.template,
+                "timeout": self.timeout_seconds,
+                "metadata": merged_metadata,
+                **api_opts,
+            }
+            if self.env:
+                create_kwargs["envs"] = self.env
 
-        merged_metadata = {
-            METADATA_WORKSPACE_ID_KEY: self.workspace_id,
-            **self.sandbox_metadata,
-        }
-        create_kwargs: dict[str, Any] = {
-            "template": self.template,
-            "timeout": self.timeout_seconds,
-            "metadata": merged_metadata,
-            **api_opts,
-        }
-        if self.env:
-            create_kwargs["envs"] = self.env
+            self._sandbox = await AsyncSandbox.create(**create_kwargs)
 
-        self._sandbox = await AsyncSandbox.create(**create_kwargs)
+        await self._wait_until_running()
+
+    async def _wait_until_running(self, timeout: float = 30.0) -> None:
+        """Poll ``self._sandbox.is_running()`` until it answers ``True``.
+
+        ``AsyncSandbox.create`` / ``AsyncSandbox.connect`` can return
+        before the in-sandbox envd is routable. Subsequent
+        ``commands.run`` / ``files.exists`` calls against an
+        unrouted envd surface as transient SDK errors. We poll envd's
+        own ``/health`` (which is what :meth:`AsyncSandbox.is_running`
+        wraps — 502 → ``False``, 200 → ``True``) until it goes green.
+
+        Args:
+            timeout (`float`, defaults to `30.0`):
+                Hard ceiling in seconds. Raises :class:`RuntimeError`
+                if envd is still not routable after this long.
+        """
+        deadline = asyncio.get_event_loop().time() + timeout
+        delay = 0.1
+        while asyncio.get_event_loop().time() < deadline:
+            try:
+                if await self._sandbox.is_running():
+                    return
+            except Exception as e:  # noqa: BLE001
+                # SDK can raise on transient network / proxy errors
+                # while the sandbox is still provisioning. Treat as
+                # "not yet" and keep polling.
+                logger.debug(
+                    "E2BWorkspace: is_running probe error (will retry): %s",
+                    e,
+                )
+            await asyncio.sleep(delay)
+            delay = min(delay * 1.5, 1.0)
+        raise RuntimeError(
+            f"E2B sandbox did not become ready within {timeout}s "
+            f"(workspace_id={self.workspace_id!r})",
+        )
 
     async def _find_existing_sandbox(self, AsyncSandbox: Any) -> Any:
         """List sandboxes filtered by ``workspace_id`` metadata.
@@ -710,10 +795,10 @@ class E2BWorkspace(WorkspaceBase):
         startup failures are visible in logs (mirroring the docker
         build-tail strategy).
         """
-        if is_released_install():
+        if _is_released_install():
             log_bootstrap_attempt(self.workspace_id, "released")
             install_cmd = render_install_agentscope_cmd_released(
-                agentscope_version(),
+                _agentscope_version(),
             )
         else:
             log_bootstrap_attempt(self.workspace_id, "dev")
@@ -739,7 +824,7 @@ class E2BWorkspace(WorkspaceBase):
         # idempotency marker we probe in :meth:`initialize`.
         await self._sandbox.files.write(
             GATEWAY_SCRIPT,
-            read_gateway_script_bytes(),
+            _read_gateway_script_bytes(),
         )
 
     # ── internals: gateway lifecycle ────────────────────────────

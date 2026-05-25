@@ -25,7 +25,7 @@ Consumers:
 
 import uuid
 from abc import abstractmethod
-from typing import Any, Self
+from typing import Self
 
 from ..mcp import MCPClient
 from ..message import Msg, ToolResultBlock
@@ -73,12 +73,14 @@ class WorkspaceBase:
     async def reset(self) -> None:
         """Reset the workspace to a clean state.
 
-        Clears user-specific state such as session data, temporary files,
-        and dynamically added MCPs/skills. Called by the pool manager
-        before returning a workspace to the free queue.
+        Closes and removes all registered MCPs, deletes all skills,
+        and wipes per-session state (offloaded context / tool results
+        and any data files). Constructor-time ``default_mcps`` and
+        ``skill_paths`` are **not** re-seeded — reset returns the
+        workspace to an empty state, not its initial state.
 
-        The default implementation is a no-op. Subclasses that manage
-        per-user state should override this.
+        The default implementation is a no-op. Subclasses with user
+        state must override this.
         """
 
     async def __aenter__(self) -> Self:
@@ -123,7 +125,6 @@ class WorkspaceBase:
         self,
         session_id: str,
         msgs: list[Msg],
-        **kwargs: Any,
     ) -> str:
         """Persist compressed context for agentic retrieval.
 
@@ -141,7 +142,6 @@ class WorkspaceBase:
         self,
         session_id: str,
         tool_result: ToolResultBlock,
-        **kwargs: Any,
     ) -> str:
         """Persist a tool result for agentic retrieval.
 

@@ -10,7 +10,7 @@ import re
 import shutil
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Literal, TypedDict
+from typing import TypedDict
 
 import aiofiles
 import aiofiles.ospath
@@ -126,26 +126,7 @@ class LocalWorkspace(WorkspaceBase):
         ├── data/         # offloaded multimodal files
         ├── skills/       # skill subdirectories
         └── sessions/     # per-session context and tool-result files
-
-    Args:
-        workdir: Filesystem path to the workspace root. Created on
-            demand. Always resolved to an absolute path.
-        workspace_id: Existing workspace identifier to adopt. ``None``
-            generates a fresh UUID.
-        default_mcps: MCP clients seeded into a brand-new workspace.
-            Ignored on subsequent restarts that already have a
-            persisted ``<workdir>/.mcp`` file.
-        skill_paths: Local skill directories seeded into
-            ``<workdir>/skills`` on first :meth:`initialize`.
-        instructions: System-prompt fragment template returned by
-            :meth:`get_instructions`. Supports the ``{workdir}``
-            placeholder.
-
-    ``default_mcps`` and ``skill_paths`` are seed-time inputs and are
-    not retained as instance state past :meth:`initialize`.
     """  # noqa: E501
-
-    type: Literal["local"] = "local"
 
     def __init__(
         self,
@@ -158,10 +139,25 @@ class LocalWorkspace(WorkspaceBase):
     ) -> None:
         """Construct a :class:`LocalWorkspace`.
 
-        The workspace is *not* started here; call :meth:`initialize`
-        (or use the workspace as an ``async`` context manager).
-
-        See the class docstring for the full argument set.
+        Args:
+            workdir (`str`):
+                Filesystem path to the workspace root. Created on
+                demand. Always resolved to an absolute path.
+            workspace_id (`str | None`, optional):
+                Existing workspace identifier to adopt. ``None``
+                generates a fresh UUID.
+            default_mcps (`list[MCPClient] | None`, optional):
+                MCP clients seeded into a brand-new workspace.
+                Ignored on subsequent restarts that already have a
+                persisted ``<workdir>/.mcp`` file.
+            skill_paths (`list[str] | None`, optional):
+                Local skill directories seeded into
+                ``<workdir>/skills`` on first :meth:`initialize`.
+            instructions (`str`, defaults to \
+            `_DEFAULT_WORKSPACE_INSTRUCTIONS`):
+                System-prompt fragment template returned by
+                :meth:`get_instructions`. Supports the ``{workdir}``
+                placeholder.
         """
         super().__init__(workspace_id=workspace_id)
 
@@ -182,7 +178,12 @@ class LocalWorkspace(WorkspaceBase):
         MCP state is restored from ``.mcp`` if it exists; otherwise
         ``default_mcps`` are used and persisted so the next start picks
         them up from disk. ``skill_paths`` are seeded on first use.
+
+        Idempotent: a no-op when the workspace is already alive.
         """
+        if self.is_alive:
+            return
+
         os.makedirs(self.workdir, exist_ok=True)
 
         # Restore or seed MCPs
@@ -296,6 +297,8 @@ class LocalWorkspace(WorkspaceBase):
                 skills_dir,
             )
             await self._save_skills_file(skills_dir, skills_file)
+
+        self.is_alive = True
 
     async def get_instructions(self) -> str:
         """Get the workspace instructions."""
@@ -473,7 +476,6 @@ class LocalWorkspace(WorkspaceBase):
         self,
         session_id: str,
         msgs: list[Msg],
-        **kwargs: Any,
     ) -> str:
         """Offload the compressed messages into the local directory for
         further processing.
@@ -529,7 +531,6 @@ class LocalWorkspace(WorkspaceBase):
         self,
         session_id: str,
         tool_result: ToolResultBlock,
-        **kwargs: Any,
     ) -> str:
         """Offload the tool results into the local directory for agentic
         retrieval.
@@ -599,6 +600,35 @@ class LocalWorkspace(WorkspaceBase):
         for mcp in self._mcps:
             if mcp.is_stateful and mcp.is_connected:
                 await mcp.close()
+        self.is_alive = False
+
+    async def reset(self) -> None:
+        """Return the workspace to an empty state.
+
+        Closes and drops all MCPs (including the persisted ``.mcp``)
+        and deletes ``skills/``, ``sessions/``, and ``data/``.
+        ``default_mcps`` and ``skill_paths`` are not re-seeded.
+        """
+        for mcp in self._mcps:
+            if mcp.is_stateful and mcp.is_connected:
+                try:
+                    await mcp.close()
+                except Exception as e:
+                    logger.warning(
+                        "MCP %r close failed during reset: %s",
+                        mcp.name,
+                        e,
+                    )
+        self._mcps = []
+
+        mcp_file = os.path.join(self.workdir, ".mcp")
+        if await aiofiles.ospath.exists(mcp_file):
+            await asyncio.to_thread(os.remove, mcp_file)
+
+        for sub in ("skills", "sessions", "data"):
+            path = os.path.join(self.workdir, sub)
+            if await aiofiles.ospath.isdir(path):
+                await asyncio.to_thread(shutil.rmtree, path)
 
     async def list_tools(self) -> list[ToolBase]:
         """List all tools available in the workspace."""

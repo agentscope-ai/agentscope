@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """The offload protocol."""
-from typing import Protocol, Any
+from typing import Protocol
 
 from ..message import Msg, ToolResultBlock
 
@@ -12,7 +12,6 @@ class Offloader(Protocol):
         self,
         session_id: str,
         msgs: list[Msg],
-        **kwargs: Any,
     ) -> str:
         """Offload compressed context to workspace-accessible storage.
 
@@ -31,7 +30,6 @@ class Offloader(Protocol):
         self,
         session_id: str,
         tool_result: ToolResultBlock,
-        **kwargs: Any,
     ) -> str:
         """Offload a tool result to workspace-accessible storage.
 

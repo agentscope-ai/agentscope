@@ -28,12 +28,15 @@ anthropic, dashscope) for which the sandbox base image typically has
 no compiler, exactly the same trap we hit on Docker.
 """
 
-import importlib.resources as _res
 import io
 import tarfile
-from pathlib import Path
 
 from ..._logging import logger
+from .._utils import (
+    _GATEWAY_BASE_REQUIREMENTS,
+    _agentscope_source_root,
+    _is_source_ignored,
+)
 
 
 # ── shared constants ───────────────────────────────────────────────
@@ -81,117 +84,21 @@ METADATA_WORKSPACE_ID_KEY = "agentscope.workspace.id"
 DEV_SRC_TAR = "/tmp/agentscope_src.tar"
 DEV_SRC_DIR = "/tmp/agentscope_src"
 
-# Mirror the Docker manager's gateway base requirements — the
-# minimum set the gateway script (``_mcp_gateway_app.py``) needs.
-# ``mcp`` brings ``pydantic`` + ``httpx`` transitively.
-GATEWAY_BASE_REQUIREMENTS: tuple[str, ...] = (
-    "mcp",
-    "uvicorn",
-    "fastapi",
-)
-
-
-# ── gateway script bytes ───────────────────────────────────────────
-
-
-def read_gateway_script_bytes() -> bytes:
-    """Read the standalone gateway script bundled with agentscope.
-
-    The script ships under
-    ``agentscope.workspace._mcp_gateway._mcp_gateway_app`` and is
-    uploaded to a fixed path inside the sandbox so the launch command
-    can invoke it directly (avoiding ``python -m`` and the
-    ``agentscope.workspace.__init__`` heavy import graph).
-    """
-    return (
-        _res.files("agentscope.workspace._mcp_gateway")
-        .joinpath("_mcp_gateway_app.py")
-        .read_bytes()
-    )
-
-
-# ── agentscope install detection (same logic as Docker) ────────────
-
-
-def _agentscope_module_path() -> Path:
-    """Return the filesystem path of the imported ``agentscope`` package."""
-    import agentscope
-
-    file = getattr(agentscope, "__file__", None)
-    if not file:
-        raise RuntimeError(
-            "agentscope has no __file__ attribute; cannot locate package",
-        )
-    return Path(file).resolve().parent
-
-
-def is_released_install() -> bool:
-    """Return True if the imported ``agentscope`` lives in site-packages."""
-    pkg = _agentscope_module_path()
-    parts = pkg.parts
-    return "site-packages" in parts or "dist-packages" in parts
-
-
-def agentscope_version() -> str:
-    """Return the installed agentscope version."""
-    import agentscope
-
-    version = getattr(agentscope, "__version__", None)
-    if not version:
-        try:
-            from importlib.metadata import version as _v
-
-            version = _v("agentscope")
-        except Exception as e:  # noqa: BLE001
-            raise RuntimeError(
-                "cannot determine agentscope version",
-            ) from e
-    return version
-
-
-def agentscope_source_root() -> Path:
-    """Locate the project root containing ``pyproject.toml`` + ``src/``."""
-    pkg = _agentscope_module_path()
-    for parent in [pkg, *pkg.parents]:
-        if (parent / "pyproject.toml").is_file() and (
-            (parent / "src").is_dir() or (parent / "agentscope").is_dir()
-        ):
-            return parent
-    raise RuntimeError(
-        f"cannot locate agentscope project root from {pkg}",
-    )
-
-
 # ── source tarball (dev mode only) ─────────────────────────────────
 
 
-_SOURCE_IGNORE_NAMES = frozenset(
-    {
-        "__pycache__",
-        "node_modules",
-        "build",
-        "dist",
-        "venv",
-        "workdir",
-        "examples",
-        "tests",
-        "docs",
-        "assets",
-        "scripts",
-        "dump.rdb",
-        "uv.lock",
-    },
-)
-
-
 def _tar_filter(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
-    """``tarfile.add`` filter — skip caches, hidden files and heavy dirs."""
+    """``tarfile.add`` filter — skip caches, hidden files and heavy dirs.
+
+    Returning ``None`` for an entry tells :meth:`tarfile.add` to also
+    *stop recursing* into it, so the root archive entry (``arcname="."``)
+    must be passed through unchanged — otherwise the entire tree is
+    excluded and the resulting tarball is effectively empty.
+    """
+    if info.name == ".":
+        return info
     name = info.name.split("/")[-1]
-    if name.startswith("."):
-        return None
-    if name in _SOURCE_IGNORE_NAMES:
-        return None
-    if name.endswith(".pyc") or name.endswith(".egg-info"):
+    if _is_source_ignored(name):
         return None
     return info
 
@@ -202,7 +109,7 @@ def build_source_tarball() -> bytes:
     Returns the tar bytes (uncompressed); the sandbox will untar with
     ``tar -xf`` (no ``-z``).
     """
-    root = agentscope_source_root()
+    root = _agentscope_source_root()
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w") as tf:
         tf.add(str(root), arcname=".", filter=_tar_filter)
@@ -231,7 +138,7 @@ def bootstrap_commands(
         A list of shell command strings, to be executed in order.
         Each must exit 0; a non-zero exit aborts the bootstrap.
     """
-    pip_pkgs = list(GATEWAY_BASE_REQUIREMENTS) + list(extra_pip or [])
+    pip_pkgs = list(_GATEWAY_BASE_REQUIREMENTS) + list(extra_pip or [])
     pip_args = " ".join(pip_pkgs)
 
     return [

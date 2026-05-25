@@ -187,7 +187,7 @@ async def _connect_initial(
             if client.is_stateful and client.is_connected:
                 await client.close()
             raise ValueError(
-                f"duplicate server name in config: {client.name!r}",
+                f"Duplicated server name in config: {client.name!r}",
             )
         state.clients[client.name] = client
         print(f"[gateway] connected {client.name!r}", flush=True)

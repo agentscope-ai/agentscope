@@ -42,7 +42,6 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
-from aiodocker import exceptions as aiodocker_exceptions
 from pydantic import AnyUrl
 
 from ..._logging import logger
@@ -128,29 +127,6 @@ class _ExecResult:
 class DockerWorkspace(WorkspaceBase):
     """Workspace backed by a Docker container.
 
-    Args:
-        base_image: Base image for the workspace. Must provide
-            ``python3`` (e.g. ``python:3.11-slim``).
-        workdir: Host path bind-mounted to ``/workspace`` inside the
-            container. ``None`` makes the workspace ephemeral — files
-            written under ``/workspace`` only live in the container's
-            writable layer and are lost on :meth:`close`.
-        node_version: When given (e.g. ``"20"``), Node.js + npm of that
-            version are baked into the image.
-        extra_pip: Extra Python packages to install into the gateway
-            venv.
-        gateway_port: TCP port the gateway listens on inside the
-            container (always exposed to the host).
-        env: Environment variables to set inside the container.
-        instructions: System-prompt fragment returned by
-            :meth:`get_instructions`.
-        default_mcps: Initial MCPs registered on first
-            :meth:`initialize`. Subsequent restarts read
-            ``<workdir>/.mcp`` instead.
-        skill_paths: Local skill directories seeded into
-            ``<workdir>/skills`` on first :meth:`initialize` (only
-            when ``workdir`` is set).
-
     ``default_mcps`` and ``skill_paths`` are seed-time inputs and are
     not retained as instance state past :meth:`initialize`.
     """
@@ -175,40 +151,49 @@ class DockerWorkspace(WorkspaceBase):
         (or use the workspace as an ``async`` context manager).
 
         Args:
-            workspace_id: Existing workspace identifier to adopt.
-                ``None`` generates a fresh UUID.  When the same
+            workspace_id (`str | None`, optional):
+                Existing workspace identifier to adopt. ``None``
+                generates a fresh UUID. When the same
                 ``workspace_id`` is paired with a persistent
                 ``workdir``, restarts are stable across processes.
-            base_image: Base Docker image. Must provide ``python3``
-                in ``$PATH`` (e.g. ``"python:3.11-slim"``). The image
-                is rebuilt on top of this base via the dynamic
+            base_image (`str`, defaults to `DEFAULT_BASE_IMAGE`):
+                Base Docker image. Must provide ``python3`` in
+                ``$PATH`` (e.g. ``"python:3.11-slim"``). The image is
+                rebuilt on top of this base via the dynamic
                 Dockerfile (uv venv + agentscope install + optional
                 node + ``extra_pip``).
-            workdir: Host directory bind-mounted to
-                ``/workspace`` inside the container.  ``None`` makes
-                the workspace ephemeral — files written under
-                ``/workspace`` live only in the container's writable
-                layer and are lost on :meth:`close`.  When set, the
-                directory is created on demand and the
-                ``.mcp`` / ``skills/`` / ``sessions/`` / ``data/``
-                layout is mirrored host-side.
-            node_version: Major Node.js version to bake into the
-                image (e.g. ``"20"``). ``None`` skips Node entirely.
-            extra_pip: Extra Python packages to install into the
-                gateway venv at image-build time.
-            gateway_port: TCP port the gateway listens on inside the
+            workdir (`str | None`, optional):
+                Host directory bind-mounted to ``/workspace`` inside
+                the container. ``None`` makes the workspace
+                ephemeral — files written under ``/workspace`` live
+                only in the container's writable layer and are lost
+                on :meth:`close`. When set, the directory is created
+                on demand and the ``.mcp`` / ``skills/`` /
+                ``sessions/`` / ``data/`` layout is mirrored
+                host-side.
+            node_version (`str | None`, optional):
+                Major Node.js version to bake into the image (e.g.
+                ``"20"``). ``None`` skips Node entirely.
+            extra_pip (`list[str] | None`, optional):
+                Extra Python packages to install into the gateway
+                venv at image-build time.
+            gateway_port (`int`, defaults to `DEFAULT_GATEWAY_PORT`):
+                TCP port the gateway listens on inside the
                 container; always exposed to a randomly assigned
                 host port.
-            env: Environment variables to set inside the container.
-            instructions: System-prompt fragment template returned
-                by :meth:`get_instructions`.  Supports the
-                ``{workdir}`` placeholder, replaced with the
-                container-side path.
-            default_mcps: Initial MCPs registered on first
-                :meth:`initialize`. On subsequent restarts with a
-                persistent ``workdir`` these are ignored in favour
-                of the persisted ``<workdir>/.mcp`` file.
-            skill_paths: Local skill directories seeded into
+            env (`dict[str, str] | None`, optional):
+                Environment variables to set inside the container.
+            instructions (`str`, defaults to `_DEFAULT_INSTRUCTIONS`):
+                System-prompt fragment template returned by
+                :meth:`get_instructions`. Supports the ``{workdir}``
+                placeholder, replaced with the container-side path.
+            default_mcps (`list[MCPClient] | None`, optional):
+                Initial MCPs registered on first :meth:`initialize`.
+                On subsequent restarts with a persistent ``workdir``
+                these are ignored in favour of the persisted
+                ``<workdir>/.mcp`` file.
+            skill_paths (`list[str] | None`, optional):
+                Local skill directories seeded into
                 ``<workdir>/skills`` on first :meth:`initialize`
                 (only when ``workdir`` is set; subsequent starts
                 treat the host directory as the source of truth).
@@ -308,15 +293,41 @@ class DockerWorkspace(WorkspaceBase):
         self.is_alive = True
 
     async def reset(self) -> None:
-        """Wipe per-session state inside the container.
+        """Return the workspace to an empty state.
 
-        Removes ``sessions/`` and ``data/`` but preserves ``.mcp`` and
-        ``skills/``, so the workspace can be re-used across users
-        without re-registering MCPs or re-uploading skills.
+        Deregisters every MCP from the gateway (``DELETE /mcps/{name}``
+        for each), clears the local handles, and wipes ``.mcp``,
+        ``skills/``, ``sessions/``, and ``data/`` inside the container.
+        The gateway process keeps running with no upstream MCPs.
+        ``default_mcps`` / ``skill_paths`` are not re-seeded.
         """
-        await self._exec(
-            f"rm -rf {CONTAINER_SESSIONS_DIR} {CONTAINER_DATA_DIR}",
-        )
+        async with self._mcp_lock, self._skill_lock:
+            for gw_client in list(self._gateway_clients.values()):
+                try:
+                    await gw_client.close()
+                except Exception as e:
+                    logger.warning(
+                        "MCP %r close failed during reset: %s",
+                        gw_client.name,
+                        e,
+                    )
+            self._gateway_clients.clear()
+            self._mcps = []
+
+            paths = [
+                CONTAINER_SESSIONS_DIR,
+                CONTAINER_DATA_DIR,
+                CONTAINER_SKILLS_DIR,
+            ]
+            await self._exec(
+                "rm -rf " + " ".join(shlex.quote(p) for p in paths),
+            )
+
+            # Rewrite ``.mcp`` to an empty list so a future restart does
+            # not fall back to ``default_mcps`` (which would only happen
+            # if the file were missing).
+            if self.workdir is not None:
+                await self._save_mcp_file()
 
     async def close(self) -> None:
         """Stop and remove the container; release the aiodocker client.
@@ -611,7 +622,6 @@ class DockerWorkspace(WorkspaceBase):
         self,
         session_id: str,
         msgs: list[Msg],
-        **_: Any,
     ) -> str:
         """Persist a batch of messages as JSONL inside the container.
 
@@ -622,16 +632,18 @@ class DockerWorkspace(WorkspaceBase):
         before serialisation, keeping the JSONL line size bounded.
 
         Args:
-            session_id: Session-scope key used to partition offloaded
-                files (one subdirectory per session).
-            msgs: Messages to append.  Not mutated — a deep copy is
+            session_id (`str`):
+                Session-scope key used to partition offloaded files
+                (one subdirectory per session).
+            msgs (`list[Msg]`):
+                Messages to append.  Not mutated — a deep copy is
                 used internally so the caller's blocks remain
                 base64-inline.
-            **_: Reserved for forward-compatible kwargs.
 
         Returns:
-            The container-side path of the JSONL file that received
-            the new lines.
+            `str`:
+                The container-side path of the JSONL file that
+                received the new lines.
         """
         base = f"{CONTAINER_SESSIONS_DIR}/{session_id}"
         path = f"{base}/context.jsonl"
@@ -667,7 +679,6 @@ class DockerWorkspace(WorkspaceBase):
         self,
         session_id: str,
         tool_result: ToolResultBlock,
-        **_: Any,
     ) -> str:
         """Persist a single tool result as a flat text file.
 
@@ -678,13 +689,14 @@ class DockerWorkspace(WorkspaceBase):
         with inline base64 payloads first offloaded to ``data/``.
 
         Args:
-            session_id: Session-scope key used to partition offloaded
-                files.
-            tool_result: The tool result block to persist.
-            **_: Reserved for forward-compatible kwargs.
+            session_id (`str`):
+                Session-scope key used to partition offloaded files.
+            tool_result (`ToolResultBlock`):
+                The tool result block to persist.
 
         Returns:
-            The container-side path of the offloaded text file.
+            `str`:
+                The container-side path of the offloaded text file.
         """
         base = f"{CONTAINER_SESSIONS_DIR}/{session_id}"
         path = f"{base}/tool_result-{tool_result.id}.txt"
@@ -1126,6 +1138,9 @@ class DockerWorkspace(WorkspaceBase):
                 container, or if the tar stream contains no regular
                 file at that path.
         """
+
+        from aiodocker import exceptions as aiodocker_exceptions
+
         try:
             # ``get_archive`` returns an already-parsed
             # :class:`tarfile.TarFile` (the daemon serves the file

@@ -33,6 +33,15 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from .._utils import (
+    _GATEWAY_BASE_REQUIREMENTS,
+    _agentscope_source_root,
+    _agentscope_version,
+    _is_released_install,
+    _is_source_ignored,
+    _read_gateway_script_bytes,
+)
+
 # ── shared constants (also imported by _docker_workspace) ──────────
 
 DEFAULT_BASE_IMAGE = "python:3.11-slim"
@@ -55,15 +64,6 @@ GATEWAY_LOG = f"{GATEWAY_HOME}/gateway.log"
 # transitive dependencies).
 GATEWAY_SCRIPT = f"{GATEWAY_HOME}/_mcp_gateway_app.py"
 
-# TODO(release): once agentscope ships an `[gateway]` extra bundling these,
-# delete GATEWAY_BASE_REQUIREMENTS and let the install step pull them in via
-# `uv pip install agentscope[gateway]`.
-GATEWAY_BASE_REQUIREMENTS: tuple[str, ...] = (
-    "mcp",
-    "uvicorn",
-    "fastapi",
-)
-
 IMAGE_REPO = "agentscope-workspace"
 
 # ── template loading ───────────────────────────────────────────────
@@ -81,98 +81,13 @@ def _read_template(name: str) -> str:
     return _res.files(_TEMPLATE_PKG).joinpath(name).read_text(encoding="utf-8")
 
 
-# ── agentscope install detection ───────────────────────────────────
-
-
-def _agentscope_module_path() -> Path:
-    """Return the filesystem path of the imported ``agentscope`` package."""
-    import agentscope  # local import — keeps module import cheap
-
-    file = getattr(agentscope, "__file__", None)
-    if not file:
-        raise RuntimeError(
-            "agentscope has no __file__ attribute; cannot locate package",
-        )
-    return Path(file).resolve().parent
-
-
-def _is_released_install() -> bool:
-    """Return True if the imported ``agentscope`` lives in site-packages."""
-    pkg = _agentscope_module_path()
-    parts = pkg.parts
-    return "site-packages" in parts or "dist-packages" in parts
-
-
-def _agentscope_version() -> str:
-    """Return the installed agentscope version (used in released mode)."""
-    import agentscope
-
-    version = getattr(agentscope, "__version__", None)
-    if not version:
-        # fallback to importlib.metadata in case __version__ is missing
-        try:
-            from importlib.metadata import version as _v
-
-            version = _v("agentscope")
-        except Exception as e:  # noqa: BLE001
-            raise RuntimeError(
-                "cannot determine agentscope version",
-            ) from e
-    return version
-
-
-def _agentscope_source_root() -> Path:
-    """Return the project root containing ``pyproject.toml`` + ``src/``.
-
-    Only valid in dev mode. Walks up from the package directory until
-    a ``pyproject.toml`` is found.
-    """
-    pkg = _agentscope_module_path()
-    for parent in [pkg, *pkg.parents]:
-        if (parent / "pyproject.toml").is_file() and (
-            (parent / "src").is_dir() or (parent / "agentscope").is_dir()
-        ):
-            return parent
-    raise RuntimeError(
-        f"cannot locate agentscope project root from {pkg}",
-    )
-
-
 # ── source-tree packaging (dev mode) ───────────────────────────────
 
 
-_SOURCE_IGNORE_NAMES = frozenset(
-    {
-        "__pycache__",
-        "node_modules",
-        "build",
-        "dist",
-        "venv",
-        "workdir",
-        "examples",
-        "tests",
-        "docs",
-        "assets",
-        "scripts",
-        "dump.rdb",
-        "uv.lock",
-    },
-)
-
-
 def _source_ignore(_dir: str, names: list[str]) -> list[str]:
-    """``shutil.copytree`` ignore that filters caches / heavy non-build dirs.
-
-    Anything starting with ``.`` is skipped (IDE state, git metadata,
-    cache dirs). The build only needs ``pyproject.toml`` + ``src/``.
-    """
-    skipped = []
-    for n in names:
-        if n.startswith(".") or n in _SOURCE_IGNORE_NAMES:
-            skipped.append(n)
-        elif n.endswith(".pyc") or n.endswith(".egg-info"):
-            skipped.append(n)
-    return skipped
+    """``shutil.copytree`` ignore filter — defers
+    to :func:`_is_source_ignored`."""
+    return [n for n in names if _is_source_ignored(n)]
 
 
 def _hash_directory(root: Path) -> bytes:
@@ -246,7 +161,7 @@ def render_dockerfile(
 
 def _render_requirements(extra_pip: list[str]) -> str:
     """Render ``requirements.txt`` content for the gateway venv."""
-    pinned = list(GATEWAY_BASE_REQUIREMENTS) + list(extra_pip or [])
+    pinned = list(_GATEWAY_BASE_REQUIREMENTS) + list(extra_pip or [])
     return "\n".join(pinned) + "\n"
 
 
@@ -358,19 +273,3 @@ def prepare_build_context(
         )
 
     return ctx_dir, tag, copy_files
-
-
-def _read_gateway_script_bytes() -> bytes:
-    """Read the standalone gateway script as bytes via ``importlib.resources``.
-
-    The script ships with the agentscope package at
-    ``agentscope/workspace/_mcp_gateway/_mcp_gateway_app.py``; we copy
-    its content into each build context so the in-container path is
-    deterministic (``GATEWAY_SCRIPT``) and decoupled from the venv's
-    site-packages layout.
-    """
-    return (
-        _res.files("agentscope.workspace._mcp_gateway")
-        .joinpath("_mcp_gateway_app.py")
-        .read_bytes()
-    )
