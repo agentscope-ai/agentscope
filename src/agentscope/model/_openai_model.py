@@ -76,7 +76,16 @@ class OpenAIChatModel(ChatModelBase):
         model_name: str,
         api_key: str | None = None,
         stream: bool = True,
-        reasoning_effort: Literal["low", "medium", "high"] | None = None,
+        reasoning_effort: Literal[
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+        ]
+        | str
+        | None = None,
         organization: str = None,
         stream_tool_parsing: bool = True,
         client_type: Literal["openai", "azure"] = "openai",
@@ -94,12 +103,15 @@ class OpenAIChatModel(ChatModelBase):
                 be read from the environment variable `OPENAI_API_KEY`.
             stream (`bool`, default `True`):
                 Whether to use streaming output or not.
-            reasoning_effort (`Literal["low", "medium", "high"] | None`, \
-            optional):
+            reasoning_effort (`Literal["none", "minimal", "low", "medium", \
+            "high", "xhigh"] | str | None`, optional):
                 Reasoning effort, supported for o3, o4, etc. Please refer to
                 `OpenAI documentation
                 <https://platform.openai.com/docs/guides/reasoning?api-mode=chat>`_
-                for more details.
+                for more details. The type also accepts arbitrary ``str``
+                values so that OpenAI-compatible providers using non-standard
+                levels can be used directly. For example, DeepSeek supports
+                ``"max"`` and ``"high"``.
             organization (`str`, default `None`):
                 The organization ID for OpenAI API. If not specified, it will
                 be read from the environment variable `OPENAI_ORGANIZATION`.
