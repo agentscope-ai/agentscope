@@ -14,9 +14,7 @@ from agentscope.app import (
 from agentscope.mcp import MCPClient, StdioMCPConfig, HttpMCPConfig
 
 app = create_app(
-    RedisStorage(
-        # connection_pool=fakeredis.aioredis.FakeRedis().connection_pool,
-    ),
+    RedisStorage(),
     workspace_manager=LocalWorkspaceManager(
         basedir=os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
@@ -27,7 +25,7 @@ app = create_app(
                 name="browser-use",
                 mcp_config=StdioMCPConfig(
                     command="npx",
-                    args=["install @playwright/browser-use"],
+                    args=["@playwright/mcp@latest"],
                 ),
                 is_stateful=True,
             ),

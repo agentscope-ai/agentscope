@@ -271,9 +271,7 @@ class E2BWorkspace(WorkspaceBase):
         if self.is_alive:
             return
 
-        from e2b import AsyncSandbox
-
-        await self._attach_or_create_sandbox(AsyncSandbox)
+        await self._attach_or_create_sandbox()
 
         # If the gateway script is missing, the sandbox is fresh (or
         # a prior bootstrap was interrupted). Re-running bootstrap is
@@ -645,7 +643,7 @@ class E2BWorkspace(WorkspaceBase):
 
     # ── internals: sandbox attach / create ─────────────────────
 
-    async def _attach_or_create_sandbox(self, AsyncSandbox: Any) -> None:
+    async def _attach_or_create_sandbox(self) -> None:
         """Reattach to an existing sandbox by metadata, or create one.
 
         Resolution rule: a single sandbox is expected per
@@ -660,7 +658,9 @@ class E2BWorkspace(WorkspaceBase):
         "not yet routable" errors — typical on a paused sandbox that
         has just been auto-resumed via ``connect``.
         """
-        existing = await self._find_existing_sandbox(AsyncSandbox)
+        from e2b import AsyncSandbox
+
+        existing = await self._find_existing_sandbox()
 
         api_opts = self._api_opts()
         if existing is not None:
@@ -723,12 +723,13 @@ class E2BWorkspace(WorkspaceBase):
             f"(workspace_id={self.workspace_id!r})",
         )
 
-    async def _find_existing_sandbox(self, AsyncSandbox: Any) -> Any:
+    async def _find_existing_sandbox(self) -> Any:
         """List sandboxes filtered by ``workspace_id`` metadata.
 
         Returns the most recent :class:`SandboxInfo` (paused or
         running) or ``None`` if no match exists.
         """
+        from e2b import AsyncSandbox
         from e2b.api.client.models.sandbox_state import SandboxState
         from e2b.sandbox.sandbox_api import SandboxQuery
 
