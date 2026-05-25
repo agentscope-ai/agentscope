@@ -174,17 +174,17 @@ Taking DashScope API as example, we create an agent object as follows:
 
     Jarvis: {
         "type": "tool_use",
-        "id": "call_5afca10b322b499d902579",
+        "id": "call_87243ed3caf04c0ca430d5",
         "name": "execute_python_code",
         "input": {
             "code": "print('Hello World')",
-            "timeout": 5
+            "timeout": 300
         },
-        "raw_input": "{\"code\": \"print('Hello World')\", \"timeout\": 5}"
+        "raw_input": "{\"code\": \"print('Hello World')\", \"timeout\": 300}"
     }
     system: {
         "type": "tool_result",
-        "id": "call_5afca10b322b499d902579",
+        "id": "call_87243ed3caf04c0ca430d5",
         "name": "execute_python_code",
         "output": [
             {
@@ -193,7 +193,7 @@ Taking DashScope API as example, we create an agent object as follows:
             }
         ]
     }
-    Jarvis: The Python code executed successfully and printed the following:
+    Jarvis: The Python code has successfully executed and printed:
 
     ```
     Hello World
@@ -320,7 +320,7 @@ class by inheriting from it and implementing the ``reply`` method.
 
  .. code-block:: none
 
-    Friday: Hello! I'm Friday, an AI assistant designed to help with a wide range of tasks and provide information on various topics. How can I assist you today?
+    Friday: I'm Friday, your helpful AI assistant. I'm here to provide information, answer questions, and assist with a wide range of tasks. How can I help you today?
 
 
 
@@ -338,7 +338,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 9.792 seconds)
+   **Total running time of the script:** (0 minutes 7.348 seconds)
 
 
 .. _sphx_glr_download_tutorial_quickstart_agent.py:
