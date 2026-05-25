@@ -88,7 +88,18 @@ Welcome to join our community on
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+## 📑 Table of Contents
 
+- [Quickstart](#quickstart)
+  - [Installation](#installation)
+    - [From PyPI](#from-pypi)
+    - [From source](#from-source)
+- [Hello AgentScope!](#hello-agentscope)
+- [Agent Service](#agent-service)
+- [Contributing](#contributing)
+- [License](#license)
+- [Publications](#publications)
+- [Contributors](#contributors)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
