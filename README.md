@@ -73,7 +73,7 @@ rather than constraining them with strict prompts and opinionated orchestrations
 
 ## News
 <!-- BEGIN NEWS -->
-- **[2026-05] `RELS`:** AgentScope 2.0 released! [Tutorial](https://docs.agentscope.io/)
+- **[2026-05] `RELS`:** AgentScope 2.0 released! [Docs](https://docs.agentscope.io/)
 <!-- END NEWS -->
 
 [More news →](./docs/NEWS.md)
