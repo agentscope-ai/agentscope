@@ -20,7 +20,7 @@ Details about the agent service please refer to the [tutorial](https://docs.agen
 Install AgentScope from PyPI or source:
 
 ```bash
-uv pip install agentscope
+uv pip install agentscope[full]
 # or
 # uv pip install -e [full]
 ```
