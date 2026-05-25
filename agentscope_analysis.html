@@ -1,0 +1,1206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgentScope — Complete Analysis</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&family=Syne:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --surface: #111111;
+    --surface2: #181818;
+    --border: rgba(255,255,255,0.07);
+    --border2: rgba(255,255,255,0.12);
+    --text: #f0ede6;
+    --muted: #888880;
+    --accent: #7f77dd;
+    --accent2: #1d9e75;
+    --accent3: #ef9f27;
+    --accent4: #d85a30;
+    --purple-light: #afa9ec;
+    --teal-light: #5dcaa5;
+    --amber-light: #fac775;
+    --coral-light: #f0997b;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Syne', sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+    overflow-x: hidden;
+  }
+
+  /* Grid noise texture overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 0h60v60H0z' fill='none'/%3E%3Cpath d='M0 0h1v1H0z' fill='rgba(255,255,255,0.018)'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* NAV */
+  nav {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 40px;
+    height: 60px;
+    background: rgba(10,10,10,0.92);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .nav-logo {
+    font-family: 'DM Serif Display', serif;
+    font-size: 18px;
+    color: var(--text);
+    text-decoration: none;
+    letter-spacing: -0.02em;
+  }
+
+  .nav-logo span { color: var(--accent); }
+
+  .nav-links {
+    display: flex;
+    gap: 4px;
+    list-style: none;
+  }
+
+  .nav-links a {
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 6px 12px;
+    border-radius: 4px;
+    transition: color 0.2s, background 0.2s;
+  }
+
+  .nav-links a:hover {
+    color: var(--text);
+    background: var(--surface2);
+  }
+
+  /* HERO */
+  #hero {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 100px 40px 60px;
+    position: relative;
+  }
+
+  .hero-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(127,119,221,0.12);
+    border: 1px solid rgba(127,119,221,0.3);
+    border-radius: 100px;
+    padding: 6px 16px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--purple-light);
+    margin-bottom: 32px;
+    animation: fadeUp 0.6s ease both;
+  }
+
+  .hero-badge::before {
+    content: '';
+    width: 6px; height: 6px;
+    background: var(--accent);
+    border-radius: 50%;
+    animation: pulse 2s ease infinite;
+  }
+
+  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.8)} }
+
+  h1 {
+    font-family: 'DM Serif Display', serif;
+    font-size: clamp(52px, 9vw, 96px);
+    line-height: 0.95;
+    letter-spacing: -0.03em;
+    margin-bottom: 24px;
+    animation: fadeUp 0.6s 0.1s ease both;
+  }
+
+  h1 em {
+    font-style: italic;
+    color: var(--accent);
+  }
+
+  .hero-sub {
+    font-size: 17px;
+    color: var(--muted);
+    max-width: 560px;
+    margin: 0 auto 48px;
+    line-height: 1.7;
+    animation: fadeUp 0.6s 0.2s ease both;
+  }
+
+  .hero-stats {
+    display: flex;
+    gap: 2px;
+    animation: fadeUp 0.6s 0.3s ease both;
+  }
+
+  .stat-pill {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 24px;
+    text-align: center;
+  }
+
+  .stat-pill .num {
+    font-family: 'DM Mono', monospace;
+    font-size: 24px;
+    font-weight: 500;
+    color: var(--text);
+    display: block;
+  }
+
+  .stat-pill .label {
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-top: 2px;
+    display: block;
+  }
+
+  .scroll-hint {
+    position: absolute;
+    bottom: 32px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: var(--muted);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    animation: fadeUp 1s 0.8s ease both;
+  }
+
+  .scroll-hint::after {
+    content: '';
+    width: 1px;
+    height: 40px;
+    background: linear-gradient(to bottom, var(--muted), transparent);
+    animation: scrollLine 2s ease infinite;
+  }
+
+  @keyframes scrollLine { 0%{opacity:0;transform:scaleY(0);transform-origin:top} 50%{opacity:1} 100%{opacity:0;transform:scaleY(1)} }
+
+  /* SECTIONS */
+  section {
+    padding: 100px 40px;
+    max-width: 1100px;
+    margin: 0 auto;
+    position: relative;
+    z-index: 1;
+  }
+
+  .section-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .section-label::before {
+    content: '';
+    width: 24px;
+    height: 1px;
+    background: var(--accent);
+  }
+
+  h2 {
+    font-family: 'DM Serif Display', serif;
+    font-size: clamp(32px, 4vw, 52px);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    margin-bottom: 48px;
+  }
+
+  h2 em { font-style: italic; color: var(--accent); }
+
+  /* WHAT IS IT */
+  .what-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px;
+    margin-bottom: 2px;
+  }
+
+  .what-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 32px;
+    border-radius: 2px;
+    transition: border-color 0.2s, background 0.2s;
+  }
+
+  .what-card:hover {
+    border-color: var(--border2);
+    background: var(--surface2);
+  }
+
+  .what-card.accent-purple { border-left: 3px solid var(--accent); border-radius: 0; }
+  .what-card.accent-teal   { border-left: 3px solid var(--accent2); border-radius: 0; }
+  .what-card.accent-amber  { border-left: 3px solid var(--accent3); border-radius: 0; }
+  .what-card.accent-coral  { border-left: 3px solid var(--accent4); border-radius: 0; }
+
+  .card-icon {
+    width: 36px; height: 36px;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px;
+    margin-bottom: 16px;
+  }
+
+  .card-icon.purple { background: rgba(127,119,221,0.15); }
+  .card-icon.teal   { background: rgba(29,158,117,0.15); }
+  .card-icon.amber  { background: rgba(239,159,39,0.15); }
+  .card-icon.coral  { background: rgba(216,90,48,0.15); }
+
+  .what-card h3 {
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 10px;
+    letter-spacing: -0.01em;
+  }
+
+  .what-card p {
+    font-size: 14px;
+    color: var(--muted);
+    line-height: 1.65;
+  }
+
+  .what-full {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 40px;
+    border-radius: 2px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 40px;
+    align-items: center;
+  }
+
+  .what-full h3 {
+    font-family: 'DM Serif Display', serif;
+    font-size: 28px;
+    line-height: 1.2;
+    margin-bottom: 16px;
+    letter-spacing: -0.02em;
+  }
+
+  .what-full p {
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.7;
+  }
+
+  .code-block {
+    background: #0d0d0d;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    line-height: 1.8;
+    overflow-x: auto;
+  }
+
+  .code-block .kw { color: #c792ea; }
+  .code-block .fn { color: #82aaff; }
+  .code-block .str { color: #c3e88d; }
+  .code-block .cm { color: #546e7a; }
+  .code-block .cls { color: #ffcb6b; }
+
+  /* RL CHART SECTION */
+  #rl .chart-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    padding: 40px;
+  }
+
+  .chart-controls {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 32px;
+    flex-wrap: wrap;
+  }
+
+  .ctrl-btn {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 6px 14px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-family: 'Syne', sans-serif;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .ctrl-btn:hover, .ctrl-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+
+  .bars-container {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .bar-row {
+    display: grid;
+    grid-template-columns: 140px 1fr 60px;
+    align-items: center;
+    gap: 16px;
+    cursor: pointer;
+  }
+
+  .bar-label {
+    font-size: 13px;
+    color: var(--muted);
+    text-align: right;
+    transition: color 0.2s;
+  }
+
+  .bar-row:hover .bar-label { color: var(--text); }
+
+  .bar-track {
+    height: 36px;
+    background: rgba(255,255,255,0.04);
+    border-radius: 4px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .bar-before, .bar-after {
+    position: absolute;
+    top: 0; left: 0;
+    height: 50%;
+    border-radius: 2px;
+    transition: width 0.8s cubic-bezier(0.16,1,0.3,1);
+  }
+
+  .bar-before { background: rgba(136,135,128,0.5); top: 0; }
+  .bar-after  { background: var(--accent); top: 50%; }
+
+  .bar-delta {
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    color: var(--teal-light);
+    text-align: right;
+    font-weight: 500;
+  }
+
+  .rl-detail {
+    margin-top: 32px;
+    padding: 24px;
+    background: rgba(127,119,221,0.07);
+    border: 1px solid rgba(127,119,221,0.2);
+    border-radius: 8px;
+    font-size: 14px;
+    color: var(--muted);
+    line-height: 1.7;
+    transition: all 0.3s;
+    min-height: 90px;
+  }
+
+  .rl-detail strong { color: var(--purple-light); }
+
+  /* ARCHITECTURE */
+  #arch .arch-layers {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .arch-layer {
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: border-color 0.2s;
+  }
+
+  .arch-layer:hover { border-color: var(--border2); }
+
+  .arch-layer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 28px;
+    background: var(--surface);
+    transition: background 0.2s;
+  }
+
+  .arch-layer.open .arch-layer-header { background: var(--surface2); }
+
+  .arch-layer-title {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .layer-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+  }
+
+  .layer-name {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+
+  .layer-desc {
+    font-size: 12px;
+    color: var(--muted);
+    margin-left: 22px;
+  }
+
+  .layer-chevron {
+    color: var(--muted);
+    transition: transform 0.3s;
+    font-size: 16px;
+  }
+
+  .arch-layer.open .layer-chevron { transform: rotate(180deg); }
+
+  .arch-layer-body {
+    display: none;
+    padding: 24px 28px 28px;
+    background: rgba(0,0,0,0.3);
+    border-top: 1px solid var(--border);
+  }
+
+  .arch-layer.open .arch-layer-body { display: block; }
+
+  .arch-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .chip {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 5px 12px;
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    transition: all 0.2s;
+  }
+
+  .chip:hover {
+    border-color: var(--border2);
+    color: var(--text);
+  }
+
+  /* ECOSYSTEM COMPARISON */
+  #compare .compare-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  .compare-table th {
+    text-align: left;
+    padding: 12px 16px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .compare-table td {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+
+  .compare-table tr:last-child td { border-bottom: none; }
+
+  .compare-table tr:hover td { background: var(--surface2); }
+
+  .compare-table .fw { font-weight: 700; color: var(--text); }
+  .compare-table .yes { color: var(--teal-light); }
+  .compare-table .no  { color: #555; }
+  .compare-table .partial { color: var(--amber-light); }
+
+  .highlight-row td { background: rgba(127,119,221,0.06); }
+  .highlight-row .fw { color: var(--purple-light); }
+
+  /* NEWS TIMELINE */
+  #news .timeline {
+    position: relative;
+    padding-left: 24px;
+  }
+
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 8px; bottom: 8px;
+    width: 1px;
+    background: var(--border);
+  }
+
+  .tl-item {
+    position: relative;
+    padding: 0 0 32px 32px;
+  }
+
+  .tl-item::before {
+    content: '';
+    position: absolute;
+    left: -4px; top: 6px;
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    background: var(--surface);
+    border: 2px solid var(--border2);
+    transition: border-color 0.2s;
+  }
+
+  .tl-item:hover::before { border-color: var(--accent); }
+
+  .tl-date {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: var(--accent);
+    font-weight: 500;
+    margin-bottom: 6px;
+    letter-spacing: 0.04em;
+  }
+
+  .tl-tag {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 3px;
+    margin-right: 8px;
+  }
+
+  .tl-tag.feat { background: rgba(29,158,117,0.15); color: var(--teal-light); }
+  .tl-tag.intg { background: rgba(239,159,39,0.15); color: var(--amber-light); }
+  .tl-tag.comm { background: rgba(127,119,221,0.15); color: var(--purple-light); }
+  .tl-tag.rels { background: rgba(216,90,48,0.15); color: var(--coral-light); }
+
+  .tl-title {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+
+  .tl-body {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+
+  /* GET STARTED */
+  #start .start-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px;
+  }
+
+  .step-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 32px;
+    position: relative;
+    transition: border-color 0.2s;
+  }
+
+  .step-card:hover { border-color: var(--border2); }
+
+  .step-num {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: var(--accent);
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    margin-bottom: 12px;
+  }
+
+  .step-card h3 {
+    font-size: 17px;
+    font-weight: 700;
+    margin-bottom: 8px;
+    letter-spacing: -0.01em;
+  }
+
+  .step-card p {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.6;
+    margin-bottom: 16px;
+  }
+
+  .cmd {
+    background: #0d0d0d;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    color: var(--teal-light);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .copy-btn {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: 'Syne', sans-serif;
+    transition: color 0.2s;
+  }
+
+  .copy-btn:hover { color: var(--text); }
+
+  /* FOOTER */
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 40px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    position: relative;
+    z-index: 1;
+  }
+
+  footer a { color: var(--accent); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+
+  /* ANIMATIONS */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .reveal {
+    opacity: 0;
+    transform: translateY(24px);
+    transition: opacity 0.6s ease, transform 0.6s ease;
+  }
+
+  .reveal.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* Divider line */
+  .divider {
+    height: 1px;
+    background: var(--border);
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+
+  /* scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--surface2); border-radius: 3px; }
+
+  @media (max-width: 700px) {
+    nav { padding: 0 20px; }
+    .nav-links { display: none; }
+    section { padding: 60px 20px; }
+    h1 { font-size: 44px; }
+    .hero-stats { flex-wrap: wrap; }
+    .what-grid, .what-full, #start .start-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <a href="#hero" class="nav-logo">Agent<span>Scope</span></a>
+  <ul class="nav-links">
+    <li><a href="#what">What</a></li>
+    <li><a href="#rl">RL Results</a></li>
+    <li><a href="#arch">Architecture</a></li>
+    <li><a href="#compare">Compare</a></li>
+    <li><a href="#news">News</a></li>
+    <li><a href="#start">Get Started</a></li>
+  </ul>
+</nav>
+
+<!-- HERO -->
+<section id="hero">
+  <div class="hero-badge">Open Source · Apache 2.0 · 23.4k Stars</div>
+  <h1>Build agents you<br><em>actually trust</em></h1>
+  <p class="hero-sub">AgentScope is a production-ready Python framework for building, running, and orchestrating LLM agents — single or multi-agent — backed by Alibaba research.</p>
+  <div class="hero-stats">
+    <div class="stat-pill">
+      <span class="num">23.4k</span>
+      <span class="label">Stars</span>
+    </div>
+    <div class="stat-pill">
+      <span class="num">2.4k</span>
+      <span class="label">Forks</span>
+    </div>
+    <div class="stat-pill">
+      <span class="num">250+</span>
+      <span class="label">Commits</span>
+    </div>
+    <div class="stat-pill">
+      <span class="num">v1.0.18</span>
+      <span class="label">Latest</span>
+    </div>
+    <div class="stat-pill">
+      <span class="num">3.10+</span>
+      <span class="label">Python</span>
+    </div>
+  </div>
+  <div class="scroll-hint">Scroll</div>
+</section>
+
+<div class="divider"></div>
+
+<!-- WHAT IS IT -->
+<section id="what">
+  <div class="section-label reveal">What is it</div>
+  <h2 class="reveal">The framework that <em>gets out</em><br>of your model's way</h2>
+
+  <div class="what-grid reveal">
+    <div class="what-card accent-purple">
+      <div class="card-icon purple">▲</div>
+      <h3>The Problem</h3>
+      <p>Most agent frameworks constrain LLMs with rigid prompts, hard-coded orchestration, and opinionated pipelines. Every hardcoded rule is technical debt as models improve.</p>
+    </div>
+    <div class="what-card accent-teal">
+      <div class="card-icon teal">◎</div>
+      <h3>The Philosophy</h3>
+      <p>AgentScope leverages the model's own reasoning and tool-use abilities. You provide structure at the edges — memory, deployment, observability — and let the LLM think.</p>
+    </div>
+    <div class="what-card accent-amber">
+      <div class="card-icon amber">◈</div>
+      <h3>The Audience</h3>
+      <p>Built for engineers who need to ship production agents, not demos. Supports local, serverless, and Kubernetes deployment with OpenTelemetry observability out of the box.</p>
+    </div>
+    <div class="what-card accent-coral">
+      <div class="card-icon coral">◐</div>
+      <h3>The Differentiator</h3>
+      <p>Unique agentic RL support: train your agents end-to-end with reinforcement learning using the Trinity-RFT library. Agents learn to be better agents — not just prompted to be.</p>
+    </div>
+  </div>
+
+  <div style="height:2px"></div>
+
+  <div class="what-full reveal">
+    <div>
+      <h3>Hello, AgentScope</h3>
+      <p style="margin-bottom:12px">A ReAct agent with tools, memory, and streaming — in under 30 lines. Works with any OpenAI-compatible API, DashScope, Anthropic, and more.</p>
+      <p>The <code style="font-family:'DM Mono',monospace;font-size:12px;color:var(--purple-light)">Toolkit</code> accepts any callable — including MCP tools unwrapped as local functions.</p>
+    </div>
+    <div class="code-block">
+<span class="kw">from</span> agentscope.agent <span class="kw">import</span> <span class="cls">ReActAgent</span>, <span class="cls">UserAgent</span>
+<span class="kw">from</span> agentscope.model <span class="kw">import</span> <span class="cls">DashScopeChatModel</span>
+<span class="kw">from</span> agentscope.memory <span class="kw">import</span> <span class="cls">InMemoryMemory</span>
+<span class="kw">from</span> agentscope.tool <span class="kw">import</span> <span class="cls">Toolkit</span>, execute_python_code
+
+agent = <span class="cls">ReActAgent</span>(
+  name=<span class="str">"Friday"</span>,
+  sys_prompt=<span class="str">"You're a helpful assistant."</span>,
+  model=<span class="cls">DashScopeChatModel</span>(
+    model_name=<span class="str">"qwen-max"</span>,
+    api_key=os.environ[<span class="str">"API_KEY"</span>],
+    stream=<span class="kw">True</span>,
+  ),
+  memory=<span class="cls">InMemoryMemory</span>(),
+  toolkit=<span class="cls">Toolkit</span>(),
+)
+
+<span class="cm"># Run conversation loop</span>
+<span class="kw">async</span> <span class="kw">def</span> <span class="fn">main</span>():
+  msg = <span class="kw">None</span>
+  <span class="kw">while</span> <span class="kw">True</span>:
+    msg = <span class="kw">await</span> <span class="fn">agent</span>(msg)
+    msg = <span class="kw">await</span> user(msg)
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- RL RESULTS -->
+<section id="rl">
+  <div class="section-label reveal">Agentic RL</div>
+  <h2 class="reveal">Agents that <em>learn</em>,<br>not just respond</h2>
+
+  <div class="chart-wrap reveal">
+    <div class="chart-controls">
+      <button class="ctrl-btn active" onclick="sortBars('default',this)">Default order</button>
+      <button class="ctrl-btn" onclick="sortBars('gain',this)">Sort by gain</button>
+      <button class="ctrl-btn" onclick="sortBars('after',this)">Sort by final score</button>
+    </div>
+    <div class="bars-container" id="barsContainer"></div>
+    <div class="rl-detail" id="rlDetail">
+      Hover or click any scenario to see training details, model used, and what the agent learned.
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ARCHITECTURE -->
+<section id="arch">
+  <div class="section-label reveal">Architecture</div>
+  <h2 class="reveal">Seven layers,<br><em>one coherent system</em></h2>
+
+  <div class="arch-layers reveal" id="archLayers"></div>
+</section>
+
+<div class="divider"></div>
+
+<!-- COMPARE -->
+<section id="compare">
+  <div class="section-label reveal">Comparison</div>
+  <h2 class="reveal">How it stacks up<br><em>against alternatives</em></h2>
+
+  <div class="reveal" style="overflow-x:auto">
+    <table class="compare-table">
+      <thead>
+        <tr>
+          <th>Feature</th>
+          <th style="color:var(--purple-light)">AgentScope</th>
+          <th>LangChain</th>
+          <th>AutoGen</th>
+          <th>CrewAI</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="highlight-row">
+          <td>Agentic RL / fine-tuning</td>
+          <td class="fw yes">✓ Built-in</td>
+          <td class="no">✗</td>
+          <td class="no">✗</td>
+          <td class="no">✗</td>
+        </tr>
+        <tr>
+          <td>MCP tool support</td>
+          <td class="yes fw">✓ Native</td>
+          <td class="partial">~ Plugin</td>
+          <td class="partial">~ Plugin</td>
+          <td class="no">✗</td>
+        </tr>
+        <tr class="highlight-row">
+          <td>A2A protocol</td>
+          <td class="yes fw">✓ Built-in</td>
+          <td class="no">✗</td>
+          <td class="partial">~ Beta</td>
+          <td class="no">✗</td>
+        </tr>
+        <tr>
+          <td>Realtime voice agent</td>
+          <td class="yes fw">✓</td>
+          <td class="no">✗</td>
+          <td class="no">✗</td>
+          <td class="no">✗</td>
+        </tr>
+        <tr class="highlight-row">
+          <td>Human-in-the-loop interruption</td>
+          <td class="yes fw">✓ Realtime</td>
+          <td class="partial">~ Manual</td>
+          <td class="partial">~ Manual</td>
+          <td class="partial">~ Manual</td>
+        </tr>
+        <tr>
+          <td>K8s / serverless deploy</td>
+          <td class="yes fw">✓ Built-in</td>
+          <td class="partial">~ External</td>
+          <td class="partial">~ External</td>
+          <td class="partial">~ External</td>
+        </tr>
+        <tr class="highlight-row">
+          <td>OpenTelemetry observability</td>
+          <td class="yes fw">✓</td>
+          <td class="partial">~ LangSmith</td>
+          <td class="no">✗</td>
+          <td class="no">✗</td>
+        </tr>
+        <tr>
+          <td>Dynamic multi-agent hub</td>
+          <td class="yes fw">✓ MsgHub</td>
+          <td class="partial">~ Graphs</td>
+          <td class="yes">✓</td>
+          <td class="partial">~ Crews</td>
+        </tr>
+        <tr class="highlight-row">
+          <td>Memory compression</td>
+          <td class="yes fw">✓ Built-in</td>
+          <td class="partial">~ External</td>
+          <td class="partial">~ External</td>
+          <td class="no">✗</td>
+        </tr>
+        <tr>
+          <td>License</td>
+          <td class="fw">Apache 2.0</td>
+          <td>MIT</td>
+          <td>MIT</td>
+          <td>MIT</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="font-size:12px;color:var(--muted);margin-top:16px;font-style:italic">✓ native support &nbsp;·&nbsp; ~ partial / via plugin &nbsp;·&nbsp; ✗ not available. Based on public docs as of May 2026.</p>
+</section>
+
+<div class="divider"></div>
+
+<!-- NEWS -->
+<section id="news">
+  <div class="section-label reveal">Changelog</div>
+  <h2 class="reveal">Recent <em>milestones</em></h2>
+
+  <div class="timeline reveal" id="timeline"></div>
+</section>
+
+<div class="divider"></div>
+
+<!-- GET STARTED -->
+<section id="start">
+  <div class="section-label reveal">Get started</div>
+  <h2 class="reveal">From zero to<br><em>running agent</em> in 5 min</h2>
+
+  <div class="start-grid reveal">
+    <div class="step-card">
+      <div class="step-num">01 / Install</div>
+      <h3>Add to your project</h3>
+      <p>Requires Python 3.10+. Works with pip or uv.</p>
+      <div class="cmd">
+        <span>pip install agentscope</span>
+        <button class="copy-btn" onclick="copyCmd(this,'pip install agentscope')">copy</button>
+      </div>
+    </div>
+    <div class="step-card">
+      <div class="step-num">02 / Configure</div>
+      <h3>Set your API key</h3>
+      <p>Works with DashScope, OpenAI, Anthropic, or any OpenAI-compatible endpoint.</p>
+      <div class="cmd">
+        <span>export DASHSCOPE_API_KEY=...</span>
+        <button class="copy-btn" onclick="copyCmd(this,'export DASHSCOPE_API_KEY=your_key')">copy</button>
+      </div>
+    </div>
+    <div class="step-card">
+      <div class="step-num">03 / Build</div>
+      <h3>Create your agent</h3>
+      <p>ReActAgent is the default — gives your agent tools, memory, and streaming out of the box.</p>
+      <div class="cmd">
+        <span>agent = ReActAgent(...)</span>
+        <button class="copy-btn" onclick="copyCmd(this,'agent = ReActAgent(...)')">copy</button>
+      </div>
+    </div>
+    <div class="step-card">
+      <div class="step-num">04 / Explore</div>
+      <h3>Read the docs</h3>
+      <p>Full tutorial, API reference, and 30+ examples at the official documentation site.</p>
+      <div class="cmd">
+        <span>doc.agentscope.io</span>
+        <button class="copy-btn" onclick="copyCmd(this,'https://doc.agentscope.io')">copy</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>AgentScope is released under <strong>Apache License 2.0</strong> by Alibaba research teams.</p>
+  <p style="margin-top:8px">
+    <a href="https://github.com/agentscope-ai/agentscope" target="_blank">GitHub</a> &nbsp;·&nbsp;
+    <a href="https://doc.agentscope.io" target="_blank">Docs</a> &nbsp;·&nbsp;
+    <a href="https://arxiv.org/abs/2402.14034" target="_blank">Paper</a> &nbsp;·&nbsp;
+    <a href="https://discord.gg/eYMpfnkG8h" target="_blank">Discord</a>
+  </p>
+  <p style="margin-top:16px;color:rgba(136,135,128,0.5)">Analysis compiled May 2026</p>
+</footer>
+
+<script>
+// RL data
+const rlData = [
+  { id:'frozen', label:'Frozen Lake', model:'Qwen2.5-3B', before:15, after:86, desc:'A navigation agent trained to traverse the Frozen Lake environment using reinforcement learning via Trinity-RFT. Success rate jumped from <strong>15% → 86%</strong> — a 5.7x improvement on a 3B parameter model.' },
+  { id:'math',   label:'Math reasoning', model:'Qwen3-0.6B', before:75, after:85, desc:'Multi-step math solving agent. Even a tiny 0.6B model improved from <strong>75% → 85%</strong> accuracy using agentic RL, demonstrating that small models can learn complex reasoning behaviors.' },
+  { id:'learn',  label:'Learn to Ask', model:'Qwen2.5-7B', before:47, after:92, desc:'An agent trained to ask the right clarifying questions, using LLM-as-judge for automated reward signals — no labeled ground truth needed. Accuracy nearly doubled from <strong>47% → 92%</strong>.' },
+  { id:'wolf',   label:'Werewolf game', model:'Qwen2.5-7B', before:50, after:80, desc:'Strategic multi-agent game where agents must bluff, deduce, and collaborate. The werewolf agent learned long-horizon strategy from self-play, going from <strong>50% → 80%</strong> win rate.' },
+  { id:'data',   label:'Data augment', model:'Qwen3-0.6B', before:20, after:60, desc:'Synthetic training data generation to boost AIME-24 math accuracy. Demonstrates that RL-generated data can amplify small models — jumping from <strong>20% → 60%</strong>, a 3x improvement.' },
+];
+
+let currentOrder = [...rlData];
+
+function renderBars(data) {
+  const c = document.getElementById('barsContainer');
+  c.innerHTML = '';
+  data.forEach(d => {
+    const row = document.createElement('div');
+    row.className = 'bar-row';
+    row.innerHTML = `
+      <div class="bar-label">${d.label}<br><span style="font-size:10px;font-family:'DM Mono',monospace;color:var(--accent)">${d.model}</span></div>
+      <div class="bar-track">
+        <div class="bar-before" style="width:0%" data-w="${d.before}"></div>
+        <div class="bar-after"  style="width:0%" data-w="${d.after}"></div>
+      </div>
+      <div class="bar-delta">+${d.after - d.before}%</div>`;
+    row.addEventListener('click', () => showDetail(d));
+    row.addEventListener('mouseenter', () => showDetail(d));
+    c.appendChild(row);
+    setTimeout(() => {
+      row.querySelector('.bar-before').style.width = d.before + '%';
+      row.querySelector('.bar-after').style.width  = d.after  + '%';
+    }, 80);
+  });
+}
+
+function showDetail(d) {
+  document.getElementById('rlDetail').innerHTML =
+    `<strong style="color:var(--text)">${d.label}</strong> &nbsp;·&nbsp; <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--accent)">${d.model}</span><br><br>${d.desc}`;
+}
+
+function sortBars(mode, btn) {
+  document.querySelectorAll('.ctrl-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  let sorted = [...rlData];
+  if (mode === 'gain')  sorted.sort((a,b) => (b.after-b.before)-(a.after-a.before));
+  if (mode === 'after') sorted.sort((a,b) => b.after - a.after);
+  renderBars(sorted);
+}
+
+renderBars(rlData);
+
+// Architecture layers
+const layers = [
+  { color:'#7f77dd', name:'Interface layer', desc:'User-facing agents and modalities', items:['UserAgent','Voice agent','Realtime voice','Human-in-the-loop steering','Realtime interruption + resume'] },
+  { color:'#534ab7', name:'Agent core', desc:'Reasoning and execution engine', items:['ReActAgent','Planning module','Structured output','Streaming responses','Meta planner agent','Deep research agent'] },
+  { color:'#1d9e75', name:'Tools & integrations', desc:'External capabilities and protocols', items:['Built-in toolkit','execute_python_code','execute_shell_command','MCP (Model Context Protocol)','A2A protocol','Anthropic Agent Skills','Browser agent'] },
+  { color:'#ba7517', name:'Memory', desc:'Short and long-term context', items:['InMemoryMemory','SQLite-backed sessions','Memory compression','RAG (retrieval-augmented)','ReMe long-term memory','Memory summarization'] },
+  { color:'#d85a30', name:'Multi-agent orchestration', desc:'Coordination and message routing', items:['MsgHub','sequential_pipeline','concurrent pipeline','multiagent_debate','Dynamic add/remove participants','Broadcast messaging'] },
+  { color:'#993556', name:'Evaluation & tuning', desc:'Measure and improve agent quality', items:['ACEBench evaluation','LLM-as-judge feedback','Agentic RL via Trinity-RFT','Reward signal design','Data augmentation','Fine-tuning integration'] },
+  { color:'#5f5e5a', name:'Deployment', desc:'Production infrastructure', items:['Local execution','Serverless cloud','Kubernetes cluster','OpenTelemetry (OTel)','Code-first deployment','Docker support'] },
+];
+
+const al = document.getElementById('archLayers');
+layers.forEach((l, i) => {
+  const div = document.createElement('div');
+  div.className = 'arch-layer' + (i === 0 ? ' open' : '');
+  div.innerHTML = `
+    <div class="arch-layer-header" onclick="toggleLayer(this.parentElement)">
+      <div class="arch-layer-title">
+        <div class="layer-dot" style="background:${l.color}"></div>
+        <div>
+          <div class="layer-name">${l.name}</div>
+          <div class="layer-desc">${l.desc}</div>
+        </div>
+      </div>
+      <div class="layer-chevron">⌄</div>
+    </div>
+    <div class="arch-layer-body">
+      <div class="arch-chips">
+        ${l.items.map(it => `<span class="chip">${it}</span>`).join('')}
+      </div>
+    </div>`;
+  al.appendChild(div);
+});
+
+function toggleLayer(el) {
+  el.classList.toggle('open');
+}
+
+// Timeline
+const events = [
+  { date:'2026-04', tag:'comm', title:'AgentScope 2.0 announced', body:'Roadmap published for the next major version with community discussion open on GitHub.' },
+  { date:'2026-02', tag:'feat', title:'Realtime voice agent', body:'Support for realtime bidirectional voice interactions, including multi-agent realtime conversations.' },
+  { date:'2026-01', tag:'comm', title:'Biweekly community meetings', body:'Regular open meetings launched to share ecosystem updates and development plans.' },
+  { date:'2026-01', tag:'feat', title:'Database memory + compression', body:'SQLite-backed sessions and memory compression added to the memory module.' },
+  { date:'2025-12', tag:'intg', title:'A2A protocol support', body:'Agent-to-Agent protocol integration allowing cross-framework agent communication.' },
+  { date:'2025-12', tag:'feat', title:'TTS (Text-to-Speech)', body:'Native text-to-speech support enabling voice output from any agent.' },
+  { date:'2025-11', tag:'intg', title:'Anthropic Agent Skills', body:'Full support for Anthropic\'s Agent Skills specification.' },
+  { date:'2025-11', tag:'rels', title:'Alias-Agent & Data-Juicer Agent', body:'Two specialized agents open-sourced: Alias-Agent for real-world tasks, Data-Juicer for data processing.' },
+  { date:'2025-11', tag:'intg', title:'Agentic RL via Trinity-RFT', body:'End-to-end reinforcement learning for agents integrated via the Trinity-RFT library.' },
+];
+
+const tl = document.getElementById('timeline');
+events.forEach(e => {
+  const item = document.createElement('div');
+  item.className = 'tl-item';
+  item.innerHTML = `
+    <div class="tl-date">${e.date}</div>
+    <div class="tl-title"><span class="tl-tag ${e.tag}">${e.tag.toUpperCase()}</span>${e.title}</div>
+    <div class="tl-body">${e.body}</div>`;
+  tl.appendChild(item);
+});
+
+// Copy
+function copyCmd(btn, text) {
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = 'copied!';
+    setTimeout(() => btn.textContent = 'copy', 1800);
+  });
+}
+
+// Reveal on scroll
+const reveals = document.querySelectorAll('.reveal');
+const observer = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      e.target.classList.add('visible');
+      observer.unobserve(e.target);
+    }
+  });
+}, { threshold: 0.12 });
+reveals.forEach(r => observer.observe(r));
+</script>
+</body>
+</html>
