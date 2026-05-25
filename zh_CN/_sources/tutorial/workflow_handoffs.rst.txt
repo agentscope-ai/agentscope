@@ -46,22 +46,22 @@ Handoffs 是由 OpenAI 提出的工作流模式，通过调用子智能体的方
         "type": "tool_use",
         "name": "create_worker",
         "input": {
-            "task_description": "在 Python 中编写并执行一个打印 'Hello, World!' 的简单脚本。"
+            "task_description": "在 Python 中编写并执行一个打印 'Hello, World!' 的简单程序。"
         },
-        "id": "call_086e51433ac94949b96eec"
+        "id": "call_5738b7ae3fe1486d9d0988"
     }
     Worker: {
         "type": "tool_use",
         "name": "execute_python_code",
         "input": {
             "code": "print('Hello, World!')",
-            "timeout": 5
+            "timeout": 300
         },
-        "id": "call_020b4ab7d48d4bbcbb851d"
+        "id": "call_d3b1538697bf495b87f886"
     }
     system: {
         "type": "tool_result",
-        "id": "call_020b4ab7d48d4bbcbb851d",
+        "id": "call_d3b1538697bf495b87f886",
         "name": "execute_python_code",
         "output": [
             {
@@ -70,23 +70,19 @@ Handoffs 是由 OpenAI 提出的工作流模式，通过调用子智能体的方
             }
         ]
     }
-    Worker: Python 脚本已成功执行，并打印出了 'Hello, World!'。
-
-    ```
-    Hello, World!
-    ```
+    Worker: 程序成功执行，并打印出了 'Hello, World!'。
     system: {
         "type": "tool_result",
-        "id": "call_086e51433ac94949b96eec",
+        "id": "call_5738b7ae3fe1486d9d0988",
         "name": "create_worker",
         "output": [
             {
                 "type": "text",
-                "text": "Python 脚本已成功执行，并打印出了 'Hello, World!'。\n\n```\nHello, World!\n```"
+                "text": "程序成功执行，并打印出了 'Hello, World!'。"
             }
         ]
     }
-    Orchestrator: 子智能体已成功执行 Python 脚本，并打印出了 'Hello, World!'。
+    Orchestrator: 子智能体已经成功地在 Python 中执行了程序，并打印出了 'Hello, World!'。
 
 
 
@@ -177,7 +173,7 @@ Handoffs 是由 OpenAI 提出的工作流模式，通过调用子智能体的方
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 12.514 seconds)
+   **Total running time of the script:** (0 minutes 11.925 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_handoffs.py:
