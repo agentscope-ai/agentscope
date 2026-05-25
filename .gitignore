@@ -149,3 +149,13 @@ package-lock.json
 .wireit/
 .angular/
 uv.lock
+
+# JS/Node frontend (examples/web_ui)
+*.local
+.eslintcache
+.vite/
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*

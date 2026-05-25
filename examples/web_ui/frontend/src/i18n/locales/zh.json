@@ -1,0 +1,292 @@
+{
+	"common": {
+		"add": "添加",
+		"agent": "Agent",
+		"cancel": "取消",
+		"chat": "聊天",
+		"close": "关闭",
+		"confirm": "确认",
+		"create": "创建",
+		"creating": "创建中…",
+		"credential": "凭证",
+		"date": "日期",
+		"delete": "删除",
+		"deleting": "删除中…",
+		"disabled": "已禁用",
+		"edit": "编辑",
+		"error": "出错了",
+		"information": "信息",
+		"interrupted": "已中断",
+		"loading": "加载中...",
+		"model": "模型",
+		"name": "名称",
+		"no": "否",
+		"noData": "暂无数据",
+		"completed": "已完成",
+		"failed": "已失败",
+		"running": "运行中",
+		"save": "保存",
+		"saving": "保存中…",
+		"schedule": "日程",
+		"selectAgent": "选择 Agent",
+		"settings": "设置",
+		"switchToZh": "切换为中文",
+		"switchToEn": "Switch to English",
+		"success": "成功",
+		"time": "时间",
+		"yes": "是"
+	},
+	"tool": {
+		"moreLines": "... 还有 {{count}} 行",
+		"read": {
+			"name": "读取",
+			"fileCount": "{{count}} 个文件"
+		},
+		"glob": {
+			"name": "Glob"
+		},
+		"grep": {
+			"name": "Grep"
+		}
+	},
+	"textInput": {
+		"toComplete": "补全",
+		"newLine": "换行",
+		"attach": "添加附件",
+		"attachNotSupported": "当前模型不支持文件附件",
+		"send": "发送"
+	},
+	"confirmCard": {
+		"toConfirm": "确认",
+		"yesWithRule": "是，且该次对话中都允许 {{toolName}} 执行 {{ruleContent}}"
+	},
+	"messageBubble": {
+		"thinking": "思考中"
+	},
+	"chat": {
+		"inputPlaceholder": "输入消息...",
+		"placeholder": "输入消息...",
+		"send": "发送",
+		"confirmToolCall": "允许此操作？",
+		"newSession": "新会话",
+		"noSessions": "暂无会话",
+		"noMessages": "暂无消息",
+		"noMessagesDesc": "发送一条消息开始新的对话",
+		"agent": {
+			"selectPlaceholder": "选择 Agent",
+			"emptyTitle": "暂无 Agent",
+			"emptyDescription": "创建一个 Agent 开始使用。"
+		},
+		"session": {
+			"label": "会话",
+			"emptyTitle": "暂无会话",
+			"emptyNoAgent": "请先选择一个 Agent。",
+			"emptyHasAgent": "创建会话开始对话。"
+		}
+	},
+	"dialog-agent-create": {
+		"title": "创建 Agent",
+		"trigger": "创建 Agent",
+		"identity": {
+			"legend": "Agent 身份",
+			"description": "定义此 Agent 行为的名称和指令。",
+			"name": { "label": "名称", "placeholder": "我的 Agent" },
+			"systemPrompt": { "label": "系统提示词", "placeholder": "你是一个有帮助的助手。" }
+		},
+		"contextConfig": {
+			"legend": "上下文配置",
+			"description": "控制上下文窗口的管理和压缩方式。",
+			"triggerRatio": { "label": "触发比例", "placeholder": "例如 0.75（0.01–0.89）" },
+			"reserveRatio": { "label": "保留比例", "placeholder": "例如 0.25（0.01–0.89）" },
+			"toolResultLimit": {
+				"label": "工具结果限制",
+				"placeholder": "每个工具结果的最大字符数"
+			},
+			"compressionPrompt": { "label": "压缩提示词", "placeholder": "覆盖默认压缩指令" },
+			"summaryTemplate": { "label": "摘要模板", "placeholder": "覆盖默认摘要输出模板" }
+		},
+		"reactConfig": {
+			"legend": "ReAct 配置",
+			"description": "控制推理和行动循环的行为。",
+			"maxIters": { "label": "最大迭代次数", "placeholder": "ReAct 循环最大迭代次数" },
+			"stopOnReject": { "label": "拒绝时停止" }
+		}
+	},
+	"dialog-agent-edit": {
+		"title": "编辑 Agent"
+	},
+	"dialog-agent-delete": {
+		"title": "删除 Agent",
+		"description": "此操作无法撤销。",
+		"confirm": "删除"
+	},
+	"dialog-session-delete": {
+		"title": "删除会话",
+		"description": "此操作无法撤销。"
+	},
+	"dialog-session-rename": {
+		"title": "重命名会话",
+		"label": "名称",
+		"placeholder": "会话名称",
+		"confirm": "重命名"
+	},
+	"session-menu": {
+		"rename": "重命名",
+		"delete": "删除"
+	},
+	"dialog-credential-create": {
+		"title": "添加凭证",
+		"selectType": "提供商",
+		"selectTypePlaceholder": "选择提供商"
+	},
+	"dialog-credential-edit": {
+		"title": "编辑凭证"
+	},
+	"credential": {
+		"addConfig": "添加配置",
+		"noProviders": "暂无可用提供商",
+		"noConfigs": "暂无配置",
+		"selectHint": "未选择凭证",
+		"selectHintDescription": "从左侧选择一个凭证以查看详情。",
+		"availableModels": "可用模型",
+		"noModels": "暂无可用模型",
+		"noModelsDescription": "该提供商未返回任何模型。",
+		"deleteTitle": "确定要删除 API 凭证 \"{{name}}\" 吗？",
+		"deleteDescription": "此操作无法撤销",
+		"subtitle": "模型 API 授权配置",
+		"reasoning": "推理模型",
+		"maxContext": "最大上下文",
+		"maxOutput": "最大输出",
+		"inputTypes": "输入模态",
+		"outputTypes": "输出模态"
+	},
+	"llm-select": {
+		"placeholder": "选择模型",
+		"loading": "加载中…",
+		"empty": {
+			"title": "暂无可用模型",
+			"description": "请先添加凭证。",
+			"addButton": "添加凭证"
+		},
+		"addCredential": "添加凭证"
+	},
+	"permission-mode": {
+		"placeholder": "选择权限模式",
+		"trigger-tooltip": "权限模式",
+		"label": "权限模式",
+		"default-tooltip": "默认模式：所有操作需要明确授权（最安全）",
+		"accept_edits-tooltip": "自动允许工作目录内的文件读写及文件系统命令（mkdir、rm、mv 等），其他操作按正常规则处理",
+		"explore-tooltip": "只读模式：允许读取/Grep/Glob 工具，禁止写入/编辑/Bash 等修改操作",
+		"bypass-tooltip": "所有操作自动允许，无需权限检查（适用于可信/沙箱环境）",
+		"dont_ask-tooltip": "将所有 ASK 决策转为 DENY，适合定时任务或用户不在场时的后台执行"
+	},
+	"dialog-mcp-create": {
+		"title": "添加 MCP 服务器",
+		"description": "通过配置添加新的 MCP 服务器。",
+		"configLabel": "MCP 配置",
+		"keepAlive": "保持连接",
+		"keepAliveDesc": "在交互间保持状态。适用于浏览器操作或其他长时间运行的 MCP。",
+		"adding": "添加中…",
+		"added": "已添加",
+		"parseError": "JSON 配置无效：{{message}}",
+		"missingMcpServers": "配置中必须包含 \"mcpServers\" 对象。",
+		"emptyMcpServers": "配置中未找到 MCP 服务器。"
+	},
+	"dialog-mcp-delete": {
+		"title": "确定要删除 MCP 服务器 \"{{name}}\" 吗？",
+		"description": "此操作无法撤销。"
+	},
+	"schedule": {
+		"calendar": "日历",
+		"createSchedule": {
+			"description": "为 Agent 设置定时或一次性的计划任务。",
+			"descriptionLabel": "描述",
+			"descriptionPlaceholder": "描述这个计划任务的用途...",
+			"namePlaceholder": "例如：每日报告",
+			"title": "创建日程"
+		},
+		"deleteSchedule": {
+			"description": "此操作无法撤销，计划任务将被永久删除。",
+			"successToast": "日程已删除。",
+			"title": "删除日程"
+		},
+		"endAt": "结束日期",
+		"end_at": "结束时间",
+		"executionHistory": "执行历史",
+		"freqDaily": "每天",
+		"freqMonthly": "每月",
+		"freqOnce": "一次",
+		"freqWeekly": "每周",
+		"frequency": "频率",
+		"friday": "周五",
+		"list": "列表",
+		"monday": "周一",
+		"more": "更多",
+		"nextMonth": "下个月",
+		"nextYear": "下一年",
+		"noExecutions": "暂无执行记录",
+		"noExecutionsDescription": "该日程尚未执行过。",
+		"noSchedules": "暂无日程",
+		"noSchedulesDescription": "创建日程以自动化 Agent 任务。",
+		"pickDate": "选择日期",
+		"permissionMode": "权限模式",
+		"timezone": "时区",
+		"triggerTime": "触发时间",
+		"createdAt": "创建时间",
+		"dayOfMonthSuffix": "日",
+		"stateful": "有状态",
+		"statefulDesc": "开启后，每次触发复用同一个会话以累积上下文；关闭则每次触发都创建新会话。",
+		"previousMonth": "上个月",
+		"previousYear": "上一年",
+		"saturday": "周六",
+		"startAt": "开始时间",
+		"sunday": "周日",
+		"thursday": "周四",
+		"today": "今天",
+		"tuesday": "周二",
+		"wednesday": "周三"
+	},
+	"model-parameters": {
+		"title": "模型参数",
+		"description": "调整所选模型的推理参数。",
+		"empty": "暂无可配置参数。"
+	},
+	"setup": {
+		"title": "连接到服务器",
+		"description": "请输入服务器地址和用户名以开始使用。",
+		"serverUrl": "服务器地址",
+		"serverUrlPlaceholder": "https://...",
+		"username": "用户名",
+		"usernamePlaceholder": "请输入用户名",
+		"submit": "开始使用",
+		"hint": "此应用进提供前端服务，所有数据均来自填写的服务器地址，用户名仅用于服务端鉴权。"
+	},
+	"tour": {
+		"trigger": "新手引导",
+		"prev": "上一步",
+		"next": "下一步",
+		"finish": "完成",
+		"skip": "跳过",
+		"step": "第 {{current}} / {{total}} 步",
+		"createAgent": {
+			"title": "创建 Agent",
+			"content": "先创建一个 Agent —— 与你对话的智能体。"
+		},
+		"createSession": {
+			"title": "创建会话",
+			"content": "点 + 新建会话，开始对话。"
+		},
+		"llmSelect": {
+			"title": "选择模型",
+			"content": "为本次对话选一个模型；没有凭证可在下拉中添加。"
+		},
+		"permissionMode": {
+			"title": "权限模式",
+			"content": "决定工具调用是否需要确认。"
+		},
+		"chatInput": {
+			"title": "开始对话",
+			"content": "输入消息回车发送，回形针可附加文件。"
+		}
+	}
+}

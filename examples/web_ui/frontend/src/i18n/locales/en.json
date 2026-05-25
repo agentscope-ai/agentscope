@@ -1,0 +1,301 @@
+{
+	"common": {
+		"add": "Add",
+		"agent": "Agent",
+		"cancel": "Cancel",
+		"chat": "Chat",
+		"close": "Close",
+		"confirm": "Confirm",
+		"create": "Create",
+		"creating": "Creating…",
+		"credential": "Credentials",
+		"date": "Date",
+		"delete": "Delete",
+		"deleting": "Deleting…",
+		"disabled": "Disabled",
+		"edit": "Edit",
+		"error": "Something went wrong",
+		"information": "Information",
+		"interrupted": "Interrupted",
+		"loading": "Loading...",
+		"model": "Model",
+		"name": "Name",
+		"no": "No",
+		"noData": "No data",
+		"completed": "Completed",
+		"failed": "Failed",
+		"running": "Running",
+		"save": "Save",
+		"saving": "Saving…",
+		"schedule": "Schedule",
+		"selectAgent": "Select an agent",
+		"settings": "Settings",
+		"switchToZh": "切换为中文",
+		"switchToEn": "Switch to English",
+		"success": "Success",
+		"time": "Time",
+		"yes": "Yes"
+	},
+	"tool": {
+		"moreLines": "... {{count}} more lines",
+		"read": {
+			"name": "Read",
+			"fileCount": "{{count}} file(s)"
+		},
+		"glob": {
+			"name": "Glob"
+		},
+		"grep": {
+			"name": "Grep"
+		}
+	},
+	"textInput": {
+		"toComplete": "to complete",
+		"newLine": "new line",
+		"attach": "Attach file",
+		"attachNotSupported": "This model does not support file attachments",
+		"send": "Send"
+	},
+	"confirmCard": {
+		"toConfirm": "to confirm",
+		"yesWithRule": "Yes, and allow {{toolName}} to execute {{ruleContent}} for this session"
+	},
+	"messageBubble": {
+		"thinking": "Thinking"
+	},
+	"chat": {
+		"inputPlaceholder": "Type a message...",
+		"placeholder": "Type a message...",
+		"send": "Send",
+		"confirmToolCall": "Allow this action?",
+		"newSession": "New Session",
+		"noSessions": "No sessions yet",
+		"noMessages": "No Messages Yet",
+		"noMessagesDesc": "Start your conversation by sending a message",
+		"agent": {
+			"selectPlaceholder": "Select an agent",
+			"emptyTitle": "No agents",
+			"emptyDescription": "Create an agent to get started."
+		},
+		"session": {
+			"label": "Session",
+			"emptyTitle": "No sessions",
+			"emptyNoAgent": "Select an agent first.",
+			"emptyHasAgent": "Create a session to start chatting."
+		}
+	},
+	"dialog-agent-create": {
+		"title": "Create agent",
+		"trigger": "Create agent",
+		"identity": {
+			"legend": "Agent Identity",
+			"description": "Name and instructions that define this agent's behaviour.",
+			"name": { "label": "Name", "placeholder": "My agent" },
+			"systemPrompt": {
+				"label": "System prompt",
+				"placeholder": "You're a helpful assistant."
+			}
+		},
+		"contextConfig": {
+			"legend": "Context Config",
+			"description": "Controls how the context window is managed and compressed.",
+			"triggerRatio": { "label": "Trigger ratio", "placeholder": "e.g. 0.75 (0.01–0.89)" },
+			"reserveRatio": { "label": "Reserve ratio", "placeholder": "e.g. 0.25 (0.01–0.89)" },
+			"toolResultLimit": {
+				"label": "Tool result limit",
+				"placeholder": "Max chars per tool result"
+			},
+			"compressionPrompt": {
+				"label": "Compression prompt",
+				"placeholder": "Override the default compression instruction"
+			},
+			"summaryTemplate": {
+				"label": "Summary template",
+				"placeholder": "Override the default summary output template"
+			}
+		},
+		"reactConfig": {
+			"legend": "ReAct Config",
+			"description": "Controls the reasoning and action loop behaviour.",
+			"maxIters": { "label": "Max iterations", "placeholder": "Max ReAct loop iterations" },
+			"stopOnReject": { "label": "Stop on reject" }
+		}
+	},
+	"dialog-agent-edit": {
+		"title": "Edit agent"
+	},
+	"dialog-agent-delete": {
+		"title": "Delete agent",
+		"description": "This action cannot be undone.",
+		"confirm": "Delete"
+	},
+	"dialog-session-delete": {
+		"title": "Delete session",
+		"description": "This action cannot be undone."
+	},
+	"dialog-session-rename": {
+		"title": "Rename session",
+		"label": "Name",
+		"placeholder": "Session name",
+		"confirm": "Rename"
+	},
+	"session-menu": {
+		"rename": "Rename",
+		"delete": "Delete"
+	},
+	"dialog-credential-create": {
+		"title": "Add credential",
+		"selectType": "Provider",
+		"selectTypePlaceholder": "Select a provider"
+	},
+	"dialog-credential-edit": {
+		"title": "Edit Credential"
+	},
+	"credential": {
+		"addConfig": "Add configuration",
+		"noProviders": "No providers available",
+		"noConfigs": "No configurations",
+		"selectHint": "No credential selected",
+		"selectHintDescription": "Select a credential from the sidebar to view its details.",
+		"availableModels": "Available Models",
+		"noModels": "No models available",
+		"noModelsDescription": "This provider returned no models.",
+		"deleteTitle": "Delete \"{{name}}\"?",
+		"deleteDescription": "This action cannot be undone. The credential will be permanently removed.",
+		"subtitle": "Model API credential configuration",
+		"reasoning": "Reasoning",
+		"maxContext": "Max. Context",
+		"maxOutput": "Max. Output",
+		"inputTypes": "Input",
+		"outputTypes": "Output"
+	},
+	"llm-select": {
+		"placeholder": "Select a model",
+		"loading": "Loading…",
+		"empty": {
+			"title": "No models available",
+			"description": "Add a credential to get started.",
+			"addButton": "Add credential"
+		},
+		"addCredential": "Add Credential"
+	},
+	"permission-mode": {
+		"placeholder": "Select permission mode",
+		"trigger-tooltip": "Permission Mode",
+		"label": "Permission Mode",
+		"default-tooltip": "Default mode: all operations require explicit permission (most secure)",
+		"accept_edits-tooltip": "Auto-allow file reads/writes in working directories and filesystem commands; other operations follow normal rules",
+		"explore-tooltip": "Read-only mode: allow read/grep/glob tools, deny write/edit/bash modification tools",
+		"bypass-tooltip": "All operations automatically allowed without any permission checks (use in trusted/sandbox environments)",
+		"dont_ask-tooltip": "Convert all ASK decisions to DENY; suitable for scheduled tasks or background execution when user is unavailable"
+	},
+	"dialog-mcp-create": {
+		"title": "Add MCP Servers",
+		"description": "Add new MCP server(s) by configuration.",
+		"configLabel": "MCP Configuration",
+		"keepAlive": "Keep Alive",
+		"keepAliveDesc": "Maintain state across interactions. Enable for browser-use or other long-running MCPs.",
+		"adding": "Adding…",
+		"added": "Added",
+		"parseError": "Invalid JSON configuration: {{message}}",
+		"missingMcpServers": "Configuration must contain a \"mcpServers\" object.",
+		"emptyMcpServers": "No MCP servers found in configuration."
+	},
+	"dialog-mcp-delete": {
+		"title": "Delete MCP server \"{{name}}\"?",
+		"description": "This action cannot be undone."
+	},
+	"schedule": {
+		"calendar": "Calendar",
+		"createSchedule": {
+			"description": "Set up a recurring or one-time scheduled task for an agent.",
+			"descriptionLabel": "Description",
+			"descriptionPlaceholder": "Describe what this schedule should do...",
+			"namePlaceholder": "e.g. Daily Report",
+			"title": "Create Schedule"
+		},
+		"deleteSchedule": {
+			"description": "This action cannot be undone. The scheduled task will be permanently removed.",
+			"successToast": "Schedule deleted successfully.",
+			"title": "Delete Schedule"
+		},
+		"endAt": "End Date",
+		"end_at": "End At",
+		"executionHistory": "Execution History",
+		"freqDaily": "Daily",
+		"freqMonthly": "Monthly",
+		"freqOnce": "Once",
+		"freqWeekly": "Weekly",
+		"frequency": "Frequency",
+		"friday": "Fri",
+		"list": "List",
+		"monday": "Mon",
+		"more": "more",
+		"nextMonth": "Next Month",
+		"nextYear": "Next Year",
+		"noExecutions": "No executions yet",
+		"noExecutionsDescription": "This schedule has not been executed yet.",
+		"noSchedules": "No schedules",
+		"noSchedulesDescription": "Create a schedule to automate agent tasks.",
+		"pickDate": "Pick a date",
+		"permissionMode": "Permission Mode",
+		"timezone": "Timezone",
+		"triggerTime": "Trigger Time",
+		"createdAt": "Created At",
+		"dayOfMonthSuffix": "",
+		"stateful": "Stateful",
+		"statefulDesc": "Reuse one session across all fires to accumulate context. Disabled: every fire creates a fresh session.",
+		"previousMonth": "Previous Month",
+		"previousYear": "Previous Year",
+		"saturday": "Sat",
+		"startAt": "Start At",
+		"sunday": "Sun",
+		"thursday": "Thu",
+		"today": "Today",
+		"tuesday": "Tue",
+		"wednesday": "Wed"
+	},
+	"model-parameters": {
+		"title": "Model Parameters",
+		"description": "Adjust inference parameters for the selected model.",
+		"empty": "No configurable parameters."
+	},
+	"setup": {
+		"title": "Connect to Service",
+		"description": "Enter your server URL and username to get started.",
+		"serverUrl": "Server URL",
+		"serverUrlPlaceholder": "https://...",
+		"username": "Username",
+		"usernamePlaceholder": "Your username",
+		"submit": "Get Started",
+		"hint": "This is a frontend-only application, and all data are served from the Server URL above. The username is used solely for server-side authentication."
+	},
+	"tour": {
+		"trigger": "Take a tour",
+		"prev": "Back",
+		"next": "Next",
+		"finish": "Finish",
+		"skip": "Skip",
+		"step": "Step {{current}} / {{total}}",
+		"createAgent": {
+			"title": "Create an agent",
+			"content": "Start by creating an agent — your chat partner."
+		},
+		"createSession": {
+			"title": "Create a session",
+			"content": "Click + to start a new session."
+		},
+		"llmSelect": {
+			"title": "Pick a model",
+			"content": "Choose a model; add a credential from the dropdown if needed."
+		},
+		"permissionMode": {
+			"title": "Permission mode",
+			"content": "Decide whether tool calls need confirmation."
+		},
+		"chatInput": {
+			"title": "Start chatting",
+			"content": "Type a message and press Enter. Paperclip attaches files."
+		}
+	}
+}

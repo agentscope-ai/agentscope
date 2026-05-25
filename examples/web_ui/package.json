@@ -1,0 +1,36 @@
+{
+	"name": "new-studio",
+	"version": "1.0.0",
+	"private": true,
+	"scripts": {
+		"dev:frontend": "pnpm --filter frontend dev",
+		"dev:backend": "pnpm --filter backend dev",
+		"dev": "concurrently \"pnpm dev:frontend\" \"pnpm dev:backend\"",
+		"build:frontend": "pnpm --filter frontend build",
+		"build:backend": "pnpm --filter backend build",
+		"build": "pnpm build:frontend && pnpm build:backend",
+		"format": "prettier --write . && pnpm --filter frontend lint:fix",
+		"format:check": "prettier --check . && pnpm --filter frontend lint",
+		"prepare": "husky"
+	},
+	"lint-staged": {
+		"frontend/**/*.{ts,tsx}": [
+			"prettier --write",
+			"cd frontend && pnpm eslint --fix"
+		],
+		"backend/**/*.{ts,js}": [
+			"prettier --write"
+		],
+		"*.{json,css,md,html,yaml,yml}": [
+			"prettier --write"
+		]
+	},
+	"devDependencies": {
+		"concurrently": "^8.2.2",
+		"eslint-config-prettier": "^10.1.8",
+		"eslint-plugin-prettier": "^5.5.5",
+		"husky": "^9.1.7",
+		"lint-staged": "^17.0.5",
+		"prettier": "^3.8.3"
+	}
+}
