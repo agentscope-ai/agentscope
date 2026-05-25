@@ -35,6 +35,7 @@ import os
 import posixpath
 import shlex
 import shutil
+import sys
 import tarfile
 import uuid
 from copy import deepcopy
@@ -335,6 +336,23 @@ class DockerWorkspace(WorkspaceBase):
         self._gateway_clients.clear()
 
         if self._container is not None:
+            # Linux native docker preserves container-side ownership on
+            # bind-mounted host paths verbatim — files written by the
+            # in-container root process land on host as root, so a
+            # non-root host user (CI runner, IDE user) cannot remove
+            # them. macOS Docker Desktop / Windows Docker remap uids
+            # transparently, so this only matters on Linux. Best-effort:
+            # exec failures are swallowed, and we still tear the
+            # container down.
+            if self.workdir is not None and sys.platform == "linux":
+                try:
+                    await self._exec(
+                        f"chown -R {os.getuid()}:{os.getgid()} "
+                        f"{shlex.quote(CONTAINER_WORKDIR)}",
+                        timeout=10.0,
+                    )
+                except Exception:
+                    pass
             try:
                 await self._container.kill()
             except Exception:
@@ -1050,21 +1068,25 @@ class DockerWorkspace(WorkspaceBase):
             stdout: list[bytes] = []
             stderr: list[bytes] = []
             # ``exec_obj.start()`` returns aiodocker's ``Stream``
-            # object, which is *not* directly async-iterable — we
-            # have to drain it with ``read_out()``. Each call yields
+            # object — an async context manager wrapping a
+            # persistent HTTP/1.1-Upgrade connection to the docker
+            # daemon. Drain it with ``read_out()``: each call yields
             # a ``Message(stream=int, data=bytes)`` (channel 1 =
             # stdout, channel 2 = stderr), or ``None`` at EOF when
-            # the exec process exits and the underlying socket
-            # closes.
-            stream = exec_obj.start()
-            while True:
-                msg = await stream.read_out()
-                if msg is None:
-                    break
-                if msg.stream == 1:
-                    stdout.append(msg.data)
-                else:
-                    stderr.append(msg.data)
+            # the exec process exits.  ``async with`` is required —
+            # without it the underlying ``ClientResponse`` is leaked
+            # and asyncio logs ``Unclosed response`` at GC time,
+            # which on a closed event loop manifests as ``Event loop
+            # is closed`` errors during pytest teardown.
+            async with exec_obj.start() as stream:
+                while True:
+                    msg = await stream.read_out()
+                    if msg is None:
+                        break
+                    if msg.stream == 1:
+                        stdout.append(msg.data)
+                    else:
+                        stderr.append(msg.data)
             inspect = await exec_obj.inspect()
             code = inspect.get("ExitCode", -1)
             if code is None:
