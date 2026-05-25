@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=too-many-lines
 """The gemini formatter unittests."""
+import base64
 import os
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch, MagicMock
@@ -93,6 +95,9 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
             ),
         ]
 
+        self.thought_sig_1 = base64.b64encode(b"sig_1").decode("utf-8")
+        self.thought_sig_2 = base64.b64encode(b"sig_2").decode("utf-8")
+
         self.msgs_tools = [
             Msg(
                 "assistant",
@@ -102,6 +107,7 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                         id="1",
                         name="get_capital",
                         input={"country": "Japan"},
+                        thought_signature=self.thought_sig_1,
                     ),
                 ],
                 "assistant",
@@ -162,6 +168,7 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                         id="2",
                         name="get_capital",
                         input={"country": "South Korea"},
+                        thought_signature=self.thought_sig_2,
                     ),
                 ],
                 "assistant",
@@ -277,7 +284,7 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                                 "country": "Japan",
                             },
                         },
-                        "thought_signature": "1",
+                        "thought_signature": b"sig_1",
                     },
                 ],
             },
@@ -360,7 +367,7 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                                 "country": "Japan",
                             },
                         },
-                        "thought_signature": "1",
+                        "thought_signature": b"sig_1",
                     },
                 ],
             },
@@ -413,7 +420,7 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                                 "country": "Japan",
                             },
                         },
-                        "thought_signature": "1",
+                        "thought_signature": b"sig_1",
                     },
                 ],
             },
@@ -499,7 +506,7 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                                 "country": "Japan",
                             },
                         },
-                        "thought_signature": "1",
+                        "thought_signature": b"sig_1",
                     },
                 ],
             },
@@ -542,7 +549,7 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                                 "country": "South Korea",
                             },
                         },
-                        "thought_signature": "2",
+                        "thought_signature": b"sig_2",
                     },
                 ],
             },
@@ -711,7 +718,7 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                                 "country": "Japan",
                             },
                         },
-                        "thought_signature": "1",
+                        "thought_signature": b"sig_1",
                     },
                 ],
             },
@@ -934,7 +941,7 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                                 "country": "Japan",
                             },
                         },
-                        "thought_signature": "1",
+                        "thought_signature": b"sig_1",
                     },
                 ],
             },
