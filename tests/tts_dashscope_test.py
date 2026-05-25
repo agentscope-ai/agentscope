@@ -132,6 +132,13 @@ class DashScopeRealtimeTTSModelTest(IsolatedAsyncioTestCase):
                 api_key=self.api_key,
                 stream=False,
             ) as model:
+                # Mock finish_event to not block
+                model._dashscope_callback.finish_event = Mock()
+                model._dashscope_callback.finish_event.wait = Mock()
+                # Mock has_audio_data to return True (skip retry)
+                model._dashscope_callback.has_audio_data = Mock(
+                    return_value=True,
+                )
                 model._dashscope_callback.get_audio_data = AsyncMock(
                     return_value=TTSResponse(
                         content=AudioBlock(
@@ -169,6 +176,13 @@ class DashScopeRealtimeTTSModelTest(IsolatedAsyncioTestCase):
                 api_key=self.api_key,
                 stream=True,
             ) as model:
+                # Mock finish_event to not block
+                model._dashscope_callback.finish_event = Mock()
+                model._dashscope_callback.finish_event.wait = Mock()
+                # Mock has_audio_data to return True (skip retry)
+                model._dashscope_callback.has_audio_data = Mock(
+                    return_value=True,
+                )
 
                 async def mock_generator() -> AsyncGenerator[
                     TTSResponse,
