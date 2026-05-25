@@ -99,6 +99,12 @@ class RealtimeAgent(StateModule):
         self._model_response_queue = Queue()
         self._model_response_handling_task = None
 
+        # Hold strong references to fire-and-forget tool-execution tasks
+        # so they aren't garbage-collected before they finish. Tasks
+        # remove themselves on completion via add_done_callback.
+        # See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
+        self._tool_execution_tasks: set[asyncio.Task] = set()
+
     async def start(self, outgoing_queue: Queue) -> None:
         """Establish a connection for real-time interaction.
 
@@ -286,12 +292,19 @@ class RealtimeAgent(StateModule):
 
                     # Then execute the tool call using accumulated arguments
                     if self.toolkit:
-                        # Execute the tool call asynchronously
-                        asyncio.create_task(
+                        # Execute the tool call asynchronously. Keep a strong
+                        # reference in the set so the task isn't GC'd before
+                        # it completes — otherwise tool calls may silently
+                        # vanish under memory pressure.
+                        task = asyncio.create_task(
                             self._acting(
                                 tool_use=event.tool_use,
                                 outgoing_queue=outgoing_queue,
                             ),
+                        )
+                        self._tool_execution_tasks.add(task)
+                        task.add_done_callback(
+                            self._tool_execution_tasks.discard,
                         )
 
                 case _:
