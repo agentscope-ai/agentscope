@@ -14,7 +14,7 @@ from typing import (
 )
 from collections import OrderedDict
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from . import ChatResponse
 from ._model_base import ChatModelBase
@@ -309,6 +309,26 @@ class OpenAIChatModel(ChatModelBase):
                         response = await self.client.chat.completions.parse(
                             **kwargs,
                         )
+                        # Provider-agnostic post-parse validation: some
+                        # OpenAI-compatible endpoints (e.g. DashScope) reply
+                        # HTTP 200 with a body that does not conform to the
+                        # requested schema. The SDK may either raise
+                        # ``ValidationError`` mid-parse (caught below) or
+                        # silently leave ``message.parsed`` as ``None`` /
+                        # a non-matching type (caught here). Both must
+                        # drop to the tool-call fallback rather than
+                        # surfacing a confusing error to the caller.
+                        mismatch = self._structured_parse_mismatch_reason(
+                            response,
+                            structured_model,
+                        )
+                        if mismatch is not None:
+                            response = await self._fallback_to_tool_call(
+                                kwargs,
+                                structured_model,
+                                start_datetime,
+                                mismatch,
+                            )
                     else:
                         response = self.client.chat.completions.stream(
                             **kwargs,
@@ -319,19 +339,12 @@ class OpenAIChatModel(ChatModelBase):
                             structured_model,
                             kwargs,
                         )
-                except openai.BadRequestError as e:
-                    logger.warning(
-                        "response_format structured output failed (%s: %s), "
-                        "falling back to tool-call based structured output. "
-                        "Subsequent calls will use tool-call directly.",
-                        type(e).__name__,
-                        e,
-                    )
-                    self._structured_output_fallback = True
-                    response = await self._structured_via_tool_call(
+                except (openai.BadRequestError, ValidationError) as e:
+                    response = await self._fallback_to_tool_call(
                         kwargs,
                         structured_model,
                         start_datetime,
+                        f"{type(e).__name__}: {e}",
                     )
                     if isinstance(response, AsyncGenerator):
                         return response
@@ -692,6 +705,69 @@ class OpenAIChatModel(ChatModelBase):
 
         return ChatResponse(**resp_kwargs)
 
+    @staticmethod
+    def _structured_parse_mismatch_reason(
+        response: Any,
+        structured_model: Type[BaseModel],
+    ) -> str | None:
+        """Return a human-readable reason string if ``response.choices[0]
+        .message.parsed`` is not an instance of ``structured_model``, else
+        ``None``.
+
+        Covers the case where an endpoint returns HTTP 200 with a body that
+        does not match the requested ``response_format`` schema and the
+        OpenAI SDK silently leaves ``message.parsed`` as ``None`` or a
+        non-matching type instead of raising ``pydantic.ValidationError``.
+        """
+        if not getattr(response, "choices", None):
+            return "response_format returned no choices"
+        parsed = getattr(response.choices[0].message, "parsed", None)
+        if isinstance(parsed, structured_model):
+            return None
+        return (
+            "response_format returned a body that does not conform to the "
+            f"requested schema (parsed type: {type(parsed).__name__})"
+        )
+
+    @staticmethod
+    def _is_tool_choice_rejection(err: BaseException) -> bool:
+        """Return ``True`` if ``err`` looks like an endpoint rejecting a
+        forced ``tool_choice`` value.
+
+        Centralises the heuristic used by every tool-call retry path:
+        non-streaming ``BadRequestError`` from ``create()``, streaming
+        ``BadRequestError`` from ``create()``, and lazy ``APIError`` from
+        the first ``__anext__``. Substring match is intentional -- vendor
+        error messages vary (e.g. DashScope: ``"The tool_choice parameter
+        does not support being set to required..."``). If the message
+        does not mention ``tool_choice`` we re-raise instead of looping.
+        """
+        return "tool_choice" in str(err)
+
+    async def _fallback_to_tool_call(
+        self,
+        kwargs: dict,
+        structured_model: Type[BaseModel],
+        start_datetime: datetime,
+        reason: str,
+    ) -> Any:
+        """Log a warning, latch ``_structured_output_fallback``, and route
+        through ``_structured_via_tool_call``. Used by both the sync ``parse``
+        path and the streaming wrapper.
+        """
+        logger.warning(
+            "response_format structured output failed (%s), falling back "
+            "to tool-call based structured output. Subsequent calls will "
+            "use tool-call directly.",
+            reason,
+        )
+        self._structured_output_fallback = True
+        return await self._structured_via_tool_call(
+            kwargs,
+            structured_model,
+            start_datetime,
+        )
+
     async def _structured_stream_with_fallback(
         self,
         start_datetime: datetime,
@@ -708,7 +784,16 @@ class OpenAIChatModel(ChatModelBase):
         ``_structured_output_fallback`` is never set.
 
         This wrapper catches such errors during stream consumption and
-        transparently falls back to the tool-call approach.
+        transparently falls back to the tool-call approach. We catch both:
+
+        * ``openai.BadRequestError`` -- the endpoint rejects
+          ``response_format`` outright (e.g. DeepSeek), surfaced lazily on
+          first stream read.
+        * ``pydantic.ValidationError`` -- the endpoint replies HTTP 200
+          with a body that the SDK parses successfully as JSON but fails
+          to validate against the requested schema (e.g. DashScope
+          OpenAI-compat returns ``{"message": "Hi!"}`` for a schema with
+          required fields).
         """
         import openai
 
@@ -719,19 +804,12 @@ class OpenAIChatModel(ChatModelBase):
                 structured_model,
             ):
                 yield chunk
-        except openai.BadRequestError as e:
-            logger.warning(
-                "response_format structured output failed during streaming "
-                "(%s: %s), falling back to tool-call based structured "
-                "output. Subsequent calls will use tool-call directly.",
-                type(e).__name__,
-                e,
-            )
-            self._structured_output_fallback = True
-            fallback = await self._structured_via_tool_call(
+        except (openai.BadRequestError, ValidationError) as e:
+            fallback = await self._fallback_to_tool_call(
                 kwargs,
                 structured_model,
                 datetime.now(),
+                f"streaming {type(e).__name__}: {e}",
             )
             if isinstance(fallback, AsyncGenerator):
                 async for chunk in fallback:
@@ -749,7 +827,16 @@ class OpenAIChatModel(ChatModelBase):
 
         Falls back to this when the API endpoint does not support
         json_schema response_format (e.g. DashScope, DeepSeek).
+
+        Some reasoning / "thinking" models (e.g. DashScope qwen3.6 thinking
+        mode) reject any forced ``tool_choice`` with HTTP 400. When that
+        happens we retry once with ``tool_choice="auto"``; since the tools
+        list contains only the schema-derived tool, the model is highly
+        likely to call it anyway, which keeps the structured-output
+        contract intact for the caller.
         """
+        import openai
+
         kwargs.pop("response_format", None)
         format_tool = _create_tool_from_base_model(structured_model)
         kwargs["tools"] = self._format_tools_json_schemas([format_tool])
@@ -759,14 +846,96 @@ class OpenAIChatModel(ChatModelBase):
         if self.stream:
             kwargs["stream"] = True
             kwargs["stream_options"] = {"include_usage": True}
-        response = await self.client.chat.completions.create(**kwargs)
-        if self.stream:
-            return self._parse_openai_stream_response(
+            return self._tool_call_stream_with_choice_retry(
+                kwargs,
+                structured_model,
+                start_datetime,
+            )
+        try:
+            return await self.client.chat.completions.create(**kwargs)
+        except openai.BadRequestError as e:
+            if not self._is_tool_choice_rejection(e):
+                raise
+            logger.warning(
+                "tool_choice rejected by endpoint (%s: %s); retrying with "
+                "tool_choice='auto' for structured output fallback.",
+                type(e).__name__,
+                e,
+            )
+            kwargs["tool_choice"] = "auto"
+            return await self.client.chat.completions.create(**kwargs)
+
+    async def _tool_call_stream_with_choice_retry(
+        self,
+        kwargs: dict,
+        structured_model: Type[BaseModel],
+        start_datetime: datetime,
+    ) -> AsyncGenerator[ChatResponse, None]:
+        """Stream-mode counterpart of the ``tool_choice`` retry in
+        :meth:`_structured_via_tool_call`.
+
+        DashScope thinking-mode rejects forced ``tool_choice`` in two
+        observed shapes during streaming:
+
+        * **Synchronous** ``openai.BadRequestError`` raised from
+          ``client.chat.completions.create(**kwargs)`` itself (e.g.
+          ``qwen3.6-plus`` / ``qwen3.6-flash``).
+        * **Lazy** ``openai.APIError`` surfaced from an SSE error event
+          during the first ``__anext__`` (e.g.
+          ``qwen3-235b-a22b-thinking-2507``).
+
+        Both shapes are caught here -- but only when no chunk has been
+        yielded yet, so retrying with ``tool_choice="auto"`` is safe and
+        the caller never sees duplicated output.
+        """
+        import openai
+
+        try:
+            response = await self.client.chat.completions.create(**kwargs)
+        except openai.BadRequestError as e:
+            if not self._is_tool_choice_rejection(e):
+                raise
+            logger.warning(
+                "tool_choice rejected by endpoint on streaming create "
+                "(%s: %s); retrying with tool_choice='auto' for "
+                "structured output fallback.",
+                type(e).__name__,
+                e,
+            )
+            kwargs["tool_choice"] = "auto"
+            response = await self.client.chat.completions.create(**kwargs)
+
+        yielded = False
+        captured: openai.APIError | None = None
+        try:
+            async for chunk in self._parse_openai_stream_response(
                 start_datetime,
                 response,
                 structured_model,
-            )
-        return response
+            ):
+                yielded = True
+                yield chunk
+            return
+        except openai.APIError as e:
+            if yielded or not self._is_tool_choice_rejection(e):
+                raise
+            captured = e
+
+        logger.warning(
+            "tool_choice rejected during streaming iteration (%s: %s); "
+            "retrying with tool_choice='auto' for structured output "
+            "fallback.",
+            type(captured).__name__,
+            captured,
+        )
+        kwargs["tool_choice"] = "auto"
+        retry_response = await self.client.chat.completions.create(**kwargs)
+        async for chunk in self._parse_openai_stream_response(
+            start_datetime,
+            retry_response,
+            structured_model,
+        ):
+            yield chunk
 
     def _format_tools_json_schemas(
         self,
