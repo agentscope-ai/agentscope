@@ -13,6 +13,10 @@ repos:
       - id: check-toml
       - id: check-docstring-first
       - id: check-json
+        exclude: |
+          (?x)^(
+              .*tsconfig(\.[^.]+)?\.json
+          )$
       - id: fix-encoding-pragma
       - id: detect-private-key
       - id: trailing-whitespace
