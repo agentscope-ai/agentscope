@@ -77,6 +77,7 @@ def init(
     logging_level: str = "INFO",
     studio_url: str | None = None,
     tracing_url: str | None = None,
+    global_trace_enabled: bool = False,
 ) -> None:
     """Initialize the agentscope library.
 
@@ -101,6 +102,10 @@ def init(
             OpenTelemetry tracing platforms like Arize-Phoenix and Langfuse.
             If not provided and `studio_url` is provided, it will send traces
             to the AgentScope Studio's tracing endpoint.
+        global_trace_enabled (`bool`, optional):
+            Global flag to enable/disable tracing. When True, tracing is enabled
+            globally regardless of ContextVar settings. When False, falls back to
+            ContextVar for runtime control. Default is False for backward compatibility.
     """
 
     if project:
@@ -152,7 +157,11 @@ def init(
     if endpoint:
         from .tracing import setup_tracing
 
-        setup_tracing(endpoint=endpoint)
+        setup_tracing(
+            endpoint=endpoint,
+            global_trace_enabled=global_trace_enabled,
+        )
+        # Set ContextVar for backward compatibility
         _config.trace_enabled = True
 
 

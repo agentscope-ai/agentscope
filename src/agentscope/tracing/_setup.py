@@ -8,13 +8,27 @@ else:
     Tracer = "Tracer"
 
 
-def setup_tracing(endpoint: str) -> None:
+def setup_tracing(
+    endpoint: str,
+    *,
+    global_trace_enabled: bool = False,
+) -> None:
     """Set up the AgentScope tracing by configuring the endpoint URL.
 
     Args:
         endpoint (`str`):
             The endpoint URL for the tracing exporter.
+        global_trace_enabled (`bool`, optional):
+            Global flag to enable/disable tracing. When True, tracing is
+            enabled globally regardless of ContextVar settings. When False,
+            falls back to ContextVar for runtime control. Default is False
+            for backward compatibility.
     """
+    # Configure global tracing setting
+    from .. import _config
+
+    _config.global_trace_enabled = global_trace_enabled
+
     # Lazy import
     from opentelemetry import trace
     from opentelemetry.sdk.trace import TracerProvider
