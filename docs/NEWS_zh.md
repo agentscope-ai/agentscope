@@ -2,4 +2,5 @@
 <!-- The first 10 items are automatically synced to README.md and README_zh.md via GitHub Actions. -->
 <!-- To update news in READMEs, modify this file and push to trigger the workflow. -->
 
+- **[2026-05] `新特性`:** 接入 OrcaRouter —— 通过 `OrcaRouterChatModel` 一把 OpenAI 兼容 API key 即可访问 150+ 模型，并支持 `orcarouter/auto` 自适应路由。
 - **[2026-05] `发布`:** AgentScope 2.0 已发布！[文档](https://docs.agentscope.io/)
