@@ -146,12 +146,19 @@ class ModelConfig(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
 
     max_retries: int = Field(
-        default=3,
-        gt=0,
-        description="Maximum number of retries when the model call fails.",
+        default=0,
+        ge=0,
+        description=(
+            "Number of retries on top of the initial call before falling "
+            "over to the fallback model. ``0`` means call the model exactly "
+            "once and immediately move to the fallback on failure. Same "
+            "semantics as ``ChatModelBase.max_retries``. Defaults to 0 to "
+            "avoid compounding with the model's own inner retry loop."
+        ),
     )
-    """The maximum number of retries when the model call fails. Must be
-    greater than 0."""
+    """Number of retries on top of the initial call before falling over to
+    the fallback model. ``0`` means a single attempt with no retries.
+    Mirrors the semantics of ``ChatModelBase.max_retries``."""
 
     fallback_model: ChatModelBase | None = Field(
         default=None,

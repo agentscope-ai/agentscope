@@ -23,6 +23,11 @@ class CreateSessionRequest(BaseModel):
         description="Model provider and parameters. "
         "Can be set later via PATCH.",
     )
+    fallback_chat_model_config: ChatModelConfig | None = Field(
+        default=None,
+        description="Fallback model used when the primary model fails. "
+        "Can be set later via PATCH.",
+    )
 
 
 class CreateSessionResponse(BaseModel):
@@ -44,7 +49,13 @@ class UpdateSessionRequest(BaseModel):
     chat_model_config: ChatModelConfig | None = Field(
         default=None,
         description="New model configuration. "
-        "Replaces the existing one entirely.",
+        "Replaces the existing one entirely. "
+        "Pass null to clear; omit to leave unchanged.",
+    )
+    fallback_chat_model_config: ChatModelConfig | None = Field(
+        default=None,
+        description="New fallback model configuration. "
+        "Pass null to clear; omit to leave unchanged.",
     )
     permission_mode: PermissionMode | None = Field(
         default=None,

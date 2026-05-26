@@ -1958,8 +1958,11 @@ class Agent:
             models.append(self.model_config.fallback_model)
 
         last_exception = None
+        # ``max_retries`` is the number of retries on top of the initial
+        # call (mirrors ``ChatModelBase.max_retries``), so total attempts
+        # per model is ``max_retries + 1``.
         for model in models:
-            for _ in range(self.model_config.max_retries):
+            for attempt in range(self.model_config.max_retries + 1):
                 try:
                     # Apply middleware to wrap the actual model() call
                     if not self._model_call_middlewares:
@@ -2013,15 +2016,28 @@ class Agent:
 
                         return await execute_chain()
                 except Exception as e:
-                    logger.warning(
-                        "Model %s call failed for agent %s. "
-                        "Retrying (%d/%d)...",
-                        model.model,
-                        self.name,
-                        _ + 1,
-                        self.model_config.max_retries,
-                    )
                     last_exception = e
+                    # Only log a "Retrying" message when there's actually a
+                    # next attempt left for this model. When ``max_retries=0``
+                    # or the last retry has been used, the outer loop either
+                    # falls over to the fallback or raises.
+                    if attempt < self.model_config.max_retries:
+                        logger.warning(
+                            "Model %s call failed for agent %s. "
+                            "Retrying (%d/%d)...",
+                            model.model,
+                            self.name,
+                            attempt + 1,
+                            self.model_config.max_retries,
+                        )
+                    else:
+                        logger.warning(
+                            "Model %s exhausted all %d attempt(s) "
+                            "for agent %s.",
+                            model.model,
+                            self.model_config.max_retries + 1,
+                            self.name,
+                        )
 
         if last_exception:
             raise last_exception from None

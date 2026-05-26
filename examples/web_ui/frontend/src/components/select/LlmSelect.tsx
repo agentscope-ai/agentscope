@@ -1,4 +1,4 @@
-import { ChevronDown, PlusCircle } from 'lucide-react';
+import { ChevronDown, PlusCircle, Ban } from 'lucide-react';
 import { useEffect } from 'react';
 
 import type { ChatModelConfig } from '@/api';
@@ -20,12 +20,33 @@ import { useTranslation } from '@/i18n/useI18n.ts';
 
 interface Props {
 	value?: ChatModelConfig | null;
-	onChange?: (value: ChatModelConfig) => void;
+	/**
+	 * Called when the user selects a model, or — when `allowClear` is true —
+	 * clears the selection (in which case `null` is emitted).
+	 */
+	onChange?: (value: ChatModelConfig | null) => void;
 	onAddCredential?: () => void;
 	refetchTrigger?: number;
+	/** Override the trigger label shown when no model is selected. */
+	placeholder?: string;
+	/**
+	 * When true, append a "clear selection" item to the dropdown that emits
+	 * `null` via `onChange`. Used by the fallback selector.
+	 */
+	allowClear?: boolean;
+	/** Override the label of the "clear selection" item. */
+	clearLabel?: string;
 }
 
-export function LlmSelect({ value, onChange, onAddCredential, refetchTrigger }: Props) {
+export function LlmSelect({
+	value,
+	onChange,
+	onAddCredential,
+	refetchTrigger,
+	placeholder,
+	allowClear = false,
+	clearLabel,
+}: Props) {
 	const { groups, loading, refetch } = useAvailableModels();
 	const { t } = useTranslation();
 	const hasOptions = Object.keys(groups).length > 0;
@@ -42,7 +63,7 @@ export function LlmSelect({ value, onChange, onAddCredential, refetchTrigger }: 
 		? value.model
 		: loading
 			? t('llm-select.loading')
-			: t('llm-select.placeholder');
+			: (placeholder ?? t('llm-select.placeholder'));
 
 	return (
 		<DropdownMenu>
@@ -115,6 +136,12 @@ export function LlmSelect({ value, onChange, onAddCredential, refetchTrigger }: 
 					})
 				)}
 				<DropdownMenuSeparator />
+				{allowClear && (
+					<DropdownMenuItem onSelect={() => onChange?.(null)} disabled={!value}>
+						<Ban className="size-4" />
+						<span>{clearLabel ?? t('llm-select.clear')}</span>
+					</DropdownMenuItem>
+				)}
 				<DropdownMenuItem onSelect={onAddCredential}>
 					<PlusCircle className="size-4" />
 					<span>{t('llm-select.addCredential')}</span>

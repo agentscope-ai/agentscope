@@ -474,9 +474,9 @@ export function MessageBubble({ message, onUserConfirm }: MessageBubbleProps) {
 				<div className="flex flex-row text-muted-foreground gap-x-4 px-2">
 					<Badge variant="secondary">
 						<ArrowUp data-icon="inline-start" />
-						{formatNumber(message.usage?.inputTokens || 0)}
+						{formatNumber(message.usage?.input_tokens || 0)}
 						<ArrowDown data-icon="inline-start" className="ml-1" />
-						{formatNumber(message.usage?.outputTokens || 0)}
+						{formatNumber(message.usage?.output_tokens || 0)}
 					</Badge>
 				</div>
 			)}

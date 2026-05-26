@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from ._model import get_model
 from .._manager import WorkspaceManagerBase
 from ..storage import StorageBase
-from ...agent import Agent
+from ...agent import Agent, ModelConfig
 from ...middleware import MiddlewareBase
 from ...tool import Toolkit
 
@@ -51,6 +51,18 @@ async def get_agent(
     model = await get_model(user_id, model_cfg, storage)
 
     # ====================================================================
+    # Step 2.1.1. Build the optional fallback model
+    # ====================================================================
+    # The fallback model is invoked by the agent when the primary model
+    # fails. ``None`` means no fallback is configured for this session.
+    fallback_cfg = session_record.config.fallback_chat_model_config
+    fallback_model = (
+        await get_model(user_id, fallback_cfg, storage)
+        if fallback_cfg is not None
+        else None
+    )
+
+    # ====================================================================
     # Step 2.2. Get the session data, i.e. the agent state
     # ====================================================================
     agent_state = session_record.state
@@ -75,6 +87,7 @@ async def get_agent(
             skills_or_loaders=await workspace.list_skills(),
             mcps=await workspace.list_mcps(),
         ),
+        model_config=ModelConfig(fallback_model=fallback_model),
         context_config=cfg.context_config,
         react_config=cfg.react_config,
         state=agent_state,

@@ -90,6 +90,12 @@ const ChatPageInner = () => {
 
 	const [sidebarOpen, setSidebarOpen] = useState(true);
 	const [selectedModel, setSelectedModel] = useState<ChatModelConfig | null>(null);
+	// Fallback model used when the primary model fails. `null` means none.
+	// Unlike the primary model, we never auto-select a fallback — the user
+	// must opt in explicitly.
+	const [selectedFallbackModel, setSelectedFallbackModel] = useState<ChatModelConfig | null>(
+		null,
+	);
 	const [selectedPermissionMode, setSelectedPermissionMode] = useState<string>('default');
 	const [editOpen, setEditOpen] = useState(false);
 	const [deleteOpen, setDeleteOpen] = useState(false);
@@ -198,6 +204,9 @@ const ChatPageInner = () => {
 				setSelectedModel(null);
 			}
 		}
+
+		// Fallback is purely opt-in: mirror what's persisted, never auto-select.
+		setSelectedFallbackModel(session?.config.fallback_chat_model_config ?? null);
 	}, [selectedSessionId, sessions, groups]);
 
 	// Sync selectedPermissionMode when switching sessions.
@@ -208,7 +217,11 @@ const ChatPageInner = () => {
 		setSelectedPermissionMode(mode ?? 'default');
 	}, [selectedSessionId]);
 
-	const handleLlmChange = async (config: ChatModelConfig) => {
+	// Primary selector does not enable `allowClear`, so `config` is always
+	// non-null in practice; the union below just satisfies the shared
+	// `LlmSelect` callback signature.
+	const handleLlmChange = async (config: ChatModelConfig | null) => {
+		if (!config) return;
 		setSelectedModel(config);
 		if (selectedSessionId && selectedAgentId) {
 			await updateSession(selectedSessionId, { chat_model_config: config });
@@ -224,11 +237,23 @@ const ChatPageInner = () => {
 		}
 	};
 
+	// Fallback selector emits `null` when the user clears the selection.
+	// Persist the change to the active session if one exists.
+	const handleFallbackChange = async (config: ChatModelConfig | null) => {
+		setSelectedFallbackModel(config);
+		if (selectedSessionId && selectedAgentId) {
+			await updateSession(selectedSessionId, {
+				fallback_chat_model_config: config,
+			});
+		}
+	};
+
 	const handleCreateSession = async () => {
 		if (!selectedAgentId) return;
 		const res = await createSession({
 			agent_id: selectedAgentId,
 			...(selectedModel ? { chat_model_config: selectedModel } : {}),
+			...(selectedFallbackModel ? { fallback_chat_model_config: selectedFallbackModel } : {}),
 		});
 		setSelectedSessionId(res.session_id);
 	};
@@ -432,10 +457,17 @@ const ChatPageInner = () => {
 								onAddCredential={() => setCredentialOpen(true)}
 								refetchTrigger={credentialRefetchTrigger}
 							/>
+							{/*
+							 * Combined settings dropdown: fallback model + parameter
+							 * editing for the primary model. Disabled until a primary
+							 * model is selected.
+							 */}
 							<ModelParametersPopover
 								selectedModel={selectedModel}
 								modelCard={selectedModelCard}
 								onChange={handleParametersChange}
+								selectedFallbackModel={selectedFallbackModel}
+								onFallbackChange={handleFallbackChange}
 							/>
 						</div>
 						<div id="tour-permission-mode" className="flex flex-row gap-x-2">

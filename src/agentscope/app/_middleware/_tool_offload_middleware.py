@@ -218,13 +218,6 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         if tool is not None and (
             tool.is_state_injected or tool.is_external_tool
         ):
-            logger.info(
-                "Tool '%s' is state-injected or external, executing "
-                "synchronously: session_id=%s, agent_id=%s",
-                tool_call.name,
-                agent.state.session_id,
-                agent.name,
-            )
             async for item in next_handler(**input_kwargs):
                 yield item
             return

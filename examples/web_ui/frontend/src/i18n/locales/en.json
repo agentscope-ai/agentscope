@@ -171,13 +171,16 @@
 	},
 	"llm-select": {
 		"placeholder": "Select a model",
+		"fallbackPlaceholder": "Fallback model",
 		"loading": "Loading…",
 		"empty": {
 			"title": "No models available",
 			"description": "Add a credential to get started.",
 			"addButton": "Add credential"
 		},
-		"addCredential": "Add Credential"
+		"addCredential": "Add Credential",
+		"clear": "Clear selection",
+		"noFallback": "No fallback"
 	},
 	"permission-mode": {
 		"placeholder": "Select permission mode",
@@ -258,7 +261,10 @@
 	"model-parameters": {
 		"title": "Model Parameters",
 		"description": "Adjust inference parameters for the selected model.",
-		"empty": "No configurable parameters."
+		"empty": "No configurable parameters.",
+		"fallbackLabel": "Fallback model",
+		"fallbackLabelWithModel": "Fallback model ({{model}})",
+		"parametersLabel": "Parameters"
 	},
 	"setup": {
 		"title": "Connect to Service",

@@ -162,13 +162,16 @@
 	},
 	"llm-select": {
 		"placeholder": "选择模型",
+		"fallbackPlaceholder": "兜底模型",
 		"loading": "加载中…",
 		"empty": {
 			"title": "暂无可用模型",
 			"description": "请先添加凭证。",
 			"addButton": "添加凭证"
 		},
-		"addCredential": "添加凭证"
+		"addCredential": "添加凭证",
+		"clear": "清除选择",
+		"noFallback": "无兜底模型"
 	},
 	"permission-mode": {
 		"placeholder": "选择权限模式",
@@ -249,7 +252,10 @@
 	"model-parameters": {
 		"title": "模型参数",
 		"description": "调整所选模型的推理参数。",
-		"empty": "暂无可配置参数。"
+		"empty": "暂无可配置参数。",
+		"fallbackLabel": "兜底模型",
+		"fallbackLabelWithModel": "兜底模型（{{model}}）",
+		"parametersLabel": "参数"
 	},
 	"setup": {
 		"title": "连接到服务器",
