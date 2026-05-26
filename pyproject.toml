@@ -24,6 +24,7 @@ dependencies = [
     "anthropic",
     "dashscope",
     "docstring_parser",
+    "fastapi",
     "filetype",
     "json5",
     "json_repair",
@@ -42,6 +43,7 @@ dependencies = [
     "sqlalchemy",
     "python-frontmatter",
     "aiofiles",
+    "uvicorn",
 ]
 
 [project.optional-dependencies]
