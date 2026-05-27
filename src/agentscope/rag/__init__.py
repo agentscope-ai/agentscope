@@ -21,6 +21,7 @@ from ._store import (
     OceanBaseStore,
     MongoDBStore,
     AlibabaCloudMySQLStore,
+    ValkeyStore,
 )
 from ._knowledge_base import KnowledgeBase
 from ._simple_knowledge import SimpleKnowledge
@@ -42,6 +43,7 @@ __all__ = [
     "OceanBaseStore",
     "MongoDBStore",
     "AlibabaCloudMySQLStore",
+    "ValkeyStore",
     "KnowledgeBase",
     "SimpleKnowledge",
 ]
