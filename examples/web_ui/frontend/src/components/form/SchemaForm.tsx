@@ -134,8 +134,11 @@ export function SchemaForm({
 								}
 								onChange={(e) => {
 									const raw = e.target.value;
+									// Empty input → undefined so JSON.stringify drops the key
+									// and the backend applies its own default. Sending "" would
+									// fail Pydantic float/int coercion.
 									if (raw === '') {
-										onChange(key, '');
+										onChange(key, undefined);
 										return;
 									}
 									const parsed =

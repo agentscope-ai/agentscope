@@ -60,7 +60,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         basedir: str,
         *,
         base_image: str = DEFAULT_BASE_IMAGE,
-        node_version: str | None = None,
+        node_version: str = "20",
         extra_pip: list[str] | None = None,
         gateway_port: int = DEFAULT_GATEWAY_PORT,
         env: dict[str, str] | None = None,
@@ -79,9 +79,9 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
                 container.
             base_image (`str`, defaults to `DEFAULT_BASE_IMAGE`):
                 Base Docker image; must provide ``python3``.
-            node_version (`str | None`, optional):
+            node_version (`str`, defaults to `"20"`):
                 Major Node.js version (e.g. ``"20"``) to bake into
-                the image, or ``None`` to skip Node.
+                the image.
             extra_pip (`list[str] | None`, optional):
                 Extra Python packages to install into the gateway
                 venv at image-build time.
