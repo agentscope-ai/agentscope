@@ -116,7 +116,6 @@ class ContextConfig(BaseModel):
 
     tool_result_limit: int = Field(
         title="Tool Result Limit",
-        ge=500,
         default=3000,
         description=(
             "The maximum length of the tool results in tokens. "
