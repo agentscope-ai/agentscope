@@ -56,3 +56,27 @@ class ListAgentsResponse(BaseModel):
 
     agents: list[AgentRecord] = Field(description="Agent records.")
     total: int = Field(description="Total number of agents.")
+
+
+class AgentSchemaResponse(BaseModel):
+    """JSON Schema fragments used by the frontend to render the agent
+    create / edit forms.
+
+    Each fragment is a self-contained JSON Schema object so the frontend
+    doesn't need to follow ``$ref`` links across fragments. The frontend
+    pairs each property with an i18n key derived from its path, so labels
+    and descriptions remain localizable independently of the backend.
+    """
+
+    identity: dict = Field(
+        description=(
+            "Schema for the agent's identity fields (``name``, "
+            "``system_prompt``)."
+        ),
+    )
+    context_config: dict = Field(
+        description="Schema for ``ContextConfig``.",
+    )
+    react_config: dict = Field(
+        description="Schema for ``ReActConfig``.",
+    )

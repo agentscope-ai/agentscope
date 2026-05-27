@@ -86,30 +86,29 @@
 	},
 	"dialog-agent-create": {
 		"title": "创建 Agent",
-		"trigger": "创建 Agent",
+		"trigger": "创建 Agent"
+	},
+	"agent-form": {
 		"identity": {
 			"legend": "Agent 身份",
 			"description": "定义此 Agent 行为的名称和指令。",
 			"name": { "label": "名称", "placeholder": "我的 Agent" },
-			"systemPrompt": { "label": "系统提示词", "placeholder": "你是一个有帮助的助手。" }
+			"system-prompt": { "label": "系统提示词" }
 		},
-		"contextConfig": {
+		"context-config": {
 			"legend": "上下文配置",
 			"description": "控制上下文窗口的管理和压缩方式。",
-			"triggerRatio": { "label": "触发比例", "placeholder": "例如 0.75（0.01–0.89）" },
-			"reserveRatio": { "label": "保留比例", "placeholder": "例如 0.25（0.01–0.89）" },
-			"toolResultLimit": {
-				"label": "工具结果限制",
-				"placeholder": "每个工具结果的最大字符数"
-			},
-			"compressionPrompt": { "label": "压缩提示词", "placeholder": "覆盖默认压缩指令" },
-			"summaryTemplate": { "label": "摘要模板", "placeholder": "覆盖默认摘要输出模板" }
+			"trigger-ratio": { "label": "触发比例" },
+			"reserve-ratio": { "label": "保留比例" },
+			"tool-result-limit": { "label": "工具结果限制" },
+			"compression-prompt": { "label": "压缩提示词" },
+			"summary-template": { "label": "摘要模板" }
 		},
-		"reactConfig": {
+		"react-config": {
 			"legend": "ReAct 配置",
 			"description": "控制推理和行动循环的行为。",
-			"maxIters": { "label": "最大迭代次数", "placeholder": "ReAct 循环最大迭代次数" },
-			"stopOnReject": { "label": "拒绝时停止" }
+			"max-iters": { "label": "最大迭代次数" },
+			"stop-on-reject": { "label": "拒绝时停止" }
 		}
 	},
 	"dialog-agent-edit": {

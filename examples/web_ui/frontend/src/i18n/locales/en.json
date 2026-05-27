@@ -86,39 +86,29 @@
 	},
 	"dialog-agent-create": {
 		"title": "Create agent",
-		"trigger": "Create agent",
+		"trigger": "Create agent"
+	},
+	"agent-form": {
 		"identity": {
 			"legend": "Agent Identity",
 			"description": "Name and instructions that define this agent's behaviour.",
 			"name": { "label": "Name", "placeholder": "My agent" },
-			"systemPrompt": {
-				"label": "System prompt",
-				"placeholder": "You're a helpful assistant."
-			}
+			"system-prompt": { "label": "System prompt" }
 		},
-		"contextConfig": {
+		"context-config": {
 			"legend": "Context Config",
 			"description": "Controls how the context window is managed and compressed.",
-			"triggerRatio": { "label": "Trigger ratio", "placeholder": "e.g. 0.75 (0.01–0.89)" },
-			"reserveRatio": { "label": "Reserve ratio", "placeholder": "e.g. 0.25 (0.01–0.89)" },
-			"toolResultLimit": {
-				"label": "Tool result limit",
-				"placeholder": "Max chars per tool result"
-			},
-			"compressionPrompt": {
-				"label": "Compression prompt",
-				"placeholder": "Override the default compression instruction"
-			},
-			"summaryTemplate": {
-				"label": "Summary template",
-				"placeholder": "Override the default summary output template"
-			}
+			"trigger-ratio": { "label": "Trigger ratio" },
+			"reserve-ratio": { "label": "Reserve ratio" },
+			"tool-result-limit": { "label": "Tool result limit" },
+			"compression-prompt": { "label": "Compression prompt" },
+			"summary-template": { "label": "Summary template" }
 		},
-		"reactConfig": {
+		"react-config": {
 			"legend": "ReAct Config",
 			"description": "Controls the reasoning and action loop behaviour.",
-			"maxIters": { "label": "Max iterations", "placeholder": "Max ReAct loop iterations" },
-			"stopOnReject": { "label": "Stop on reject" }
+			"max-iters": { "label": "Max iterations" },
+			"stop-on-reject": { "label": "Stop on reject" }
 		}
 	},
 	"dialog-agent-edit": {

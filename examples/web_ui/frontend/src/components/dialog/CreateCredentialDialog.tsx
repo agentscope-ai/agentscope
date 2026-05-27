@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 
 import { credentialApi } from '@/api';
 import type { CredentialSchema } from '@/api';
-import { SchemaForm } from '@/components/form/SchemaForm';
+import { SchemaForm, type SchemaFormValue } from '@/components/form/SchemaForm';
 import { Button } from '@/components/ui/button';
 import {
 	Dialog,
@@ -35,7 +35,7 @@ export function CreateCredentialDialog({ open, onOpenChange, onCreated, defaultT
 	const [schemas, setSchemas] = useState<CredentialSchema[]>([]);
 	const [loadingSchemas, setLoadingSchemas] = useState(false);
 	const [selectedType, setSelectedType] = useState('');
-	const [values, setValues] = useState<Record<string, string | boolean>>({});
+	const [values, setValues] = useState<Record<string, SchemaFormValue>>({});
 	const [submitting, setSubmitting] = useState(false);
 
 	useEffect(() => {
