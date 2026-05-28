@@ -1961,7 +1961,13 @@ class Agent:
         # ``max_retries`` is the number of retries on top of the initial
         # call (mirrors ``ChatModelBase.max_retries``), so total attempts
         # per model is ``max_retries + 1``.
-        for model in models:
+        for index, model in enumerate(models):
+            if index > 0:
+                logger.info(
+                    "Fallback to model '%s'",
+                    model.model,
+                )
+
             for attempt in range(self.model_config.max_retries + 1):
                 try:
                     # Apply middleware to wrap the actual model() call
