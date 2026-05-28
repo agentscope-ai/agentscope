@@ -8,6 +8,7 @@ from ._manager import (
     WorkspaceManagerBase,
     SchedulerManager,
 )
+from ._types import AgentMiddlewareFactory, AgentToolFactory
 from .storage import StorageBase
 
 
@@ -109,3 +110,33 @@ async def get_background_task_manager(
         `BackgroundTaskManager`: The manager stored in ``app.state``.
     """
     return request.app.state.background_task_manager
+
+
+async def get_extra_agent_middlewares(
+    request: Request,
+) -> AgentMiddlewareFactory | None:
+    """Return the caller-supplied agent middleware factory, if any.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `AgentMiddlewareFactory | None`: The factory passed to
+        :func:`~agentscope.app.create_app`, or ``None`` if not configured.
+    """
+    return request.app.state.extra_agent_middlewares
+
+
+async def get_extra_agent_tools(
+    request: Request,
+) -> AgentToolFactory | None:
+    """Return the caller-supplied agent tool factory, if any.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `AgentToolFactory | None`: The factory passed to
+        :func:`~agentscope.app.create_app`, or ``None`` if not configured.
+    """
+    return request.app.state.extra_agent_tools

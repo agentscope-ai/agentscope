@@ -14,15 +14,16 @@ from ._router import (
     session_router,
     workspace_router,
 )
+from ._types import AgentMiddlewareFactory, AgentToolFactory
 from .storage import StorageBase
 from ..credential import CredentialFactory, CredentialBase
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
-    from fastapi.middleware import Middleware
+    from fastapi.middleware import Middleware as FastAPIMiddleware
 else:
     FastAPI = Any
-    Middleware = Any
+    FastAPIMiddleware = Any
 
 
 def create_app(
@@ -30,7 +31,9 @@ def create_app(
     *,
     workspace_manager: WorkspaceManagerBase | None = None,
     extra_credentials: list[Type[CredentialBase]] | None = None,
-    extra_middlewares: list[Middleware] | None = None,
+    extra_middlewares: list[FastAPIMiddleware] | None = None,
+    extra_agent_middlewares: AgentMiddlewareFactory | None = None,
+    extra_agent_tools: AgentToolFactory | None = None,
     title: str = "AgentScope",
     version: str = "2.0.0",
 ) -> FastAPI:
@@ -67,6 +70,23 @@ def create_app(
             register_credential` for each class.
         extra_middlewares (`list[Middleware] | None`, optional):
             Additional ASGI middlewares to add to the application.
+        extra_agent_middlewares (`AgentMiddlewareFactory | None`, optional):
+            An async factory ``(user_id, agent_id, session_id) -> awaitable
+            of list[MiddlewareBase]`` that produces extra
+            :class:`~agentscope.middleware.MiddlewareBase` instances to
+            attach to the agent on each invocation.  Called once per agent
+            assembly (i.e. per chat turn / scheduled trigger), so it can
+            return user/session-specific middleware (auth, audit logging,
+            tenant isolation, etc.).  The returned middlewares are appended
+            to the framework-supplied ones (e.g. ``ToolOffloadMiddleware``).
+        extra_agent_tools (`AgentToolFactory | None`, optional):
+            An async factory ``(user_id, agent_id, session_id) -> awaitable
+            of list[ToolBase]`` that produces extra
+            :class:`~agentscope.tool.ToolBase` instances to register in the
+            agent's toolkit on each invocation.  Useful when tool
+            availability depends on the caller (per-tenant integrations,
+            user-specific credentials).  The returned tools are added to
+            the workspace-derived tools in the toolkit's ``"basic"`` group.
         title (`str`, defaults to ``"AgentScope"``):
             OpenAPI title shown in the docs UI.
         version (`str`, defaults to ``"2.0.0"``):
@@ -86,6 +106,8 @@ def create_app(
     # Attach shared state that lifespan and dependencies read from app.state
     app.state.storage = storage
     app.state.workspace_manager = workspace_manager
+    app.state.extra_agent_middlewares = extra_agent_middlewares
+    app.state.extra_agent_tools = extra_agent_tools
 
     # Built-in routers
     for router in (

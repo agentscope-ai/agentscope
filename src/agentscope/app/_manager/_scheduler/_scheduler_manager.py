@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The cron scheduler manager class."""
 from collections.abc import Callable, Coroutine
+from typing import TYPE_CHECKING
 
 
 from ....message import UserMsg
@@ -15,6 +16,9 @@ from ...storage import (
 from .._background_task_manager import BackgroundTaskManager
 from .._session_manager import SessionManager
 from .._workspace_manager import WorkspaceManagerBase
+
+if TYPE_CHECKING:
+    from ..._types import AgentMiddlewareFactory, AgentToolFactory
 
 
 class SchedulerManager:
@@ -33,6 +37,8 @@ class SchedulerManager:
         session_manager: SessionManager,
         background_task_manager: BackgroundTaskManager,
         workspace_manager: WorkspaceManagerBase,
+        extra_agent_middlewares: "AgentMiddlewareFactory | None" = None,
+        extra_agent_tools: "AgentToolFactory | None" = None,
     ) -> None:
         """Initialize the scheduler manager.
 
@@ -48,6 +54,13 @@ class SchedulerManager:
             workspace_manager (`WorkspaceManagerBase`):
                 The workspace manager passed through to :class:`ChatService`
                 so triggered agents get the configured toolkit and MCPs.
+            extra_agent_middlewares (`AgentMiddlewareFactory | None`, \
+optional):
+                Async factory passed through to :class:`ChatService` to
+                produce extra agent middlewares per scheduled trigger.
+            extra_agent_tools (`AgentToolFactory | None`, optional):
+                Async factory passed through to :class:`ChatService` to
+                produce extra agent tools per scheduled trigger.
         """
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -55,6 +68,8 @@ class SchedulerManager:
         self._session_manager = session_manager
         self._background_task_manager = background_task_manager
         self._workspace_manager = workspace_manager
+        self._extra_agent_middlewares = extra_agent_middlewares
+        self._extra_agent_tools = extra_agent_tools
         self._scheduler = AsyncIOScheduler()
 
     # ------------------------------------------------------------------
@@ -110,6 +125,8 @@ class SchedulerManager:
         session_manager = self._session_manager
         background_task_manager = self._background_task_manager
         workspace_manager = self._workspace_manager
+        extra_agent_middlewares = self._extra_agent_middlewares
+        extra_agent_tools = self._extra_agent_tools
 
         async def _trigger() -> None:
             logger.info(
@@ -225,6 +242,8 @@ class SchedulerManager:
                     session_manager=session_manager,
                     background_task_manager=background_task_manager,
                     workspace_manager=workspace_manager,
+                    extra_agent_middlewares=extra_agent_middlewares,
+                    extra_agent_tools=extra_agent_tools,
                 )
                 async for _ in chat_service.stream_chat(
                     user_id=record.user_id,

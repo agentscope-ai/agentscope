@@ -4,6 +4,7 @@ from fastapi import HTTPException
 
 from ._model import get_model
 from .._manager import WorkspaceManagerBase
+from .._types import AgentMiddlewareFactory, AgentToolFactory
 from ..storage import StorageBase
 from ...agent import Agent
 from ...middleware import MiddlewareBase
@@ -17,8 +18,46 @@ async def get_agent(
     agent_id: str,
     session_id: str,
     middlewares: list[MiddlewareBase] | None = None,
+    extra_agent_middlewares: AgentMiddlewareFactory | None = None,
+    extra_agent_tools: AgentToolFactory | None = None,
 ) -> Agent:
-    """Get the agent class for the given agent ID."""
+    """Assemble the agent for ``(user_id, agent_id, session_id)``.
+
+    Loads the agent configuration and session state from storage, resolves
+    the chat model, materialises the per-session workspace (tools / skills
+    / MCPs), and wires in any caller-supplied middlewares plus extras
+    produced by the supplied factories.
+
+    Args:
+        storage (`StorageBase`):
+            Application storage backend used to fetch the agent record and
+            session record.
+        workspace_manager (`WorkspaceManagerBase`):
+            Workspace manager used to obtain the per-session workspace.
+        user_id (`str`):
+            The authenticated caller's user ID.
+        agent_id (`str`):
+            The agent record ID to assemble.
+        session_id (`str`):
+            The session ID whose persisted state will be restored onto the
+            agent.
+        middlewares (`list[MiddlewareBase] | None`, optional):
+            Framework-supplied middlewares (e.g.
+            ``ToolOffloadMiddleware``) to attach to the agent.  Extras
+            produced by ``extra_agent_middlewares`` are appended to this
+            list.
+        extra_agent_middlewares (`AgentMiddlewareFactory | None`, optional):
+            Async factory ``(user_id, agent_id, session_id) -> list[
+            MiddlewareBase]``.  Awaited once per call; results are
+            appended to ``middlewares``.
+        extra_agent_tools (`AgentToolFactory | None`, optional):
+            Async factory ``(user_id, agent_id, session_id) -> list[
+            ToolBase]``.  Awaited once per call; results are merged into
+            the toolkit's ``"basic"`` group alongside workspace tools.
+
+    Returns:
+        `Agent`: The fully-assembled agent ready to reply.
+    """
 
     # ====================================================================
     # Step 1. Get the agent configuration
@@ -66,18 +105,35 @@ async def get_agent(
         session_record.config.workspace_id,
     )
 
+    # ====================================================================
+    # Step 3. Resolve caller-supplied factories for tools and middlewares
+    # ====================================================================
+    tools = await workspace.list_tools()
+    if extra_agent_tools is not None:
+        tools = tools + await extra_agent_tools(
+            user_id,
+            agent_id,
+            session_id,
+        )
+
+    final_middlewares = list(middlewares or [])
+    if extra_agent_middlewares is not None:
+        final_middlewares.extend(
+            await extra_agent_middlewares(user_id, agent_id, session_id),
+        )
+
     return Agent(
         name=cfg.name,
         system_prompt=cfg.system_prompt,
         model=model,
         toolkit=Toolkit(
-            tools=await workspace.list_tools(),
+            tools=tools,
             skills_or_loaders=await workspace.list_skills(),
             mcps=await workspace.list_mcps(),
         ),
         context_config=cfg.context_config,
         react_config=cfg.react_config,
         state=agent_state,
-        middlewares=middlewares,
+        middlewares=final_middlewares,
         offloader=workspace,
     )

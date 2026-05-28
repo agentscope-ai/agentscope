@@ -7,6 +7,8 @@ from fastapi.responses import StreamingResponse
 
 from .._deps import (
     get_current_user_id,
+    get_extra_agent_middlewares,
+    get_extra_agent_tools,
     get_session_manager,
     get_storage,
     get_workspace_manager,
@@ -19,6 +21,7 @@ from .._manager import (
 )
 from .._schema import ChatRequest
 from .._service import ChatService
+from .._types import AgentMiddlewareFactory, AgentToolFactory
 from ..storage import StorageBase
 
 chat_router = APIRouter(
@@ -35,6 +38,8 @@ async def _stream_events(
     session_manager: SessionManager,
     workspace_manager: WorkspaceManagerBase,
     background_task_manager: BackgroundTaskManager,
+    extra_agent_middlewares: AgentMiddlewareFactory | None,
+    extra_agent_tools: AgentToolFactory | None,
 ) -> AsyncGenerator[str, None]:
     """Encode :class:`~agentscope.event.AgentEvent` objects as SSE frames.
 
@@ -48,6 +53,8 @@ async def _stream_events(
         session_manager=session_manager,
         background_task_manager=background_task_manager,
         workspace_manager=workspace_manager,
+        extra_agent_middlewares=extra_agent_middlewares,
+        extra_agent_tools=extra_agent_tools,
     )
     async for event in service.stream_chat(
         user_id=user_id,
@@ -71,6 +78,14 @@ async def chat(
     workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
     background_task_manager: BackgroundTaskManager = Depends(
         get_background_task_manager,
+    ),
+    extra_agent_middlewares: AgentMiddlewareFactory
+    | None = Depends(
+        get_extra_agent_middlewares,
+    ),
+    extra_agent_tools: AgentToolFactory
+    | None = Depends(
+        get_extra_agent_tools,
     ),
 ) -> StreamingResponse:
     """Send a message to an agent and stream back the reply as SSE events.
@@ -104,6 +119,8 @@ async def chat(
             session_manager,
             workspace_manager,
             background_task_manager,
+            extra_agent_middlewares,
+            extra_agent_tools,
         ),
         media_type="text/event-stream",
         headers={
