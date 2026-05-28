@@ -61,7 +61,8 @@
 		"yesWithRule": "是，且该次对话中都允许 {{toolName}} 执行 {{ruleContent}}"
 	},
 	"messageBubble": {
-		"thinking": "思考中"
+		"thinking": "思考中",
+		"running": "运行中..."
 	},
 	"chat": {
 		"inputPlaceholder": "输入消息...",

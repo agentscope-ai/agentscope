@@ -5,21 +5,24 @@ import { BashRenderer } from './BashRenderer';
 import {
 	defaultGetDisplayName,
 	defaultRenderCallArgs,
-	defaultRenderResult,
 	defaultRenderConfirmBody,
+	defaultRenderGroup,
+	defaultRenderResult,
 } from './DefaultRenderer';
+import { EditRenderer } from './EditRenderer';
+import { GlobRenderer } from './GlobRenderer';
+import { GrepRenderer } from './GrepRenderer';
 import { ReadRenderer } from './ReadRenderer';
-import { SearchRenderer } from './SearchRenderer';
-import type { TFunction, ToolRenderer } from './types';
+import type { TFunction, ToolCallWithResult, ToolRenderer } from './types';
 import { WriteRenderer } from './WriteRenderer';
 
 const renderers: Record<string, ToolRenderer> = {
 	Bash: BashRenderer,
 	Read: ReadRenderer,
 	Write: WriteRenderer,
-	Edit: WriteRenderer,
-	Glob: SearchRenderer,
-	Grep: SearchRenderer,
+	Edit: EditRenderer,
+	Glob: GlobRenderer,
+	Grep: GrepRenderer,
 };
 
 function getRenderer(toolName: string): ToolRenderer {
@@ -48,4 +51,28 @@ export function renderResult(
 export function renderConfirmBody(call: ToolCallBlock, t: TFunction): ReactNode {
 	const r = getRenderer(call.name);
 	return r.renderConfirmBody?.(call, t) ?? defaultRenderConfirmBody(call);
+}
+
+/**
+ * Render a group of consecutive tool calls of the same name.
+ *
+ * - If the tool's renderer defines `renderGroup`, delegate to it.
+ * - Otherwise fall back to `defaultRenderGroup`, wired with this registry's
+ *   resolvers so per-tool `getDisplayName` / `renderCallArgs` / `renderResult`
+ *   still apply.
+ */
+export function renderToolGroup(
+	toolName: string,
+	calls: ToolCallWithResult[],
+	t: TFunction,
+): ReactNode {
+	const r = getRenderer(toolName);
+	if (r.renderGroup) {
+		return r.renderGroup(calls, t);
+	}
+	return defaultRenderGroup(calls, t, {
+		getDisplayName: (call) => getDisplayName(call, t),
+		renderCallArgs: (call) => renderCallArgs(call, t),
+		renderResult: (call, result) => renderResult(call, result, t),
+	});
 }

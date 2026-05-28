@@ -61,7 +61,8 @@
 		"yesWithRule": "Yes, and allow {{toolName}} to execute {{ruleContent}} for this session"
 	},
 	"messageBubble": {
-		"thinking": "Thinking"
+		"thinking": "Thinking",
+		"running": "Running..."
 	},
 	"chat": {
 		"inputPlaceholder": "Type a message...",

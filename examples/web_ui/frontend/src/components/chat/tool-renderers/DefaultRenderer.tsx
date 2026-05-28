@@ -2,7 +2,8 @@ import type { ToolCallBlock, ToolResultBlock } from '@agentscope-ai/agentscope/m
 import * as mime from 'mime-types';
 import type { ReactNode } from 'react';
 
-import type { TFunction } from './types';
+import { CornerLine, ToolStateIcon } from './_shared';
+import type { TFunction, ToolCallWithResult } from './types';
 
 function processToolInput(input: string): string {
 	try {
@@ -72,5 +73,51 @@ export function defaultRenderConfirmBody(call: ToolCallBlock): ReactNode {
 		<div className="w-full max-w-full overflow-hidden text-ellipsis truncate">
 			<div className="text-secondary-foreground">{call.input}</div>
 		</div>
+	);
+}
+
+/**
+ * Default group layout: each call is an independent block with a state icon,
+ * `displayName(args)` header line, and (optionally) a corner-line-prefixed
+ * result block beneath it. Used by tools without a custom `renderGroup`,
+ * e.g. arbitrary MCP tools.
+ *
+ * `getDisplayName` / `renderCallArgs` / `renderResult` are passed in from
+ * `index.ts` so this function stays decoupled from the renderer registry.
+ */
+export function defaultRenderGroup(
+	calls: ToolCallWithResult[],
+	_t: TFunction,
+	resolvers: {
+		getDisplayName: (call: ToolCallBlock) => string;
+		renderCallArgs: (call: ToolCallBlock) => ReactNode;
+		renderResult: (call: ToolCallBlock, result: ToolResultBlock) => ReactNode;
+	},
+): ReactNode {
+	return (
+		<>
+			{calls.map(({ call, result }) => {
+				const displayName = resolvers.getDisplayName(call);
+				const args = resolvers.renderCallArgs(call);
+				const resultContent = result ? resolvers.renderResult(call, result) : null;
+				return (
+					<div key={call.id} className="flex flex-col w-full max-w-full text-sm">
+						<div className="flex flex-row gap-x-2 w-full max-w-full items-center">
+							<ToolStateIcon states={[result?.state]} />
+							<span className="truncate">
+								<strong className="truncate text-primary">{displayName}</strong>
+								{args && <>({args})</>}
+							</span>
+						</div>
+						{resultContent && (
+							<div className="flex flex-row gap-x-2 pl-6 max-w-full">
+								<CornerLine />
+								{resultContent}
+							</div>
+						)}
+					</div>
+				);
+			})}
+		</>
 	);
 }
