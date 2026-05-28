@@ -213,10 +213,11 @@ interface MessageBubbleProps {
  * Running state is derived from `message.finished_at`: a missing or null
  * `finished_at` means the agent is still producing this reply. The bottom
  * status row shows a single left-aligned badge laid out as
- * `[clock] [duration] [↑in ↓out]`:
+ * `[state-icon] [duration] [↑in ↓out]`:
+ *   - State icon: spinning `Loader2` while running, static `CheckCircle`
+ *     once finished.
  *   - Duration is `now - created_at` while running (ticking each second),
  *     `finished_at - created_at` once complete.
- *   - The clock pulses while running.
  *   - Token counts only appear once `usage` is populated with non-zero
  *     values — typically after the message finishes.
  *
@@ -247,9 +248,7 @@ export function MessageBubble({ message, onUserConfirm }: MessageBubbleProps) {
 	const startMs = new Date(message.created_at).getTime();
 	const endMs = isRunning ? now : new Date(message.finished_at!).getTime();
 	const elapsedSeconds = Math.max(0, (endMs - startMs) / 1000);
-	// While running we update each second, so use 0 decimals to avoid the
-	// jittery `.0` suffix; on completion show 1 decimal for accuracy.
-	const elapsedText = formatTime(elapsedSeconds, isRunning ? 0 : 1);
+	const elapsedText = formatTime(elapsedSeconds);
 
 	return (
 		<div
@@ -289,7 +288,7 @@ export function MessageBubble({ message, onUserConfirm }: MessageBubbleProps) {
 						) : (
 							<CheckCircle data-icon="inline-start" />
 						)}
-						<span className="tabular-nums">{elapsedText}</span>
+						<span className="tabular-nums tracking-tighter">{elapsedText}</span>
 						{hasUsage && (
 							<>
 								<ArrowUp data-icon="inline-start" className="ml-1" />

@@ -40,7 +40,10 @@
 		"moreLines": "... {{count}} more lines",
 		"read": {
 			"name": "Read",
-			"fileCount": "{{count}} file(s)"
+			"fileCount_one": "{{count}} file",
+			"fileCount_other": "{{count}} files",
+			"lineCount_one": "Read {{formatted}} line",
+			"lineCount_other": "Read {{formatted}} lines"
 		},
 		"glob": {
 			"name": "Glob"

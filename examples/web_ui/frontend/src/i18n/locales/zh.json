@@ -40,7 +40,10 @@
 		"moreLines": "... 还有 {{count}} 行",
 		"read": {
 			"name": "读取",
-			"fileCount": "{{count}} 个文件"
+			"fileCount_one": "{{count}} 个文件",
+			"fileCount_other": "{{count}} 个文件",
+			"lineCount_one": "读取 {{formatted}} 行",
+			"lineCount_other": "读取 {{formatted}} 行"
 		},
 		"glob": {
 			"name": "Glob"
