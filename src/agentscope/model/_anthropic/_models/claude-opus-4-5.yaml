@@ -15,7 +15,7 @@ output_types:
   - application/x-thinking
 
 context_size: 200000
-output_size: 32768
+output_size: 65536
 
 parameter_overrides:
-  max_tokens: {"maximum": 32768}
+  max_tokens: {"maximum": 65536}

@@ -1,5 +1,5 @@
-name: qwen-max
-label: Qwen Max
+name: qwen-max-3.7
+label: Qwen Max 3.7
 status: active
 
 input_types:
@@ -9,8 +9,8 @@ output_types:
   - text/plain
   - application/x-thinking
 
-context_size: 32768
-output_size: 8192
+context_size: 1000000
+output_size: 65536
 
 parameter_overrides:
-  max_tokens: {"maximum": 8192}
+  max_tokens: {"maximum": 65536}

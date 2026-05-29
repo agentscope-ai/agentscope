@@ -1,5 +1,5 @@
-name: gpt-4.1-nano
-label: GPT-4.1 Nano
+name: gpt-5.5
+label: GPT-5.5
 status: active
 
 input_types:
@@ -8,16 +8,18 @@ input_types:
   - image/png
   - image/gif
   - image/webp
+  - audio/mp3
+  - audio/wav
 
 output_types:
   - text/plain
 
-context_size: 1047576
-output_size: 32768
+context_size: 1050000
+output_size: 128000
 
 parameter_overrides:
   max_tokens:
-    maximum: 32768
+    maximum: 128000
   thinking_enable:
     hidden: true
   reasoning_effort:

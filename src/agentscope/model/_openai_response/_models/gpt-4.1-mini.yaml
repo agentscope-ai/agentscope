@@ -20,3 +20,5 @@ parameter_overrides:
     maximum: 32768
   thinking_enable:
     hidden: true
+  reasoning_effort:
+    hidden: true
