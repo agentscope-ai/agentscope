@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The types for the tool module in AgentScope."""
+
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import (
@@ -156,10 +157,10 @@ class RegisteredTool:
 # The function types that can be registered as tools in AgentScope.
 Function: TypeAlias = (
     # Sync function
-    Callable[..., ToolChunk]
+    Callable[..., ToolChunk | str]
     |
     # Async function
-    Callable[..., Awaitable[ToolChunk]]
+    Callable[..., Awaitable[ToolChunk | str]]
     |
     # Sync generator function
     Callable[..., Generator[ToolChunk, None, None]]

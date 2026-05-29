@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Adapters to convert functions and MCP tools to ToolProtocol."""
+
 import inspect
 from contextlib import _AsyncGeneratorContextManager
 from datetime import timedelta
@@ -115,6 +116,9 @@ class FunctionTool(ToolBase):
         else:
             result = self._func(**kwargs)
 
+        if isinstance(result, str):
+            return ToolChunk(content=[TextBlock(text=result)])
+
         return result
 
 
@@ -135,8 +139,9 @@ class MCPTool(ToolBase):
         self,
         mcp_name: str,
         tool: mcp.types.Tool,
-        client_gen: Callable[..., _AsyncGeneratorContextManager[Any]]
-        | None = None,
+        client_gen: (
+            Callable[..., _AsyncGeneratorContextManager[Any]] | None
+        ) = None,
         session: Any | None = None,
         timeout: float | None = None,
     ) -> None:
@@ -257,9 +262,11 @@ class MCPTool(ToolBase):
         # Convert MCP result to AgentScope blocks
         return ToolChunk(
             content=self._convert_mcp_content_to_blocks(result.content),
-            state=ToolResultState.ERROR
-            if result.isError
-            else ToolResultState.RUNNING,
+            state=(
+                ToolResultState.ERROR
+                if result.isError
+                else ToolResultState.RUNNING
+            ),
         )
 
     @staticmethod

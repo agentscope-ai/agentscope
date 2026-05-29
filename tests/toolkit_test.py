@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=unused-argument
 """Toolkit test case."""
+
 import json
 from typing import Any, AsyncGenerator, Generator
 from unittest import TestCase
@@ -521,6 +522,47 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "id": "test_add",
             },
+        )
+
+    async def test_sync_function_can_return_text(self) -> None:
+        """Test registering a synchronous function that returns plain text."""
+
+        def get_weather(location: str) -> str:
+            """Get weather information.
+
+            Args:
+                location: The location to get weather for
+            """
+            return f"The weather in {location} is sunny."
+
+        toolkit = Toolkit(
+            tools=[FunctionTool(get_weather)],
+        )
+
+        state = AgentState()
+        tool_call = ToolCallBlock(
+            id="test_get_weather",
+            name="get_weather",
+            input=json.dumps({"location": "Chengdu"}),
+        )
+
+        chunks = []
+        response = None
+        async for result in toolkit.call_tool(tool_call, state):
+            if isinstance(result, ToolChunk):
+                chunks.append(result)
+            elif isinstance(result, ToolResponse):
+                response = result
+
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(
+            chunks[0].content[0].text,
+            "The weather in Chengdu is sunny.",
+        )
+        self.assertIsNotNone(response)
+        self.assertEqual(
+            response.content[0].text,
+            "The weather in Chengdu is sunny.",
         )
 
     async def test_sync_streaming_function(self) -> None:
