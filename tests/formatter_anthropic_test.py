@@ -338,13 +338,17 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
         )
 
     async def test_chat_formatter_thinking_preserved(self) -> None:
-        """ThinkingBlock is passed back as a thinking content block."""
+        """ThinkingBlock with a signature is passed back as a thinking
+        content block."""
         fmt = AnthropicChatFormatter()
         msgs = [
             AssistantMsg(
                 name="assistant",
                 content=[
-                    ThinkingBlock(thinking="inner thoughts"),
+                    ThinkingBlock(
+                        thinking="inner thoughts",
+                        signature="sig_abc",
+                    ),
                     TextBlock(text="reply"),
                 ],
             ),
@@ -358,7 +362,7 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
                         {
                             "type": "thinking",
                             "thinking": "inner thoughts",
-                            "signature": "",
+                            "signature": "sig_abc",
                         },
                         {"type": "text", "text": "reply"},
                     ],
@@ -366,6 +370,48 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+    async def test_chat_formatter_thinking_without_signature_dropped(
+        self,
+    ) -> None:
+        """ThinkingBlock from another provider (no signature) is dropped
+        rather than forwarded with an empty signature, which Anthropic
+        rejects with `Invalid signature in thinking block`. An empty-string
+        signature is treated the same as a missing one."""
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ThinkingBlock(thinking="from another provider"),
+                    ThinkingBlock(thinking="empty sig", signature=""),
+                    TextBlock(text="reply"),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "reply"},
+                    ],
+                },
+            ],
+            res,
+        )
+
+        # Thinking-only message produces no output (no empty assistant msg).
+        res = await fmt.format(
+            [
+                AssistantMsg(
+                    name="assistant",
+                    content=[ThinkingBlock(thinking="only thinking")],
+                ),
+            ],
+        )
+        self.assertListEqual([], res)
 
     async def test_chat_formatter_tool_result_role_forced_to_user(
         self,
@@ -531,7 +577,7 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
             AssistantMsg(
                 name="assistant",
                 content=[
-                    ThinkingBlock(thinking="thinking_1"),
+                    ThinkingBlock(thinking="thinking_1", signature="sig_1"),
                     TextBlock(text="text_1"),
                     ToolCallBlock(
                         id="call_1",
@@ -555,7 +601,7 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
                         output=[TextBlock(text="result_2")],
                         state=ToolResultState.SUCCESS,
                     ),
-                    ThinkingBlock(thinking="thinking_2"),
+                    ThinkingBlock(thinking="thinking_2", signature="sig_2"),
                     TextBlock(text="text_2"),
                     ToolCallBlock(
                         id="call_3",
@@ -579,7 +625,7 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
                         output=[TextBlock(text="result_4")],
                         state=ToolResultState.SUCCESS,
                     ),
-                    ThinkingBlock(thinking="thinking_3"),
+                    ThinkingBlock(thinking="thinking_3", signature="sig_3"),
                     TextBlock(text="text_3"),
                 ],
             ),
@@ -593,7 +639,7 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
                         {
                             "type": "thinking",
                             "thinking": "thinking_1",
-                            "signature": "",
+                            "signature": "sig_1",
                         },
                         {"type": "text", "text": "text_1"},
                         {
@@ -640,7 +686,7 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
                         {
                             "type": "thinking",
                             "thinking": "thinking_2",
-                            "signature": "",
+                            "signature": "sig_2",
                         },
                         {"type": "text", "text": "text_2"},
                         {
@@ -692,7 +738,7 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
                         {
                             "type": "thinking",
                             "thinking": "thinking_3",
-                            "signature": "",
+                            "signature": "sig_3",
                         },
                         {"type": "text", "text": "text_3"},
                     ],

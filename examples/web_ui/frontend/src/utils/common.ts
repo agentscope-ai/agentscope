@@ -71,47 +71,26 @@ export const formatDuration = (seconds: number): number => {
 };
 
 /**
- * Format a duration in seconds into a human-readable string with appropriate units (seconds, minutes, hours).
+ * Format a duration in seconds into a human-readable, compact string.
+ *
+ * - Integer-only output (e.g. `45s`, `2min30s`, `3h`); no decimals.
+ * - Adjacent unit segments are concatenated without spaces.
+ * - Once the leading unit is hours, only whole hours are shown — minute and
+ *   second precision is not useful at that scale and would only widen the
+ *   badge when, e.g., a tool call sits awaiting user confirmation for hours.
  *
  * @param seconds - The duration in seconds to format
- * @param decimals - The number of decimal places to show (default: 1)
- * @returns Formatted string with appropriate time unit (e.g., "45.2s", "2m 30.0s", "1h 15m 30.5s")
+ * @returns Formatted string (e.g., "45s", "2min30s", "3h")
  */
-export const formatTime = (seconds: number, decimals: number = 1): string => {
-	// If duration is less than 60 seconds, display in seconds with specified decimal places
-	if (seconds < 60) {
-		return `${seconds.toFixed(decimals)}s`;
+export const formatTime = (seconds: number): string => {
+	const total = Math.floor(seconds);
+	if (total < 60) {
+		return `${total}s`;
 	}
-	// If duration is between 60 seconds and 1 hour, display in minutes and seconds
-	else if (seconds < 3600) {
-		const minutes = Math.floor(seconds / 60);
-		const remainingSeconds = seconds % 60;
-		// If there are no remaining seconds, only show minutes
-		if (remainingSeconds === 0) {
-			return `${minutes}min`;
-		}
-		// Otherwise, show both minutes and seconds with specified decimal places
-		return `${minutes}min ${remainingSeconds.toFixed(decimals)}s`;
+	if (total < 3600) {
+		const minutes = Math.floor(total / 60);
+		const remaining = total % 60;
+		return remaining === 0 ? `${minutes}min` : `${minutes}min${remaining}s`;
 	}
-	// If duration is 1 hour or more, display in hours, minutes, and seconds
-	else {
-		const hours = Math.floor(seconds / 3600);
-		const minutes = Math.floor((seconds % 3600) / 60);
-		const remainingSeconds = seconds % 60;
-
-		// Only show hours if minutes and seconds are both zero
-		if (minutes === 0 && remainingSeconds === 0) {
-			return `${hours}h`;
-		}
-		// Show hours and minutes if seconds is zero
-		else if (remainingSeconds === 0) {
-			return `${hours}h ${minutes}min`;
-		}
-		// Show hours and seconds if minutes is zero
-		else if (minutes === 0) {
-			return `${hours}h ${remainingSeconds.toFixed(decimals)}s`;
-		}
-		// Show all components: hours, minutes, and seconds
-		return `${hours}h ${minutes}min ${remainingSeconds.toFixed(decimals)}s`;
-	}
+	return `${Math.floor(total / 3600)}h`;
 };

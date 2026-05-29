@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The base class for the chat models."""
+import asyncio
 import inspect
 import json
 from abc import abstractmethod
@@ -177,6 +178,8 @@ class ChatModelBase:
                         self.model,
                         str(e),
                     )
+                    # Sleep before retry
+                    await asyncio.sleep(0.1)
                 else:
                     logger.warning(
                         "All %d attempt(s) failed for model %s.",

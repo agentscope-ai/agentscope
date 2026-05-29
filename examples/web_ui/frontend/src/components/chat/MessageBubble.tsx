@@ -1,346 +1,128 @@
-import type {
-	ContentBlock,
-	Msg,
-	ToolCallBlock,
-	ToolResultBlock,
-} from '@agentscope-ai/agentscope/message';
-import { ArrowDown, ArrowUp, Circle, Copy } from 'lucide-react';
-import type { ReactNode } from 'react';
+import type { ContentBlock, Msg, ToolCallBlock } from '@agentscope-ai/agentscope/message';
+import { ArrowDown, ArrowUp, CheckCircle, Copy, Loader2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import { ConfirmCard } from './ConfirmCard';
-import { getDisplayName, renderCallArgs, renderResult } from './tool-renderers';
-import lineCornerSvg from '@/assets/images/line-corner.svg';
-import lineVerticalSvg from '@/assets/images/line-vertical.svg';
+import { renderToolGroup } from './tool-renderers';
+import type { TFunction, ToolCallWithResult } from './tool-renderers/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/i18n/useI18n';
-import { formatNumber } from '@/utils/common';
+import { formatNumber, formatTime } from '@/utils/common';
 
-// Tool call group, containing multiple tool_call and tool_result pairs
 interface ToolCallGroupBlock {
 	type: 'tool_call_group';
 	id: string;
-	groupType: 'read_group' | 'glob_group' | 'grep_group' | 'tool_group';
-	calls: Array<{
-		call: ToolCallBlock;
-		result?: ToolResultBlock;
-	}>;
+	toolName: string;
+	calls: ToolCallWithResult[];
 }
 
-// Extend ContentBlock type to include ToolCallGroupBlock
 type ExtendedContentBlock = ContentBlock | ToolCallGroupBlock;
 
 /**
- * Combine adjacent tool_call and tool_result in message content into tool_call_group
- * Consecutive Read/Glob/Grep tools will be grouped into their respective groups
- * Other tools will be mixed into tool_group
- * @param content
- * @returns The processed content with tool calls grouped together for better rendering.
+ * Group consecutive tool_call blocks of the same name into a single
+ * `tool_call_group`. tool_result blocks are matched by id back onto the
+ * call inside the current group. Any non-tool block (or a tool_call with
+ * a different name) flushes the current group.
  */
 function groupToolCalls(content: ContentBlock[]): ExtendedContentBlock[] {
 	const result: ExtendedContentBlock[] = [];
-	let currentGroup: Array<{ call: ToolCallBlock; result?: ToolResultBlock }> = [];
-	let currentGroupType: 'read_group' | 'glob_group' | 'grep_group' | 'tool_group' | null = null;
+	let currentGroup: ToolCallWithResult[] = [];
+	let currentToolName: string | null = null;
 
-	const getGroupType = (
-		toolName: string,
-	): 'read_group' | 'glob_group' | 'grep_group' | 'tool_group' => {
-		if (toolName === 'Read') return 'read_group';
-		if (toolName === 'Glob') return 'glob_group';
-		if (toolName === 'Grep') return 'grep_group';
-		return 'tool_group';
-	};
-
-	const flushCurrentGroup = () => {
-		if (currentGroup.length > 0 && currentGroupType) {
+	const flush = () => {
+		if (currentGroup.length > 0 && currentToolName) {
 			result.push({
 				type: 'tool_call_group',
 				id: crypto.randomUUID(),
-				groupType: currentGroupType,
+				toolName: currentToolName,
 				calls: currentGroup,
 			});
 			currentGroup = [];
-			currentGroupType = null;
+			currentToolName = null;
 		}
 	};
 
 	for (const block of content) {
 		if (block.type === 'tool_call') {
-			const toolGroupType = getGroupType(block.name);
-
-			// If it's Read/Glob/Grep and the group type is different from the current one, start a new group
-			if (toolGroupType !== 'tool_group' && currentGroupType !== toolGroupType) {
-				flushCurrentGroup();
-				currentGroupType = toolGroupType;
-			} else if (toolGroupType === 'tool_group' && currentGroupType !== 'tool_group') {
-				// If it's another tool and the current group is not tool_group, start a new group
-				flushCurrentGroup();
-				currentGroupType = 'tool_group';
-			} else if (!currentGroupType) {
-				// If there's no current group yet, set the group type
-				currentGroupType = toolGroupType;
+			if (currentToolName !== null && currentToolName !== block.name) {
+				flush();
 			}
-
-			// Collect tool_call
+			currentToolName = block.name;
 			currentGroup.push({ call: block });
 		} else if (block.type === 'tool_result') {
-			// Find the corresponding tool_call and add result
 			const matchingCall = currentGroup.find((item) => item.call.id === block.id);
 			if (matchingCall) {
 				matchingCall.result = block;
 			} else {
-				// If no corresponding call is found, create a new group (this should not happen in theory)
+				// No matching call in the current group — emit a synthetic group
+				// so the result still renders. Should not happen in practice.
+				flush();
+				currentToolName = block.name;
 				currentGroup.push({
 					call: {
 						type: 'tool_call',
 						id: block.id,
 						name: block.name,
 						input: '',
-						state: 'pending',
+						state: 'finished',
 					},
 					result: block,
 				});
+				flush();
 			}
 		} else {
-			// When encountering a non-tool_call/tool_result block, end the current group
-			flushCurrentGroup();
+			flush();
 			result.push(block);
 		}
 	}
 
-	// Process the last group
-	flushCurrentGroup();
-
+	flush();
 	return result;
 }
 
 /**
- * Get the appropriate line connector image based on position in a list.
- * @param index - The current item index
- * @param total - The total number of items
- * @returns The appropriate line connector image (corner or vertical)
- */
-function getLineImage(index: number, total: number): string {
-	return index === total - 1 ? lineCornerSvg : lineVerticalSvg;
-}
-
-/**
- * The ToolStateIcon component renders an icon representing the state of a tool call based on its states.
- * @param root0
- * @param root0.states
- * @returns A ReactNode representing the icon corresponding to the tool call state.
- */
-function ToolStateIcon({ states }: { states: (ToolResultBlock['state'] | undefined)[] }) {
-	// If any of the states is 'running' or any one is undefined
-	if (states.includes('running') || states.includes(undefined)) {
-		return (
-			<Circle className="size-2.5 text-muted-foreground fill-muted-foreground animate-pulse shrink-0" />
-		);
-	}
-
-	// If all the states are 'success', show success;
-	if (states.every((state) => state === 'success')) {
-		return <Circle className="size-2.5 text-green-500 fill-green-500 shrink-0" />;
-	}
-
-	// If any of the states is 'error', show error;
-	if (states.some((state) => state === 'error')) {
-		return <Circle className="size-2.5 text-red-500 fill-red-500 shrink-0" />;
-	}
-
-	// if any of the states is 'interrupted', show interrupted;
-	if (states.some((state) => state === 'interrupted')) {
-		return <Circle className="size-2.5 text-yellow-500 fill-yellow-500 shrink-0" />;
-	}
-
-	// Return a default icon if none of the above conditions are met
-	return <Circle className="size-2.5 text-muted-foreground fill-muted-foreground shrink-0" />;
-}
-
-/**
- * Renders a grouped list of tool calls (Read / Glob / Grep) with a header and indented items.
- * @param root0 - The component props
- * @param root0.calls - Array of tool calls with their results
- * @param root0.label - The label to display for the group
- * @param root0.paramKey - The parameter key to extract from each call
- * @param root0.inline - Whether to display items inline or stacked
- * @returns A ReactNode representing the grouped tool call list
- */
-function ToolCallGroupList({
-	calls,
-	label,
-	inline,
-}: {
-	calls: Array<{ call: ToolCallBlock; result?: ToolResultBlock }>;
-	label: ReactNode;
-	inline?: boolean;
-}) {
-	return (
-		<div className="flex flex-col w-full">
-			<div className="flex flex-row gap-x-2 w-full max-w-full items-center">
-				<ToolStateIcon states={calls.map((item) => item.result?.state)} />
-				{label}
-			</div>
-			<div className={`flex ${inline ? 'flex-row' : 'flex-col'} gap-x-2 pl-6 max-w-full`}>
-				{calls.map((item, index) => (
-					<div
-						key={index}
-						className="flex flex-row gap-x-2 w-full max-w-full items-stretch"
-					>
-						<div className="flex-shrink-0 h-full items-center">
-							<img
-								src={getLineImage(index, calls.length)}
-								alt=""
-								className="w-3 h-full"
-							/>
-						</div>
-						<div className="truncate flex-1 min-w-0 text-sm">
-							{renderCallArgs(item.call, () => '')}
-						</div>
-					</div>
-				))}
-			</div>
-		</div>
-	);
-}
-
-/**
- * The RenderToolCallGroup component renders a group of tool calls and their results in a structured format.
- *
- * @param root0
- * @param root0.block
- * @param root0.index
- * @param root0.onUserConfirm
- * @returns A ReactNode representing the rendered tool call group.
- */
-function ToolCallGroup({
-	block,
-	index,
-	onUserConfirm,
-}: {
-	block: ToolCallGroupBlock;
-	index: number;
-	onUserConfirm?: (
-		toolCallBlock: ToolCallBlock,
-		confirm: boolean,
-		rules?: ToolCallBlock['suggested_rules'],
-	) => void;
-}): ReactNode {
-	const { t } = useTranslation();
-	if (block.calls.length === 0) return null;
-
-	const firstNeedConfirm = block.calls.findIndex((item) => item.call.state === 'asking');
-
-	const renderToolCalls =
-		firstNeedConfirm === -1 ? block.calls : block.calls.slice(0, firstNeedConfirm + 1);
-
-	const elements: ReactNode[] = [];
-
-	if (block.groupType === 'read_group') {
-		elements.push(
-			<ToolCallGroupList
-				key="read"
-				calls={renderToolCalls}
-				label={
-					<span className="text-sm">
-						<strong className="truncate text-primary">{t('tool.read.name')} </strong>
-						{t('tool.read.fileCount', { count: renderToolCalls.length })}
-					</span>
-				}
-			/>,
-		);
-	} else if (block.groupType === 'glob_group' || block.groupType === 'grep_group') {
-		elements.push(
-			<ToolCallGroupList
-				key="search"
-				calls={renderToolCalls}
-				inline
-				label={
-					<strong className="truncate text-primary text-sm">
-						{block.groupType === 'glob_group'
-							? t('tool.glob.name')
-							: t('tool.grep.name')}
-					</strong>
-				}
-			/>,
-		);
-	} else {
-		for (const { call, result } of renderToolCalls) {
-			const displayName = getDisplayName(call, t);
-			const args = renderCallArgs(call, t);
-			const resultContent = result ? renderResult(call, result, t) : null;
-
-			elements.push(
-				<div className="flex flex-col w-full max-w-full text-sm">
-					<div className="flex flex-row gap-x-2 w-full max-w-full items-center">
-						<ToolStateIcon states={[result?.state]} />
-						<span className="truncate">
-							<strong className="truncate text-primary">{displayName}</strong>
-							{args && <>({args})</>}
-						</span>
-					</div>
-					{resultContent && (
-						<div className="flex flex-row gap-x-2 pl-6 max-w-full">
-							<div className="flex-shrink-0">
-								<img src={lineCornerSvg} alt="" className="w-3 h-4" />
-							</div>
-							{resultContent}
-						</div>
-					)}
-				</div>,
-			);
-		}
-	}
-
-	// Need to confirm
-	if (firstNeedConfirm !== -1) {
-		const { call } = block.calls[firstNeedConfirm];
-		elements.push(
-			<ConfirmCard
-				toolCall={call}
-				onUserConfirm={(confirm, rules) => {
-					if (onUserConfirm) onUserConfirm(call, confirm, rules);
-				}}
-			/>,
-		);
-	}
-
-	return (
-		<div key={index} className="flex flex-col gap-y-4 text-muted-foreground">
-			{elements}
-		</div>
-	);
-}
-
-/**
- * Renders a content block based on its type.
- *
- * @param block - The content block to render.
- * @param index - The index of the block in the content array.
- * @param onUserConfirm
- * @returns A React element representing the rendered block.
+ * Render a single content block. Tool call groups are dispatched to
+ * `renderToolGroup`; the per-group truncation at the first `asking` call
+ * (and the trailing ConfirmCard) lives here so renderers only see a clean
+ * list of calls.
  */
 function renderBlock(
 	block: ExtendedContentBlock,
 	index: number,
+	t: TFunction,
 	onUserConfirm?: (
 		toolCallBlock: ToolCallBlock,
 		confirm: boolean,
 		rules?: ToolCallBlock['suggested_rules'],
 	) => void,
-	t?: (key: string) => string,
 ) {
 	switch (block.type) {
-		case 'tool_call_group':
-			return <ToolCallGroup block={block} index={index} onUserConfirm={onUserConfirm} />;
+		case 'tool_call_group': {
+			const firstAsk = block.calls.findIndex((item) => item.call.state === 'asking');
+			const visible = firstAsk === -1 ? block.calls : block.calls.slice(0, firstAsk + 1);
+			const askingCall = firstAsk === -1 ? null : block.calls[firstAsk].call;
+			return (
+				<div key={index} className="flex flex-col gap-y-4 text-muted-foreground">
+					{renderToolGroup(block.toolName, visible, t)}
+					{askingCall && (
+						<ConfirmCard
+							toolCall={askingCall}
+							onUserConfirm={(confirm, rules) => {
+								if (onUserConfirm) onUserConfirm(askingCall, confirm, rules);
+							}}
+						/>
+					)}
+				</div>
+			);
+		}
 		case 'text':
 			return (
-				<div className="prose text-sm w-full min-w-full">
+				<div key={index} className="prose text-sm w-full min-w-full">
 					<ReactMarkdown
 						remarkPlugins={[remarkGfm]}
-						// rehypePlugins={[rehypeRaw]}
 						components={{
 							code: ({ className, children, ...props }) => {
 								const isInline = !String(className ?? '').startsWith('language-');
@@ -386,7 +168,7 @@ function renderBlock(
 			return (
 				<details key={index} className="text-xs text-muted-foreground">
 					<summary className="cursor-pointer select-none">
-						{t ? t('messageBubble.thinking') : 'Thinking'}
+						{t('messageBubble.thinking')}
 					</summary>
 					<p className="mt-1 whitespace-pre-wrap">{block.thinking}</p>
 				</details>
@@ -402,11 +184,11 @@ function renderBlock(
 			}
 			switch (dataType) {
 				case 'image':
-					return <img src={data} alt="Uploaded image" />;
+					return <img key={index} src={data} alt="Uploaded image" />;
 				case 'audio':
-					return <audio controls src={data} />;
+					return <audio key={index} controls src={data} />;
 				case 'video':
-					return <video controls src={data} />;
+					return <video key={index} controls src={data} />;
 			}
 			return null;
 		}
@@ -428,55 +210,97 @@ interface MessageBubbleProps {
 /**
  * A message bubble component that displays a chat message.
  *
- * @param root0 - The component props.
- * @param root0.message - The message object to display.
- * @param root0.onUserConfirm
- * @returns A MessageBubble component.
+ * Running state is derived from `message.finished_at`: a missing or null
+ * `finished_at` means the agent is still producing this reply. The bottom
+ * status row shows a single left-aligned badge laid out as
+ * `[state-icon] [duration] [↑in ↓out]`:
+ *   - State icon: spinning `Loader2` while running, static `CheckCircle`
+ *     once finished.
+ *   - Duration is `now - created_at` while running (ticking each second),
+ *     `finished_at - created_at` once complete.
+ *   - Token counts only appear once `usage` is populated with non-zero
+ *     values — typically after the message finishes.
+ *
+ * When `content` is empty and the message is still running, the bubble
+ * body is omitted entirely so only the bottom status row renders.
  */
 export function MessageBubble({ message, onUserConfirm }: MessageBubbleProps) {
 	const isUser = message.role === 'user';
 	const { t } = useTranslation();
 
-	const renderContent = () => {
-		if (typeof message.content === 'string') {
-			return <p className="whitespace-pre-wrap">{message.content}</p>;
-		}
-		// Combine adjacent tool_call and tool_result into tool_call_group
-		const processedContent = groupToolCalls(message.content);
-		return processedContent.map((block, i) =>
-			renderBlock(
-				block,
-				i,
-				(
-					toolCall: ToolCallBlock,
-					confirm: boolean,
-					rules?: ToolCallBlock['suggested_rules'],
-				) => {
-					onUserConfirm(toolCall, confirm, message.id, rules);
-					toolCall.state = confirm ? 'allowed' : 'finished';
-					// Remove confirmation UI while preserving denied state
-				},
-				t,
-			),
-		);
-	};
+	const isRunning = !message.finished_at;
+	const hasUsage =
+		!!message.usage &&
+		((message.usage.input_tokens ?? 0) > 0 || (message.usage.output_tokens ?? 0) > 0);
+
+	// Tick once per second while running so the elapsed time updates live.
+	const [now, setNow] = useState(() => Date.now());
+	useEffect(() => {
+		if (!isRunning) return;
+		const id = setInterval(() => setNow(Date.now()), 1000);
+		return () => clearInterval(id);
+	}, [isRunning]);
+
+	const blocks = groupToolCalls(message.content);
+	const showBody = blocks.length > 0;
+	const showFooter = !isUser;
+
+	const startMs = new Date(message.created_at).getTime();
+	const endMs = isRunning ? now : new Date(message.finished_at!).getTime();
+	const elapsedSeconds = Math.max(0, (endMs - startMs) / 1000);
+	const elapsedText = formatTime(elapsedSeconds);
 
 	return (
 		<div
 			className={`flex flex-col w-full max-w-full ${isUser ? 'items-end' : 'items-start'} mb-4`}
 		>
-			<div
-				className={`p-4 rounded-xl space-y-2 max-w-full ${isUser ? 'w-fit bg-secondary' : 'w-full min-w-full'}`}
-			>
-				{renderContent()}
-			</div>
-			{isUser ? null : (
-				<div className="flex flex-row text-muted-foreground gap-x-4 px-2">
-					<Badge variant="secondary">
-						<ArrowUp data-icon="inline-start" />
-						{formatNumber(message.usage?.inputTokens || 0)}
-						<ArrowDown data-icon="inline-start" className="ml-1" />
-						{formatNumber(message.usage?.outputTokens || 0)}
+			{showBody && (
+				<div
+					className={`p-4 rounded-xl space-y-2 max-w-full ${
+						isUser ? 'w-fit bg-secondary' : 'w-full min-w-full'
+					}`}
+				>
+					{blocks.map((block, i) =>
+						renderBlock(
+							block,
+							i,
+							t,
+							(
+								toolCall: ToolCallBlock,
+								confirm: boolean,
+								rules?: ToolCallBlock['suggested_rules'],
+							) => {
+								onUserConfirm(toolCall, confirm, message.id, rules);
+								toolCall.state = confirm ? 'allowed' : 'finished';
+							},
+						),
+					)}
+				</div>
+			)}
+			{showFooter && (
+				<div className="flex flex-row items-center text-muted-foreground gap-x-4 px-2 w-full">
+					<Badge
+						variant="secondary"
+						aria-label={isRunning ? t('messageBubble.running') : undefined}
+					>
+						{isRunning ? (
+							<Loader2 data-icon="inline-start" className="animate-spin" />
+						) : (
+							<CheckCircle data-icon="inline-start" />
+						)}
+						<span className="tabular-nums tracking-tighter">{elapsedText}</span>
+						{hasUsage && (
+							<>
+								<ArrowUp data-icon="inline-start" className="ml-1" />
+								<span className="tabular-nums">
+									{formatNumber(message.usage?.input_tokens ?? 0)}
+								</span>
+								<ArrowDown data-icon="inline-start" className="ml-1" />
+								<span className="tabular-nums">
+									{formatNumber(message.usage?.output_tokens ?? 0)}
+								</span>
+							</>
+						)}
 					</Badge>
 				</div>
 			)}

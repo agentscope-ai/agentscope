@@ -76,17 +76,25 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                     )
 
                 elif isinstance(block, ThinkingBlock):
-                    # Anthropic requires the signature to be passed back in
-                    # subsequent requests so the API can verify the thinking
-                    # block.  signature is stored as an extra field and may be
-                    # absent on blocks from other providers.
-                    content_blocks.append(
-                        {
-                            "type": "thinking",
-                            "thinking": block.thinking,
-                            "signature": getattr(block, "signature", "") or "",
-                        },
-                    )
+                    # Anthropic rejects thinking blocks without a valid
+                    # signature ("Invalid `signature` in `thinking` block").
+                    # ThinkingBlocks from other providers (OpenAI, DeepSeek,
+                    # ...) carry no signature, so drop them instead of
+                    # forwarding an empty one.
+                    signature = getattr(block, "signature", None)
+                    if signature:
+                        content_blocks.append(
+                            {
+                                "type": "thinking",
+                                "thinking": block.thinking,
+                                "signature": signature,
+                            },
+                        )
+                    else:
+                        logger.debug(
+                            "Dropping ThinkingBlock without signature; "
+                            "Anthropic requires a valid signature.",
+                        )
 
                 elif isinstance(block, HintBlock):
                     if content_blocks:

@@ -64,6 +64,17 @@ export interface AgentListResponse {
 	total: number;
 }
 
+/**
+ * JSON Schema fragments returned by `GET /agent/schema`. Each fragment is a
+ * self-contained JSON Schema object (no `$ref`s across fragments) covering
+ * one section of the agent create / edit form.
+ */
+export interface AgentSchemaResponse {
+	identity: JSONSchema;
+	context_config: JSONSchema;
+	react_config: JSONSchema;
+}
+
 // ─── Session ──────────────────────────────────────────────────────────────────
 
 export type SessionSource = 'user' | 'schedule';
@@ -71,6 +82,8 @@ export type SessionSource = 'user' | 'schedule';
 export interface SessionConfig {
 	name: string;
 	chat_model_config: ChatModelConfig;
+	/** Fallback model used when the primary model fails. */
+	fallback_chat_model_config: ChatModelConfig | null;
 	workspace_id: string;
 }
 
@@ -90,6 +103,8 @@ export interface CreateSessionRequest {
 	agent_id: string;
 	workspace_id?: string;
 	chat_model_config?: ChatModelConfig | null;
+	/** Optional fallback model. Omit (or pass null) for no fallback. */
+	fallback_chat_model_config?: ChatModelConfig | null;
 }
 
 export interface CreateSessionResponse {
@@ -99,6 +114,13 @@ export interface CreateSessionResponse {
 export interface UpdateSessionRequest {
 	name?: string;
 	chat_model_config?: ChatModelConfig;
+	/**
+	 * New fallback model. PATCH semantics:
+	 *   - omit the field → leave unchanged
+	 *   - set to `null`  → clear the existing fallback
+	 *   - set to a value → replace the existing fallback
+	 */
+	fallback_chat_model_config?: ChatModelConfig | null;
 	permission_mode?: PermissionMode;
 }
 
@@ -107,9 +129,14 @@ export interface SessionListResponse {
 	total: number;
 }
 
-// ─── Credential ───────────────────────────────────────────────────────────────
+// ─── JSON Schema ──────────────────────────────────────────────────────────────
 
-export interface CredentialSchemaProperty {
+/**
+ * Subset of JSON Schema property fields the frontend renders. Sourced from
+ * Pydantic's `model_json_schema()` output, including the `format: textarea`
+ * hint we add via `json_schema_extra` for multi-line strings.
+ */
+export interface JSONSchemaProperty {
 	type?: string;
 	format?: string;
 	description?: string;
@@ -118,13 +145,29 @@ export interface CredentialSchemaProperty {
 	anyOf?: Array<{ type: string }>;
 	title?: string;
 	writeOnly?: boolean;
+	minimum?: number;
+	maximum?: number;
+	exclusiveMinimum?: number;
+	exclusiveMaximum?: number;
 }
 
-export interface CredentialSchema {
+export interface JSONSchema {
+	title?: string;
+	type?: string;
+	properties: Record<string, JSONSchemaProperty>;
+	required?: string[];
+}
+
+// ─── Credential ───────────────────────────────────────────────────────────────
+
+export type CredentialSchemaProperty = JSONSchemaProperty;
+
+// Credential schemas always include title + type (Pydantic always emits them
+// for credential data classes); we narrow the generic JSONSchema here so call
+// sites that read `schema.title` don't have to do null-checks.
+export interface CredentialSchema extends JSONSchema {
 	title: string;
 	type: string;
-	properties: Record<string, CredentialSchemaProperty>;
-	required?: string[];
 }
 
 export interface CredentialSchemasResponse {

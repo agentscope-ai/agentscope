@@ -99,6 +99,7 @@ class OpenAIChatModel(ChatModelBase):
         max_retries: int = 3,
         context_size: int = 128000,
         formatter: FormatterBase | None = None,
+        client_kwargs: dict[str, Any] | None = None,
     ) -> None:
         """Initialize the OpenAI chat model.
 
@@ -121,6 +122,9 @@ class OpenAIChatModel(ChatModelBase):
                 The formatter that converts ``Msg`` objects to the format
                 required by the OpenAI API. When ``None``, an
                 ``OpenAIChatFormatter`` instance will be used.
+            client_kwargs (`dict[str, Any] | None`, defaults to `None`):
+                Extra keyword arguments forwarded to ``openai.AsyncClient``
+                (e.g. ``timeout``, ``default_headers``, ``http_client``).
         """
         super().__init__(
             credential=credential,
@@ -131,6 +135,7 @@ class OpenAIChatModel(ChatModelBase):
             context_size=context_size,
         )
         self.formatter = formatter or OpenAIChatFormatter()
+        self.client_kwargs = client_kwargs or {}
 
     async def _call_api(
         self,
@@ -163,9 +168,12 @@ class OpenAIChatModel(ChatModelBase):
         import openai
 
         client = openai.AsyncClient(
-            api_key=self.credential.api_key.get_secret_value(),
-            organization=self.credential.organization,
-            base_url=self.credential.base_url,
+            **{
+                "api_key": self.credential.api_key.get_secret_value(),
+                "organization": self.credential.organization,
+                "base_url": self.credential.base_url,
+                **self.client_kwargs,
+            },
         )
 
         formatted_messages = await self.formatter.format(messages)

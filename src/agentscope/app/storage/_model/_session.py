@@ -47,6 +47,10 @@ class SessionConfig(BaseModel):
     chat_model_config: ChatModelConfig | None = None
     """The chat model config. None means no model has been configured yet."""
 
+    fallback_chat_model_config: ChatModelConfig | None = None
+    """The fallback chat model config. Used as a backup when the primary
+    model fails. None means no fallback configured."""
+
 
 class SessionRecord(_RecordBase):
     """The session record."""

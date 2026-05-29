@@ -89,8 +89,6 @@ dev = [
     "pre-commit",
     "pytest",
     "pytest-forked",
-    "sphinx-gallery",
-    "furo",
     "myst_parser",
     "matplotlib",
     "fakeredis",

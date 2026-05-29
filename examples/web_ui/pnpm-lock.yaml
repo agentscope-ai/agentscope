@@ -58,8 +58,8 @@ importers:
   frontend:
     dependencies:
       '@agentscope-ai/agentscope':
-        specifier: ^0.0.5
-        version: 0.0.5
+        specifier: ^0.0.6
+        version: 0.0.6
       '@fontsource-variable/geist':
         specifier: ^5.2.8
         version: 5.2.8
@@ -129,6 +129,9 @@ importers:
       shadcn:
         specifier: ^4.7.0
         version: 4.7.0(@cfworker/json-schema@4.1.1)(@types/node@24.12.4)(typescript@6.0.3)
+      shadcn-prose:
+        specifier: ^1.2.1
+        version: 1.2.1
       sonner:
         specifier: ^2.0.7
         version: 2.0.7(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
@@ -148,6 +151,9 @@ importers:
       '@eslint/js':
         specifier: ^10.0.1
         version: 10.0.1(eslint@10.3.0(jiti@2.7.0))
+      '@tailwindcss/typography':
+        specifier: ^0.5.19
+        version: 0.5.19(tailwindcss@4.3.0)
       '@types/mime-types':
         specifier: ^3.0.1
         version: 3.0.1
@@ -193,8 +199,8 @@ importers:
 
 packages:
 
-  '@agentscope-ai/agentscope@0.0.5':
-    resolution: {integrity: sha512-luEpnLrTLM7bpjgZdDFAwSMDx8S7qIA0l2OM+PdDqOUBJUzkjRvlYEI8Dm+UvnWDQjmxnd6R7PFK6cJrjFPAAg==}
+  '@agentscope-ai/agentscope@0.0.6':
+    resolution: {integrity: sha512-qQdcXK9GT6kkxsXKhpKg8MuEFjPJHci8NKXCqoCr3Fx/r2bHK7jzhkJblzXM+kmmrzC/4OXmjCWcvUbEP0pkgQ==}
 
   '@babel/code-frame@7.29.0':
     resolution: {integrity: sha512-9NhCeYjq9+3uxgdtp20LSiJXJvN0FeCtNGpJxuMFZ1Kv3cWUNb6DOhJwUvcVCzKGR66cw4njwM6hrJLqgOwbcw==}
@@ -1738,6 +1744,11 @@ packages:
   '@tailwindcss/oxide@4.3.0':
     resolution: {integrity: sha512-F7HZGBeN9I0/AuuJS5PwcD8xayx5ri5GhjYUDBEVYUkexyA/giwbDNjRVrxSezE3T250OU2K/wp/ltWx3UOefg==}
     engines: {node: '>= 20'}
+
+  '@tailwindcss/typography@0.5.19':
+    resolution: {integrity: sha512-w31dd8HOx3k9vPtcQh5QHP9GwKcgbMp87j58qi6xgiBnFFtKEAgCWnDw4qUT8aHwkCp8bKvb/KGKWWHedP0AAg==}
+    peerDependencies:
+      tailwindcss: '>=3.0.0 || insiders || >=4.0.0-alpha.20 || >=4.0.0-beta.1'
 
   '@tailwindcss/vite@4.3.0':
     resolution: {integrity: sha512-t6J3OrB5Fc0ExuhohouH0fWUGMYL6PTLhW+E7zIk/pdbnJARZDCwjBznFnkh5ynRnIRSI4YjtTH0t6USjJISrw==}
@@ -3614,8 +3625,8 @@ packages:
     resolution: {integrity: sha512-smsWv2LzFjP03xmvFoJ331ss6h+jixfA4UUV/Bsiyuu4YJPfN+FIQGOIiv4w9/+MoHkfkJ22UIaQWRVFRfH6Vw==}
     engines: {node: '>=20'}
 
-  openai@6.38.0:
-    resolution: {integrity: sha512-AoMplt2UalrpgUDMh3L09QWjNRlgJPipclQvA6sYAaeF6nHNBMgmikAZGmcYLn8on4d9sQY9Q8bOLfrBS7Lc8g==}
+  openai@6.39.0:
+    resolution: {integrity: sha512-O61LIsimY3acVabwvomwFhwrnN36yvHY2quIfy9keEcFytGgWeV35yLHQ6NVMLSBxRpHmcg2yuhCnlu2HT4pLQ==}
     hasBin: true
     peerDependencies:
       ws: ^8.18.0
@@ -3706,6 +3717,10 @@ packages:
   pkce-challenge@5.0.1:
     resolution: {integrity: sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==}
     engines: {node: '>=16.20.0'}
+
+  postcss-selector-parser@6.0.10:
+    resolution: {integrity: sha512-IQ7TZdoaqbT+LCpShg46jnZVlhWD2w6iQYAcYXfHARZ7X1t/UGhhceQDs5X0cGqKvYlHNOuv7Oa1xmb0oQuA3w==}
+    engines: {node: '>=4'}
 
   postcss-selector-parser@7.1.1:
     resolution: {integrity: sha512-orRsuYpJVw8LdAwqqLykBj9ecS5/cRHlI5+nvTo8LcCKmzDmqVORXtOIYEEQuL9D4BxtA1lm5isAqzQZCoQ6Eg==}
@@ -3992,6 +4007,10 @@ packages:
 
   setprototypeof@1.2.0:
     resolution: {integrity: sha512-E5LDX7Wrp85Kil5bhZv46j8jOeboKq5JMmYM3gVGdGH8xFpPWXUMsNrlODCrkoxMEeNi/XZIwuRvY4XNwYMJpw==}
+
+  shadcn-prose@1.2.1:
+    resolution: {integrity: sha512-WKYSb3lZ4/iC7YPrZP8HeO1ywQJE94iuBrTaUmPm0C3tPrM+ymWVmKyuzabCTtAkqWQAPOO7SOB40UcDuzsxyw==}
+    deprecated: 'You can now install this as a shadcn component with: npx kibo-ui add typography'
 
   shadcn@4.7.0:
     resolution: {integrity: sha512-70fwnesNrY1GgeD7Kdzn+3SsYeyfibm8immsA5L68+OusoPTvYF01oWExl8/latKpMpvVXcbgdbbE6VFBJQ38w==}
@@ -4567,7 +4586,7 @@ packages:
 
 snapshots:
 
-  '@agentscope-ai/agentscope@0.0.5':
+  '@agentscope-ai/agentscope@0.0.6':
     dependencies:
       '@cfworker/json-schema': 4.1.1
       '@modelcontextprotocol/sdk': 1.29.0(@cfworker/json-schema@4.1.1)(zod@4.4.3)
@@ -4575,7 +4594,7 @@ snapshots:
       jsonrepair: 3.14.0
       mime-types: 3.0.2
       ollama: 0.6.3
-      openai: 6.38.0(zod@4.4.3)
+      openai: 6.39.0(zod@4.4.3)
       string-format: 2.0.0
       uuid: 13.0.2
       zod: 4.4.3
@@ -6112,6 +6131,11 @@ snapshots:
       '@tailwindcss/oxide-wasm32-wasi': 4.3.0
       '@tailwindcss/oxide-win32-arm64-msvc': 4.3.0
       '@tailwindcss/oxide-win32-x64-msvc': 4.3.0
+
+  '@tailwindcss/typography@0.5.19(tailwindcss@4.3.0)':
+    dependencies:
+      postcss-selector-parser: 6.0.10
+      tailwindcss: 4.3.0
 
   '@tailwindcss/vite@4.3.0(vite@8.0.13(@types/node@24.12.4)(jiti@2.7.0)(yaml@2.9.0))':
     dependencies:
@@ -8131,7 +8155,7 @@ snapshots:
       powershell-utils: 0.1.0
       wsl-utils: 0.3.1
 
-  openai@6.38.0(zod@4.4.3):
+  openai@6.39.0(zod@4.4.3):
     optionalDependencies:
       zod: 4.4.3
 
@@ -8214,6 +8238,11 @@ snapshots:
   picomatch@4.0.4: {}
 
   pkce-challenge@5.0.1: {}
+
+  postcss-selector-parser@6.0.10:
+    dependencies:
+      cssesc: 3.0.0
+      util-deprecate: 1.0.2
 
   postcss-selector-parser@7.1.1:
     dependencies:
@@ -8610,6 +8639,8 @@ snapshots:
   set-cookie-parser@3.1.0: {}
 
   setprototypeof@1.2.0: {}
+
+  shadcn-prose@1.2.1: {}
 
   shadcn@4.7.0(@cfworker/json-schema@4.1.1)(@types/node@24.12.4)(typescript@6.0.3):
     dependencies:

@@ -13,13 +13,46 @@ from .._schema import (
     ListSessionsResponse,
     UpdateSessionRequest,
 )
-from ..storage import StorageBase, SessionConfig, SessionRecord
+from ..storage import (
+    ChatModelConfig,
+    SessionConfig,
+    SessionRecord,
+    StorageBase,
+)
 
 session_router = APIRouter(
     prefix="/sessions",
     tags=["sessions"],
     responses={404: {"description": "Not found"}},
 )
+
+
+async def _ensure_credential_exists(
+    storage: StorageBase,
+    user_id: str,
+    config: ChatModelConfig | None,
+) -> None:
+    """Validate that the credential referenced by ``config`` belongs to the
+    given user. No-op when ``config`` is ``None``.
+
+    Args:
+        storage (`StorageBase`): Injected storage backend.
+        user_id (`str`): The authenticated user ID.
+        config (`ChatModelConfig | None`): Model config to validate. Pass
+            ``None`` to skip the check.
+
+    Raises:
+        `HTTPException`: 404 if the credential does not exist or does not
+            belong to the user.
+    """
+    if config is None:
+        return
+    credentials = await storage.list_credentials(user_id)
+    if not any(c.id == config.credential_id for c in credentials):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Credential '{config.credential_id}' not found.",
+        )
 
 
 @session_router.get(
@@ -94,16 +127,12 @@ async def create_session(
             detail=f"Agent '{body.agent_id}' not found.",
         )
 
-    if body.chat_model_config is not None:
-        credentials = await storage.list_credentials(user_id)
-        if not any(
-            c.id == body.chat_model_config.credential_id for c in credentials
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Credential '{body.chat_model_config.credential_id}' "
-                f"not found.",
-            )
+    await _ensure_credential_exists(storage, user_id, body.chat_model_config)
+    await _ensure_credential_exists(
+        storage,
+        user_id,
+        body.fallback_chat_model_config,
+    )
 
     session_record = await storage.upsert_session(
         user_id=user_id,
@@ -111,6 +140,7 @@ async def create_session(
         config=SessionConfig(
             workspace_id=body.workspace_id or uuid.uuid4().hex,
             chat_model_config=body.chat_model_config,
+            fallback_chat_model_config=body.fallback_chat_model_config,
             **({"name": body.name} if body.name is not None else {}),
         ),
     )
@@ -181,18 +211,12 @@ async def update_session(
             detail=f"Session '{session_id}' not found.",
         )
 
-    if body.chat_model_config is not None:
-        credentials = await storage.list_credentials(user_id)
-        if not any(
-            c.id == body.chat_model_config.credential_id for c in credentials
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=(
-                    f"Credential '{body.chat_model_config.credential_id}' "
-                    f"not found."
-                ),
-            )
+    await _ensure_credential_exists(storage, user_id, body.chat_model_config)
+    await _ensure_credential_exists(
+        storage,
+        user_id,
+        body.fallback_chat_model_config,
+    )
 
     updated_state = existing.state
     if body.permission_mode is not None:
@@ -206,17 +230,19 @@ async def update_session(
             },
         )
 
+    # PATCH semantics: only fields explicitly present in the request body are
+    # applied. ``exclude_unset=True`` lets clients distinguish "leave
+    # unchanged" (omit) from "clear" (send ``null``) — required for clearing
+    # ``fallback_chat_model_config``.
     config_updates = body.model_dump(
-        exclude_none=True,
+        exclude_unset=True,
         exclude={"permission_mode"},
     )
 
     return await storage.upsert_session(
         user_id=user_id,
         agent_id=agent_id,
-        config=existing.config.model_copy(
-            update=dict(config_updates.items()),
-        ),
+        config=existing.config.model_copy(update=config_updates),
         state=updated_state,
         session_id=session_id,
     )

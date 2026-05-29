@@ -15,6 +15,7 @@ from .._manager import (
     WorkspaceManagerBase,
 )
 from .._middleware import ToolOffloadMiddleware
+from .._types import AgentMiddlewareFactory, AgentToolFactory
 from ._agent import get_agent
 from ..._logging import logger
 from ...event import (
@@ -40,6 +41,8 @@ class ChatService:
         session_manager: SessionManager,
         background_task_manager: BackgroundTaskManager,
         workspace_manager: WorkspaceManagerBase,
+        extra_agent_middlewares: AgentMiddlewareFactory | None = None,
+        extra_agent_tools: AgentToolFactory | None = None,
     ) -> None:
         """Initialize chat service.
 
@@ -55,11 +58,20 @@ class ChatService:
             workspace_manager (`WorkspaceManagerBase`):
                 Provides per-session workspace (tools, MCPs, skills) used
                 during agent assembly.
+            extra_agent_middlewares (`AgentMiddlewareFactory | None`, \
+optional):
+                Async factory invoked at every chat turn to produce
+                user/session-specific middlewares to attach to the agent.
+            extra_agent_tools (`AgentToolFactory | None`, optional):
+                Async factory invoked at every chat turn to produce
+                user/session-specific tools to register in the toolkit.
         """
         self._storage = storage
         self._session_manager = session_manager
         self._background_task_manager = background_task_manager
         self._workspace_manager = workspace_manager
+        self._extra_agent_middlewares = extra_agent_middlewares
+        self._extra_agent_tools = extra_agent_tools
 
     async def stream_chat(
         self,
@@ -138,6 +150,8 @@ class ChatService:
             agent_id=agent_id,
             session_id=session_id,
             middlewares=middlewares,
+            extra_agent_middlewares=self._extra_agent_middlewares,
+            extra_agent_tools=self._extra_agent_tools,
         )
 
         # ----------------------------------------------------------------

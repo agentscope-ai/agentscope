@@ -52,7 +52,7 @@ export function ConfirmCard({
 	}, [onUserConfirm, selected, options]);
 
 	return (
-		<div className="ring ring-border rounded-xl w-full p-4 space-y-4 text-sm">
+		<div className="ring ring-border rounded-xl w-full p-4 space-y-4 text-sm overflow-hidden">
 			<div className="flex flex-col gap-y-2">
 				<strong className="text-secondary-foreground">{getDisplayName(toolCall, t)}</strong>
 				<div className="px-4 py-2 bg-white rounded-sm">
@@ -88,7 +88,7 @@ export function ConfirmCard({
 				{hasSuggestedRules && (
 					<Button
 						className={cn(
-							'flex justify-start cursor-pointer',
+							'flex flex-wrap justify-start items-start cursor-pointer h-auto text-left',
 							selected === 'yes_with_rule' ? 'text-primary' : 'text-muted-foreground',
 						)}
 						size="sm"
@@ -100,26 +100,26 @@ export function ConfirmCard({
 							onUserConfirm(true, [toolCall.suggested_rules![0]]);
 						}}
 					>
-						<ChevronRight
-							className={cn(
-								'size-4',
-								selected === 'yes_with_rule' ? 'visible' : 'invisible',
-							)}
-						/>
-						2.{' '}
-						{t('confirmCard.yesWithRule', {
-							toolName: toolCall.suggested_rules![0].tool_name,
-							ruleContent: toolCall.suggested_rules![0].rule_content,
-						})}
-						<div
-							className={cn(
-								selected === 'yes_with_rule'
-									? 'text-muted-foreground'
-									: 'invisible',
-							)}
-						>
-							(<Kbd>Enter</Kbd> {t('confirmCard.toConfirm')})
-						</div>
+						<span className="flex items-start gap-1 w-full break-words whitespace-normal min-w-0">
+							<ChevronRight
+								className={cn(
+									'size-4 shrink-0 mt-0.5',
+									selected === 'yes_with_rule' ? 'visible' : 'invisible',
+								)}
+							/>
+							<span className="break-words min-w-0">
+								2.{' '}
+								{t('confirmCard.yesWithRule', {
+									toolName: toolCall.suggested_rules![0].tool_name,
+									ruleContent: toolCall.suggested_rules![0].rule_content,
+								})}
+								{selected === 'yes_with_rule' && (
+									<span className="text-muted-foreground ml-1 whitespace-nowrap">
+										(<Kbd>Enter</Kbd> {t('confirmCard.toConfirm')})
+									</span>
+								)}
+							</span>
+						</span>
 					</Button>
 				)}
 				<Button

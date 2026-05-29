@@ -4,8 +4,10 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from ...agent import ContextConfig, ReActConfig
 from .._deps import get_current_user_id, get_storage
 from .._schema import (
+    AgentSchemaResponse,
     ListAgentsResponse,
     CreateAgentRequest,
     CreateAgentResponse,
@@ -18,6 +20,55 @@ agent_router = APIRouter(
     tags=["agent"],
     responses={404: {"description": "Not found"}},
 )
+
+
+@agent_router.get(
+    "/schema",
+    response_model=AgentSchemaResponse,
+    summary="Get JSON Schema fragments for the agent form",
+)
+async def get_agent_schema() -> AgentSchemaResponse:
+    """Return the JSON Schema fragments used by the frontend to render
+    the agent create / edit forms.
+
+    The frontend uses three sections — identity, context config, and
+    react config — so we return them as separate self-contained schemas
+    rather than a single ``AgentData`` schema with ``$ref``s.
+
+    Returns:
+        `AgentSchemaResponse`:
+            Schemas for the three form sections.
+    """
+    # Slice ``AgentData``'s schema down to the identity-relevant fields.
+    # Going through ``AgentData.model_json_schema()`` (rather than building
+    # a dict by hand) keeps Pydantic as the single source of truth for
+    # defaults, titles, descriptions, and the ``format: textarea`` hint.
+    agent_schema = AgentData.model_json_schema()
+    identity_keys = ("name", "system_prompt")
+    identity = {
+        "type": "object",
+        "title": "Identity",
+        "properties": {
+            k: v
+            for k, v in agent_schema.get("properties", {}).items()
+            if k in identity_keys
+        },
+        "required": [
+            r for r in agent_schema.get("required", []) if r in identity_keys
+        ],
+    }
+
+    context_schema = ContextConfig.model_json_schema()
+    # ``summary_schema`` holds a Pydantic JSON Schema describing how the
+    # compression model should structure its output. The end-user is not
+    # expected to edit it from the form, so we hide it.
+    context_schema.get("properties", {}).pop("summary_schema", None)
+
+    return AgentSchemaResponse(
+        identity=identity,
+        context_config=context_schema,
+        react_config=ReActConfig.model_json_schema(),
+    )
 
 
 @agent_router.get(

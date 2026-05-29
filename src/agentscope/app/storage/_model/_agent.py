@@ -23,8 +23,12 @@ class AgentData(BaseModel):
     )
 
     system_prompt: str = Field(
+        default="You're a helpful assistant.",
         description="The system prompt for the agent.",
         title="System Prompt",
+        # Hint for schema-driven UI renderers; see ``ContextConfig`` for
+        # the same pattern on long-form prompts.
+        json_schema_extra={"format": "textarea"},
     )
 
     context_config: ContextConfig = Field(

@@ -20,6 +20,8 @@ from .storage import (
 from ._manager import (
     WorkspaceManagerBase,
     LocalWorkspaceManager,
+    DockerWorkspaceManager,
+    E2BWorkspaceManager,
     BackgroundTaskManager,
     SchedulerManager,
     SessionManager,
@@ -39,6 +41,8 @@ __all__ = [
     "WorkspaceManagerBase",
     "BackgroundTaskManager",
     "LocalWorkspaceManager",
+    "DockerWorkspaceManager",
+    "E2BWorkspaceManager",
     "BackgroundTaskManager",
     "SchedulerManager",
     "SessionManager",

@@ -1,3 +1,9 @@
+import {
+	defaultGetDisplayName,
+	defaultRenderCallArgs,
+	defaultRenderGroup,
+	defaultRenderResult,
+} from './DefaultRenderer';
 import type { ToolRenderer } from './types';
 
 function parseInput(input: string): Record<string, unknown> {
@@ -38,4 +44,15 @@ export const BashRenderer: ToolRenderer = {
 			</div>
 		);
 	},
+
+	renderGroup: (calls, t) =>
+		defaultRenderGroup(calls, t, {
+			getDisplayName: (call) =>
+				BashRenderer.getDisplayName?.(call, t) ?? defaultGetDisplayName(call),
+			renderCallArgs: (call) =>
+				BashRenderer.renderCallArgs?.(call, t) ?? defaultRenderCallArgs(call),
+			renderResult: (call, result) =>
+				BashRenderer.renderResult?.(call, result, t) ??
+				defaultRenderResult(call, result, t),
+		}),
 };

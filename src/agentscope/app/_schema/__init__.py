@@ -11,6 +11,7 @@ from ._schedule import (
     UpdateScheduleRequest,
 )
 from ._agent import (
+    AgentSchemaResponse,
     ListAgentsResponse,
     CreateAgentRequest,
     CreateAgentResponse,
@@ -37,6 +38,7 @@ from ._session import (
 
 __all__ = [
     # Agent
+    "AgentSchemaResponse",
     "ListAgentsResponse",
     "CreateAgentRequest",
     "CreateAgentResponse",

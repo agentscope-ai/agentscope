@@ -11,7 +11,7 @@
 		"preview": "vite preview"
 	},
 	"dependencies": {
-		"@agentscope-ai/agentscope": "^0.0.5",
+		"@agentscope-ai/agentscope": "^0.0.6",
 		"@fontsource-variable/geist": "^5.2.8",
 		"@tailwindcss/vite": "^4.3.0",
 		"class-variance-authority": "^0.7.1",
@@ -35,6 +35,7 @@
 		"react-router-dom": "^7.15.1",
 		"remark-gfm": "^4.0.1",
 		"shadcn": "^4.7.0",
+		"shadcn-prose": "^1.2.1",
 		"sonner": "^2.0.7",
 		"tailwind-merge": "^3.6.0",
 		"tailwindcss": "^4.3.0",
@@ -43,6 +44,7 @@
 	},
 	"devDependencies": {
 		"@eslint/js": "^10.0.1",
+		"@tailwindcss/typography": "^0.5.19",
 		"@types/mime-types": "^3.0.1",
 		"@types/node": "^24.12.3",
 		"@types/react": "^19.2.14",

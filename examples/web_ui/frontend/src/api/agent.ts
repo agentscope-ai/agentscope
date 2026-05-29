@@ -2,6 +2,7 @@ import { client } from './client';
 import type {
 	AgentListResponse,
 	AgentRecord,
+	AgentSchemaResponse,
 	CreateAgentRequest,
 	CreateAgentResponse,
 	UpdateAgentRequest,
@@ -9,6 +10,8 @@ import type {
 
 export const agentApi = {
 	list: () => client.get<AgentListResponse>('/agent/'),
+
+	getSchema: () => client.get<AgentSchemaResponse>('/agent/schema'),
 
 	create: (body: CreateAgentRequest) => client.post<CreateAgentResponse>('/agent/', body),
 

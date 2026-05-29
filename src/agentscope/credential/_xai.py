@@ -25,6 +25,16 @@ class XAICredential(CredentialBase):
     )
     """The xAI API key."""
 
+    api_host: str = Field(
+        default="api.x.ai",
+        title="API Host",
+        description=(
+            "The xAI API host (without scheme). Override to point at a "
+            "compatible/self-hosted endpoint."
+        ),
+    )
+    """The xAI API host."""
+
     @classmethod
     def get_chat_model_class(cls) -> Type["ChatModelBase"]:
         """Return the XAIChatModel class."""

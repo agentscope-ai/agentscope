@@ -104,6 +104,7 @@ class DashScopeChatModel(ChatModelBase):
         max_retries: int = 3,
         context_size: int = 131072,
         formatter: FormatterBase | None = None,
+        client_kwargs: dict[str, Any] | None = None,
     ) -> None:
         """Initialize the DashScope chat model.
 
@@ -126,6 +127,9 @@ class DashScopeChatModel(ChatModelBase):
                 The formatter that converts ``Msg`` objects to the format
                 required by the DashScope API. When ``None``, a
                 ``DashScopeChatFormatter`` instance will be used.
+            client_kwargs (`dict[str, Any] | None`, defaults to `None`):
+                Extra keyword arguments forwarded to ``openai.AsyncClient``
+                (e.g. ``timeout``, ``default_headers``, ``http_client``).
         """
         super().__init__(
             credential=credential,
@@ -136,6 +140,7 @@ class DashScopeChatModel(ChatModelBase):
             context_size=context_size,
         )
         self.formatter = formatter or DashScopeChatFormatter()
+        self.client_kwargs = client_kwargs or {}
 
     async def _call_api(
         self,
@@ -164,8 +169,11 @@ class DashScopeChatModel(ChatModelBase):
         import openai
 
         client = openai.AsyncClient(
-            api_key=self.credential.api_key.get_secret_value(),
-            base_url=self.credential.base_url,
+            **{
+                "api_key": self.credential.api_key.get_secret_value(),
+                "base_url": self.credential.base_url,
+                **self.client_kwargs,
+            },
         )
 
         formatted_messages = await self.formatter.format(messages)
@@ -533,6 +541,8 @@ class DashScopeChatModel(ChatModelBase):
         default ``tool_choice`` to ``"auto"`` and rely on the base class's
         injected system-reminder prompt to guide the model. When thinking
         is disabled, this falls through to the base implementation.
+
+        See: https://help.aliyun.com/en/model-studio/qwen-function-calling
 
         Args:
             model_name (`str`):

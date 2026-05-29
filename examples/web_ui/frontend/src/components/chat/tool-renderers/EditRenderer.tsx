@@ -19,7 +19,9 @@ function getFilePath(input: string): string {
 	return file_path || input;
 }
 
-export const WriteRenderer: ToolRenderer = {
+// TODO: render old_string / new_string as a side-by-side or unified diff
+// inside `renderGroup` once a diff component is available.
+export const EditRenderer: ToolRenderer = {
 	getDisplayName: (call) => call.name,
 
 	renderCallArgs: (call) => getFilePath(call.input),
@@ -33,11 +35,11 @@ export const WriteRenderer: ToolRenderer = {
 	renderGroup: (calls, t) =>
 		defaultRenderGroup(calls, t, {
 			getDisplayName: (call) =>
-				WriteRenderer.getDisplayName?.(call, t) ?? defaultGetDisplayName(call),
+				EditRenderer.getDisplayName?.(call, t) ?? defaultGetDisplayName(call),
 			renderCallArgs: (call) =>
-				WriteRenderer.renderCallArgs?.(call, t) ?? defaultRenderCallArgs(call),
+				EditRenderer.renderCallArgs?.(call, t) ?? defaultRenderCallArgs(call),
 			renderResult: (call, result) =>
-				WriteRenderer.renderResult?.(call, result, t) ??
+				EditRenderer.renderResult?.(call, result, t) ??
 				defaultRenderResult(call, result, t),
 		}),
 };

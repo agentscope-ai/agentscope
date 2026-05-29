@@ -3,6 +3,8 @@
 @import 'shadcn/tailwind.css';
 @import '@fontsource-variable/geist';
 
+@plugin '@tailwindcss/typography';
+
 html,
 body,
 #root {

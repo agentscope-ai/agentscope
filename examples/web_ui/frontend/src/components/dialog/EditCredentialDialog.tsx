@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 
 import { credentialApi } from '@/api';
 import type { CredentialRecord, CredentialSchema } from '@/api';
-import { SchemaForm } from '@/components/form/SchemaForm';
+import { SchemaForm, type SchemaFormValue } from '@/components/form/SchemaForm';
 import { Button } from '@/components/ui/button';
 import {
 	Dialog,
@@ -26,7 +26,7 @@ export function EditCredentialDialog({ open, onOpenChange, credential, onUpdated
 	const { t } = useTranslation();
 	const [schema, setSchema] = useState<CredentialSchema | null>(null);
 	const [loadingSchema, setLoadingSchema] = useState(false);
-	const [values, setValues] = useState<Record<string, string | boolean>>({});
+	const [values, setValues] = useState<Record<string, SchemaFormValue>>({});
 	const [submitting, setSubmitting] = useState(false);
 
 	const type = credential.data.type as string | undefined;
@@ -43,13 +43,13 @@ export function EditCredentialDialog({ open, onOpenChange, credential, onUpdated
 				setSchema(matched ?? null);
 				// Pre-fill values from existing credential data (excluding writeOnly fields)
 				if (matched) {
-					const prefill: Record<string, string | boolean> = {};
+					const prefill: Record<string, SchemaFormValue> = {};
 					for (const [key, prop] of Object.entries(matched.properties)) {
 						if (key === 'id' || key === 'type' || prop.const !== undefined) continue;
 						if (prop.writeOnly) continue; // don't pre-fill secrets like api_key
 						const existing = credential.data[key];
 						if (existing !== undefined) {
-							prefill[key] = existing as string | boolean;
+							prefill[key] = existing as SchemaFormValue;
 						}
 					}
 					setValues(prefill);
