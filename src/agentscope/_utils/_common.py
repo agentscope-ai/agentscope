@@ -4,12 +4,15 @@ import asyncio
 import base64
 import functools
 import inspect
+import ipaddress
 import json
 import os
+import socket
 import types
 import uuid
 from datetime import datetime
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 import requests
 from json_repair import repair_json
@@ -150,6 +153,54 @@ async def _execute_async_or_sync_func(
     return func(*args, **kwargs)
 
 
+def _is_private_url(url: str) -> bool:
+    """Check whether the given URL resolves to a private/internal IP address.
+
+    This is used to prevent Server-Side Request Forgery (SSRF) attacks by
+    blocking requests to localhost, private subnets, and link-local addresses.
+
+    Args:
+        url (`str`):
+            The URL to inspect.
+
+    Returns:
+        `bool`:
+            `True` if the URL points to a private/internal IP, `False` otherwise.
+    """
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+        if not hostname:
+            return True
+
+        # If the hostname is already an IP address (IPv4 or IPv6)
+        try:
+            addr = ipaddress.ip_address(hostname)
+            return addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved or addr.is_multicast
+        except ValueError:
+            pass
+
+        # Otherwise resolve the hostname and check each resolved IP
+        try:
+            _, _, ip_list = socket.gethostbyname_ex(hostname)
+        except socket.gaierror:
+            # If we can't resolve it, treat it as potentially unsafe
+            return True
+
+        for ip_str in ip_list:
+            try:
+                addr = ipaddress.ip_address(ip_str)
+                if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved or addr.is_multicast:
+                    return True
+            except ValueError:
+                continue
+
+        return False
+    except Exception:
+        # On any parsing error, default to blocking the request
+        return True
+
+
 def _get_bytes_from_web_url(
     url: str,
     max_retries: int = 3,
@@ -162,9 +213,15 @@ def _get_bytes_from_web_url(
         max_retries (`int`, defaults to `3`):
             The maximum number of retries.
     """
+    if _is_private_url(url):
+        raise RuntimeError(
+            f"URL `{url}` resolves to a private/internal address. "
+            "Access to internal resources is blocked for security reasons.",
+        )
+
     for _ in range(max_retries):
         try:
-            response = requests.get(url)
+            response = requests.get(url, timeout=10)
             response.raise_for_status()
             return response.content.decode("utf-8")
 
