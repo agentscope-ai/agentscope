@@ -111,20 +111,16 @@ class RedisStorage(StorageBase):
         """Format a key template with the given keyword arguments."""
         return template.format(**kwargs)
 
-    async def _set_with_ttl(self, key: str, value: str) -> None:
-        """SET a key and optionally apply the sliding TTL."""
-        await self._client.set(key, value)
-        if self.key_ttl is not None:
-            await self._client.expire(key, self.key_ttl)
+    async def _ensure_client(self) -> None:
+        """Lazily initialise the Redis client if ``__aenter__`` has not
+        been called yet.
 
-    async def __aenter__(self) -> Self:
-        """Create the connection pool and Redis client.
-
-        If an external pool was supplied at construction time it is used
-        directly and its lifecycle remains the caller's responsibility.
-        Otherwise, an internal pool is created from the stored host/port/db
-        parameters and will be closed by :meth:`aclose`.
+        This makes the storage usable even when the ASGI lifespan is not
+        triggered (e.g. certain deployment configurations or unit tests
+        that bypass the context manager).
         """
+        if self._client is not None:
+            return
         try:
             import redis.asyncio as aioredis
         except ImportError as e:
@@ -147,6 +143,22 @@ class RedisStorage(StorageBase):
             pool = self._owned_pool
 
         self._client = aioredis.Redis(connection_pool=pool)
+
+    async def _set_with_ttl(self, key: str, value: str) -> None:
+        """SET a key and optionally apply the sliding TTL."""
+        await self._client.set(key, value)
+        if self.key_ttl is not None:
+            await self._client.expire(key, self.key_ttl)
+
+    async def __aenter__(self) -> Self:
+        """Create the connection pool and Redis client.
+
+        If an external pool was supplied at construction time it is used
+        directly and its lifecycle remains the caller's responsibility.
+        Otherwise, an internal pool is created from the stored host/port/db
+        parameters and will be closed by :meth:`aclose`.
+        """
+        await self._ensure_client()
         return self
 
     async def aclose(self) -> None:
@@ -233,6 +245,7 @@ class RedisStorage(StorageBase):
                 credential_data,
             )
 
+        await self._ensure_client()
         data_dump = _dump_with_secrets(credential_data)
 
         if credential_data.id:
@@ -284,6 +297,7 @@ class RedisStorage(StorageBase):
         Returns:
             `list[CredentialRecord]`: All credential records for the user.
         """
+        await self._ensure_client()
         index_key = self._key(
             self.key_config.credential_index,
             user_id=user_id,
@@ -308,6 +322,7 @@ class RedisStorage(StorageBase):
         credential_id: str,
     ) -> CredentialRecord | None:
         """Fetch a single credential record by id."""
+        await self._ensure_client()
         key = self._key(
             self.key_config.credential,
             user_id=user_id,
@@ -331,6 +346,7 @@ class RedisStorage(StorageBase):
             `bool`: ``True`` if the record existed and was deleted,
             ``False`` if it did not exist.
         """
+        await self._ensure_client()
         key = self._key(
             self.key_config.credential,
             user_id=user_id,
@@ -365,6 +381,7 @@ class RedisStorage(StorageBase):
             `str`:
                 The id of the stored agent record.
         """
+        await self._ensure_client()
         key = self._key(
             self.key_config.agent,
             user_id=user_id,
@@ -388,6 +405,7 @@ class RedisStorage(StorageBase):
         Returns:
             `list[AgentRecord]`: All agent records for the user.
         """
+        await self._ensure_client()
         index_key = self._key(self.key_config.agent_index, user_id=user_id)
         ids = await self._client.smembers(index_key)
         records = []
@@ -409,6 +427,7 @@ class RedisStorage(StorageBase):
         agent_id: str,
     ) -> AgentRecord | None:
         """Fetch a single agent record by id."""
+        await self._ensure_client()
         key = self._key(
             self.key_config.agent,
             user_id=user_id,
@@ -434,6 +453,7 @@ class RedisStorage(StorageBase):
             `bool`: ``True`` if the agent record existed and was deleted,
             ``False`` if it did not exist.
         """
+        await self._ensure_client()
         # Cascade: sessions
         sessions = await self.list_sessions(user_id, agent_id)
         for session in sessions:
@@ -470,6 +490,7 @@ class RedisStorage(StorageBase):
         When *session_id* is provided the existing session is updated.
         When *session_id* is ``None`` a new session is always created.
         """
+        await self._ensure_client()
         if session_id:
             key = self._key(
                 self.key_config.session,
@@ -529,6 +550,7 @@ class RedisStorage(StorageBase):
         Raises:
             KeyError: If the session does not exist.
         """
+        await self._ensure_client()
         key = self._key(
             self.key_config.session,
             user_id=user_id,
@@ -561,6 +583,7 @@ class RedisStorage(StorageBase):
             `list[SessionRecord]`: All session records for the (user, agent)
             pair.
         """
+        await self._ensure_client()
         index_key = self._key(
             self.key_config.session_index,
             user_id=user_id,
@@ -588,6 +611,7 @@ class RedisStorage(StorageBase):
         session_id: str,
     ) -> SessionRecord | None:
         """Fetch a single session record by id."""
+        await self._ensure_client()
         key = self._key(
             self.key_config.session,
             user_id=user_id,
@@ -605,6 +629,7 @@ class RedisStorage(StorageBase):
         session_id: str,
     ) -> bool:
         """Delete a session record and clean up all associated keys."""
+        await self._ensure_client()
         key = self._key(
             self.key_config.session,
             user_id=user_id,
@@ -646,6 +671,7 @@ class RedisStorage(StorageBase):
         schedule_id: str,
     ) -> list[SessionRecord]:
         """Return all sessions created by a given schedule."""
+        await self._ensure_client()
         schedule_session_key = self._key(
             self.key_config.schedule_session_index,
             user_id=user_id,
@@ -673,6 +699,7 @@ class RedisStorage(StorageBase):
     ) -> str:
         """Persist a cron task record and register it in the user and global
         indexes."""
+        await self._ensure_client()
         key = self._key(
             self.key_config.schedule,
             user_id=user_id,
@@ -693,6 +720,7 @@ class RedisStorage(StorageBase):
         schedule_id: str,
     ) -> ScheduleRecord | None:
         """Fetch a single cron task record by id."""
+        await self._ensure_client()
         key = self._key(
             self.key_config.schedule,
             user_id=user_id,
@@ -705,6 +733,7 @@ class RedisStorage(StorageBase):
 
     async def list_schedules(self, user_id: str) -> list[ScheduleRecord]:
         """Return all cron task records belonging to the given user."""
+        await self._ensure_client()
         index_key = self._key(
             self.key_config.schedule_index,
             user_id=user_id,
@@ -726,6 +755,7 @@ class RedisStorage(StorageBase):
     async def delete_schedule(self, user_id: str, schedule_id: str) -> bool:
         """Delete a cron task record, cascade-delete its execution sessions,
         and remove it from the user and global indexes."""
+        await self._ensure_client()
         key = self._key(
             self.key_config.schedule,
             user_id=user_id,
@@ -774,6 +804,7 @@ class RedisStorage(StorageBase):
         Returns:
             `list[ScheduleRecord]`: All schedule records in the store.
         """
+        await self._ensure_client()
         entries = await self._client.smembers(
             self.key_config.schedule_global_index,
         )
@@ -810,6 +841,7 @@ class RedisStorage(StorageBase):
         msg: Msg,
     ) -> None:
         """Persist a message to the session's message list."""
+        await self._ensure_client()
         key = self._message_key(user_id, session_id)
         last_raw = await self._client.lindex(key, -1)
         if last_raw:
@@ -826,6 +858,7 @@ class RedisStorage(StorageBase):
         message_id: str,
     ) -> Msg | None:
         """Fetch a single message by id from the session's message list."""
+        await self._ensure_client()
         key = self._message_key(user_id, session_id)
         length = await self._client.llen(key)
         for i in range(length - 1, -1, -1):
@@ -844,6 +877,7 @@ class RedisStorage(StorageBase):
         limit: int = 50,
     ) -> list[Msg]:
         """Return messages for a session with pagination."""
+        await self._ensure_client()
         key = self._message_key(user_id, session_id)
         raw_list = await self._client.lrange(key, offset, offset + limit - 1)
         return [Msg.model_validate_json(raw) for raw in raw_list]
