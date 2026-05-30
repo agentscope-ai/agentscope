@@ -436,6 +436,8 @@ class Agent:
                 f"'{path}', you can refer to it when needed.</system-reminder>"
             )
 
+        self._clear_evicted_read_cache(msgs_to_compress, msgs_to_reserve)
+
         # Update the context
         self.state.context = msgs_to_reserve
 
@@ -1729,6 +1731,48 @@ class Agent:
             msgs_to_reserve = [boundary_msg_to_reserve] + msgs_to_reserve
 
         return msgs_to_compress, msgs_to_reserve
+
+    def _clear_evicted_read_cache(
+        self,
+        msgs_to_compress: list[Msg],
+        msgs_to_reserve: list[Msg],
+    ) -> None:
+        """Clear Read caches whose tool call blocks leave the context."""
+        evicted_ids, evicted_paths = self._collect_read_tool_calls(
+            msgs_to_compress,
+        )
+        _, reserved_paths = self._collect_read_tool_calls(msgs_to_reserve)
+
+        self.state.tool_context.clear_read_cache_for_tool_calls(
+            tool_call_ids=evicted_ids,
+            fallback_file_paths=evicted_paths,
+            reserved_file_paths=reserved_paths,
+        )
+
+    @staticmethod
+    def _collect_read_tool_calls(msgs: list[Msg]) -> tuple[set[str], set[str]]:
+        """Collect Read tool call ids and file paths from messages."""
+        tool_call_ids: set[str] = set()
+        file_paths: set[str] = set()
+
+        for msg in msgs:
+            for block in msg.get_content_blocks("tool_call"):
+                if not (
+                    isinstance(block, ToolCallBlock) and block.name == "Read"
+                ):
+                    continue
+
+                tool_call_ids.add(block.id)
+                try:
+                    tool_input = _json_loads_with_repair(block.input)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    continue
+
+                file_path = tool_input.get("file_path")
+                if isinstance(file_path, str):
+                    file_paths.add(file_path)
+
+        return tool_call_ids, file_paths
 
     async def _split_tool_result_for_compression(
         self,

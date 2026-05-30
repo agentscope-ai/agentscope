@@ -173,6 +173,7 @@ Usage:
         offset: int = 1,
         limit: int = 2000,
         _agent_state: AgentState | None = None,
+        _tool_call_id: str | None = None,
     ) -> ToolChunk:
         """Read the file and return the content with line numbers."""
 
@@ -234,6 +235,7 @@ Usage:
                     await _agent_state.tool_context.cache_file(
                         file_path=file_path,
                         lines=lines,
+                        tool_call_id=_tool_call_id,
                     )
 
             # Apply offset and limit (offset is 1-based)

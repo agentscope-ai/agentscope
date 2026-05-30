@@ -305,6 +305,11 @@ class Toolkit:
                 and not tool_func.is_external_tool
             ):
                 kwargs["_agent_state"] = state
+                if (
+                    "_tool_call_id"
+                    in inspect.signature(tool_func.__call__).parameters
+                ):
+                    kwargs["_tool_call_id"] = tool_call.id
 
             if inspect.iscoroutinefunction(tool_func.__call__):
                 res = await tool_func(**kwargs)

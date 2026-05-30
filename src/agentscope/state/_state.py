@@ -18,6 +18,7 @@ class ReadCacheEntry(BaseModel):
     updated_at: float
     bytes: float
     file_path: str
+    tool_call_id: str | None = None
 
 
 class ToolContext(BaseModel):
@@ -62,12 +63,19 @@ class ToolContext(BaseModel):
                     return None
         return None
 
-    async def cache_file(self, file_path: str, lines: list[str]) -> None:
+    async def cache_file(
+        self,
+        file_path: str,
+        lines: list[str],
+        tool_call_id: str | None = None,
+    ) -> None:
         """Cache file content with LRU eviction.
 
         Args:
             file_path: The absolute path of the file.
             lines: The lines of the file content.
+            tool_call_id: The id of the Read tool call that produced the
+                cache.
         """
         try:
             updated_at = await aiofiles.os.path.getmtime(file_path)
@@ -107,8 +115,43 @@ class ToolContext(BaseModel):
                 updated_at=updated_at,
                 bytes=new_entry_bytes,
                 file_path=file_path,
+                tool_call_id=tool_call_id,
             ),
         )
+
+    def clear_read_cache_for_tool_calls(
+        self,
+        tool_call_ids: set[str],
+        fallback_file_paths: set[str] | None = None,
+        reserved_file_paths: set[str] | None = None,
+    ) -> None:
+        """Clear read caches associated with evicted Read tool calls.
+
+        Args:
+            tool_call_ids: The evicted Read tool call ids.
+            fallback_file_paths: File paths from evicted Read calls. Used for
+                older cache entries that do not have a tool_call_id.
+            reserved_file_paths: File paths from Read calls that remain in the
+                context. Older path-only caches for these files are kept.
+        """
+        fallback_file_paths = fallback_file_paths or set()
+        reserved_file_paths = reserved_file_paths or set()
+
+        self.read_file_cache = [
+            entry
+            for entry in self.read_file_cache
+            if not (
+                (
+                    entry.tool_call_id is not None
+                    and entry.tool_call_id in tool_call_ids
+                )
+                or (
+                    entry.tool_call_id is None
+                    and entry.file_path in fallback_file_paths
+                    and entry.file_path not in reserved_file_paths
+                )
+            )
+        ]
 
 
 class TaskContext(BaseModel):
