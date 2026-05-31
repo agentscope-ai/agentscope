@@ -439,7 +439,8 @@ class Toolkit:
                 The combined prompt for all registered agent skills, or None
                 if no skill is registered.
         """
-        skills = await self._get_available_skills()
+        all_group_names = [g.name for g in self.tool_groups]
+        skills = await self._get_available_skills(all_group_names)
 
         # If no skills were collected, return None
         if len(skills) == 0:
@@ -474,7 +475,8 @@ class Toolkit:
         available_tools = {}
 
         # Built-in skill viewers
-        skills = await self._get_available_skills()
+        all_group_names = [g.name for g in self.tool_groups]
+        skills = await self._get_available_skills(all_group_names)
         if len(skills):
             available_tools[
                 self.builtin_skill_viewer.tool.name
