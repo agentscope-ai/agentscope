@@ -115,6 +115,11 @@ class FunctionTool(ToolBase):
         else:
             result = self._func(**kwargs)
 
+        if isinstance(result, str):
+            return ToolChunk(
+                content=[TextBlock(text=result)],
+            )
+
         return result
 
 
