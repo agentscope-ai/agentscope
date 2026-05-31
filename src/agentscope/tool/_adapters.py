@@ -4,7 +4,7 @@
 import inspect
 from contextlib import _AsyncGeneratorContextManager
 from datetime import timedelta
-from typing import Callable, Any, AsyncGenerator
+from typing import Callable, Any, AsyncGenerator, Generator
 
 from mcp import ClientSession
 import mcp
@@ -25,6 +25,30 @@ from ..message import (
     URLSource,
     ToolResultState,
 )
+
+
+def _text_chunk(text: str) -> ToolChunk:
+    return ToolChunk(content=[TextBlock(text=text)])
+
+
+async def _wrap_async_text_chunks(
+    chunks: AsyncGenerator[ToolChunk | str, None],
+) -> AsyncGenerator[ToolChunk, None]:
+    async for chunk in chunks:
+        if isinstance(chunk, str):
+            yield _text_chunk(chunk)
+        else:
+            yield chunk
+
+
+def _wrap_text_chunks(
+    chunks: Generator[ToolChunk | str, None, None],
+) -> Generator[ToolChunk, None, None]:
+    for chunk in chunks:
+        if isinstance(chunk, str):
+            yield _text_chunk(chunk)
+        else:
+            yield chunk
 
 
 class FunctionTool(ToolBase):
@@ -117,7 +141,13 @@ class FunctionTool(ToolBase):
             result = self._func(**kwargs)
 
         if isinstance(result, str):
-            return ToolChunk(content=[TextBlock(text=result)])
+            return _text_chunk(result)
+
+        if inspect.isasyncgen(result):
+            return _wrap_async_text_chunks(result)
+
+        if inspect.isgenerator(result):
+            return _wrap_text_chunks(result)
 
         return result
 

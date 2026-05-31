@@ -163,16 +163,16 @@ Function: TypeAlias = (
     Callable[..., Awaitable[ToolChunk | str]]
     |
     # Sync generator function
-    Callable[..., Generator[ToolChunk, None, None]]
+    Callable[..., Generator[ToolChunk | str, None, None]]
     |
     # Async generator function
-    Callable[..., AsyncGenerator[ToolChunk, None]]
+    Callable[..., AsyncGenerator[ToolChunk | str, None]]
     |
     # Async function that returns async generator
-    Callable[..., Coroutine[Any, Any, AsyncGenerator[ToolChunk, None]]]
+    Callable[..., Coroutine[Any, Any, AsyncGenerator[ToolChunk | str, None]]]
     |
     # Async function that returns sync generator
-    Callable[..., Coroutine[Any, Any, Generator[ToolChunk, None, None]]]
+    Callable[..., Coroutine[Any, Any, Generator[ToolChunk | str, None, None]]]
 )
 
 

@@ -565,6 +565,48 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
             "The weather in Chengdu is sunny.",
         )
 
+    async def test_async_streaming_function_can_yield_text(self) -> None:
+        """Test registering an async generator that yields plain text."""
+
+        async def stream_weather(
+            location: str,
+        ) -> AsyncGenerator[str, None]:
+            """Stream weather information.
+
+            Args:
+                location: The location to get weather for
+            """
+            yield f"The weather in {location}"
+            yield " is sunny."
+
+        toolkit = Toolkit(
+            tools=[FunctionTool(stream_weather)],
+        )
+
+        state = AgentState()
+        tool_call = ToolCallBlock(
+            id="test_stream_weather",
+            name="stream_weather",
+            input=json.dumps({"location": "Chengdu"}),
+        )
+
+        chunks = []
+        response = None
+        async for result in toolkit.call_tool(tool_call, state):
+            if isinstance(result, ToolChunk):
+                chunks.append(result)
+            elif isinstance(result, ToolResponse):
+                response = result
+
+        self.assertEqual(len(chunks), 2)
+        self.assertEqual(chunks[0].content[0].text, "The weather in Chengdu")
+        self.assertEqual(chunks[1].content[0].text, " is sunny.")
+        self.assertIsNotNone(response)
+        self.assertEqual(
+            response.content[0].text,
+            "The weather in Chengdu is sunny.",
+        )
+
     async def test_sync_streaming_function(self) -> None:
         """Test registering a synchronous streaming function."""
 
