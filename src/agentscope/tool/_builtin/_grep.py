@@ -2,6 +2,7 @@
 """The grep tool in agentscope."""
 import asyncio
 import fnmatch
+import logging
 import os
 import shutil
 from typing import Any, List, Literal
@@ -15,6 +16,8 @@ from ...permission import (
 )
 from .._response import ToolChunk
 from ...message import TextBlock
+
+logger = logging.getLogger(__name__)
 
 
 # Version control system directories to exclude from searches
@@ -160,6 +163,13 @@ class Grep(ToolBase):
     def __init__(self) -> None:
         """Initialize the grep tool."""
         self._rg_path = shutil.which("rg")
+        if self._rg_path is None:
+            logger.warning(
+                "ripgrep (rg) binary not found. To use the Grep tool, "
+                "install ripgrep: pip install agentscope[tools] or "
+                "brew install ripgrep / apt install ripgrep / "
+                "choco install ripgrep",
+            )
 
     async def check_permissions(
         self,

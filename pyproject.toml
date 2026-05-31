@@ -43,7 +43,6 @@ dependencies = [
     "aiofiles",
     "tree_sitter",
     "tree_sitter_bash",
-    "ripgrep",
     "jsonschema",
 ]
 
@@ -73,12 +72,18 @@ workspace = [
     "aiodocker",
     "e2b",
 ]
+# ------------ Tools ------------
+tools = [
+    "ripgrep",
+]
+
 # ------------ Full ------------
 full = [
     "agentscope[models]",
     "agentscope[service]",
     "agentscope[storage]",
     "agentscope[workspace]",
+    "agentscope[tools]",
 ]
 
 # ------------ Development ------------
