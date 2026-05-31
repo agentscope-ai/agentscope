@@ -5,8 +5,7 @@ import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from agentscope.state import AgentState
-from agentscope.tool import Read, Write, Edit, Toolkit
-from agentscope.message import ToolCallBlock
+from agentscope.tool import Read, Write, Edit
 
 
 class FileCacheTest(IsolatedAsyncioTestCase):
@@ -308,28 +307,6 @@ class FileCacheTest(IsolatedAsyncioTestCase):
         self.assertEqual(cache.lines, ["line1\n", "line2\n", "line3\n"])
         # "".join reconstructs the exact original content
         self.assertEqual("".join(cache.lines), "line1\nline2\nline3\n")
-
-    async def test_read_cache_records_tool_call_id(self) -> None:
-        """Test Read cache is associated with its tool call block id."""
-        with open(self.test_file, "w", encoding="utf-8") as f:
-            f.write("line1\n")
-
-        toolkit = Toolkit(tools=[self.read_tool])
-        tool_call = ToolCallBlock(
-            id="read-call-1",
-            name="Read",
-            input=f'{{"file_path": "{self.test_file}"}}',
-        )
-
-        chunks = [
-            chunk
-            async for chunk in toolkit.call_tool(tool_call, self.state)
-        ]
-
-        self.assertGreater(len(chunks), 0)
-        cache = await self.state.tool_context.get_cache(self.test_file)
-        self.assertIsNotNone(cache)
-        self.assertEqual(cache.tool_call_id, "read-call-1")
 
     async def test_edit_multiline_match_from_cache(self) -> None:
         """Test Edit correctly matches multi-line old_string from

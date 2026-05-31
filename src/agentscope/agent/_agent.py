@@ -436,7 +436,7 @@ class Agent:
                 f"'{path}', you can refer to it when needed.</system-reminder>"
             )
 
-        self._clear_evicted_read_cache(msgs_to_compress, msgs_to_reserve)
+        self._clear_unreserved_read_cache(msgs_to_reserve)
 
         # Update the context
         self.state.context = msgs_to_reserve
@@ -1732,27 +1732,20 @@ class Agent:
 
         return msgs_to_compress, msgs_to_reserve
 
-    def _clear_evicted_read_cache(
+    def _clear_unreserved_read_cache(
         self,
-        msgs_to_compress: list[Msg],
         msgs_to_reserve: list[Msg],
     ) -> None:
-        """Clear Read caches whose tool call blocks leave the context."""
-        evicted_ids, evicted_paths = self._collect_read_tool_calls(
-            msgs_to_compress,
-        )
-        _, reserved_paths = self._collect_read_tool_calls(msgs_to_reserve)
+        """Clear Read caches not referenced by reserved Read tool calls."""
+        reserved_paths = self._collect_read_tool_file_paths(msgs_to_reserve)
 
-        self.state.tool_context.clear_read_cache_for_tool_calls(
-            tool_call_ids=evicted_ids,
-            fallback_file_paths=evicted_paths,
+        self.state.tool_context.clear_read_cache_except_paths(
             reserved_file_paths=reserved_paths,
         )
 
     @staticmethod
-    def _collect_read_tool_calls(msgs: list[Msg]) -> tuple[set[str], set[str]]:
-        """Collect Read tool call ids and file paths from messages."""
-        tool_call_ids: set[str] = set()
+    def _collect_read_tool_file_paths(msgs: list[Msg]) -> set[str]:
+        """Collect Read tool file paths from messages."""
         file_paths: set[str] = set()
 
         for msg in msgs:
@@ -1762,7 +1755,6 @@ class Agent:
                 ):
                     continue
 
-                tool_call_ids.add(block.id)
                 try:
                     tool_input = _json_loads_with_repair(block.input)
                 except Exception:  # pylint: disable=broad-exception-caught
@@ -1772,7 +1764,7 @@ class Agent:
                 if isinstance(file_path, str):
                     file_paths.add(file_path)
 
-        return tool_call_ids, file_paths
+        return file_paths
 
     async def _split_tool_result_for_compression(
         self,
