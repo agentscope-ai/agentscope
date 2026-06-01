@@ -1,0 +1,19 @@
+name: grok-3-fast
+label: Grok 3 Fast
+status: active
+
+input_types:
+  - text/plain
+  - image/jpeg
+  - image/png
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 131072
+output_size: 16000
+
+parameter_overrides:
+  max_tokens:
+    maximum: 16000
