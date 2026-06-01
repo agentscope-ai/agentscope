@@ -4,27 +4,28 @@ components and a configurable FastAPI app factory.
 """
 
 from ._app import create_app
+from ._manager import (
+    BackgroundTaskManager,
+    DockerWorkspaceManager,
+    E2BWorkspaceManager,
+    LocalWorkspaceManager,
+    RLWorkspaceManager,
+    SchedulerManager,
+    SessionManager,
+    WorkspaceManagerBase,
+)
 from ._middleware import (
-    ProtocolMiddlewareBase,
     AGUIProtocolMiddleware,
+    ProtocolMiddlewareBase,
     ToolOffloadMiddleware,
 )
 from .storage import (
-    RedisStorage,
     AgentRecord,
     CredentialRecord,
+    RedisStorage,
     SessionConfig,
     SessionRecord,
     UserRecord,
-)
-from ._manager import (
-    WorkspaceManagerBase,
-    LocalWorkspaceManager,
-    DockerWorkspaceManager,
-    E2BWorkspaceManager,
-    BackgroundTaskManager,
-    SchedulerManager,
-    SessionManager,
 )
 
 __all__ = [
@@ -43,6 +44,7 @@ __all__ = [
     "LocalWorkspaceManager",
     "DockerWorkspaceManager",
     "E2BWorkspaceManager",
+    "RLWorkspaceManager",
     "BackgroundTaskManager",
     "SchedulerManager",
     "SessionManager",

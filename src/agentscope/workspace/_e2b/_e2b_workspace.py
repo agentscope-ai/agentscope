@@ -66,6 +66,11 @@ from .._gateway_client import (
     GatewayClient,
     GatewayMCPClient,
 )
+from .._utils import (
+    _agentscope_version,
+    _is_released_install,
+    _read_gateway_script_bytes,
+)
 from ._bootstrap import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_TEMPLATE,
@@ -88,12 +93,6 @@ from ._bootstrap import (
     render_install_agentscope_cmd_dev,
     render_install_agentscope_cmd_released,
 )
-from .._utils import (
-    _agentscope_version,
-    _is_released_install,
-    _read_gateway_script_bytes,
-)
-
 
 _DEFAULT_INSTRUCTIONS = """<workspace>
 You have an E2B-based cloud workspace. All tool calls execute **inside
@@ -362,6 +361,188 @@ class E2BWorkspace(WorkspaceBase):
             # not fall back to ``default_mcps``.
             await self._save_mcp_file()
 
+    async def reset_for_pool(
+        self,
+        default_mcps: list[MCPClient] | None = None,
+        skill_paths: list[str] | None = None,
+    ) -> None:
+        """Thorough reset for pool recycling.
+
+        Extends :meth:`reset` with a full gateway restart and
+        optional re-seeding — designed for the pooling lifecycle
+        where a workspace must be handed to a different user with
+        no residual state.
+
+        Steps:
+
+        1. Kill the gateway process.
+        2. Delete ``sessions/``, ``data/``, ``skills/``, ``.mcp``.
+        3. Recreate empty directory structure.
+        4. Clear internal MCP / gateway-client state.
+        5. Write an empty ``.mcp``.
+        6. Mint a fresh bearer token and restart the gateway.
+        7. Wait for gateway ``/health``.
+        8. Re-seed ``default_mcps`` and ``skill_paths`` if provided.
+
+        Must be called while the sandbox is **running**.
+
+        Args:
+            default_mcps: MCPs to register after reset. ``None`` means
+                the workspace stays MCP-free.
+            skill_paths: Local skill directories to upload after reset.
+                ``None`` means no skills.
+        """
+        if self._sandbox is None:
+            raise RuntimeError("Cannot reset_for_pool: sandbox is None")
+
+        # 1. Kill gateway
+        await self._exec("pkill -f _mcp_gateway_app.py || true")
+
+        # 2. Wipe
+        paths_to_remove = [
+            SANDBOX_SESSIONS_DIR,
+            SANDBOX_DATA_DIR,
+            SANDBOX_SKILLS_DIR,
+            SANDBOX_MCP_FILE,
+        ]
+        await self._exec(
+            "rm -rf " + " ".join(shlex.quote(p) for p in paths_to_remove),
+        )
+
+        # 3. Recreate
+        await self._exec(
+            f"mkdir -p {SANDBOX_DATA_DIR} {SANDBOX_SKILLS_DIR} "
+            f"{SANDBOX_SESSIONS_DIR}",
+        )
+
+        # 4. Clear in-memory state
+        async with self._mcp_lock, self._skill_lock:
+            self._gateway_clients.clear()
+            self._mcps = []
+
+        # 5. Empty .mcp
+        await self._save_mcp_file()
+
+        # 6. Restart gateway with fresh token
+        self._gateway_token = uuid.uuid4().hex
+        if self._gateway is not None:
+            try:
+                await self._gateway.aclose()
+            except Exception:
+                pass
+
+        await self._write_gateway_config()
+        await self._start_gateway_process()
+
+        host = self._sandbox.get_host(self.gateway_port)
+        self._gateway = GatewayClient(
+            base_url=f"https://{host}",
+            token=self._gateway_token,
+            timeout=30.0,
+            extra_headers=self._sandbox_proxy_headers(),
+        )
+
+        # 7. Wait for healthy
+        await self._wait_for_gateway()
+
+        # 8. Re-seed
+        if default_mcps:
+            self._mcps = list(default_mcps)
+            await self._save_mcp_file()
+            self._gateway_clients = {
+                c.name: c for c in await self._gateway.list_mcps()
+            }
+
+        if skill_paths:
+            await self._exec(f"mkdir -p {SANDBOX_SKILLS_DIR}")
+            for path in skill_paths:
+                try:
+                    await self.add_skill(path)
+                except Exception as e:
+                    logger.warning(
+                        "E2BWorkspace: skip skill %r during "
+                        "reset_for_pool: %s",
+                        path,
+                        e,
+                    )
+
+    async def pause(self) -> None:
+        """Pause the sandbox and release the gateway client.
+
+        Unlike :meth:`close`, the ``_sandbox`` reference is **kept**
+        so :meth:`resume` can reconnect using the ``sandbox_id``.
+        Intended for pool idle storage where E2B billing should stop.
+        """
+        if self._gateway is not None:
+            try:
+                await self._gateway.aclose()
+            except Exception:
+                pass
+            self._gateway = None
+        self._gateway_clients.clear()
+
+        if self._sandbox is not None:
+            await self._sandbox.pause()
+        self.is_alive = False
+
+    async def resume(self) -> None:
+        """Resume a paused sandbox and restart the gateway.
+
+        ``AsyncSandbox.connect(sandbox_id=...)`` auto-resumes a
+        paused sandbox.  After envd is routable we kill any leftover
+        gateway (frozen mid-request by the pause), write a fresh
+        config with a new bearer token, and start a new gateway.
+        """
+        from e2b import AsyncSandbox
+
+        sandbox_id = self.sandbox_id
+        if sandbox_id is None:
+            raise RuntimeError(
+                f"Cannot resume workspace {self.workspace_id}: "
+                "sandbox_id is None",
+            )
+
+        self._sandbox = await AsyncSandbox.connect(
+            sandbox_id=sandbox_id,
+            timeout=self.timeout_seconds,
+            **self._api_opts(),
+        )
+        await self._wait_until_running()
+
+        # Kill frozen gateway, restart with new token.
+        await self._exec("pkill -f _mcp_gateway_app.py || true")
+
+        self._gateway_token = uuid.uuid4().hex
+        await self._write_gateway_config()
+        await self._start_gateway_process()
+
+        host = self._sandbox.get_host(self.gateway_port)
+        self._gateway = GatewayClient(
+            base_url=f"https://{host}",
+            token=self._gateway_token,
+            timeout=30.0,
+            extra_headers=self._sandbox_proxy_headers(),
+        )
+        await self._wait_for_gateway()
+
+        self._gateway_clients = {
+            c.name: c for c in await self._gateway.list_mcps()
+        }
+        self.is_alive = True
+
+    async def gateway_health(self) -> bool:
+        """Probe the gateway's ``/health`` endpoint.
+
+        Returns ``True`` if the gateway responds with 200, ``False``
+        on any error or if no gateway client is configured.
+        """
+        if self._gateway is None:
+            return False
+        try:
+            return await self._gateway.health()
+        except Exception:
+            return False
+
     async def close(self) -> None:
         """Pause the sandbox and release host-side resources.
 
@@ -426,8 +607,7 @@ class E2BWorkspace(WorkspaceBase):
         import frontmatter as fm
 
         result = await self._exec(
-            f"find {SANDBOX_SKILLS_DIR} -name SKILL.md "
-            f"2>/dev/null || true",
+            f"find {SANDBOX_SKILLS_DIR} -name SKILL.md 2>/dev/null || true",
         )
         if not result.ok():
             return []
