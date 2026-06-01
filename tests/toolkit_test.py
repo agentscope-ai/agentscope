@@ -742,6 +742,56 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_sync_streaming_function_returning_plain_values(
+        self,
+    ) -> None:
+        """Test wrapping a sync generator that yields plain values."""
+
+        def stream_weather() -> Generator[Any, None, None]:
+            """Stream weather information."""
+            yield "checking"
+            yield {
+                "condition": "sunny",
+                "temperature": 22,
+            }
+
+        toolkit = Toolkit(
+            tools=[FunctionTool(stream_weather)],
+        )
+
+        state = AgentState()
+        tool_call = ToolCallBlock(
+            id="test_weather_stream",
+            name="stream_weather",
+            input=json.dumps({}),
+        )
+        expected_dict_text = json.dumps(
+            {
+                "condition": "sunny",
+                "temperature": 22,
+            },
+            ensure_ascii=False,
+        )
+
+        chunks = []
+        response = None
+        async for result in toolkit.call_tool(tool_call, state):
+            if isinstance(result, ToolChunk):
+                chunks.append(result)
+            elif isinstance(result, ToolResponse):
+                response = result
+
+        self.assertEqual(
+            [chunk.content[0].text for chunk in chunks],
+            ["checking", expected_dict_text],
+        )
+
+        self.assertIsNotNone(response)
+        self.assertEqual(
+            response.content[0].text,
+            f"checking{expected_dict_text}",
+        )
+
     async def test_async_non_streaming_function(self) -> None:
         """Test registering an asynchronous non-streaming function."""
 
@@ -945,6 +995,54 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "id": "test_sequence",
             },
+        )
+
+    async def test_async_streaming_function_returning_plain_values(
+        self,
+    ) -> None:
+        """Test wrapping an async generator that yields plain values."""
+
+        async def stream_status() -> AsyncGenerator[Any, None]:
+            """Stream status information."""
+            yield "started"
+            yield {
+                "done": True,
+            }
+
+        toolkit = Toolkit(
+            tools=[FunctionTool(stream_status)],
+        )
+
+        state = AgentState()
+        tool_call = ToolCallBlock(
+            id="test_status_stream",
+            name="stream_status",
+            input=json.dumps({}),
+        )
+        expected_dict_text = json.dumps(
+            {
+                "done": True,
+            },
+            ensure_ascii=False,
+        )
+
+        chunks = []
+        response = None
+        async for result in toolkit.call_tool(tool_call, state):
+            if isinstance(result, ToolChunk):
+                chunks.append(result)
+            elif isinstance(result, ToolResponse):
+                response = result
+
+        self.assertEqual(
+            [chunk.content[0].text for chunk in chunks],
+            ["started", expected_dict_text],
+        )
+
+        self.assertIsNotNone(response)
+        self.assertEqual(
+            response.content[0].text,
+            f"started{expected_dict_text}",
         )
 
 
