@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """A template test case."""
 # pylint: disable=protected-access
+import json
 import os
 import tempfile
 
@@ -686,14 +687,16 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                                 ToolCallBlock(
                                     id="read-call-1",
                                     name="Read",
-                                    input=f'{{"file_path": "{file_path}"}}',
+                                    input=json.dumps(
+                                        {"file_path": file_path},
+                                    ),
                                 ),
                             ],
                             id="1",
                         ),
                         UserMsg(
                             "User",
-                            "".join(["2" for _ in range(20 * 4)]),
+                            "".join(["2" for _ in range(30 * 4)]),
                             id="2",
                         ),
                         UserMsg(
@@ -758,14 +761,16 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                                 ToolCallBlock(
                                     id="read-call-1",
                                     name="Read",
-                                    input=f'{{"file_path": "{file_path}"}}',
+                                    input=json.dumps(
+                                        {"file_path": file_path},
+                                    ),
                                 ),
                             ],
                             id="1",
                         ),
                         UserMsg(
                             "User",
-                            "".join(["2" for _ in range(20 * 4)]),
+                            "".join(["2" for _ in range(30 * 4)]),
                             id="2",
                         ),
                         AssistantMsg(
@@ -774,7 +779,9 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                                 ToolCallBlock(
                                     id="read-call-2",
                                     name="Read",
-                                    input=f'{{"file_path": "{file_path}"}}',
+                                    input=json.dumps(
+                                        {"file_path": file_path},
+                                    ),
                                 ),
                             ],
                             id="3",

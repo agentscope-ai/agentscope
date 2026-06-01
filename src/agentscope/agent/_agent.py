@@ -436,7 +436,7 @@ class Agent:
                 f"'{path}', you can refer to it when needed.</system-reminder>"
             )
 
-        self._clear_unreserved_read_cache(msgs_to_reserve)
+        await self._clear_unreserved_read_cache(msgs_to_reserve)
 
         # Update the context
         self.state.context = msgs_to_reserve
@@ -1732,23 +1732,13 @@ class Agent:
 
         return msgs_to_compress, msgs_to_reserve
 
-    def _clear_unreserved_read_cache(
+    async def _clear_unreserved_read_cache(
         self,
         msgs_to_reserve: list[Msg],
     ) -> None:
-        """Clear Read caches not referenced by reserved Read tool calls."""
-        reserved_paths = self._collect_read_tool_file_paths(msgs_to_reserve)
-
-        self.state.tool_context.clear_read_cache_except_paths(
-            reserved_file_paths=reserved_paths,
-        )
-
-    @staticmethod
-    def _collect_read_tool_file_paths(msgs: list[Msg]) -> set[str]:
-        """Collect Read tool file paths from messages."""
-        file_paths: set[str] = set()
-
-        for msg in msgs:
+        """Clean Read caches not referenced by reserved Read tool calls."""
+        reserved_paths: set[str] = set()
+        for msg in msgs_to_reserve:
             for block in msg.get_content_blocks("tool_call"):
                 if not (
                     isinstance(block, ToolCallBlock) and block.name == "Read"
@@ -1762,9 +1752,11 @@ class Agent:
 
                 file_path = tool_input.get("file_path")
                 if isinstance(file_path, str):
-                    file_paths.add(file_path)
+                    reserved_paths.add(file_path)
 
-        return file_paths
+        await self.state.tool_context.clean_file_cache(
+            reserved_file_paths=reserved_paths,
+        )
 
     async def _split_tool_result_for_compression(
         self,
