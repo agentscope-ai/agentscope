@@ -641,10 +641,14 @@ class LocalWorkspace(WorkspaceBase):
                 await asyncio.to_thread(os.remove, mcp_file)
 
         async with self._skill_lock:
-            for sub in ("skills", "sessions", "data"):
-                path = os.path.join(self.workdir, sub)
-                if await aiofiles.ospath.isdir(path):
-                    await asyncio.to_thread(shutil.rmtree, path)
+            path = os.path.join(self.workdir, "skills")
+            if await aiofiles.ospath.isdir(path):
+                await asyncio.to_thread(shutil.rmtree, path)
+
+        for sub in ("sessions", "data"):
+            path = os.path.join(self.workdir, sub)
+            if await aiofiles.ospath.isdir(path):
+                await asyncio.to_thread(shutil.rmtree, path)
 
     async def list_tools(self) -> list[ToolBase]:
         """List all tools available in the workspace."""
