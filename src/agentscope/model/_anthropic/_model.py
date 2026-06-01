@@ -61,6 +61,7 @@ class AnthropicChatModel(ChatModelBase):
         parameters: "AnthropicChatModel.Parameters | None" = None,
         stream: bool = True,
         max_retries: int = 3,
+        retry_delay: float = 1.0,
         context_size: int = 200000,
         formatter: FormatterBase | None = None,
         client_kwargs: dict[str, Any] | None = None,
@@ -80,6 +81,8 @@ class AnthropicChatModel(ChatModelBase):
                 Whether to enable streaming output.
             max_retries (`int`, defaults to `3`):
                 The maximum number of retries for the Anthropic API.
+            retry_delay (`float`, defaults to `1.0`):
+                Seconds to sleep between retry attempts.
             context_size (`int`, defaults to `200000`):
                 The model context size used for context compression.
             formatter (`FormatterBase | None`, defaults to `None`):
@@ -97,10 +100,22 @@ class AnthropicChatModel(ChatModelBase):
             parameters=parameters or self.Parameters(),
             stream=stream,
             max_retries=max_retries,
+            retry_delay=retry_delay,
             context_size=context_size,
         )
         self.formatter = formatter or AnthropicChatFormatter()
         self.client_kwargs = client_kwargs or {}
+
+    @classmethod
+    def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
+        import anthropic
+
+        return (
+            anthropic.APIConnectionError,
+            anthropic.APITimeoutError,
+            anthropic.RateLimitError,
+            anthropic.InternalServerError,
+        )
 
     async def _call_api(
         self,

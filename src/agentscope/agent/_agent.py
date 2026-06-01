@@ -180,6 +180,9 @@ class Agent:
         self._system_prompt_middlewares = [
             _ for _ in middlewares if _.is_implemented("on_system_prompt")
         ]
+        self._compress_context_middlewares = [
+            _ for _ in middlewares if _.is_implemented("on_compress_context")
+        ]
 
     # =======================================================================
     # Agent public methods
@@ -254,6 +257,47 @@ class Agent:
         await self._handle_incoming_messages(msgs)
 
     async def compress_context(
+        self,
+        context_config: ContextConfig | None = None,
+    ) -> None:
+        """Compress the agent's context if the token count exceeds the
+        threshold.
+
+        Args:
+            context_config (`ContextConfig | None`, optional):
+                If provided, compress the context with the given context
+                config. Otherwise, use the default context config in the
+                agent.
+        """
+        if not self._compress_context_middlewares:
+            await self._compress_context_impl(context_config=context_config)
+        else:
+
+            async def execute_chain(
+                index: int = 0,
+                context_config: ContextConfig | None = context_config,
+            ) -> None:
+                """Execute the compress_context middleware chain."""
+                if index >= len(self._compress_context_middlewares):
+                    await self._compress_context_impl(
+                        context_config=context_config,
+                    )
+                else:
+                    mw = self._compress_context_middlewares[index]
+                    input_kwargs = {"context_config": context_config}
+
+                    async def next_handler(**kwargs: Any) -> None:
+                        await execute_chain(index + 1, **kwargs)
+
+                    await mw.on_compress_context(
+                        agent=self,
+                        input_kwargs=input_kwargs,
+                        next_handler=next_handler,
+                    )
+
+            await execute_chain()
+
+    async def _compress_context_impl(
         self,
         context_config: ContextConfig | None = None,
     ) -> None:
@@ -435,6 +479,8 @@ class Agent:
                 f"\n<system-reminder>The compressed context is offloaded to "
                 f"'{path}', you can refer to it when needed.</system-reminder>"
             )
+
+        await self._clear_unreserved_read_cache(msgs_to_reserve)
 
         # Update the context
         self.state.context = msgs_to_reserve
@@ -1729,6 +1775,32 @@ class Agent:
             msgs_to_reserve = [boundary_msg_to_reserve] + msgs_to_reserve
 
         return msgs_to_compress, msgs_to_reserve
+
+    async def _clear_unreserved_read_cache(
+        self,
+        msgs_to_reserve: list[Msg],
+    ) -> None:
+        """Clean Read caches not referenced by reserved Read tool calls."""
+        reserved_paths: set[str] = set()
+        for msg in msgs_to_reserve:
+            for block in msg.get_content_blocks("tool_call"):
+                if not (
+                    isinstance(block, ToolCallBlock) and block.name == "Read"
+                ):
+                    continue
+
+                try:
+                    tool_input = _json_loads_with_repair(block.input)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    continue
+
+                file_path = tool_input.get("file_path")
+                if isinstance(file_path, str):
+                    reserved_paths.add(file_path)
+
+        await self.state.tool_context.clean_file_cache(
+            reserved_file_paths=reserved_paths,
+        )
 
     async def _split_tool_result_for_compression(
         self,

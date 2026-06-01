@@ -3,7 +3,7 @@
 import json
 import uuid
 from datetime import datetime
-from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List
+from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 
 from pydantic import BaseModel, Field
 
@@ -60,6 +60,7 @@ class OllamaChatModel(ChatModelBase):
         parameters: "OllamaChatModel.Parameters | None" = None,
         stream: bool = True,
         max_retries: int = 3,
+        retry_delay: float = 1.0,
         context_size: int = 32768,
         formatter: FormatterBase | None = None,
         client_kwargs: dict[str, Any] | None = None,
@@ -80,6 +81,8 @@ class OllamaChatModel(ChatModelBase):
                 Whether to enable streaming output.
             max_retries (`int`, defaults to `3`):
                 The maximum number of retries for the Ollama API.
+            retry_delay (`float`, defaults to `1.0`):
+                Seconds to sleep between retry attempts.
             context_size (`int`, defaults to `32768`):
                 The model context size used for context compression.
             formatter (`FormatterBase | None`, defaults to `None`):
@@ -99,11 +102,25 @@ class OllamaChatModel(ChatModelBase):
             parameters=parameters or self.Parameters(),
             stream=stream,
             max_retries=max_retries,
+            retry_delay=retry_delay,
             context_size=context_size,
         )
 
         self.formatter = formatter or OllamaChatFormatter()
         self.client_kwargs = client_kwargs or {}
+
+    @classmethod
+    def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
+        import httpx
+
+        # Local service: retry transient transport-layer failures only.
+        # ollama.ResponseError wraps server-side errors regardless of cause
+        # (incl. 4xx like "model not found"), so we don't retry on it.
+        return (
+            httpx.ConnectError,
+            httpx.ReadTimeout,
+            httpx.RemoteProtocolError,
+        )
 
     async def _call_api(
         self,
