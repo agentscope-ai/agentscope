@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=protected-access
 """Unit tests for RedisStorage using fakeredis."""
 
 from unittest.async_case import IsolatedAsyncioTestCase
