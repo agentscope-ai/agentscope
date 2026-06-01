@@ -22,7 +22,7 @@ from ...message import TextBlock
 from .._response import ToolChunk
 
 
-def _subprocess_creation_kwargs() -> dict[str, int]:
+def _subprocess_creation_kwargs() -> dict[str, Any]:
     """Return platform-specific subprocess creation options."""
     if os.name != "nt":
         return {}
