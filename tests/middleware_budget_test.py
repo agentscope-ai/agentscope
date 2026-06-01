@@ -5,11 +5,16 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import MockModel
 from agentscope.agent import Agent
-from agentscope.message import UserMsg, TextBlock
+from agentscope.message import UserMsg, TextBlock, ToolCallBlock, HintBlock
 from agentscope.middleware import BudgetControlMiddleware
 from agentscope.model import ChatResponse
 from agentscope.model._model_usage import ChatUsage
-from agentscope.tool import Toolkit
+from agentscope.permission import (
+    PermissionBehavior,
+    PermissionContext,
+    PermissionDecision,
+)
+from agentscope.tool import ToolBase, Toolkit, ToolChunk
 
 
 def _response(
@@ -26,6 +31,44 @@ def _response(
             output_tokens=output_tokens,
             time=0.0,
         ),
+    )
+
+
+class DummyTool(ToolBase):
+    """Minimal tool that always allows and returns a fixed result."""
+
+    name: str = "dummy"
+    description: str = "A dummy tool for testing"
+    input_schema: dict[str, Any] = {"type": "object", "properties": {}}
+    is_concurrency_safe: bool = True
+    is_read_only: bool = True
+    is_external_tool: bool = False
+    is_mcp: bool = False
+
+    async def check_permissions(
+        self,
+        tool_input: dict[str, Any],
+        context: PermissionContext,
+    ) -> PermissionDecision:
+        """Always allow."""
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            decision_reason="Dummy tool always allows",
+            message="Dummy tool always allows",
+        )
+
+    async def __call__(self, **kwargs: Any) -> ToolChunk:
+        """Return a fixed result."""
+        return ToolChunk(content=[TextBlock(text="ok")])
+
+
+def _has_hint_block(msg: Any, hint_message: str) -> bool:
+    """Return True if *msg* contains a HintBlock with *hint_message*."""
+    content = getattr(msg, "content", None)
+    if not isinstance(content, list):
+        return False
+    return any(
+        isinstance(b, HintBlock) and hint_message in b.hint for b in content
     )
 
 
@@ -55,16 +98,16 @@ class TestBudgetControlMiddleware(IsolatedAsyncioTestCase):
         context_before = len(agent.state.context)
         await agent.reply(UserMsg("user", "hello"))
 
-        # No hint message should have been appended to context
+        # No HintBlock should have been added to context
         hint_msgs = [
             m
             for m in agent.state.context[context_before:]
-            if middleware.hint_message in (m.get_text_content() or "")
+            if _has_hint_block(m, middleware.hint_message)
         ]
         self.assertEqual(len(hint_msgs), 0)
 
     async def test_budget_exceeded_injects_hint(self) -> None:
-        """When the budget is exceeded, the hint message is injected.
+        """When the budget is exceeded, the hint block is injected.
 
         Uses max_tokens=0 so the budget condition fires on the very first
         reasoning call (0 used >= 0 max).
@@ -89,7 +132,7 @@ class TestBudgetControlMiddleware(IsolatedAsyncioTestCase):
         hint_msgs = [
             m
             for m in agent.state.context[context_before:]
-            if middleware.hint_message in (m.get_text_content() or "")
+            if _has_hint_block(m, middleware.hint_message)
         ]
         self.assertGreater(len(hint_msgs), 0)
 
@@ -138,29 +181,67 @@ class TestBudgetControlMiddleware(IsolatedAsyncioTestCase):
         )
 
     async def test_token_accumulation_across_steps(self) -> None:
-        """Tokens from ModelCallEndEvent accumulate in _used_tokens."""
+        """Tokens accumulate across steps and trigger enforcement correctly.
+
+        Step 1: tool call costs 200+100=300 tokens (max_tokens=300 so
+        step 2 sees used >= max and injects the hint).
+        """
+        toolkit = Toolkit(tools=[DummyTool()])
+
         model = MockModel()
         model.set_responses(
-            [_response("answer", input_tokens=200, output_tokens=100)],
+            [
+                # Step 1: tool call with token usage
+                [
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id="tc_1",
+                                name="dummy",
+                                input="{}",
+                            ),
+                        ],
+                        is_last=True,
+                        usage=ChatUsage(
+                            input_tokens=200,
+                            output_tokens=100,
+                            time=0.0,
+                        ),
+                    ),
+                ],
+                # Step 2: final text answer (budget enforced before this call)
+                [
+                    ChatResponse(
+                        content=[TextBlock(text="done")],
+                        is_last=True,
+                        usage=ChatUsage(
+                            input_tokens=150,
+                            output_tokens=50,
+                            time=0.0,
+                        ),
+                    ),
+                ],
+            ],
         )
 
-        middleware = BudgetControlMiddleware(max_tokens=10000)
+        # max_tokens=300: step 1 uses exactly 300, so step 2 triggers
+        middleware = BudgetControlMiddleware(max_tokens=300)
         agent = Agent(
             name="test_agent",
             system_prompt="you are helpful",
             model=model,
-            toolkit=self.toolkit,
+            toolkit=toolkit,
             middlewares=[middleware],
         )
 
+        context_before = len(agent.state.context)
         await agent.reply(UserMsg("user", "hello"))
 
-        # reply_id is set at the start of _reply and holds after completion
-        reply_id = agent.state.reply_id
-        total = (
-            middleware._used_tokens.get(  # pylint: disable=protected-access
-                reply_id,
-                0,
-            )
-        )
-        self.assertEqual(total, 300)  # 200 input + 100 output
+        # After step 1 used 300 tokens the budget was hit; verify hint
+        # was injected before step 2 (proves accumulation worked)
+        hint_msgs = [
+            m
+            for m in agent.state.context[context_before:]
+            if _has_hint_block(m, middleware.hint_message)
+        ]
+        self.assertGreater(len(hint_msgs), 0)
