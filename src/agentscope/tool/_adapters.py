@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """Adapters to convert functions and MCP tools to ToolProtocol."""
 import inspect
+import json
 from contextlib import _AsyncGeneratorContextManager
 from datetime import timedelta
-from typing import Callable, Any, AsyncGenerator
+from typing import Callable, Any, AsyncGenerator, Generator
 
 from mcp import ClientSession
 import mcp
@@ -32,7 +33,7 @@ class FunctionTool(ToolBase):
     This class wraps a regular Python function and makes it compatible with
     the ToolProtocol interface. It automatically extracts metadata from the
     function's signature and docstring, and normalizes the return value to
-    AsyncGenerator[ToolChunk, None].
+    ToolChunk or AsyncGenerator[ToolChunk, None].
     """
 
     is_external_tool: bool = False
@@ -115,7 +116,28 @@ class FunctionTool(ToolBase):
         else:
             result = self._func(**kwargs)
 
-        return result
+        if isinstance(result, (AsyncGenerator, Generator)):
+            return result
+
+        return self._convert_func_result_to_chunk(result)
+
+    @staticmethod
+    def _convert_func_result_to_chunk(
+        result: Any,
+    ) -> ToolChunk:
+        if isinstance(result, ToolChunk):
+            return result
+        if isinstance(result, str):
+            text = result
+        else:
+            try:
+                text = json.dumps(result, ensure_ascii=False)
+            except (TypeError, ValueError):
+                text = str(result)
+        return ToolChunk(
+            content=[TextBlock(text=text)],
+            state=ToolResultState.RUNNING,
+        )
 
 
 class MCPTool(ToolBase):
