@@ -8,6 +8,7 @@ from ._base import ToolBase
 from ._adapters import MCPTool, FunctionTool
 from ._builtin import (
     ResetTools,
+    MemoryTool,
     Bash,
     Edit,
     Glob,
@@ -37,6 +38,7 @@ __all__ = [
     "RegisteredTool",
     # Builtin tools
     "ResetTools",
+    "MemoryTool",
     "Bash",
     "Edit",
     "Glob",
