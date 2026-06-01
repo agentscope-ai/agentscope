@@ -180,6 +180,9 @@ class Agent:
         self._system_prompt_middlewares = [
             _ for _ in middlewares if _.is_implemented("on_system_prompt")
         ]
+        self._compress_context_middlewares = [
+            _ for _ in middlewares if _.is_implemented("on_compress_context")
+        ]
 
     # =======================================================================
     # Agent public methods
@@ -254,6 +257,47 @@ class Agent:
         await self._handle_incoming_messages(msgs)
 
     async def compress_context(
+        self,
+        context_config: ContextConfig | None = None,
+    ) -> None:
+        """Compress the agent's context if the token count exceeds the
+        threshold.
+
+        Args:
+            context_config (`ContextConfig | None`, optional):
+                If provided, compress the context with the given context
+                config. Otherwise, use the default context config in the
+                agent.
+        """
+        if not self._compress_context_middlewares:
+            await self._compress_context_impl(context_config=context_config)
+        else:
+
+            async def execute_chain(
+                index: int = 0,
+                context_config: ContextConfig | None = context_config,
+            ) -> None:
+                """Execute the compress_context middleware chain."""
+                if index >= len(self._compress_context_middlewares):
+                    await self._compress_context_impl(
+                        context_config=context_config,
+                    )
+                else:
+                    mw = self._compress_context_middlewares[index]
+                    input_kwargs = {"context_config": context_config}
+
+                    async def next_handler(**kwargs: Any) -> None:
+                        await execute_chain(index + 1, **kwargs)
+
+                    await mw.on_compress_context(
+                        agent=self,
+                        input_kwargs=input_kwargs,
+                        next_handler=next_handler,
+                    )
+
+            await execute_chain()
+
+    async def _compress_context_impl(
         self,
         context_config: ContextConfig | None = None,
     ) -> None:
