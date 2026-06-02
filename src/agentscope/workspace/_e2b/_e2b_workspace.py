@@ -957,11 +957,21 @@ class E2BWorkspace(WorkspaceBase):
 
         E2B's edge proxy gates non-default ports behind the
         ``X-Access-Token`` header tied to the sandbox. The token is
-        exposed on the sandbox object as ``traffic_access_token``.
+        typically ``traffic_access_token`` but on self-hosted deployments
+        (custom domain) it may only be available as ``envd_access_token``
+        or the private ``_SandboxBase__envd_access_token``.
         """
         if self._sandbox is None:
             return {}
         token = getattr(self._sandbox, "traffic_access_token", None)
+        if not token:
+            token = getattr(self._sandbox, "envd_access_token", None)
+        if not token:
+            token = getattr(
+                self._sandbox,
+                "_SandboxBase__envd_access_token",
+                None,
+            )
         if not token:
             return {}
         return {"X-Access-Token": token}
