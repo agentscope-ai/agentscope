@@ -38,21 +38,25 @@ export function PermissionModeSelect({ className, value, disabled, onChange }: P
 
 	return (
 		<DropdownMenu>
-			<DropdownMenuTrigger asChild>
-				<Button
-					variant="outline"
-					size="sm"
-					className={cn('justify-between gap-1', className)}
-					disabled={disabled}
-					tooltip={t('permission-mode.trigger-tooltip')}
-				>
-					<div className="flex flex-row items-center gap-x-2">
-						<UserRoundKey />
-						<span className="truncate">{displayLabel}</span>
-					</div>
-					<ChevronDown className="size-3.5 opacity-50" />
-				</Button>
-			</DropdownMenuTrigger>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<DropdownMenuTrigger asChild>
+						<Button
+							variant="outline"
+							size="sm"
+							className={cn('justify-between gap-1', className)}
+							disabled={disabled}
+						>
+							<div className="flex flex-row items-center gap-x-2">
+								<UserRoundKey />
+								<span className="truncate">{displayLabel}</span>
+							</div>
+							<ChevronDown className="size-3.5 opacity-50" />
+						</Button>
+					</DropdownMenuTrigger>
+				</TooltipTrigger>
+				<TooltipContent>{t('permission-mode.trigger-tooltip')}</TooltipContent>
+			</Tooltip>
 			<DropdownMenuContent align="start" className="min-w-48">
 				<DropdownMenuGroup>
 					<DropdownMenuLabel>{t('permission-mode.label')}</DropdownMenuLabel>
