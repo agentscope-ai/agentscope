@@ -173,6 +173,39 @@ Skills are a collection of instructions, scripts, and resources to extend your c
         assert result is not None
         self.assertIn("<name>repair_skill</name>", result)
 
+    async def test_get_skill_instructions_filters_inactive_group_skills(
+        self,
+    ) -> None:
+        """Test that inactive group skills are hidden from the prompt."""
+        toolkit = Toolkit(
+            skills_or_loaders=[MockSkillLoader([_make_skill("basic_skill")])],
+            tool_groups=[
+                ToolGroup(
+                    name="repair",
+                    description="Repair tools",
+                    skills_or_loaders=[
+                        MockSkillLoader([_make_skill("repair_skill")]),
+                    ],
+                ),
+            ],
+        )
+
+        inactive_result = await toolkit.get_skill_instructions(
+            activated_groups=[],
+        )
+        active_result = await toolkit.get_skill_instructions(
+            activated_groups=["repair"],
+        )
+
+        self.assertIsNotNone(inactive_result)
+        self.assertIsNotNone(active_result)
+        assert inactive_result is not None
+        assert active_result is not None
+        self.assertIn("<name>basic_skill</name>", inactive_result)
+        self.assertNotIn("<name>repair_skill</name>", inactive_result)
+        self.assertIn("<name>basic_skill</name>", active_result)
+        self.assertIn("<name>repair_skill</name>", active_result)
+
 
 class ToolkitSkillViewerTest(IsolatedAsyncioTestCase):
     """Test cases for Toolkit SkillViewer functionality."""
