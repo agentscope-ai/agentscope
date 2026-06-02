@@ -110,6 +110,25 @@ class ToolContext(BaseModel):
             ),
         )
 
+    async def clean_file_cache(
+        self,
+        reserved_file_paths: set[str] | None = None,
+    ) -> None:
+        """Drop read caches whose paths are not in ``reserved_file_paths``.
+
+        Args:
+            reserved_file_paths: File paths from Read calls that remain in the
+                context. Caches for these files are kept; all others are
+                evicted.
+        """
+        reserved_file_paths = reserved_file_paths or set()
+
+        self.read_file_cache = [
+            entry
+            for entry in self.read_file_cache
+            if entry.file_path in reserved_file_paths
+        ]
+
 
 class TaskContext(BaseModel):
     """The task context."""

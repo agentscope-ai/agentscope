@@ -22,6 +22,22 @@ from ...message import TextBlock
 from .._response import ToolChunk
 
 
+def _subprocess_creation_kwargs() -> dict[str, Any]:
+    """Return platform-specific subprocess creation options."""
+    if os.name != "nt":
+        return {}
+
+    import subprocess
+
+    return {
+        "creationflags": getattr(
+            subprocess,
+            "CREATE_NO_WINDOW",
+            0x08000000,
+        ),
+    }
+
+
 class Bash(ToolBase):
     """The bash tool."""
 
@@ -604,6 +620,7 @@ easier to review tool calls and give permission.
                 command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                **_subprocess_creation_kwargs(),
             )
 
             # Wait for completion with timeout

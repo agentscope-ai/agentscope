@@ -163,7 +163,7 @@ class LocalWorkspace(WorkspaceBase):
 
         # ── serializable config ─────────────────────────────────
         self.workdir = os.path.abspath(workdir)
-        self.instructions = instructions
+        self.instructions = instructions.format(workdir=self.workdir)
 
         # ── seed-only ───────────────────────────────────────────
         self.default_mcps: list[MCPClient] = list(default_mcps or [])
@@ -171,6 +171,9 @@ class LocalWorkspace(WorkspaceBase):
 
         # ── runtime state ───────────────────────────────────────
         self._mcps: list[MCPClient] = []
+
+        self._skill_lock = asyncio.Lock()
+        self._mcp_lock = asyncio.Lock()
 
     async def initialize(self) -> None:
         """Initialise the workspace.
@@ -302,7 +305,7 @@ class LocalWorkspace(WorkspaceBase):
 
     async def get_instructions(self) -> str:
         """Get the workspace instructions."""
-        return self.instructions.format(workdir=self.workdir)
+        return self.instructions
 
     async def _load_skills_file(self, skills_dir: str) -> _SkillsFile:
         """Load the .skills index file, returning an empty structure if absent.
@@ -597,9 +600,20 @@ class LocalWorkspace(WorkspaceBase):
         closed explicitly. Stateless HTTP MCPs are skipped — they
         spin up an ad-hoc session per call and have nothing to close.
         """
-        for mcp in self._mcps:
-            if mcp.is_stateful and mcp.is_connected:
-                await mcp.close()
+        async with self._mcp_lock:
+            for mcp in self._mcps:
+                if mcp.is_stateful and mcp.is_connected:
+                    try:
+                        await mcp.close()
+                    except Exception as e:
+                        logger.warning(
+                            (
+                                "Failed to close MCP %r "
+                                "when closing local workspace: %s"
+                            ),
+                            mcp.name,
+                            e,
+                        )
         self.is_alive = False
 
     async def reset(self) -> None:
@@ -609,23 +623,29 @@ class LocalWorkspace(WorkspaceBase):
         and deletes ``skills/``, ``sessions/``, and ``data/``.
         ``default_mcps`` and ``skill_paths`` are not re-seeded.
         """
-        for mcp in self._mcps:
-            if mcp.is_stateful and mcp.is_connected:
-                try:
-                    await mcp.close()
-                except Exception as e:
-                    logger.warning(
-                        "MCP %r close failed during reset: %s",
-                        mcp.name,
-                        e,
-                    )
-        self._mcps = []
+        async with self._mcp_lock:
+            for mcp in self._mcps:
+                if mcp.is_stateful and mcp.is_connected:
+                    try:
+                        await mcp.close()
+                    except Exception as e:
+                        logger.warning(
+                            "MCP %r close failed during reset: %s",
+                            mcp.name,
+                            e,
+                        )
+            self._mcps = []
 
-        mcp_file = os.path.join(self.workdir, ".mcp")
-        if await aiofiles.ospath.exists(mcp_file):
-            await asyncio.to_thread(os.remove, mcp_file)
+            mcp_file = os.path.join(self.workdir, ".mcp")
+            if await aiofiles.ospath.exists(mcp_file):
+                await asyncio.to_thread(os.remove, mcp_file)
 
-        for sub in ("skills", "sessions", "data"):
+        async with self._skill_lock:
+            path = os.path.join(self.workdir, "skills")
+            if await aiofiles.ospath.isdir(path):
+                await asyncio.to_thread(shutil.rmtree, path)
+
+        for sub in ("sessions", "data"):
             path = os.path.join(self.workdir, sub)
             if await aiofiles.ospath.isdir(path):
                 await asyncio.to_thread(shutil.rmtree, path)
@@ -653,43 +673,43 @@ class LocalWorkspace(WorkspaceBase):
                 A list of Skill objects found in the workspace.
         """
         skills_dir = os.path.join(self.workdir, "skills")
+        async with self._skill_lock:
+            if not await aiofiles.ospath.isdir(skills_dir):
+                return []
 
-        if not await aiofiles.ospath.isdir(skills_dir):
-            return []
+            skills_file = await self._load_skills_file(skills_dir)
+            current_mtime = await aiofiles.ospath.getmtime(skills_dir)
 
-        skills_file = await self._load_skills_file(skills_dir)
-        current_mtime = await aiofiles.ospath.getmtime(skills_dir)
-
-        # Detect whether the skills directory has changed since last indexing
-        if current_mtime != skills_file["skills_dir_mtime"]:
-            skills_file = await self._reconcile_skills_dir(
-                skills_dir,
-                skills_file,
-                current_mtime,
-            )
-
-        # Load each skill from disk using the index for the agent-facing name
-        tasks = [
-            self._load_single_skill(
-                os.path.join(skills_dir, dir_name),
-                entry["skill_name"],
-            )
-            for dir_name, entry in skills_file["skills"].items()
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        skills: list = []
-        for dir_name, result in zip(skills_file["skills"], results):
-            if isinstance(result, Exception):
-                logger.warning(
-                    "Failed to load skill from %s: %s",
-                    dir_name,
-                    str(result),
+            # Detect if the skills directory has changed since last indexing
+            if current_mtime != skills_file["skills_dir_mtime"]:
+                skills_file = await self._reconcile_skills_dir(
+                    skills_dir,
+                    skills_file,
+                    current_mtime,
                 )
-            elif result is not None:
-                skills.append(result)
 
-        return skills
+            # Load skills from disk using the index for the agent-facing name
+            tasks = [
+                self._load_single_skill(
+                    os.path.join(skills_dir, dir_name),
+                    entry["skill_name"],
+                )
+                for dir_name, entry in skills_file["skills"].items()
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            skills: list = []
+            for dir_name, result in zip(skills_file["skills"], results):
+                if isinstance(result, Exception):
+                    logger.warning(
+                        "Failed to load skill from %s: %s",
+                        dir_name,
+                        str(result),
+                    )
+                elif result is not None:
+                    skills.append(result)
+
+            return skills
 
     async def _reconcile_skills_dir(
         self,
@@ -854,6 +874,7 @@ class LocalWorkspace(WorkspaceBase):
         """Persist the current MCP client list to ``.mcp`` in workdir."""
         mcp_file = os.path.join(self.workdir, ".mcp")
         try:
+            # callers have lock.
             async with aiofiles.open(mcp_file, "w", encoding="utf-8") as f:
                 await f.write(
                     json.dumps(
@@ -871,10 +892,11 @@ class LocalWorkspace(WorkspaceBase):
         Args:
             mcp_client: The MCP client to add.
         """
-        if mcp_client.is_stateful and not mcp_client.is_connected:
-            await mcp_client.connect()
-        self._mcps.append(mcp_client)
-        await self._save_mcp_file()
+        async with self._mcp_lock:
+            if mcp_client.is_stateful and not mcp_client.is_connected:
+                await mcp_client.connect()
+            self._mcps.append(mcp_client)
+            await self._save_mcp_file()
 
     async def remove_mcp(self, name: str) -> None:
         """Remove an MCP client by name, disconnecting it if stateful.
@@ -882,13 +904,14 @@ class LocalWorkspace(WorkspaceBase):
         Args:
             name: The ``name`` field of the client to remove.
         """
-        for i, mcp in enumerate(self._mcps):
-            if mcp.name == name:
-                if mcp.is_stateful and mcp.is_connected:
-                    await mcp.close()
-                self._mcps.pop(i)
-                await self._save_mcp_file()
-                return
+        async with self._mcp_lock:
+            for i, mcp in enumerate(self._mcps):
+                if mcp.name == name:
+                    if mcp.is_stateful and mcp.is_connected:
+                        await mcp.close()
+                    self._mcps.pop(i)
+                    await self._save_mcp_file()
+                    return
         logger.warning("MCP client %r not found in workspace", name)
 
     async def add_skill(self, skill_path: str) -> None:
@@ -909,79 +932,80 @@ class LocalWorkspace(WorkspaceBase):
                 malformed ``SKILL.md``).
         """
         skills_dir = os.path.join(self.workdir, "skills")
-        os.makedirs(skills_dir, exist_ok=True)
+        async with self._skill_lock:
+            os.makedirs(skills_dir, exist_ok=True)
 
-        result = await self._validate_and_hash_skill(skill_path)
-        if result is None:
-            raise ValueError(
-                f"Invalid skill at {skill_path!r}: missing or malformed "
-                "SKILL.md (requires 'name' and 'description' fields).",
+            result = await self._validate_and_hash_skill(skill_path)
+            if result is None:
+                raise ValueError(
+                    f"Invalid skill at {skill_path!r}: missing or malformed "
+                    "SKILL.md (requires 'name' and 'description' fields).",
+                )
+
+            _, raw_name, skill_hash = result
+
+            skills_file = await self._load_skills_file(skills_dir)
+            existing: dict[str, _SkillEntry] = skills_file["skills"]
+
+            existing_hashes: set[str] = {e["hash"] for e in existing.values()}
+            if skill_hash in existing_hashes:
+                logger.info(
+                    "Skill '%s' (hash: %s...) already exists, skipping",
+                    raw_name,
+                    skill_hash[:8],
+                )
+                return
+
+            existing_agent_names: set[str] = {
+                e["skill_name"] for e in existing.values()
+            }
+            existing_dir_names: set[str] = set(existing.keys())
+
+            # Resolve agent-facing name conflict
+            agent_name = raw_name
+            counter = 1
+            while agent_name in existing_agent_names:
+                agent_name = f"{raw_name} ({counter})"
+                counter += 1
+
+            # Resolve directory name conflict
+            base_dir = _sanitize_dir_name(raw_name)
+            dir_name = base_dir
+            counter = 1
+            while dir_name in existing_dir_names:
+                dir_name = f"{base_dir}_{counter}"
+                counter += 1
+
+            dest_path = os.path.join(skills_dir, dir_name)
+
+            if not os.path.realpath(dest_path).startswith(
+                os.path.realpath(skills_dir) + os.sep,
+            ):
+                raise ValueError(
+                    f"Skill path {skill_path!r} resolves outside skills_dir.",
+                )
+
+            await asyncio.to_thread(
+                shutil.copytree,
+                skill_path,
+                dest_path,
+                dirs_exist_ok=False,
             )
 
-        _, raw_name, skill_hash = result
-
-        skills_file = await self._load_skills_file(skills_dir)
-        existing: dict[str, _SkillEntry] = skills_file["skills"]
-
-        existing_hashes: set[str] = {e["hash"] for e in existing.values()}
-        if skill_hash in existing_hashes:
             logger.info(
-                "Skill '%s' (hash: %s...) already exists, skipping",
+                "Copied skill '%s' (agent name: '%s') from %s to %s",
                 raw_name,
-                skill_hash[:8],
-            )
-            return
-
-        existing_agent_names: set[str] = {
-            e["skill_name"] for e in existing.values()
-        }
-        existing_dir_names: set[str] = set(existing.keys())
-
-        # Resolve agent-facing name conflict
-        agent_name = raw_name
-        counter = 1
-        while agent_name in existing_agent_names:
-            agent_name = f"{raw_name} ({counter})"
-            counter += 1
-
-        # Resolve directory name conflict
-        base_dir = _sanitize_dir_name(raw_name)
-        dir_name = base_dir
-        counter = 1
-        while dir_name in existing_dir_names:
-            dir_name = f"{base_dir}_{counter}"
-            counter += 1
-
-        dest_path = os.path.join(skills_dir, dir_name)
-
-        if not os.path.realpath(dest_path).startswith(
-            os.path.realpath(skills_dir) + os.sep,
-        ):
-            raise ValueError(
-                f"Skill path {skill_path!r} resolves outside skills_dir.",
+                agent_name,
+                skill_path,
+                dest_path,
             )
 
-        await asyncio.to_thread(
-            shutil.copytree,
-            skill_path,
-            dest_path,
-            dirs_exist_ok=False,
-        )
-
-        logger.info(
-            "Copied skill '%s' (agent name: '%s') from %s to %s",
-            raw_name,
-            agent_name,
-            skill_path,
-            dest_path,
-        )
-
-        existing[dir_name] = {"hash": skill_hash, "skill_name": agent_name}
-        skills_file["skills"] = existing
-        skills_file["skills_dir_mtime"] = await aiofiles.ospath.getmtime(
-            skills_dir,
-        )
-        await self._save_skills_file(skills_dir, skills_file)
+            existing[dir_name] = {"hash": skill_hash, "skill_name": agent_name}
+            skills_file["skills"] = existing
+            skills_file["skills_dir_mtime"] = await aiofiles.ospath.getmtime(
+                skills_dir,
+            )
+            await self._save_skills_file(skills_dir, skills_file)
 
     async def remove_skill(self, name: str) -> None:
         """Remove a skill from the workspace by its agent-facing name.
@@ -997,44 +1021,47 @@ class LocalWorkspace(WorkspaceBase):
                 possibly with a numeric suffix for de-duplication).
         """
         skills_dir = os.path.join(self.workdir, "skills")
+        async with self._skill_lock:
+            if not await aiofiles.ospath.isdir(skills_dir):
+                logger.warning(
+                    "Skills directory does not exist; cannot remove skill %r",
+                    name,
+                )
+                return
 
-        if not await aiofiles.ospath.isdir(skills_dir):
-            logger.warning(
-                "Skills directory does not exist; cannot remove skill %r",
-                name,
+            skills_file = await self._load_skills_file(skills_dir)
+            existing: dict[str, _SkillEntry] = skills_file["skills"]
+
+            target_dir: str | None = None
+            for dir_name, entry in existing.items():
+                if entry["skill_name"] == name:
+                    target_dir = dir_name
+                    break
+
+            if target_dir is None:
+                logger.warning("Skill %r not found in workspace", name)
+                return
+
+            skill_dir_path = os.path.join(skills_dir, target_dir)
+            if await aiofiles.ospath.isdir(skill_dir_path):
+                await asyncio.to_thread(shutil.rmtree, skill_dir_path)
+                logger.info(
+                    "Removed skill '%s' from %s",
+                    name,
+                    skill_dir_path,
+                )
+            else:
+                logger.warning(
+                    (
+                        "Skill directory %r not found on disk; "
+                        "removing index entry"
+                    ),
+                    skill_dir_path,
+                )
+
+            del existing[target_dir]
+            skills_file["skills"] = existing
+            skills_file["skills_dir_mtime"] = await aiofiles.ospath.getmtime(
+                skills_dir,
             )
-            return
-
-        skills_file = await self._load_skills_file(skills_dir)
-        existing: dict[str, _SkillEntry] = skills_file["skills"]
-
-        target_dir: str | None = None
-        for dir_name, entry in existing.items():
-            if entry["skill_name"] == name:
-                target_dir = dir_name
-                break
-
-        if target_dir is None:
-            logger.warning("Skill %r not found in workspace", name)
-            return
-
-        skill_dir_path = os.path.join(skills_dir, target_dir)
-        if await aiofiles.ospath.isdir(skill_dir_path):
-            await asyncio.to_thread(shutil.rmtree, skill_dir_path)
-            logger.info(
-                "Removed skill '%s' from %s",
-                name,
-                skill_dir_path,
-            )
-        else:
-            logger.warning(
-                "Skill directory %r not found on disk; removing index entry",
-                skill_dir_path,
-            )
-
-        del existing[target_dir]
-        skills_file["skills"] = existing
-        skills_file["skills_dir_mtime"] = await aiofiles.ospath.getmtime(
-            skills_dir,
-        )
-        await self._save_skills_file(skills_dir, skills_file)
+            await self._save_skills_file(skills_dir, skills_file)
