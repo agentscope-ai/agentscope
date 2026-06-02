@@ -104,8 +104,9 @@ class OpenAITextEmbedding(EmbeddingModelBase):
         embeddings: list = [None] * len(gather_text)
         for emb in response.data:
             if 0 <= emb.index < len(gather_text):
-                vec = emb.embedding or getattr(emb, "dense_embedding", None)
-                embeddings[emb.index] = list(vec) if vec is not None else None
+                embeddings[emb.index] = emb.embedding or getattr(
+                    emb, "dense_embedding"
+                )
 
         if self.embedding_cache:
             await self.embedding_cache.store(
