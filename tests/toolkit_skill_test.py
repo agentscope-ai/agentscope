@@ -8,7 +8,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from utils import AnyString
 
 from agentscope.skill import SkillLoaderBase, Skill
-from agentscope.tool import Toolkit, ToolChunk, ToolResponse
+from agentscope.tool import Toolkit, ToolGroup, ToolChunk, ToolResponse
 from agentscope.message import ToolCallBlock
 from agentscope.state import AgentState
 
@@ -150,6 +150,60 @@ Skills are a collection of instructions, scripts, and resources to extend your c
 
         result = await toolkit.get_skill_instructions()
         self.assertIsNone(result)
+
+    async def test_get_skill_instructions_with_groups_filter(self) -> None:
+        """Test that get_skill_instructions respects the groups filter.
+
+        Regression test for issue #1724, where the groups parameter was
+        accepted but not forwarded to _get_available_skills()."""
+        basic_skill = _make_skill("basic_skill", description="A basic skill")
+        repair_skill = _make_skill(
+            "repair_skill",
+            description="A repair skill",
+        )
+        order_skill = _make_skill(
+            "order_skill",
+            description="An order skill",
+        )
+
+        repair_group = ToolGroup(
+            name="repair",
+            description="Repair tools and skills",
+            skills_or_loaders=[MockSkillLoader([repair_skill])],
+        )
+        order_group = ToolGroup(
+            name="order",
+            description="Order management tools and skills",
+            skills_or_loaders=[MockSkillLoader([order_skill])],
+        )
+
+        toolkit = Toolkit(
+            skills_or_loaders=[MockSkillLoader([basic_skill])],
+            tool_groups=[repair_group, order_group],
+        )
+
+        # When no groups specified, only "basic" group skills are returned
+        result_default = await toolkit.get_skill_instructions()
+        self.assertIn("basic_skill", result_default)
+        self.assertNotIn("repair_skill", result_default)
+        self.assertNotIn("order_skill", result_default)
+
+        # When filtering by "repair", both "basic" and "repair" skills
+        # are returned
+        result_repair = await toolkit.get_skill_instructions(
+            groups=["repair"],
+        )
+        self.assertIn("basic_skill", result_repair)
+        self.assertIn("repair_skill", result_repair)
+        self.assertNotIn("order_skill", result_repair)
+
+        # When filtering by both groups, all skills are returned
+        result_all = await toolkit.get_skill_instructions(
+            groups=["repair", "order"],
+        )
+        self.assertIn("basic_skill", result_all)
+        self.assertIn("repair_skill", result_all)
+        self.assertIn("order_skill", result_all)
 
 
 class ToolkitSkillViewerTest(IsolatedAsyncioTestCase):

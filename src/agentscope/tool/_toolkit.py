@@ -424,7 +424,10 @@ class Toolkit:
 
         return skills
 
-    async def get_skill_instructions(self) -> str | None:
+    async def get_skill_instructions(
+        self,
+        groups: list[str] | None = None,
+    ) -> str | None:
         """Get the prompt for all registered agent skills, which can be
         attached to the system prompt for the agent.
 
@@ -434,12 +437,18 @@ class Toolkit:
 
         .. note:: If no skill is registered, None will be returned.
 
+        Args:
+            groups (`list[str] | None`, optional):
+                A list of group names to filter the skills. The "basic"
+                group will always be included regardless of the filter. If not
+                provided, only the "basic" group will be included.
+
         Returns:
             `str | None`:
                 The combined prompt for all registered agent skills, or None
                 if no skill is registered.
         """
-        skills = await self._get_available_skills()
+        skills = await self._get_available_skills(groups=groups)
 
         # If no skills were collected, return None
         if len(skills) == 0:
@@ -474,7 +483,7 @@ class Toolkit:
         available_tools = {}
 
         # Built-in skill viewers
-        skills = await self._get_available_skills()
+        skills = await self._get_available_skills(groups=groups)
         if len(skills):
             available_tools[
                 self.builtin_skill_viewer.tool.name
