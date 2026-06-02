@@ -34,6 +34,7 @@ Differences from the Docker manager:
 
 import asyncio
 import time
+import uuid
 from typing import Self
 
 from ..._logging import logger
@@ -45,6 +46,7 @@ from ...workspace._e2b._bootstrap import (
     DEFAULT_TIMEOUT,
 )
 from ._workspace_manager import WorkspaceManagerBase
+from ._workspace_pool import PooledEntry, WorkspacePool
 
 DEFAULT_SWEEP_INTERVAL = 300.0
 
@@ -72,6 +74,14 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         skill_paths: list[str] | None = None,
         ttl: float = 3600.0,
         sweep_interval: float = DEFAULT_SWEEP_INTERVAL,
+        # ── pooling parameters (disabled by default) ──────────
+        pool_enabled: bool = False,
+        min_idle: int = 1,
+        max_idle: int = 3,
+        total: int = 10,
+        create_batch_size: int = 2,
+        max_reuse: int = 50,
+        health_check_interval: float = 60.0,
     ) -> None:
         """Initialize the E2B workspace manager.
 
@@ -108,10 +118,30 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
                 Skill directories seeded into brand-new workspaces.
             ttl (`float`, defaults to `3600.0`):
                 Seconds before an idle cached workspace is evicted
-                and its sandbox paused.
+                and its sandbox paused. Only used when
+                ``pool_enabled=False``.
             sweep_interval (`float`, defaults to `DEFAULT_SWEEP_INTERVAL`):
                 How often (seconds) the background sweeper wakes up
                 to look for idle workspaces. Defaults to 5 minutes.
+                Only used when ``pool_enabled=False``.
+            pool_enabled (`bool`, defaults to `False`):
+                When ``True``, use a pre-warming pool instead of the
+                TTL cache. The pool provides stronger isolation by
+                destroying and recreating sandboxes on each release
+                (via :meth:`E2BWorkspace.heavy_reset_for_pool`).
+            min_idle (`int`, defaults to `1`):
+                Pool: minimum idle instances to maintain.
+            max_idle (`int`, defaults to `3`):
+                Pool: target idle count after replenishment.
+            total (`int`, defaults to `10`):
+                Pool: hard cap on total managed instances.
+            create_batch_size (`int`, defaults to `2`):
+                Pool: concurrent factory calls per replenishment.
+            max_reuse (`int`, defaults to `50`):
+                Pool: max recycling count per sandbox. ``0`` =
+                unlimited.
+            health_check_interval (`float`, defaults to `60.0`):
+                Pool: seconds between health-check sweeps.
         """
         self._template = template
         self._api_key = api_key
@@ -125,11 +155,31 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         self._skill_paths = list(skill_paths or [])
         self._ttl = ttl
         self._sweep_interval = sweep_interval
+        self._pool_enabled = pool_enabled
 
-        # workspace_id → (workspace, last_access_monotonic)
+        # ── TTL-cache mode (pool_enabled=False) ───────────────
         self._cache: dict[str, tuple[E2BWorkspace, float]] = {}
         self._lock = asyncio.Lock()
         self._sweep_task: asyncio.Task | None = None
+
+        # ── Pool mode (pool_enabled=True) ─────────────────────
+        self._active: dict[str, PooledEntry[E2BWorkspace]] = {}
+        self._pool: WorkspacePool[E2BWorkspace] | None = None
+        if pool_enabled:
+            self._pool = WorkspacePool[E2BWorkspace](
+                factory=self._pool_factory,
+                reset_fn=self._pool_reset,
+                health_check_fn=self._pool_health_check,
+                close_fn=self._pool_close,
+                pause_fn=self._pool_pause,
+                resume_fn=self._pool_resume,
+                min_idle=min_idle,
+                max_idle=max_idle,
+                total=total,
+                create_batch_size=create_batch_size,
+                max_reuse=max_reuse,
+                health_check_interval=health_check_interval,
+            )
 
     # ── metadata helper ───────────────────────────────────────────
 
@@ -138,19 +188,14 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         user_id: str,
         agent_id: str,
     ) -> dict[str, str]:
-        """Build the extra sandbox metadata for ``(user_id, agent_id)``.
-
-        ``E2BWorkspace`` always sets ``agentscope.workspace.id`` itself;
-        we add the user/agent keys here so they show up alongside it
-        in the E2B dashboard's metadata filter UI.
-        """
+        """Build the extra sandbox metadata for ``(user_id, agent_id)``."""
         return {
             "agentscope.user.id": user_id,
             "agentscope.agent.id": agent_id,
             **self._sandbox_metadata,
         }
 
-    # ── workspace construction ────────────────────────────────────
+    # ── workspace construction (TTL-cache mode) ───────────────────
 
     async def _build_and_start(
         self,
@@ -159,13 +204,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         user_id: str,
         agent_id: str,
     ) -> E2BWorkspace:
-        """Construct an :class:`E2BWorkspace` and run its full ``initialize``.
-
-        ``workspace_id=None`` lets :class:`WorkspaceBase` allocate a
-        fresh UUID — used by :meth:`create_workspace`. Otherwise the
-        provided id is forwarded so reattachment by metadata works on
-        the second call.
-        """
+        """Construct an E2BWorkspace and run ``initialize``."""
         ws = E2BWorkspace(
             workspace_id=workspace_id,
             template=self._template,
@@ -182,6 +221,63 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         await ws.initialize()
         return ws
 
+    # ── pool callbacks (pool_enabled=True) ────────────────────────
+
+    async def _pool_factory(self) -> E2BWorkspace:
+        """Create and initialize a fresh E2BWorkspace for the pool."""
+        ws = E2BWorkspace(
+            workspace_id=None,
+            template=self._template,
+            api_key=self._api_key,
+            domain=self._domain,
+            timeout_seconds=self._timeout_seconds,
+            gateway_port=self._gateway_port,
+            env=self._env,
+            sandbox_metadata=dict(self._sandbox_metadata),
+            extra_pip=self._extra_pip,
+            default_mcps=self._default_mcps,
+            skill_paths=self._skill_paths,
+        )
+        await ws.initialize()
+        logger.info(
+            "E2BWorkspaceManager[pool]: created workspace %s",
+            ws.workspace_id,
+        )
+        return ws
+
+    async def _pool_reset(self, ws: E2BWorkspace) -> None:
+        """Heavy reset: destroy sandbox and recreate for strong isolation."""
+        await ws.heavy_reset_for_pool(
+            default_mcps=self._default_mcps or None,
+            skill_paths=self._skill_paths or None,
+        )
+
+    @staticmethod
+    async def _pool_health_check(ws: E2BWorkspace) -> bool:
+        """Probe gateway health."""
+        return await ws.gateway_health()
+
+    @staticmethod
+    async def _pool_pause(ws: E2BWorkspace) -> None:
+        """Pause sandbox to stop billing."""
+        await ws.pause()
+
+    @staticmethod
+    async def _pool_resume(ws: E2BWorkspace) -> None:
+        """Resume a paused sandbox."""
+        await ws.resume()
+
+    @staticmethod
+    async def _pool_close(ws: E2BWorkspace) -> None:
+        """Permanently destroy a workspace."""
+        try:
+            await ws.close()
+        except Exception:
+            logger.exception(
+                "E2BWorkspaceManager[pool]: failed to close %s",
+                ws.workspace_id,
+            )
+
     # ── public API ────────────────────────────────────────────────
 
     async def get_workspace(
@@ -191,39 +287,21 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         session_id: str,
         workspace_id: str,
     ) -> E2BWorkspace:
-        """Return an initialised workspace, reattaching on cache miss.
+        """Return an initialised workspace.
 
-        On miss the manager calls ``E2BWorkspace(workspace_id=…)`` and
-        relies on its ``initialize`` to find any existing sandbox via
-        ``AsyncSandbox.list(query=SandboxQuery(metadata=...))`` and
-        ``connect`` to it (auto-resuming if paused) — or to ``create``
-        a fresh sandbox otherwise.
-
-        Eviction of idle workspaces is *not* performed here — the
-        background sweeper started by :meth:`__aenter__` handles that.
-
-        Args:
-            user_id (`str`):
-                Owning user identifier (forwarded as sandbox metadata
-                only — not part of the cache key).
-            agent_id (`str`):
-                Agent identifier (forwarded as sandbox metadata only
-                — not part of the cache key).
-            session_id (`str`):
-                Session identifier (unused; sandboxes are
-                per-workspace, sessions partition under
-                ``sessions/<session_id>/``).
-            workspace_id (`str`):
-                Stable workspace identifier — the cache key and the
-                value stored in the sandbox's
-                ``agentscope.workspace.id`` metadata.
-
-        Returns:
-            `E2BWorkspace`:
-                A live, initialised workspace.
+        In TTL-cache mode, reattaches on cache miss. In pool mode,
+        checks out from the pool if not already active.
         """
-        del session_id  # accepted for interface parity; not used here
+        del session_id
 
+        if self._pool_enabled:
+            return await self._pool_get_workspace(
+                user_id,
+                agent_id,
+                workspace_id,
+            )
+
+        # ── TTL-cache mode ────────────────────────────────────
         async with self._lock:
             cached = self._cache.get(workspace_id)
             if cached is not None:
@@ -231,9 +309,6 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
                 self._cache[workspace_id] = (ws, time.monotonic())
                 return ws
 
-        # Cache miss: build under the lock to prevent two concurrent
-        # get_workspace(workspace_id=X) calls from creating two
-        # workspaces (and thus two sandboxes) for the same id.
         async with self._lock:
             cached = self._cache.get(workspace_id)
             if cached is not None:
@@ -255,28 +330,13 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         agent_id: str,
         session_id: str,
     ) -> E2BWorkspace:
-        """Build a brand-new workspace and track it.
+        """Build or check out a workspace."""
+        del session_id
 
-        A fresh ``workspace_id`` is allocated by
-        :class:`WorkspaceBase`; the caller should persist
-        ``workspace.workspace_id`` for later :meth:`get_workspace`
-        calls.
+        if self._pool_enabled:
+            return await self._pool_create_workspace(user_id, agent_id)
 
-        Args:
-            user_id (`str`):
-                Owning user identifier (forwarded as sandbox metadata).
-            agent_id (`str`):
-                Agent identifier (forwarded as sandbox metadata).
-            session_id (`str`):
-                Session identifier (accepted for parity; not used
-                here).
-
-        Returns:
-            `E2BWorkspace`:
-                The newly built workspace, already initialised.
-        """
-        del session_id  # accepted for interface parity; not used here
-
+        # ── TTL-cache mode ────────────────────────────────────
         ws = await self._build_and_start(
             workspace_id=None,
             user_id=user_id,
@@ -287,14 +347,11 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         return ws
 
     async def close(self, workspace_id: str) -> None:
-        """Close (= pause the sandbox) and evict a single workspace.
+        """Close / release a workspace."""
+        if self._pool_enabled:
+            return await self._pool_close_workspace(workspace_id)
 
-        No-op when the workspace_id is not tracked.
-
-        Args:
-            workspace_id (`str`):
-                The workspace to close.
-        """
+        # ── TTL-cache mode ────────────────────────────────────
         async with self._lock:
             entry = self._cache.pop(workspace_id, None)
         if entry is None:
@@ -303,12 +360,11 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         await self._safe_close(ws)
 
     async def close_all(self) -> None:
-        """Close every cached workspace in parallel.
+        """Close / release every tracked workspace."""
+        if self._pool_enabled:
+            return await self._pool_close_all()
 
-        ``sandbox.pause()`` is a remote round-trip per sandbox; doing
-        it sequentially on app shutdown produces a noticeable stall,
-        so we fan the calls out with :func:`asyncio.gather`.
-        """
+        # ── TTL-cache mode ────────────────────────────────────
         async with self._lock:
             entries = list(self._cache.values())
             self._cache.clear()
@@ -319,35 +375,109 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
             return_exceptions=True,
         )
 
+    # ── pool-mode public API helpers ──────────────────────────────
+
+    async def _pool_get_workspace(
+        self,
+        user_id: str,
+        agent_id: str,
+        workspace_id: str,
+    ) -> E2BWorkspace:
+        async with self._lock:
+            entry = self._active.get(workspace_id)
+            if entry is not None:
+                return entry.workspace
+
+        assert self._pool is not None
+        entry = await self._pool.acquire()
+        ws = entry.workspace
+
+        ws.sandbox_metadata.update(
+            {
+                "agentscope.user.id": user_id,
+                "agentscope.agent.id": agent_id,
+                "agentscope.workspace.id": workspace_id,
+            },
+        )
+
+        async with self._lock:
+            existing = self._active.get(workspace_id)
+            if existing is not None:
+                asyncio.create_task(self._pool.release(entry))
+                return existing.workspace
+            self._active[workspace_id] = entry
+
+        logger.info(
+            "E2BWorkspaceManager[pool]: checked out %s for workspace_id=%s",
+            ws.workspace_id,
+            workspace_id,
+        )
+        return ws
+
+    async def _pool_create_workspace(
+        self,
+        user_id: str,
+        agent_id: str,
+    ) -> E2BWorkspace:
+        workspace_id = uuid.uuid4().hex
+        return await self._pool_get_workspace(
+            user_id,
+            agent_id,
+            workspace_id,
+        )
+
+    async def _pool_close_workspace(self, workspace_id: str) -> None:
+        async with self._lock:
+            entry = self._active.pop(workspace_id, None)
+        if entry is None:
+            return
+        assert self._pool is not None
+        await self._pool.release(entry)
+
+    async def _pool_close_all(self) -> None:
+        async with self._lock:
+            entries = list(self._active.items())
+            self._active.clear()
+        if not entries:
+            return
+        assert self._pool is not None
+        await asyncio.gather(
+            *(self._pool.release(entry) for _, entry in entries),
+            return_exceptions=True,
+        )
+
     # ── async context manager ─────────────────────────────────────
 
     async def __aenter__(self) -> Self:
-        """Start the TTL sweeper task."""
-        if self._sweep_task is None:
-            self._sweep_task = asyncio.create_task(self._sweep_loop())
+        """Start the pool or TTL sweeper."""
+        if self._pool_enabled:
+            assert self._pool is not None
+            await self._pool.start()
+        else:
+            if self._sweep_task is None:
+                self._sweep_task = asyncio.create_task(self._sweep_loop())
         return self
 
     async def __aexit__(self, *exc: object) -> None:
-        """Stop the TTL sweeper task, then close every cached workspace."""
-        if self._sweep_task is not None:
-            self._sweep_task.cancel()
-            try:
-                await self._sweep_task
-            except (asyncio.CancelledError, Exception):
-                pass
-            self._sweep_task = None
-        await self.close_all()
+        """Stop the pool or TTL sweeper, then close everything."""
+        if self._pool_enabled:
+            await self.close_all()
+            assert self._pool is not None
+            await self._pool.stop()
+        else:
+            if self._sweep_task is not None:
+                self._sweep_task.cancel()
+                try:
+                    await self._sweep_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                self._sweep_task = None
+            await self.close_all()
 
-    # ── background sweeper ───────────────────────────────────────
+    # ── background sweeper (TTL-cache mode only) ──────────────────
 
     async def _sweep_loop(self) -> None:
-        """Periodically pause idle workspaces.
-
-        Runs forever until cancelled. Each tick pops every cache entry
-        whose last-access is older than ``ttl`` and closes it outside
-        the lock; exceptions during close are logged and swallowed so
-        one bad sandbox does not poison the sweeper.
-        """
+        """Periodically pause idle workspaces."""
         while True:
             try:
                 await asyncio.sleep(self._sweep_interval)

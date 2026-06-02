@@ -195,11 +195,11 @@ class RLWorkspaceManager(WorkspaceManagerBase):
     async def _reset_workspace(self, ws: E2BWorkspace) -> None:
         """Reset an E2BWorkspace to a clean state for reuse.
 
-        Delegates to :meth:`E2BWorkspace.reset_for_pool` which
+        Delegates to :meth:`E2BWorkspace.light_reset_for_pool` which
         performs a full gateway restart and data wipe while the
         sandbox is still running.
         """
-        await ws.reset_for_pool(
+        await ws.light_reset_for_pool(
             default_mcps=self._default_mcps or None,
             skill_paths=self._skill_paths or None,
         )

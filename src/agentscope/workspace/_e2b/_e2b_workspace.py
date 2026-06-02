@@ -361,12 +361,12 @@ class E2BWorkspace(WorkspaceBase):
             # not fall back to ``default_mcps``.
             await self._save_mcp_file()
 
-    async def reset_for_pool(
+    async def light_reset_for_pool(
         self,
         default_mcps: list[MCPClient] | None = None,
         skill_paths: list[str] | None = None,
     ) -> None:
-        """Thorough reset for pool recycling.
+        """Light reset for pool recycling.
 
         Extends :meth:`reset` with a full gateway restart and
         optional re-seeding — designed for the pooling lifecycle
@@ -393,7 +393,7 @@ class E2BWorkspace(WorkspaceBase):
                 ``None`` means no skills.
         """
         if self._sandbox is None:
-            raise RuntimeError("Cannot reset_for_pool: sandbox is None")
+            raise RuntimeError("Cannot light_reset_for_pool: sandbox is None")
 
         # 1. Kill gateway
         await self._exec("pkill -f _mcp_gateway_app.py || true")
@@ -411,8 +411,8 @@ class E2BWorkspace(WorkspaceBase):
 
         # 3. Recreate
         await self._exec(
-            f"mkdir -p {SANDBOX_DATA_DIR} {SANDBOX_SKILLS_DIR} "
-            f"{SANDBOX_SESSIONS_DIR}",
+            f"mkdir -p {SANDBOX_DATA_DIR} "
+            f"{SANDBOX_SKILLS_DIR} {SANDBOX_SESSIONS_DIR}",
         )
 
         # 4. Clear in-memory state
@@ -460,11 +460,124 @@ class E2BWorkspace(WorkspaceBase):
                     await self.add_skill(path)
                 except Exception as e:
                     logger.warning(
-                        "E2BWorkspace: skip skill %r during "
-                        "reset_for_pool: %s",
+                        "E2BWorkspace: skip skill %r "
+                        "during light_reset_for_pool: %s",
                         path,
                         e,
                     )
+
+    async def heavy_reset_for_pool(
+        self,
+        default_mcps: list[MCPClient] | None = None,
+        skill_paths: list[str] | None = None,
+    ) -> None:
+        """Heavy reset for agent-app pool recycling.
+
+        Provides stronger isolation than :meth:`light_reset_for_pool` by
+        destroying the entire sandbox and creating a fresh one from
+        the same template. This ensures no residual processes, temp
+        files, or environment state leaks between users.
+
+        Steps:
+
+        1. Release gateway client.
+        2. Kill the old sandbox.
+        3. Create and bootstrap a fresh sandbox (same template).
+        4. Mint a fresh bearer token and start gateway.
+        5. Wait for gateway ``/health``.
+        6. Re-seed ``default_mcps`` and ``skill_paths`` if provided.
+
+        Args:
+            default_mcps: MCPs to register after reset. ``None`` means
+                the workspace stays MCP-free.
+            skill_paths: Local skill directories to upload after reset.
+                ``None`` means no skills.
+        """
+        from e2b import AsyncSandbox
+
+        # 1. Release gateway
+        if self._gateway is not None:
+            try:
+                await self._gateway.aclose()
+            except Exception:
+                pass
+            self._gateway = None
+        self._gateway_clients.clear()
+
+        # 2. Kill old sandbox
+        if self._sandbox is not None:
+            try:
+                await self._sandbox.kill()
+            except Exception:
+                pass
+            self._sandbox = None
+        self.is_alive = False
+
+        # 3. Create fresh sandbox from same template
+        merged_metadata = {
+            METADATA_WORKSPACE_ID_KEY: self.workspace_id,
+            **self.sandbox_metadata,
+        }
+        create_kwargs: dict[str, Any] = {
+            "template": self.template,
+            "timeout": self.timeout_seconds,
+            "metadata": merged_metadata,
+            **self._api_opts(),
+        }
+        if self.env:
+            create_kwargs["envs"] = self.env
+
+        self._sandbox = await AsyncSandbox.create(**create_kwargs)
+        await self._wait_until_running()
+
+        # Re-bootstrap if needed
+        if not await self._sandbox.files.exists(GATEWAY_SCRIPT):
+            await self._sandbox.commands.run(
+                f"mkdir -p {shlex.quote(SANDBOX_WORKDIR)}",
+            )
+            await self._run_bootstrap()
+
+        # 4. Clear state + start gateway with new token
+        async with self._mcp_lock, self._skill_lock:
+            self._mcps = list(default_mcps or [])
+
+        self._gateway_token = uuid.uuid4().hex
+        await self._exec("pkill -f _mcp_gateway_app.py || true")
+        await self._write_gateway_config()
+        await self._start_gateway_process()
+
+        host = self._sandbox.get_host(self.gateway_port)
+        self._gateway = GatewayClient(
+            base_url=f"https://{host}",
+            token=self._gateway_token,
+            timeout=30.0,
+            extra_headers=self._sandbox_proxy_headers(),
+        )
+
+        # 5. Wait for healthy
+        await self._wait_for_gateway()
+
+        # 6. Re-seed
+        if default_mcps:
+            await self._save_mcp_file()
+            self._gateway_clients = {
+                c.name: c for c in await self._gateway.list_mcps()
+            }
+
+        if skill_paths:
+            await self._exec(f"mkdir -p {SANDBOX_SKILLS_DIR}")
+            for path in skill_paths:
+                try:
+                    await self.add_skill(path)
+                except Exception as e:
+                    logger.warning(
+                        "E2BWorkspace: skip skill %r "
+                        "during heavy_reset_for_pool: %s",
+                        path,
+                        e,
+                    )
+
+        self.is_alive = True
 
     async def pause(self) -> None:
         """Pause the sandbox and release the gateway client.
@@ -498,8 +611,8 @@ class E2BWorkspace(WorkspaceBase):
         sandbox_id = self.sandbox_id
         if sandbox_id is None:
             raise RuntimeError(
-                f"Cannot resume workspace {self.workspace_id}: "
-                "sandbox_id is None",
+                f"Cannot resume workspace {self.workspace_id}"
+                ": sandbox_id is None",
             )
 
         self._sandbox = await AsyncSandbox.connect(
@@ -1037,8 +1150,8 @@ class E2BWorkspace(WorkspaceBase):
             return [MCPClient.model_validate(m) for m in data]
         except Exception as e:
             logger.warning(
-                "E2BWorkspace: failed to parse %s, falling back to "
-                "default_mcps: %s",
+                "E2BWorkspace: failed to parse %s, "
+                "falling back to default_mcps: %s",
                 SANDBOX_MCP_FILE,
                 e,
             )

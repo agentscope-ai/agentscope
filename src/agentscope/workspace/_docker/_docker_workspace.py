@@ -383,6 +383,276 @@ class DockerWorkspace(WorkspaceBase):
 
         self.is_alive = False
 
+    # ── pool lifecycle ──────────────────────────────────────────
+
+    async def light_reset_for_pool(
+        self,
+        default_mcps: list[MCPClient] | None = None,
+        skill_paths: list[str] | None = None,
+    ) -> None:
+        """Thorough reset for pool recycling.
+
+        Designed for the pooling lifecycle where a workspace must be
+        handed to a different user with no residual state.
+
+        Steps:
+
+        1. Kill the gateway process.
+        2. Delete ``sessions/``, ``data/``, ``skills/``, ``.mcp``.
+        3. Recreate empty directory structure.
+        4. Clear internal MCP / gateway-client state.
+        5. Mint a fresh bearer token and restart the gateway.
+        6. Wait for gateway ``/health``.
+        7. Re-seed ``default_mcps`` and ``skill_paths`` if provided.
+
+        Must be called while the container is **running**.
+
+        Args:
+            default_mcps: MCPs to register after reset. ``None`` means
+                the workspace stays MCP-free.
+            skill_paths: Local skill directories to upload after reset.
+                ``None`` means no skills.
+        """
+        if self._container is None:
+            raise RuntimeError(
+                "Cannot light_reset_for_pool: container is None",
+            )
+
+        # 1. Kill gateway
+        await self._exec(
+            f"pkill -f {shlex.quote(GATEWAY_SCRIPT)} || true",
+        )
+
+        # 2. Wipe
+        paths_to_remove = [
+            CONTAINER_SESSIONS_DIR,
+            CONTAINER_DATA_DIR,
+            CONTAINER_SKILLS_DIR,
+            f"{CONTAINER_WORKDIR}/.mcp",
+        ]
+        await self._exec(
+            "rm -rf " + " ".join(shlex.quote(p) for p in paths_to_remove),
+        )
+
+        # 3. Recreate
+        await self._exec(
+            f"mkdir -p {CONTAINER_DATA_DIR} {CONTAINER_SKILLS_DIR} "
+            f"{CONTAINER_SESSIONS_DIR}",
+        )
+
+        # 4. Clear in-memory state
+        async with self._mcp_lock, self._skill_lock:
+            self._gateway_clients.clear()
+            self._mcps = []
+
+        # 5. Restart gateway with fresh token
+        self._gateway_token = uuid.uuid4().hex
+        if self._gateway is not None:
+            try:
+                await self._gateway.aclose()
+            except Exception:
+                pass
+
+        await self._write_gateway_config()
+        await self._start_gateway_process()
+
+        host_port = self._port_mapping[self.gateway_port]
+        self._gateway = GatewayClient(
+            base_url=f"http://127.0.0.1:{host_port}",
+            token=self._gateway_token,
+            timeout=30.0,
+        )
+
+        # 6. Wait for healthy
+        await self._wait_for_gateway()
+
+        # 7. Re-seed
+        if default_mcps:
+            self._mcps = list(default_mcps)
+            if self.workdir is not None:
+                await self._save_mcp_file()
+            self._gateway_clients = {
+                c.name: c for c in await self._gateway.list_mcps()
+            }
+
+        if skill_paths:
+            for path in skill_paths:
+                try:
+                    await self.add_skill(path)
+                except Exception as e:
+                    logger.warning(
+                        "DockerWorkspace: skip skill %r "
+                        "during light_reset_for_pool: %s",
+                        path,
+                        e,
+                    )
+
+    async def heavy_reset_for_pool(
+        self,
+        default_mcps: list[MCPClient] | None = None,
+        skill_paths: list[str] | None = None,
+    ) -> None:
+        """Heavy reset for agent-app pool recycling.
+
+        Provides stronger isolation than :meth:`light_reset_for_pool` by
+        destroying the entire container and creating a fresh one from
+        the cached image. This ensures no residual processes, temp
+        files, or environment state leaks between users.
+
+        Steps:
+
+        1. Release gateway client.
+        2. Kill and remove the old container.
+        3. Create and start a fresh container (same image, new port).
+        4. Write gateway config and start gateway.
+        5. Wait for gateway ``/health``.
+        6. Re-seed ``default_mcps`` and ``skill_paths`` if provided.
+
+        The image (``self._image_tag``) must already be built.
+
+        Args:
+            default_mcps: MCPs to register after reset. ``None`` means
+                the workspace stays MCP-free.
+            skill_paths: Local skill directories to upload after reset.
+                ``None`` means no skills.
+        """
+        # 1. Release gateway
+        if self._gateway is not None:
+            try:
+                await self._gateway.aclose()
+            except Exception:
+                pass
+            self._gateway = None
+        self._gateway_clients.clear()
+
+        # 2. Kill and remove old container
+        if self._container is not None:
+            try:
+                await self._container.kill()
+            except Exception:
+                pass
+            try:
+                await self._container.delete(force=True)
+            except Exception:
+                pass
+            self._container = None
+        self._port_mapping.clear()
+
+        # 3. Create fresh container from cached image
+        await self._create_and_start_container()
+
+        # 4. Clear in-memory state + start gateway
+        async with self._mcp_lock, self._skill_lock:
+            self._mcps = list(default_mcps or [])
+
+        self._gateway_token = uuid.uuid4().hex
+        await self._write_gateway_config()
+        await self._start_gateway_process()
+
+        host_port = self._port_mapping[self.gateway_port]
+        self._gateway = GatewayClient(
+            base_url=f"http://127.0.0.1:{host_port}",
+            token=self._gateway_token,
+            timeout=30.0,
+        )
+
+        # 5. Wait for healthy
+        await self._wait_for_gateway()
+
+        # 6. Re-seed
+        if default_mcps:
+            if self.workdir is not None:
+                await self._save_mcp_file()
+            self._gateway_clients = {
+                c.name: c for c in await self._gateway.list_mcps()
+            }
+
+        if skill_paths:
+            for path in skill_paths:
+                try:
+                    await self.add_skill(path)
+                except Exception as e:
+                    logger.warning(
+                        "DockerWorkspace: skip skill %r "
+                        "during heavy_reset_for_pool: %s",
+                        path,
+                        e,
+                    )
+
+        self.is_alive = True
+
+    async def pause(self) -> None:
+        """Pause (freeze) the container to save resources.
+
+        Uses Docker's pause mechanism (cgroups freezer) which freezes
+        all processes instantly without a full stop/start cycle. The
+        gateway client is released since the gateway is frozen and
+        cannot respond.
+
+        Unlike :meth:`close`, the ``_container`` reference is **kept**
+        so :meth:`resume` can unpause it.
+        """
+        if self._gateway is not None:
+            try:
+                await self._gateway.aclose()
+            except Exception:
+                pass
+            self._gateway = None
+        self._gateway_clients.clear()
+
+        if self._container is not None:
+            await self._container.pause()
+        self.is_alive = False
+
+    async def resume(self) -> None:
+        """Resume a paused container and restart the gateway.
+
+        Unpauses the container, kills the frozen gateway process, mints
+        a fresh bearer token, and starts a new gateway instance.
+        """
+        if self._container is None:
+            raise RuntimeError(
+                f"Cannot resume workspace {self.workspace_id}: "
+                "container is None",
+            )
+
+        await self._container.unpause()
+
+        # Kill frozen gateway, restart with new token.
+        await self._exec(
+            f"pkill -f {shlex.quote(GATEWAY_SCRIPT)} || true",
+        )
+
+        self._gateway_token = uuid.uuid4().hex
+        await self._write_gateway_config()
+        await self._start_gateway_process()
+
+        host_port = self._port_mapping[self.gateway_port]
+        self._gateway = GatewayClient(
+            base_url=f"http://127.0.0.1:{host_port}",
+            token=self._gateway_token,
+            timeout=30.0,
+        )
+        await self._wait_for_gateway()
+
+        self._gateway_clients = {
+            c.name: c for c in await self._gateway.list_mcps()
+        }
+        self.is_alive = True
+
+    async def gateway_health(self) -> bool:
+        """Probe the gateway's ``/health`` endpoint.
+
+        Returns ``True`` if the gateway responds with 200, ``False``
+        on any error or if no gateway client is configured.
+        """
+        if self._gateway is None:
+            return False
+        try:
+            return await self._gateway.health()
+        except Exception:
+            return False
+
     # ── instructions ────────────────────────────────────────────
 
     async def get_instructions(self) -> str:
@@ -428,8 +698,7 @@ class DockerWorkspace(WorkspaceBase):
         import frontmatter as fm
 
         result = await self._exec(
-            f"find {CONTAINER_SKILLS_DIR} -name SKILL.md "
-            f"2>/dev/null || true",
+            f"find {CONTAINER_SKILLS_DIR} -name SKILL.md 2>/dev/null || true",
         )
         if not result.ok():
             return []
@@ -559,7 +828,7 @@ class DockerWorkspace(WorkspaceBase):
             # mirrors the conflict-rejection behaviour of ``mkdir`` here
             # rather than LocalWorkspace's full hash-dedup index.
             check = await self._exec(
-                f"test -e "
+                "test -e "
                 f"{shlex.quote(CONTAINER_SKILLS_DIR + '/' + dir_name)}",
             )
             if check.ok():
@@ -864,8 +1133,8 @@ class DockerWorkspace(WorkspaceBase):
         bindings = ports_info.get(f"{self.gateway_port}/tcp", []) or []
         if not bindings:
             raise RuntimeError(
-                f"gateway port {self.gateway_port} did not bind to a "
-                "host port",
+                f"gateway port {self.gateway_port} "
+                "did not bind to a host port",
             )
         self._port_mapping[self.gateway_port] = int(bindings[0]["HostPort"])
 
@@ -904,8 +1173,8 @@ class DockerWorkspace(WorkspaceBase):
             return [MCPClient.model_validate(m) for m in data]
         except Exception as e:
             logger.warning(
-                "DockerWorkspace: failed to read %s, falling back to "
-                "default_mcps: %s",
+                "DockerWorkspace: failed to read %s, "
+                "falling back to default_mcps: %s",
                 host_mcp,
                 e,
             )
