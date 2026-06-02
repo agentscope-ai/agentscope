@@ -2,12 +2,13 @@
 # pylint: disable=abstract-method
 """Unit tests for middleware system."""
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, patch
 from typing import Any, AsyncGenerator, Callable, Union
 
 from utils import MockModel
 from pydantic import BaseModel
 from agentscope.event import AgentEvent
-from agentscope.agent import Agent
+from agentscope.agent import Agent, ContextConfig
 from agentscope.middleware import MiddlewareBase
 from agentscope.model import ChatResponse
 from agentscope.message import (
@@ -814,6 +815,172 @@ class TestMiddleware(IsolatedAsyncioTestCase):
                 for m in system_messages
             ),
         )
+
+    async def test_on_compress_context_middleware(self) -> None:
+        """Test on_compress_context middleware follows the onion chain pattern.
+
+        Verifies that:
+        - Multiple middlewares are chained in onion order (mw1 wraps mw2).
+        - ``input_kwargs`` carries the correct ``context_config``.
+        - The ``next_handler`` ultimately calls ``_compress_context_impl``.
+        - A middleware can short-circuit and skip the actual implementation.
+        """
+
+        # ------------------------------------------------------------------ #
+        # Middleware that records pre/post and forwards to next_handler.      #
+        # ------------------------------------------------------------------ #
+        class CompressContextMiddleware(MiddlewareBase):
+            """Middleware for testing on_compress_context hook."""
+
+            def __init__(self, log: list, name: str) -> None:
+                """Initialize the compress context middleware.
+
+                Args:
+                    log (`list`):
+                        The execution log list.
+                    name (`str`):
+                        The middleware name.
+                """
+                self.log = log
+                self.name = name
+
+            async def on_compress_context(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., Any],
+            ) -> None:
+                """Forward to next handler, recording pre and post."""
+                self.log.append(f"{self.name}_pre")
+                await next_handler(**input_kwargs)
+                self.log.append(f"{self.name}_post")
+
+        middleware1 = CompressContextMiddleware(self.execution_log, "mw1")
+        middleware2 = CompressContextMiddleware(self.execution_log, "mw2")
+
+        self.mock_model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="test response")],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        context_config = ContextConfig(trigger_ratio=0.8, reserve_ratio=0.1)
+        agent = Agent(
+            name="test_agent",
+            system_prompt="test prompt",
+            model=self.mock_model,
+            toolkit=self.toolkit,
+            middlewares=[middleware1, middleware2],
+            context_config=context_config,
+        )
+
+        # Patch _compress_context_impl to avoid real token counting.
+        with patch.object(
+            agent,
+            "_compress_context_impl",
+            new_callable=AsyncMock,
+        ) as mock_impl:
+            await agent.compress_context(context_config=context_config)
+
+            # _compress_context_impl must have been called exactly once.
+            mock_impl.assert_awaited_once_with(context_config=context_config)
+
+        # Verify onion execution order: mw1_pre -> mw2_pre -> mw2_post ->
+        # mw1_post
+        expected = ["mw1_pre", "mw2_pre", "mw2_post", "mw1_post"]
+        self.assertListEqual(self.execution_log, expected)
+
+    async def test_on_compress_context_middleware_short_circuit(
+        self,
+    ) -> None:
+        """Test that a middleware can skip _compress_context_impl entirely."""
+
+        class SkipCompressMiddleware(MiddlewareBase):
+            """Middleware that skips the actual compress_context call."""
+
+            def __init__(self, log: list) -> None:
+                """Initialize the skip compress middleware.
+
+                Args:
+                    log (`list`):
+                        The execution log list.
+                """
+                self.log = log
+
+            async def on_compress_context(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., Any],
+            ) -> None:
+                """Record the call and skip forwarding to next_handler."""
+                self.log.append("skipped")
+                # Intentionally NOT calling next_handler.
+
+        middleware = SkipCompressMiddleware(self.execution_log)
+
+        self.mock_model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="test response")],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        agent = Agent(
+            name="test_agent",
+            system_prompt="test prompt",
+            model=self.mock_model,
+            toolkit=self.toolkit,
+            middlewares=[middleware],
+        )
+
+        with patch.object(
+            agent,
+            "_compress_context_impl",
+            new_callable=AsyncMock,
+        ) as mock_impl:
+            await agent.compress_context()
+
+            # _compress_context_impl should NOT have been called.
+            mock_impl.assert_not_awaited()
+
+        self.assertListEqual(self.execution_log, ["skipped"])
+
+    async def test_on_compress_context_no_middleware(self) -> None:
+        """Test that compress_context calls _compress_context_impl directly
+        when no middleware is registered."""
+
+        self.mock_model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="test response")],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        context_config = ContextConfig(trigger_ratio=0.8, reserve_ratio=0.1)
+        agent = Agent(
+            name="test_agent",
+            system_prompt="test prompt",
+            model=self.mock_model,
+            toolkit=self.toolkit,
+            # No middlewares registered.
+            context_config=context_config,
+        )
+
+        with patch.object(
+            agent,
+            "_compress_context_impl",
+            new_callable=AsyncMock,
+        ) as mock_impl:
+            await agent.compress_context(context_config=context_config)
+            mock_impl.assert_awaited_once_with(context_config=context_config)
 
     async def asyncTearDown(self) -> None:
         """Clean up test fixtures."""

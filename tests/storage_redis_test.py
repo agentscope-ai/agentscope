@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=protected-access
 """Unit tests for RedisStorage using fakeredis."""
+
 from unittest.async_case import IsolatedAsyncioTestCase
 
 import fakeredis.aioredis
@@ -311,6 +313,18 @@ class TestMessage(IsolatedAsyncioTestCase):
             [msg.model_dump()],
         )
 
+    async def test_upsert_refreshes_message_list_ttl(self) -> None:
+        """Message list keys expire with the session storage TTL."""
+        self.storage.key_ttl = 60
+        msg = UserMsg(name="alice", content="hello")
+
+        await self.storage.upsert_message(self.user_id, self.session_id, msg)
+
+        ttl = await self.storage._client.ttl(
+            self.storage._message_key(self.user_id, self.session_id),
+        )
+        self.assertGreater(ttl, 0)
+
     async def test_upsert_replaces_last_message_with_same_id(self) -> None:
         """Upserting a message whose id matches the last entry replaces it
         in-place (streaming overwrite), rather than creating a duplicate."""
@@ -336,6 +350,29 @@ class TestMessage(IsolatedAsyncioTestCase):
             [updated.model_dump()],
             "Duplicate must not be created; existing entry must be replaced.",
         )
+
+    async def test_replace_refreshes_message_list_ttl(self) -> None:
+        """Streaming message replacement keeps the message key expiring."""
+        self.storage.key_ttl = 60
+        msg = AssistantMsg(name="bot", content="v1")
+        await self.storage.upsert_message(self.user_id, self.session_id, msg)
+        await self.storage._client.persist(
+            self.storage._message_key(self.user_id, self.session_id),
+        )
+        updated = msg.model_copy(
+            update={"content": [TextBlock(text="v2")]},
+        )
+
+        await self.storage.upsert_message(
+            self.user_id,
+            self.session_id,
+            updated,
+        )
+
+        ttl = await self.storage._client.ttl(
+            self.storage._message_key(self.user_id, self.session_id),
+        )
+        self.assertGreater(ttl, 0)
 
     async def test_upsert_appends_when_id_differs_from_last(self) -> None:
         """Upserting a message with a different id than the last always

@@ -523,6 +523,125 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_sync_function_returning_plain_string(self) -> None:
+        """Test wrapping a sync function that returns a plain string."""
+
+        def get_weather(location: str) -> str:
+            """Get weather information.
+
+            Args:
+                location: The location to get weather for
+            """
+            return f"The weather in {location} is sunny."
+
+        toolkit = Toolkit(
+            tools=[FunctionTool(get_weather)],
+        )
+
+        state = AgentState()
+        tool_call = ToolCallBlock(
+            id="test_weather",
+            name="get_weather",
+            input=json.dumps({"location": "Chengdu"}),
+        )
+
+        chunks = []
+        response = None
+        async for result in toolkit.call_tool(tool_call, state):
+            if isinstance(result, ToolChunk):
+                chunks.append(result)
+            elif isinstance(result, ToolResponse):
+                response = result
+
+        self.assertEqual(len(chunks), 1)
+        self.assertDictEqual(
+            chunks[0].model_dump(),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": "The weather in Chengdu is sunny.",
+                    },
+                ],
+                "state": "running",
+                "is_last": True,
+                "metadata": {},
+                "id": AnyString(),
+            },
+        )
+
+        self.assertIsNotNone(response)
+        self.assertDictEqual(
+            response.model_dump(),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": "The weather in Chengdu is sunny.",
+                    },
+                ],
+                "state": "success",
+                "metadata": {},
+                "id": "test_weather",
+            },
+        )
+
+    async def test_async_function_returning_json_serializable_value(
+        self,
+    ) -> None:
+        """Test wrapping an async function that returns a JSON value."""
+
+        async def get_weather(location: str) -> dict:
+            """Get weather information.
+
+            Args:
+                location: The location to get weather for
+            """
+            return {
+                "location": location,
+                "weather": {
+                    "condition": "sunny",
+                    "temperature": 22,
+                },
+            }
+
+        toolkit = Toolkit(
+            tools=[FunctionTool(get_weather)],
+        )
+
+        state = AgentState()
+        tool_call = ToolCallBlock(
+            id="test_weather_json",
+            name="get_weather",
+            input=json.dumps({"location": "成都"}),
+        )
+        expected_text = json.dumps(
+            {
+                "location": "成都",
+                "weather": {
+                    "condition": "sunny",
+                    "temperature": 22,
+                },
+            },
+            ensure_ascii=False,
+        )
+
+        chunks = []
+        response = None
+        async for result in toolkit.call_tool(tool_call, state):
+            if isinstance(result, ToolChunk):
+                chunks.append(result)
+            elif isinstance(result, ToolResponse):
+                response = result
+
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0].content[0].text, expected_text)
+
+        self.assertIsNotNone(response)
+        self.assertEqual(response.content[0].text, expected_text)
+
     async def test_sync_streaming_function(self) -> None:
         """Test registering a synchronous streaming function."""
 
@@ -621,6 +740,56 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "id": "test_count",
             },
+        )
+
+    async def test_sync_streaming_function_returning_plain_values(
+        self,
+    ) -> None:
+        """Test wrapping a sync generator that yields plain values."""
+
+        def stream_weather() -> Generator[Any, None, None]:
+            """Stream weather information."""
+            yield "checking"
+            yield {
+                "condition": "sunny",
+                "temperature": 22,
+            }
+
+        toolkit = Toolkit(
+            tools=[FunctionTool(stream_weather)],
+        )
+
+        state = AgentState()
+        tool_call = ToolCallBlock(
+            id="test_weather_stream",
+            name="stream_weather",
+            input=json.dumps({}),
+        )
+        expected_dict_text = json.dumps(
+            {
+                "condition": "sunny",
+                "temperature": 22,
+            },
+            ensure_ascii=False,
+        )
+
+        chunks = []
+        response = None
+        async for result in toolkit.call_tool(tool_call, state):
+            if isinstance(result, ToolChunk):
+                chunks.append(result)
+            elif isinstance(result, ToolResponse):
+                response = result
+
+        self.assertEqual(
+            [chunk.content[0].text for chunk in chunks],
+            ["checking", expected_dict_text],
+        )
+
+        self.assertIsNotNone(response)
+        self.assertEqual(
+            response.content[0].text,
+            f"checking{expected_dict_text}",
         )
 
     async def test_async_non_streaming_function(self) -> None:
@@ -826,6 +995,54 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "id": "test_sequence",
             },
+        )
+
+    async def test_async_streaming_function_returning_plain_values(
+        self,
+    ) -> None:
+        """Test wrapping an async generator that yields plain values."""
+
+        async def stream_status() -> AsyncGenerator[Any, None]:
+            """Stream status information."""
+            yield "started"
+            yield {
+                "done": True,
+            }
+
+        toolkit = Toolkit(
+            tools=[FunctionTool(stream_status)],
+        )
+
+        state = AgentState()
+        tool_call = ToolCallBlock(
+            id="test_status_stream",
+            name="stream_status",
+            input=json.dumps({}),
+        )
+        expected_dict_text = json.dumps(
+            {
+                "done": True,
+            },
+            ensure_ascii=False,
+        )
+
+        chunks = []
+        response = None
+        async for result in toolkit.call_tool(tool_call, state):
+            if isinstance(result, ToolChunk):
+                chunks.append(result)
+            elif isinstance(result, ToolResponse):
+                response = result
+
+        self.assertEqual(
+            [chunk.content[0].text for chunk in chunks],
+            ["started", expected_dict_text],
+        )
+
+        self.assertIsNotNone(response)
+        self.assertEqual(
+            response.content[0].text,
+            f"started{expected_dict_text}",
         )
 
 

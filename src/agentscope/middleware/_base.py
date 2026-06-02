@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Base middleware class for AgentScope middleware system."""
-from typing import AsyncGenerator, Awaitable, Callable, Union, TYPE_CHECKING
+from typing import AsyncGenerator, Awaitable, Callable, TYPE_CHECKING
+
+from ..tool import ToolBase
 
 if TYPE_CHECKING:
     from ..agent import Agent
@@ -163,7 +165,7 @@ class MiddlewareBase:  # pylint: disable=unused-argument
             ...,
             Awaitable["ChatResponse" | AsyncGenerator["ChatResponse", None]],
         ],
-    ) -> Union["ChatResponse", AsyncGenerator["ChatResponse", None]]:
+    ) -> "ChatResponse" | AsyncGenerator["ChatResponse", None]:
         """Hook for intercepting the model API call.
 
         Args:
@@ -181,6 +183,28 @@ class MiddlewareBase:  # pylint: disable=unused-argument
         """
         raise RuntimeError(
             f"{type(self).__name__} does not implement on_model_call",
+        )
+
+    async def on_compress_context(
+        self,
+        agent: "Agent",
+        input_kwargs: dict,
+        next_handler: Callable[..., Awaitable[None]],
+    ) -> None:
+        """Onion hook for `compress_context` function in `Agent` class
+
+        Args:
+            agent (`Agent`):
+                The Agent instance executing this middleware
+            input_kwargs (`dict`):
+                Dictionary containing:
+                - context_config: ContextConfig | None
+            next_handler (`Callable[..., Awaitable[None]]`):
+                Callable that executes the next middleware or
+                original method
+        """
+        raise RuntimeError(
+            f"{type(self).__name__} does not implement on_compress_context",
         )
 
     async def on_system_prompt(
@@ -204,3 +228,13 @@ class MiddlewareBase:  # pylint: disable=unused-argument
         raise RuntimeError(
             f"{type(self).__name__} does not implement on_system_prompt",
         )
+
+    async def list_tools(self) -> list[ToolBase]:
+        """List available tools provided by this middleware. Optional to
+        implement.
+
+        Returns:
+            `list[ToolBase]`:
+                A list of tools provided by this middleware.
+        """
+        return []

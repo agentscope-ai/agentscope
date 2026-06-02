@@ -49,7 +49,10 @@ class ChatModelBase:
     """The enable stream output for the LLM output."""
 
     max_retries: int
-    """The maximum retries for the Anthropic API."""
+    """The maximum number of retries for the underlying API."""
+
+    retry_delay: float
+    """Seconds to sleep between retry attempts."""
 
     context_size: int
     """The model context size that will be used in the context compression."""
@@ -61,6 +64,7 @@ class ChatModelBase:
         parameters: BaseModel,
         stream: bool = True,
         max_retries: int = 3,
+        retry_delay: float = 1.0,
         context_size: int = 32768,
     ) -> None:
         """Initialize the chat model base.
@@ -75,7 +79,11 @@ class ChatModelBase:
             stream (`bool`, defaults to `True`):
                 Whether to enable streaming output for the LLM.
             max_retries (`int`, defaults to `3`):
-                The maximum number of retries for API calls.
+                The maximum number of retries for API calls. Only exceptions
+                listed in ``_get_retryable_exceptions()`` count against this
+                budget; other exceptions are raised immediately.
+            retry_delay (`float`, defaults to `1.0`):
+                Seconds to sleep between retry attempts.
             context_size (`int`, defaults to `32768`):
                 The model context size used for context compression.
         """
@@ -84,7 +92,19 @@ class ChatModelBase:
         self.parameters = parameters
         self.stream = stream
         self.max_retries = max_retries
+        self.retry_delay = retry_delay
         self.context_size = context_size
+
+    @classmethod
+    def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
+        """Return the exception types that should trigger a retry.
+
+        Defaults to an empty tuple (no retries). Subclasses can override to
+        declare provider-specific retryable exceptions. SDK exception types
+        should be imported lazily inside the override so the SDK stays an
+        optional dependency.
+        """
+        return ()
 
     @classmethod
     def list_models(
@@ -141,11 +161,11 @@ class ChatModelBase:
         tool_choice: ToolChoice | None = None,
         **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
-        """Call the model with retry and fallback logic.
+        """Call the model with retry logic.
 
-        Formats messages using formatter if available, then attempts
-        to call the model up to max_retries + 1 times. If all attempts
-        fail and a fallback model is configured, retries with that model.
+        Attempts to call the model up to ``max_retries + 1`` times. Only
+        exceptions listed in ``_get_retryable_exceptions()`` count against
+        this budget; other exceptions are raised immediately.
 
         Args:
             messages (`list[Msg]`):
@@ -158,8 +178,8 @@ class ChatModelBase:
                 Additional keyword arguments passed to the underlying API.
         """
 
+        retryable = tuple(self._get_retryable_exceptions())
         last_error: Exception | None = None
-
         for attempt in range(self.max_retries + 1):
             try:
                 return await self._call_api(
@@ -170,26 +190,27 @@ class ChatModelBase:
                     **kwargs,
                 )
             except Exception as e:
+                if not isinstance(e, retryable):
+                    raise
                 last_error = e
                 if attempt < self.max_retries:
                     logger.warning(
-                        "Attempt %d failed for model %s: %s. Retrying...",
+                        "Attempt %d failed for model %s: %s. "
+                        "Retrying in %.1fs...",
                         attempt + 1,
                         self.model,
                         str(e),
+                        self.retry_delay,
                     )
-                    # Sleep before retry
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(self.retry_delay)
                 else:
                     logger.warning(
                         "All %d attempt(s) failed for model %s.",
                         self.max_retries + 1,
                         self.model,
                     )
-
         if last_error is not None:
             raise last_error
-
         raise RuntimeError(
             f"Failed to call model {self.model} after "
             f"{self.max_retries + 1} retries.",
@@ -357,8 +378,8 @@ class ChatModelBase:
     ) -> StructuredResponse:
         """Generate required structured output by the given model.
 
-        Note this function also shares the fallback model and max retries
-        settings with the `__call__` method.
+        Shares the same retry settings (``max_retries``, ``retry_delay``, and
+        ``_get_retryable_exceptions()``) as the ``__call__`` method.
 
         Args:
             messages (`list[Msg]`):
@@ -377,8 +398,8 @@ class ChatModelBase:
                 "`generate_structured_output` method.",
             )
 
+        retryable = tuple(self._get_retryable_exceptions())
         last_error: Exception | None = None
-
         for attempt in range(self.max_retries + 1):
             try:
                 return await self._call_api_with_structured_output(
@@ -388,24 +409,27 @@ class ChatModelBase:
                     **kwargs,
                 )
             except Exception as e:
+                if not isinstance(e, retryable):
+                    raise
                 last_error = e
                 if attempt < self.max_retries:
                     logger.warning(
-                        "Attempt %d failed for model %s: %s. Retrying...",
+                        "Attempt %d failed for model %s: %s. "
+                        "Retrying in %.1fs...",
                         attempt + 1,
                         self.model,
                         str(e),
+                        self.retry_delay,
                     )
+                    await asyncio.sleep(self.retry_delay)
                 else:
                     logger.warning(
                         "All %d attempt(s) failed for model %s.",
                         self.max_retries + 1,
                         self.model,
                     )
-
         if last_error is not None:
             raise last_error
-
         raise RuntimeError(
             f"Failed to generate structured output after "
             f"{self.max_retries + 1} retries.",

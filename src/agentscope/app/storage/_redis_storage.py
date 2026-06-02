@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=too-many-public-methods
 """The Redis storage implementation."""
+
 from datetime import datetime
 from typing import Any, TYPE_CHECKING, Self
 
@@ -114,6 +115,10 @@ class RedisStorage(StorageBase):
     async def _set_with_ttl(self, key: str, value: str) -> None:
         """SET a key and optionally apply the sliding TTL."""
         await self._client.set(key, value)
+        await self._refresh_key_ttl(key)
+
+    async def _refresh_key_ttl(self, key: str) -> None:
+        """Apply the sliding TTL to a key, if configured."""
         if self.key_ttl is not None:
             await self._client.expire(key, self.key_ttl)
 
@@ -816,8 +821,10 @@ class RedisStorage(StorageBase):
             last_msg = Msg.model_validate_json(last_raw)
             if last_msg.id == msg.id:
                 await self._client.lset(key, -1, msg.model_dump_json())
+                await self._refresh_key_ttl(key)
                 return
         await self._client.rpush(key, msg.model_dump_json())
+        await self._refresh_key_ttl(key)
 
     async def get_message(
         self,
