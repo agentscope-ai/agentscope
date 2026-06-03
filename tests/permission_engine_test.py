@@ -720,7 +720,7 @@ class PermissionEngineBypassImmuneFieldTest(IsolatedAsyncioTestCase):
     configurable ``bypass_immune`` value — independent of any specific
     safety trigger — to verify the engine's mechanism for honoring the
     field. Together with
-    :class:`PermissionEngineSafetyCheckBypassImmuneTest` (which tests
+    :class:`PermissionEngineSafetyCheckAllowRuleImmuneTest` (which tests
     that Bash/Write/Edit's individual safety checks correctly set the
     field), this fully covers the bypass-immune contract.
     """

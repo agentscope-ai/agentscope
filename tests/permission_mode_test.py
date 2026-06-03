@@ -15,7 +15,7 @@ that mode can be verified in isolation. Tests cover:
 
 Specific safety-check triggers (injection, dangerous removal, sed
 constraints, dangerous config paths) are tested separately in
-``permission_engine_test.py::PermissionEngineSafetyCheckBypassImmuneTest``.
+``permission_engine_test.py::PermissionEngineSafetyCheckAllowRuleImmuneTest``.
 """
 import os
 import sys

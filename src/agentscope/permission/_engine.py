@@ -120,8 +120,10 @@ class PermissionEngine:
     ) -> PermissionDecision:
         """Permission check for :attr:`PermissionMode.DEFAULT`.
 
-        Every operation requires explicit permission unless an allow rule
-        matches. Evaluation order:
+        Every operation requires explicit permission unless either an
+        allow rule matches or the tool's own ``check_permissions``
+        explicitly returns ALLOW (e.g. ``Bash`` auto-allows recognized
+        read-only commands like ``ls``/``git status``). Evaluation order:
 
         1. Deny rules → DENY
         2. Ask rules → ASK (with suggestions)
@@ -529,8 +531,11 @@ class PermissionEngine:
         A safety ASK is an ASK that a tool has explicitly marked with
         :attr:`PermissionDecision.bypass_immune` ``= True``. Tools emit
         these for dangerous operations (e.g. write to ``~/.bashrc``,
-        ``rm -rf /``, command-injection patterns) that must be
-        surfaced to the user regardless of allow rules or BYPASS mode.
+        ``rm -rf /``, command-injection patterns) that must be surfaced
+        to the user regardless of allow rules in
+        ``DEFAULT``/``ACCEPT_EDITS``. ``BYPASS`` mode intentionally
+        skips this check (see :meth:`_check_bypass`); ``DONT_ASK``
+        converts the ASK to DENY (see :meth:`_check_dont_ask`).
 
         Args:
             decision (`PermissionDecision`):

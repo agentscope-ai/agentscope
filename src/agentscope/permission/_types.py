@@ -26,9 +26,13 @@ class PermissionMode(Enum):
     +===============+==================================================+================================+
     | DEFAULT       | Every operation asks for permission unless:      | Default mode, most secure      |
     |               | - an allow rule matches, OR                      |                                |
-    |               | - the tool classifies the invocation as          |                                |
-    |               |   read-only (e.g. ``Bash("ls")``, ``Read``,      |                                |
-    |               |   ``Glob``, ``Grep``)                            |                                |
+    |               | - the tool's ``check_permissions`` explicitly    |                                |
+    |               |   returns ALLOW for the invocation (currently   |                                |
+    |               |   only ``Bash`` auto-allows recognized          |                                |
+    |               |   read-only commands such as ``ls``/``git       |                                |
+    |               |   status``). Read/Glob/Grep return PASSTHROUGH  |                                |
+    |               |   and fall through to the default ASK unless    |                                |
+    |               |   an allow rule matches.                        |                                |
     +---------------+--------------------------------------------------+--------------------------------+
     | ACCEPT_EDITS  | - Auto-allow file writes in working directories | User present, rapid iteration  |
     |               | - Auto-allow file reads in working directories  | development                    |
@@ -60,8 +64,10 @@ class PermissionMode(Enum):
     +---------------+--------------------------------------------------+--------------------------------+
 
     Attributes:
-        DEFAULT: Default mode - explicit permission per action, but
-            read-only operations are auto-allowed.
+        DEFAULT: Default mode - explicit permission per action. The
+            only auto-allow path is the tool's own ``check_permissions``
+            returning ALLOW (currently just ``Bash`` for recognized
+            read-only commands like ``ls``/``git status``).
         ACCEPT_EDITS: Accept edits mode - automatically allows file
             edits within working directories (including filesystem
             bash commands whose every target is in a working dir).
