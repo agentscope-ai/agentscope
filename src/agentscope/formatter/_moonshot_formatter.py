@@ -145,14 +145,18 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
                         reasoning_parts = []
                         tool_calls = []
 
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": block.hint},
-                            ],
-                        },
-                    )
+                    if isinstance(block.hint, str):
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": block.hint},
+                                ],
+                            },
+                        )
+                    else:
+                        # TODO: support multimodal HintBlock content
+                        pass
 
                 elif isinstance(block, ToolCallBlock):
                     tool_calls.append(

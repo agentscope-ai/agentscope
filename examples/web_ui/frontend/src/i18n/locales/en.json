@@ -33,6 +33,9 @@
 		"switchToZh": "切换为中文",
 		"switchToEn": "Switch to English",
 		"success": "Success",
+		"team": "Team",
+		"leader": "Leader",
+		"worker": "Worker",
 		"time": "Time",
 		"yes": "Yes"
 	},
@@ -47,6 +50,12 @@
 		},
 		"glob": {
 			"name": "Glob"
+		},
+		"taskCreate": {
+			"name": "TaskCreate",
+			"label": "Create",
+			"count_one": "{{count}} task",
+			"count_other": "{{count}} tasks"
 		},
 		"grep": {
 			"name": "Grep"
@@ -297,5 +306,20 @@
 			"title": "Start chatting",
 			"content": "Type a message and press Enter. Paperclip attaches files."
 		}
+	},
+	"task-panel": {
+		"heading": "Tasks",
+		"noTasks": "No tasks yet.",
+		"pending": "Pending",
+		"inProgress": "In Progress",
+		"completed": "Completed",
+		"blockedBy": "blocked by"
+	},
+	"team-sidebar": {
+		"membersHeading": "Members",
+		"noMembers": "No members yet — ask the leader to spawn one with AgentCreate.",
+		"running": "Running",
+		"idle": "Idle",
+		"missingSession": "(no session)"
 	}
 }

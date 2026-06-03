@@ -14,8 +14,7 @@ from ...permission import (
     PermissionRule,
 )
 from .._response import ToolChunk
-from ...message import TextBlock
-
+from ...message import TextBlock, ToolResultState
 
 # Version control system directories to exclude from searches
 VCS_DIRECTORIES_TO_EXCLUDE = [
@@ -345,7 +344,7 @@ class Grep(ToolBase):
                         "Windows: choco install ripgrep",
                     ),
                 ],
-                state="error",
+                state=ToolResultState.ERROR,
                 is_last=True,
             )
 
@@ -364,7 +363,7 @@ class Grep(ToolBase):
         if multiline:
             args.extend(["-U", "--multiline-dotall"])
 
-        # Case insensitive (support both i and case_insensitive
+        # Case-insensitive (support both i and case_insensitive
         # for compatibility)
         if i or case_insensitive:
             args.append("-i")
@@ -422,13 +421,13 @@ class Grep(ToolBase):
         except RipgrepTimeoutError as e:
             return ToolChunk(
                 content=[TextBlock(text=str(e))],
-                state="error",
+                state=ToolResultState.ERROR,
                 is_last=True,
             )
         except RuntimeError as e:
             return ToolChunk(
                 content=[TextBlock(text=str(e))],
-                state="error",
+                state=ToolResultState.ERROR,
                 is_last=True,
             )
 
@@ -437,7 +436,7 @@ class Grep(ToolBase):
                 content=[
                     TextBlock(text=f"No matches found for pattern: {pattern}"),
                 ],
-                state="running",
+                state=ToolResultState.SUCCESS,
                 is_last=True,
             )
 
@@ -459,6 +458,6 @@ class Grep(ToolBase):
 
         return ToolChunk(
             content=[TextBlock(text="\n".join(limited) + suffix)],
-            state="running",
+            state=ToolResultState.SUCCESS,
             is_last=True,
         )

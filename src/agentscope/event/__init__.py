@@ -17,6 +17,7 @@ from ._event import (
     ThinkingBlockStartEvent,
     ThinkingBlockDeltaEvent,
     ThinkingBlockEndEvent,
+    HintBlockEvent,
     ToolCallStartEvent,
     ToolCallDeltaEvent,
     ToolCallEndEvent,
@@ -29,6 +30,7 @@ from ._event import (
     RequireExternalExecutionEvent,
     UserConfirmResultEvent,
     ExternalExecutionResultEvent,
+    CustomEvent,
     AgentEvent,
     ConfirmResult,
 )
@@ -50,6 +52,7 @@ __all__ = [
     "ThinkingBlockStartEvent",
     "ThinkingBlockDeltaEvent",
     "ThinkingBlockEndEvent",
+    "HintBlockEvent",
     "ToolCallStartEvent",
     "ToolCallDeltaEvent",
     "ToolCallEndEvent",
@@ -62,6 +65,7 @@ __all__ = [
     "RequireExternalExecutionEvent",
     "UserConfirmResultEvent",
     "ExternalExecutionResultEvent",
+    "CustomEvent",
     "AgentEvent",
     "ConfirmResult",
 ]

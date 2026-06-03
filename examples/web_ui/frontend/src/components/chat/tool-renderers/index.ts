@@ -13,6 +13,7 @@ import { EditRenderer } from './EditRenderer';
 import { GlobRenderer } from './GlobRenderer';
 import { GrepRenderer } from './GrepRenderer';
 import { ReadRenderer } from './ReadRenderer';
+import { TaskCreateRenderer } from './TaskCreateRenderer';
 import type { TFunction, ToolCallWithResult, ToolRenderer } from './types';
 import { WriteRenderer } from './WriteRenderer';
 
@@ -23,6 +24,7 @@ const renderers: Record<string, ToolRenderer> = {
 	Edit: EditRenderer,
 	Glob: GlobRenderer,
 	Grep: GrepRenderer,
+	TaskCreate: TaskCreateRenderer,
 };
 
 function getRenderer(toolName: string): ToolRenderer {

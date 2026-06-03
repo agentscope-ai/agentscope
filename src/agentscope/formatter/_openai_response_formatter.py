@@ -161,17 +161,21 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                         )
                         content_parts = []
 
-                    items.append(
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "input_text",
-                                    "text": block.hint,
-                                },
-                            ],
-                        },
-                    )
+                    if isinstance(block.hint, str):
+                        items.append(
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "input_text",
+                                        "text": block.hint,
+                                    },
+                                ],
+                            },
+                        )
+                    else:
+                        # TODO: support multimodal HintBlock content
+                        pass
 
                 elif isinstance(block, ThinkingBlock):
                     # When reasoning_item_id is present the block originated

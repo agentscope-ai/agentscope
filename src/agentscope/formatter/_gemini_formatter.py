@@ -165,12 +165,16 @@ class GeminiChatFormatter(_GeminiFormatterBase):
                         messages.append({"role": role, "parts": parts})
                         parts = []
 
-                    messages.append(
-                        {
-                            "role": "user",
-                            "parts": [{"text": block.hint}],
-                        },
-                    )
+                    if isinstance(block.hint, str):
+                        messages.append(
+                            {
+                                "role": "user",
+                                "parts": [{"text": block.hint}],
+                            },
+                        )
+                    else:
+                        # TODO: support multimodal HintBlock content
+                        pass
 
                 elif isinstance(block, DataBlock):
                     formatted = self._format_gemini_data_block(block)

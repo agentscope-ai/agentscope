@@ -4,7 +4,7 @@
 from ._types import ToolChoice, Function, RegisteredTool
 from ._response import ToolResponse, ToolChunk
 from ._toolkit import Toolkit
-from ._base import ToolBase
+from ._base import ToolBase, ParamsBase
 from ._adapters import MCPTool, FunctionTool
 from ._builtin import (
     ResetTools,
@@ -28,6 +28,7 @@ __all__ = [
     "ToolChoice",
     "Function",
     "ToolBase",
+    "ParamsBase",
     "MCPTool",
     "FunctionTool",
     "ToolGroup",

@@ -97,7 +97,11 @@ class XAIChatFormatter(FormatterBase):
                         if content_args:
                             xai_messages.append(user(*content_args))
                             content_args = []
-                        xai_messages.append(user(block.hint))
+                        if isinstance(block.hint, str):
+                            xai_messages.append(user(block.hint))
+                        else:
+                            # TODO: support multimodal HintBlock content
+                            pass
                     elif isinstance(block, TextBlock):
                         content_args.append(block.text)
                     elif isinstance(block, DataBlock):
@@ -229,7 +233,11 @@ class XAIChatFormatter(FormatterBase):
                                 if text:
                                     xai_messages.append(assistant(text))
                                 pending_text = []
-                        xai_messages.append(user(block.hint))
+                        if isinstance(block.hint, str):
+                            xai_messages.append(user(block.hint))
+                        else:
+                            # TODO: support multimodal HintBlock content
+                            pass
 
                 if pending_tool_calls:
                     # Assistant turn that triggered tool calls (history).

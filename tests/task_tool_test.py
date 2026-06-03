@@ -267,9 +267,9 @@ class TestTaskList(IsolatedAsyncioTestCase):
         expected_result = {
             "content": [
                 {
-                    "text": f"#{task1_id} [pending] Task 1\n"
-                    f"#{task2_id} [pending] Task 2\n"
-                    f"#{task3_id} [pending] Task 3",
+                    "text": f"{task1_id} [pending] Task 1\n"
+                    f"{task2_id} [pending] Task 2\n"
+                    f"{task3_id} [pending] Task 3",
                     "type": "text",
                     "id": AnyString(),
                 },
@@ -314,7 +314,7 @@ class TestTaskGet(IsolatedAsyncioTestCase):
         expected_result = {
             "content": [
                 {
-                    "text": f"Task #{task_id}: Test Task\n"
+                    "text": f"Task {task_id}: Test Task\n"
                     f"Status: pending\n"
                     f"Description: This is a test task with details\n"
                     f"Metadata: {{'priority': 'high'}}",
@@ -385,7 +385,7 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         expected_result = {
             "content": [
                 {
-                    "text": f"Update task #{task_id} subject.",
+                    "text": f"Update task {task_id} subject.",
                     "type": "text",
                     "id": AnyString(),
                 },
@@ -438,7 +438,7 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         expected_result = {
             "content": [
                 {
-                    "text": f"Update task #{task_id} description.",
+                    "text": f"Update task {task_id} description.",
                     "type": "text",
                     "id": AnyString(),
                 },
@@ -491,7 +491,7 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         expected_result = {
             "content": [
                 {
-                    "text": f"Update task #{task_id} status.",
+                    "text": f"Update task {task_id} status.",
                     "type": "text",
                     "id": AnyString(),
                 },
@@ -534,7 +534,7 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         expected_result = {
             "content": [
                 {
-                    "text": f"Update task #{task_id} status.\n\n"
+                    "text": f"Update task {task_id} status.\n\n"
                     f"Task completed. "
                     f"Call TaskList now to find your next available "
                     f"task or see if your work unblocked others.",
@@ -614,7 +614,7 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         expected_result = {
             "content": [
                 {
-                    "text": f"Update task #{task_id} owner.",
+                    "text": f"Update task {task_id} owner.",
                     "type": "text",
                     "id": AnyString(),
                 },
@@ -668,7 +668,7 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         expected_result = {
             "content": [
                 {
-                    "text": f"Update task #{task_id} metadata.",
+                    "text": f"Update task {task_id} metadata.",
                     "type": "text",
                     "id": AnyString(),
                 },
@@ -732,7 +732,7 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         expected_result = {
             "content": [
                 {
-                    "text": f"Update task #{task1_id} add_blocks.",
+                    "text": f"Update task {task1_id} add_blocks.",
                     "type": "text",
                     "id": AnyString(),
                 },
@@ -803,7 +803,7 @@ class TestTaskUpdate(IsolatedAsyncioTestCase):
         expected_result = {
             "content": [
                 {
-                    "text": f"Update task #{task2_id} add_blocked_by.",
+                    "text": f"Update task {task2_id} add_blocked_by.",
                     "type": "text",
                     "id": AnyString(),
                 },

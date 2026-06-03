@@ -86,9 +86,13 @@ class DeepSeekChatFormatter(FormatterBase):
                         reasoning_content_blocks = []
                         tool_calls = []
 
-                    messages.append(
-                        {"role": "user", "content": block.hint},
-                    )
+                    if isinstance(block.hint, str):
+                        messages.append(
+                            {"role": "user", "content": block.hint},
+                        )
+                    else:
+                        # TODO: support multimodal HintBlock content
+                        pass
 
                 elif isinstance(block, ToolCallBlock):
                     tool_calls.append(

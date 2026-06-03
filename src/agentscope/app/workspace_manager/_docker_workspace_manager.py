@@ -3,7 +3,7 @@
 
 Mirrors :class:`LocalWorkspaceManager` 1:1 in its public surface
 (``get_workspace`` / ``create_workspace`` / ``close`` / ``close_all``)
-so that callers — notably :func:`agentscope.app._service.get_agent` —
+so that callers — notably :class:`agentscope.app._service.ChatService` —
 do not branch on backend.
 
 Differences from the local manager (allowed to surface only via the
@@ -30,14 +30,14 @@ import os
 import time
 from typing import Self
 
-from ..._logging import logger
-from ...mcp import MCPClient
-from ...workspace._docker import DockerWorkspace
-from ...workspace._docker._make_dockerfile import (
+from agentscope._logging import logger
+from agentscope.mcp import MCPClient
+from agentscope.workspace._docker import DockerWorkspace
+from agentscope.workspace._docker._make_dockerfile import (
     DEFAULT_BASE_IMAGE,
     DEFAULT_GATEWAY_PORT,
 )
-from ._workspace_manager import WorkspaceManagerBase
+from ._base import WorkspaceManagerBase
 
 DEFAULT_SWEEP_INTERVAL = 300.0
 

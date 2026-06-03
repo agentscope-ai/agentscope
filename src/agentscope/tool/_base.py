@@ -19,7 +19,7 @@ from ._response import ToolChunk
 from ._utils import _remove_title_field
 
 
-class _ParamsBase(BaseModel):
+class ParamsBase(BaseModel):
     """A base class for tool parameters that remove the title field from the
     exported JSON schema.
     """

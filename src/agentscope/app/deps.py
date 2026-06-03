@@ -2,13 +2,11 @@
 """Shared FastAPI dependencies for the agentscope app."""
 from fastapi import Header, HTTPException, Request, status
 
-from ._manager import (
-    BackgroundTaskManager,
-    SessionManager,
-    WorkspaceManagerBase,
-    SchedulerManager,
-)
+from .workspace_manager import WorkspaceManagerBase
+from ._manager import SchedulerManager
+from ._service import ChatService
 from ._types import AgentMiddlewareFactory, AgentToolFactory
+from .message_bus import MessageBus
 from .storage import StorageBase
 
 
@@ -19,10 +17,6 @@ async def get_current_user_id(
     ),
 ) -> str:
     """Return the caller's user ID from the ``X-User-ID`` request header.
-
-    This is a placeholder dependency. Once an auth middleware is in place,
-    replace the header extraction with a JWT / session-token lookup and remove
-    the ``X-User-ID`` header entirely.
 
     Args:
         x_user_id (`str`): Value of the ``X-User-ID`` header.
@@ -53,16 +47,28 @@ async def get_storage(request: Request) -> StorageBase:
     return request.app.state.storage
 
 
-async def get_session_manager(request: Request) -> SessionManager:
-    """Return the application-wide session manager.
+async def get_message_bus(request: Request) -> MessageBus:
+    """Return the application-wide message bus.
 
     Args:
         request (`Request`): The incoming FastAPI request.
 
     Returns:
-        `SessionManager`: The session manager stored in ``app.state``.
+        `MessageBus`: The message bus instance stored in ``app.state``.
     """
-    return request.app.state.session_manager
+    return request.app.state.message_bus
+
+
+async def get_chat_service(request: Request) -> ChatService:
+    """Return the application-wide chat service.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `ChatService`: The chat service instance stored in ``app.state``.
+    """
+    return request.app.state.chat_service
 
 
 async def get_scheduler_manager(request: Request) -> SchedulerManager:
@@ -85,31 +91,8 @@ async def get_workspace_manager(request: Request) -> WorkspaceManagerBase:
 
     Returns:
         `WorkspaceManagerBase`: The workspace manager stored in ``app.state``.
-
-    Raises:
-        `HTTPException`: 503 if no workspace manager is configured.
     """
-    manager = request.app.state.workspace_manager
-    if manager is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Workspace manager is not configured.",
-        )
-    return manager
-
-
-async def get_background_task_manager(
-    request: Request,
-) -> BackgroundTaskManager:
-    """Return the application-wide background task manager.
-
-    Args:
-        request (`Request`): The incoming FastAPI request.
-
-    Returns:
-        `BackgroundTaskManager`: The manager stored in ``app.state``.
-    """
-    return request.app.state.background_task_manager
+    return request.app.state.workspace_manager
 
 
 async def get_extra_agent_middlewares(

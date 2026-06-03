@@ -85,7 +85,19 @@ All tasks are created with status `pending`.
             )
 
         try:
+            # Derive the next sequential id from existing tasks.
+            # Existing ids that look numeric are considered; any
+            # non-numeric ids (e.g. legacy UUIDs) are ignored.
+            max_numeric = 0
+            for t in _agent_state.tasks_context.tasks:
+                try:
+                    max_numeric = max(max_numeric, int(t.id))
+                except (ValueError, TypeError):
+                    pass
+            next_id = str(max_numeric + 1)
+
             task = Task(
+                id=next_id,
                 subject=subject,
                 description=description,
                 metadata=metadata or {},

@@ -150,9 +150,13 @@ class OllamaChatFormatter(_OllamaFormatterBase):
                         content_parts = []
                         images = []
 
-                    messages.append(
-                        {"role": "user", "content": block.hint},
-                    )
+                    if isinstance(block.hint, str):
+                        messages.append(
+                            {"role": "user", "content": block.hint},
+                        )
+                    else:
+                        # TODO: support multimodal HintBlock content
+                        pass
 
                 elif isinstance(block, DataBlock):
                     formatted_image = self._format_ollama_data_block(block)

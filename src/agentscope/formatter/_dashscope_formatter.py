@@ -284,14 +284,18 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                         tool_calls = []
                         thinking_parts = []
 
-                    formatted_msgs.append(
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": block.hint},
-                            ],
-                        },
-                    )
+                    if isinstance(block.hint, str):
+                        formatted_msgs.append(
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": block.hint},
+                                ],
+                            },
+                        )
+                    else:
+                        # TODO: support multimodal HintBlock content
+                        pass
 
                 elif isinstance(block, ToolCallBlock):
                     tool_calls.append(

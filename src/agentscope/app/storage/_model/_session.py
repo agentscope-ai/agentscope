@@ -67,6 +67,14 @@ class SessionRecord(_RecordBase):
     source_schedule_id: str | None = None
     """The source schedule Id."""
 
+    team_id: str | None = None
+    """The team this session participates in, if any.
+
+    Team membership is session-level: a user agent can lead multiple teams
+    across different sessions, and each worker session belongs to exactly
+    one team. ``None`` means the session is not part of any team.
+    """
+
     config: SessionConfig
     """Session configuration (workspace, name, model)."""
 

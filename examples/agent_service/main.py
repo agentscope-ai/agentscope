@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from agentscope.app import (
     create_app,
+    RedisMessageBus,
     RedisStorage,
     LocalWorkspaceManager,
 )
@@ -39,6 +40,10 @@ if os.getenv("AMAP_API_KEY"):
 
 app = create_app(
     RedisStorage(
+        host="localhost",
+        port=6379,
+    ),
+    RedisMessageBus(
         host="localhost",
         port=6379,
     ),

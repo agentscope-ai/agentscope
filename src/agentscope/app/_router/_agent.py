@@ -5,8 +5,8 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from ...agent import ContextConfig, ReActConfig
-from .._deps import get_current_user_id, get_storage
-from .._schema import (
+from ..deps import get_current_user_id, get_storage
+from ._schema import (
     AgentSchemaResponse,
     ListAgentsResponse,
     CreateAgentRequest,

@@ -3,7 +3,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from .._schema import ListModelsResponse, ListModelsRequest
+from ._schema import ListModelsResponse, ListModelsRequest
 from ...credential import CredentialFactory
 
 model_router = APIRouter(

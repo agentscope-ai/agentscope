@@ -306,6 +306,18 @@ class Msg(BaseModel):
             case EventType.THINKING_BLOCK_END:
                 pass
 
+            case EventType.HINT_BLOCK:
+                # One-shot event — the full HintBlock content arrives in
+                # a single event, so just append it to ``content`` for
+                # persistence and replay.
+                self.content.append(
+                    HintBlock(
+                        id=event.block_id,
+                        source=event.source,
+                        hint=event.hint,
+                    ),
+                )
+
             case EventType.TOOL_CALL_START:
                 self.content.append(
                     ToolCallBlock(

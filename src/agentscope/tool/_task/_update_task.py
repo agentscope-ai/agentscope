@@ -250,10 +250,10 @@ Set up task dependencies:
                     _agent_state.tasks_context.tasks[index].metadata[k] = v
 
         if updated_fields:
-            res = f'Update task #{task_id} {", ".join(updated_fields)}.'
+            res = f'Update task {task_id} {", ".join(updated_fields)}.'
         else:
             res = (
-                f"No updates were made to the task #{task_id}. "
+                f"No updates were made to the task {task_id}. "
                 f"Make sure you provided at least one field to update and "
                 f"the values are correct."
             )

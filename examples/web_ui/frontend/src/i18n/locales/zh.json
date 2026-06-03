@@ -33,6 +33,9 @@
 		"switchToZh": "切换为中文",
 		"switchToEn": "Switch to English",
 		"success": "成功",
+		"team": "团队",
+		"leader": "队长",
+		"worker": "成员",
 		"time": "时间",
 		"yes": "是"
 	},
@@ -47,6 +50,12 @@
 		},
 		"glob": {
 			"name": "Glob"
+		},
+		"taskCreate": {
+			"name": "TaskCreate",
+			"label": "创建",
+			"count_one": "{{count}} 个任务",
+			"count_other": "{{count}} 个任务"
 		},
 		"grep": {
 			"name": "Grep"
@@ -297,5 +306,20 @@
 			"title": "开始对话",
 			"content": "输入消息回车发送，回形针可附加文件。"
 		}
+	},
+	"task-panel": {
+		"heading": "任务",
+		"noTasks": "暂无任务。",
+		"pending": "待处理",
+		"inProgress": "进行中",
+		"completed": "已完成",
+		"blockedBy": "依赖"
+	},
+	"team-sidebar": {
+		"membersHeading": "成员",
+		"noMembers": "还没有成员——让队长用 AgentCreate 添加一个。",
+		"running": "运行中",
+		"idle": "空闲",
+		"missingSession": "（无会话）"
 	}
 }

@@ -4,9 +4,9 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from .._deps import get_current_user_id, get_scheduler_manager, get_storage
-from .._manager import SchedulerManager
-from .._schema import (
+from ..deps import get_current_user_id, get_scheduler_manager, get_storage
+from agentscope.app._manager import SchedulerManager
+from ._schema import (
     CreateScheduleRequest,
     CreateScheduleResponse,
     ListSchedulesResponse,
@@ -77,8 +77,8 @@ async def create_schedule(
     Raises:
         `HTTPException`: 404 if the specified agent does not exist.
     """
-    agents = await storage.list_agents(user_id)
-    if not any(a.id == body.agent_id for a in agents):
+    agent = await storage.get_agent(user_id, body.agent_id)
+    if agent is None or agent.user_id != user_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Agent '{body.agent_id}' not found.",

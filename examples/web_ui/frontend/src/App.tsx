@@ -29,7 +29,9 @@ const router = createBrowserRouter([
 		element: <AppLayout />,
 		children: [
 			{ path: '/', element: <ChatPage /> },
+			{ path: '/chat/:agentId', element: <ChatPage /> },
 			{ path: '/chat/:agentId/:sessionId', element: <ChatPage /> },
+			{ path: '/chat/:agentId/:sessionId/:memberId', element: <ChatPage /> },
 			{ path: '/schedule', element: <SchedulePage /> },
 			{ path: '/credential', element: <CredentialPage /> },
 		],

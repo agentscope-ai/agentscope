@@ -11,7 +11,7 @@
 		"preview": "vite preview"
 	},
 	"dependencies": {
-		"@agentscope-ai/agentscope": "^0.0.6",
+		"@agentscope-ai/agentscope": "^0.0.8",
 		"@fontsource-variable/geist": "^5.2.8",
 		"@tailwindcss/vite": "^4.3.0",
 		"class-variance-authority": "^0.7.1",
