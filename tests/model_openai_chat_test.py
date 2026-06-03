@@ -186,6 +186,46 @@ class TestOpenAIChatNonStream(IsolatedAsyncioTestCase):
         self.assertEqual(result.id, "resp-1")
 
     @patch("openai.AsyncClient")
+    async def test_default_thinking_enable_not_forwarded(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Default parameters do not add provider-specific extra_body."""
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello world!"),
+        )
+        mock_client_cls.return_value.chat.completions.create = mock_create
+
+        await self.model([])
+
+        self.assertNotIn("extra_body", mock_create.call_args.kwargs)
+
+    @patch("openai.AsyncClient")
+    async def test_explicit_thinking_enable_forwarded_to_extra_body(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Explicit thinking_enable controls OpenAI-compatible Qwen mode."""
+        model = OpenAIChatModel(
+            credential=OpenAICredential(api_key="test"),
+            model="qwen3",
+            stream=False,
+            context_size=128_000,
+            parameters=OpenAIChatModel.Parameters(thinking_enable=False),
+        )
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello world!"),
+        )
+        mock_client_cls.return_value.chat.completions.create = mock_create
+
+        await model([])
+
+        self.assertEqual(
+            mock_create.call_args.kwargs["extra_body"],
+            {"enable_thinking": False},
+        )
+
+    @patch("openai.AsyncClient")
     async def test_tool_call_response(
         self,
         mock_client_cls: MagicMock,

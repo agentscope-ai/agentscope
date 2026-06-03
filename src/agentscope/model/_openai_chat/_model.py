@@ -249,6 +249,12 @@ class OpenAIChatModel(ChatModelBase):
 
         kwargs.update(generate_kwargs)
 
+        if "thinking_enable" in self.parameters.model_fields_set:
+            kwargs.setdefault("extra_body", {})
+            kwargs["extra_body"][
+                "enable_thinking"
+            ] = self.parameters.thinking_enable
+
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 
         if fmt_tools:
