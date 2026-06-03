@@ -71,6 +71,7 @@ from ._make_dockerfile import (
     GATEWAY_CONFIG,
     GATEWAY_HOME,
     GATEWAY_LOG,
+    GATEWAY_PID,
     GATEWAY_SCRIPT,
     GATEWAY_VENV,
     prepare_build_context,
@@ -418,10 +419,8 @@ class DockerWorkspace(WorkspaceBase):
                 "Cannot light_reset_for_pool: container is None",
             )
 
-        # 1. Kill gateway
-        await self._exec(
-            f"pkill -f {shlex.quote(GATEWAY_SCRIPT)} || true",
-        )
+        # 1. Stop gateway
+        await self._stop_gateway_process()
 
         # 2. Wipe
         paths_to_remove = [
@@ -452,6 +451,7 @@ class DockerWorkspace(WorkspaceBase):
                 await self._gateway.aclose()
             except Exception:
                 pass
+            self._gateway = None
 
         await self._write_gateway_config()
         await self._start_gateway_process()
@@ -618,10 +618,8 @@ class DockerWorkspace(WorkspaceBase):
 
         await self._container.unpause()
 
-        # Kill frozen gateway, restart with new token.
-        await self._exec(
-            f"pkill -f {shlex.quote(GATEWAY_SCRIPT)} || true",
-        )
+        # Stop the previously frozen gateway and restart with a new token.
+        await self._stop_gateway_process()
 
         self._gateway_token = uuid.uuid4().hex
         await self._write_gateway_config()
@@ -1236,25 +1234,58 @@ class DockerWorkspace(WorkspaceBase):
         tail when startup fails.
 
         We do not block on this exec call; readiness is detected via
-        the ``/health`` poll instead.
+        the ``/health`` and authenticated ``/mcps`` poll instead.
         """
         cmd = (
+            f"rm -f {shlex.quote(GATEWAY_PID)}; "
             f"nohup {shlex.quote(GATEWAY_VENV + '/bin/python')} -u "
             f"{shlex.quote(GATEWAY_SCRIPT)} "
             f"--config {shlex.quote(GATEWAY_CONFIG)} "
             f"--port {self.gateway_port} "
-            f"> {shlex.quote(GATEWAY_LOG)} 2>&1 &"
+            f"> {shlex.quote(GATEWAY_LOG)} 2>&1 & "
+            f"echo $! > {shlex.quote(GATEWAY_PID)}"
         )
         # Detach: we don't await stream completion, just kick it off.
         await self._exec(cmd)
 
-    async def _wait_for_gateway(self, timeout: float = 30.0) -> None:
-        """Block until the gateway answers ``/health`` with 200.
+    async def _stop_gateway_process(self) -> None:
+        """Stop the gateway process recorded by :data:`GATEWAY_PID`.
 
-        Uses an exponentially-backed-off poll capped at 1 s.  When
-        the deadline expires, attempts to read the gateway log and
-        surfaces the tail in the raised error so callers can see the
-        actual startup failure.
+        The Docker image is intentionally slim and does not ship
+        process-management helpers such as ``pkill``.  Use the shell's
+        built-in ``kill`` against the PID captured when the gateway was
+        started, then remove the pidfile so stale values are not reused.
+        """
+        cmd = (
+            f"pid_file={shlex.quote(GATEWAY_PID)}; "
+            'if [ -f "$pid_file" ]; then '
+            'pid=$(cat "$pid_file" 2>/dev/null || true); '
+            'if [ -n "$pid" ]; then '
+            'kill "$pid" 2>/dev/null || true; '
+            "i=0; "
+            'while [ "$i" -lt 50 ] && kill -0 "$pid" 2>/dev/null; do '
+            "sleep 0.1; "
+            "i=$((i+1)); "
+            "done; "
+            'if kill -0 "$pid" 2>/dev/null; then '
+            'kill -9 "$pid" 2>/dev/null || true; '
+            "fi; "
+            "fi; "
+            'rm -f "$pid_file"; '
+            "fi"
+        )
+        await self._exec(cmd)
+
+    async def _wait_for_gateway(self, timeout: float = 30.0) -> None:
+        """Block until the gateway answers authenticated requests.
+
+        Uses an exponentially-backed-off poll capped at 1 s.  Readiness
+        requires both the public ``/health`` endpoint and the
+        bearer-protected ``/mcps`` endpoint to succeed, so a stale
+        gateway that still owns the port cannot be mistaken for the
+        freshly started process.  When the deadline expires, attempts
+        to read the gateway log and surfaces the tail in the raised
+        error so callers can see the actual startup failure.
 
         Args:
             timeout: Maximum seconds to wait for readiness.
@@ -1268,7 +1299,11 @@ class DockerWorkspace(WorkspaceBase):
         delay = 0.1
         while asyncio.get_event_loop().time() < deadline:
             if await self._gateway.health():
-                return
+                try:
+                    await self._gateway.list_mcps()
+                    return
+                except Exception:
+                    pass
             await asyncio.sleep(delay)
             delay = min(delay * 1.5, 1.0)
         # Last-ditch: dump the gateway log to help debug startup failures.
@@ -1278,7 +1313,7 @@ class DockerWorkspace(WorkspaceBase):
         except Exception:
             tail = "<no gateway log available>"
         raise RuntimeError(
-            f"gateway did not become healthy within {timeout}s. "
+            f"gateway did not become ready within {timeout}s. "
             f"Tail of {GATEWAY_LOG}:\n{tail}",
         )
 

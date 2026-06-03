@@ -133,7 +133,9 @@ class WorkspacePool(Generic[T]):
 
         # Background tasks
         self._health_task: asyncio.Task | None = None
+        self._replenish_tasks: set[asyncio.Task[None]] = set()
         self._replenish_lock = asyncio.Lock()
+        self._stopping = False
 
     # ── pool size helpers ───────────────────────────────────────────
 
@@ -151,6 +153,7 @@ class WorkspacePool(Generic[T]):
 
     async def start(self) -> None:
         """Start background tasks and pre-warm the pool to ``min_idle``."""
+        self._stopping = False
         if self._health_task is None:
             self._health_task = asyncio.create_task(
                 self._health_check_loop(),
@@ -161,6 +164,8 @@ class WorkspacePool(Generic[T]):
 
     async def stop(self) -> None:
         """Cancel background tasks and destroy every managed instance."""
+        self._stopping = True
+
         if self._health_task is not None:
             self._health_task.cancel()
             try:
@@ -168,6 +173,14 @@ class WorkspacePool(Generic[T]):
             except (asyncio.CancelledError, Exception):
                 pass
             self._health_task = None
+
+        # Do not cancel replenish tasks while factory() may be inside a
+        # workspace initialize call.  Wait for them to reach their stopping
+        # checks so any workspace created during shutdown is closed normally.
+        replenish_tasks = list(self._replenish_tasks)
+        if replenish_tasks:
+            await asyncio.gather(*replenish_tasks, return_exceptions=True)
+            self._replenish_tasks.clear()
 
         # Drain the idle queue so no awaiter gets stale entries.
         while not self._idle.empty():
@@ -206,6 +219,9 @@ class WorkspacePool(Generic[T]):
             A :class:`PooledEntry` in ``ACTIVE`` state.
         """
         while True:
+            if self._stopping:
+                raise RuntimeError("WorkspacePool is stopping")
+
             # Trigger replenishment if needed (non-blocking background task).
             if (
                 self.idle_count < self._min_idle
@@ -263,6 +279,10 @@ class WorkspacePool(Generic[T]):
         Args:
             entry: The entry previously obtained via :meth:`acquire`.
         """
+        if self._stopping:
+            await self._destroy_entry(entry)
+            return
+
         # Check max reuse limit.
         if self._max_reuse > 0 and entry.reuse_count >= self._max_reuse:
             logger.info(
@@ -312,6 +332,9 @@ class WorkspacePool(Generic[T]):
                 return
 
         entry.state = PooledState.POOLED
+        if self._stopping:
+            await self._destroy_entry(entry)
+            return
         await self._idle.put(entry)
 
     # ── replenishment ───────────────────────────────────────────────
@@ -325,7 +348,22 @@ class WorkspacePool(Generic[T]):
         running replenishment will re-evaluate the idle count on its
         own.
         """
-        asyncio.create_task(self._guarded_replenish())
+        if self._stopping:
+            return
+
+        task = asyncio.create_task(self._guarded_replenish())
+        self._replenish_tasks.add(task)
+
+        def _on_done(done: asyncio.Task[None]) -> None:
+            self._replenish_tasks.discard(done)
+            try:
+                done.result()
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.exception("WorkspacePool: replenish task failed")
+
+        task.add_done_callback(_on_done)
 
     async def _guarded_replenish(self) -> None:
         """Acquire the replenish lock and run ``_replenish``.
@@ -335,9 +373,13 @@ class WorkspacePool(Generic[T]):
         that holds the lock will keep looping until ``idle_count``
         reaches ``max_idle`` (or ``total`` is exhausted).
         """
+        if self._stopping:
+            return
         if self._replenish_lock.locked():
             return
         async with self._replenish_lock:
+            if self._stopping:
+                return
             await self._replenish(target=self._max_idle)
 
     async def _replenish(self, target: int) -> None:
@@ -348,7 +390,7 @@ class WorkspacePool(Generic[T]):
 
         Must be called while holding ``_replenish_lock``.
         """
-        while self.idle_count < target:
+        while not self._stopping and self.idle_count < target:
             # How many can we still create?
             async with self._lock:
                 headroom = self._total - self.total_managed
@@ -380,7 +422,7 @@ class WorkspacePool(Generic[T]):
             state=PooledState.CREATING,
         )
         async with self._lock:
-            if self.total_managed >= self._total:
+            if self._stopping or self.total_managed >= self._total:
                 return
             oid = id(entry)
             self._all[oid] = entry
@@ -391,6 +433,10 @@ class WorkspacePool(Generic[T]):
             async with self._lock:
                 self._all.pop(id(entry), None)
             raise
+
+        if self._stopping:
+            await self._destroy_created_entry(entry, ws)
+            return
 
         # Pause the freshly created workspace before pooling it.
         if self._pause_fn is not None:
@@ -409,6 +455,10 @@ class WorkspacePool(Generic[T]):
                 except Exception:
                     logger.exception("WorkspacePool: close_fn failed")
                 raise
+
+        if self._stopping:
+            await self._destroy_created_entry(entry, ws)
+            return
 
         entry.workspace = ws
         entry.state = PooledState.POOLED
@@ -497,6 +547,18 @@ class WorkspacePool(Generic[T]):
 
     async def _destroy_entry(self, entry: PooledEntry[T]) -> None:
         """Destroy a single entry and remove it from tracking."""
+        entry.state = PooledState.DESTROYED
+        async with self._lock:
+            self._all.pop(id(entry), None)
+        await self._safe_destroy(entry)
+
+    async def _destroy_created_entry(
+        self,
+        entry: PooledEntry[T],
+        workspace: T,
+    ) -> None:
+        """Destroy an entry whose factory completed during shutdown."""
+        entry.workspace = workspace
         entry.state = PooledState.DESTROYED
         async with self._lock:
             self._all.pop(id(entry), None)
