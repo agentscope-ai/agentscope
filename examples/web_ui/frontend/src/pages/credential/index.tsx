@@ -308,6 +308,7 @@ export const CredentialPage = () => {
 							<SidebarGroup key={type}>
 								<SidebarGroupLabel>{title}</SidebarGroupLabel>
 								<SidebarGroupAction
+									asChild
 									title={t('credential.addConfig')}
 									onClick={() => handleOpenCreate(type)}
 								>
