@@ -9,6 +9,7 @@ import {
 	DialogContent,
 	DialogHeader,
 	DialogTitle,
+	DialogDescription,
 	DialogFooter,
 } from '@/components/ui/dialog';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field.tsx';
@@ -85,6 +86,9 @@ export function CreateCredentialDialog({ open, onOpenChange, onCreated, defaultT
 			<DialogContent>
 				<DialogHeader>
 					<DialogTitle>{t('dialog-credential-create.title')}</DialogTitle>
+					<DialogDescription>
+						{t('dialog-credential-create.description')}
+					</DialogDescription>
 				</DialogHeader>
 				<FieldGroup>
 					<Field>
