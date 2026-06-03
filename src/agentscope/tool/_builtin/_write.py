@@ -125,6 +125,7 @@ Usage:
                 message=f"Permission required: Write operation on "
                 f"sensitive file {file_path}",
                 decision_reason="Safety check: dangerous file or directory",
+                bypass_immune=True,
             )
 
         # 2. Check ACCEPT_EDITS mode for files in working directories
@@ -144,53 +145,6 @@ Usage:
             behavior=PermissionBehavior.PASSTHROUGH,
             message="",
         )
-
-    def _path_in_allowed_working_path(
-        self,
-        file_path: str,
-        context: PermissionContext,
-    ) -> bool:
-        """Check if a file path is within any allowed working directory.
-
-        Args:
-            file_path (`str`):
-                The file path to check
-            context (`PermissionContext`):
-                The permission context containing working directories
-
-        Returns:
-            `bool`:
-                True if the path is within any allowed working directory
-        """
-
-        # Get all working directories (current directory + additional)
-        current_dir = os.getcwd()
-        additional_dirs = list(context.working_directories.keys())
-        all_working_dirs = [current_dir] + additional_dirs
-
-        # Normalize paths, resolving symlinks so that aliases like
-        # macOS's /tmp -> /private/tmp compare equal on both sides.
-        abs_file_path = os.path.realpath(os.path.expanduser(file_path))
-
-        # Check if file path is in any working directory
-        for working_dir in all_working_dirs:
-            abs_working_dir = os.path.realpath(
-                os.path.expanduser(working_dir),
-            )
-            try:
-                # Check if file_path is inside working_dir
-                os.path.relpath(abs_file_path, abs_working_dir)
-                if (
-                    abs_file_path.startswith(abs_working_dir + os.sep)
-                    or abs_file_path == abs_working_dir
-                ):
-                    return True
-            except ValueError:
-                # On Windows, relpath raises ValueError if paths are on
-                # different drives
-                continue
-
-        return False
 
     def match_rule(
         self,
