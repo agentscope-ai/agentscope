@@ -82,6 +82,8 @@ class _PersistentLoop:
         atexit.register(self._shutdown)
 
     def get(self) -> asyncio.AbstractEventLoop:
+        """Return the persistent background loop, starting it on the
+        first call."""
         with self._lock:
             if self._loop is None or self._loop.is_closed():
                 self._started.clear()
@@ -160,13 +162,17 @@ class AgentScopeLLM(LLMBase):
         self._agentscope_model: ChatModelBase = self.config.model
 
     # ----- LLMBase interface -----
+    # pylint: disable=unused-argument
     def generate_response(
         self,
         messages: list[dict[str, str]],
-        response_format: Any | None = None,  # noqa: ARG002 — mem0 contract
+        response_format: Any | None = None,  # mem0 contract — unused
         tools: list[dict] | None = None,
-        tool_choice: str = "auto",  # noqa: ARG002 — mem0 contract
+        tool_choice: str = "auto",  # mem0 contract — unused
     ) -> str | dict:
+        """mem0 ``LLMBase`` entry — runs the AgentScope chat model on
+        the persistent loop and returns str (or dict with tool_calls
+        when ``tools`` is given)."""
         as_messages = _convert_messages_to_agentscope(messages)
         if not as_messages:
             raise ValueError(
@@ -290,11 +296,14 @@ class AgentScopeEmbedding(EmbeddingBase):
         self._agentscope_model: EmbeddingModelBase = self.config.model
 
     # ----- EmbeddingBase interface -----
+    # pylint: disable=unused-argument
     def embed(
         self,
         text: str | list[str],
-        memory_action: str | None = None,  # noqa: ARG002 — mem0 contract
+        memory_action: str | None = None,  # mem0 contract — unused
     ) -> list[float]:
+        """mem0 ``EmbeddingBase`` entry — runs the AgentScope embedding
+        model on the persistent loop and returns the first vector."""
         text_list = [text] if isinstance(text, str) else list(text)
         response = _run_sync(self._agentscope_model(text_list))
         if not response.embeddings:
@@ -437,18 +446,26 @@ def _agentscope_config_classes() -> tuple[type, type]:
     from mem0.llms.configs import LlmConfig
 
     class _AgentScopeLlmConfig(LlmConfig):
+        """``LlmConfig`` subclass that accepts the AgentScope provider."""
+
         @field_validator("config")
         @classmethod
         def validate_config(cls, v: Any, values: Any) -> Any:
+            """Allow ``provider == "agentscope"``; reject everything
+            else with mem0's original error."""
             provider = values.data.get("provider")
             if provider == _AGENTSCOPE_PROVIDER:
                 return v
             raise ValueError(f"Unsupported LLM provider: {provider}")
 
     class _AgentScopeEmbedderConfig(EmbedderConfig):
+        """``EmbedderConfig`` subclass that accepts the AgentScope provider."""
+
         @field_validator("config")
         @classmethod
         def validate_config(cls, v: Any, values: Any) -> Any:
+            """Allow ``provider == "agentscope"``; reject everything
+            else with mem0's original error."""
             provider = values.data.get("provider")
             if provider == _AGENTSCOPE_PROVIDER:
                 return v

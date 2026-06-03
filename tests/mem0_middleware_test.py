@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=missing-docstring,missing-class-docstring
+# pylint: disable=protected-access,unused-argument
 """Unit tests for Mem0Middleware.
 
 The mem0 client itself is mocked — we only exercise the AgentScope hook
@@ -8,6 +10,10 @@ AgentScope and mem0. The OSS ``Memory`` and Platform ``MemoryClient``
 share the same call shape (``search(query, filters=..., top_k=...)``
 and ``add(messages, user_id=..., agent_id=...)``) so one mock covers
 both.
+
+``protected-access`` is disabled because tests legitimately reach into
+middleware internals (``mw._client``, ``tool._func``) to inspect what
+the public API just did.
 """
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
@@ -246,7 +252,9 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
             search_return={"results": [{"memory": "alice loves coffee"}]},
         )
         mw = Mem0Middleware(
-            client=fake, user_id="alice", mode="static_control"
+            client=fake,
+            user_id="alice",
+            mode="static_control",
         )
 
         agent = self._agent(mw, response_text="hi alice")
@@ -318,7 +326,9 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
             search_return={"results": [{"memory": "saved fact"}]},
         )
         mw = Mem0Middleware(
-            client=fake, user_id="alice", mode="static_control"
+            client=fake,
+            user_id="alice",
+            mode="static_control",
         )
         agent = self._agent(mw, response_text="answer")
         await agent.reply(UserMsg("user", "tell me what you know"))
@@ -346,7 +356,9 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
     async def test_no_memories_no_injection(self) -> None:
         fake = _FakeAsyncMem0Client(search_return={"results": []})
         mw = Mem0Middleware(
-            client=fake, user_id="alice", mode="static_control"
+            client=fake,
+            user_id="alice",
+            mode="static_control",
         )
 
         agent = self._agent(mw)
@@ -363,7 +375,9 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         fake = _FakeAsyncMem0Client()
         fake.search = AsyncMock(side_effect=RuntimeError("mem0 down"))
         mw = Mem0Middleware(
-            client=fake, user_id="alice", mode="static_control"
+            client=fake,
+            user_id="alice",
+            mode="static_control",
         )
 
         agent = self._agent(mw, response_text="still works")
@@ -435,9 +449,9 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         """
         from functools import wraps
 
-        def sync_wraps_async(func):
+        def sync_wraps_async(func: Any) -> Any:
             @wraps(func)
-            def wrapper(*args, **kwargs):
+            def wrapper(*args: Any, **kwargs: Any) -> Any:
                 return func(*args, **kwargs)
 
             return wrapper

@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=missing-docstring,missing-class-docstring,wrong-import-order
 """Unit tests for the AgentScope ↔ mem0 adapters.
 
 Verifies that ``AgentScopeLLM`` / ``AgentScopeEmbedding`` correctly

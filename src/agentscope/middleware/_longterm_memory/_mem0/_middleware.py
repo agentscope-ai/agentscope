@@ -34,13 +34,19 @@ from ._utils import (
 )
 
 if TYPE_CHECKING:
+    from typing import TypeAlias
+
     from mem0 import AsyncMemory, AsyncMemoryClient
 
     from ....agent import Agent
     from ....embedding import EmbeddingModelBase
     from ....model import ChatModelBase
 
-    Mem0AsyncClient = AsyncMemory | AsyncMemoryClient
+    # Explicit ``TypeAlias`` annotation tells mypy this is a type
+    # alias rather than a plain variable assignment — without it
+    # mypy 1.7+ refuses to use ``Mem0AsyncClient`` in annotation
+    # positions ("Variable is not valid as a type").
+    Mem0AsyncClient: TypeAlias = AsyncMemory | AsyncMemoryClient
 
 
 UserIdResolver = Callable[["Agent"], str]

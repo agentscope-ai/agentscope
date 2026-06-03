@@ -62,11 +62,13 @@ async def _facts_in_mem0(client: AsyncMemory, user_id: str) -> list[str]:
     """Return mem0's current facts for ``user_id`` as plain strings."""
     res = await client.get_all(filters={"user_id": user_id})
     items = res.get("results", res) if isinstance(res, dict) else res
-    return [
-        m.get("memory")
-        for m in items
-        if isinstance(m, dict) and m.get("memory")
-    ]
+    out: list[str] = []
+    for m in items:
+        if isinstance(m, dict):
+            text = m.get("memory")
+            if isinstance(text, str) and text:
+                out.append(text)
+    return out
 
 
 def _injected_memory_bullets(agent: Agent) -> list[str]:
@@ -116,7 +118,7 @@ async def _run_turn(agent: Agent, user_msg: UserMsg) -> str:
             injected = _injected_memory_bullets(agent)
             print(
                 f"[mem0 → context (static)] retrieved "
-                f"{len(injected)} memory note(s):"
+                f"{len(injected)} memory note(s):",
             )
             for b in injected:
                 print(f"  ← {b}")
@@ -147,6 +149,7 @@ async def _run_turn(agent: Agent, user_msg: UserMsg) -> str:
 
 
 async def main() -> None:
+    """Drive two cross-session agent turns and print middleware effects."""
     api_key = os.environ["DASHSCOPE_API_KEY"]
     user_id = "alice"
 
@@ -244,7 +247,9 @@ async def main() -> None:
     #
     # No local Qdrant / vector_store config needed — extraction and
     # storage all happen in mem0's cloud service.
-    mem0_client: AsyncMemory = mw._client  # noqa: SLF001 — demo only
+    # pylint: disable-next=protected-access
+    mem0_client: AsyncMemory = mw._client  # demo only — peek at the
+    # constructed client to inspect mem0 state between turns.
 
     # =================================================================
     # SESSION 1

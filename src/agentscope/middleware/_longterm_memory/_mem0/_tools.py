@@ -53,7 +53,15 @@ def build_memory_tools(
     agent: "Agent",
 ) -> list[ToolBase]:
     """Return the ``search_memory`` / ``add_memory`` tools bound to
-    ``mw`` and ``agent``."""
+    ``mw`` and ``agent``.
+
+    The tools intentionally reach into ``mw``'s private state
+    (``_resolve_user_id`` / ``_top_k`` / ``_async_search`` / ...) —
+    we live in the same package and ``mw`` is the natural place for
+    that state. Suppress pylint's protected-access warnings for the
+    whole closure rather than scatter ``# pylint: disable`` per line.
+    """
+    # pylint: disable=protected-access
 
     async def search_memory(
         keywords: list[str],
@@ -165,15 +173,24 @@ def build_memory_tools(
         rationale = f" (rationale: {thinking})" if thinking else ""
         return f"Successfully recorded to memory{rationale} → {result}"
 
+    # ``FunctionTool``'s type signature only lists ``ToolChunk``-shaped
+    # return types, but at runtime its ``_convert_func_result_to_chunk``
+    # wraps plain ``str`` (and other types) into a ``ToolChunk``
+    # transparently — see ``tests/toolkit_test.py:test_sync_function_
+    # returning_plain_string`` for the official precedent. Our tools
+    # return ``str | ToolChunk`` (str on the success path, ToolChunk
+    # only when we need to mark ``state=ERROR``), which is supported
+    # at runtime but not in the type stub. Suppress the false
+    # positive arg-type complaint here.
     return [
         _AllowedFunctionTool(
-            search_memory,
+            search_memory,  # type: ignore[arg-type]
             is_read_only=True,
             is_concurrency_safe=True,
             is_state_injected=False,
         ),
         _AllowedFunctionTool(
-            add_memory,
+            add_memory,  # type: ignore[arg-type]
             is_read_only=False,
             is_concurrency_safe=False,
             is_state_injected=False,
