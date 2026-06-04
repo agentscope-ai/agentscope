@@ -3,14 +3,33 @@
 import sys
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from agentscope.tool import ToolChunk, Bash
+from agentscope.tool._builtin._bash import _subprocess_creation_kwargs
 from agentscope.permission import (
     PermissionContext,
     PermissionBehavior,
     PermissionRule,
 )
 from agentscope.message import TextBlock
+
+
+class BashSubprocessKwargsTest(unittest.TestCase):
+    """Test platform-specific subprocess kwargs."""
+
+    def test_non_windows_subprocess_kwargs_are_empty(self) -> None:
+        """On non-Windows the helper returns no extra subprocess kwargs."""
+        with patch("agentscope.tool._builtin._bash.os.name", "posix"):
+            self.assertEqual(_subprocess_creation_kwargs(), {})
+
+    def test_windows_subprocess_kwargs_hide_console(self) -> None:
+        """On Windows the helper sets ``creationflags`` to hide the console."""
+        with patch("agentscope.tool._builtin._bash.os.name", "nt"):
+            self.assertEqual(
+                _subprocess_creation_kwargs(),
+                {"creationflags": 0x08000000},
+            )
 
 
 @unittest.skipIf(

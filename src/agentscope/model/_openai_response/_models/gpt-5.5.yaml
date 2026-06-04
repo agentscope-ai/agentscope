@@ -1,0 +1,26 @@
+name: gpt-5.5
+label: GPT-5.5
+status: active
+
+input_types:
+  - text/plain
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+  - audio/mp3
+  - audio/wav
+
+output_types:
+  - text/plain
+
+context_size: 1050000
+output_size: 128000
+
+parameter_overrides:
+  max_tokens:
+    maximum: 128000
+  thinking_enable:
+    hidden: true
+  reasoning_effort:
+    hidden: true
