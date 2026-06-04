@@ -9,6 +9,7 @@ from ._gemini import GeminiCredential
 from ._moonshot import MoonshotCredential
 from ._ollama import OllamaCredential
 from ._openai import OpenAICredential
+from ._orcarouter import OrcaRouterCredential
 from ._xai import XAICredential
 from ._factory import CredentialFactory
 
@@ -22,6 +23,7 @@ __all__ = [
     "MoonshotCredential",
     "OllamaCredential",
     "OpenAICredential",
+    "OrcaRouterCredential",
     "XAICredential",
     "CredentialFactory",
 ]

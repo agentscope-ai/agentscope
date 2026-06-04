@@ -11,6 +11,7 @@ from ._deepseek import DeepSeekChatModel
 from ._gemini import GeminiChatModel
 from ._ollama import OllamaChatModel
 from ._openai_chat import OpenAIChatModel
+from ._orcarouter import OrcaRouterChatModel
 from ._xai import XAIChatModel
 from ._moonshot import MoonshotChatModel
 from ._openai_response import OpenAIResponseModel
@@ -27,6 +28,7 @@ __all__ = [
     "GeminiChatModel",
     "OllamaChatModel",
     "OpenAIChatModel",
+    "OrcaRouterChatModel",
     "XAIChatModel",
     "MoonshotChatModel",
     "OpenAIResponseModel",
