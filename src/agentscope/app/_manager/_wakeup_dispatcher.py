@@ -99,8 +99,6 @@ class WakeupDispatcher:
                 on_ready=ready.set,
             ):
                 await self._drain_and_dispatch()
-        except asyncio.CancelledError:
-            raise
         except Exception:  # pylint: disable=broad-except
             logger.exception(
                 "WakeupDispatcher loop crashed; subscription ended.",
@@ -121,7 +119,7 @@ class WakeupDispatcher:
                 agent_id = payload["agent_id"]
             except (KeyError, TypeError):
                 logger.warning(
-                    "WakeupDispatcher: skipping malformed wake-up " "entry %r",
+                    "WakeupDispatcher: skipping malformed wake-up entry %r",
                     payload,
                 )
                 continue

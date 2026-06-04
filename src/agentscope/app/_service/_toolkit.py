@@ -6,12 +6,21 @@ workspace builtins, MCPs, skills, planning tools (Task*), background-task
 control (TaskStop), schedule control (Schedule*), team participation
 tools, and caller-supplied extras — into one :class:`Toolkit`.
 """
+from typing import Any
+
 from .._manager import BackgroundTaskManager, SchedulerManager
 from ..message_bus import MessageBus
 from .._tools import AgentCreate, TeamCreate, TeamDelete, TeamSay
 from .._types import AgentToolFactory
 from ..storage import AgentRecord, SessionRecord, StorageBase
-from ...tool import TaskCreate, TaskGet, TaskList, TaskUpdate, Toolkit
+from ...tool import (
+    TaskCreate,
+    TaskGet,
+    TaskList,
+    TaskUpdate,
+    Toolkit,
+    ToolGroup,
+)
 from ...workspace import WorkspaceBase
 
 
@@ -37,7 +46,7 @@ async def get_toolkit(
     3. Background-task control (:class:`TaskStop`, from
        :meth:`BackgroundTaskManager.list_tools`)
     4. Schedule control (:class:`ScheduleCreate` / :class:`ScheduleView`
-       / :class:`ScheduleStop` / :class:`ScheduleList`, from
+       / :class:`ScheduleDelete` / :class:`ScheduleList`, from
        :meth:`SchedulerManager.list_tools`). Only attached when the
        session has a model configured (Schedule tools need a model to
        fire new chats with).
@@ -85,6 +94,8 @@ async def get_toolkit(
         `Toolkit`: Fully populated toolkit (tools + skills + MCPs).
     """
 
+    tool_groups = []
+
     # The general tools running in the workspace
     tools = await workspace.list_tools()
 
@@ -97,10 +108,28 @@ async def get_toolkit(
     # Schedule control. Requires a model config on this session because
     # ``ScheduleCreate`` records it into new ``ScheduleRecord`` instances.
     if session_record.config.chat_model_config is not None:
-        tools += await scheduler_manager.list_tools(
-            user_id=user_id,
-            agent_id=agent_record.id,
-            chat_model_config=session_record.config.chat_model_config,
+        # Add schedule tools as a tool group
+        tool_groups.append(
+            ToolGroup(
+                name="schedule_tools",
+                description=(
+                    """Tools for managing cron schedules. A cron schedule is \
+a recurring task that fires at a specified time — at that point, a new \
+session is created and an agent will be invoked to complete the given task \
+autonomously.
+
+## When to Use This Tool Group
+- When you need to create a new cron schedule that triggers at a specific \
+time or interval"
+- When you're asked to list, inspect, stop, or delete existing cron schedules
+"""
+                ),
+                tools=await scheduler_manager.list_tools(
+                    user_id=user_id,
+                    agent_id=agent_record.id,
+                    chat_model_config=session_record.config.chat_model_config,
+                ),
+            ),
         )
 
     # Team tools — variant based on ``agent_record.source``. A worker
@@ -109,7 +138,7 @@ async def get_toolkit(
     # preconditions (am I in a team? am I the leader?) at call time
     # against fresh storage, which is why the full set can be attached
     # unconditionally without needing a stale snapshot of team_id.
-    team_tool_kwargs = {
+    team_tool_kwargs: dict[str, Any] = {
         "storage": storage,
         "message_bus": message_bus,
         "user_id": user_id,
@@ -138,4 +167,5 @@ async def get_toolkit(
         tools=tools,
         skills_or_loaders=await workspace.list_skills(),
         mcps=await workspace.list_mcps(),
+        tool_groups=tool_groups,
     )

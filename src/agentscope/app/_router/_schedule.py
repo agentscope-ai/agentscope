@@ -4,8 +4,9 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from ..deps import get_current_user_id, get_scheduler_manager, get_storage
 from agentscope.app._manager import SchedulerManager
+
+from ..deps import get_current_user_id, get_scheduler_manager, get_storage
 from ._schema import (
     CreateScheduleRequest,
     CreateScheduleResponse,

@@ -172,11 +172,28 @@ optional):
 
         # ----------------------------------------------------------------
         # 1. Load records + resolve workspace ONCE here, reused below.
+        # Reject missing records up front with a clear error so the
+        # downstream assembly code can rely on non-None values.
         # ----------------------------------------------------------------
         agent_record = await self._storage.get_agent(user_id, agent_id)
+        if agent_record is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Agent {agent_id!r} not found.",
+            )
         session_record = await self._storage.get_session(
-            user_id, agent_id, session_id,
+            user_id,
+            agent_id,
+            session_id,
         )
+        if session_record is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"Session {session_id!r} not found for "
+                    f"agent {agent_id!r}."
+                ),
+            )
         workspace = await self._workspace_manager.get_workspace(
             user_id,
             agent_id,
@@ -223,7 +240,9 @@ optional):
         if self._extra_agent_middlewares is not None:
             middlewares.extend(
                 await self._extra_agent_middlewares(
-                    user_id, agent_id, session_id,
+                    user_id,
+                    agent_id,
+                    session_id,
                 ),
             )
 

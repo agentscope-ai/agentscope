@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Schedule stop tool – removes a job from the scheduler and storage."""
+"""Schedule delete tool – removes a job from the scheduler and storage."""
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -15,30 +15,30 @@ from .....tool import ToolBase, ToolChunk
 from ....storage._base import StorageBase
 
 
-class _ScheduleStopParams(BaseModel):
-    """The params for the schedule stop tool."""
+class _ScheduleDeleteParams(BaseModel):
+    """The params for the schedule delete tool."""
 
     schedule_id: str = Field(
-        description="The schedule ID to stop (remove).",
+        description="The schedule ID to delete (permanently remove).",
     )
 
 
-class ScheduleStop(ToolBase):
-    """The schedule stop tool.
+class ScheduleDelete(ToolBase):
+    """The schedule delete tool.
 
     Permanently removes the given scheduled job from both the in-memory
     APScheduler and the persistent storage.  The job cannot be recovered
     after removal.
     """
 
-    name: str = "ScheduleStop"
+    name: str = "ScheduleDelete"
 
     description: str = (
-        "Stop (permanently remove) a scheduled task by its schedule ID. "
+        "Permanently delete a scheduled task by its schedule ID. "
         "After this call the task will no longer be executed and its record "
         "will be deleted from storage."
     )
-    input_schema: dict = _ScheduleStopParams.model_json_schema()
+    input_schema: dict = _ScheduleDeleteParams.model_json_schema()
 
     is_concurrency_safe: bool = False
     is_read_only: bool = False
@@ -53,7 +53,7 @@ class ScheduleStop(ToolBase):
         scheduler: Any,
         storage: StorageBase,
     ) -> None:
-        """Initialize the schedule stop tool.
+        """Initialize the schedule delete tool.
 
         Args:
             user_id (`str`):
@@ -82,15 +82,15 @@ class ScheduleStop(ToolBase):
         self,
         schedule_id: str,
     ) -> ToolChunk:  # type: ignore[override]
-        """Stop (remove) the scheduled task with the given ID.
+        """Permanently delete the scheduled task with the given ID.
 
         Args:
             schedule_id (`str`):
-                The unique identifier of the schedule to stop.
+                The unique identifier of the schedule to delete.
 
         Returns:
             `ToolChunk`:
-                A chunk describing the result of the stop operation.
+                A chunk describing the result of the delete operation.
         """
 
         # Remove from the in-memory scheduler (best-effort; may already be
@@ -123,8 +123,8 @@ class ScheduleStop(ToolBase):
             content=[
                 TextBlock(
                     text=(
-                        f"Schedule {schedule_id!r} has been stopped "
-                        f"and permanently removed."
+                        f"Schedule {schedule_id!r} has been permanently "
+                        f"deleted."
                     ),
                 ),
             ],

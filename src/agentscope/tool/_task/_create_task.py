@@ -107,7 +107,7 @@ All tasks are created with status `pending`.
             return ToolChunk(
                 content=[
                     TextBlock(
-                        text=f"Task {task.id} created successfully: "
+                        text=f"Task (id={next_id}) created successfully: "
                         f"{task.subject}",
                     ),
                 ],

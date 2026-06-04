@@ -293,6 +293,12 @@ class MessageBus(ABC):
             `dict`:
                 Each payload originally passed to :meth:`publish`.
         """
+        # The empty `yield` makes Python treat this as an async generator
+        # function (return type AsyncGenerator) rather than a coroutine
+        # returning an AsyncGenerator. Subclasses override it; this body
+        # never runs.
+        if False:  # pylint: disable=using-constant-test
+            yield  # pylint: disable=unreachable
 
     # ------------------------------------------------------------------
     # Mode E — distributed lock (cluster-wide mutex)
@@ -328,7 +334,7 @@ class MessageBus(ABC):
         """
         # The decorator-based abstract method requires a body for
         # @asynccontextmanager to work; subclasses override it.
-        if False:
+        if False:  # pylint: disable=using-constant-test
             yield  # pylint: disable=unreachable
 
     @abstractmethod

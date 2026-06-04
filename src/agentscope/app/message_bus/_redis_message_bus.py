@@ -483,12 +483,9 @@ class RedisMessageBus(MessageBus):
 
         # Heartbeat: renew TTL every ttl/2 seconds.
         async def _heartbeat() -> None:
-            try:
-                while True:
-                    await asyncio.sleep(max(1.0, ttl_secs / 2))
-                    await self._client.expire(key, ttl_secs)
-            except asyncio.CancelledError:
-                raise
+            while True:
+                await asyncio.sleep(max(1.0, ttl_secs / 2))
+                await self._client.expire(key, ttl_secs)
 
         hb_task = asyncio.create_task(
             _heartbeat(),

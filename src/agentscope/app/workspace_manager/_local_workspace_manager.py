@@ -9,6 +9,7 @@ from ..._logging import logger
 from ...workspace import LocalWorkspace
 from ._base import WorkspaceManagerBase
 
+
 class LocalWorkspaceManager(WorkspaceManagerBase):
     """Manages LocalWorkspace instances with TTL-based lazy lifecycle.
 

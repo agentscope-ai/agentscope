@@ -3,7 +3,7 @@
 from typing import Type, TYPE_CHECKING, Any
 
 from ._lifespan import lifespan
-from agentscope.app.workspace_manager import WorkspaceManagerBase
+from .workspace_manager import WorkspaceManagerBase
 from ._router import (
     agent_router,
     chat_router,

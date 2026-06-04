@@ -23,6 +23,8 @@ import asyncio
 from copy import deepcopy
 from typing import AsyncGenerator, Callable
 
+from agentscope.app._manager import BackgroundTaskManager
+
 from ...middleware import MiddlewareBase
 from ...tool import ToolChunk, ToolResponse
 from ...message import (
@@ -32,7 +34,6 @@ from ...message import (
     ToolResultState,
 )
 from ...agent import Agent
-from agentscope.app._manager import BackgroundTaskManager
 from ..message_bus import MessageBus
 from ..._logging import logger
 

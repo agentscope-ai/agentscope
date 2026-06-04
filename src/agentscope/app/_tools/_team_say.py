@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """The TeamSay tool — sends a message to one or all team members."""
+from typing import Any
+
 from pydantic import Field
 
 from ._team_tool_base import _TeamToolBase
@@ -88,9 +90,9 @@ class TeamSay(_TeamToolBase):
 
     def __init__(
         self,
-        *args,
+        *args: Any,
         role: str = "leader",
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         """Initialise with role-specific description.
 
@@ -170,7 +172,9 @@ class TeamSay(_TeamToolBase):
                 )
 
             leader_session = await self._storage.get_session(
-                self._user_id, "", team.session_id,
+                self._user_id,
+                "",
+                team.session_id,
             )
             if leader_session is None:
                 return ToolChunk(
@@ -251,7 +255,8 @@ class TeamSay(_TeamToolBase):
 
             # Resolve sender display name once.
             sender_agent = await self._storage.get_agent(
-                self._user_id, self._agent_id,
+                self._user_id,
+                self._agent_id,
             )
             sender_name = (
                 sender_agent.data.name

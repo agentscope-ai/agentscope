@@ -540,6 +540,10 @@ class RedisStorage(StorageBase):
                 await self._set_with_ttl(key, record.model_dump_json())
                 return record
 
+        # Use the caller-provided ``session_id`` when given so a
+        # "create-if-missing under this id" call (e.g. scheduler's
+        # stateful-mode session) lands at the expected key.
+        new_id_kwargs = {"id": session_id} if session_id else {}
         record = SessionRecord(
             user_id=user_id,
             agent_id=agent_id,
@@ -547,6 +551,7 @@ class RedisStorage(StorageBase):
             source=source,
             source_schedule_id=source_schedule_id,
             state=state if state is not None else AgentState(),
+            **new_id_kwargs,
         )
         key = self._key(
             self.key_config.session,

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import uuid
+from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -73,6 +74,7 @@ async def _build_team_detail(
         leader_agent=leader_agent,
         members=members,
     )
+
 
 session_router = APIRouter(
     prefix="/sessions",
@@ -445,7 +447,7 @@ async def stream_session_events(
             detail=f"Session '{session_id}' not found.",
         )
 
-    async def _sse_generator():
+    async def _sse_generator() -> AsyncGenerator[str, None]:
         # 1. Replay buffered events from the current run (if any).
         for _entry_id, event in await message_bus.session_read_events(
             session_id,

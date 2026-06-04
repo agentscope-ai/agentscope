@@ -6,7 +6,6 @@ import fakeredis.aioredis
 
 from agentscope.app.storage import (
     RedisStorage,
-    RedisKeyConfig,
     AgentRecord,
     SessionConfig,
     SessionRecord,
@@ -29,7 +28,7 @@ def make_storage() -> RedisStorage:
     # pylint: disable=protected-access
     storage._client = fakeredis.aioredis.FakeRedis(decode_responses=True)
     storage.key_ttl = None
-    storage.key_config = RedisKeyConfig()
+    storage.key_config = RedisStorage.KeyConfig()
     return storage
 
 

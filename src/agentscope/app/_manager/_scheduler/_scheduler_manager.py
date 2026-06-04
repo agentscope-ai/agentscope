@@ -9,14 +9,14 @@ from ....permission import PermissionContext
 from ....state import AgentState
 from ....tool import ToolBase
 from ...._logging import logger
-from ._tools import ScheduleCreate, ScheduleList, ScheduleStop, ScheduleView
+from ._tools import ScheduleCreate, ScheduleDelete, ScheduleList, ScheduleView
 from ...message_bus import MessageBus
 from ...storage import (
     StorageBase,
     ScheduleRecord,
     ChatModelConfig,
     SessionConfig,
-    SessionSource
+    SessionSource,
 )
 
 
@@ -375,7 +375,7 @@ class SchedulerManager:
         Returns:
             `list[ToolBase]`:
                 The four schedule tools: :class:`ScheduleCreate`,
-                :class:`ScheduleView`, :class:`ScheduleStop`, and
+                :class:`ScheduleView`, :class:`ScheduleDelete`, and
                 :class:`ScheduleList`.
         """
         return [
@@ -391,7 +391,7 @@ class SchedulerManager:
                 scheduler=self._scheduler,
                 storage=self._storage,
             ),
-            ScheduleStop(
+            ScheduleDelete(
                 user_id=user_id,
                 scheduler=self._scheduler,
                 storage=self._storage,

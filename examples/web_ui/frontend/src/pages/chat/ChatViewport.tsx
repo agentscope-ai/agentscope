@@ -282,9 +282,13 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 							/>
 						</div>
 					</div>
-					<div className="flex flex-1 justify-center min-h-0 overflow-hidden">
+					<div className="flex flex-1 justify-center min-h-0 overflow-hidden relative [--chat-content-w:36rem]">
+						<TaskPanel
+							className="absolute left-0 top-0 h-full max-w-[calc(50%-var(--chat-content-w)/2)]"
+							tasksContext={tasksContext}
+						/>
 						<ChatContent
-							className={'max-w-xl'}
+							className={'max-w-[var(--chat-content-w)] w-full'}
 							msgs={msgs}
 							sending={streaming}
 							disabled={selectedModel === null}
@@ -342,7 +346,6 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 					</div>
 				</div>
 				<div className="flex flex-col h-full gap-2 px-2">
-					<TaskPanel tasksContext={tasksContext} />
 					<WorkspaceDrawer
 						mcps={mcps}
 						loading={mcpsLoading}

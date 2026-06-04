@@ -8,7 +8,7 @@ from ..deps import (
     get_storage,
     get_workspace_manager,
 )
-from agentscope.app.workspace_manager import WorkspaceManagerBase
+from ..workspace_manager import WorkspaceManagerBase
 from ..storage import StorageBase
 from ...mcp import MCPClient
 from ...skill import Skill

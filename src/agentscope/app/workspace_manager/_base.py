@@ -71,4 +71,3 @@ class WorkspaceManagerBase(ABC):
     async def __aexit__(self, *exc: object) -> None:
         """Exit the manager's lifetime — closes all cached workspaces."""
         await self.close_all()
-
