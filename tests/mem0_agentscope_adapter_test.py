@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=missing-docstring,missing-class-docstring,wrong-import-order
+# pylint: disable=wrong-import-order
 """Unit tests for the AgentScope ↔ mem0 adapters.
 
 Verifies that ``AgentScopeLLM`` / ``AgentScopeEmbedding`` correctly
@@ -35,7 +35,10 @@ from utils import MockModel
 
 
 class TestConvertMessages(unittest.TestCase):
+    """Tests for converting mem0 dict messages into AgentScope messages."""
+
     def test_three_roles_map_to_correct_role(self) -> None:
+        """System, user, and assistant roles should be preserved."""
         msgs = _convert_messages_to_agentscope(
             [
                 {"role": "system", "content": "you are helpful"},
@@ -51,6 +54,7 @@ class TestConvertMessages(unittest.TestCase):
         self.assertEqual(msgs[1].get_text_content(), "hi")
 
     def test_unknown_role_dropped(self) -> None:
+        """Unsupported message roles should be skipped."""
         msgs = _convert_messages_to_agentscope(
             [
                 {"role": "tool", "content": "noise"},
@@ -62,14 +66,19 @@ class TestConvertMessages(unittest.TestCase):
 
 
 class TestParseChatResponse(unittest.TestCase):
+    """Tests for converting AgentScope chat responses into mem0 output."""
+
     def _resp(self, blocks: list) -> ChatResponse:
+        """Build a final chat response from content blocks."""
         return ChatResponse(content=blocks, is_last=True)
 
     def test_text_only_returns_string(self) -> None:
+        """Plain text responses should become plain strings."""
         resp = self._resp([TextBlock(type="text", text="answer")])
         self.assertEqual(_parse_chat_response(resp, has_tool=False), "answer")
 
     def test_thinking_prefixed_to_text(self) -> None:
+        """Thinking blocks should be preserved before visible text."""
         resp = self._resp(
             [
                 ThinkingBlock(type="thinking", thinking="hmm"),
@@ -104,6 +113,7 @@ class TestParseChatResponse(unittest.TestCase):
         )
 
     def test_tool_call_with_malformed_input_keeps_raw(self) -> None:
+        """Malformed JSON tool inputs should remain as raw strings."""
         resp = self._resp(
             [
                 ToolCallBlock(
@@ -118,6 +128,7 @@ class TestParseChatResponse(unittest.TestCase):
         self.assertEqual(out["tool_calls"][0]["arguments"], "not json")
 
     def test_empty_content(self) -> None:
+        """Empty responses should convert to the empty mem0 shapes."""
         resp = self._resp([])
         self.assertEqual(_parse_chat_response(resp, has_tool=False), "")
         self.assertEqual(
@@ -136,24 +147,31 @@ class _RecordingMockChatModel(MockModel):
     objects mem0's dict messages were converted into."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize the recording model."""
         super().__init__(*args, **kwargs)
         self.received_messages: list[list[Msg]] = []
 
     async def _call_api(self, *args: Any, **kwargs: Any) -> Any:
+        """Record delivered messages before delegating to MockModel."""
         self.received_messages.append(list(kwargs.get("messages") or []))
         return await super()._call_api(*args, **kwargs)
 
 
 class TestAgentScopeLLM(unittest.TestCase):
+    """End-to-end tests for the mem0 LLM adapter."""
+
     def test_constructor_rejects_non_chatmodel(self) -> None:
+        """The LLM adapter should reject non-AgentScope chat models."""
         with self.assertRaises(TypeError):
             AgentScopeLLM(config={"model": object()})
 
     def test_constructor_requires_model(self) -> None:
+        """The LLM adapter should require a model config entry."""
         with self.assertRaises(ValueError):
             AgentScopeLLM(config={})
 
     def test_generate_response_routes_through_agentscope_model(self) -> None:
+        """mem0 generation should call the wrapped AgentScope model."""
         model = _RecordingMockChatModel()
         model.set_responses(
             [
@@ -178,6 +196,7 @@ class TestAgentScopeLLM(unittest.TestCase):
         self.assertEqual([m.role for m in delivered], ["system", "user"])
 
     def test_generate_response_with_tools(self) -> None:
+        """Tool-call responses should be converted to mem0's tool shape."""
         model = _RecordingMockChatModel()
         model.set_responses(
             [
@@ -233,6 +252,7 @@ class TestAgentScopeLLM(unittest.TestCase):
         self.assertEqual(result, "final")
 
     def test_empty_messages_raises(self) -> None:
+        """Dropping all unsupported messages should raise ValueError."""
         llm = AgentScopeLLM(config={"model": _RecordingMockChatModel()})
         with self.assertRaises(ValueError):
             llm.generate_response([{"role": "tool", "content": "ignored"}])
@@ -244,11 +264,15 @@ class TestAgentScopeLLM(unittest.TestCase):
 
 
 class _FakeEmbeddingModel(EmbeddingModelBase):
+    """Minimal embedding model that records requested texts."""
+
     def __init__(self) -> None:
+        """Initialize the fake embedding model."""
         super().__init__(model_name="fake-embed", dimensions=3)
         self.received: list[list[str]] = []
 
     async def __call__(self, *args: Any, **kwargs: Any) -> EmbeddingResponse:
+        """Return a fixed vector for every input text."""
         texts = args[0] if args else kwargs.get("texts")
         self.received.append(list(texts))
         return EmbeddingResponse(
@@ -258,13 +282,17 @@ class _FakeEmbeddingModel(EmbeddingModelBase):
 
 
 class TestAgentScopeEmbedding(unittest.TestCase):
+    """Tests for the mem0 embedding adapter."""
+
     def test_constructor_validation(self) -> None:
+        """The embedding adapter should validate model config."""
         with self.assertRaises(ValueError):
             AgentScopeEmbedding(config={})
         with self.assertRaises(TypeError):
             AgentScopeEmbedding(config={"model": object()})
 
     def test_embed_single_string(self) -> None:
+        """Single-string inputs should be wrapped before model calls."""
         model = _FakeEmbeddingModel()
         emb = AgentScopeEmbedding(config={"model": model})
         result = emb.embed("hello")
@@ -292,6 +320,7 @@ class TestBuildMem0Config(unittest.TestCase):
     whitelist and emit a config that names the AgentScope adapter."""
 
     def test_models_only_produces_fresh_config(self) -> None:
+        """Models-only construction should create AgentScope providers."""
         chat = MockModel()
         emb = _FakeEmbeddingModel()
         cfg = build_mem0_config(chat_model=chat, embedding_model=emb)
@@ -302,6 +331,7 @@ class TestBuildMem0Config(unittest.TestCase):
         self.assertIs(cfg.embedder.config["model"], emb)
 
     def test_models_only_requires_both(self) -> None:
+        """Models-only construction should require chat and embedding."""
         with self.assertRaises(ValueError):
             build_mem0_config(chat_model=MockModel())
         with self.assertRaises(ValueError):

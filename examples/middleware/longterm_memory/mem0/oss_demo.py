@@ -46,11 +46,12 @@ from agentscope.event import (
     ToolResultTextDeltaEvent,
 )
 from agentscope.message import UserMsg
-from agentscope.middleware._longterm_memory import Mem0Middleware
+from agentscope.middleware import Mem0Middleware
 from agentscope.model import DashScopeChatModel
+from agentscope.tool import Toolkit
 
 
-MODE = "static_control"  # try "static_control" or "agent_control" too
+MODE = "both"  # try "static_control" or "agent_control" too
 
 
 # Silence mem0's noisy init warnings (qdrant migration notice, spaCy
@@ -78,9 +79,12 @@ def _injected_memory_bullets(agent: Agent) -> list[str]:
     for msg in agent.state.context:
         if getattr(msg, "name", None) != "memory":
             continue
+        hint_text = "\n".join(
+            block.hint for block in msg.get_content_blocks("hint")
+        )
         return [
             line[2:].strip()
-            for line in (msg.get_text_content() or "").splitlines()
+            for line in hint_text.splitlines()
             if line.startswith("- ")
         ]
     return []
@@ -271,6 +275,7 @@ async def main() -> None:
             "the add_memory tool when one is available."
         ),
         model=chat_model,
+        toolkit=Toolkit(tools=await mw.list_tools()),
         middlewares=[mw],
     )
     reply_text = await _run_turn(agent, UserMsg("alice", user_msg_1))
@@ -302,6 +307,7 @@ async def main() -> None:
             "the add_memory tool when one is available."
         ),
         model=chat_model,
+        toolkit=Toolkit(tools=await mw.list_tools()),
         middlewares=[mw],
     )
     reply_text = await _run_turn(agent, UserMsg("alice", user_msg_2))

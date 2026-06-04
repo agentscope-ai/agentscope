@@ -31,11 +31,11 @@ export DASHSCOPE_API_KEY=sk-...     # OSS path
 
 ## Import path
 
-`Mem0Middleware` lives under the long-term-memory subpackage and is
-imported directly from there:
+`Mem0Middleware` is exported from the middleware package:
 
 ```python
-from agentscope.middleware._longterm_memory import Mem0Middleware
+from agentscope.middleware import Mem0Middleware
+from agentscope.tool import Toolkit
 ```
 
 ## Three construction paths
@@ -98,7 +98,7 @@ Precedence and validation matrix:
 | `client` | `mem0_config` | `chat_model` | `embedding_model` | Behavior |
 |:-:|:-:|:-:|:-:|---|
 | ✓ | — | — | — | Use `client` as-is. |
-| ✓ | any | any | any | Use `client`; the other three are silently ignored (a `WARNING` log lists which kwargs got dropped). |
+| ✓ | any | any | any | Use `client`; the other three are ignored, and a `WARNING` log lists which kwargs got dropped. |
 | — | ✓ | — | — | Wrap `mem0_config` in an `AsyncMemory`, no overrides. |
 | — | ✓ | ✓ | — | Wrap + override `.llm` with the AgentScope adapter; keep `.embedder` from `mem0_config`. |
 | — | ✓ | — | ✓ | Wrap + override `.embedder` only; keep `.llm` from `mem0_config`. |
@@ -108,13 +108,13 @@ Precedence and validation matrix:
 | — | — | — | ✓ | ❌ Same. |
 | — | — | — | — | ❌ `ValueError` — need one of: `client`, `mem0_config`, or both `chat_model` + `embedding_model`. |
 
-Why the "silent ignore" and "silent override" paths exist:
+Why the "client wins" and "config override" paths exist:
 
-- **Silent ignore on `client`** lets one `Mem0Middleware(...)` call
+- **`client` wins** lets one `Mem0Middleware(...)` call
   shape work for both library callers (who pass AgentScope models)
   and production setups (who supply a pre-built `client`). The
   `WARNING` log makes any mismatch visible without crashing.
-- **Silent override of `mem0_config.llm` / `.embedder`** lets you
+- **Config override of `mem0_config.llm` / `.embedder`** lets you
   keep one canonical `MemoryConfig` template (custom vector store,
   history DB, reranker, …) and swap just the LLM / embedder per
   call site by passing `chat_model` / `embedding_model`.
@@ -145,14 +145,23 @@ anything; if that becomes a token concern, post-process with
 `compress_context` or write your own middleware to pop them.
 
 ### `agent_control`
-The middleware exposes two tools — `search_memory(keywords, limit)`
-and `add_memory(thinking, content)` — and otherwise stays out of the
-way. On the first reply they're added to the agent's always-active
-`basic` tool group so they're callable immediately, without a
-meta-tool activation round-trip. The system prompt gets a short
-nudge telling the agent that memory tools exist; the actual per-tool
-usage guidance comes through the standard tool schema (extracted
-from each tool's docstring). No automatic retrieval or write-back.
+The middleware lists two tools — `search_memory(keywords, limit)` and
+`add_memory(thinking, content)` — and otherwise stays out of the way.
+Pass them into the agent's toolkit explicitly when constructing the
+agent:
+
+```python
+mw = Mem0Middleware(..., mode="agent_control")
+agent = Agent(
+    ...,
+    toolkit=Toolkit(tools=await mw.list_tools()),
+    middlewares=[mw],
+)
+```
+
+The system prompt gets a short nudge telling the agent that memory
+tools exist; the actual per-tool usage guidance comes through the
+standard tool schema. No automatic retrieval or write-back.
 
 ### `both` (default)
 Both patterns are active simultaneously: memories are auto-retrieved
@@ -184,14 +193,22 @@ mw = Mem0Middleware(
     embedding_model=embedding_model,
     mode="both",
 )
-agent_a = Agent(..., middlewares=[mw])
-agent_b = Agent(..., middlewares=[mw])
+agent_a = Agent(
+    ...,
+    toolkit=Toolkit(tools=await mw.list_tools()),
+    middlewares=[mw],
+)
+agent_b = Agent(
+    ...,
+    toolkit=Toolkit(tools=await mw.list_tools()),
+    middlewares=[mw],
+)
 ```
 
-This is what the demo does. Per-agent state inside the middleware
-(``_tools_registered_for`` keyed by ``id(agent)``,
-``_pending_memories`` keyed by ``state.session_id``) is namespaced
-correctly, so sharing one middleware across agents is safe.
+This is what the demo does. The memory tools receive the live
+`AgentState` at call time, and the middleware resolves the active
+agent by `state.session_id`, so sharing one middleware across agents
+is safe.
 
 If you genuinely need a separate Qdrant store per agent, pass a
 ``mem0_config`` with a distinct ``vector_store.config.path`` or
@@ -293,7 +310,7 @@ factory:
 
 ```python
 from agentscope.app import create_app
-from agentscope.middleware._longterm_memory import Mem0Middleware
+from agentscope.middleware import Mem0Middleware
 from agentscope.middleware._longterm_memory._mem0._agentscope_adapter \
     import build_mem0_config
 from mem0 import AsyncMemory

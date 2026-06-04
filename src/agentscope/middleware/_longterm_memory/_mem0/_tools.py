@@ -1,19 +1,20 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=protected-access
 """Agent-control tools exposed by the mem0 middleware.
 
-These ``search_memory`` / ``add_memory`` tools are registered into the
-agent's toolkit by :class:`Mem0Middleware` when ``mode`` is
-``"agent_control"`` or ``"both"``. They close over the middleware
-instance and the target agent so per-call ``user_id`` / ``agent_id``
-resolvers keep working after registration.
+These ``search_memory`` / ``add_memory`` tools are listed by
+:class:`Mem0Middleware` when ``mode`` is ``"agent_control"`` or
+``"both"``. Callers pass them into the agent's toolkit explicitly.
+Each tool receives the live agent state at call time, then asks the
+middleware to resolve the active agent so per-call ``user_id`` /
+``agent_id`` resolvers keep working after registration.
 
 Shape and behavior mirror AgentScope 1.x's
 ``Mem0LongTermMemory.retrieve_from_memory`` / ``record_to_memory``
-(multi-keyword parallel search, 3-tier add fallback, verbose result
+(multi-keyword parallel search, fallback write, verbose result
 text) — adapted to AgentScope 2.x's tool conventions
-(``FunctionTool`` wrapping plain async functions; failures return a
-``ToolChunk`` with ``state=ERROR`` so the toolkit aggregates it
-properly).
+(custom ``ToolBase`` implementations; failures return a ``ToolChunk``
+with ``state=ERROR`` so the toolkit aggregates it properly).
 """
 from __future__ import annotations
 
@@ -22,20 +23,32 @@ from typing import Any, TYPE_CHECKING
 
 from ....message import TextBlock, ToolResultState
 from ....permission import PermissionBehavior, PermissionDecision
-from ....tool import FunctionTool, ToolBase, ToolChunk
+from ....tool import ToolBase, ToolChunk
 
 if TYPE_CHECKING:
     from ....agent import Agent
+    from ....state import AgentState
 
     from ._middleware import Mem0Middleware
 
 
-class _AllowedFunctionTool(FunctionTool):
-    """FunctionTool that auto-allows itself (no permission prompt).
+class _Mem0MemoryToolBase(ToolBase):
+    """Base class for mem0 tools that auto-allow themselves.
 
     Middleware-provided memory tools are part of the agent's standard
     capabilities — prompting on every call would defeat the point.
     """
+
+    is_external_tool: bool = False
+    is_state_injected: bool = True
+    is_mcp: bool = False
+    mcp_name: str | None = None
+
+    def __init__(
+        self,
+        mw: "Mem0Middleware",
+    ) -> None:
+        self._mw = mw
 
     async def check_permissions(
         self,
@@ -47,26 +60,54 @@ class _AllowedFunctionTool(FunctionTool):
             message="auto-allowed: mem0 long-term memory tool",
         )
 
+    def _resolve_agent(
+        self,
+        agent_state: "AgentState | None",
+    ) -> "Agent | None":
+        """Resolve the active agent from toolkit-injected state."""
+        return self._mw._resolve_tool_agent(agent_state)
 
-def build_memory_tools(
-    mw: "Mem0Middleware",
-    agent: "Agent",
-) -> list[ToolBase]:
-    """Return the ``search_memory`` / ``add_memory`` tools bound to
-    ``mw`` and ``agent``.
 
-    The tools intentionally reach into ``mw``'s private state
-    (``_resolve_user_id`` / ``_top_k`` / ``_async_search`` / ...) —
-    we live in the same package and ``mw`` is the natural place for
-    that state. Suppress pylint's protected-access warnings for the
-    whole closure rather than scatter ``# pylint: disable`` per line.
-    """
-    # pylint: disable=protected-access
+class _SearchMemoryTool(_Mem0MemoryToolBase):
+    """Agent-callable mem0 search tool."""
 
-    async def search_memory(
+    name: str = "search_memory"
+    description: str = (
+        "Retrieve memories based on short, targeted search keywords. "
+        "Each keyword is issued as an independent query; results are merged "
+        "and deduplicated."
+    )
+    input_schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "keywords": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Short, targeted search phrases such as a person's name, "
+                    "a specific date, a location, or a phrase describing what "
+                    "to retrieve from memory."
+                ),
+            },
+            "limit": {
+                "type": "integer",
+                "description": (
+                    "Maximum number of memories to retrieve per keyword."
+                ),
+                "default": 5,
+            },
+        },
+        "required": ["keywords"],
+    }
+    is_concurrency_safe: bool = True
+    is_read_only: bool = True
+
+    async def __call__(
+        self,
         keywords: list[str],
         limit: int = 5,
-    ) -> str | ToolChunk:
+        _agent_state: "AgentState | None" = None,
+    ) -> ToolChunk:
         """Retrieve the memory based on the given keywords.
 
         Args:
@@ -80,35 +121,43 @@ def build_memory_tools(
             limit (int):
                 The maximum number of memories to retrieve per keyword.
                 Defaults to 5.
+            _agent_state (`AgentState | None`, optional):
+                The toolkit-injected agent state.
         """
         if not keywords:
-            return "(no keywords supplied — nothing to search)"
+            return _text_chunk("(no keywords supplied — nothing to search)")
 
-        user_id = mw._resolve_user_id(agent)
+        agent = self._resolve_agent(_agent_state)
+        if agent is None:
+            return _error_chunk(
+                "Unable to resolve the active agent for `search_memory`. "
+                "Register this tool from `Mem0Middleware.list_tools()` on "
+                "an agent that also uses the same middleware instance.",
+            )
+
+        user_id = self._mw._resolve_user_id(agent)
         agent_id = (
-            mw._resolve_agent_id(agent) if mw._scope_search_by_agent else None
+            self._mw._resolve_agent_id(agent)
+            if self._mw._scope_search_by_agent
+            else None
         )
 
         # Match v1: each keyword is an independent search, run them in
         # parallel and merge.
-        original_top_k = mw._top_k
-        mw._top_k = limit
         try:
-            try:
-                per_keyword = await asyncio.gather(
-                    *[
-                        mw._async_search(
-                            kw,
-                            user_id=user_id,
-                            agent_id=agent_id,
-                        )
-                        for kw in keywords
-                    ],
-                )
-            except Exception as e:  # noqa: BLE001
-                return _error_chunk(f"Error retrieving memory: {e}")
-        finally:
-            mw._top_k = original_top_k
+            per_keyword = await asyncio.gather(
+                *[
+                    self._mw._async_search(
+                        kw,
+                        user_id=user_id,
+                        agent_id=agent_id,
+                        top_k=limit,
+                    )
+                    for kw in keywords
+                ],
+            )
+        except Exception as e:  # noqa: BLE001
+            return _error_chunk(f"Error retrieving memory: {e}")
 
         seen: set[str] = set()
         merged: list[str] = []
@@ -119,13 +168,49 @@ def build_memory_tools(
                     merged.append(r)
 
         if not merged:
-            return "(no relevant memories found)"
-        return "\n".join(f"- {m}" for m in merged)
+            return _text_chunk("(no relevant memories found)")
+        return _text_chunk("\n".join(f"- {m}" for m in merged))
 
-    async def add_memory(
+
+class _AddMemoryTool(_Mem0MemoryToolBase):
+    """Agent-callable mem0 write tool."""
+
+    name: str = "add_memory"
+    description: str = (
+        "Record important, durable information that may be useful later. "
+        "Only the provided content is persisted; thinking is retained in the "
+        "tool result for auditability."
+    )
+    input_schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "thinking": {
+                "type": "string",
+                "description": (
+                    "Reasoning about why this information is worth "
+                    "remembering. This is not persisted to mem0."
+                ),
+            },
+            "content": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Specific facts to remember. Each item should be a "
+                    "complete, standalone sentence."
+                ),
+            },
+        },
+        "required": ["thinking", "content"],
+    }
+    is_concurrency_safe: bool = False
+    is_read_only: bool = False
+
+    async def __call__(
+        self,
         thinking: str,
         content: list[str],
-    ) -> str | ToolChunk:
+        _agent_state: "AgentState | None" = None,
+    ) -> ToolChunk:
         """Use this function to record important information that you
         may need later. The target content should be specific and
         concise, e.g. who, when, where, do what, why, how, etc.
@@ -146,12 +231,22 @@ def build_memory_tools(
                 item per fact). Each item should be a complete,
                 standalone sentence — only this is sent to mem0 for
                 extraction.
+            _agent_state (`AgentState | None`, optional):
+                The toolkit-injected agent state.
         """
         if not content:
             return _error_chunk("`content` is empty — nothing to record.")
 
-        user_id = mw._resolve_user_id(agent)
-        agent_id = mw._resolve_agent_id(agent)
+        agent = self._resolve_agent(_agent_state)
+        if agent is None:
+            return _error_chunk(
+                "Unable to resolve the active agent for `add_memory`. "
+                "Register this tool from `Mem0Middleware.list_tools()` on "
+                "an agent that also uses the same middleware instance.",
+            )
+
+        user_id = self._mw._resolve_user_id(agent)
+        agent_id = self._mw._resolve_agent_id(agent)
 
         # Only the user-facing content goes into mem0. ``thinking`` is
         # the agent's internal rationale — meta about the agent's
@@ -162,7 +257,7 @@ def build_memory_tools(
         text = "\n".join(content)
 
         try:
-            result = await mw._async_add_with_fallback(
+            result = await self._mw._async_add_with_fallback(
                 text,
                 user_id=user_id,
                 agent_id=agent_id,
@@ -171,31 +266,33 @@ def build_memory_tools(
             return _error_chunk(f"Error recording memory: {e}")
 
         rationale = f" (rationale: {thinking})" if thinking else ""
-        return f"Successfully recorded to memory{rationale} → {result}"
+        return _text_chunk(
+            f"Successfully recorded to memory{rationale} → {result}",
+        )
 
-    # ``FunctionTool``'s type signature only lists ``ToolChunk``-shaped
-    # return types, but at runtime its ``_convert_func_result_to_chunk``
-    # wraps plain ``str`` (and other types) into a ``ToolChunk``
-    # transparently — see ``tests/toolkit_test.py:test_sync_function_
-    # returning_plain_string`` for the official precedent. Our tools
-    # return ``str | ToolChunk`` (str on the success path, ToolChunk
-    # only when we need to mark ``state=ERROR``), which is supported
-    # at runtime but not in the type stub. Suppress the false
-    # positive arg-type complaint here.
+
+def _build_memory_tools(
+    mw: "Mem0Middleware",
+) -> list[ToolBase]:
+    """Return the ``search_memory`` / ``add_memory`` tools bound to
+    ``mw``.
+
+    The tool classes intentionally reach into ``mw``'s private state
+    (``_resolve_user_id`` / ``_async_search`` / ...) —
+    we live in the same package and ``mw`` is the natural place for
+    that state.
+    """
     return [
-        _AllowedFunctionTool(
-            search_memory,  # type: ignore[arg-type]
-            is_read_only=True,
-            is_concurrency_safe=True,
-            is_state_injected=False,
-        ),
-        _AllowedFunctionTool(
-            add_memory,  # type: ignore[arg-type]
-            is_read_only=False,
-            is_concurrency_safe=False,
-            is_state_injected=False,
-        ),
+        _SearchMemoryTool(mw),
+        _AddMemoryTool(mw),
     ]
+
+
+def _text_chunk(message: str) -> ToolChunk:
+    """Wrap a text message as a normal tool chunk."""
+    return ToolChunk(
+        content=[TextBlock(type="text", text=message)],
+    )
 
 
 def _error_chunk(message: str) -> ToolChunk:

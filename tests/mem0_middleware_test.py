@@ -1,19 +1,18 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=missing-docstring,missing-class-docstring
 # pylint: disable=protected-access,unused-argument
 """Unit tests for Mem0Middleware.
 
 The mem0 client itself is mocked — we only exercise the AgentScope hook
 wiring (retrieve-before / write-after, system-prompt injection,
-list_tools registration) and the small adapter that translates between
+list_tools exposure) and the small adapter that translates between
 AgentScope and mem0. The OSS ``Memory`` and Platform ``MemoryClient``
 share the same call shape (``search(query, filters=..., top_k=...)``
 and ``add(messages, user_id=..., agent_id=...)``) so one mock covers
 both.
 
 ``protected-access`` is disabled because tests legitimately reach into
-middleware internals (``mw._client``, ``tool._func``) to inspect what
-the public API just did.
+middleware internals (``mw._client``, ``mw._async_search``, ``mw._top_k``) to
+inspect what the public API just did.
 """
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
@@ -22,11 +21,15 @@ from typing import Any
 from utils import MockModel
 
 from agentscope.agent import Agent
-from agentscope.message import Msg, TextBlock, UserMsg
-from agentscope.middleware._longterm_memory import Mem0Middleware
+from agentscope.event import (
+    ExternalExecutionResultEvent,
+    UserConfirmResultEvent,
+)
+from agentscope.message import HintBlock, Msg, TextBlock, UserMsg
+from agentscope.middleware import Mem0Middleware
 from agentscope.middleware._longterm_memory._mem0._utils import (
-    extract_memory_texts,
-    extract_query_text,
+    _extract_memory_texts,
+    _extract_query_text,
 )
 from agentscope.model import ChatResponse
 from agentscope.tool import Toolkit
@@ -41,6 +44,7 @@ class RecordingMockModel(MockModel):
     """MockModel that captures the ``messages`` of every _call_api call."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize the recording mock model."""
         super().__init__(*args, **kwargs)
         self.calls: list[list[Msg]] = []
 
@@ -49,6 +53,7 @@ class RecordingMockModel(MockModel):
         *args: Any,
         **kwargs: Any,
     ) -> Any:
+        """Record messages before delegating to MockModel."""
         messages = kwargs.get("messages")
         if messages is None and len(args) >= 2:
             messages = args[1]
@@ -57,6 +62,7 @@ class RecordingMockModel(MockModel):
 
     @property
     def last_call_messages(self) -> list[Msg]:
+        """Return the most recent model-call messages."""
         return self.calls[-1]
 
 
@@ -69,19 +75,23 @@ class _FakeAsyncMem0Client:
     """
 
     def __init__(self, search_return: Any = None) -> None:
+        """Initialize the fake mem0 client."""
         self.search_return = search_return or {"results": []}
         self.search_calls: list[dict] = []
         self.add_calls: list[dict] = []
 
     async def search(self, query: str, **kwargs: Any) -> Any:
+        """Record a mem0 search call and return the configured result."""
         self.search_calls.append({"query": query, **kwargs})
         return self.search_return
 
     async def add(self, messages: list[dict], **kwargs: Any) -> None:
+        """Record a mem0 add call."""
         self.add_calls.append({"messages": messages, **kwargs})
 
 
 def _single_response(text: str) -> ChatResponse:
+    """Build a final single-text chat response."""
     return ChatResponse(
         content=[TextBlock(type="text", text=text)],
         is_last=True,
@@ -103,10 +113,16 @@ def _find_tool(toolkit: Toolkit, name: str) -> Any:
 
 
 def _find_group(toolkit: Toolkit, name: str) -> Any:
+    """Look a tool group up by name on the toolkit."""
     for g in toolkit.tool_groups:
         if g.name == name:
             return g
     raise LookupError(f"tool group {name!r} not found")
+
+
+def _chunk_text(chunk: Any) -> str:
+    """Return the first text block from a tool chunk."""
+    return chunk.content[0].text
 
 
 # ----------------------------------------------------------------------
@@ -115,39 +131,69 @@ def _find_group(toolkit: Toolkit, name: str) -> Any:
 
 
 class TestExtractQueryText(IsolatedAsyncioTestCase):
+    """Tests for extracting the query text from incoming inputs."""
+
     def test_none_and_empty(self) -> None:
-        self.assertIsNone(extract_query_text(None))
-        self.assertIsNone(extract_query_text([]))
+        """None and empty inputs should not produce a query."""
+        self.assertIsNone(_extract_query_text(None))
+        self.assertIsNone(_extract_query_text([]))
 
     def test_single_user_msg(self) -> None:
+        """A single user message should become its text content."""
         msg = UserMsg("user", "hello world")
-        self.assertEqual(extract_query_text(msg), "hello world")
+        self.assertEqual(_extract_query_text(msg), "hello world")
 
     def test_list_of_user_msgs_joined(self) -> None:
+        """Multiple user messages should be joined by newlines."""
         msgs = [UserMsg("user", "first"), UserMsg("user", "second")]
-        self.assertEqual(extract_query_text(msgs), "first\nsecond")
+        self.assertEqual(_extract_query_text(msgs), "first\nsecond")
+
+    def test_resumption_events_return_none(self) -> None:
+        """HITL resumption events should not trigger memory IO."""
+        self.assertIsNone(
+            _extract_query_text(
+                UserConfirmResultEvent(
+                    reply_id="reply",
+                    confirm_results=[],
+                ),
+            ),
+        )
+        self.assertIsNone(
+            _extract_query_text(
+                ExternalExecutionResultEvent(
+                    reply_id="reply",
+                    execution_results=[],
+                ),
+            ),
+        )
 
 
 class TestExtractMemoryTexts(IsolatedAsyncioTestCase):
+    """Tests for normalizing mem0 search responses into text lists."""
+
     def test_dict_with_results(self) -> None:
+        """Dictionary responses with result dicts should be flattened."""
         raw = {"results": [{"memory": "a"}, {"memory": "b"}]}
-        self.assertEqual(extract_memory_texts(raw), ["a", "b"])
+        self.assertEqual(_extract_memory_texts(raw), ["a", "b"])
 
     def test_plain_list_of_dicts(self) -> None:
+        """Plain list responses should also be supported."""
         self.assertEqual(
-            extract_memory_texts([{"memory": "only"}]),
+            _extract_memory_texts([{"memory": "only"}]),
             ["only"],
         )
 
     def test_plain_list_of_strings(self) -> None:
+        """String results should pass through unchanged."""
         self.assertEqual(
-            extract_memory_texts({"results": ["x", "y"]}),
+            _extract_memory_texts({"results": ["x", "y"]}),
             ["x", "y"],
         )
 
     def test_none_and_garbage(self) -> None:
-        self.assertEqual(extract_memory_texts(None), [])
-        self.assertEqual(extract_memory_texts({"results": "nope"}), [])
+        """Malformed mem0 outputs should normalize to an empty list."""
+        self.assertEqual(_extract_memory_texts(None), [])
+        self.assertEqual(_extract_memory_texts({"results": "nope"}), [])
 
 
 # ----------------------------------------------------------------------
@@ -156,13 +202,17 @@ class TestExtractMemoryTexts(IsolatedAsyncioTestCase):
 
 
 class TestConstructorValidation(IsolatedAsyncioTestCase):
+    """Tests for Mem0Middleware constructor validation."""
+
     def test_missing_user_id_raises(self) -> None:
+        """Empty user IDs should be rejected."""
         with self.assertRaises(ValueError):
             Mem0Middleware(client=MagicMock(), user_id="")
         with self.assertRaises(ValueError):
             Mem0Middleware(client=MagicMock(), user_id="   ")
 
     def test_unknown_mode_raises(self) -> None:
+        """Unknown control modes should be rejected."""
         with self.assertRaises(ValueError):
             Mem0Middleware(
                 client=MagicMock(),
@@ -171,6 +221,7 @@ class TestConstructorValidation(IsolatedAsyncioTestCase):
             )
 
     def test_neither_client_nor_models_nor_config_raises(self) -> None:
+        """At least one backend construction path should be provided."""
         with self.assertRaises(ValueError) as ctx:
             Mem0Middleware(user_id="alice")
         self.assertIn("client", str(ctx.exception))
@@ -215,6 +266,7 @@ class TestConstructorValidation(IsolatedAsyncioTestCase):
     def test_only_one_of_chat_or_embedding_without_config_raises(
         self,
     ) -> None:
+        """Models-only construction requires both chat and embedding."""
         with self.assertRaises(ValueError):
             Mem0Middleware(user_id="alice", chat_model=MagicMock())
         with self.assertRaises(ValueError):
@@ -230,6 +282,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
     """Default mode: retrieve-before / inject / write-after, no tools."""
 
     async def asyncSetUp(self) -> None:
+        """Create a fresh recording model and empty toolkit."""
         self.model = RecordingMockModel(context_size=100_000)
         self.toolkit = Toolkit()
 
@@ -238,6 +291,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         middleware: Mem0Middleware,
         response_text: str = "ok",
     ) -> Agent:
+        """Build a test agent using ``middleware`` and one response."""
         self.model.set_responses([_single_response(response_text)])
         return Agent(
             name="agent_under_test",
@@ -248,6 +302,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         )
 
     async def test_retrieve_inject_write(self) -> None:
+        """Static control should search, inject, reply, then write."""
         fake = _FakeAsyncMem0Client(
             search_return={"results": [{"memory": "alice loves coffee"}]},
         )
@@ -292,15 +347,18 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         self.assertEqual(sys_msg.get_text_content(), "base system prompt")
 
         # 4. memory appended to the agent's persistent context as an
-        #    assistant-role note named "memory".
-        memory_msgs = [
-            m
-            for m in agent.state.context
-            if getattr(m, "name", None) == "memory"
-        ]
+        #    assistant-role hint note named "memory". Formatters convert
+        #    HintBlock content into a user message before provider calls.
+        memory_msgs = []
+        for msg in agent.state.context:
+            if getattr(msg, "name", None) == "memory":
+                memory_msgs.append(msg)
         self.assertEqual(len(memory_msgs), 1)
         self.assertEqual(memory_msgs[0].role, "assistant")
-        memory_text = memory_msgs[0].get_text_content()
+        memory_hints = memory_msgs[0].get_content_blocks("hint")
+        self.assertEqual(len(memory_hints), 1)
+        self.assertIsInstance(memory_hints[0], HintBlock)
+        memory_text = memory_hints[0].hint
         self.assertIn("Relevant memories", memory_text)
         self.assertIn("alice loves coffee", memory_text)
         # The model saw it on its first call as well.
@@ -354,6 +412,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         )
 
     async def test_no_memories_no_injection(self) -> None:
+        """Empty search results should not add a memory hint message."""
         fake = _FakeAsyncMem0Client(search_return={"results": []})
         mw = Mem0Middleware(
             client=fake,
@@ -372,6 +431,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         self.assertEqual(len(fake.search_calls), 1)
 
     async def test_search_failure_does_not_break_reply(self) -> None:
+        """Search errors should be logged but not block the reply."""
         fake = _FakeAsyncMem0Client()
         fake.search = AsyncMock(side_effect=RuntimeError("mem0 down"))
         mw = Mem0Middleware(
@@ -388,6 +448,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         self.assertEqual(len(fake.add_calls), 1)
 
     async def test_user_id_resolver_callable(self) -> None:
+        """Callable user_id resolvers should receive the current agent."""
         fake = _FakeAsyncMem0Client()
         mw = Mem0Middleware(
             client=fake,
@@ -405,6 +466,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
     async def test_scope_search_by_agent_false_drops_agent_id(
         self,
     ) -> None:
+        """Unscoped search should omit agent_id from mem0 filters."""
         fake = _FakeAsyncMem0Client()
         mw = Mem0Middleware(
             client=fake,
@@ -425,11 +487,15 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         supported."""
 
         class SyncFake:
+            """Fake sync mem0 client used to verify rejection."""
+
             def search(self, query: str, **kwargs: Any) -> Any:
+                """Return an empty synchronous search result."""
                 return {"results": []}
 
             def add(self, messages: list, **kwargs: Any) -> None:
-                pass
+                """No-op synchronous add method."""
+                return None
 
         with self.assertRaises(TypeError) as ctx:
             Mem0Middleware(client=SyncFake(), user_id="alice")
@@ -450,20 +516,27 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         from functools import wraps
 
         def sync_wraps_async(func: Any) -> Any:
+            """Wrap an async function in a sync functools wrapper."""
+
             @wraps(func)
             def wrapper(*args: Any, **kwargs: Any) -> Any:
+                """Return the coroutine created by the wrapped function."""
                 return func(*args, **kwargs)
 
             return wrapper
 
         class WrappedFake:
+            """Fake client whose async methods are sync-wrapped."""
+
             @sync_wraps_async
             async def search(self, query: str, **kwargs: Any) -> Any:
+                """Return an empty async search result."""
                 return {"results": []}
 
             @sync_wraps_async
             async def add(self, messages: list, **kwargs: Any) -> None:
-                pass
+                """No-op async add method."""
+                return None
 
         # Should NOT raise — the unwrap+iscoroutinefunction check sees
         # through the sync wrapper.
@@ -477,13 +550,36 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
 
 
 class TestAgentControlMode(IsolatedAsyncioTestCase):
-    """Tools are registered, but no automatic hook behavior."""
+    """Tools are listed, but no automatic memory hook behavior."""
 
     async def asyncSetUp(self) -> None:
+        """Create a fresh recording model and empty toolkit."""
         self.model = RecordingMockModel(context_size=100_000)
         self.toolkit = Toolkit()
 
-    async def test_tools_registered_and_hint_in_prompt(self) -> None:
+    async def _agent(
+        self,
+        middleware: Mem0Middleware,
+        *,
+        name: str = "a",
+        system_prompt: str = "p",
+        responses: list[str] | None = None,
+    ) -> Agent:
+        """Build an agent with tools explicitly listed by middleware."""
+        self.model.set_responses(
+            [_single_response(r) for r in (responses or ["ok"])],
+        )
+        self.toolkit = Toolkit(tools=await middleware.list_tools())
+        return Agent(
+            name=name,
+            system_prompt=system_prompt,
+            model=self.model,
+            toolkit=self.toolkit,
+            middlewares=[middleware],
+        )
+
+    async def test_tools_listed_and_hint_in_prompt(self) -> None:
+        """Agent-control mode should expose tools and prompt guidance."""
         fake = _FakeAsyncMem0Client(
             search_return={"results": [{"memory": "found"}]},
         )
@@ -492,19 +588,14 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
             user_id="alice",
             mode="agent_control",
         )
-        self.model.set_responses([_single_response("ok")])
-        agent = Agent(
-            name="a",
+        agent = await self._agent(
+            mw,
             system_prompt="base prompt",
-            model=self.model,
-            toolkit=self.toolkit,
-            middlewares=[mw],
         )
         await agent.reply(UserMsg("user", "hello"))
 
-        # Tools registered into the always-active `basic` group so
-        # the agent can call them immediately, without a meta-tool
-        # activation dance.
+        # Tools are listed by the middleware and explicitly passed into
+        # the toolkit by the caller.
         basic = _find_group(self.toolkit, "basic")
         names = [t.name for t in basic.tools]
         self.assertIn("search_memory", names)
@@ -527,7 +618,30 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
         for m in msgs:
             self.assertNotEqual(getattr(m, "name", None), "memory")
 
+    async def test_middleware_does_not_mutate_toolkit(self) -> None:
+        """Middleware should not register tools unless caller does so."""
+        fake = _FakeAsyncMem0Client()
+        mw = Mem0Middleware(
+            client=fake,
+            user_id="alice",
+            mode="agent_control",
+        )
+        self.model.set_responses([_single_response("ok")])
+        toolkit = Toolkit()
+        agent = Agent(
+            name="a",
+            system_prompt="base prompt",
+            model=self.model,
+            toolkit=toolkit,
+            middlewares=[mw],
+        )
+        await agent.reply(UserMsg("user", "hello"))
+
+        self.assertNotIn("search_memory", _all_tool_names(toolkit))
+        self.assertNotIn("add_memory", _all_tool_names(toolkit))
+
     async def test_search_memory_tool_invokes_mem0(self) -> None:
+        """The search_memory tool should query mem0 per keyword."""
         fake = _FakeAsyncMem0Client(
             search_return={
                 "results": [
@@ -541,28 +655,26 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
             user_id="alice",
             mode="agent_control",
         )
-        self.model.set_responses([_single_response("ok")])
-        agent = Agent(
-            name="a",
+        agent = await self._agent(
+            mw,
             system_prompt="base prompt",
-            model=self.model,
-            toolkit=self.toolkit,
-            middlewares=[mw],
         )
-        # Trigger middleware tool collection by issuing a reply.
+        # Trigger middleware agent lookup collection by issuing a reply.
         await agent.reply(UserMsg("user", "hi"))
 
         search_tool = _find_tool(self.toolkit, "search_memory")
 
-        # Exercise the tool's underlying coroutine directly. The new
-        # signature mirrors AgentScope 1.x: a LIST of keywords, each
-        # issued as an independent parallel search.
-        result = await search_tool._func(
-            ["what does alice like?", "alice preferences"],
-            3,
+        # Exercise the tool directly. The signature mirrors
+        # AgentScope 1.x: a LIST of keywords, each issued as an
+        # independent parallel search.
+        result = await search_tool(
+            keywords=["what does alice like?", "alice preferences"],
+            limit=3,
+            _agent_state=agent.state,
         )
-        self.assertIn("first fact", result)
-        self.assertIn("second fact", result)
+        result_text = _chunk_text(result)
+        self.assertIn("first fact", result_text)
+        self.assertIn("second fact", result_text)
 
         # Each keyword produces one mem0 call; both share user/agent
         # filter and per-keyword limit.
@@ -573,6 +685,26 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
                 {"user_id": "alice", "agent_id": "a"},
             )
             self.assertEqual(call["top_k"], 3)
+
+    async def test_async_search_accepts_per_call_top_k(self) -> None:
+        """Per-call search limits should not mutate middleware state."""
+        fake = _FakeAsyncMem0Client()
+        mw = Mem0Middleware(
+            client=fake,
+            user_id="alice",
+            mode="agent_control",
+            top_k=9,
+        )
+
+        await mw._async_search(
+            "q",
+            user_id="alice",
+            agent_id="a",
+            top_k=3,
+        )
+
+        self.assertEqual(fake.search_calls[0]["top_k"], 3)
+        self.assertEqual(mw._top_k, 9)
 
     async def test_search_memory_tool_resolves_user_id_per_call(
         self,
@@ -586,22 +718,16 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
             user_id=lambda _a: current_user["id"],
             mode="agent_control",
         )
-        self.model.set_responses(
-            [_single_response("ok"), _single_response("ok")],
-        )
-        agent = Agent(
-            name="a",
-            system_prompt="p",
-            model=self.model,
-            toolkit=self.toolkit,
-            middlewares=[mw],
+        agent = await self._agent(
+            mw,
+            responses=["ok", "ok"],
         )
         await agent.reply(UserMsg("user", "first"))
 
         search_tool = _find_tool(self.toolkit, "search_memory")
-        await search_tool._func(["q1"], 5)
+        await search_tool(keywords=["q1"], limit=5, _agent_state=agent.state)
         current_user["id"] = "u2"
-        await search_tool._func(["q2"], 5)
+        await search_tool(keywords=["q2"], limit=5, _agent_state=agent.state)
 
         self.assertEqual(
             [c["filters"]["user_id"] for c in fake.search_calls],
@@ -609,19 +735,13 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
         )
 
     async def test_tools_auto_allow_permission(self) -> None:
+        """Memory tools should be auto-allowed by permission checks."""
         mw = Mem0Middleware(
             client=_FakeAsyncMem0Client(),
             user_id="alice",
             mode="agent_control",
         )
-        self.model.set_responses([_single_response("ok")])
-        agent = Agent(
-            name="a",
-            system_prompt="p",
-            model=self.model,
-            toolkit=self.toolkit,
-            middlewares=[mw],
-        )
+        agent = await self._agent(mw)
         await agent.reply(UserMsg("user", "hi"))
 
         from agentscope.permission import PermissionBehavior
@@ -642,21 +762,19 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
             },
         )
         mw = Mem0Middleware(client=fake, user_id="alice", mode="agent_control")
-        self.model.set_responses([_single_response("ok")])
-        agent = Agent(
-            name="a",
-            system_prompt="p",
-            model=self.model,
-            toolkit=self.toolkit,
-            middlewares=[mw],
-        )
+        agent = await self._agent(mw)
         await agent.reply(UserMsg("user", "hi"))
         search_tool = _find_tool(self.toolkit, "search_memory")
 
-        result = await search_tool._func(["kw1", "kw2"], 5)
+        result = await search_tool(
+            keywords=["kw1", "kw2"],
+            limit=5,
+            _agent_state=agent.state,
+        )
+        result_text = _chunk_text(result)
         # "shared" appears once even though both keywords returned it.
-        self.assertEqual(result.count("shared"), 1)
-        self.assertEqual(result.count("unique"), 1)
+        self.assertEqual(result_text.count("shared"), 1)
+        self.assertEqual(result_text.count("unique"), 1)
 
     async def test_search_memory_failure_returns_error_chunk(self) -> None:
         """mem0 raising during search produces a ToolChunk with
@@ -667,18 +785,15 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
         fake = _FakeAsyncMem0Client()
         fake.search = AsyncMock(side_effect=RuntimeError("mem0 down"))
         mw = Mem0Middleware(client=fake, user_id="alice", mode="agent_control")
-        self.model.set_responses([_single_response("ok")])
-        agent = Agent(
-            name="a",
-            system_prompt="p",
-            model=self.model,
-            toolkit=self.toolkit,
-            middlewares=[mw],
-        )
+        agent = await self._agent(mw)
         await agent.reply(UserMsg("user", "hi"))
         search_tool = _find_tool(self.toolkit, "search_memory")
 
-        result = await search_tool._func(["q"], 5)
+        result = await search_tool(
+            keywords=["q"],
+            limit=5,
+            _agent_state=agent.state,
+        )
         self.assertIsInstance(result, ToolChunk)
         self.assertEqual(result.state, ToolResultState.ERROR)
         self.assertIn("mem0 down", result.content[0].text)
@@ -696,7 +811,10 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
         rationale."""
 
         class CountingFake:
+            """Fake mem0 client that triggers add fallback once."""
+
             def __init__(self) -> None:
+                """Initialize call tracking and empty search behavior."""
                 self.add_calls: list[dict] = []
                 self.search = AsyncMock(return_value={"results": []})
 
@@ -705,6 +823,7 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
                 messages: list[dict],
                 **kwargs: Any,
             ) -> dict:
+                """Return empty extraction first, then a saved memory."""
                 self.add_calls.append({"messages": messages, **kwargs})
                 # First attempt: extracted nothing → triggers fallback.
                 # Second attempt (with infer=False): succeeds.
@@ -714,19 +833,16 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
 
         fake = CountingFake()
         mw = Mem0Middleware(client=fake, user_id="alice", mode="agent_control")
-        self.model.set_responses([_single_response("ok")])
-        agent = Agent(
-            name="a",
-            system_prompt="p",
-            model=self.model,
-            toolkit=self.toolkit,
-            middlewares=[mw],
-        )
+        agent = await self._agent(mw)
         await agent.reply(UserMsg("user", "hi"))
         add_tool = _find_tool(self.toolkit, "add_memory")
 
-        result = await add_tool._func("my reasoning", ["fact one"])
-        self.assertIn("Successfully recorded", result)
+        result = await add_tool(
+            thinking="my reasoning",
+            content=["fact one"],
+            _agent_state=agent.state,
+        )
+        self.assertIn("Successfully recorded", _chunk_text(result))
 
         # Exactly 2 calls — the role-switch tier from v1 is gone.
         self.assertEqual(len(fake.add_calls), 2)
@@ -748,20 +864,18 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
             return_value={"results": [{"id": "m1", "memory": "saved"}]},
         )
         mw = Mem0Middleware(client=fake, user_id="alice", mode="agent_control")
-        self.model.set_responses([_single_response("ok")])
-        agent = Agent(
-            name="a",
-            system_prompt="p",
-            model=self.model,
-            toolkit=self.toolkit,
-            middlewares=[mw],
-        )
+        agent = await self._agent(mw)
         await agent.reply(UserMsg("user", "hi"))
         add_tool = _find_tool(self.toolkit, "add_memory")
 
         thinking = "user said X because Y"
         fact = "likes coffee"
-        result_text = await add_tool._func(thinking, [fact])
+        result = await add_tool(
+            thinking=thinking,
+            content=[fact],
+            _agent_state=agent.state,
+        )
+        result_text = _chunk_text(result)
 
         # mem0 only saw the fact, NOT the rationale.
         sent = fake.add.call_args.args[0][0]["content"]
@@ -779,13 +893,16 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
 
 
 class TestBothMode(IsolatedAsyncioTestCase):
+    """Tests for combined static-control and agent-control behavior."""
+
     async def test_memory_msg_and_tool_hint_both_present(self) -> None:
+        """Both mode should inject memory and expose memory tools."""
         model = RecordingMockModel(context_size=100_000)
-        toolkit = Toolkit()
         fake = _FakeAsyncMem0Client(
             search_return={"results": [{"memory": "auto-injected"}]},
         )
         mw = Mem0Middleware(client=fake, user_id="alice", mode="both")
+        toolkit = Toolkit(tools=await mw.list_tools())
         model.set_responses([_single_response("ok")])
         agent = Agent(
             name="a",
@@ -807,10 +924,12 @@ class TestBothMode(IsolatedAsyncioTestCase):
         self.assertIn("Long-term memory", prompt_text)
         self.assertIn("search_memory", prompt_text)
 
-        # Memory injected as a synthetic Msg (from on_model_call).
+        # Memory injected as a synthetic HintBlock Msg.
         memory_msgs = [m for m in msgs if getattr(m, "name", None) == "memory"]
         self.assertEqual(len(memory_msgs), 1)
-        self.assertIn("auto-injected", memory_msgs[0].get_text_content())
+        memory_hints = memory_msgs[0].get_content_blocks("hint")
+        self.assertEqual(len(memory_hints), 1)
+        self.assertIn("auto-injected", memory_hints[0].hint)
 
         # Tools exposed.
         names = _all_tool_names(toolkit)

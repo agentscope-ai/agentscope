@@ -360,8 +360,9 @@ def build_mem0_config(
     2. Bypassing the hardcoded provider whitelist in
        ``LlmConfig.validate_config`` / ``EmbedderConfig.validate_config``.
        Done by substituting subclasses whose validator only allows
-       ``"agentscope"`` and delegates everything else to the base
-       class.
+       ``"agentscope"``. Other provider names are rejected by these
+       subclasses, matching the fact that this helper is only for wiring
+       the AgentScope adapters.
 
     Args:
         chat_model:

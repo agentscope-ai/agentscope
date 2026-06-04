@@ -9,11 +9,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from ....event import ExternalExecutionResultEvent
+from ....event import ExternalExecutionResultEvent, UserConfirmResultEvent
 from ....message import Msg
 
 
-def extract_query_text(inputs: Any) -> str | None:
+def _extract_query_text(inputs: Any) -> str | None:
     """Pull a single text query out of the agent inputs.
 
     Returns ``None`` for resumption events or empty/non-user inputs,
@@ -21,9 +21,10 @@ def extract_query_text(inputs: Any) -> str | None:
     """
     if inputs is None:
         return None
-    if isinstance(inputs, ExternalExecutionResultEvent):
-        return None
-    if type(inputs).__name__ == "UserConfirmResultEvent":
+    if isinstance(
+        inputs,
+        (ExternalExecutionResultEvent, UserConfirmResultEvent),
+    ):
         return None
 
     msgs = inputs if isinstance(inputs, list) else [inputs]
@@ -37,7 +38,7 @@ def extract_query_text(inputs: Any) -> str | None:
     return "\n".join(texts) if texts else None
 
 
-def mem0_extracted_anything(raw: Any) -> bool:
+def _mem0_extracted_anything(raw: Any) -> bool:
     """Did mem0's add() actually extract any memories from the input?
 
     mem0 returns ``{"results": [...]}``; an empty list means its LLM
@@ -51,7 +52,7 @@ def mem0_extracted_anything(raw: Any) -> bool:
     return isinstance(results, list) and len(results) > 0
 
 
-def extract_memory_texts(raw: Any) -> list[str]:
+def _extract_memory_texts(raw: Any) -> list[str]:
     """Flatten a mem0 search response into a list of memory strings.
 
     Tolerates the common shapes:

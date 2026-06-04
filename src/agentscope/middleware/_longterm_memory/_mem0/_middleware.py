@@ -21,16 +21,17 @@ from typing import (
     Literal,
     TYPE_CHECKING,
 )
+from weakref import WeakValueDictionary
 
 from ..._base import MiddlewareBase
 from ...._logging import logger
 from ....event import ReplyStartEvent
-from ....message import AssistantMsg, Msg
-from ._tools import build_memory_tools
+from ....message import AssistantMsg, HintBlock, Msg
+from ._tools import _build_memory_tools
 from ._utils import (
-    extract_memory_texts,
-    extract_query_text,
-    mem0_extracted_anything as _mem0_extracted_anything,
+    _extract_memory_texts,
+    _extract_query_text,
+    _mem0_extracted_anything,
 )
 
 if TYPE_CHECKING:
@@ -41,6 +42,8 @@ if TYPE_CHECKING:
     from ....agent import Agent
     from ....embedding import EmbeddingModelBase
     from ....model import ChatModelBase
+    from ....state import AgentState
+    from ....tool import ToolBase
 
     # Explicit ``TypeAlias`` annotation tells mypy this is a type
     # alias rather than a plain variable assignment — without it
@@ -111,33 +114,36 @@ class Mem0Middleware(MiddlewareBase):
 
     Example (build OSS internally)::
 
-        from agentscope.middleware._longterm_memory import Mem0Middleware
+        from agentscope.middleware import Mem0Middleware
+        from agentscope.tool import Toolkit
 
+        mw = Mem0Middleware(
+            user_id="alice",
+            chat_model=my_chat_model,
+            embedding_model=my_embedding_model,
+            mode="both",
+        )
         agent = Agent(
             ...,
-            middlewares=[
-                Mem0Middleware(
-                    user_id="alice",
-                    chat_model=my_chat_model,
-                    embedding_model=my_embedding_model,
-                    mode="both",
-                ),
-            ],
+            toolkit=Toolkit(tools=await mw.list_tools()),
+            middlewares=[mw],
         )
 
     Example (hosted Platform with pre-built client)::
 
+        from agentscope.middleware import Mem0Middleware
+        from agentscope.tool import Toolkit
         from mem0 import AsyncMemoryClient
 
+        mw = Mem0Middleware(
+            user_id="alice",
+            client=AsyncMemoryClient(api_key="m0-..."),
+            mode="both",
+        )
         agent = Agent(
             ...,
-            middlewares=[
-                Mem0Middleware(
-                    user_id="alice",
-                    client=AsyncMemoryClient(api_key="m0-..."),
-                    mode="both",
-                ),
-            ],
+            toolkit=Toolkit(tools=await mw.list_tools()),
+            middlewares=[mw],
         )
     """
 
@@ -174,7 +180,8 @@ class Mem0Middleware(MiddlewareBase):
         - **Client** — pass a pre-built mem0 client (OSS / Platform /
           custom). When ``client`` is given it takes absolute
           precedence; ``chat_model`` / ``embedding_model`` /
-          ``mem0_config`` are silently ignored.
+          ``mem0_config`` are ignored, with a warning listing any
+          ignored kwargs.
 
         Args:
             user_id:
@@ -250,9 +257,8 @@ class Mem0Middleware(MiddlewareBase):
                 in ``agent_control`` / ``both`` modes, advertising the
                 ``search_memory`` / ``add_memory`` tools to the LLM.
         """
-        if user_id is None or (
-            isinstance(user_id, str) and not user_id.strip()
-        ):
+        is_empty_user_id = isinstance(user_id, str) and not user_id.strip()
+        if user_id is None or is_empty_user_id:
             raise ValueError(
                 "Mem0Middleware requires a non-empty `user_id` "
                 '(or a resolver callable). Pass `user_id="<id>"` or '
@@ -286,41 +292,13 @@ class Mem0Middleware(MiddlewareBase):
         self._memory_section_intro = memory_section_intro
         self._tool_instructions = tool_instructions
 
-        # Agents whose toolkits we've already populated with the memory
-        # tools (agent_control / both modes). Keyed by id(agent) so the
-        # same middleware instance can serve multiple agents without
-        # double-registration.
-        self._tools_registered_for: set[int] = set()
-
-    # ==================================================================
-    # MiddlewareBase overrides
-    # ==================================================================
-
-    def is_implemented(self, hook_name: str) -> bool:
-        """Per-mode hook participation.
-
-        - ``on_reply`` — always implemented. In ``static_control`` /
-          ``both`` it pre-fetches memories, waits for the agent's
-          ``ReplyStartEvent`` (fires right after the new user input
-          lands in ``state.context``), appends the memory note there,
-          then writes the new exchange back after the reply completes.
-          In ``agent_control`` / ``both`` it also lazily registers the
-          ``search_memory`` / ``add_memory`` tools on the first reply
-          per agent.
-        - ``on_system_prompt`` — implemented only in
-          ``agent_control`` / ``both``: appends the usage instructions
-          for the ``search_memory`` / ``add_memory`` tools to the
-          agent's system prompt.
-
-        ``on_model_call`` and other hooks are not implemented — memory
-        injection now happens through ``state.context`` mutation from
-        ``on_reply``, not by rewriting the per-call ``messages`` list.
-        """
-        if hook_name == "on_reply":
-            return True
-        if hook_name == "on_system_prompt":
-            return self._mode in ("agent_control", "both")
-        return super().is_implemented(hook_name)
+        # The middleware exposes tools before an Agent exists, but resolver
+        # callables may need the live Agent. Remember active agents by their
+        # state session id without extending their lifetime.
+        self._agents_by_session: WeakValueDictionary[
+            str,
+            "Agent",
+        ] = WeakValueDictionary()
 
     # ------------------------------------------------------------------
     # Hook: on_reply
@@ -331,11 +309,11 @@ class Mem0Middleware(MiddlewareBase):
         input_kwargs: dict,
         next_handler: Callable[..., AsyncGenerator],
     ) -> AsyncGenerator:
-        # Lazy tool registration — runs once per (middleware, agent)
-        # pair. We do it here rather than in __init__ because the agent
-        # reference isn't available until the first invocation.
+        # Tool instances are registered by the caller through list_tools().
+        # Keep a weak lookup so state-injected tools can resolve the active
+        # Agent for dynamic user_id / agent_id resolvers.
         if self._mode in ("agent_control", "both"):
-            self._ensure_tools_registered(agent)
+            self._remember_agent(agent)
 
         # In pure agent_control mode the middleware is a no-op on the
         # reply path — the agent decides when to invoke the memory
@@ -364,17 +342,28 @@ class Mem0Middleware(MiddlewareBase):
         agent_id = self._resolve_agent_id(agent)
 
         inputs = input_kwargs.get("inputs")
-        query_text = extract_query_text(inputs)
+        query_text = _extract_query_text(inputs)
 
         memories: list[str] = []
         if query_text:
+            search_agent_id = agent_id if self._scope_search_by_agent else None
+            logger.info(
+                "mem0 search started: user_id=%s agent_id=%s chars=%d",
+                user_id,
+                search_agent_id,
+                len(query_text),
+            )
             try:
                 memories = await self._async_search(
                     query_text,
                     user_id=user_id,
-                    agent_id=(
-                        agent_id if self._scope_search_by_agent else None
-                    ),
+                    agent_id=search_agent_id,
+                )
+                logger.info(
+                    "mem0 search finished: user_id=%s agent_id=%s memories=%d",
+                    user_id,
+                    search_agent_id,
+                    len(memories),
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning(
@@ -387,11 +376,8 @@ class Mem0Middleware(MiddlewareBase):
         injected = False
         try:
             async for item in next_handler(**input_kwargs):
-                if (
-                    not injected
-                    and memories
-                    and isinstance(item, ReplyStartEvent)
-                ):
+                is_reply_start = isinstance(item, ReplyStartEvent)
+                if not injected and memories and is_reply_start:
                     agent.state.context.append(
                         self._build_memory_message(memories),
                     )
@@ -420,7 +406,34 @@ class Mem0Middleware(MiddlewareBase):
         agent: "Agent",
         current_prompt: str,
     ) -> str:
+        """Append memory-tool instructions to the system prompt.
+
+        Args:
+            agent (`Agent`):
+                The agent whose system prompt is being transformed.
+            current_prompt (`str`):
+                The system prompt produced by previous middleware.
+
+        Returns:
+            `str`:
+                The unchanged prompt in static-control mode, otherwise the
+                prompt with memory-tool instructions appended.
+        """
+        if self._mode == "static_control":
+            return current_prompt
         return f"{current_prompt}\n\n{self._tool_instructions}"
+
+    async def list_tools(self) -> list["ToolBase"]:
+        """List memory tools provided by this middleware.
+
+        Returns:
+            `list[ToolBase]`:
+                The ``search_memory`` and ``add_memory`` tools in
+                agent-control modes, otherwise an empty list.
+        """
+        if self._mode == "static_control":
+            return []
+        return _build_memory_tools(self)
 
     # ==================================================================
     # mem0 client construction
@@ -462,11 +475,8 @@ class Mem0Middleware(MiddlewareBase):
                     "is" if len(ignored) == 1 else "are",
                 )
         if client is None:
-            if (
-                mem0_config is None
-                and chat_model is None
-                and embedding_model is None
-            ):
+            no_models = chat_model is None and embedding_model is None
+            if mem0_config is None and no_models:
                 raise ValueError(
                     "Mem0Middleware needs one of: a pre-built `client`, "
                     "a `mem0_config`, or both `chat_model` and "
@@ -514,20 +524,39 @@ class Mem0Middleware(MiddlewareBase):
         *,
         user_id: str,
         agent_id: str | None,
+        top_k: int | None = None,
     ) -> list[str]:
+        """Search mem0 and normalize the result into memory strings.
+
+        Args:
+            query (`str`):
+                Search query text.
+            user_id (`str`):
+                mem0 ``user_id`` namespace.
+            agent_id (`str | None`):
+                Optional mem0 ``agent_id`` namespace. ``None`` searches by
+                user only.
+            top_k (`int | None`, optional):
+                Optional per-call result limit. Defaults to the middleware's
+                configured ``top_k``.
+
+        Returns:
+            `list[str]`:
+                Retrieved memory texts extracted from mem0's response.
+        """
         filters: dict[str, Any] = {"user_id": user_id}
         if agent_id:
             filters["agent_id"] = agent_id
 
         kwargs: dict[str, Any] = {
             "filters": filters,
-            "top_k": self._top_k,
+            "top_k": self._top_k if top_k is None else top_k,
         }
         if self._threshold is not None:
             kwargs["threshold"] = self._threshold
 
         raw = await self._client.search(query, **kwargs)
-        return extract_memory_texts(raw)
+        return _extract_memory_texts(raw)
 
     async def _async_add(
         self,
@@ -537,6 +566,23 @@ class Mem0Middleware(MiddlewareBase):
         agent_id: str | None,
         infer: bool = True,
     ) -> dict | None:
+        """Add messages to mem0 using the shared async client call shape.
+
+        Args:
+            messages (`list[dict[str, str]]`):
+                mem0-compatible message dictionaries.
+            user_id (`str`):
+                mem0 ``user_id`` namespace.
+            agent_id (`str | None`):
+                Optional mem0 ``agent_id`` namespace.
+            infer (`bool`, optional):
+                Whether mem0 should run memory extraction. ``False`` asks
+                mem0 to store the text directly.
+
+        Returns:
+            `dict | None`:
+                The raw result returned by mem0.
+        """
         kwargs: dict[str, Any] = {"user_id": user_id}
         if agent_id:
             kwargs["agent_id"] = agent_id
@@ -619,55 +665,77 @@ class Mem0Middleware(MiddlewareBase):
     # Helpers
     # ==================================================================
     def _build_memory_message(self, memories: list[str]) -> Msg:
-        """Format retrieved ``memories`` as a synthetic ``AssistantMsg``
-        appended to the agent's context — framed as a recall note the
-        assistant brings into the conversation."""
+        """Format retrieved ``memories`` as a synthetic hint message.
+
+        The context entry uses an assistant-role ``Msg`` container because
+        user messages cannot carry ``HintBlock`` content. Formatters convert
+        the ``HintBlock`` itself into a user message before the model call.
+
+        Args:
+            memories (`list[str]`):
+                Retrieved memory texts to expose to the model.
+
+        Returns:
+            `Msg`:
+                An assistant-role message containing one ``HintBlock``.
+        """
         bullets = "\n".join(f"- {m}" for m in memories)
         content = (
             f"{self._memory_section_header}\n"
             f"{self._memory_section_intro}\n"
             f"{bullets}"
         )
-        return AssistantMsg(name="memory", content=content)
+        return AssistantMsg(
+            name="memory",
+            content=[HintBlock(hint=content)],
+        )
 
-    def _ensure_tools_registered(self, agent: "Agent") -> None:
-        """Append ``search_memory`` / ``add_memory`` to the agent's
-        ``basic`` toolkit group, at most once per agent.
+    def _remember_agent(self, agent: "Agent") -> None:
+        """Remember the active agent for state-injected memory tools.
 
-        We deliberately use the ``basic`` group (always-active in v2)
-        rather than a dedicated ``ToolGroup``:
-
-        - Memory should be always-on when the user opted into
-          ``agent_control`` / ``both`` mode.
-        - The dedicated-group path would require the agent to call the
-          toolkit's meta-tool (``ResetTools``) to activate it — one
-          extra round-trip per session, plus the risk that ``ResetTools``
-          clears our group when the agent reorganizes its toolset
-          (``ResetTools.__call__`` first does
-          ``activated_groups.clear()``).
-        - ``ToolGroup.instructions`` only surfaces to the agent through
-          the meta-tool's render pipeline, so a dedicated group's
-          instructions wouldn't fire under auto-activation anyway.
-
-        Per-tool guidance to the LLM lives in each tool's
-        ``description`` field (extracted from the function docstring
-        by ``FunctionTool``); a brief group-level nudge is appended to
-        the system prompt by :meth:`on_system_prompt`.
-
-        Called from ``on_reply`` instead of ``MiddlewareBase.list_tools``
-        because the agent does not (currently) consume ``list_tools``;
-        wiring here keeps the integration self-contained.
+        Args:
+            agent (`Agent`):
+                The agent currently executing a reply.
         """
-        if id(agent) in self._tools_registered_for:
-            return
-        self._tools_registered_for.add(id(agent))
-        tools = build_memory_tools(self, agent)
-        agent.toolkit.tool_groups[0].tools.extend(tools)
+        self._agents_by_session[agent.state.session_id] = agent
+
+    def _resolve_tool_agent(
+        self,
+        agent_state: "AgentState | None",
+    ) -> "Agent | None":
+        """Resolve the live agent associated with an injected state.
+
+        Args:
+            agent_state (`AgentState | None`):
+                State injected by the toolkit when calling a memory tool.
+
+        Returns:
+            `Agent | None`:
+                The live agent for the session, or ``None`` if the tool was
+                called outside an active agent turn.
+        """
+        if agent_state is None:
+            return None
+        return self._agents_by_session.get(agent_state.session_id)
 
     def _resolve_user_id(self, agent: "Agent") -> str:
-        value = (
-            self._user_id(agent) if callable(self._user_id) else self._user_id
-        )
+        """Resolve and validate the mem0 ``user_id`` for an agent.
+
+        ``user_id`` may be a static string or a callable resolver. Empty
+        resolved values are invalid because mem0 requires this namespace.
+
+        Args:
+            agent (`Agent`):
+                The agent for which to resolve ``user_id``.
+
+        Returns:
+            `str`:
+                The resolved non-empty mem0 ``user_id``.
+        """
+        if callable(self._user_id):
+            value = self._user_id(agent)
+        else:
+            value = self._user_id
         if not value:
             raise ValueError(
                 f"Mem0Middleware resolved an empty user_id for agent "
@@ -676,13 +744,26 @@ class Mem0Middleware(MiddlewareBase):
         return str(value)
 
     def _resolve_agent_id(self, agent: "Agent") -> str | None:
+        """Resolve the optional mem0 ``agent_id`` for an agent.
+
+        ``agent_id`` may be disabled with ``None``, provided as a static
+        string, or resolved dynamically from the current agent.
+
+        Args:
+            agent (`Agent`):
+                The agent for which to resolve ``agent_id``.
+
+        Returns:
+            `str | None`:
+                The resolved mem0 ``agent_id``, or ``None`` when disabled or
+                empty.
+        """
         if self._agent_id is None:
             return None
-        value = (
-            self._agent_id(agent)
-            if callable(self._agent_id)
-            else self._agent_id
-        )
+        if callable(self._agent_id):
+            value = self._agent_id(agent)
+        else:
+            value = self._agent_id
         return str(value) if value else None
 
     async def _dispatch_write(
@@ -692,12 +773,37 @@ class Mem0Middleware(MiddlewareBase):
         user_id: str,
         agent_id: str | None,
     ) -> None:
+        """Persist a completed user/assistant exchange to mem0.
+
+        When ``await_write`` is enabled, the add call is awaited inline so
+        errors can be logged before reply cleanup completes. Otherwise the
+        write is scheduled as a background task and failures are logged there.
+
+        Args:
+            messages (`list[dict[str, str]]`):
+                User/assistant message pair to persist.
+            user_id (`str`):
+                mem0 ``user_id`` namespace.
+            agent_id (`str | None`):
+                Optional mem0 ``agent_id`` namespace.
+        """
         if self._await_write:
             try:
+                logger.info(
+                    "mem0 write started: user_id=%s agent_id=%s messages=%d",
+                    user_id,
+                    agent_id,
+                    len(messages),
+                )
                 await self._async_add(
                     messages,
                     user_id=user_id,
                     agent_id=agent_id,
+                )
+                logger.info(
+                    "mem0 write finished for user_id=%s agent_id=%s",
+                    user_id,
+                    agent_id,
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning(
@@ -709,10 +815,22 @@ class Mem0Middleware(MiddlewareBase):
 
             async def _bg() -> None:
                 try:
+                    logger.info(
+                        "mem0 background write started for user_id=%s "
+                        "agent_id=%s messages=%d",
+                        user_id,
+                        agent_id,
+                        len(messages),
+                    )
                     await self._async_add(
                         messages,
                         user_id=user_id,
                         agent_id=agent_id,
+                    )
+                    logger.info(
+                        "mem0 bg write finished: user_id=%s agent_id=%s",
+                        user_id,
+                        agent_id,
                     )
                 except Exception as e:  # noqa: BLE001
                     logger.warning(
