@@ -3,7 +3,7 @@
 from fastapi import Header, HTTPException, Request, status
 
 from .workspace_manager import WorkspaceManagerBase
-from ._manager import SchedulerManager
+from ._manager import BackgroundTaskManager, SchedulerManager
 from ._service import ChatService
 from ._types import AgentMiddlewareFactory, AgentToolFactory
 from .message_bus import MessageBus
@@ -81,6 +81,21 @@ async def get_scheduler_manager(request: Request) -> SchedulerManager:
         `SchedulerManager`: The scheduler manager stored in ``app.state``.
     """
     return request.app.state.scheduler_manager
+
+
+async def get_background_task_manager(
+    request: Request,
+) -> BackgroundTaskManager:
+    """Return the application-wide background task manager.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `BackgroundTaskManager`: The background task manager stored in
+        ``app.state``.
+    """
+    return request.app.state.background_task_manager
 
 
 async def get_workspace_manager(request: Request) -> WorkspaceManagerBase:

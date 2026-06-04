@@ -39,6 +39,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await stack.enter_async_context(workspace_manager)
 
         bg_manager = await stack.enter_async_context(BackgroundTaskManager())
+        app.state.background_task_manager = bg_manager
 
         # Scheduler is independent of ChatService now (its fire path
         # pushes to inbox + enqueues wakeup via the bus), so we build it
