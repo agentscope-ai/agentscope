@@ -226,6 +226,28 @@ class TestOpenAIChatNonStream(IsolatedAsyncioTestCase):
         )
 
     @patch("openai.AsyncClient")
+    async def test_openai_model_thinking_enable_not_forwarded(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Official OpenAI models do not accept Qwen extra_body flags."""
+        model = OpenAIChatModel(
+            credential=OpenAICredential(api_key="test"),
+            model="gpt-4.1",
+            stream=False,
+            context_size=128_000,
+            parameters=OpenAIChatModel.Parameters(thinking_enable=True),
+        )
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello world!"),
+        )
+        mock_client_cls.return_value.chat.completions.create = mock_create
+
+        await model([])
+
+        self.assertNotIn("extra_body", mock_create.call_args.kwargs)
+
+    @patch("openai.AsyncClient")
     async def test_tool_call_response(
         self,
         mock_client_cls: MagicMock,

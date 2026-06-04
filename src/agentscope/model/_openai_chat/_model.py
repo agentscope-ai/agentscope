@@ -249,7 +249,10 @@ class OpenAIChatModel(ChatModelBase):
 
         kwargs.update(generate_kwargs)
 
-        if "thinking_enable" in self.parameters.model_fields_set:
+        if (
+            "thinking_enable" in self.parameters.model_fields_set
+            and self._uses_qwen_extra_body(model_name)
+        ):
             kwargs.setdefault("extra_body", {})
             kwargs["extra_body"][
                 "enable_thinking"
@@ -680,3 +683,12 @@ class OpenAIChatModel(ChatModelBase):
             return tools, {"type": "function", "function": {"name": mode}}
 
         return tools, mode
+
+    def _uses_qwen_extra_body(self, model_name: str) -> bool:
+        base_url = str(self.credential.base_url or "").lower()
+        model = model_name.lower()
+        return (
+            "qwen" in model
+            or "dashscope" in base_url
+            or "aliyuncs.com" in base_url
+        )
