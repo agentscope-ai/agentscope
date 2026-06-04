@@ -83,7 +83,7 @@ from ..permission import (
     PermissionEngine,
     PermissionDecision,
 )
-from ..workspace import Offloader
+from ..workspace import Offloader, WorkspaceBase
 
 if TYPE_CHECKING:
     from ..middleware import MiddlewareBase
@@ -1961,6 +1961,12 @@ class Agent:
         skill_instructions = await self.toolkit.get_skill_instructions()
         if skill_instructions:
             prompt.append(skill_instructions)
+
+        # Workspace & offloader instructions
+        if isinstance(self.offloader, WorkspaceBase):
+            offload_instructions = await self.offloader.get_instructions()
+            if offload_instructions:
+                prompt.append(offload_instructions)
 
         result = "\n".join(prompt)
 

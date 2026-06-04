@@ -84,7 +84,7 @@ class TeamSay(_TeamToolBase):
     description: str
 
     is_concurrency_safe: bool = True
-    is_read_only: bool = False
+    is_read_only: bool = True
 
     input_schema: dict = _TeamSayParams.model_json_schema()
 

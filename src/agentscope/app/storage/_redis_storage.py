@@ -489,7 +489,7 @@ class RedisStorage(StorageBase):
         # Cascade: schedules owned by this agent
         schedules = await self.list_schedules(user_id)
         for schedule in schedules:
-            if schedule.data.agent_id == agent_id:
+            if schedule.agent_id == agent_id:
                 await self.delete_schedule(user_id, schedule.id)
 
         # Defensive: scrub agent_id from any team's member_ids list.

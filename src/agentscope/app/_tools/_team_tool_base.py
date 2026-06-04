@@ -33,7 +33,7 @@ class _TeamToolBase(ToolBase):
     description: str
     input_schema: dict[str, Any]
     is_concurrency_safe: bool = False
-    is_read_only: bool = False
+    is_read_only: bool = True
     is_state_injected: bool = False
     is_external_tool: bool = False
     is_mcp: bool = False
