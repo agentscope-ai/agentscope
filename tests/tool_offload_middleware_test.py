@@ -292,12 +292,14 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         mock_bus.inbox_push.assert_called_once()
         session_id_called, hint_dict = mock_bus.inbox_push.call_args.args
         self.assertEqual(session_id_called, agent.state.session_id)
+        self.maxDiff = None
         self.assertDictEqual(
             hint_dict,
             {
                 "type": "hint",
                 "id": AnyString(),
-                "source": "Tool Output",
+                "source": '{"label": "tool_output", "sublabel": "slow_tool · '
+                'call_bg"}',
                 "hint": [
                     {
                         "type": "text",

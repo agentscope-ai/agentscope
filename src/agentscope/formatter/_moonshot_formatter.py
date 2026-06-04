@@ -80,6 +80,7 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
     ) -> dict[str, Any]:
         return _moonshot_format_image_source(source)
 
+    # pylint: disable=too-many-branches
     async def format(
         self,
         msgs: list[Msg],
@@ -155,8 +156,23 @@ class MoonshotChatFormatter(_OpenAIFormatterBase):
                             },
                         )
                     else:
-                        # TODO: support multimodal HintBlock content
-                        pass
+                        hint_parts: list[dict] = []
+                        for sub in block.hint:
+                            if isinstance(sub, TextBlock):
+                                hint_parts.append(
+                                    {"type": "text", "text": sub.text},
+                                )
+                            elif isinstance(sub, DataBlock):
+                                formatted_sub = self._format_openai_data_block(
+                                    sub,
+                                    role="user",
+                                )
+                                if formatted_sub is not None:
+                                    hint_parts.append(formatted_sub)
+                        if hint_parts:
+                            messages.append(
+                                {"role": "user", "content": hint_parts},
+                            )
 
                 elif isinstance(block, ToolCallBlock):
                     tool_calls.append(

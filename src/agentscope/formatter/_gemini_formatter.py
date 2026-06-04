@@ -173,8 +173,20 @@ class GeminiChatFormatter(_GeminiFormatterBase):
                             },
                         )
                     else:
-                        # TODO: support multimodal HintBlock content
-                        pass
+                        hint_parts: list[dict] = []
+                        for sub in block.hint:
+                            if isinstance(sub, TextBlock):
+                                hint_parts.append({"text": sub.text})
+                            elif isinstance(sub, DataBlock):
+                                formatted_sub = self._format_gemini_data_block(
+                                    sub,
+                                )
+                                if formatted_sub:
+                                    hint_parts.append(formatted_sub)
+                        if hint_parts:
+                            messages.append(
+                                {"role": "user", "parts": hint_parts},
+                            )
 
                 elif isinstance(block, DataBlock):
                     formatted = self._format_gemini_data_block(block)

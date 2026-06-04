@@ -9,6 +9,7 @@ from .._logging import logger
 from ..message import (
     Msg,
     TextBlock,
+    DataBlock,
     ThinkingBlock,
     HintBlock,
     ToolCallBlock,
@@ -91,8 +92,22 @@ class DeepSeekChatFormatter(FormatterBase):
                             {"role": "user", "content": block.hint},
                         )
                     else:
-                        # TODO: support multimodal HintBlock content
-                        pass
+                        hint_text_parts: list[str] = []
+                        for sub in block.hint:
+                            if isinstance(sub, TextBlock):
+                                hint_text_parts.append(sub.text)
+                            elif isinstance(sub, DataBlock):
+                                hint_text_parts.append(
+                                    f"[{sub.source.media_type} attached, "
+                                    "not supported by this provider]",
+                                )
+                        if hint_text_parts:
+                            messages.append(
+                                {
+                                    "role": "user",
+                                    "content": "\n".join(hint_text_parts),
+                                },
+                            )
 
                 elif isinstance(block, ToolCallBlock):
                     tool_calls.append(

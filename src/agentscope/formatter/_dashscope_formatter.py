@@ -231,6 +231,7 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
     thinking (``reasoning_content``).
     """
 
+    # pylint: disable=too-many-branches
     async def format(
         self,
         msgs: list[Msg],
@@ -294,8 +295,25 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                             },
                         )
                     else:
-                        # TODO: support multimodal HintBlock content
-                        pass
+                        hint_parts: list[dict] = []
+                        for sub in block.hint:
+                            if isinstance(sub, TextBlock):
+                                hint_parts.append(
+                                    {"type": "text", "text": sub.text},
+                                )
+                            elif isinstance(sub, DataBlock):
+                                formatted_sub = (
+                                    self._format_dashscope_data_block(
+                                        sub,
+                                        role="user",
+                                    )
+                                )
+                                if formatted_sub:
+                                    hint_parts.append(formatted_sub)
+                        if hint_parts:
+                            formatted_msgs.append(
+                                {"role": "user", "content": hint_parts},
+                            )
 
                 elif isinstance(block, ToolCallBlock):
                     tool_calls.append(

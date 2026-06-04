@@ -283,7 +283,7 @@ class TestAgentCreate(_TeamToolsTestBase):
                 "type": "hint",
                 "id": AnyString(),
                 "hint": AnyString(),
-                "source": "leader",
+                "source": '{"label": "team_message", "sublabel": "leader"}',
             },
         )
         self.assertIn("please look up X", hint_payload["hint"])

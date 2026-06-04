@@ -14,6 +14,7 @@ In stateful mode the session id is deterministic (``{record_id}_stateful``)
 and reused across fires; in non-stateful mode a fresh session id is
 created every fire.
 """
+import json
 from contextlib import AsyncExitStack
 from datetime import datetime
 from unittest import IsolatedAsyncioTestCase
@@ -159,7 +160,9 @@ class TestSchedulerFireDelivery(_SchedulerFireTestBase):
                 "type": "hint",
                 "id": AnyString(),
                 "hint": AnyString(),
-                "source": f"schedule:{record.id}",
+                "source": json.dumps(
+                    {"label": "schedule", "sublabel": record.data.name},
+                ),
             },
         )
         self.assertIn("<scheduled-task>", hint["hint"])
