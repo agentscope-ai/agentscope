@@ -345,7 +345,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 						/>
 					</div>
 				</div>
-				<div className="flex flex-col h-full gap-2 px-2">
+				<div className="flex flex-col h-full gap-2 p-2">
 					<WorkspaceDrawer
 						mcps={mcps}
 						loading={mcpsLoading}

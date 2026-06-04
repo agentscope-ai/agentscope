@@ -1,4 +1,13 @@
-import { Ellipsis, MessageSquareDashed, Pencil, Plus, Settings2, Trash2 } from 'lucide-react';
+import {
+	BotMessageSquare,
+	CalendarClock,
+	Ellipsis,
+	MessageSquareDashed,
+	Pencil,
+	Plus,
+	Settings2,
+	Trash2,
+} from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
@@ -100,6 +109,7 @@ const ChatPageInner = () => {
 
 	const selectedAgent = agents.find((a) => a.id === urlAgentId) ?? null;
 	const currentView = sessions.find((v) => v.session.id === urlSessionId) ?? null;
+	const hasScheduleSessions = sessions.some((v) => v.session.source === 'schedule');
 
 	// "Inner focus" — when the URL carries a third `:memberId` segment
 	// the user is drilling into a team member's chat. The main sidebar
@@ -288,6 +298,12 @@ const ChatPageInner = () => {
 															)
 														}
 													>
+														{hasScheduleSessions &&
+															(session.source === 'schedule' ? (
+																<CalendarClock />
+															) : (
+																<BotMessageSquare />
+															))}
 														<span className="truncate">
 															{session.config.name || session.id}
 														</span>

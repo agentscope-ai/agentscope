@@ -20,11 +20,11 @@ retrigger callback — both responsibilities now live in the
 bus/wakeup infrastructure, which works correctly across processes.
 """
 import asyncio
+import json
 from copy import deepcopy
 from typing import AsyncGenerator, Callable
 
-from agentscope.app._manager import BackgroundTaskManager
-
+from .._manager import BackgroundTaskManager
 from ...middleware import MiddlewareBase
 from ...tool import ToolChunk, ToolResponse
 from ...message import (
@@ -281,6 +281,14 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
 
             tool_call_id = tool_call.id
 
+            hint_source = json.dumps(
+                {
+                    "label": "tool_output",
+                    "sublabel": f"{tool_name} · {tool_call_id}",
+                },
+                ensure_ascii=False,
+            )
+
             if response is None or len(response.content) == 0:
                 hint = HintBlock(
                     hint=(
@@ -289,7 +297,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                         f"(id={tool_call_id}) has completed with no output."
                         f"</system-notification>"
                     ),
-                    source="Tool Output",
+                    source=hint_source,
                 )
 
             else:
@@ -323,7 +331,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
 
                 hint = HintBlock(
                     hint=content_blocks,
-                    source="Tool Output",
+                    source=hint_source,
                 )
 
             # Deliver via inbox + wakeup — same path as a team message.

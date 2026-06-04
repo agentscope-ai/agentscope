@@ -8,11 +8,14 @@ import type {
 import {
 	ArrowDown,
 	ArrowUp,
+	Bot,
+	CalendarClock,
 	CheckCircle,
 	ChevronDownIcon,
 	Copy,
 	Loader2,
 	MessageSquareQuote,
+	Wrench,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -252,14 +255,30 @@ function renderBlock(
 		}
 
 		case 'hint': {
-			// A hint is a side-channel message injected into the assistant's
-			// reasoning loop — team messages (source = sender name),
-			// background tool offload results (source = "system"), or
-			// user interruptions. Rendered as a distinct bordered card so
-			// it's not mistaken for the assistant's own output. Nested
-			// content blocks (text / data) are rendered recursively via
-			// renderBlock so multimodal hints get the same image/audio/
-			// video treatment as regular data blocks.
+			// Parse source: try JSON, fall back to plain string, default to t('common.message').
+			let hintLabel: string;
+			let hintSublabel: string | null = null;
+			let HintIcon = MessageSquareQuote;
+
+			if (block.source) {
+				try {
+					const parsed = JSON.parse(block.source) as {
+						label?: string;
+						sublabel?: string;
+					};
+					hintLabel = parsed.label
+						? t(`messageBubble.hintSource.${parsed.label}`)
+						: block.source;
+					hintSublabel = parsed.sublabel ?? null;
+					if (parsed.label === 'team_message') HintIcon = Bot;
+					else if (parsed.label === 'schedule') HintIcon = CalendarClock;
+					else if (parsed.label === 'tool_output') HintIcon = Wrench;
+				} catch {
+					hintLabel = block.source;
+				}
+			} else {
+				hintLabel = t('common.message');
+			}
 			const items: (TextBlock | DataBlock)[] =
 				typeof block.hint === 'string'
 					? [{ type: 'text', id: `${block.id}-text`, text: block.hint }]
@@ -270,10 +289,13 @@ function renderBlock(
 						<Collapsible>
 							<CollapsibleTrigger asChild>
 								<Button className="group w-full max-w-full" variant="ghost">
-									<MessageSquareQuote className="size-3.5" />
-									<span className="tracking-tight">
-										{block.source || t('common.message')}
-									</span>
+									<HintIcon className="size-3.5" />
+									<span className="tracking-tight">{hintLabel}</span>
+									{hintSublabel && (
+										<span className="text-muted-foreground font-normal truncate max-w-[200px]">
+											{hintSublabel}
+										</span>
+									)}
 									<ChevronDownIcon className="ml-auto group-data-[state=open]:rotate-180" />
 								</Button>
 							</CollapsibleTrigger>

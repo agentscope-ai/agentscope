@@ -74,7 +74,12 @@
 	},
 	"messageBubble": {
 		"thinking": "思考中",
-		"running": "运行中..."
+		"running": "运行中...",
+		"hintSource": {
+			"tool_output": "工具输出",
+			"team_message": "团队消息",
+			"schedule": "定时任务"
+		}
 	},
 	"chat": {
 		"inputPlaceholder": "输入消息...",

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The AgentCreate tool — spawns a worker into the current team."""
+import json
 from typing import Literal
 
 from pydantic import Field
@@ -313,7 +314,13 @@ deleted when ``TeamDelete`` is called.
                     f"{prompt}\n"
                     f"</team-message>"
                 ),
-                source=leader_name,
+                source=json.dumps(
+                    {
+                        "label": "team_message",
+                        "sublabel": leader_name,
+                    },
+                    ensure_ascii=False,
+                ),
             )
             await self._message_bus.inbox_push(
                 worker_session.id,

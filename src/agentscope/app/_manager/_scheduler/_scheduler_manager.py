@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The cron scheduler manager class."""
+import json
 from collections.abc import Callable, Coroutine
 
 from typing import Self
@@ -223,7 +224,13 @@ class SchedulerManager:
                         f"{record.data.description}\n"
                         f"</scheduled-task>"
                     ),
-                    source=f"schedule:{record.id}",
+                    source=json.dumps(
+                        {
+                            "label": "schedule",
+                            "sublabel": record.data.name,
+                        },
+                        ensure_ascii=False,
+                    ),
                 )
                 await message_bus.inbox_push(
                     session.id,

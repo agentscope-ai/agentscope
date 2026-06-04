@@ -74,7 +74,12 @@
 	},
 	"messageBubble": {
 		"thinking": "Thinking",
-		"running": "Running..."
+		"running": "Running...",
+		"hintSource": {
+			"tool_output": "Tool Output",
+			"team_message": "Team Message",
+			"schedule": "Schedule"
+		}
 	},
 	"chat": {
 		"inputPlaceholder": "Type a message...",
