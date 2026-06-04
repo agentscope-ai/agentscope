@@ -75,6 +75,30 @@ class ToolBase(ABC):
     ) -> PermissionDecision:
         """Check permissions for the tool usage."""
 
+    async def check_read_only(
+        self,
+        tool_input: dict[str, Any],
+    ) -> bool:
+        """Decide whether this specific invocation is read-only.
+
+        Returns the static :attr:`is_read_only` attribute by default.
+        Subclasses with input-dependent semantics (e.g. ``Bash``) should
+        override this to inspect ``tool_input`` — for example, ``Bash`` is
+        statically marked as not read-only but ``ls -a`` is in fact read-only.
+
+        Should be cheap — the permission engine may call this before the
+        full :meth:`check_permissions` flow.
+
+        Args:
+            tool_input (`dict[str, Any]`):
+                The tool input data for this invocation.
+
+        Returns:
+            `bool`:
+                ``True`` if this invocation is read-only, ``False`` otherwise.
+        """
+        return self.is_read_only
+
     def match_rule(
         self,
         rule_content: str | None,
@@ -142,6 +166,58 @@ class ToolBase(ABC):
                 source="suggested",
             ),
         ]
+
+    def _path_in_allowed_working_path(
+        self,
+        file_path: str,
+        context: PermissionContext,
+    ) -> bool:
+        """Check if a file path is within any allowed working directory.
+
+        A "working directory" is the process's current directory plus any
+        entries in :attr:`PermissionContext.working_directories`. Paths
+        are compared via :func:`os.path.realpath` so that aliases like
+        macOS's ``/tmp`` → ``/private/tmp`` and symlinked working
+        directories compare equal on both sides.
+
+        Used by tools that conditionally auto-allow file operations in
+        :attr:`PermissionMode.ACCEPT_EDITS` (e.g. Write, Edit, and the
+        filesystem-command branch of Bash).
+
+        Args:
+            file_path (`str`):
+                The file path to check.
+            context (`PermissionContext`):
+                The permission context containing the working directories.
+
+        Returns:
+            `bool`:
+                True if ``file_path`` is within any allowed working
+                directory.
+        """
+        current_dir = os.getcwd()
+        additional_dirs = list(context.working_directories.keys())
+        all_working_dirs = [current_dir] + additional_dirs
+
+        abs_file_path = os.path.realpath(os.path.expanduser(file_path))
+
+        for working_dir in all_working_dirs:
+            abs_working_dir = os.path.realpath(
+                os.path.expanduser(working_dir),
+            )
+            try:
+                os.path.relpath(abs_file_path, abs_working_dir)
+                if (
+                    abs_file_path.startswith(abs_working_dir + os.sep)
+                    or abs_file_path == abs_working_dir
+                ):
+                    return True
+            except ValueError:
+                # On Windows, relpath raises ValueError if paths are on
+                # different drives.
+                continue
+
+        return False
 
     def _is_dangerous_path(self, file_path: str) -> bool:
         """Check if a file path is dangerous (sensitive file or directory).

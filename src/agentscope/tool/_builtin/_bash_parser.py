@@ -301,6 +301,8 @@ class BashCommandParser:
                 "touch",
                 "ln",
                 "sed",
+                "mkdir",
+                "rmdir",
             ]:
                 # Extract file arguments (skip flags)
                 for arg in args:
@@ -341,7 +343,17 @@ class BashCommandParser:
                 continue
 
             # Check for file-manipulating commands
-            if token in ["rm", "mv", "cp", "chmod", "chown", "sed", "touch"]:
+            if token in [
+                "rm",
+                "mv",
+                "cp",
+                "chmod",
+                "chown",
+                "sed",
+                "touch",
+                "mkdir",
+                "rmdir",
+            ]:
                 cmd_name = token
                 # Look for file arguments after this command
                 j = i + 1
