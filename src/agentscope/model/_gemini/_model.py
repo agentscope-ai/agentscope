@@ -239,6 +239,11 @@ class GeminiChatModel(ChatModelBase):
                 "include_thoughts": True,
                 "thinking_budget": self.parameters.thinking_budget or 1024,
             }
+        else:
+            config["thinking_config"] = {
+                "include_thoughts": False,
+                "thinking_budget": 0,
+            }
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 

@@ -112,6 +112,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         return {
             "id": AnyString(),
             "created_at": AnyString(),
+            "metadata": {},
             "reply_id": reply_id,
         }
 

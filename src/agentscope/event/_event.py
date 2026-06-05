@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 from enum import StrEnum
-from typing import Literal, List, TypeAlias
+from typing import Any, Dict, Literal, List, TypeAlias
 
 from pydantic import BaseModel, Field, ConfigDict
 
@@ -69,6 +69,8 @@ class EventBase(BaseModel):
     """Unique event identifier."""
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     """ISO 8601 timestamp of when the event was created."""
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    """Optional metadata attached to the event."""
 
 
 class ReplyStartEvent(EventBase):

@@ -175,8 +175,7 @@ class OllamaChatModel(ChatModelBase):
         if options:
             kwargs["options"] = options
 
-        if self.parameters.thinking_enable:
-            kwargs["think"] = True
+        kwargs["think"] = self.parameters.thinking_enable
 
         kwargs.update(generate_kwargs)
 

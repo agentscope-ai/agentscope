@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Unified MCP client implementation for AgentScope."""
+import re
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager
 from typing import Any, TYPE_CHECKING
 
@@ -115,6 +116,15 @@ class MCPClient(BaseModel):
 
     def model_post_init(self, __context: Any) -> None:
         """Validate configuration and initialize client."""
+        # MCP name is used to compose model-facing tool names
+        # (mcp__{name}__{tool}), which must match ^[a-zA-Z0-9_-]+$.
+        if not re.fullmatch(r"[a-zA-Z0-9_-]+", self.name):
+            raise ValueError(
+                f"MCPClient name '{self.name}' contains characters not "
+                f"allowed by LLM providers (only [a-zA-Z0-9_-] are "
+                f"permitted). Please rename it.",
+            )
+
         # STDIO MCP must be stateful
         if self.mcp_config.type == "stdio_mcp" and not self.is_stateful:
             raise ValueError(
