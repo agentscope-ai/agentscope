@@ -37,7 +37,9 @@
 		"leader": "Leader",
 		"worker": "Worker",
 		"time": "Time",
-		"yes": "Yes"
+		"yes": "Yes",
+		"deleteTitle": "Delete {{entity}} \"{{name}}\"?",
+		"deleteDescription": "This action cannot be undone."
 	},
 	"tool": {
 		"moreLines": "... {{count}} more lines",
@@ -133,19 +135,17 @@
 		"title": "Edit agent"
 	},
 	"dialog-agent-delete": {
-		"title": "Delete agent",
-		"description": "This action cannot be undone.",
+		"entity": "agent",
 		"confirm": "Delete"
 	},
 	"dialog-session-delete": {
-		"title": "Delete session",
-		"description": "This action cannot be undone."
+		"entity": "session",
+		"confirm": "Delete"
 	},
 	"dialog-session-rename": {
 		"title": "Rename session",
 		"label": "Name",
-		"placeholder": "Session name",
-		"confirm": "Rename"
+		"placeholder": "Session name"
 	},
 	"session-menu": {
 		"rename": "Rename",
@@ -168,8 +168,7 @@
 		"availableModels": "Available Models",
 		"noModels": "No models available",
 		"noModelsDescription": "This provider returned no models.",
-		"deleteTitle": "Delete \"{{name}}\"?",
-		"deleteDescription": "This action cannot be undone. The credential will be permanently removed.",
+		"deleteEntity": "credential",
 		"subtitle": "Model API credential configuration",
 		"reasoning": "Reasoning",
 		"maxContext": "Max. Context",
@@ -213,8 +212,15 @@
 		"emptyMcpServers": "No MCP servers found in configuration."
 	},
 	"dialog-mcp-delete": {
-		"title": "Delete MCP server \"{{name}}\"?",
-		"description": "This action cannot be undone."
+		"entity": "MCP server",
+		"skillEntity": "skill",
+		"skillDescription": "Are you sure you want to remove this skill from the workspace?"
+	},
+	"dialog-skill-add": {
+		"title": "Add skill",
+		"description": "Enter the path to a skill directory to add it to the workspace.",
+		"pathLabel": "Skill path",
+		"pathPlaceholder": "/path/to/skill"
 	},
 	"schedule": {
 		"calendar": "Calendar",
@@ -226,9 +232,8 @@
 			"title": "Create Schedule"
 		},
 		"deleteSchedule": {
-			"description": "This action cannot be undone. The scheduled task will be permanently removed.",
-			"successToast": "Schedule deleted successfully.",
-			"title": "Delete Schedule"
+			"entity": "schedule",
+			"successToast": "Schedule deleted successfully."
 		},
 		"endAt": "End Date",
 		"end_at": "End At",

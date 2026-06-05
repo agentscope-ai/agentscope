@@ -105,6 +105,30 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 
 	const view = sessions.find((v) => v.session.id === sessionId) ?? null;
 
+	// ChatViewport keeps its own `useSessions(agentId)` instance (the
+	// outer page has a separate one). Its built-in fetch only fires on
+	// `agentId` change, so when the outer page creates a new session
+	// under the same agent, this list doesn't auto-refresh. Without
+	// this refetch, `view` would stay `null` for the brand-new session
+	// id and every effect below would early-return on `!view`,
+	// leaving the model select and friends pinned to whatever the
+	// previously-viewed session had configured.
+	useEffect(() => {
+		if (!sessionId) return;
+		if (view) return;
+		refetchSessions();
+	}, [sessionId, view, refetchSessions]);
+
+	// Reset local UI state when the target session changes. Otherwise
+	// the model select (and disabled-state guards on `send`) would
+	// show the previous session's model during the in-flight window
+	// before `view` repopulates — and an immediate send would post to
+	// a session whose backend config doesn't actually have that model.
+	useEffect(() => {
+		setSelectedModel(null);
+		setSelectedFallbackModel(null);
+	}, [sessionId]);
+
 	const selectedModelCard = useMemo(() => {
 		if (!selectedModel) return null;
 		const items = groups[selectedModel.type];

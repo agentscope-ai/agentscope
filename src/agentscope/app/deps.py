@@ -3,8 +3,12 @@
 from fastapi import Header, HTTPException, Request, status
 
 from .workspace_manager import WorkspaceManagerBase
-from ._manager import BackgroundTaskManager, SchedulerManager
-from ._service import ChatService
+from ._manager import (
+    BackgroundTaskManager,
+    ChatRunRegistry,
+    SchedulerManager,
+)
+from ._service import ChatService, SessionService
 from ._types import AgentMiddlewareFactory, AgentToolFactory
 from .message_bus import MessageBus
 from .storage import StorageBase
@@ -69,6 +73,31 @@ async def get_chat_service(request: Request) -> ChatService:
         `ChatService`: The chat service instance stored in ``app.state``.
     """
     return request.app.state.chat_service
+
+
+async def get_session_service(request: Request) -> SessionService:
+    """Return the application-wide session service.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `SessionService`: The session service instance stored in
+        ``app.state``.
+    """
+    return request.app.state.session_service
+
+
+async def get_chat_run_registry(request: Request) -> ChatRunRegistry:
+    """Return the per-process chat-run registry.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `ChatRunRegistry`: The registry stored in ``app.state``.
+    """
+    return request.app.state.chat_run_registry
 
 
 async def get_scheduler_manager(request: Request) -> SchedulerManager:

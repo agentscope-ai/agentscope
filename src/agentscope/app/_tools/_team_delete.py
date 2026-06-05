@@ -33,8 +33,6 @@ single member" tool in v1, only whole-team dissolution.
 - Your own session continues to exist but is no longer associated with \
 any team — the team-related tools become unavailable on subsequent \
 reasoning steps.
-- All in-flight inbox messages addressed to deleted members are \
-abandoned (TTL cleans up the orphaned bus keys).
 
 This is irreversible.
 """
@@ -42,10 +40,15 @@ This is irreversible.
     input_schema: dict = _TeamDeleteParams.model_json_schema()
 
     async def __call__(self) -> ToolChunk:
-        """Dissolve the bound session's team via storage cascade.
+        """Dissolve the bound session's team via :class:`SessionService`.
 
         Reads the current session + team records from storage to
         enforce: caller must be in a team AND must be its leader.
+        Then delegates the actual cancel + delete + bus-purge cascade
+        to :meth:`SessionService.delete_team`, which routes every
+        member through the shared session-level primitive — so worker
+        chat runs are cancelled cross-process and their bus state is
+        cleaned up the same way ``DELETE /agents`` would.
 
         Returns:
             `ToolChunk`:
@@ -100,7 +103,15 @@ This is irreversible.
                     state=ToolResultState.ERROR,
                 )
 
-            await self._storage.delete_team(self._user_id, team.id)
+            # Local import to avoid a circular dependency between
+            # ``_tools`` and ``_service`` at module load.
+            from .._service import SessionService  # noqa: PLC0415
+
+            session_service = SessionService(
+                storage=self._storage,
+                message_bus=self._message_bus,
+            )
+            await session_service.delete_team(self._user_id, team.id)
             return ToolChunk(
                 content=[
                     TextBlock(

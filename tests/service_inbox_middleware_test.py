@@ -71,6 +71,9 @@ class _FakeBus(MessageBus):
         self._queues[key] = self._queues.get(key, [])[max_count:]
         return entries
 
+    async def queue_delete(self, key: str) -> None:
+        self._queues.pop(key, None)
+
     # Mode C — log (unused)
     async def log_append(
         self,

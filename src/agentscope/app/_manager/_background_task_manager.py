@@ -230,6 +230,53 @@ class BackgroundTaskManager:
         """
         return [TaskStop(self.tasks)]
 
+    # ------------------------------------------------------------------
+    # Session-scoped cancel
+    # ------------------------------------------------------------------
+
+    def cancel_session_tasks(self, session_id: str) -> int:
+        """Cancel every locally-tracked task whose owner session matches.
+
+        Called by :class:`CancelDispatcher` on each incoming cancel
+        broadcast. The dispatcher fires this on every process; each
+        process only cancels the tasks it actually holds, so a session
+        whose BG tasks all live on other processes is a silent no-op
+        here. Returns the number of tasks cancelled on this process so
+        callers can log the local effect.
+
+        The matching tasks' ``add_done_callback`` from
+        :meth:`register_task` removes them from ``self.tasks`` once the
+        cancel actually takes effect, so no explicit pop is needed.
+        Watcher coroutines (e.g.
+        :class:`~agentscope.app._middleware.ToolOffloadMiddleware`'s
+        ``_deliver_when_done``) catch :class:`asyncio.CancelledError`
+        and skip result delivery, so cancelling here will not push a
+        stale inbox/wakeup for a session being deleted.
+
+        Args:
+            session_id (`str`):
+                The session whose tasks should be cancelled on this
+                process.
+
+        Returns:
+            `int`:
+                Number of tasks cancelled locally.
+        """
+        cancelled = 0
+        for bg_task in list(self.tasks.values()):
+            if bg_task.session_id != session_id:
+                continue
+            logger.info(
+                "Cancelling background task for deleted/cancelled "
+                "session: task_id=%s, session_id=%s, agent_id=%s",
+                bg_task.id,
+                bg_task.session_id,
+                bg_task.agent_id,
+            )
+            bg_task.asyncio_task.cancel()
+            cancelled += 1
+        return cancelled
+
     async def __aenter__(self) -> Self:
         """Enter the async context. No setup required.
 

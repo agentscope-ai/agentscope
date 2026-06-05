@@ -402,6 +402,7 @@ class SchedulerManager:
                 user_id=user_id,
                 scheduler=self._scheduler,
                 storage=self._storage,
+                message_bus=self._message_bus,
             ),
             ScheduleList(
                 user_id=user_id,

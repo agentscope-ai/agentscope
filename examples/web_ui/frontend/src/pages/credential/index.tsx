@@ -382,12 +382,13 @@ export const CredentialPage = () => {
 					<DeleteDialog
 						open={deleteOpen}
 						onOpenChange={setDeleteOpen}
-						title={t('credential.deleteTitle', {
+						title={t('common.deleteTitle', {
+							entity: t('credential.deleteEntity'),
 							name:
 								(selectedCredential.data.name as string | undefined) ??
 								selectedCredential.id,
 						})}
-						description={t('credential.deleteDescription')}
+						description={t('common.deleteDescription')}
 						onConfirm={handleDelete}
 					/>
 				</>

@@ -39,20 +39,15 @@ return its team id.
 Use this tool when the task you've been given is best decomposed into \
 parallel sub-tasks executed by multiple specialised agents (members) \
 under your coordination. After creating the team, use ``AgentCreate`` to \
-spawn each member with its own role, prompt, and permission mode, then \
-use ``TeamSay`` to coordinate them.
+spawn each member with its own role, prompt, and permission mode. NOTE: \
+the ``prompt`` you pass to ``AgentCreate`` is delivered to that member \
+automatically, so do **NOT** call ``TeamSay`` right after ``AgentCreate`` — \
+just wait for the members to report back.
 
 ## When NOT to Use This Tool
 - The task is small enough to handle yourself.
 - You already lead a team in this session — a session can only lead \
-one team at a time.
-
-## Effects
-- A ``TeamRecord`` is created.
-- Your current session is marked as the leader session of this team.
-- New tools become available to you on subsequent reasoning steps: \
-``AgentCreate``, ``TeamSay``, ``TeamDelete``.
-"""
+one team at a time."""
 
     input_schema: dict = _TeamCreateParams.model_json_schema()
 

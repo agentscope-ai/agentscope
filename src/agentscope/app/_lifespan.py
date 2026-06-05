@@ -3,12 +3,14 @@
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
-from agentscope.app._manager import (
+from ._manager import (
     BackgroundTaskManager,
+    CancelDispatcher,
+    ChatRunRegistry,
     SchedulerManager,
     WakeupDispatcher,
 )
-from ._service import ChatService
+from ._service import ChatService, SessionService
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -26,8 +28,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     later in the sequence raises during startup, so no resource leaks
     on partial failure.
 
-    Service-layer ``ChatService`` has no lifecycle of its own and is
-    constructed inline.
+    Service-layer ``ChatService`` and ``SessionService`` have no
+    lifecycle of their own and are constructed inline.
     """
     storage = app.state.storage
     message_bus = app.state.message_bus
@@ -40,6 +42,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         bg_manager = await stack.enter_async_context(BackgroundTaskManager())
         app.state.background_task_manager = bg_manager
+
+        # Per-process registry of in-flight chat-run asyncio tasks.
+        # Entered before the wake-up + cancel dispatchers so they can
+        # share the same registry; exited last so its shutdown can
+        # cancel any leftover runs after the dispatchers stop.
+        chat_run_registry = await stack.enter_async_context(ChatRunRegistry())
+        app.state.chat_run_registry = chat_run_registry
 
         # Scheduler is independent of ChatService now (its fire path
         # pushes to inbox + enqueues wakeup via the bus), so we build it
@@ -63,13 +72,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         app.state.chat_service = chat_service
 
-        # WakeupDispatcher needs a live reference somewhere, or it would
-        # be garbage-collected; the AsyncExitStack holds that reference
-        # for us, so we don't need a local binding or app.state slot.
+        app.state.session_service = SessionService(
+            storage=storage,
+            message_bus=message_bus,
+        )
+
+        # Dispatchers need live references somewhere, or they would be
+        # garbage-collected; the AsyncExitStack holds those references
+        # for us, so we don't need local bindings or app.state slots.
         await stack.enter_async_context(
             WakeupDispatcher(
                 message_bus=message_bus,
+                storage=storage,
                 chat_service=chat_service,
+                chat_run_registry=chat_run_registry,
+            ),
+        )
+        await stack.enter_async_context(
+            CancelDispatcher(
+                message_bus=message_bus,
+                registry=chat_run_registry,
+                bg_manager=bg_manager,
             ),
         )
 

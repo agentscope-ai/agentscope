@@ -1,5 +1,5 @@
 import { format } from 'date-fns';
-import { ChevronDownIcon } from 'lucide-react';
+import { ChevronDownIcon, CircleAlert, Loader2, PlusCircle } from 'lucide-react';
 import * as React from 'react';
 
 import type { ChatModelConfig, PermissionMode } from '@/api';
@@ -181,7 +181,7 @@ export function CreateScheduleDialog({ open, onOpenChange, onCreated }: Props) {
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="w-[560px] max-w-[560px]">
+			<DialogContent className="!w-[500px] !max-w-[500px]">
 				<DialogHeader>
 					<DialogTitle>{t('schedule.createSchedule.title')}</DialogTitle>
 					<DialogDescription className="tracking-tight">
@@ -329,11 +329,17 @@ export function CreateScheduleDialog({ open, onOpenChange, onCreated }: Props) {
 				</div>
 
 				<DialogFooter>
-					<Button size="sm" variant="outline" onClick={() => onOpenChange(false)}>
+					<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={loading}>
+						<CircleAlert className="size-3.5" />
 						{t('common.cancel')}
 					</Button>
-					<Button size="sm" onClick={handleSubmit} disabled={loading || !isValid}>
-						{t('common.create')}
+					<Button onClick={handleSubmit} disabled={loading || !isValid}>
+						{loading ? (
+							<Loader2 className="size-3.5 animate-spin" />
+						) : (
+							<PlusCircle className="size-3.5" />
+						)}
+						{loading ? t('common.creating') : t('common.create')}
 					</Button>
 				</DialogFooter>
 			</DialogContent>

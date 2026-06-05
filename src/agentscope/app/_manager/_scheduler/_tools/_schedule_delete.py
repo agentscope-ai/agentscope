@@ -12,6 +12,7 @@ from .....permission import (
     PermissionBehavior,
 )
 from .....tool import ToolBase, ToolChunk
+from ....message_bus import MessageBus
 from ....storage._base import StorageBase
 
 
@@ -26,9 +27,10 @@ class _ScheduleDeleteParams(BaseModel):
 class ScheduleDelete(ToolBase):
     """The schedule delete tool.
 
-    Permanently removes the given scheduled job from both the in-memory
-    APScheduler and the persistent storage.  The job cannot be recovered
-    after removal.
+    Permanently removes the given scheduled job from APScheduler,
+    storage, and the message bus. Every execution session spawned by
+    the schedule is cancelled (if running) and has its bus state
+    purged. The job cannot be recovered after removal.
     """
 
     name: str = "ScheduleDelete"
@@ -52,6 +54,7 @@ class ScheduleDelete(ToolBase):
         user_id: str,
         scheduler: Any,
         storage: StorageBase,
+        message_bus: MessageBus,
     ) -> None:
         """Initialize the schedule delete tool.
 
@@ -62,10 +65,15 @@ class ScheduleDelete(ToolBase):
                 The ``AsyncIOScheduler`` instance whose job will be removed.
             storage (`StorageBase`):
                 The storage backend used to delete the persisted record.
+            message_bus (`MessageBus`):
+                The message bus used to cancel in-flight chat runs for
+                any execution session spawned by this schedule and to
+                purge their per-session bus state.
         """
         self._user_id = user_id
         self._scheduler = scheduler
         self._storage = storage
+        self._message_bus = message_bus
 
     async def check_permissions(
         self,
@@ -84,6 +92,13 @@ class ScheduleDelete(ToolBase):
     ) -> ToolChunk:  # type: ignore[override]
         """Permanently delete the scheduled task with the given ID.
 
+        Delegates the storage + bus cascade to
+        :meth:`SessionService.delete_schedule`, which cancels in-flight
+        runs for any session this schedule spawned and purges their
+        bus state before dropping the schedule record. The APScheduler
+        job is removed separately because it lives in-process and the
+        service layer is bus/storage-only.
+
         Args:
             schedule_id (`str`):
                 The unique identifier of the schedule to delete.
@@ -100,8 +115,15 @@ class ScheduleDelete(ToolBase):
         except JobLookupError:
             pass
 
-        # Delete from persistent storage
-        deleted = await self._storage.delete_schedule(
+        # Local import to avoid a circular dependency between
+        # ``_manager`` and ``_service`` at module load.
+        from ...._service import SessionService  # noqa: PLC0415
+
+        session_service = SessionService(
+            storage=self._storage,
+            message_bus=self._message_bus,
+        )
+        deleted = await session_service.delete_schedule(
             self._user_id,
             schedule_id,
         )

@@ -117,7 +117,8 @@ After ``TeamCreate``, call this for each member you want on the team. \
 Each call:
 - Creates a worker agent dedicated to this team.
 - Delivers ``prompt`` as the worker's first user message — **the worker \
-starts executing it immediately**.
+starts executing it immediately**. (So DONT use ``TeamSay`` right after \
+creating one agent).
 
 ## When NOT to Use This Tool
 - You're not currently leading a team. Call ``TeamCreate`` first.

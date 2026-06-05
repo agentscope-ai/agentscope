@@ -4,10 +4,14 @@ application-wide resources."""
 
 from ._scheduler import SchedulerManager
 from ._wakeup_dispatcher import WakeupDispatcher
+from ._cancel_dispatcher import CancelDispatcher
+from ._chat_run_registry import ChatRunRegistry
 from ._background_task_manager import BackgroundTaskManager
 
 __all__ = [
     "BackgroundTaskManager",
+    "CancelDispatcher",
+    "ChatRunRegistry",
     "SchedulerManager",
     "WakeupDispatcher",
 ]

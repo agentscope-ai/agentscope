@@ -1,3 +1,4 @@
+import { CircleAlert, Loader2, PlusCircle } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -12,6 +13,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { useTranslation } from '@/i18n/useI18n';
 
 interface AddSkillDialogProps {
 	children: ReactNode;
@@ -19,6 +21,7 @@ interface AddSkillDialogProps {
 }
 
 export function AddSkillDialog({ children, onAdd }: AddSkillDialogProps) {
+	const { t } = useTranslation();
 	const [open, setOpen] = useState(false);
 	const [skillPath, setSkillPath] = useState('');
 	const [loading, setLoading] = useState(false);
@@ -42,18 +45,16 @@ export function AddSkillDialog({ children, onAdd }: AddSkillDialogProps) {
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
 			<DialogTrigger asChild>{children}</DialogTrigger>
-			<DialogContent>
+			<DialogContent className="!w-[500px] !max-w-[500px]">
 				<DialogHeader>
-					<DialogTitle>Add Skill</DialogTitle>
-					<DialogDescription>
-						Enter the path to a skill directory to add it to the workspace.
-					</DialogDescription>
+					<DialogTitle>{t('dialog-skill-add.title')}</DialogTitle>
+					<DialogDescription>{t('dialog-skill-add.description')}</DialogDescription>
 				</DialogHeader>
 				<div className="flex flex-col gap-y-2">
-					<Label htmlFor="skill-path">Skill Path</Label>
+					<Label htmlFor="skill-path">{t('dialog-skill-add.pathLabel')}</Label>
 					<Input
 						id="skill-path"
-						placeholder="/path/to/skill"
+						placeholder={t('dialog-skill-add.pathPlaceholder')}
 						value={skillPath}
 						onChange={(e) => setSkillPath(e.target.value)}
 						onKeyDown={(e) => {
@@ -63,11 +64,17 @@ export function AddSkillDialog({ children, onAdd }: AddSkillDialogProps) {
 					{error && <p className="text-destructive text-sm">{error}</p>}
 				</div>
 				<DialogFooter>
-					<Button variant="outline" onClick={() => setOpen(false)} disabled={loading}>
-						Cancel
+					<Button variant="ghost" onClick={() => setOpen(false)} disabled={loading}>
+						<CircleAlert className="size-3.5" />
+						{t('common.cancel')}
 					</Button>
 					<Button onClick={handleSubmit} disabled={loading || !skillPath.trim()}>
-						{loading ? 'Adding…' : 'Add'}
+						{loading ? (
+							<Loader2 className="size-3.5 animate-spin" />
+						) : (
+							<PlusCircle className="size-3.5" />
+						)}
+						{loading ? t('dialog-mcp-create.adding') : t('common.add')}
 					</Button>
 				</DialogFooter>
 			</DialogContent>

@@ -4,9 +4,13 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from agentscope.app._manager import SchedulerManager
-
-from ..deps import get_current_user_id, get_scheduler_manager, get_storage
+from .._manager import SchedulerManager
+from ..deps import (
+    get_current_user_id,
+    get_scheduler_manager,
+    get_session_service,
+    get_storage,
+)
 from ._schema import (
     CreateScheduleRequest,
     CreateScheduleResponse,
@@ -14,6 +18,7 @@ from ._schema import (
     ScheduleSessionsResponse,
     UpdateScheduleRequest,
 )
+from .._service import SessionService
 from ..storage import (
     StorageBase,
     ScheduleData,
@@ -172,23 +177,25 @@ async def update_schedule(
 async def delete_schedule(
     schedule_id: str,
     user_id: str = Depends(get_current_user_id),
-    storage: StorageBase = Depends(get_storage),
+    session_service: SessionService = Depends(get_session_service),
     scheduler: SchedulerManager = Depends(get_scheduler_manager),
 ) -> None:
     """Permanently delete a schedule.
 
-    Removes the record from storage and unregisters the APScheduler job.
+    Cancels any in-flight chat run for sessions this schedule has
+    triggered, removes their records via the session service, and
+    finally unregisters the APScheduler job.
 
     Args:
         schedule_id (`str`): ID of the schedule to delete.
         user_id (`str`): Authenticated user ID.
-        storage (`StorageBase`): Storage instance.
+        session_service (`SessionService`): Injected session service.
         scheduler (`SchedulerManager`): Scheduler manager.
 
     Raises:
         `HTTPException`: 404 if the schedule does not exist.
     """
-    deleted = await storage.delete_schedule(user_id, schedule_id)
+    deleted = await session_service.delete_schedule(user_id, schedule_id)
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

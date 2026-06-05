@@ -14,7 +14,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ChatViewport } from './ChatViewport';
 import type { SessionRecord } from '@/api';
 import { AgentDialog } from '@/components/dialog/AgentDialog';
-import { DeleteAgentDialog } from '@/components/dialog/DeleteAgentDialog';
+import { DeleteDialog } from '@/components/dialog/DeleteDialog';
 import { EditAgentDialog } from '@/components/dialog/EditAgentDialog';
 import { RenameSessionDialog } from '@/components/dialog/RenameSessionDialog';
 import { TeamSidebar } from '@/components/team/TeamSidebar';
@@ -92,7 +92,7 @@ const ChatPageInner = () => {
 		memberId?: string;
 	}>();
 	const { t } = useTranslation();
-	const { agents, refetch: refetchAgents } = useAgents();
+	const { agents, refetch: refetchAgents, remove: removeAgent } = useAgents();
 	const {
 		sessions,
 		refetch: refetchSessions,
@@ -106,6 +106,8 @@ const ChatPageInner = () => {
 	const [deleteOpen, setDeleteOpen] = useState(false);
 	const [renameOpen, setRenameOpen] = useState(false);
 	const [renameSession, setRenameSession] = useState<SessionRecord | null>(null);
+	const [deleteSessionOpen, setDeleteSessionOpen] = useState(false);
+	const [sessionToDelete, setSessionToDelete] = useState<SessionRecord | null>(null);
 
 	const selectedAgent = agents.find((a) => a.id === urlAgentId) ?? null;
 	const currentView = sessions.find((v) => v.session.id === urlSessionId) ?? null;
@@ -148,11 +150,15 @@ const ChatPageInner = () => {
 	 * Create a new session under the currently selected agent and
 	 * pre-fill it with the model + fallback the currently open session
 	 * is using (so "new chat" inherits whatever the user just had
-	 * configured). Navigates to the freshly created session.
+	 * configured). Falls back to any other session under this agent
+	 * when there is no current one — keeps the model choice sticky
+	 * across "delete last → create new" instead of dropping back to
+	 * whatever ChatViewport's auto-pick happens to land on. Navigates
+	 * to the freshly created session.
 	 */
 	const handleCreateSession = async () => {
 		if (!urlAgentId) return;
-		const seedConfig = currentView?.session.config;
+		const seedConfig = currentView?.session.config ?? sessions[0]?.session.config;
 		const res = await createSession({
 			agent_id: urlAgentId,
 			...(seedConfig?.chat_model_config
@@ -178,6 +184,11 @@ const ChatPageInner = () => {
 		if (sessionId === urlSessionId && urlAgentId) {
 			navigate(`/chat/${urlAgentId}`, { replace: true });
 		}
+	};
+
+	const requestDeleteSession = (session: SessionRecord) => {
+		setSessionToDelete(session);
+		setDeleteSessionOpen(true);
 	};
 
 	const handleRenameConfirm = async (name: string) => {
@@ -226,7 +237,7 @@ const ChatPageInner = () => {
 									</SelectContent>
 								</Select>
 								<Button
-									size="icon-sm"
+									size="icon"
 									variant="ghost"
 									disabled={!urlAgentId}
 									onClick={() => setEditOpen(true)}
@@ -234,7 +245,7 @@ const ChatPageInner = () => {
 									<Settings2 />
 								</Button>
 								<Button
-									size="icon-sm"
+									size="icon"
 									variant="ghost"
 									disabled={!urlAgentId}
 									onClick={() => setDeleteOpen(true)}
@@ -329,8 +340,8 @@ const ChatPageInner = () => {
 																<DropdownMenuItem
 																	variant="destructive"
 																	onClick={() =>
-																		handleDeleteSession(
-																			session.id,
+																		requestDeleteSession(
+																			session,
 																		)
 																	}
 																>
@@ -377,11 +388,19 @@ const ChatPageInner = () => {
 						agent={selectedAgent}
 						onUpdated={refetchAgents}
 					/>
-					<DeleteAgentDialog
+					<DeleteDialog
 						open={deleteOpen}
 						onOpenChange={setDeleteOpen}
-						agent={selectedAgent}
-						onDeleted={handleAgentDeleted}
+						title={t('common.deleteTitle', {
+							entity: t('dialog-agent-delete.entity'),
+							name: selectedAgent.data.name,
+						})}
+						description={t('common.deleteDescription')}
+						confirmLabel={t('dialog-agent-delete.confirm')}
+						onConfirm={async () => {
+							await removeAgent(selectedAgent.id);
+							await handleAgentDeleted();
+						}}
 					/>
 				</>
 			)}
@@ -390,6 +409,21 @@ const ChatPageInner = () => {
 				onOpenChange={setRenameOpen}
 				currentName={renameSession?.config.name ?? renameSession?.id ?? ''}
 				onConfirm={handleRenameConfirm}
+			/>
+			<DeleteDialog
+				open={deleteSessionOpen}
+				onOpenChange={setDeleteSessionOpen}
+				title={t('common.deleteTitle', {
+					entity: t('dialog-session-delete.entity'),
+					name: sessionToDelete?.config.name || sessionToDelete?.id || '',
+				})}
+				description={t('common.deleteDescription')}
+				confirmLabel={t('dialog-session-delete.confirm')}
+				onConfirm={async () => {
+					if (sessionToDelete) {
+						await handleDeleteSession(sessionToDelete.id);
+					}
+				}}
 			/>
 			<ChatTourController
 				agentsCount={agents.length}

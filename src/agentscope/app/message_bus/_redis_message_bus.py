@@ -266,6 +266,16 @@ class RedisMessageBus(MessageBus):
 
         return results
 
+    async def queue_delete(self, key: str) -> None:
+        """Delete the drain queue at ``key``.
+
+        Args:
+            key (`str`):
+                Stream key for the drain queue. ``DEL`` is a no-op
+                when the key does not exist.
+        """
+        await self._client.delete(key)
+
     # ------------------------------------------------------------------
     # Mode C — replay log
     # ------------------------------------------------------------------

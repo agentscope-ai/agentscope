@@ -34,20 +34,23 @@ _LEADER_DESCRIPTION = """Send a message to a specific team member or \
 broadcast to all members.
 
 ## When to Use This Tool
-- Pass new requirements or context from the user to a specific member.
+- Pass **new** requirements or context from the user to a specific member.
 - Broadcast an update or coordination message to all members.
 - Ask a member a follow-up question when you need clarification.
 
 ## When NOT to Use This Tool
-- Do NOT repeatedly call this to check on a member's progress — members \
-will automatically notify you via TeamSay when they finish their task. \
+- DO NOT repeatedly call this to check on a member's progress — members \
+will automatically notify you via ``TeamSay`` when they finish their task. \
 Wait for their message instead of polling.
-- The session is not in a team yet (call TeamCreate first).
+- DO NOT call this right after creating a member by ``AgentCreate``, the \
+member will receive its initial task from the ``prompt`` of the \
+``AgentCreate`` call and report back when done — just wait for their message. \
+- The session is not in a team yet (call ``TeamCreate`` first).
 - You want to talk to yourself — use your own reasoning.
 
 ## Important
 Each member starts working immediately when created via AgentCreate. \
-When a member finishes its task, it will call TeamSay to report results \
+When a member finishes its task, it will call ``TeamSay`` to report results \
 back to you. You do NOT need to prompt them — just wait for their reply.
 """
 

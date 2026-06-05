@@ -8,7 +8,12 @@ from typing import AsyncGenerator
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
-from ..deps import get_current_user_id, get_message_bus, get_storage
+from ..deps import (
+    get_current_user_id,
+    get_message_bus,
+    get_session_service,
+    get_storage,
+)
 from ._schema import (
     CreateSessionRequest,
     CreateSessionResponse,
@@ -20,6 +25,7 @@ from ._schema import (
     UpdateSessionRequest,
 )
 from ..message_bus import MessageBus
+from .._service import SessionService
 from ..storage import (
     AgentRecord,
     ChatModelConfig,
@@ -247,20 +253,31 @@ async def delete_session(
     session_id: str,
     agent_id: str = Query(description="Agent the session belongs to."),
     user_id: str = Depends(get_current_user_id),
-    storage: StorageBase = Depends(get_storage),
+    session_service: SessionService = Depends(get_session_service),
 ) -> None:
     """Permanently delete a session and all its associated state.
 
+    Cancels any in-flight chat run for this session (and for every
+    worker session if this one is a team leader) before dropping
+    storage records and bus state. The cancel path is cross-process:
+    whichever worker is actually running the session will receive the
+    cancel broadcast and abort.
+
     Args:
         session_id (`str`): The session to delete.
+        agent_id (`str`): The agent the session belongs to.
         user_id (`str`): Injected authenticated user ID.
-        storage (`StorageBase`): Injected storage backend.
+        session_service (`SessionService`): Injected session service.
 
     Raises:
         `HTTPException`: 404 if the session does not exist or does not belong
             to the authenticated user.
     """
-    deleted = await storage.delete_session(user_id, agent_id, session_id)
+    deleted = await session_service.delete_session(
+        user_id,
+        agent_id,
+        session_id,
+    )
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

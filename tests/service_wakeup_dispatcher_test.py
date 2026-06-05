@@ -19,8 +19,31 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator, Callable
 from unittest import IsolatedAsyncioTestCase
 
-from agentscope.app._manager import WakeupDispatcher
+from agentscope.app._manager import ChatRunRegistry, WakeupDispatcher
 from agentscope.app.message_bus import MessageBus
+
+
+class _FakeStorage:
+    """Minimal storage stand-in for the dispatcher's orphan-guard check.
+
+    ``get_session`` returns a truthy sentinel for every session id by
+    default; tests that exercise the orphan path mutate
+    ``missing_session_ids``.
+    """
+
+    def __init__(self) -> None:
+        self.missing_session_ids: set[str] = set()
+
+    async def get_session(
+        self,
+        _user_id: str,
+        _agent_id: str,
+        session_id: str,
+    ) -> object | None:
+        """Get a session id from the orphan guard."""
+        if session_id in self.missing_session_ids:
+            return None
+        return object()
 
 
 class _FakeBus(MessageBus):
@@ -63,6 +86,9 @@ class _FakeBus(MessageBus):
         entries = self.queues.get(key, [])[:max_count]
         self.queues[key] = self.queues.get(key, [])[max_count:]
         return entries
+
+    async def queue_delete(self, key: str) -> None:
+        self.queues.pop(key, None)
 
     # Mode C — log (unused here)
     async def log_append(
@@ -163,7 +189,12 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
         entry dispatched as a chat run."""
         bus = _FakeBus()
         chat = _FakeChatService()
-        async with WakeupDispatcher(message_bus=bus, chat_service=chat):
+        async with WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        ):
             await bus.queue_push(
                 MessageBus._WAKEUP_QUEUE_KEY,
                 {"user_id": "u", "session_id": "s1", "agent_id": "a1"},
@@ -194,7 +225,12 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
             {"user_id": "u", "session_id": "pre", "agent_id": "a"},
         )
 
-        async with WakeupDispatcher(message_bus=bus, chat_service=chat):
+        async with WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        ):
             await _yield_a_few_times()
 
         self.assertEqual(
@@ -216,7 +252,12 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
         chat = _FakeChatService()
         bus._locks.add(MessageBus._SESSION_LOCK_KEY.format(sid="busy"))
 
-        async with WakeupDispatcher(message_bus=bus, chat_service=chat):
+        async with WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        ):
             await bus.queue_push(
                 MessageBus._WAKEUP_QUEUE_KEY,
                 {"user_id": "u", "session_id": "busy", "agent_id": "a"},
@@ -232,7 +273,12 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
         bus = _FakeBus()
         chat = _FakeChatService()
 
-        async with WakeupDispatcher(message_bus=bus, chat_service=chat):
+        async with WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        ):
             await bus.queue_push(
                 MessageBus._WAKEUP_QUEUE_KEY,
                 {"oops": True},
@@ -257,6 +303,44 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_deleted_session_skipped(self) -> None:
+        """A wake-up whose target session no longer exists in storage
+        is dropped without spawning a chat run; later wake-ups for live
+        sessions still dispatch."""
+        bus = _FakeBus()
+        chat = _FakeChatService()
+        storage = _FakeStorage()
+        storage.missing_session_ids.add("ghost")
+
+        async with WakeupDispatcher(
+            message_bus=bus,
+            storage=storage,
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        ):
+            await bus.queue_push(
+                MessageBus._WAKEUP_QUEUE_KEY,
+                {"user_id": "u", "session_id": "ghost", "agent_id": "a"},
+            )
+            await bus.queue_push(
+                MessageBus._WAKEUP_QUEUE_KEY,
+                {"user_id": "u", "session_id": "live", "agent_id": "a"},
+            )
+            await bus.publish(MessageBus._WAKEUP_SIGNAL_KEY, {})
+            await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
+
+        self.assertEqual(
+            chat.calls,
+            [
+                {
+                    "user_id": "u",
+                    "session_id": "live",
+                    "agent_id": "a",
+                    "input_msg": None,
+                },
+            ],
+        )
+
 
 class TestWakeupDispatcherLifecycle(IsolatedAsyncioTestCase):
     """Tests covering the ``__aenter__`` / ``__aexit__`` ACM behaviour."""
@@ -266,7 +350,12 @@ class TestWakeupDispatcherLifecycle(IsolatedAsyncioTestCase):
         without re-raising the cancellation."""
         bus = _FakeBus()
         chat = _FakeChatService()
-        dispatcher = WakeupDispatcher(message_bus=bus, chat_service=chat)
+        dispatcher = WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        )
 
         # pylint: disable=unnecessary-dunder-call
         await dispatcher.__aenter__()

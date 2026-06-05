@@ -46,7 +46,7 @@ from contextlib import asynccontextmanager
 from typing import Any, Callable, Self
 
 
-class MessageBus(ABC):
+class MessageBus(ABC):  # pylint: disable=too-many-public-methods
     """Abstract base class for live message transport.
 
     Implementations expose three consumption modes (drain queue, replay
@@ -148,6 +148,19 @@ class MessageBus(ABC):
             `list[tuple[str, dict]]`:
                 ``(entry_id, payload)`` pairs in arrival order. Empty
                 list when the queue is empty.
+        """
+
+    @abstractmethod
+    async def queue_delete(self, key: str) -> None:
+        """Delete the drain queue at ``key`` and all of its entries.
+
+        Idempotent: a no-op when the key does not exist. Used by
+        :meth:`session_purge` to drop a session's inbox during
+        cascade-delete.
+
+        Args:
+            key (`str`):
+                Queue identifier.
         """
 
     # ------------------------------------------------------------------
@@ -364,6 +377,13 @@ class MessageBus(ABC):
     _SESSION_EVENTS_KEY = "agentscope:session:events:{sid}"
     """Per-session replay log + live pub/sub channel key template."""
 
+    _SESSION_CANCEL_KEY = "agentscope:session:cancel"
+    """Global cancel-broadcast channel. Used by
+    :meth:`session_publish_cancel` to ask whichever process is currently
+    running a given session to abort its run; the payload carries the
+    target ``session_id`` and only the worker actually holding that
+    session's task reacts."""
+
     _SESSION_RUN_TTL_SECS = 600
     """Default lock lease for a chat run (10 minutes)."""
 
@@ -509,6 +529,79 @@ class MessageBus(ABC):
         key = self._SESSION_EVENTS_KEY.format(sid=session_id)
         async for payload in self.subscribe(key, on_ready=on_ready):
             yield {k: v for k, v in payload.items() if k != "_entry_id"}
+
+    # Cross-process cancel ---------------------------------------------
+
+    async def session_publish_cancel(self, session_id: str) -> None:
+        """Broadcast a cancel request for ``session_id``.
+
+        Sent on a transient pub/sub channel: only processes that have
+        an active :meth:`session_subscribe_cancel` subscription at
+        publish time will see it. The process actually running the
+        session is expected to be such a subscriber (its
+        :class:`~agentscope.app._manager.CancelDispatcher` subscribes
+        for the lifetime of the app). Other processes ignore the
+        message because they hold no asyncio task for that session.
+
+        Args:
+            session_id (`str`):
+                The session whose run should be cancelled.
+        """
+        await self.publish(
+            self._SESSION_CANCEL_KEY,
+            {"session_id": session_id},
+        )
+
+    async def session_subscribe_cancel(
+        self,
+        *,
+        on_ready: Callable[[], None] | None = None,
+    ) -> AsyncGenerator[str, None]:
+        """Subscribe to the cancel-broadcast channel.
+
+        Yields session ids as cancel requests arrive. A single
+        subscriber per process is enough — the
+        :class:`~agentscope.app._manager.CancelDispatcher` filters
+        locally by checking whether the incoming ``session_id`` is in
+        its own :class:`ChatRunRegistry`.
+
+        Args:
+            on_ready (`Callable[[], None] | None`, optional):
+                Forwarded to the underlying :meth:`subscribe`.
+
+        Yields:
+            `str`:
+                The session id from each incoming cancel payload.
+        """
+        async for payload in self.subscribe(
+            self._SESSION_CANCEL_KEY,
+            on_ready=on_ready,
+        ):
+            sid = payload.get("session_id")
+            if isinstance(sid, str):
+                yield sid
+
+    # Purge -------------------------------------------------------------
+
+    async def session_purge(self, session_id: str) -> None:
+        """Delete all per-session bus state.
+
+        Drops the events log and the inbox queue. The distributed
+        run-lock is intentionally not touched: callers must ensure no
+        run is in flight (e.g. by publishing cancel via
+        :meth:`session_publish_cancel` and polling
+        :meth:`is_locked` until it clears) before calling this.
+        Any residual lock key expires on its own after at most
+        :attr:`_SESSION_RUN_TTL_SECS`.
+
+        Idempotent: a no-op when the keys are already absent.
+
+        Args:
+            session_id (`str`):
+                The session whose bus state should be removed.
+        """
+        await self.log_trim(self._SESSION_EVENTS_KEY.format(sid=session_id))
+        await self.queue_delete(self._INBOX_KEY.format(sid=session_id))
 
     # Inbox -----------------------------------------------------------
 

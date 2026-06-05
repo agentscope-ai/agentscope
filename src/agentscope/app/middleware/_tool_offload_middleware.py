@@ -371,14 +371,16 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             agent.name,
         )
 
-        placeholder_text = (
-            f"<system-reminder>Tool '{tool_name}' is running in background "
-            f"(id={task_id}) for over {self._timeout_secs}s. "
-            f"Do NOT poll or query the result yourself — just continue other "
-            f"tasks or wait. "
-            f"You will be notified automatically when it finishes."
-            f"</system-reminder>"
-        )
+        placeholder_text = f"""<system-reminder>Tool '{tool_name}' is \
+running in background (id={task_id}) for over {self._timeout_secs}s. \
+You will be notified automatically when it finishes, so **DO NOT** poll, \
+query, or wait for the result yourself. **DO NOT** call any waiting tool \
+such as `bash sleep`. You have exactly two valid options:
+1. Continue with other independent tasks and ignore this tool for now; or
+2. If there is nothing else to do, simply give a text reply without calling \
+any tool, which ends the current reasoning loop — just do nothing and end \
+this run.
+</system-reminder>"""
 
         yield ToolChunk(
             content=[TextBlock(text=placeholder_text)],
