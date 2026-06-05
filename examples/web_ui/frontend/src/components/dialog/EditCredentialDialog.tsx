@@ -1,3 +1,4 @@
+import { CircleAlert, Loader2, Save } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
 import { credentialApi } from '@/api';
@@ -78,7 +79,7 @@ export function EditCredentialDialog({ open, onOpenChange, credential, onUpdated
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent>
+			<DialogContent className="!w-[500px] !max-w-[500px]">
 				<DialogHeader>
 					<DialogTitle>{t('dialog-credential-edit.title')}</DialogTitle>
 				</DialogHeader>
@@ -92,10 +93,20 @@ export function EditCredentialDialog({ open, onOpenChange, credential, onUpdated
 					/>
 				) : null}
 				<DialogFooter>
-					<Button variant="outline" onClick={() => onOpenChange(false)}>
+					<Button
+						variant="ghost"
+						onClick={() => onOpenChange(false)}
+						disabled={submitting}
+					>
+						<CircleAlert className="size-3.5" />
 						{t('common.cancel')}
 					</Button>
 					<Button onClick={handleSubmit} disabled={submitting || !schema}>
+						{submitting ? (
+							<Loader2 className="size-3.5 animate-spin" />
+						) : (
+							<Save className="size-3.5" />
+						)}
 						{submitting ? t('common.saving') : t('common.save')}
 					</Button>
 				</DialogFooter>

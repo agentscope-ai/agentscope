@@ -103,6 +103,7 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
       echoed back verbatim as required by reasoning models (e.g. ``o1``).
     """
 
+    # pylint: disable=too-many-branches
     async def format(
         self,
         msgs: list[Msg],
@@ -161,17 +162,41 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                         )
                         content_parts = []
 
-                    items.append(
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "input_text",
-                                    "text": block.hint,
-                                },
-                            ],
-                        },
-                    )
+                    if isinstance(block.hint, str):
+                        items.append(
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "input_text",
+                                        "text": block.hint,
+                                    },
+                                ],
+                            },
+                        )
+                    else:
+                        hint_parts: list[dict] = []
+                        for sub in block.hint:
+                            if isinstance(sub, TextBlock):
+                                hint_parts.append(
+                                    {
+                                        "type": "input_text",
+                                        "text": sub.text,
+                                    },
+                                )
+                            elif isinstance(sub, DataBlock):
+                                formatted_sub = (
+                                    self._format_response_data_block(
+                                        sub,
+                                        role="user",
+                                    )
+                                )
+                                if formatted_sub is not None:
+                                    hint_parts.append(formatted_sub)
+                        if hint_parts:
+                            items.append(
+                                {"role": "user", "content": hint_parts},
+                            )
 
                 elif isinstance(block, ThinkingBlock):
                     # When reasoning_item_id is present the block originated

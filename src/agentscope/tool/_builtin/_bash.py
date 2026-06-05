@@ -178,6 +178,23 @@ easier to review tool calls and give permission.
         self.dangerous_files = list(dangerous_files)
         self.dangerous_directories = list(dangerous_directories)
 
+    async def check_read_only(
+        self,
+        tool_input: dict[str, Any],
+    ) -> bool:
+        """Decide whether this specific bash invocation is read-only.
+
+        Inspects the command and returns ``True`` for known-safe read-only
+        commands (e.g. ``ls``, ``cat``, ``grep``, ``git status``). The
+        static :attr:`is_read_only` class attribute is ``False`` because
+        Bash can execute arbitrary commands; this method overrides that
+        with a per-invocation answer.
+        """
+        command = tool_input.get("command", "")
+        if not command:
+            return self.is_read_only
+        return self._bash_parser.is_read_only_command(command)
+
     async def check_permissions(
         self,
         tool_input: dict[str, Any],
@@ -186,13 +203,29 @@ easier to review tool calls and give permission.
         """Check permissions for bash command execution.
 
         This method implements Bash-specific permission checks:
-        0. Injection risk check (detect dynamic shell structures)
-        1. Read-only command check (auto-allow safe commands)
-        2. Dangerous command pattern check (safety check, bypass-immune)
-        3. Sed constraint check (safety check, bypass-immune)
-        4. Dangerous path check for config files (safety check, bypass-immune)
-        5. Dangerous removal path check for system dirs (bypass-immune)
-        6. ACCEPT_EDITS mode filesystem command check
+
+        0. Injection risk check (bypass-immune safety ASK if command
+           contains dynamic expansion like ``$(...)`` or ``<(...)``)
+        1. Read-only command check — auto-ALLOW in **every mode**
+           (including DEFAULT) for known-safe read-only commands
+           (``ls``, ``pwd``, ``git status``, ``cat``, etc.). This is
+           the static counterpart to :meth:`check_read_only`.
+        2. Dangerous command pattern check (bypass-immune safety ASK)
+        3. Sed in-place constraint check (bypass-immune safety ASK)
+        4. Dangerous path check for config files (bypass-immune safety
+           ASK)
+        5. Dangerous removal path check for system dirs (bypass-immune
+           safety ASK)
+        6. ACCEPT_EDITS auto-allow for ``mkdir``/``touch``/``rm``/
+           ``rmdir``/``mv``/``cp``/``sed`` — only when **every**
+           target path resolves inside a working directory
+        7. PASSTHROUGH (engine continues with rule matching)
+
+        "Bypass-immune" decisions set
+        :attr:`PermissionDecision.bypass_immune` so they cannot be
+        silenced by allow rules in DEFAULT mode. In BYPASS mode all
+        bypass-immune ASKs are intentionally skipped — see
+        :attr:`PermissionMode.BYPASS`.
 
         Args:
             tool_input (`dict[str, Any]`):
@@ -224,6 +257,7 @@ easier to review tool calls and give permission.
                 message=f"Permission required: {injection_reason}",
                 decision_reason="Safety check: command contains dynamic "
                 "expansion that cannot be statically analyzed",
+                bypass_immune=True,
             )
 
         # 1. Check if command is read-only (auto-allow)
@@ -243,6 +277,7 @@ easier to review tool calls and give permission.
                 f"pattern: {dangerous_pattern}",
                 decision_reason="Safety check: dangerous command pattern "
                 "detected",
+                bypass_immune=True,
             )
 
         # 3. Check for sed constraints (safety check, bypass-immune)
@@ -256,6 +291,7 @@ easier to review tool calls and give permission.
                 message=f"Permission required: {sed_error}",
                 decision_reason="Safety check: sed in-place modification "
                 "of dangerous file",
+                bypass_immune=True,
             )
 
         # 4. Check for dangerous paths in sensitive config files/dirs
@@ -269,6 +305,7 @@ easier to review tool calls and give permission.
                 f"sensitive paths: {paths_str}",
                 decision_reason="Safety check: dangerous file or "
                 "directory in bash command",
+                bypass_immune=True,
             )
 
         # 5. Check for dangerous removal paths: rm/rmdir targeting system
@@ -286,11 +323,17 @@ easier to review tool calls and give permission.
                 f"cannot be auto-allowed by permission rules.",
                 decision_reason="Safety check: dangerous removal of "
                 "critical system path",
+                bypass_immune=True,
             )
 
-        # 6. Check ACCEPT_EDITS mode for filesystem commands
+        # 6. ACCEPT_EDITS auto-allow for filesystem commands whose targets
+        # all live inside a working directory. Mirrors Write/Edit's strict
+        # working-directory check — we never auto-allow a bash command that
+        # would touch a path outside the configured working set (e.g.
+        # ``cp /etc/hosts /tmp/x`` must not pass even though ``cp`` is in
+        # the auto-allow list).
         if context.mode == PermissionMode.ACCEPT_EDITS:
-            filesystem_commands = [
+            filesystem_commands = {
                 "mkdir",
                 "touch",
                 "rm",
@@ -298,21 +341,44 @@ easier to review tool calls and give permission.
                 "mv",
                 "cp",
                 "sed",
-            ]
+            }
             base_command = (
                 command.strip().split()[0] if command.strip() else ""
             )
 
             if base_command in filesystem_commands:
-                return PermissionDecision(
-                    behavior=PermissionBehavior.ALLOW,
-                    message=f"Permission granted for '{base_command}' "
-                    f"command (accept edits mode - filesystem command)",
-                    decision_reason=f"Filesystem command '{base_command}' "
-                    f"is auto-allowed in accept edits mode",
-                )
+                # Collect every target path: file arguments AND output
+                # redirections. ``extract_file_paths`` includes both.
+                target_paths = [
+                    path
+                    for _cmd, path in self._bash_parser.extract_file_paths(
+                        command,
+                    )
+                ]
+                # Conservative: only auto-allow when we extracted at least
+                # one target AND every target resolves inside a working
+                # directory. An empty list means the parser found nothing
+                # actionable (or the command has no args) — in that case
+                # we fall through to PASSTHROUGH rather than blindly
+                # allowing.
+                if target_paths and all(
+                    self._path_in_allowed_working_path(path, context)
+                    for path in target_paths
+                ):
+                    return PermissionDecision(
+                        behavior=PermissionBehavior.ALLOW,
+                        message=f"Permission granted for '{base_command}' "
+                        f"command (accept edits mode - filesystem command, "
+                        f"all targets in working directory)",
+                        decision_reason=(
+                            f"Filesystem command '{base_command}' is "
+                            f"auto-allowed in accept edits mode because "
+                            f"all target paths are within a working "
+                            f"directory"
+                        ),
+                    )
 
-        # 6. Passthrough to let Engine continue with rule matching
+        # 7. Passthrough to let Engine continue with rule matching
         return PermissionDecision(
             behavior=PermissionBehavior.PASSTHROUGH,
             message=f"Execute bash command: {command}",

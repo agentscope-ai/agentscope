@@ -33,8 +33,13 @@
 		"switchToZh": "切换为中文",
 		"switchToEn": "Switch to English",
 		"success": "成功",
+		"team": "团队",
+		"leader": "队长",
+		"worker": "成员",
 		"time": "时间",
-		"yes": "是"
+		"yes": "是",
+		"deleteTitle": "删除{{entity}} \"{{name}}\"？",
+		"deleteDescription": "此操作无法撤销。"
 	},
 	"tool": {
 		"moreLines": "... 还有 {{count}} 行",
@@ -47,6 +52,12 @@
 		},
 		"glob": {
 			"name": "Glob"
+		},
+		"taskCreate": {
+			"name": "TaskCreate",
+			"label": "创建",
+			"count_one": "{{count}} 个任务",
+			"count_other": "{{count}} 个任务"
 		},
 		"grep": {
 			"name": "Grep"
@@ -65,7 +76,12 @@
 	},
 	"messageBubble": {
 		"thinking": "思考中",
-		"running": "运行中..."
+		"running": "运行中...",
+		"hintSource": {
+			"tool_output": "工具输出",
+			"team_message": "团队消息",
+			"schedule": "定时任务"
+		}
 	},
 	"chat": {
 		"inputPlaceholder": "输入消息...",
@@ -119,19 +135,17 @@
 		"title": "编辑 Agent"
 	},
 	"dialog-agent-delete": {
-		"title": "删除 Agent",
-		"description": "此操作无法撤销。",
+		"entity": "Agent",
 		"confirm": "删除"
 	},
 	"dialog-session-delete": {
-		"title": "删除会话",
-		"description": "此操作无法撤销。"
+		"entity": "会话",
+		"confirm": "删除"
 	},
 	"dialog-session-rename": {
 		"title": "重命名会话",
 		"label": "名称",
-		"placeholder": "会话名称",
-		"confirm": "重命名"
+		"placeholder": "会话名称"
 	},
 	"session-menu": {
 		"rename": "重命名",
@@ -154,8 +168,7 @@
 		"availableModels": "可用模型",
 		"noModels": "暂无可用模型",
 		"noModelsDescription": "该提供商未返回任何模型。",
-		"deleteTitle": "确定要删除 API 凭证 \"{{name}}\" 吗？",
-		"deleteDescription": "此操作无法撤销",
+		"deleteEntity": "凭证",
 		"subtitle": "模型 API 授权配置",
 		"reasoning": "推理模型",
 		"maxContext": "最大上下文",
@@ -199,8 +212,15 @@
 		"emptyMcpServers": "配置中未找到 MCP 服务器。"
 	},
 	"dialog-mcp-delete": {
-		"title": "确定要删除 MCP 服务器 \"{{name}}\" 吗？",
-		"description": "此操作无法撤销。"
+		"entity": "MCP 服务器",
+		"skillEntity": "技能",
+		"skillDescription": "确定要将该技能从工作区中移除吗？"
+	},
+	"dialog-skill-add": {
+		"title": "添加技能",
+		"description": "输入技能目录的路径以添加到工作区。",
+		"pathLabel": "技能路径",
+		"pathPlaceholder": "/path/to/skill"
 	},
 	"schedule": {
 		"calendar": "日历",
@@ -212,9 +232,8 @@
 			"title": "创建日程"
 		},
 		"deleteSchedule": {
-			"description": "此操作无法撤销，计划任务将被永久删除。",
-			"successToast": "日程已删除。",
-			"title": "删除日程"
+			"entity": "日程",
+			"successToast": "日程已删除。"
 		},
 		"endAt": "结束日期",
 		"end_at": "结束时间",
@@ -297,5 +316,20 @@
 			"title": "开始对话",
 			"content": "输入消息回车发送，回形针可附加文件。"
 		}
+	},
+	"task-panel": {
+		"heading": "任务",
+		"noTasks": "暂无任务。",
+		"pending": "待处理",
+		"inProgress": "进行中",
+		"completed": "已完成",
+		"blockedBy": "依赖"
+	},
+	"team-sidebar": {
+		"membersHeading": "成员",
+		"noMembers": "还没有成员——让队长用 AgentCreate 添加一个。",
+		"running": "运行中",
+		"idle": "空闲",
+		"missingSession": "（无会话）"
 	}
 }

@@ -15,6 +15,7 @@ from ._model import (
     SessionRecord,
     SessionConfig,
     SessionSource,
+    TeamRecord,
 )
 from ._utils import _dump_with_secrets
 from ...credential import CredentialBase
@@ -28,35 +29,50 @@ else:
     Redis = Any
 
 
-class RedisKeyConfig(BaseModel):
-    """Key templates for all Redis keys used by RedisStorage."""
-
-    # Record keys
-    credential: str = "agentscope:user:{user_id}:credential:{credential_id}"
-    agent: str = "agentscope:user:{user_id}:agent:{agent_id}"
-    session: str = "agentscope:user:{user_id}:session:{session_id}"
-
-    # Index keys (Redis Sets — store all IDs for a given scope)
-    credential_index: str = "agentscope:user:{user_id}:credentials"
-    agent_index: str = "agentscope:user:{user_id}:agents"
-    session_index: str = "agentscope:user:{user_id}:agent:{agent_id}:sessions"
-
-    # Lookup key: maps (user_id, agent_id) → session_id
-    session_lookup: str = "agentscope:user:{user_id}:agent:{agent_id}:session"
-
-    # Message list key (Redis List — ordered message history per session)
-    messages: str = "agentscope:user:{user_id}:session:{session_id}:messages"
-
-    schedule: str = "agentscope:user:{user_id}:schedule:{schedule_id}"
-    schedule_index: str = "agentscope:user:{user_id}:schedules"
-    schedule_global_index: str = "agentscope:schedules"
-    schedule_session_index: str = (
-        "agentscope:user:{user_id}:schedule:{schedule_id}:sessions"
-    )
-
-
 class RedisStorage(StorageBase):
     """The Redis storage implementation."""
+
+    class KeyConfig(BaseModel):
+        """Key templates for all Redis keys used by :class:`RedisStorage`.
+
+        Nested on :class:`RedisStorage` because customising key prefixes
+        is meaningful only for this backend; users tweak them via
+        ``RedisStorage(key_config=RedisStorage.KeyConfig(...))``.
+        """
+
+        # Record keys
+        credential: str = (
+            "agentscope:user:{user_id}:credential:{credential_id}"
+        )
+        agent: str = "agentscope:user:{user_id}:agent:{agent_id}"
+        session: str = "agentscope:user:{user_id}:session:{session_id}"
+
+        # Index keys (Redis Sets — store all IDs for a given scope)
+        credential_index: str = "agentscope:user:{user_id}:credentials"
+        agent_index: str = "agentscope:user:{user_id}:agents"
+        session_index: str = (
+            "agentscope:user:{user_id}:agent:{agent_id}:sessions"
+        )
+
+        # Lookup key: maps (user_id, agent_id) → session_id
+        session_lookup: str = (
+            "agentscope:user:{user_id}:agent:{agent_id}:session"
+        )
+
+        # Message list key (Redis List — ordered message history per session)
+        messages: str = (
+            "agentscope:user:{user_id}:session:{session_id}:messages"
+        )
+
+        schedule: str = "agentscope:user:{user_id}:schedule:{schedule_id}"
+        schedule_index: str = "agentscope:user:{user_id}:schedules"
+        schedule_global_index: str = "agentscope:schedules"
+        schedule_session_index: str = (
+            "agentscope:user:{user_id}:schedule:{schedule_id}:sessions"
+        )
+
+        team: str = "agentscope:user:{user_id}:team:{team_id}"
+        team_index: str = "agentscope:user:{user_id}:teams"
 
     def __init__(
         self,
@@ -66,7 +82,7 @@ class RedisStorage(StorageBase):
         password: str | None = None,
         connection_pool: ConnectionPool | None = None,
         key_ttl: int | None = None,
-        key_config: RedisKeyConfig | None = None,
+        key_config: "RedisStorage.KeyConfig | None" = None,
         **kwargs: Any,
     ) -> None:
         """Store connection parameters; the actual pool is created in
@@ -88,8 +104,9 @@ class RedisStorage(StorageBase):
             key_ttl (`int | None`, optional):
                 Expire time in seconds for record keys. Refreshed on every
                 write (sliding TTL). If `None`, keys do not expire.
-            key_config (`RedisKeyConfig | None`, optional):
-                Key template configuration. Defaults to `RedisKeyConfig()`.
+            key_config (`RedisStorage.KeyConfig | None`, optional):
+                Key template configuration. Defaults to
+                ``RedisStorage.KeyConfig()``.
             **kwargs (`Any`):
                 Extra keyword arguments forwarded to
                 ``redis.asyncio.ConnectionPool`` when the pool is created
@@ -102,7 +119,7 @@ class RedisStorage(StorageBase):
         self._external_pool: ConnectionPool | None = connection_pool
         self._kwargs = kwargs
         self.key_ttl = key_ttl
-        self.key_config = key_config or RedisKeyConfig()
+        self.key_config = key_config or RedisStorage.KeyConfig()
 
         # Populated in __aenter__; None until the context is entered.
         self._client: Redis | None = None
@@ -381,17 +398,23 @@ class RedisStorage(StorageBase):
         return agent_record.id
 
     async def list_agents(self, user_id: str) -> list[AgentRecord]:
-        """Return all agent records belonging to the given user.
+        """Return user-facing agent records (``source='user'``).
 
-        Reads the per-user agent index Set to obtain all ids, then fetches
-        each record individually. Records whose keys have expired or been
-        deleted externally are silently skipped.
+        Reads the per-user agent index Set to obtain all ids, fetches
+        each record individually, and **filters out team-spawned
+        workers** (``source='team'``) — those are scoped to a team
+        and only addressable via team detail / direct id lookup, not
+        enumerated as part of the user's regular agent list.
+
+        Records whose keys have expired or been deleted externally
+        are silently skipped.
 
         Args:
             user_id (`str`): The owner user id.
 
         Returns:
-            `list[AgentRecord]`: All agent records for the user.
+            `list[AgentRecord]`:
+                All ``source='user'`` agent records for the user.
         """
         index_key = self._key(self.key_config.agent_index, user_id=user_id)
         ids = await self._client.smembers(index_key)
@@ -405,7 +428,9 @@ class RedisStorage(StorageBase):
                 ),
             )
             if raw:
-                records.append(AgentRecord.model_validate_json(raw))
+                record = AgentRecord.model_validate_json(raw)
+                if record.source == "user":
+                    records.append(record)
         return records
 
     async def get_agent(
@@ -423,21 +448,38 @@ class RedisStorage(StorageBase):
         return AgentRecord.model_validate_json(raw) if raw else None
 
     async def delete_agent(self, user_id: str, agent_id: str) -> bool:
-        """Delete an agent record and cascade-delete its sessions and
-        schedules.
+        """Delete an agent record and cascade-delete its sessions,
+        schedules, and any team back-references.
 
-        Removes all session records (and their lookup / index keys) that belong
-        to this agent, then removes all schedule records whose
-        ``data.agent_id`` matches.  Finally, the agent record itself and its
-        entry in the per-user agent index are deleted.
+        Cascade order:
+
+        1. **Sessions** — every session belonging to this agent is
+           deleted via :meth:`delete_session` (which itself cascades
+           message log, schedule-session index, and — if a session leads
+           a team — the team).
+        2. **Schedules** — every schedule whose ``data.agent_id`` matches
+           is deleted via :meth:`delete_schedule`.
+        3. **Team back-references (defensive)** — if the agent is a team
+           worker (``source='team'``) but the caller chose to delete it
+           directly instead of going through :meth:`delete_team`, scan
+           the user's teams and remove the agent id from every
+           :attr:`TeamData.member_ids` list it appears in. The normal
+           path (``delete_team`` iterates ``member_ids`` and calls
+           ``delete_agent`` for each) does not need this scan, but it
+           keeps the team record consistent if a caller bypasses it.
+        4. **Agent record + index** — finally delete the agent key and
+           remove from the per-user agent index.
 
         Args:
-            user_id (`str`): The owner user id.
-            agent_id (`str`): The id of the agent to delete.
+            user_id (`str`):
+                The owner user id.
+            agent_id (`str`):
+                The id of the agent to delete.
 
         Returns:
-            `bool`: ``True`` if the agent record existed and was deleted,
-            ``False`` if it did not exist.
+            `bool`:
+                ``True`` if the agent record existed and was deleted,
+                ``False`` if it did not exist.
         """
         # Cascade: sessions
         sessions = await self.list_sessions(user_id, agent_id)
@@ -447,8 +489,20 @@ class RedisStorage(StorageBase):
         # Cascade: schedules owned by this agent
         schedules = await self.list_schedules(user_id)
         for schedule in schedules:
-            if schedule.data.agent_id == agent_id:
+            if schedule.agent_id == agent_id:
                 await self.delete_schedule(user_id, schedule.id)
+
+        # Defensive: scrub agent_id from any team's member_ids list.
+        # The common path (delete_team -> delete_agent) is unaffected
+        # because the team is being torn down anyway and removed from
+        # the index in step 4 of delete_team.
+        teams = await self.list_teams(user_id)
+        for team in teams:
+            if agent_id in team.data.member_ids:
+                team.data.member_ids = [
+                    mid for mid in team.data.member_ids if mid != agent_id
+                ]
+                await self.upsert_team(user_id, team)
 
         key = self._key(
             self.key_config.agent,
@@ -491,6 +545,10 @@ class RedisStorage(StorageBase):
                 await self._set_with_ttl(key, record.model_dump_json())
                 return record
 
+        # Use the caller-provided ``session_id`` when given so a
+        # "create-if-missing under this id" call (e.g. scheduler's
+        # stateful-mode session) lands at the expected key.
+        new_id_kwargs = {"id": session_id} if session_id else {}
         record = SessionRecord(
             user_id=user_id,
             agent_id=agent_id,
@@ -498,6 +556,7 @@ class RedisStorage(StorageBase):
             source=source,
             source_schedule_id=source_schedule_id,
             state=state if state is not None else AgentState(),
+            **new_id_kwargs,
         )
         key = self._key(
             self.key_config.session,
@@ -609,7 +668,41 @@ class RedisStorage(StorageBase):
         agent_id: str,
         session_id: str,
     ) -> bool:
-        """Delete a session record and clean up all associated keys."""
+        """Delete a session record and cascade clean-up.
+
+        Cascades:
+
+        - Existing: per-session message log, schedule-session index entry.
+        - **NEW**: if this session is the leader of a team (``team_id``
+          set AND a :class:`TeamRecord` exists with
+          ``session_id == this session_id``), call :meth:`delete_team`
+          first. ``delete_team`` will recursively cascade workers and
+          clear ``team_id`` on this session — that clear is idempotent
+          and the session itself is deleted right after, so the order is
+          safe.
+
+        Worker sessions (``team_id`` set, but the team's
+        ``leader_session_id`` is **not** this session) are deleted
+        without dissolving the team — the team and the surviving leader
+        keep their member_ids list pointing to the now-orphaned worker
+        agent. This intentional asymmetry mirrors SQL: there is no FK
+        from :class:`SessionRecord` back to the agent that owns it, so
+        deleting a session doesn't automatically delete the agent.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            agent_id (`str`):
+                The id of the agent that owns the session (used to
+                clean up the per-agent session index).
+            session_id (`str`):
+                The id of the session to delete.
+
+        Returns:
+            `bool`:
+                ``True`` if the session existed and was deleted,
+                ``False`` if no record was found.
+        """
         key = self._key(
             self.key_config.session,
             user_id=user_id,
@@ -620,6 +713,12 @@ class RedisStorage(StorageBase):
             return False
 
         record = SessionRecord.model_validate_json(raw)
+
+        # Cascade: if this session leads a team, dissolve it first.
+        if record.team_id:
+            team = await self.get_team(user_id, record.team_id)
+            if team is not None and team.session_id == session_id:
+                await self.delete_team(user_id, record.team_id)
 
         index_key = self._key(
             self.key_config.session_index,
@@ -854,3 +953,195 @@ class RedisStorage(StorageBase):
         key = self._message_key(user_id, session_id)
         raw_list = await self._client.lrange(key, offset, offset + limit - 1)
         return [Msg.model_validate_json(raw) for raw in raw_list]
+
+    # ------------------------------------------------------------------
+    # Team persistence
+    # ------------------------------------------------------------------
+
+    async def upsert_team(
+        self,
+        user_id: str,
+        record: TeamRecord,
+    ) -> TeamRecord:
+        """Persist a team record and register it in the user's team index.
+
+        Args:
+            user_id (`str`):
+                The owner user id. Used to scope both the record key and
+                the per-user team index.
+            record (`TeamRecord`):
+                The team record to persist. Its ``id`` is used as the
+                primary key; an existing record with the same id is
+                overwritten. ``updated_at`` is refreshed to ``datetime.now()``
+                before writing.
+
+        Returns:
+            `TeamRecord`:
+                The stored record (with refreshed ``updated_at``).
+        """
+        record.updated_at = datetime.now()
+        key = self._key(
+            self.key_config.team,
+            user_id=user_id,
+            team_id=record.id,
+        )
+        index_key = self._key(self.key_config.team_index, user_id=user_id)
+        await self._set_with_ttl(key, record.model_dump_json())
+        await self._client.sadd(index_key, record.id)
+        return record
+
+    async def get_team(
+        self,
+        user_id: str,
+        team_id: str,
+    ) -> TeamRecord | None:
+        """Fetch a single team record by id.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            team_id (`str`):
+                The team id to look up.
+
+        Returns:
+            `TeamRecord | None`:
+                The record, or ``None`` if no record exists at the
+                ``(user_id, team_id)`` key (e.g. expired or never created).
+        """
+        key = self._key(
+            self.key_config.team,
+            user_id=user_id,
+            team_id=team_id,
+        )
+        raw = await self._client.get(key)
+        if not raw:
+            return None
+        return TeamRecord.model_validate_json(raw)
+
+    async def list_teams(self, user_id: str) -> list[TeamRecord]:
+        """Return all team records belonging to the given user.
+
+        Reads the per-user team index (a Redis Set of team ids) and fetches
+        each record individually. Records whose keys have expired or been
+        deleted externally are silently skipped.
+
+        Args:
+            user_id (`str`):
+                The owner user id whose teams to list.
+
+        Returns:
+            `list[TeamRecord]`:
+                All team records for the user, in arbitrary order (the
+                index is a Set).
+        """
+        index_key = self._key(self.key_config.team_index, user_id=user_id)
+        ids = await self._client.smembers(index_key)
+        records: list[TeamRecord] = []
+        for team_id in ids:
+            raw = await self._client.get(
+                self._key(
+                    self.key_config.team,
+                    user_id=user_id,
+                    team_id=team_id,
+                ),
+            )
+            if raw:
+                records.append(TeamRecord.model_validate_json(raw))
+        return records
+
+    async def set_session_team_id(
+        self,
+        user_id: str,
+        session_id: str,
+        team_id: str | None,
+    ) -> None:
+        """Set or clear ``team_id`` on an existing session record.
+
+        Bypasses :meth:`upsert_session` because that method does not
+        allow writing ``team_id`` (which is a relation column the
+        application normally only mutates via team operations).
+        Idempotent: a no-op if the session does not exist or already
+        holds the given value.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            session_id (`str`):
+                The session whose ``team_id`` should be updated.
+            team_id (`str | None`):
+                The new value. ``None`` detaches the session from any
+                team (used by :meth:`delete_team` and by the team
+                service when a session leaves a team).
+        """
+        key = self._key(
+            self.key_config.session,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        raw = await self._client.get(key)
+        if not raw:
+            return
+        record = SessionRecord.model_validate_json(raw)
+        if record.team_id == team_id:
+            return
+        record.team_id = team_id
+        record.updated_at = datetime.now()
+        await self._set_with_ttl(key, record.model_dump_json())
+
+    async def delete_team(self, user_id: str, team_id: str) -> bool:
+        """Delete a team record and cascade-delete all of its workers.
+
+        Cascade order (mirrors what SQL's ``ON DELETE CASCADE`` would do
+        for the same set of foreign keys):
+
+        1. For each ``member_id`` in :attr:`TeamData.member_ids`, call
+           :meth:`delete_agent`. Each call cascades the worker's single
+           session via the existing agent-cascade logic.
+        2. Clear ``team_id`` on the leader session (referenced by
+           :attr:`TeamRecord.session_id`) — semantically equivalent to
+           ``ON DELETE SET NULL`` for that direction of the relationship.
+           Idempotent if the session has already been deleted (no-op).
+        3. Delete the :class:`TeamRecord` key and remove it from the
+           per-user team index.
+
+        The cascade is best-effort: Redis has no cross-key transaction,
+        so a process crash mid-cascade may leave residue. Each step is
+        idempotent so retries are safe.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            team_id (`str`):
+                The id of the team to delete.
+
+        Returns:
+            `bool`:
+                ``True`` if the team record existed and was deleted,
+                ``False`` if no record was found at the
+                ``(user_id, team_id)`` key.
+        """
+        team = await self.get_team(user_id, team_id)
+        if team is None:
+            # Make sure the index is also clean if the record vanished
+            # for any reason.
+            index_key = self._key(self.key_config.team_index, user_id=user_id)
+            await self._client.srem(index_key, team_id)
+            return False
+
+        # Cascade: delete each worker agent (which cascades its session)
+        for member_id in team.data.member_ids:
+            await self.delete_agent(user_id, member_id)
+
+        # Clear team_id on the leader session (idempotent)
+        await self.set_session_team_id(user_id, team.session_id, None)
+
+        # Delete the TeamRecord key + index entry
+        key = self._key(
+            self.key_config.team,
+            user_id=user_id,
+            team_id=team_id,
+        )
+        existed = await self._client.delete(key)
+        index_key = self._key(self.key_config.team_index, user_id=user_id)
+        await self._client.srem(index_key, team_id)
+        return bool(existed)

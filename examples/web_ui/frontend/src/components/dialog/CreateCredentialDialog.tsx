@@ -1,3 +1,4 @@
+import { CircleAlert, Loader2, PlusCircle } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
 import { credentialApi } from '@/api';
@@ -82,7 +83,7 @@ export function CreateCredentialDialog({ open, onOpenChange, onCreated, defaultT
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent>
+			<DialogContent className="!w-[500px] !max-w-[500px]">
 				<DialogHeader>
 					<DialogTitle>{t('dialog-credential-create.title')}</DialogTitle>
 				</DialogHeader>
@@ -124,10 +125,20 @@ export function CreateCredentialDialog({ open, onOpenChange, onCreated, defaultT
 					)}
 				</FieldGroup>
 				<DialogFooter>
-					<Button variant="outline" onClick={() => onOpenChange(false)}>
+					<Button
+						variant="ghost"
+						onClick={() => onOpenChange(false)}
+						disabled={submitting}
+					>
+						<CircleAlert className="size-3.5" />
 						{t('common.cancel')}
 					</Button>
 					<Button onClick={handleSubmit} disabled={submitting || !selectedSchema}>
+						{submitting ? (
+							<Loader2 className="size-3.5 animate-spin" />
+						) : (
+							<PlusCircle className="size-3.5" />
+						)}
 						{submitting ? t('common.creating') : t('common.create')}
 					</Button>
 				</DialogFooter>

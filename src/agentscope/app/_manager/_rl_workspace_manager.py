@@ -39,7 +39,7 @@ from ...workspace._e2b._bootstrap import (
     DEFAULT_TEMPLATE,
     DEFAULT_TIMEOUT,
 )
-from ._workspace_manager import WorkspaceManagerBase
+from ..workspace_manager._base import WorkspaceManagerBase
 from ._workspace_pool import PooledEntry, WorkspacePool
 
 

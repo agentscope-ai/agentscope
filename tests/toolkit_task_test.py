@@ -82,7 +82,7 @@ class TestToolkitTaskCreate(_ToolkitTaskTestBase):
             {
                 "content": [
                     {
-                        "text": f"Task {task_id} created successfully: "
+                        "text": f"Task (id={task_id}) created successfully: "
                         "Test Task 1",
                         "type": "text",
                         "id": AnyString(),
@@ -127,7 +127,7 @@ class TestToolkitTaskCreate(_ToolkitTaskTestBase):
             {
                 "content": [
                     {
-                        "text": f"Task {task_1_id} created successfully: "
+                        "text": f"Task (id={task_1_id}) created successfully: "
                         f"Task 1",
                         "type": "text",
                         "id": AnyString(),
@@ -153,7 +153,7 @@ class TestToolkitTaskCreate(_ToolkitTaskTestBase):
             {
                 "content": [
                     {
-                        "text": f"Task {task_2_id} created successfully: "
+                        "text": f"Task (id={task_2_id}) created successfully: "
                         f"Task 2",
                         "type": "text",
                         "id": AnyString(),
@@ -180,7 +180,7 @@ class TestToolkitTaskCreate(_ToolkitTaskTestBase):
             {
                 "content": [
                     {
-                        "text": f"Task {task_3_id} created successfully: "
+                        "text": f"Task (id={task_3_id}) created successfully: "
                         f"Task 3",
                         "type": "text",
                         "id": AnyString(),
@@ -252,7 +252,7 @@ class TestToolkitTaskCreate(_ToolkitTaskTestBase):
             {
                 "content": [
                     {
-                        "text": f"Task {task_id} created successfully: "
+                        "text": f"Task (id={task_id}) created successfully: "
                         f"Bug Fix",
                         "type": "text",
                         "id": AnyString(),
@@ -355,9 +355,9 @@ class TestToolkitTaskList(_ToolkitTaskTestBase):
             {
                 "content": [
                     {
-                        "text": f"#{task_1_id} [pending] Task 1\n"
-                        f"#{task_2_id} [pending] Task 2\n"
-                        f"#{task_3_id} [pending] Task 3",
+                        "text": f"{task_1_id} [pending] Task 1\n"
+                        f"{task_2_id} [pending] Task 2\n"
+                        f"{task_3_id} [pending] Task 3",
                         "type": "text",
                         "id": AnyString(),
                     },
@@ -431,11 +431,11 @@ class TestToolkitTaskGet(_ToolkitTaskTestBase):
         )
 
         self.assertDictEqual(
-            response.model_dump(),
+            response.model_dump(mode="json"),
             {
                 "content": [
                     {
-                        "text": f"Task #{task_id}: Test Task\n"
+                        "text": f"Task (id={task_id}): Test Task\n"
                         "Status: pending\n"
                         "Description: This is a test task with details\n"
                         "Metadata: {'priority': 'high'}",
@@ -521,7 +521,7 @@ class TestToolkitTaskUpdate(_ToolkitTaskTestBase):
             {
                 "content": [
                     {
-                        "text": f"Update task #{task_id} subject.",
+                        "text": f"Update task (id={task_id}) subject.",
                         "type": "text",
                         "id": AnyString(),
                     },
@@ -575,7 +575,7 @@ class TestToolkitTaskUpdate(_ToolkitTaskTestBase):
             {
                 "content": [
                     {
-                        "text": f"Update task #{task_id} description.",
+                        "text": f"Update task (id={task_id}) description.",
                         "type": "text",
                         "id": AnyString(),
                     },
@@ -628,7 +628,7 @@ class TestToolkitTaskUpdate(_ToolkitTaskTestBase):
             {
                 "content": [
                     {
-                        "text": f"Update task #{task_id} status.",
+                        "text": f"Update task (id={task_id}) status.",
                         "type": "text",
                         "id": AnyString(),
                     },
@@ -668,7 +668,7 @@ class TestToolkitTaskUpdate(_ToolkitTaskTestBase):
             {
                 "content": [
                     {
-                        "text": f"Update task #{task_id} status.\n\n"
+                        "text": f"Update task (id={task_id}) status.\n\n"
                         "Task completed. Call TaskList now to find your "
                         "next available task or see if your work "
                         "unblocked others.",
@@ -721,7 +721,8 @@ class TestToolkitTaskUpdate(_ToolkitTaskTestBase):
             {
                 "content": [
                     {
-                        "text": f"Task {task_to_delete_id} has been deleted.",
+                        "text": f"Task (id={task_to_delete_id}) has been "
+                        f"deleted.",
                         "type": "text",
                         "id": AnyString(),
                     },
@@ -774,7 +775,7 @@ class TestToolkitTaskUpdate(_ToolkitTaskTestBase):
             {
                 "content": [
                     {
-                        "text": f"Update task #{task_id} owner.",
+                        "text": f"Update task (id={task_id}) owner.",
                         "type": "text",
                         "id": AnyString(),
                     },
@@ -835,7 +836,7 @@ class TestToolkitTaskUpdate(_ToolkitTaskTestBase):
             {
                 "content": [
                     {
-                        "text": f"Update task #{task_id} metadata.",
+                        "text": f"Update task (id={task_id}) metadata.",
                         "type": "text",
                         "id": AnyString(),
                     },
@@ -902,7 +903,7 @@ class TestToolkitTaskUpdate(_ToolkitTaskTestBase):
             {
                 "content": [
                     {
-                        "text": f"Update task #{task_1_id} add_blocks.",
+                        "text": f"Update task (id={task_1_id}) add_blocks.",
                         "type": "text",
                         "id": AnyString(),
                     },
@@ -976,7 +977,8 @@ class TestToolkitTaskUpdate(_ToolkitTaskTestBase):
             {
                 "content": [
                     {
-                        "text": f"Update task #{task_2_id} add_blocked_by.",
+                        "text": f"Update task (id={task_2_id}) "
+                        f"add_blocked_by.",
                         "type": "text",
                         "id": AnyString(),
                     },
@@ -1116,7 +1118,7 @@ class TestToolkitTaskUpdate(_ToolkitTaskTestBase):
             {
                 "content": [
                     {
-                        "text": f"Task {task_2_id} has been deleted.",
+                        "text": f"Task (id={task_2_id}) has been deleted.",
                         "type": "text",
                         "id": AnyString(),
                     },
@@ -1172,7 +1174,7 @@ class TestToolkitTaskUpdate(_ToolkitTaskTestBase):
                 "content": [
                     {
                         "text": "TaskNotFoundError: "
-                        "The task nonexistent-id does not exist.",
+                        "The task (id=nonexistent-id) does not exist.",
                         "type": "text",
                         "id": AnyString(),
                     },

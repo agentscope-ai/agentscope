@@ -10,6 +10,7 @@ from ._session import (
     ChatModelConfig,
     SessionSource,
 )
+from ._team import TeamRecord, TeamData
 from ._user import UserRecord
 
 __all__ = [
@@ -23,5 +24,7 @@ __all__ = [
     "SessionRecord",
     "SessionSource",
     "ChatModelConfig",
+    "TeamData",
+    "TeamRecord",
     "UserRecord",
 ]

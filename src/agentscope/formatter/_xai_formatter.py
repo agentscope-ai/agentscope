@@ -97,7 +97,15 @@ class XAIChatFormatter(FormatterBase):
                         if content_args:
                             xai_messages.append(user(*content_args))
                             content_args = []
-                        xai_messages.append(user(block.hint))
+                        if isinstance(block.hint, str):
+                            xai_messages.append(user(block.hint))
+                        else:
+                            hint_args = self._xai_user_args_from_blocks(
+                                block.hint,
+                                image,
+                            )
+                            if hint_args:
+                                xai_messages.append(user(*hint_args))
                     elif isinstance(block, TextBlock):
                         content_args.append(block.text)
                     elif isinstance(block, DataBlock):
@@ -229,7 +237,15 @@ class XAIChatFormatter(FormatterBase):
                                 if text:
                                     xai_messages.append(assistant(text))
                                 pending_text = []
-                        xai_messages.append(user(block.hint))
+                        if isinstance(block.hint, str):
+                            xai_messages.append(user(block.hint))
+                        else:
+                            hint_args = self._xai_user_args_from_blocks(
+                                block.hint,
+                                image,
+                            )
+                            if hint_args:
+                                xai_messages.append(user(*hint_args))
 
                 if pending_tool_calls:
                     # Assistant turn that triggered tool calls (history).
@@ -263,6 +279,68 @@ class XAIChatFormatter(FormatterBase):
                 )
 
         return xai_messages
+
+    def _xai_user_args_from_blocks(
+        self,
+        blocks: list,
+        image: Any,
+    ) -> list:
+        """Convert a list of ``TextBlock | DataBlock`` into the positional
+        args expected by ``xai_sdk.chat.user(*args)``.
+
+        DataBlocks that are not images (or use an unsupported media type)
+        are dropped with a warning, matching the existing user-role
+        DataBlock handling above.
+
+        Args:
+            blocks (`list`):
+                The ``hint`` list from a :class:`HintBlock`.
+            image (`Any`):
+                The ``xai_sdk.chat.image`` constructor, passed in to keep
+                the local import contract identical to ``format``.
+
+        Returns:
+            `list`:
+                Positional args for ``user(*args)``; empty if nothing
+                survived.
+        """
+        args: list = []
+        for sub in blocks:
+            if isinstance(sub, TextBlock):
+                args.append(sub.text)
+            elif isinstance(sub, DataBlock):
+                if not sub.source.media_type.startswith("image/"):
+                    logger.warning(
+                        "Unsupported media type %s for xAI API. "
+                        "Only image/jpeg and image/png are supported. "
+                        "This hint sub-block will be skipped.",
+                        sub.source.media_type,
+                    )
+                    continue
+                if isinstance(sub.source, URLSource):
+                    url_str = str(sub.source.url)
+                    if url_str.startswith("file://"):
+                        local_path = url_str.removeprefix("file://")
+                        with open(local_path, "rb") as f:
+                            encoded = base64.b64encode(f.read()).decode(
+                                "utf-8",
+                            )
+                        args.append(
+                            image(
+                                f"data:{sub.source.media_type};"
+                                f"base64,{encoded}",
+                            ),
+                        )
+                    else:
+                        args.append(image(url_str))
+                elif isinstance(sub.source, Base64Source):
+                    args.append(
+                        image(
+                            f"data:{sub.source.media_type};"
+                            f"base64,{sub.source.data}",
+                        ),
+                    )
+        return args
 
     def _extract_result_text(self, output: Any) -> str:
         """Extract a plain-text string from a ``ToolResultBlock`` output.

@@ -315,7 +315,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 									<Button
 										type="button"
 										variant="ghost"
-										size="icon-sm"
+										size="icon"
 										onClick={() => fileInputRef.current?.click()}
 										disabled={attachDisabled}
 										className="shrink-0 rounded-full"
@@ -337,7 +337,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 										type="button"
 										onClick={handleSend}
 										disabled={disabled || !value.trim() || hasProcessing}
-										size="icon-sm"
+										size="icon"
 										className="shrink-0 rounded-full"
 									>
 										<Send className="h-4 w-4" />

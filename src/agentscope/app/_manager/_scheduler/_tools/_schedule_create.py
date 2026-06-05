@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The schedule create tool."""
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -41,6 +42,24 @@ class _ScheduleCreateParams(BaseModel):
         "e.g. 'America/New_York' or 'Asia/Shanghai'.",
     )
 
+    enabled: bool = Field(
+        default=True,
+        description="Whether the schedule is active immediately after "
+        "creation. Set to False to create a disabled schedule.",
+    )
+
+    started_at: datetime | None = Field(
+        default=None,
+        description="ISO-8601 datetime at which the schedule becomes active. "
+        "Defaults to the current time when not specified.",
+    )
+
+    ended_at: datetime | None = Field(
+        default=None,
+        description="ISO-8601 datetime at which the schedule stops firing. "
+        "If not set the schedule runs indefinitely.",
+    )
+
     stateful: bool = Field(
         default=False,
         description="If True, consecutive executions share the same session "
@@ -71,11 +90,26 @@ class ScheduleCreate(ToolBase):
 
     name: str = "ScheduleCreate"
 
-    description: str = (
-        "Create a new recurring scheduled task for the current agent. "
-        "The agent will be executed automatically according to the given "
-        "cron expression. Returns the new schedule ID on success."
-    )
+    description: str = """Create a new recurring scheduled task for yourself. \
+You will be notified in a new session each time the schedule is triggered.
+
+**About the cron expression:**
+- Determine your current timezone first, that's very important for setting a \
+correct cron expression. Get it by bash command like `date +%z`, \
+`cat /etc/timezone` or directly ask the user.
+- Determine whether the task should run once or recur at an interval, \
+then set the cron expression accordingly.
+- For a one-off task, query the current time first and set the cron \
+expression to fire at that specific moment.
+- Set `started_at` and `ended_at` to match the user's requirements. \
+When in doubt, ask for clarification before creating the schedule.
+
+**About the description field:**
+- The `description` is the only context available to you when the \
+schedule fires in a new session. Include all necessary details: the goal, \
+expected output, constraints, relevant file paths, and anything else needed \
+to complete the task independently.
+"""
 
     input_schema: dict = _ScheduleCreateParams.model_json_schema()
 
@@ -132,6 +166,9 @@ class ScheduleCreate(ToolBase):
         cron_expression: str,
         description: str = "",
         timezone: str = "UTC",
+        enabled: bool = True,
+        started_at: datetime | None = None,
+        ended_at: datetime | None = None,
         stateful: bool = False,
         permission_mode: str = PermissionMode.DONT_ASK.value,
         _agent_state: AgentState | None = None,
@@ -147,6 +184,14 @@ class ScheduleCreate(ToolBase):
                 Human-readable description of what this schedule does.
             timezone (`str`, optional):
                 IANA timezone name, e.g. ``'Asia/Shanghai'``.
+            enabled (`bool`, optional):
+                Whether the schedule is active immediately after creation.
+            started_at (`datetime | None`, optional):
+                Datetime at which the schedule becomes active. Defaults to
+                the current time when not specified.
+            ended_at (`datetime | None`, optional):
+                Datetime at which the schedule stops firing. If not set the
+                schedule runs indefinitely.
             stateful (`bool`, optional):
                 Whether consecutive executions share the same session context.
             permission_mode (`str`, optional):
@@ -174,8 +219,11 @@ class ScheduleCreate(ToolBase):
             data=ScheduleData(
                 name=name,
                 description=description,
+                enabled=enabled,
                 cron_expression=cron_expression,
                 timezone=timezone,
+                started_at=started_at or datetime.now(),
+                ended_at=ended_at,
                 stateful=stateful,
                 permission_mode=perm_mode,
                 source=ScheduleSource.AGENT,
@@ -194,6 +242,9 @@ class ScheduleCreate(ToolBase):
                         f"Schedule {name!r} created successfully.\n"
                         f"Schedule ID: {record.id}\n"
                         f"Cron: {cron_expression} (timezone: {timezone})\n"
+                        f"Enabled: {enabled}\n"
+                        f"Started at: {record.data.started_at}\n"
+                        f"Ended at: {ended_at or '(no end time)'}\n"
                         f"Stateful: {stateful}"
                     ),
                 ),

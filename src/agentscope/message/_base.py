@@ -306,6 +306,18 @@ class Msg(BaseModel):
             case EventType.THINKING_BLOCK_END:
                 pass
 
+            case EventType.HINT_BLOCK:
+                # One-shot event — the full HintBlock content arrives in
+                # a single event, so just append it to ``content`` for
+                # persistence and replay.
+                self.content.append(
+                    HintBlock(
+                        id=event.block_id,
+                        source=event.source,
+                        hint=event.hint,
+                    ),
+                )
+
             case EventType.TOOL_CALL_START:
                 self.content.append(
                     ToolCallBlock(
@@ -392,6 +404,14 @@ class Msg(BaseModel):
                 else:
                     assert isinstance(block, ToolResultBlock)
                     block.state = event.state
+                # The paired ToolCallBlock's lifecycle ends with its
+                # result — flip it to FINISHED here so the SSE-rebuilt
+                # reply_msg matches ``agent.state.context``, which
+                # ``_update_tool_call_state`` mutates directly.
+                call_block = self._find_block("tool_call", event.tool_call_id)
+                if call_block is not None:
+                    assert isinstance(call_block, ToolCallBlock)
+                    call_block.state = ToolCallState.FINISHED
 
             case EventType.REQUIRE_USER_CONFIRM:
                 for tool_call in event.tool_calls:

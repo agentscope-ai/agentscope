@@ -4,7 +4,7 @@
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock
 
-from agentscope.app import AGUIProtocolMiddleware
+from agentscope.app.middleware import AGUIProtocolMiddleware
 from agentscope.event import (
     ConfirmResult,
     DataBlockDeltaEvent,

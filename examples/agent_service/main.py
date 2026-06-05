@@ -6,11 +6,10 @@ import uvicorn
 from fastapi.middleware import Middleware
 from fastapi.middleware.cors import CORSMiddleware
 
-from agentscope.app import (
-    create_app,
-    RedisStorage,
-    LocalWorkspaceManager,
-)
+from agentscope.app import create_app
+from agentscope.app.message_bus import RedisMessageBus
+from agentscope.app.storage import RedisStorage
+from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.mcp import MCPClient, StdioMCPConfig, HttpMCPConfig
 
 
@@ -39,6 +38,10 @@ if os.getenv("AMAP_API_KEY"):
 
 app = create_app(
     RedisStorage(
+        host="localhost",
+        port=6379,
+    ),
+    RedisMessageBus(
         host="localhost",
         port=6379,
     ),

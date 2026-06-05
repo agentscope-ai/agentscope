@@ -90,7 +90,7 @@ export const formatTime = (seconds: number): string => {
 	if (total < 3600) {
 		const minutes = Math.floor(total / 60);
 		const remaining = total % 60;
-		return remaining === 0 ? `${minutes}min` : `${minutes}min${remaining}s`;
+		return remaining === 0 ? `${minutes}m` : `${minutes}m${remaining}s`;
 	}
 	return `${Math.floor(total / 3600)}h`;
 };

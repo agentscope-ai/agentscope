@@ -1,4 +1,4 @@
-import { PlusCircle } from 'lucide-react';
+import { CircleAlert, Loader2, PlusCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -72,12 +72,12 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
 			<DialogTrigger asChild>
-				<Button id={triggerId} size="sm">
+				<Button id={triggerId}>
 					<PlusCircle />
 					<span>{t('dialog-agent-create.trigger')}</span>
 				</Button>
 			</DialogTrigger>
-			<DialogContent className="w-[500px]! max-w-[500px]!">
+			<DialogContent className="!w-[500px] !max-w-[500px]">
 				<DialogHeader>
 					<DialogTitle>{t('dialog-agent-create.title')}</DialogTitle>
 				</DialogHeader>
@@ -89,15 +89,19 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 					)}
 				</div>
 				<DialogFooter>
-					<Button size="sm" variant="outline" onClick={() => setOpen(false)}>
+					<Button variant="ghost" onClick={() => setOpen(false)} disabled={submitting}>
+						<CircleAlert className="size-3.5" />
 						{t('common.cancel')}
 					</Button>
 					<Button
-						size="sm"
 						onClick={handleSubmit}
 						disabled={!nameValid || submitting || !schema || !values}
 					>
-						<PlusCircle />
+						{submitting ? (
+							<Loader2 className="size-3.5 animate-spin" />
+						) : (
+							<PlusCircle className="size-3.5" />
+						)}
 						{submitting ? t('common.creating') : t('common.create')}
 					</Button>
 				</DialogFooter>

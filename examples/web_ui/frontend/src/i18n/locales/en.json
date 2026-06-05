@@ -33,8 +33,13 @@
 		"switchToZh": "切换为中文",
 		"switchToEn": "Switch to English",
 		"success": "Success",
+		"team": "Team",
+		"leader": "Leader",
+		"worker": "Worker",
 		"time": "Time",
-		"yes": "Yes"
+		"yes": "Yes",
+		"deleteTitle": "Delete {{entity}} \"{{name}}\"?",
+		"deleteDescription": "This action cannot be undone."
 	},
 	"tool": {
 		"moreLines": "... {{count}} more lines",
@@ -47,6 +52,12 @@
 		},
 		"glob": {
 			"name": "Glob"
+		},
+		"taskCreate": {
+			"name": "TaskCreate",
+			"label": "Create",
+			"count_one": "{{count}} task",
+			"count_other": "{{count}} tasks"
 		},
 		"grep": {
 			"name": "Grep"
@@ -65,7 +76,12 @@
 	},
 	"messageBubble": {
 		"thinking": "Thinking",
-		"running": "Running..."
+		"running": "Running...",
+		"hintSource": {
+			"tool_output": "Tool Output",
+			"team_message": "Team Message",
+			"schedule": "Schedule"
+		}
 	},
 	"chat": {
 		"inputPlaceholder": "Type a message...",
@@ -119,19 +135,17 @@
 		"title": "Edit agent"
 	},
 	"dialog-agent-delete": {
-		"title": "Delete agent",
-		"description": "This action cannot be undone.",
+		"entity": "agent",
 		"confirm": "Delete"
 	},
 	"dialog-session-delete": {
-		"title": "Delete session",
-		"description": "This action cannot be undone."
+		"entity": "session",
+		"confirm": "Delete"
 	},
 	"dialog-session-rename": {
 		"title": "Rename session",
 		"label": "Name",
-		"placeholder": "Session name",
-		"confirm": "Rename"
+		"placeholder": "Session name"
 	},
 	"session-menu": {
 		"rename": "Rename",
@@ -154,8 +168,7 @@
 		"availableModels": "Available Models",
 		"noModels": "No models available",
 		"noModelsDescription": "This provider returned no models.",
-		"deleteTitle": "Delete \"{{name}}\"?",
-		"deleteDescription": "This action cannot be undone. The credential will be permanently removed.",
+		"deleteEntity": "credential",
 		"subtitle": "Model API credential configuration",
 		"reasoning": "Reasoning",
 		"maxContext": "Max. Context",
@@ -199,8 +212,15 @@
 		"emptyMcpServers": "No MCP servers found in configuration."
 	},
 	"dialog-mcp-delete": {
-		"title": "Delete MCP server \"{{name}}\"?",
-		"description": "This action cannot be undone."
+		"entity": "MCP server",
+		"skillEntity": "skill",
+		"skillDescription": "Are you sure you want to remove this skill from the workspace?"
+	},
+	"dialog-skill-add": {
+		"title": "Add skill",
+		"description": "Enter the path to a skill directory to add it to the workspace.",
+		"pathLabel": "Skill path",
+		"pathPlaceholder": "/path/to/skill"
 	},
 	"schedule": {
 		"calendar": "Calendar",
@@ -212,9 +232,8 @@
 			"title": "Create Schedule"
 		},
 		"deleteSchedule": {
-			"description": "This action cannot be undone. The scheduled task will be permanently removed.",
-			"successToast": "Schedule deleted successfully.",
-			"title": "Delete Schedule"
+			"entity": "schedule",
+			"successToast": "Schedule deleted successfully."
 		},
 		"endAt": "End Date",
 		"end_at": "End At",
@@ -297,5 +316,20 @@
 			"title": "Start chatting",
 			"content": "Type a message and press Enter. Paperclip attaches files."
 		}
+	},
+	"task-panel": {
+		"heading": "Tasks",
+		"noTasks": "No tasks yet.",
+		"pending": "Pending",
+		"inProgress": "In Progress",
+		"completed": "Completed",
+		"blockedBy": "blocked by"
+	},
+	"team-sidebar": {
+		"membersHeading": "Members",
+		"noMembers": "No members yet — ask the leader to spawn one with AgentCreate.",
+		"running": "Running",
+		"idle": "Idle",
+		"missingSession": "(no session)"
 	}
 }

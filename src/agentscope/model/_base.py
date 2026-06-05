@@ -26,6 +26,7 @@ from ..message import (
     DataBlock,
     URLSource,
     Base64Source,
+    HintBlock,
 )
 from ..tool import ToolChoice
 
@@ -329,6 +330,20 @@ class ChatModelBase:
 
                 elif isinstance(block, ThinkingBlock):
                     acc_texts.append(block.thinking)
+
+                elif isinstance(block, HintBlock):
+                    # ``hint`` may be a plain string or a list of
+                    # ``TextBlock`` / ``DataBlock`` for multimodal
+                    # content; mirror the ``ToolResultBlock.output``
+                    # branching above.
+                    if isinstance(block.hint, str):
+                        acc_texts.append(block.hint)
+                    else:
+                        for item in block.hint:
+                            if isinstance(item, TextBlock):
+                                acc_texts.append(item.text)
+                            elif isinstance(item, DataBlock):
+                                data_blocks.append(item)
 
                 elif isinstance(block, ToolCallBlock):
                     acc_texts.append(block.input)

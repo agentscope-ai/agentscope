@@ -3,20 +3,17 @@
 application-wide resources."""
 
 from ._background_task_manager import BackgroundTaskManager
-from ._docker_workspace_manager import DockerWorkspaceManager
-from ._e2b_workspace_manager import E2BWorkspaceManager
+from ._cancel_dispatcher import CancelDispatcher
+from ._chat_run_registry import ChatRunRegistry
 from ._rl_workspace_manager import RLWorkspaceManager
 from ._scheduler import SchedulerManager
-from ._session_manager import SessionManager
-from ._workspace_manager import LocalWorkspaceManager, WorkspaceManagerBase
+from ._wakeup_dispatcher import WakeupDispatcher
 
 __all__ = [
     "BackgroundTaskManager",
-    "DockerWorkspaceManager",
-    "E2BWorkspaceManager",
-    "LocalWorkspaceManager",
+    "CancelDispatcher",
+    "ChatRunRegistry",
     "RLWorkspaceManager",
     "SchedulerManager",
-    "SessionManager",
-    "WorkspaceManagerBase",
+    "WakeupDispatcher",
 ]
