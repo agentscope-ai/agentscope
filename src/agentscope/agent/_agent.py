@@ -676,6 +676,20 @@ class Agent:
             reply_id=self.state.reply_id,
             name=self.name,
         )
+        logger.warning(
+            "Agent %s exceeds the max iteration numbers %d. "
+            "Stop the react loop.",
+            self.name,
+            self.react_config.max_iters,
+        )
+
+        # Mirror the normal-exit path so subscribers (e.g. SSE clients
+        # waiting on a terminal event) don't hang when the loop bails
+        # out on max_iters.
+        yield ReplyEndEvent(
+            session_id=self.state.session_id,
+            reply_id=self.state.reply_id,
+        )
 
         yield AssistantMsg(
             id=self.state.reply_id,

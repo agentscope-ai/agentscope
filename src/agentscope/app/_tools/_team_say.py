@@ -47,9 +47,12 @@ member will receive its initial task from the ``prompt`` of the \
 - You want to talk to yourself — use your own reasoning.
 
 ## Important
-Each member starts working immediately when created via AgentCreate. \
+- Each member starts working immediately when created via AgentCreate. \
 When a member finishes its task, it will call ``TeamSay`` to report results \
 back to you. You do NOT need to prompt them — just wait for their reply.
+- **DO NOT** reply to a member's report message unless you have further \
+questions or requirements. ``TeamSay`` is for coordination, not chit-chat — \
+your top priority is to complete the overall task.
 """
 
 _WORKER_DESCRIPTION = """Send a message to the team leader or broadcast to \

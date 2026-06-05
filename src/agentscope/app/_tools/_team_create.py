@@ -47,7 +47,8 @@ just wait for the members to report back.
 ## When NOT to Use This Tool
 - The task is small enough to handle yourself.
 - You already lead a team in this session — a session can only lead \
-one team at a time."""
+one team at a time.
+"""
 
     input_schema: dict = _TeamCreateParams.model_json_schema()
 

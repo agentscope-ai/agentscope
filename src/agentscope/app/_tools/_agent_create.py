@@ -131,6 +131,13 @@ messages to this member specifically. Names must be unique within the \
 team (including against the leader's name); duplicates are rejected.
 - Members spawned this way live only as long as the team — they are \
 deleted when ``TeamDelete`` is called.
+
+## Important
+- You are responsible for organising the team, assigning tasks, collecting \
+every member's report, and producing the final answer — all members report \
+directly to you. Therefore, **DO NOT** encourage members to communicate with \
+each other, and **AVOID** creating "integrator"-style members; both make the \
+overall communication topology unnecessarily complex.
 """
 
     input_schema: dict = _AgentCreateParams.model_json_schema()

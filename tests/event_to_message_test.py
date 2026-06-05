@@ -429,8 +429,14 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             tool_call_id=_TC_ALLOW,
             state=ToolResultState.SUCCESS,
         )
+        # TOOL_RESULT_END flips the paired ToolCallBlock to FINISHED, so the
+        # tool_call state in the prefix changes from "allowed" to "finished"
+        # from this point onward.
+        _s4b_done_prefix = _s4_prefix + [
+            _tcb(_TC_ALLOW, "search", '{"q": "hi"}', "finished"),
+        ]
         gt_result_end_ok = _base(
-            _s4b_prefix
+            _s4b_done_prefix
             + [
                 _trb(
                     _TC_ALLOW,
@@ -450,7 +456,7 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
         # ================================================================
         # Stage 5 – ToolCall (TC_DENY): stream → confirm → denied (finished)
         # ================================================================
-        _s5_prefix = _s4b_prefix + [
+        _s5_prefix = _s4b_done_prefix + [
             _trb(
                 _TC_ALLOW,
                 "search",
@@ -636,8 +642,12 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             tool_call_id=_TC_IMG,
             state=ToolResultState.ERROR,
         )
+        # TOOL_RESULT_END flips the paired ToolCallBlock to FINISHED.
+        _s7b_done_prefix = _s7_prefix + [
+            _tcb(_TC_IMG, "screenshot", "", "finished"),
+        ]
         gt_res_img_end = _base(
-            _s7b_prefix
+            _s7b_done_prefix
             + [
                 _trb(
                     _TC_IMG,
@@ -659,7 +669,7 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
         # Stage 8 – ModelCallEndEvent (first call: usage initialized;
         #          second call: usage accumulated)
         # ================================================================
-        _final_content = _s7b_prefix + [
+        _final_content = _s7b_done_prefix + [
             _trb(
                 _TC_IMG,
                 "screenshot",
