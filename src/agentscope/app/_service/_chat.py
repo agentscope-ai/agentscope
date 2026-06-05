@@ -34,6 +34,26 @@ from ...event import (
     ExternalExecutionResultEvent,
 )
 from ...message import AssistantMsg, Msg, ToolCallState
+from ...permission import AdditionalWorkingDirectory
+from ...state import AgentState
+from ...workspace import WorkspaceBase
+
+
+def _ensure_workspace_working_directory(
+    agent_state: AgentState,
+    workspace: WorkspaceBase,
+) -> None:
+    """Add the workspace root to the permission context if missing."""
+    working_directory = workspace.working_directory
+    if working_directory in agent_state.permission_context.working_directories:
+        return
+
+    agent_state.permission_context.working_directories[working_directory] = (
+        AdditionalWorkingDirectory(
+            path=working_directory,
+            source="workspace",
+        )
+    )
 
 
 class ChatService:
@@ -269,6 +289,7 @@ optional):
         # ----------------------------------------------------------------
         agent_state = session_record.state
         agent_state.session_id = session_id
+        _ensure_workspace_working_directory(agent_state, workspace)
         agent = Agent(
             name=agent_record.data.name,
             system_prompt=agent_record.data.system_prompt,

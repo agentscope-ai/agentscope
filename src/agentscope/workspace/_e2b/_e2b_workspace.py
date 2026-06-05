@@ -401,6 +401,11 @@ class E2BWorkspace(WorkspaceBase):
         """
         return self.instructions.format(workdir=SANDBOX_WORKDIR)
 
+    @property
+    def working_directory(self) -> str:
+        """The sandbox-side workspace root path."""
+        return SANDBOX_WORKDIR
+
     # ── tool / MCP / skill discovery ────────────────────────────
 
     async def list_tools(self) -> list[ToolBase]:
