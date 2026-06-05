@@ -42,8 +42,6 @@ from ...workspace._e2b._bootstrap import (
 from ._workspace_manager import WorkspaceManagerBase
 from ._workspace_pool import PooledEntry, WorkspacePool
 
-DEFAULT_HEALTH_CHECK_INTERVAL = 60.0
-
 
 class RLWorkspaceManager(WorkspaceManagerBase):
     """Manages :class:`E2BWorkspace` instances with a **pooling** strategy.
@@ -83,7 +81,6 @@ class RLWorkspaceManager(WorkspaceManagerBase):
         total: int = 10,
         create_batch_size: int = 2,
         max_reuse: int = 50,
-        health_check_interval: float = DEFAULT_HEALTH_CHECK_INTERVAL,
     ) -> None:
         """Initialize the RL workspace manager.
 
@@ -126,8 +123,6 @@ class RLWorkspaceManager(WorkspaceManagerBase):
             max_reuse (`int`, defaults to `50`):
                 Maximum times a single sandbox can be recycled.
                 ``0`` means unlimited.
-            health_check_interval (`float`, defaults to `60.0`):
-                Seconds between background health-check sweeps.
         """
         # ── E2B workspace configuration ────────────────────────
         self._template = template
@@ -159,7 +154,6 @@ class RLWorkspaceManager(WorkspaceManagerBase):
             total=total,
             create_batch_size=create_batch_size,
             max_reuse=max_reuse,
-            health_check_interval=health_check_interval,
         )
 
     # ── pool callbacks ─────────────────────────────────────────────

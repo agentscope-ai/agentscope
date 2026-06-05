@@ -81,7 +81,6 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         total: int = 10,
         create_batch_size: int = 2,
         max_reuse: int = 50,
-        health_check_interval: float = 60.0,
     ) -> None:
         """Initialize the E2B workspace manager.
 
@@ -140,8 +139,6 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
             max_reuse (`int`, defaults to `50`):
                 Pool: max recycling count per sandbox. ``0`` =
                 unlimited.
-            health_check_interval (`float`, defaults to `60.0`):
-                Pool: seconds between health-check sweeps.
         """
         self._template = template
         self._api_key = api_key
@@ -178,7 +175,6 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
                 total=total,
                 create_batch_size=create_batch_size,
                 max_reuse=max_reuse,
-                health_check_interval=health_check_interval,
             )
 
     # ── metadata helper ───────────────────────────────────────────

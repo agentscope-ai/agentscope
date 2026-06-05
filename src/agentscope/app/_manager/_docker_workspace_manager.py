@@ -77,7 +77,6 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         total: int = 10,
         create_batch_size: int = 2,
         max_reuse: int = 50,
-        health_check_interval: float = 60.0,
     ) -> None:
         """Initialize the docker workspace manager.
 
@@ -131,8 +130,6 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
                 Pool: concurrent factory calls per replenishment.
             max_reuse (`int`, defaults to `50`):
                 Pool: max recycling count per container.
-            health_check_interval (`float`, defaults to `60.0`):
-                Pool: seconds between health-check sweeps.
         """
         self._basedir = os.path.abspath(basedir) if basedir else ""
         self._base_image = base_image
@@ -167,7 +164,6 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
                 total=total,
                 create_batch_size=create_batch_size,
                 max_reuse=max_reuse,
-                health_check_interval=health_check_interval,
             )
 
     # ── isolation helpers ─────────────────────────────────────────
