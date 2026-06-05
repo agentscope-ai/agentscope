@@ -179,7 +179,7 @@ An extensible FastAPI based **multi-tenancy**, **multi-session** agent service w
     <td align="center">
       <img src="assets/images/bg_tool.gif" alt="Background task offloading" width="100%"/>
       <br/>
-      <sub><b>Background task offloading</b> — a long-running tool moves to the background; its result later wakes the agent up and the conversation resumes.</sub>
+      <b>Background task offloading</b> — a long-running tool moves to the background; its result later wakes the agent up and the conversation resumes.
     </td>
   </tr>
   <tr>
