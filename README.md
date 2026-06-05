@@ -33,7 +33,7 @@
     </a>
     <a href="https://discord.gg/eYMpfnkG8h">
         <img
-            src="https://img.shields.io/discord/1194846673529213039?label=Discord&logo=discord"
+            src="https://img.shields.io/badge/Discord-Join%20Us-5865F2?logo=discord&logoColor=white"
             alt="discord"
         />
     </a>
@@ -57,22 +57,23 @@
 
 ## What is AgentScope 2.0?
 
-AgentScope 2.0 is a production-ready, easy-to-use agent framework with essential abstractions that work with rising model capability and built-in support for finetuning.
+AgentScope 2.0 is a production-ready, easy-to-use agent framework with essential abstractions that work with rising model capability and built-in support for .
+
+- [**Event System** →](https://docs.agentscope.io/v2/building-blocks/message-and-event) A unified event bus to the frontend and human-in-the-loop support.
+- [**Permission System** →](https://docs.agentscope.io/v2/building-blocks/permission-system) Fine-grained, configurable control over tools and resources.
+- [**Multi-tenancy & Multi-session Service** →](https://docs.agentscope.io/v2/deploy/agent-service) Production-grade serving with isolation across tenants and sessions.
+- [**Workspace / Sandbox Support** →](https://docs.agentscope.io/v2/building-blocks/workspace) Run tools and code in isolated environments, with built-in backends for local, Docker, and E2B.
+- [**Extensible Middleware System** →](https://docs.agentscope.io/v2/building-blocks/middleware) Composable hooks to customize and extend the agent's reasoning-acting loop.
 
 We design for increasingly agentic LLMs.
 Our approach leverages the models' reasoning and tool use abilities
 rather than constraining them with strict prompts and opinionated orchestrations.
 
-## Why use AgentScope?
-
-- **Simple**: start building your agents in 5 minutes with built-in ReAct agent, tools, skills, human-in-the-loop steering, memory, planning, realtime voice, evaluation and model finetuning
-- **Extensible**: large number of ecosystem integrations for tools, memory and observability; built-in support for MCP and A2A; message hub for flexible multi-agent orchestration and workflows
-- **Production-ready**: deploy and serve your agents locally, as serverless in the cloud, or on your K8s cluster with built-in OTel support
-
 <img src="assets/images/agentscope.png" alt="agentscope" width="100%"/>
 
 ## News
 <!-- BEGIN NEWS -->
+- **[2026-06] `FEAT`:** Agent Team supported. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [Docs](https://docs.agentscope.io/v2/deploy/agent-team)
 - **[2026-05] `RELS`:** AgentScope 2.0 released! [Docs](https://docs.agentscope.io/)
 <!-- END NEWS -->
 
@@ -116,7 +117,7 @@ uv pip install -e .
 
 ## Hello AgentScope!
 
-Start your first agent in 5 minutes with AgentScope 2.0:
+Start your first agent with AgentScope 2.0:
 
 ```python
 from agentscope.agent import Agent
@@ -177,16 +178,9 @@ An extensible FastAPI based **multi-tenancy**, **multi-session** agent service w
 <table>
   <tr>
     <td align="center">
-      <img src="assets/images/bg_tool.gif" alt="Background task offloading" width="100%"/>
+      <img src="assets/images/team.gif" alt="Agent team" width="100%"/>
       <br/>
-      <b>Background task offloading</b> — a long-running tool moves to the background; its result later wakes the agent up and the conversation resumes.
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <img src="assets/images/permission_bypass.gif" alt="Permission control in bypass mode" width="100%"/>
-      <br/>
-      <sub><b>Permission control in bypass mode</b> — the agent runs end-to-end without pausing for tool-call confirmations.</sub>
+      <sub><b>Agent team</b> — a leader agent spawns workers and coordinates them through the built-in team tools.</sub>
     </td>
   </tr>
   <tr>
@@ -198,9 +192,16 @@ An extensible FastAPI based **multi-tenancy**, **multi-session** agent service w
   </tr>
   <tr>
     <td align="center">
-      <img src="assets/images/team.gif" alt="Agent team" width="100%"/>
+      <img src="assets/images/permission_bypass.gif" alt="Permission control in bypass mode" width="100%"/>
       <br/>
-      <sub><b>Agent team</b> — a leader agent spawns workers and coordinates them through the built-in team tools.</sub>
+      <sub><b>Permission control in bypass mode</b> — the agent runs end-to-end without pausing for tool-call confirmations.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="assets/images/bg_tool.gif" alt="Background task offloading" width="100%"/>
+      <br/>
+      <sub><b>Background task offloading</b> — a long-running tool moves to the background; its result later wakes the agent up and the conversation resumes.</sub>
     </td>
   </tr>
 </table>
@@ -208,8 +209,7 @@ An extensible FastAPI based **multi-tenancy**, **multi-session** agent service w
 Run the following commands to start the agent service backend and the web UI:
 
 ```bash
-git clone https://github.com/agentscope-ai/agentscope
-
+git clone -b main https://github.com/agentscope-ai/agentscope.git
 cd agentscope/examples/agent_service
 
 # start the agent service backend
