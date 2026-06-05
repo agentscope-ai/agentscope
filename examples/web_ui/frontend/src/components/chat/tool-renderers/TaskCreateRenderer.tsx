@@ -42,14 +42,15 @@ function TaskCreateGroup({ calls, t }: { calls: ToolCallWithResult[]; t: TFuncti
 					const input = parseInput(call.input);
 					const subject = (input.subject as string) || '(untitled)';
 					const description = (input.description as string) || '';
-					// Extract the numeric task id from result text: "Task 3 created..."
+					// Extract the numeric task id from result text:
+					// "Task (id=3) created successfully: ..."
 					const resultText =
 						typeof result?.output === 'string'
 							? result.output
 							: Array.isArray(result?.output)
 								? result.output.map((b) => ('text' in b ? b.text : '')).join('')
 								: '';
-					const idMatch = resultText.match(/^Task (\d+)/);
+					const idMatch = resultText.match(/^Task \(id=(\d+)\)/);
 					const taskId = idMatch ? idMatch[1] : null;
 					return (
 						<div key={call.id} className="flex flex-col min-w-0">

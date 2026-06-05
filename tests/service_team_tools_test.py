@@ -364,6 +364,69 @@ class TestAgentCreate(_TeamToolsTestBase):
             },
         )
 
+    async def test_rejects_duplicate_member_name(self) -> None:
+        """Two ``AgentCreate`` calls with the same ``name`` is rejected:
+        TeamSay routes by name, so duplicates would be ambiguous."""
+        tool = AgentCreate(
+            storage=self.storage,
+            message_bus=self.bus,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+        )
+        first = await tool(
+            name="worker",
+            description="d",
+            prompt="p",
+            permission_mode="default",
+        )
+        self.assertEqual(first.state.value, "running")
+
+        second = await tool(
+            name="worker",
+            description="d",
+            prompt="p",
+            permission_mode="default",
+        )
+        self.assertEqual(second.state.value, "error")
+
+        # The team still only has one member — the second call did not
+        # persist anything.
+        sess = await self.storage.get_session(
+            self.user_id,
+            self.leader_agent.id,
+            self.leader_session.id,
+        )
+        team = await self.storage.get_team(self.user_id, sess.team_id)
+        self.assertEqual(len(team.data.member_ids), 1)
+
+    async def test_rejects_member_name_colliding_with_leader(self) -> None:
+        """A worker name that matches the leader's name is rejected —
+        ``TeamSay(to=<leader name>)`` must remain unambiguous."""
+        tool = AgentCreate(
+            storage=self.storage,
+            message_bus=self.bus,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+        )
+        chunk = await tool(
+            name=self.leader_agent.data.name,  # "leader"
+            description="d",
+            prompt="p",
+            permission_mode="default",
+        )
+        self.assertEqual(chunk.state.value, "error")
+
+        # No worker was added.
+        sess = await self.storage.get_session(
+            self.user_id,
+            self.leader_agent.id,
+            self.leader_session.id,
+        )
+        team = await self.storage.get_team(self.user_id, sess.team_id)
+        self.assertEqual(team.data.member_ids, [])
+
 
 class TestTeamSay(_TeamToolsTestBase):
     """``TeamSay`` delivers a HintBlock + wakeup to each addressed
@@ -417,7 +480,7 @@ class TestTeamSay(_TeamToolsTestBase):
             await self.bus.inbox_drain(ss[0].id, max_count=100)
 
     async def test_targeted_message_delivers_to_one(self) -> None:
-        """``to=<agent_id>`` delivers a HintBlock + wakeup to that worker
+        """``to=<member name>`` delivers a HintBlock + wakeup to that worker
         only; other team members see nothing."""
         tool = TeamSay(
             storage=self.storage,
@@ -428,7 +491,11 @@ class TestTeamSay(_TeamToolsTestBase):
             role="leader",
         )
         target_aid = self.worker_ids[0]
-        chunk = await tool(content="hi w1", to=target_aid)
+        target_agent = await self.storage.get_agent(
+            self.user_id,
+            target_aid,
+        )
+        chunk = await tool(content="hi w1", to=target_agent.data.name)
         self.assertDictEqual(
             chunk.model_dump(),
             {
@@ -546,8 +613,8 @@ class TestTeamSay(_TeamToolsTestBase):
         )
 
     async def test_rejects_unknown_recipient(self) -> None:
-        """A ``to=`` that doesn't resolve to a team member returns an
-        error chunk."""
+        """A ``to=`` that doesn't resolve to a team member name returns
+        an error chunk."""
         tool = TeamSay(
             storage=self.storage,
             message_bus=self.bus,
@@ -556,7 +623,7 @@ class TestTeamSay(_TeamToolsTestBase):
             agent_id=self.leader_agent.id,
             role="leader",
         )
-        chunk = await tool(content="hi", to="not-a-real-agent-id")
+        chunk = await tool(content="hi", to="ghost-name-not-in-team")
         self.assertDictEqual(
             chunk.model_dump(),
             {
@@ -571,7 +638,7 @@ class TestTeamSay(_TeamToolsTestBase):
         )
 
     async def test_rejects_self_target(self) -> None:
-        """``to=<own agent_id>`` is rejected — talk to yourself in
+        """``to=<own name>`` is rejected — talk to yourself in
         reasoning, not via TeamSay."""
         tool = TeamSay(
             storage=self.storage,
@@ -581,7 +648,7 @@ class TestTeamSay(_TeamToolsTestBase):
             agent_id=self.leader_agent.id,
             role="leader",
         )
-        chunk = await tool(content="hi", to=self.leader_agent.id)
+        chunk = await tool(content="hi", to=self.leader_agent.data.name)
         self.assertDictEqual(
             chunk.model_dump(),
             {
@@ -593,6 +660,49 @@ class TestTeamSay(_TeamToolsTestBase):
                 "metadata": {},
                 "id": AnyString(),
             },
+        )
+
+    async def test_worker_can_address_leader_by_name(self) -> None:
+        """A worker constructed with ``role="worker"`` can address the
+        leader using the leader's name — the only identifier a worker
+        ever has for the leader (received via the ``from=`` attribute
+        of the initial ``<team-message>`` hint)."""
+        worker_aid = self.worker_ids[0]
+        worker_sid = self.worker_sessions[worker_aid]
+
+        tool = TeamSay(
+            storage=self.storage,
+            message_bus=self.bus,
+            user_id=self.user_id,
+            session_id=worker_sid,
+            agent_id=worker_aid,
+            role="worker",
+        )
+        chunk = await tool(
+            content="task done",
+            to=self.leader_agent.data.name,
+        )
+        self.assertEqual(chunk.state.value, "running")
+
+        # Leader's inbox received the worker's reply.
+        leader_inbox = await self.bus.inbox_drain(
+            self.leader_session.id,
+            max_count=10,
+        )
+        self.assertEqual(len(leader_inbox), 1)
+        self.assertIn("task done", leader_inbox[0][1]["hint"])
+
+        # Wakeup was enqueued for the leader.
+        wakeups = await self.bus.dequeue_wakeups(max_count=10)
+        self.assertEqual(
+            wakeups,
+            [
+                {
+                    "session_id": self.leader_session.id,
+                    "agent_id": self.leader_agent.id,
+                    "user_id": self.user_id,
+                },
+            ],
         )
 
 

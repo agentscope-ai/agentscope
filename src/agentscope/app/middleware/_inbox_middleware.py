@@ -8,9 +8,8 @@ and injects the HintBlocks into ``agent.state.context`` — appended to
 the last assistant message's content list (same pattern as
 :class:`ToolOffloadMiddleware`).
 
-Each injected HintBlock also yields a ``HintBlockStartEvent`` →
-``HintBlockDeltaEvent`` → ``HintBlockEndEvent`` triple so the
-front-end SSE stream can render them in real time.
+Each injected HintBlock also yields a one-shot ``HintBlockEvent``
+so the front-end SSE stream can render it in real time.
 """
 from typing import Any, AsyncGenerator, Callable
 
@@ -29,8 +28,8 @@ class InboxMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
     Each entry in the inbox is a serialised
     :class:`~agentscope.message.HintBlock`. The middleware
     deserializes them, appends to the last assistant message in
-    ``agent.state.context``, and yields the corresponding
-    ``HintBlockStart/Delta/End`` events so the front-end sees them.
+    ``agent.state.context``, and yields a one-shot ``HintBlockEvent``
+    for each so the front-end sees them.
 
     Args:
         message_bus (`MessageBus`):
@@ -76,7 +75,8 @@ class InboxMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
 
         Yields:
             `Any`:
-                HintBlock events followed by events from downstream.
+                One ``HintBlockEvent`` per drained inbox entry,
+                followed by events from downstream.
         """
         entries = await self._bus.inbox_drain(
             agent.state.session_id,

@@ -288,12 +288,30 @@ class SchedulerManager:
             record.data.timezone,
         )
 
+        # ``CronTrigger.from_crontab`` is a thin helper that only forwards
+        # the 5 parsed fields and ``timezone`` — it has no parameter for
+        # ``start_date`` / ``end_date``.  Parse the expression ourselves so
+        # the configured activation window is honoured.
+        fields = record.data.cron_expression.split()
+        if len(fields) != 5:
+            raise ValueError(
+                "Expected a 5-field cron expression, got "
+                f"{record.data.cron_expression!r}",
+            )
+        minute, hour, day, month, day_of_week = fields
+
         trigger = self._build_trigger(record)
         job = self._scheduler.add_job(
             trigger,
-            trigger=CronTrigger.from_crontab(
-                record.data.cron_expression,
+            trigger=CronTrigger(
+                minute=minute,
+                hour=hour,
+                day=day,
+                month=month,
+                day_of_week=day_of_week,
                 timezone=record.data.timezone,
+                start_date=record.data.started_at,
+                end_date=record.data.ended_at,
             ),
             id=record.id,
             name=record.data.name,

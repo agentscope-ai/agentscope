@@ -51,6 +51,7 @@ def create_app(
         app = create_app(
             storage=RedisStorage(),
             message_bus=RedisMessageBus(),
+            workspace_manager=LocalWorkspaceManager(),
         )
         uvicorn.run(app, host="0.0.0.0", port=8000)
 
@@ -60,6 +61,7 @@ def create_app(
         agentscope_app = create_app(
             storage=RedisStorage(),
             message_bus=RedisMessageBus(),
+            workspace_manager=LocalWorkspaceManager(),
         )
         root.mount("/agentscope", agentscope_app)
 
@@ -105,7 +107,7 @@ def create_app(
             the workspace-derived tools in the toolkit's ``"basic"`` group.
         title (`str`, defaults to ``"AgentScope"``):
             OpenAPI title shown in the docs UI.
-        version (`str`, defaults to ``"2.0.0"``):
+        version (`str`, defaults to the package version):
             API version shown in the docs UI.
 
     Returns:

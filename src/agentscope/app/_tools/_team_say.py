@@ -21,11 +21,9 @@ class _TeamSayParams(ParamsBase):
     to: str | None = Field(
         default=None,
         description=(
-            "Recipient agent id. Pass ``null`` (the default) to "
+            "Recipient member name. Pass ``null`` (the default) to "
             "broadcast to every other member of the team. To address "
-            "a specific peer use the agent id you obtained from "
-            "AgentCreate's result (or, for workers replying to the "
-            "leader, the leader's agent id)."
+            "a specific peer use that member's name."
         ),
     )
 
@@ -193,21 +191,43 @@ class TeamSay(_TeamToolBase):
                     state=ToolResultState.ERROR,
                 )
 
-            # Build a single (agent_id -> session_id) directory and its
-            # inverse — one pass over team.member_ids.
-            directory: dict[str, str] = {
-                leader_session.agent_id: leader_session.id,
+            # Build a (name -> (session_id, agent_id)) directory in one
+            # pass over the team. Routing is by **name** rather than
+            # agent_id so workers can address the leader (they receive
+            # the leader's name in the <team-message from="..."> hint
+            # but never see the leader's agent_id). Uniqueness of names
+            # within the team is enforced at AgentCreate time.
+            leader_agent = await self._storage.get_agent(
+                self._user_id,
+                leader_session.agent_id,
+            )
+            leader_name = (
+                leader_agent.data.name
+                if leader_agent is not None
+                else leader_session.agent_id
+            )
+            directory: dict[str, tuple[str, str]] = {
+                leader_name: (leader_session.id, leader_session.agent_id),
             }
             for worker_agent_id in team.data.member_ids:
+                worker_agent = await self._storage.get_agent(
+                    self._user_id,
+                    worker_agent_id,
+                )
+                if worker_agent is None:
+                    continue
                 sessions = await self._storage.list_sessions(
                     self._user_id,
                     worker_agent_id,
                 )
                 if sessions:
-                    directory[worker_agent_id] = sessions[0].id
-            agent_id_by_session = {sid: aid for aid, sid in directory.items()}
+                    directory[worker_agent.data.name] = (
+                        sessions[0].id,
+                        worker_agent_id,
+                    )
 
-            if self._session_id not in directory.values():
+            own_session_ids = {sid for sid, _aid in directory.values()}
+            if self._session_id not in own_session_ids:
                 return ToolChunk(
                     content=[
                         TextBlock(
@@ -222,25 +242,27 @@ class TeamSay(_TeamToolBase):
                 )
 
             if to is None:
-                recipient_session_ids = [
-                    sid
-                    for sid in directory.values()
+                recipients: list[tuple[str, str]] = [
+                    (sid, aid)
+                    for sid, aid in directory.values()
                     if sid != self._session_id
                 ]
             else:
-                target_session_id = directory.get(to)
-                if target_session_id is None:
+                resolved = directory.get(to)
+                if resolved is None:
+                    known = sorted(directory.keys())
                     return ToolChunk(
                         content=[
                             TextBlock(
                                 text=(
-                                    f"TeamSay: recipient {to!r} is not a "
-                                    f"member of team {team.id}."
+                                    f"TeamSay: no team member is named "
+                                    f"{to!r}. Known members: {known}."
                                 ),
                             ),
                         ],
                         state=ToolResultState.ERROR,
                     )
+                target_session_id, target_agent_id = resolved
                 if target_session_id == self._session_id:
                     return ToolChunk(
                         content=[
@@ -254,7 +276,7 @@ class TeamSay(_TeamToolBase):
                         ],
                         state=ToolResultState.ERROR,
                     )
-                recipient_session_ids = [target_session_id]
+                recipients = [(target_session_id, target_agent_id)]
 
             # Resolve sender display name once.
             sender_agent = await self._storage.get_agent(
@@ -277,16 +299,16 @@ class TeamSay(_TeamToolBase):
             )
             payload = hint.model_dump(mode="json")
 
-            for sid in recipient_session_ids:
+            for sid, aid in recipients:
                 await self._message_bus.inbox_push(sid, payload)
                 await self._message_bus.enqueue_wakeup(
                     user_id=self._user_id,
                     session_id=sid,
-                    agent_id=agent_id_by_session.get(sid, ""),
+                    agent_id=aid,
                 )
 
-            count = len(recipient_session_ids)
-            target = "broadcast" if to is None else f"member {to}"
+            count = len(recipients)
+            target = "broadcast" if to is None else f"member {to!r}"
             return ToolChunk(
                 content=[
                     TextBlock(

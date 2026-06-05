@@ -47,8 +47,8 @@ class _AgentCreateParams(ParamsBase):
         description=(
             'Short identifier for the new member, e.g. ``"researcher"`` '
             'or ``"coder-1"``. Other members address it via '
-            "``TeamSay(to=<this name>)``, so make it concise and unique "
-            "within the team."
+            "``TeamSay(to=<this name>)``, so it MUST be unique within "
+            "the team."
         ),
     )
     description: str = Field(
@@ -126,8 +126,9 @@ creating one agent).
 existing member via ``TeamSay`` instead.
 
 ## Effects
-- A new member id is returned. Use it as ``to=<id>`` in ``TeamSay`` to \
-direct messages to this member specifically.
+- Use the ``name`` you chose as ``to=<name>`` in ``TeamSay`` to direct \
+messages to this member specifically. Names must be unique within the \
+team (including against the leader's name); duplicates are rejected.
 - Members spawned this way live only as long as the team — they are \
 deleted when ``TeamDelete`` is called.
 """
@@ -246,6 +247,40 @@ deleted when ``TeamDelete`` is called.
                 )
             mode_enum = _PERMISSION_MODE_BY_VALUE[permission_mode]
 
+            # Enforce team-scoped name uniqueness. TeamSay routes by
+            # ``name`` (not agent_id), so duplicates would be ambiguous
+            # and unaddressable. The leader's name participates too —
+            # workers must not collide with it.
+            leader_agent_record = await self._storage.get_agent(
+                self._user_id,
+                leader_session.agent_id,
+            )
+            existing_names: set[str] = set()
+            if leader_agent_record is not None:
+                existing_names.add(leader_agent_record.data.name)
+            for member_id in team.data.member_ids:
+                member_record = await self._storage.get_agent(
+                    self._user_id,
+                    member_id,
+                )
+                if member_record is not None:
+                    existing_names.add(member_record.data.name)
+            if name in existing_names:
+                return ToolChunk(
+                    content=[
+                        TextBlock(
+                            text=(
+                                f"AgentCreate: a team member named "
+                                f"{name!r} already exists. Member names "
+                                f"must be unique within the team "
+                                f"(including the leader's name); pick "
+                                f"another."
+                            ),
+                        ),
+                    ],
+                    state=ToolResultState.ERROR,
+                )
+
             # 1. Build worker AgentRecord (source="team" so it's hidden
             #    from the global agent list).
             system_prompt = _build_worker_system_prompt(
@@ -300,10 +335,6 @@ deleted when ``TeamDelete`` is called.
             await self._storage.upsert_team(self._user_id, team)
 
             # 4. Deliver the initial task to the worker's inbox + wakeup.
-            leader_agent_record = await self._storage.get_agent(
-                self._user_id,
-                leader_session.agent_id,
-            )
             leader_name = (
                 leader_agent_record.data.name
                 if leader_agent_record is not None
@@ -337,8 +368,8 @@ deleted when ``TeamDelete`` is called.
                 content=[
                     TextBlock(
                         text=(
-                            f"Member {worker_agent.id} ({name}) added. "
-                            f'Address it via TeamSay(to="{worker_agent.id}").'
+                            f"Member {name!r} added to team "
+                            f"{team.data.name!r}."
                         ),
                     ),
                 ],
