@@ -2,12 +2,12 @@
 """The grep tool in agentscope."""
 import asyncio
 import fnmatch
-import logging
 import os
 import shutil
 from typing import Any, List, Literal
 
 from .._base import ToolBase
+from ..._logging import logger
 from ...permission import (
     PermissionContext,
     PermissionDecision,
@@ -16,8 +16,6 @@ from ...permission import (
 )
 from .._response import ToolChunk
 from ...message import TextBlock
-
-logger = logging.getLogger(__name__)
 
 
 # Version control system directories to exclude from searches
