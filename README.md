@@ -176,24 +176,28 @@ An extensible FastAPI based **multi-tenancy**, **multi-session** agent service w
 
 <table>
   <tr>
-    <td width="50%" align="center">
+    <td align="center">
       <img src="assets/images/bg_tool.gif" alt="Background task offloading" width="100%"/>
       <br/>
-      <sub><b>Background task offloading</b> — a long-running tool moves to the background; its result later wakes the agent.</sub>
-    </td>
-    <td width="50%" align="center">
-      <img src="assets/images/permission_bypass.gif" alt="Permission control in bypass mode" width="100%"/>
-      <br/>
-      <sub><b>Permission control in bypass mode</b> — the agent runs end-to-end without pausing for any tool-call confirmations.</sub>
+      <sub><b>Background task offloading</b> — a long-running tool moves to the background; its result later wakes the agent up and the conversation resumes.</sub>
     </td>
   </tr>
   <tr>
-    <td width="50%" align="center">
+    <td align="center">
+      <img src="assets/images/permission_bypass.gif" alt="Permission control in bypass mode" width="100%"/>
+      <br/>
+      <sub><b>Permission control in bypass mode</b> — the agent runs end-to-end without pausing for tool-call confirmations.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
       <img src="assets/images/task.gif" alt="Task planning" width="100%"/>
       <br/>
-      <sub><b>Task planning</b> — the agent breaks complex work into a tracked plan.</sub>
+      <sub><b>Task planning</b> — the agent breaks complex work into a tracked plan and updates it as it goes.</sub>
     </td>
-    <td width="50%" align="center">
+  </tr>
+  <tr>
+    <td align="center">
       <img src="assets/images/team.gif" alt="Agent team" width="100%"/>
       <br/>
       <sub><b>Agent team</b> — a leader agent spawns workers and coordinates them through the built-in team tools.</sub>
