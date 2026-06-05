@@ -8,7 +8,7 @@
 
 <span align="center">
 
-[**中文主页**](https://github.com/agentscope-ai/agentscope/blob/main/README_zh.md) | [**Tutorial**](https://docs.agentscope.io/) | [**Roadmap**](https://github.com/orgs/agentscope-ai/projects/2/views/1)
+[**中文主页**](https://github.com/agentscope-ai/agentscope/blob/main/README_zh.md) | [**Documentation**](https://docs.agentscope.io/) | [**Roadmap**](https://github.com/orgs/agentscope-ai/projects/2/views/1)
 
 </span>
 
@@ -85,23 +85,6 @@ Welcome to join our community on
 | [Discord](https://discord.gg/eYMpfnkG8h)                                                                                         | DingTalk                                                                  |
 |----------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------|
 | <img src="https://gw.alicdn.com/imgextra/i1/O1CN01hhD1mu1Dd3BWVUvxN_!!6000000000238-2-tps-400-400.png" width="100" height="100"> | <img src="./assets/images/dingtalk_qr_code.png" width="100" height="100"> |
-
-<!-- START doctoc generated TOC please keep comment here to allow auto update -->
-<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
-## 📑 Table of Contents
-
-- [Quickstart](#quickstart)
-  - [Installation](#installation)
-    - [From PyPI](#from-pypi)
-    - [From source](#from-source)
-- [Hello AgentScope!](#hello-agentscope)
-- [Agent Service](#agent-service)
-- [Contributing](#contributing)
-- [License](#license)
-- [Publications](#publications)
-- [Contributors](#contributors)
-
-<!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 ## Quickstart
 
@@ -187,9 +170,38 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-## Agent Service
+## Hello Agent Service!
 
 An extensible FastAPI based **multi-tenancy**, **multi-session** agent service with pre-built Web UI in `examples/web_ui`
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/images/bg_tool.gif" alt="Background task offloading" width="100%"/>
+      <br/>
+      <sub><b>Background task offloading</b> — a long-running tool moves to the background; its result later wakes the agent.</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/images/permission_bypass.gif" alt="Permission control in bypass mode" width="100%"/>
+      <br/>
+      <sub><b>Permission control in bypass mode</b> — the agent runs end-to-end without pausing for any tool-call confirmations.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/images/task.gif" alt="Task planning" width="100%"/>
+      <br/>
+      <sub><b>Task planning</b> — the agent breaks complex work into a tracked plan.</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/images/team.gif" alt="Agent team" width="100%"/>
+      <br/>
+      <sub><b>Agent team</b> — a leader agent spawns workers and coordinates them through the built-in team tools.</sub>
+    </td>
+  </tr>
+</table>
+
+Run the following commands to start the agent service backend and the web UI:
 
 ```bash
 git clone https://github.com/agentscope-ai/agentscope
@@ -209,10 +221,6 @@ cd agentscope/examples/web_ui
 pnpm install
 pnpm dev
 ```
-
-Experience a chat-style interface to interact with your agents.
-
-<img src="https://gw.alicdn.com/imgextra/i1/O1CN01vGGiBw20agWwpzmjy_!!6000000006866-2-tps-2934-1732.png" alt="Permission System" width="100%">
 
 
 ## Contributing
