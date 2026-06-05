@@ -129,6 +129,7 @@ class _NeverEndingCoro:
 
     @staticmethod
     async def run() -> None:
+        """The fake coroutine."""
         await asyncio.Event().wait()
 
 
@@ -199,10 +200,7 @@ class TestCancelDispatcher(IsolatedAsyncioTestCase):
             await bus.session_publish_cancel("sess-A")
 
             for _ in range(50):
-                if (
-                    bg_task_a1.cancelled()
-                    and bg_task_a2.cancelled()
-                ):
+                if bg_task_a1.cancelled() and bg_task_a2.cancelled():
                     break
                 await asyncio.sleep(0.01)
 

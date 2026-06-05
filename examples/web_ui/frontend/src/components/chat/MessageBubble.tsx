@@ -181,7 +181,7 @@ function renderBlock(
 		}
 		case 'text':
 			return (
-				<div key={index} className="prose text-sm w-full min-w-full">
+				<div key={index} className="prose w-full min-w-full">
 					<ReactMarkdown
 						remarkPlugins={[remarkGfm]}
 						components={{
@@ -227,7 +227,7 @@ function renderBlock(
 
 		case 'thinking':
 			return (
-				<details key={index} className="text-xs text-muted-foreground">
+				<details key={index} className="text-muted-foreground">
 					<summary className="cursor-pointer select-none">
 						{t('messageBubble.thinking')}
 					</summary>
@@ -299,7 +299,7 @@ function renderBlock(
 									<ChevronDownIcon className="ml-auto group-data-[state=open]:rotate-180" />
 								</Button>
 							</CollapsibleTrigger>
-							<CollapsibleContent className="p-2.5 pt-0 max-w-full overflow-hidden break-all text-xs text-muted-foreground">
+							<CollapsibleContent className="p-2.5 pt-0 max-w-full overflow-hidden break-all text-muted-foreground">
 								{items.map((inner, i) => renderBlock(inner, i, t))}
 							</CollapsibleContent>
 						</Collapsible>

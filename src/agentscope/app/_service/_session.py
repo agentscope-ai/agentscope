@@ -18,7 +18,8 @@ to clean its own non-session scope (records, indexes, back-refs).
 
 ::
 
-    delete_session    ← atomic: cancel run, storage.delete_session, bus.session_purge
+    delete_session    ← atomic: cancel run, storage.delete_session,
+                        bus.session_purge
         │
     delete_team       → service.delete_agent per worker
                       → storage.delete_team    (record + leader detach)

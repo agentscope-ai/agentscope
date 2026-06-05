@@ -93,7 +93,11 @@ export function EditCredentialDialog({ open, onOpenChange, credential, onUpdated
 					/>
 				) : null}
 				<DialogFooter>
-					<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>
+					<Button
+						variant="ghost"
+						onClick={() => onOpenChange(false)}
+						disabled={submitting}
+					>
 						<CircleAlert className="size-3.5" />
 						{t('common.cancel')}
 					</Button>
