@@ -154,6 +154,7 @@ easier to review tool calls and give permission.
         self,
         dangerous_files: list[str] = DEFAULT_DANGEROUS_FILES,
         dangerous_directories: list[str] = DEFAULT_DANGEROUS_DIRECTORIES,
+        cwd: str | None = None,
     ) -> None:
         """Initialize the bash tool.
 
@@ -171,12 +172,19 @@ easier to review tool calls and give permission.
                 `DEFAULT_DANGEROUS_DIRECTORIES`. Pass a custom list to
                 fully replace the defaults, or `[]` to disable the
                 directory check.
+            cwd (`str | None`, optional):
+                The working directory for command execution. If provided,
+                all commands will be executed in this directory. If
+                ``None`` (the default), commands run in the current
+                working directory of the process.
         """
 
         self._bash_parser = BashCommandParser()
 
         self.dangerous_files = list(dangerous_files)
         self.dangerous_directories = list(dangerous_directories)
+
+        self.cwd = cwd
 
     async def check_read_only(
         self,
@@ -686,6 +694,7 @@ easier to review tool calls and give permission.
                 command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                cwd=self.cwd,
                 **_subprocess_creation_kwargs(),
             )
 

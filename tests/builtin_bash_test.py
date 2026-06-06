@@ -102,6 +102,37 @@ class BashToolTest(IsolatedAsyncioTestCase):
         self.assertEqual(chunks[0].state, "error")
         self.assertIn("timed out", chunks[0].content[0].text.lower())
 
+    async def test_cwd_default_none(self) -> None:
+        """Test that cwd defaults to None."""
+        bash_tool = Bash()
+        self.assertIsNone(bash_tool.cwd)
+
+    async def test_cwd_set_in_constructor(self) -> None:
+        """Test that cwd is set via constructor."""
+        bash_tool = Bash(cwd="/tmp")
+        self.assertEqual(bash_tool.cwd, "/tmp")
+
+    async def test_command_with_cwd(self) -> None:
+        """Test executing a command with a custom working directory."""
+        bash_tool = Bash(cwd="/tmp")
+        chunks = []
+        async for chunk in bash_tool(command="pwd"):
+            chunks.append(chunk)
+
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0].state, "running")
+        self.assertIn("/tmp", chunks[0].content[0].text)
+
+    async def test_command_without_cwd(self) -> None:
+        """Test that command runs in process cwd when cwd is not set."""
+        bash_tool = Bash()
+        chunks = []
+        async for chunk in bash_tool(command="pwd"):
+            chunks.append(chunk)
+
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0].state, "running")
+
 
 @unittest.skipIf(
     sys.platform == "win32",
