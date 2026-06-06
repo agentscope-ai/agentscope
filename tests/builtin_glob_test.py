@@ -101,6 +101,19 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         self.assertIn("test2.py", content)
         self.assertIn("test3.py", content)
 
+    async def test_windows_style_separator_pattern(self) -> None:
+        """Test glob patterns that use backslashes as path separators."""
+        chunk = await self.glob_tool(
+            pattern=r"subdir\*.py",
+            path=self.temp_dir,
+        )
+
+        content = chunk.content[0].text
+
+        self.assertIn("test3.py", content)
+        self.assertNotIn("test1.py", content)
+        self.assertNotIn("test2.py", content)
+
     async def test_no_matches(self) -> None:
         """Test pattern with no matches."""
         chunk = await self.glob_tool(
