@@ -104,6 +104,11 @@ class WorkspaceBase:
     async def get_instructions(self) -> str:
         """Workspace-specific system prompt fragment."""
 
+    @property
+    @abstractmethod
+    def working_directory(self) -> str | None:
+        """Agent-visible root directory for workspace file operations."""
+
     # ── for Agent: tool & resource discovery ───────────────────────
 
     @abstractmethod

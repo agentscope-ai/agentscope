@@ -394,6 +394,11 @@ class DockerWorkspace(WorkspaceBase):
         """
         return self.instructions.format(workdir=CONTAINER_WORKDIR)
 
+    @property
+    def working_directory(self) -> str | None:
+        """Agent-visible root directory inside the workspace container."""
+        return CONTAINER_WORKDIR
+
     # ── tool / MCP / skill discovery ────────────────────────────
 
     async def list_tools(self) -> list[ToolBase]:
