@@ -65,6 +65,7 @@ from ..message import (
     ThinkingBlock,
     ToolCallBlock,
     ToolResultBlock,
+    HintBlock,
     DataBlock,
     Base64Source,
     URLSource,
@@ -605,6 +606,7 @@ class Agent:
             # Step 3.2: Execute reasoning if no more tools to be executed
             # ===============================================================
             if action == "reasoning":
+                self._inject_tool_error_hint_if_needed()
                 # Compressed the memory if needed before reasoning
                 await self.compress_context()
                 # Perform reasoning
@@ -2176,6 +2178,7 @@ class Agent:
         blocks: Sequence[
             TextBlock
             | ThinkingBlock
+            | HintBlock
             | ToolCallBlock
             | ToolResultBlock
             | DataBlock
@@ -2236,6 +2239,56 @@ class Agent:
         if last_msg.role == "assistant" and last_msg.name == self.name:
             return last_msg
         return None
+
+    def _get_repeated_tool_error(self) -> tuple[str, int] | None:
+        """Return the trailing same-tool error streak, if it crosses limit."""
+        last_msg = self._get_last_msg()
+        if last_msg is None:
+            return None
+
+        tool_name: str | None = None
+        count = 0
+        for block in reversed(last_msg.get_content_blocks()):
+            if isinstance(block, ToolCallBlock):
+                continue
+            if not isinstance(block, ToolResultBlock):
+                break
+            if block.state != ToolResultState.ERROR:
+                break
+            if tool_name is None:
+                tool_name = block.name
+            elif block.name != tool_name:
+                break
+            count += 1
+
+        if tool_name is None or count < self.react_config.max_tool_retries:
+            return None
+        return tool_name, count
+
+    def _inject_tool_error_hint_if_needed(self) -> None:
+        """Inject a hint after repeated errors from the same tool."""
+        repeated = self._get_repeated_tool_error()
+        if repeated is None:
+            return
+
+        tool_name, count = repeated
+        try:
+            hint = self.react_config.tool_error_hint.format(
+                tool_name=tool_name,
+                count=count,
+                max_tool_retries=self.react_config.max_tool_retries,
+            )
+        except (KeyError, ValueError):
+            hint = self.react_config.tool_error_hint
+
+        self._save_to_context(
+            [
+                HintBlock(
+                    hint=hint,
+                    source="tool_error_retry",
+                ),
+            ],
+        )
 
     def _check_next_action(
         self,
