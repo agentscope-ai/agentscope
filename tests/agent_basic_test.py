@@ -175,7 +175,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             ),
         )
 
-        self.agent._inject_tool_error_hint_if_needed()
+        self.agent._inject_tool_error_hint_if_needed()  # pylint: disable=protected-access
 
         blocks = self.agent.state.context[-1].get_content_blocks()
         self.assertIsInstance(blocks[-1], HintBlock)
@@ -205,7 +205,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             ),
         )
 
-        self.agent._inject_tool_error_hint_if_needed()
+        self.agent._inject_tool_error_hint_if_needed()  # pylint: disable=protected-access
 
         blocks = self.agent.state.context[-1].get_content_blocks()
         self.assertNotIsInstance(blocks[-1], HintBlock)
