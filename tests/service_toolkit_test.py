@@ -25,6 +25,7 @@ from agentscope.app._manager import (
     SchedulerManager,
 )
 from agentscope.app._service import get_toolkit
+from agentscope.app._service._chat import _with_workspace_working_directory
 from agentscope.app.storage import (
     AgentData,
     AgentRecord,
@@ -32,6 +33,8 @@ from agentscope.app.storage import (
     SessionConfig,
     SessionRecord,
 )
+from agentscope.permission import AdditionalWorkingDirectory
+from agentscope.state import AgentState
 from agentscope.tool import ToolBase
 
 
@@ -44,10 +47,17 @@ class _FakeWorkspace:
         tools: list[ToolBase] | None = None,
         skills: list | None = None,
         mcps: list | None = None,
+        working_directory: str | None = None,
     ) -> None:
         self._tools = tools or []
         self._skills = skills or []
         self._mcps = mcps or []
+        self._working_directory = working_directory
+
+    @property
+    def working_directory(self) -> str | None:
+        """Return the configured workspace root."""
+        return self._working_directory
 
     async def list_tools(self) -> list[ToolBase]:
         """Return the configured workspace tools."""
@@ -108,6 +118,67 @@ def _make_session(
 class _NoOpStorage:
     """Storage placeholder. ``get_toolkit`` itself does not call any
     storage method — the team tools bind a reference for later use."""
+
+
+class TestWorkspacePermissionRoot(IsolatedAsyncioTestCase):
+    """Workspace roots are added to the agent permission context."""
+
+    async def test_adds_workspace_root_to_permission_context(self) -> None:
+        """A resolved workspace root becomes an allowed working directory."""
+        state = AgentState()
+        next_state = _with_workspace_working_directory(
+            state,
+            _FakeWorkspace(  # type: ignore[arg-type]
+                working_directory="/tmp/as-workspace",
+            ),
+        )
+
+        self.assertIn(
+            "/tmp/as-workspace",
+            next_state.permission_context.working_directories,
+        )
+        self.assertDictEqual(
+            next_state.permission_context.working_directories[
+                "/tmp/as-workspace"
+            ].model_dump(),
+            {
+                "path": "/tmp/as-workspace",
+                "source": "workspace",
+            },
+        )
+        self.assertNotIn(
+            "/tmp/as-workspace",
+            state.permission_context.working_directories,
+        )
+
+    async def test_keeps_existing_workspace_entry(self) -> None:
+        """Existing workspace permissions are not replaced."""
+        existing = AdditionalWorkingDirectory(
+            path="/tmp/as-workspace",
+            source="session",
+        )
+        state = AgentState(
+            permission_context={
+                "working_directories": {
+                    "/tmp/as-workspace": existing,
+                },
+            },
+        )
+
+        next_state = _with_workspace_working_directory(
+            state,
+            _FakeWorkspace(  # type: ignore[arg-type]
+                working_directory="/tmp/as-workspace",
+            ),
+        )
+
+        self.assertIs(next_state, state)
+        self.assertEqual(
+            "session",
+            next_state.permission_context.working_directories[
+                "/tmp/as-workspace"
+            ].source,
+        )
 
 
 def _tool_names(toolkit: Any) -> list[str]:

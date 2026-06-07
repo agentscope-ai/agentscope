@@ -60,6 +60,11 @@ class WorkspaceBase:
         self.workspace_id = workspace_id or uuid.uuid4().hex
         self.is_alive = False
 
+    @property
+    def working_directory(self) -> str | None:
+        """Directory that should be trusted for local file operations."""
+        return None
+
     # ── lifecycle (developer) ──────────────────────────────────────
 
     @abstractmethod

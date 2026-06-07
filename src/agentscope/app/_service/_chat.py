@@ -34,6 +34,36 @@ from ...event import (
     ExternalExecutionResultEvent,
 )
 from ...message import AssistantMsg, Msg, ToolCallState
+from ...permission import AdditionalWorkingDirectory
+from ...state import AgentState
+from ...workspace import WorkspaceBase
+
+
+def _with_workspace_working_directory(
+    agent_state: AgentState,
+    workspace: WorkspaceBase,
+) -> AgentState:
+    """Include the workspace root in the session permission context."""
+    workdir = workspace.working_directory
+    if workdir is None:
+        return agent_state
+
+    permission_context = agent_state.permission_context
+    if workdir in permission_context.working_directories:
+        return agent_state
+
+    working_directories = dict(permission_context.working_directories)
+    working_directories[workdir] = AdditionalWorkingDirectory(
+        path=workdir,
+        source="workspace",
+    )
+    return agent_state.model_copy(
+        update={
+            "permission_context": permission_context.model_copy(
+                update={"working_directories": working_directories},
+            ),
+        },
+    )
 
 
 class ChatService:
@@ -267,7 +297,10 @@ optional):
         # ----------------------------------------------------------------
         # 5. Assemble the Agent.
         # ----------------------------------------------------------------
-        agent_state = session_record.state
+        agent_state = _with_workspace_working_directory(
+            session_record.state,
+            workspace,
+        )
         agent_state.session_id = session_id
         agent = Agent(
             name=agent_record.data.name,

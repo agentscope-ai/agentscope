@@ -175,6 +175,11 @@ class LocalWorkspace(WorkspaceBase):
         self._skill_lock = asyncio.Lock()
         self._mcp_lock = asyncio.Lock()
 
+    @property
+    def working_directory(self) -> str:
+        """Return the local workspace root."""
+        return self.workdir
+
     async def initialize(self) -> None:
         """Initialise the workspace.
 
