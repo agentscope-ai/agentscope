@@ -193,17 +193,29 @@ class LocalWorkspace(WorkspaceBase):
         mcp_file = os.path.join(self.workdir, ".mcp")
         if await aiofiles.ospath.exists(mcp_file):
             async with aiofiles.open(mcp_file, "r", encoding="utf-8") as f:
-                self._mcps = [
-                    MCPClient.model_validate(m)
-                    for m in json.loads(await f.read())
-                ]
+                raw_list = json.loads(await f.read())
+                for m in raw_list:
+                    try:
+                        self._mcps.append(MCPClient.model_validate(m))
+                    except Exception:
+                        logger.warning(
+                            "Skipping invalid MCP entry '%s': %s",
+                            m.get("name", "?"),
+                            m,
+                        )
         else:
             self._mcps = list(self.default_mcps)
             await self._save_mcp_file()
 
         for mcp in self._mcps:
             if mcp.is_stateful and not mcp.is_connected:
-                await mcp.connect()
+                try:
+                    await mcp.connect()
+                except Exception:
+                    logger.warning(
+                        "Failed to connect stateful MCP '%s', skipping.",
+                        mcp.name,
+                    )
 
         # Seed skills
         skills_dir = os.path.join(self.workdir, "skills")
