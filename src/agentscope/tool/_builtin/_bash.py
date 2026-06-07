@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The bash tool in agentscope."""
+
 import os
 from typing import AsyncGenerator, Any, List
 import re
@@ -132,10 +133,7 @@ easier to review tool calls and give permission.
             },
             "timeout": {
                 "type": "integer",
-                "description": (
-                    "Optional timeout in milliseconds "
-                    "(default: 120000, max: 600000)"
-                ),
+                "description": "Timeout in ms (default: 120000, max: 600000)",
                 "default": 120000,
                 "maximum": 600000,
                 "minimum": 0,
@@ -154,10 +152,13 @@ easier to review tool calls and give permission.
         self,
         dangerous_files: list[str] = DEFAULT_DANGEROUS_FILES,
         dangerous_directories: list[str] = DEFAULT_DANGEROUS_DIRECTORIES,
+        cwd: str | os.PathLike[str] | None = None,
     ) -> None:
         """Initialize the bash tool.
 
         Args:
+            cwd (`str | os.PathLike[str] | None`, optional):
+                The working directory used when executing bash commands.
             dangerous_files (`list[str]`, optional):
                 Sensitive files that require explicit user confirmation,
                 even in BYPASS mode. Matched by basename
@@ -177,6 +178,7 @@ easier to review tool calls and give permission.
 
         self.dangerous_files = list(dangerous_files)
         self.dangerous_directories = list(dangerous_directories)
+        self._cwd = os.fspath(cwd) if cwd is not None else None
 
     async def check_read_only(
         self,
@@ -275,8 +277,7 @@ easier to review tool calls and give permission.
                 behavior=PermissionBehavior.ASK,
                 message=f"Permission required: Command contains dangerous "
                 f"pattern: {dangerous_pattern}",
-                decision_reason="Safety check: dangerous command pattern "
-                "detected",
+                decision_reason="Safety check: dangerous pattern detected",
                 bypass_immune=True,
             )
 
@@ -342,9 +343,11 @@ easier to review tool calls and give permission.
                 "cp",
                 "sed",
             }
-            base_command = (
-                command.strip().split()[0] if command.strip() else ""
-            )
+            stripped_command = command.strip()
+            if stripped_command:
+                base_command = stripped_command.split()[0]
+            else:
+                base_command = ""
 
             if base_command in filesystem_commands:
                 # Collect every target path: file arguments AND output
@@ -682,11 +685,14 @@ easier to review tool calls and give permission.
 
         try:
             # Create subprocess
+            subprocess_kwargs = _subprocess_creation_kwargs()
+            if self._cwd is not None:
+                subprocess_kwargs["cwd"] = self._cwd
             process = await asyncio.create_subprocess_shell(
                 command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                **_subprocess_creation_kwargs(),
+                **subprocess_kwargs,
             )
 
             # Wait for completion with timeout
