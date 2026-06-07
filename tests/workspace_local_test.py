@@ -728,6 +728,40 @@ description: {description}
         self.assertFalse(os.path.exists(invalid_target_no_md))
         self.assertFalse(os.path.exists(invalid_target_bad_fm))
 
+    async def test_initialize_skips_invalid_mcp_entries(self) -> None:
+        """Test that a bad .mcp entry does not kill the workspace."""
+        mcp_file = os.path.join(self.temp_dir.name, ".mcp")
+        with open(mcp_file, "w", encoding="utf-8") as f:
+            json.dump(
+                [
+                    {
+                        "name": "bad_mcp",
+                        "is_stateful": False,
+                        "mcp_config": {
+                            "type": "stdio_mcp",
+                            "command": "echo",
+                            "args": ["hello"],
+                        },
+                    },
+                    {
+                        "name": "ok_http",
+                        "is_stateful": False,
+                        "mcp_config": {
+                            "type": "http_mcp",
+                            "url": "http://localhost:8765/mcp",
+                        },
+                    },
+                ],
+                f,
+            )
+
+        workspace = LocalWorkspace(workdir=self.temp_dir.name)
+        await workspace.initialize()
+
+        self.assertTrue(workspace.is_alive)
+        mcps = await workspace.list_mcps()
+        self.assertEqual([mcp.name for mcp in mcps], ["ok_http"])
+
     async def test_list_skills(self) -> None:
         """Test listing skills from workspace.
 

@@ -192,18 +192,43 @@ class LocalWorkspace(WorkspaceBase):
         # Restore or seed MCPs
         mcp_file = os.path.join(self.workdir, ".mcp")
         if await aiofiles.ospath.exists(mcp_file):
-            async with aiofiles.open(mcp_file, "r", encoding="utf-8") as f:
-                self._mcps = [
-                    MCPClient.model_validate(m)
-                    for m in json.loads(await f.read())
-                ]
+            self._mcps = []
+            try:
+                async with aiofiles.open(mcp_file, "r", encoding="utf-8") as f:
+                    mcp_configs = json.loads(await f.read())
+                for mcp_config in mcp_configs:
+                    try:
+                        self._mcps.append(MCPClient.model_validate(mcp_config))
+                    except Exception as e:
+                        logger.warning(
+                            "Skipping invalid MCP config in %s: %s",
+                            mcp_file,
+                            str(e),
+                        )
+            except Exception as e:
+                logger.warning(
+                    "Failed to load MCP configs from %s: %s",
+                    mcp_file,
+                    str(e),
+                )
         else:
             self._mcps = list(self.default_mcps)
             await self._save_mcp_file()
 
+        available_mcps: list[MCPClient] = []
         for mcp in self._mcps:
             if mcp.is_stateful and not mcp.is_connected:
-                await mcp.connect()
+                try:
+                    await mcp.connect()
+                except Exception as e:
+                    logger.warning(
+                        "Failed to connect MCP %r: %s",
+                        mcp.name,
+                        str(e),
+                    )
+                    continue
+            available_mcps.append(mcp)
+        self._mcps = available_mcps
 
         # Seed skills
         skills_dir = os.path.join(self.workdir, "skills")
