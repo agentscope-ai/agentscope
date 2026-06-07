@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field
 
@@ -12,12 +12,18 @@ from ._team_tool_base import _TeamToolBase
 from .._types import SubAgentTemplate
 from ..storage import AgentData, AgentRecord, SessionConfig
 from ...message import HintBlock, TextBlock, ToolResultState
+from ...permission import PermissionMode
 from ...state import AgentState
 from ...tool import ToolChunk, ParamsBase
 
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
     from ..storage import StorageBase
+
+
+_PERMISSION_MODE_BY_VALUE: dict[str, PermissionMode] = {
+    mode.value: mode for mode in PermissionMode
+}
 
 
 _DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
@@ -74,12 +80,47 @@ class _AgentCreateParams(ParamsBase):
             "deadlines the member needs."
         ),
     )
+    permission_mode: Literal[
+        "default",
+        "accept_edits",
+        "explore",
+        "bypass",
+        "dont_ask",
+    ] = Field(
+        default="default",
+        description=(
+            "Permission mode controlling how the member handles tool "
+            "calls that would otherwise require user confirmation.\n\n"
+            "Choose based on the member's responsibilities:\n\n"
+            '- ``"default"`` — Each tool call that touches the system '
+            "(file writes, shell commands, etc.) requires confirmation. "
+            "Pick this when the member's work has real-world side effects "
+            "you want the user to review.\n"
+            '- ``"accept_edits"`` — Auto-approve file edits and '
+            "filesystem-shaping commands inside the working directory; "
+            "still confirm other risky calls. Pick this for a member "
+            "doing rapid iteration on code under your supervision.\n"
+            '- ``"explore"`` — Read-only mode: allow Read/Grep/Glob, '
+            "deny anything that mutates state. Pick this for research / "
+            "audit / planning members that should never modify anything.\n"
+            '- ``"bypass"`` — Skip every permission check. Pick this '
+            "ONLY for fully sandboxed members where any operation is "
+            "guaranteed safe (e.g. a containerised worker on disposable "
+            "data).\n"
+            '- ``"dont_ask"`` — Convert every ASK decision to DENY. '
+            "Pick this for unattended/background members where the user "
+            'isn\'t around to answer prompts; safer than ``"bypass"`` '
+            "because risky calls fail-closed instead of executing.\n\n"
+            'When unsure, start with ``"default"``.'
+        ),
+    )
 
 
 class AgentCreate(_TeamToolBase):
     """Spawn a new worker member into the team you lead."""
 
     name: str = "AgentCreate"
+    is_state_injected: bool = True
 
     description: str = """Add a new member to the team you lead.
 
@@ -190,6 +231,8 @@ optional):
         description: str,
         prompt: str,
         subagent_type: str = "default",
+        permission_mode: str = "default",
+        _agent_state: AgentState | None = None,
     ) -> ToolChunk:
         """Spawn the worker agent + session directly via storage.
 
@@ -212,6 +255,10 @@ optional):
             subagent_type (`str`, defaults to ``"default"``):
                 Template type to use. Must match a registered
                 :class:`SubAgentTemplate.type`.
+            permission_mode (`str`, defaults to ``"default"``):
+                Permission mode the worker operates under.
+            _agent_state (`AgentState | None`, optional):
+                Live leader state injected by the toolkit.
 
         Returns:
             `ToolChunk`:
@@ -303,6 +350,20 @@ optional):
                     ],
                     state=ToolResultState.ERROR,
                 )
+            if permission_mode not in _PERMISSION_MODE_BY_VALUE:
+                return ToolChunk(
+                    content=[
+                        TextBlock(
+                            text=(
+                                f"AgentCreate: unknown permission_mode "
+                                f"{permission_mode!r}; expected one of "
+                                f"{list(_PERMISSION_MODE_BY_VALUE)}."
+                            ),
+                        ),
+                    ],
+                    state=ToolResultState.ERROR,
+                )
+            mode_enum = _PERMISSION_MODE_BY_VALUE[permission_mode]
 
             # Enforce team-scoped name uniqueness. TeamSay routes by
             # ``name`` (not agent_id), so duplicates would be ambiguous
@@ -372,10 +433,16 @@ optional):
             await self._storage.upsert_agent(self._user_id, worker_agent)
 
             # 2. Build worker SessionRecord, inheriting leader's model
-            #    config.
+            #    config and permission rules.
+            leader_permission_context = (
+                _agent_state.permission_context
+                if _agent_state is not None
+                else leader_session.state.permission_context
+            )
             worker_state = AgentState(
-                permission_context=template.permission_context.model_copy(
+                permission_context=leader_permission_context.model_copy(
                     deep=True,
+                    update={"mode": mode_enum},
                 ),
                 tasks_context=template.tasks_context.model_copy(
                     deep=True,

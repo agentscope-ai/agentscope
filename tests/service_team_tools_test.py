@@ -37,6 +37,14 @@ from agentscope.app.storage import (
     RedisStorage,
     SessionConfig,
 )
+from agentscope.permission import (
+    AdditionalWorkingDirectory,
+    PermissionBehavior,
+    PermissionContext,
+    PermissionMode,
+    PermissionRule,
+)
+from agentscope.state import AgentState
 
 
 def _make_storage(
@@ -300,6 +308,68 @@ class TestAgentCreate(_TeamToolsTestBase):
                 "agent_id": worker_agent_id,
                 "user_id": self.user_id,
             },
+        )
+
+    async def test_worker_inherits_leader_permission_rules(self) -> None:
+        """A worker keeps the leader's rules while using its requested mode."""
+        leader_state = AgentState(
+            permission_context=PermissionContext(
+                mode=PermissionMode.ACCEPT_EDITS,
+                working_directories={
+                    "/tmp/as-workspace": AdditionalWorkingDirectory(
+                        path="/tmp/as-workspace",
+                        source="session",
+                    ),
+                },
+                allow_rules={
+                    "Bash": [
+                        PermissionRule(
+                            tool_name="Bash",
+                            rule_content="git status",
+                            behavior=PermissionBehavior.ALLOW,
+                            source="session",
+                        ),
+                    ],
+                },
+            ),
+        )
+        tool = AgentCreate(
+            storage=self.storage,
+            message_bus=self.bus,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+        )
+        chunk = await tool(
+            name="worker",
+            description="does edits",
+            prompt="work in the repo",
+            permission_mode="explore",
+            _agent_state=leader_state,
+        )
+        self.assertEqual(chunk.state.value, "running")
+
+        sess = await self.storage.get_session(
+            self.user_id,
+            self.leader_agent.id,
+            self.leader_session.id,
+        )
+        team = await self.storage.get_team(self.user_id, sess.team_id)
+        worker_agent_id = team.data.member_ids[0]
+        worker_sessions = await self.storage.list_sessions(
+            self.user_id,
+            worker_agent_id,
+        )
+        worker_context = worker_sessions[0].state.permission_context
+
+        self.assertEqual(worker_context.mode, PermissionMode.EXPLORE)
+        self.assertEqual(
+            worker_context.working_directories["/tmp/as-workspace"].source,
+            "session",
+        )
+        self.assertEqual(
+            worker_context.allow_rules["Bash"][0].rule_content,
+            "git status",
         )
 
     async def test_rejects_when_not_in_team(self) -> None:
