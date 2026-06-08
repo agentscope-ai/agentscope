@@ -234,6 +234,7 @@ async def main() -> None:
 
     mw = Mem0Middleware(
         user_id=user_id,
+        agent_id="datascope_assistant",
         chat_model=chat_model,
         embedding_model=embedding_model,
         mem0_config=mem0_cfg,

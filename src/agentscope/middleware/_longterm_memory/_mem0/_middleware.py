@@ -21,8 +21,6 @@ from typing import (
     Literal,
     TYPE_CHECKING,
 )
-from weakref import WeakValueDictionary
-
 from ..._base import MiddlewareBase
 from ...._logging import logger
 from ....event import ReplyStartEvent
@@ -42,7 +40,6 @@ if TYPE_CHECKING:
     from ....agent import Agent
     from ....embedding import EmbeddingModelBase
     from ....model import ChatModelBase
-    from ....state import AgentState
     from ....tool import ToolBase
 
     # Explicit ``TypeAlias`` annotation tells mypy this is a type
@@ -50,10 +47,6 @@ if TYPE_CHECKING:
     # mypy 1.7+ refuses to use ``Mem0AsyncClient`` in annotation
     # positions ("Variable is not valid as a type").
     Mem0AsyncClient: TypeAlias = AsyncMemory | AsyncMemoryClient
-
-
-UserIdResolver = Callable[["Agent"], str]
-AgentIdResolver = Callable[["Agent"], str]
 
 
 def _looks_async(method: Any) -> bool:
@@ -150,13 +143,13 @@ class Mem0Middleware(MiddlewareBase):
     def __init__(
         self,
         *,
-        user_id: str | UserIdResolver,
+        user_id: str,
         client: Mem0AsyncClient | None = None,
         chat_model: "ChatModelBase | None" = None,
         embedding_model: "EmbeddingModelBase | None" = None,
         mem0_config: Any | None = None,
         mode: Literal["static_control", "agent_control", "both"] = "both",
-        agent_id: str | AgentIdResolver | None = None,
+        agent_id: str | None = None,
         top_k: int = 5,
         threshold: float | None = None,
         scope_search_by_agent: bool = True,
@@ -186,8 +179,6 @@ class Mem0Middleware(MiddlewareBase):
         Args:
             user_id:
                 The mem0 ``user_id`` for memory namespacing. Required.
-                Either a static string or a callable
-                ``(agent) -> str`` that resolves per-call.
             client:
                 A pre-built mem0 async client —
                 ``mem0.AsyncMemory`` (OSS) or
@@ -230,8 +221,9 @@ class Mem0Middleware(MiddlewareBase):
                 ``ReActAgent.long_term_memory_mode`` default).
             agent_id:
                 Optional mem0 ``agent_id`` for finer-grained
-                namespacing. Defaults to ``agent.name``. Pass a callable
-                ``(agent) -> str`` to resolve dynamically.
+                namespacing. When ``None`` (default) mem0 receives no
+                ``agent_id`` filter and memories are scoped by
+                ``user_id`` only.
             top_k:
                 Max number of memories retrieved per static-control
                 search. Also serves as the default ``top_k`` for the
@@ -260,10 +252,7 @@ class Mem0Middleware(MiddlewareBase):
         is_empty_user_id = isinstance(user_id, str) and not user_id.strip()
         if user_id is None or is_empty_user_id:
             raise ValueError(
-                "Mem0Middleware requires a non-empty `user_id` "
-                '(or a resolver callable). Pass `user_id="<id>"` or '
-                "`user_id=lambda agent: ...` when constructing the "
-                "middleware.",
+                "Mem0Middleware requires a non-empty `user_id`.",
             )
         if mode not in ("static_control", "agent_control", "both"):
             raise ValueError(
@@ -280,9 +269,7 @@ class Mem0Middleware(MiddlewareBase):
         self._client = client
 
         self._user_id = user_id
-        self._agent_id = (
-            agent_id if agent_id is not None else (lambda agent: agent.name)
-        )
+        self._agent_id = agent_id
         self._mode = mode
         self._top_k = top_k
         self._threshold = threshold
@@ -291,14 +278,6 @@ class Mem0Middleware(MiddlewareBase):
         self._memory_section_header = memory_section_header
         self._memory_section_intro = memory_section_intro
         self._tool_instructions = tool_instructions
-
-        # The middleware exposes tools before an Agent exists, but resolver
-        # callables may need the live Agent. Remember active agents by their
-        # state session id without extending their lifetime.
-        self._agents_by_session: WeakValueDictionary[
-            str,
-            "Agent",
-        ] = WeakValueDictionary()
 
     # ------------------------------------------------------------------
     # Hook: on_reply
@@ -309,11 +288,8 @@ class Mem0Middleware(MiddlewareBase):
         input_kwargs: dict,
         next_handler: Callable[..., AsyncGenerator],
     ) -> AsyncGenerator:
-        # Tool instances are registered by the caller through list_tools().
-        # Keep a weak lookup so state-injected tools can resolve the active
-        # Agent for dynamic user_id / agent_id resolvers.
-        if self._mode in ("agent_control", "both"):
-            self._remember_agent(agent)
+        user_id = self._user_id
+        agent_id = self._agent_id
 
         # In pure agent_control mode the middleware is a no-op on the
         # reply path — the agent decides when to invoke the memory
@@ -338,8 +314,7 @@ class Mem0Middleware(MiddlewareBase):
         # sessions will accumulate one per turn that retrieved
         # anything; rely on ``compress_context`` or pop them yourself
         # if that becomes a token concern.
-        user_id = self._resolve_user_id(agent)
-        agent_id = self._resolve_agent_id(agent)
+        # user_id / agent_id already resolved + cached above.
 
         inputs = input_kwargs.get("inputs")
         query_text = _extract_query_text(inputs)
@@ -689,82 +664,6 @@ class Mem0Middleware(MiddlewareBase):
             name="memory",
             content=[HintBlock(hint=content)],
         )
-
-    def _remember_agent(self, agent: "Agent") -> None:
-        """Remember the active agent for state-injected memory tools.
-
-        Args:
-            agent (`Agent`):
-                The agent currently executing a reply.
-        """
-        self._agents_by_session[agent.state.session_id] = agent
-
-    def _resolve_tool_agent(
-        self,
-        agent_state: "AgentState | None",
-    ) -> "Agent | None":
-        """Resolve the live agent associated with an injected state.
-
-        Args:
-            agent_state (`AgentState | None`):
-                State injected by the toolkit when calling a memory tool.
-
-        Returns:
-            `Agent | None`:
-                The live agent for the session, or ``None`` if the tool was
-                called outside an active agent turn.
-        """
-        if agent_state is None:
-            return None
-        return self._agents_by_session.get(agent_state.session_id)
-
-    def _resolve_user_id(self, agent: "Agent") -> str:
-        """Resolve and validate the mem0 ``user_id`` for an agent.
-
-        ``user_id`` may be a static string or a callable resolver. Empty
-        resolved values are invalid because mem0 requires this namespace.
-
-        Args:
-            agent (`Agent`):
-                The agent for which to resolve ``user_id``.
-
-        Returns:
-            `str`:
-                The resolved non-empty mem0 ``user_id``.
-        """
-        if callable(self._user_id):
-            value = self._user_id(agent)
-        else:
-            value = self._user_id
-        if not value:
-            raise ValueError(
-                f"Mem0Middleware resolved an empty user_id for agent "
-                f"{agent.name!r}.",
-            )
-        return str(value)
-
-    def _resolve_agent_id(self, agent: "Agent") -> str | None:
-        """Resolve the optional mem0 ``agent_id`` for an agent.
-
-        ``agent_id`` may be disabled with ``None``, provided as a static
-        string, or resolved dynamically from the current agent.
-
-        Args:
-            agent (`Agent`):
-                The agent for which to resolve ``agent_id``.
-
-        Returns:
-            `str | None`:
-                The resolved mem0 ``agent_id``, or ``None`` when disabled or
-                empty.
-        """
-        if self._agent_id is None:
-            return None
-        if callable(self._agent_id):
-            value = self._agent_id(agent)
-        else:
-            value = self._agent_id
-        return str(value) if value else None
 
     async def _dispatch_write(
         self,

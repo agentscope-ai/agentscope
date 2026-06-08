@@ -5,9 +5,9 @@
 These ``search_memory`` / ``add_memory`` tools are listed by
 :class:`Mem0Middleware` when ``mode`` is ``"agent_control"`` or
 ``"both"``. Callers pass them into the agent's toolkit explicitly.
-Each tool receives the live agent state at call time, then asks the
-middleware to resolve the active agent so per-call ``user_id`` /
-``agent_id`` resolvers keep working after registration.
+Each tool reads ``user_id`` / ``agent_id`` directly from the
+middleware instance — both are plain strings set at construction
+time, so no Agent instance is stored or referenced at call time.
 
 Shape and behavior mirror AgentScope 1.x's
 ``Mem0LongTermMemory.retrieve_from_memory`` / ``record_to_memory``
@@ -26,9 +26,6 @@ from ....permission import PermissionBehavior, PermissionDecision
 from ....tool import ToolBase, ToolChunk
 
 if TYPE_CHECKING:
-    from ....agent import Agent
-    from ....state import AgentState
-
     from ._middleware import Mem0Middleware
 
 
@@ -40,7 +37,7 @@ class _Mem0MemoryToolBase(ToolBase):
     """
 
     is_external_tool: bool = False
-    is_state_injected: bool = True
+    is_state_injected: bool = False
     is_mcp: bool = False
     mcp_name: str | None = None
 
@@ -59,13 +56,6 @@ class _Mem0MemoryToolBase(ToolBase):
             behavior=PermissionBehavior.ALLOW,
             message="auto-allowed: mem0 long-term memory tool",
         )
-
-    def _resolve_agent(
-        self,
-        agent_state: "AgentState | None",
-    ) -> "Agent | None":
-        """Resolve the active agent from toolkit-injected state."""
-        return self._mw._resolve_tool_agent(agent_state)
 
 
 class _SearchMemoryTool(_Mem0MemoryToolBase):
@@ -106,7 +96,6 @@ class _SearchMemoryTool(_Mem0MemoryToolBase):
         self,
         keywords: list[str],
         limit: int = 5,
-        _agent_state: "AgentState | None" = None,
     ) -> ToolChunk:
         """Retrieve the memory based on the given keywords.
 
@@ -121,26 +110,13 @@ class _SearchMemoryTool(_Mem0MemoryToolBase):
             limit (int):
                 The maximum number of memories to retrieve per keyword.
                 Defaults to 5.
-            _agent_state (`AgentState | None`, optional):
-                The toolkit-injected agent state.
         """
         if not keywords:
             return _text_chunk("(no keywords supplied — nothing to search)")
 
-        agent = self._resolve_agent(_agent_state)
-        if agent is None:
-            return _error_chunk(
-                "Unable to resolve the active agent for `search_memory`. "
-                "Register this tool from `Mem0Middleware.list_tools()` on "
-                "an agent that also uses the same middleware instance.",
-            )
-
-        user_id = self._mw._resolve_user_id(agent)
-        agent_id = (
-            self._mw._resolve_agent_id(agent)
-            if self._mw._scope_search_by_agent
-            else None
-        )
+        user_id = self._mw._user_id
+        agent_id = self._mw._agent_id
+        search_agent_id = agent_id if self._mw._scope_search_by_agent else None
 
         # Match v1: each keyword is an independent search, run them in
         # parallel and merge.
@@ -150,7 +126,7 @@ class _SearchMemoryTool(_Mem0MemoryToolBase):
                     self._mw._async_search(
                         kw,
                         user_id=user_id,
-                        agent_id=agent_id,
+                        agent_id=search_agent_id,
                         top_k=limit,
                     )
                     for kw in keywords
@@ -209,7 +185,6 @@ class _AddMemoryTool(_Mem0MemoryToolBase):
         self,
         thinking: str,
         content: list[str],
-        _agent_state: "AgentState | None" = None,
     ) -> ToolChunk:
         """Use this function to record important information that you
         may need later. The target content should be specific and
@@ -231,22 +206,12 @@ class _AddMemoryTool(_Mem0MemoryToolBase):
                 item per fact). Each item should be a complete,
                 standalone sentence — only this is sent to mem0 for
                 extraction.
-            _agent_state (`AgentState | None`, optional):
-                The toolkit-injected agent state.
         """
         if not content:
             return _error_chunk("`content` is empty — nothing to record.")
 
-        agent = self._resolve_agent(_agent_state)
-        if agent is None:
-            return _error_chunk(
-                "Unable to resolve the active agent for `add_memory`. "
-                "Register this tool from `Mem0Middleware.list_tools()` on "
-                "an agent that also uses the same middleware instance.",
-            )
-
-        user_id = self._mw._resolve_user_id(agent)
-        agent_id = self._mw._resolve_agent_id(agent)
+        user_id = self._mw._user_id
+        agent_id = self._mw._agent_id
 
         # Only the user-facing content goes into mem0. ``thinking`` is
         # the agent's internal rationale — meta about the agent's

@@ -309,6 +309,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         mw = Mem0Middleware(
             client=fake,
             user_id="alice",
+            agent_id="agent_under_test",
             mode="static_control",
         )
 
@@ -447,22 +448,6 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         # Write still happened — a failed search must not block writes.
         self.assertEqual(len(fake.add_calls), 1)
 
-    async def test_user_id_resolver_callable(self) -> None:
-        """Callable user_id resolvers should receive the current agent."""
-        fake = _FakeAsyncMem0Client()
-        mw = Mem0Middleware(
-            client=fake,
-            user_id=lambda a: f"user::{a.name}",
-            mode="static_control",
-        )
-        agent = self._agent(mw)
-        await agent.reply(UserMsg("user", "hi"))
-
-        self.assertEqual(
-            fake.search_calls[0]["filters"]["user_id"],
-            "user::agent_under_test",
-        )
-
     async def test_scope_search_by_agent_false_drops_agent_id(
         self,
     ) -> None:
@@ -471,6 +456,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         mw = Mem0Middleware(
             client=fake,
             user_id="alice",
+            agent_id="agent_under_test",
             mode="static_control",
             scope_search_by_agent=False,
         )
@@ -653,13 +639,14 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
         mw = Mem0Middleware(
             client=fake,
             user_id="alice",
+            agent_id="a",
             mode="agent_control",
         )
         agent = await self._agent(
             mw,
             system_prompt="base prompt",
         )
-        # Trigger middleware agent lookup collection by issuing a reply.
+        # Trigger middleware tool registration by issuing a reply.
         await agent.reply(UserMsg("user", "hi"))
 
         search_tool = _find_tool(self.toolkit, "search_memory")
@@ -670,7 +657,6 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
         result = await search_tool(
             keywords=["what does alice like?", "alice preferences"],
             limit=3,
-            _agent_state=agent.state,
         )
         result_text = _chunk_text(result)
         self.assertIn("first fact", result_text)
@@ -705,34 +691,6 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
 
         self.assertEqual(fake.search_calls[0]["top_k"], 3)
         self.assertEqual(mw._top_k, 9)
-
-    async def test_search_memory_tool_resolves_user_id_per_call(
-        self,
-    ) -> None:
-        """Callable user_id resolves at tool-invocation time, not at
-        registration time."""
-        current_user = {"id": "u1"}
-        fake = _FakeAsyncMem0Client()
-        mw = Mem0Middleware(
-            client=fake,
-            user_id=lambda _a: current_user["id"],
-            mode="agent_control",
-        )
-        agent = await self._agent(
-            mw,
-            responses=["ok", "ok"],
-        )
-        await agent.reply(UserMsg("user", "first"))
-
-        search_tool = _find_tool(self.toolkit, "search_memory")
-        await search_tool(keywords=["q1"], limit=5, _agent_state=agent.state)
-        current_user["id"] = "u2"
-        await search_tool(keywords=["q2"], limit=5, _agent_state=agent.state)
-
-        self.assertEqual(
-            [c["filters"]["user_id"] for c in fake.search_calls],
-            ["u1", "u2"],
-        )
 
     async def test_tools_auto_allow_permission(self) -> None:
         """Memory tools should be auto-allowed by permission checks."""
@@ -769,7 +727,6 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
         result = await search_tool(
             keywords=["kw1", "kw2"],
             limit=5,
-            _agent_state=agent.state,
         )
         result_text = _chunk_text(result)
         # "shared" appears once even though both keywords returned it.
@@ -792,7 +749,6 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
         result = await search_tool(
             keywords=["q"],
             limit=5,
-            _agent_state=agent.state,
         )
         self.assertIsInstance(result, ToolChunk)
         self.assertEqual(result.state, ToolResultState.ERROR)
@@ -840,7 +796,6 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
         result = await add_tool(
             thinking="my reasoning",
             content=["fact one"],
-            _agent_state=agent.state,
         )
         self.assertIn("Successfully recorded", _chunk_text(result))
 
@@ -873,7 +828,6 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
         result = await add_tool(
             thinking=thinking,
             content=[fact],
-            _agent_state=agent.state,
         )
         result_text = _chunk_text(result)
 
