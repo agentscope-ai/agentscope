@@ -41,6 +41,11 @@
 		"deleteTitle": "删除{{entity}} \"{{name}}\"？",
 		"deleteDescription": "此操作无法撤销。"
 	},
+	"error": {
+		"description": "页面遇到意外错误。你可以重试或返回首页。",
+		"retry": "重试",
+		"home": "返回首页"
+	},
 	"tool": {
 		"moreLines": "... 还有 {{count}} 行",
 		"read": {

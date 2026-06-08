@@ -41,6 +41,11 @@
 		"deleteTitle": "Delete {{entity}} \"{{name}}\"?",
 		"deleteDescription": "This action cannot be undone."
 	},
+	"error": {
+		"description": "The page hit an unexpected error. You can retry or go back home.",
+		"retry": "Retry",
+		"home": "Back to home"
+	},
 	"tool": {
 		"moreLines": "... {{count}} more lines",
 		"read": {

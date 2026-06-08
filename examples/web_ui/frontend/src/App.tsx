@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import { createBrowserRouter, Navigate, RouterProvider, useNavigate } from 'react-router-dom';
 import { Toaster } from 'sonner';
 
+import { RouteError } from '@/components/error/RouteError';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { buildChatTour } from '@/components/tour/chatTourSteps';
 import { TourCard } from '@/components/tour/TourCard';
@@ -27,17 +28,27 @@ function SetupPageRoute() {
 const router = createBrowserRouter([
 	{
 		element: <AppLayout />,
+		errorElement: <RouteError />,
 		children: [
-			{ path: '/', element: <Navigate to="/chat" replace /> },
 			{
-				path: '/chat/:agentId?/:sessionId?/:memberId?',
-				element: <ChatPage />,
+				// Content-level boundary: a crash in a page replaces only
+				// the Outlet area, so AppLayout (the icon rail / nav) stays
+				// usable. The parent route keeps its own errorElement as a
+				// last-resort catch-all for AppLayout/AppSidebar crashes.
+				errorElement: <RouteError />,
+				children: [
+					{ path: '/', element: <Navigate to="/chat" replace /> },
+					{
+						path: '/chat/:agentId?/:sessionId?/:memberId?',
+						element: <ChatPage />,
+					},
+					{ path: '/schedule', element: <SchedulePage /> },
+					{ path: '/credential', element: <CredentialPage /> },
+				],
 			},
-			{ path: '/schedule', element: <SchedulePage /> },
-			{ path: '/credential', element: <CredentialPage /> },
 		],
 	},
-	{ path: '/setup', element: <SetupPageRoute /> },
+	{ path: '/setup', element: <SetupPageRoute />, errorElement: <RouteError /> },
 ]);
 
 function App() {
