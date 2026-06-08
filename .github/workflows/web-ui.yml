@@ -2,6 +2,8 @@ name: Web UI
 
 on:
   push:
+    branches:
+      - main
     paths:
       - ".github/workflows/web-ui.yml"
       - "examples/web_ui/**"
@@ -20,7 +22,7 @@ jobs:
       run:
         working-directory: examples/web_ui
     steps:
-      - uses: actions/checkout@master
+      - uses: actions/checkout@v4
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
