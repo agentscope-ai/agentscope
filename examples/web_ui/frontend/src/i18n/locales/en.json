@@ -168,7 +168,6 @@
 		"description": "Update the saved credential for this provider."
 	},
 	"credential": {
-		"addConfig": "Add configuration",
 		"noProviders": "No providers available",
 		"noConfigs": "No configurations",
 		"selectHint": "No credential selected",
@@ -178,6 +177,8 @@
 		"noModelsDescription": "This provider returned no models.",
 		"deleteEntity": "credential",
 		"subtitle": "Model API credential configuration",
+		"configured": "Configured",
+		"addProvider": "Add credential",
 		"reasoning": "Reasoning",
 		"maxContext": "Max. Context",
 		"maxOutput": "Max. Output",

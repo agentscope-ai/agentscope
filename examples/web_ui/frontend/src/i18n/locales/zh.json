@@ -168,7 +168,6 @@
 		"description": "更新该提供商已保存的凭证。"
 	},
 	"credential": {
-		"addConfig": "添加配置",
 		"noProviders": "暂无可用提供商",
 		"noConfigs": "暂无配置",
 		"selectHint": "未选择凭证",
@@ -178,6 +177,8 @@
 		"noModelsDescription": "该提供商未返回任何模型。",
 		"deleteEntity": "凭证",
 		"subtitle": "模型 API 授权配置",
+		"configured": "已配置",
+		"addProvider": "添加凭证",
 		"reasoning": "推理模型",
 		"maxContext": "最大上下文",
 		"maxOutput": "最大输出",

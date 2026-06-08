@@ -16,7 +16,6 @@ import {
 	Sidebar,
 	SidebarContent,
 	SidebarGroup,
-	SidebarGroupAction,
 	SidebarGroupContent,
 	SidebarGroupLabel,
 	SidebarHeader,
@@ -344,6 +343,11 @@ export const CredentialPage = () => {
 			};
 		});
 
+	// Split providers so the user's actual configuration leads, and the
+	// (mostly empty) "add a provider" entries don't drown it out.
+	const configuredGroups = groupedByType.filter((g) => g.records.length > 0);
+	const totalConfigured = configuredGroups.reduce((n, g) => n + g.records.length, 0);
+
 	const handleOpenCreate = useCallback((type?: string) => {
 		setCreateDefaultType(type);
 		setCreateOpen(true);
@@ -378,40 +382,68 @@ export const CredentialPage = () => {
 							</EmptyHeader>
 						</Empty>
 					) : (
-						groupedByType.map(({ type, title, records }) => (
-							<SidebarGroup key={type}>
-								<SidebarGroupLabel>{title}</SidebarGroupLabel>
-								<SidebarGroupAction
-									asChild
-									title={t('credential.addConfig')}
-									onClick={() => handleOpenCreate(type)}
-								>
-									<Button variant="ghost" size={'icon-sm'}>
-										<Plus />
-									</Button>
-								</SidebarGroupAction>
+						<>
+							{/* Configured credentials lead — this is what the user actually set up. */}
+							{configuredGroups.length > 0 && (
+								<SidebarGroup>
+									<SidebarGroupLabel>
+										{t('credential.configured')} ({totalConfigured})
+									</SidebarGroupLabel>
+									<SidebarGroupContent className="flex flex-col gap-y-4">
+										{configuredGroups.map(({ type, title, records }) => (
+											<div key={type}>
+												<div className="px-2 pb-1.5 text-xs font-semibold text-foreground/70">
+													{title}
+												</div>
+												<SidebarMenu className="pl-4">
+													{records.map((rec) => {
+														const name =
+															(rec.data.name as string | undefined) ??
+															rec.id;
+														return (
+															<SidebarMenuItem key={rec.id}>
+																<SidebarMenuButton
+																	isActive={selectedId === rec.id}
+																	onClick={() =>
+																		setSelectedId(rec.id)
+																	}
+																>
+																	<span className="min-w-0 flex-1 truncate">
+																		{name}
+																	</span>
+																</SidebarMenuButton>
+															</SidebarMenuItem>
+														);
+													})}
+												</SidebarMenu>
+											</div>
+										))}
+									</SidebarGroupContent>
+								</SidebarGroup>
+							)}
+
+							{/* Add credential — every provider is an entry point (including
+							    configured ones, to add more under the same provider). */}
+							<SidebarGroup>
+								<SidebarGroupLabel>{t('credential.addProvider')}</SidebarGroupLabel>
 								<SidebarGroupContent>
-									{records.length > 0 && (
-										<SidebarMenu>
-											{records.map((rec) => {
-												const name =
-													(rec.data.name as string | undefined) ?? rec.id;
-												return (
-													<SidebarMenuItem key={rec.id}>
-														<SidebarMenuButton
-															isActive={selectedId === rec.id}
-															onClick={() => setSelectedId(rec.id)}
-														>
-															<span className="truncate">{name}</span>
-														</SidebarMenuButton>
-													</SidebarMenuItem>
-												);
-											})}
-										</SidebarMenu>
-									)}
+									<SidebarMenu>
+										{groupedByType.map(({ type, title }) => (
+											<SidebarMenuItem key={type}>
+												<SidebarMenuButton
+													onClick={() => handleOpenCreate(type)}
+												>
+													<Plus />
+													<span className="min-w-0 flex-1 truncate">
+														{title}
+													</span>
+												</SidebarMenuButton>
+											</SidebarMenuItem>
+										))}
+									</SidebarMenu>
 								</SidebarGroupContent>
 							</SidebarGroup>
-						))
+						</>
 					)}
 				</SidebarContent>
 			</Sidebar>
