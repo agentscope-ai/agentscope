@@ -8,7 +8,7 @@
 
 <span align="center">
 
-[**中文主页**](https://github.com/agentscope-ai/agentscope/blob/main/README_zh.md) | [**Tutorial**](https://docs.agentscope.io/) | [**Roadmap**](https://github.com/orgs/agentscope-ai/projects/2/views/1)
+[**中文主页**](https://github.com/agentscope-ai/agentscope/blob/main/README_zh.md) | [**Documentation**](https://docs.agentscope.io/) | [**Roadmap**](https://github.com/orgs/agentscope-ai/projects/2/views/1)
 
 </span>
 
@@ -33,7 +33,7 @@
     </a>
     <a href="https://discord.gg/eYMpfnkG8h">
         <img
-            src="https://img.shields.io/discord/1194846673529213039?label=Discord&logo=discord"
+            src="https://img.shields.io/badge/Discord-Join%20Us-5865F2?logo=discord&logoColor=white"
             alt="discord"
         />
     </a>
@@ -57,23 +57,23 @@
 
 ## What is AgentScope 2.0?
 
-AgentScope 2.0 is a production-ready, easy-to-use agent framework with essential abstractions that work with rising model capability and built-in support for finetuning.
+AgentScope 2.0 is a production-ready, easy-to-use agent framework with essential abstractions that work with rising model capability and built-in support for .
+
+- [**Event System** →](https://docs.agentscope.io/v2/building-blocks/message-and-event) A unified event bus to the frontend and human-in-the-loop support.
+- [**Permission System** →](https://docs.agentscope.io/v2/building-blocks/permission-system) Fine-grained, configurable control over tools and resources.
+- [**Multi-tenancy & Multi-session Service** →](https://docs.agentscope.io/v2/deploy/agent-service) Production-grade serving with isolation across tenants and sessions.
+- [**Workspace / Sandbox Support** →](https://docs.agentscope.io/v2/building-blocks/workspace) Run tools and code in isolated environments, with built-in backends for local, Docker, and E2B.
+- [**Extensible Middleware System** →](https://docs.agentscope.io/v2/building-blocks/middleware) Composable hooks to customize and extend the agent's reasoning-acting loop.
 
 We design for increasingly agentic LLMs.
 Our approach leverages the models' reasoning and tool use abilities
 rather than constraining them with strict prompts and opinionated orchestrations.
 
-## Why use AgentScope?
-
-- **Simple**: start building your agents in 5 minutes with built-in ReAct agent, tools, skills, human-in-the-loop steering, memory, planning, realtime voice, evaluation and model finetuning
-- **Extensible**: large number of ecosystem integrations for tools, memory and observability; built-in support for MCP and A2A; message hub for flexible multi-agent orchestration and workflows
-- **Production-ready**: deploy and serve your agents locally, as serverless in the cloud, or on your K8s cluster with built-in OTel support
-
 <img src="assets/images/agentscope.png" alt="agentscope" width="100%"/>
 
 ## News
 <!-- BEGIN NEWS -->
-- **[2026-06] `FEAT`:** Agent Team support. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [Docs](https://docs.agentscope.io/v2/deploy/agent-team)
+- **[2026-06] `FEAT`:** Agent Team supported. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [Docs](https://docs.agentscope.io/v2/deploy/agent-team)
 - **[2026-05] `RELS`:** AgentScope 2.0 released! [Docs](https://docs.agentscope.io/)
 <!-- END NEWS -->
 
@@ -86,23 +86,6 @@ Welcome to join our community on
 | [Discord](https://discord.gg/eYMpfnkG8h)                                                                                         | DingTalk                                                                  |
 |----------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------|
 | <img src="https://gw.alicdn.com/imgextra/i1/O1CN01hhD1mu1Dd3BWVUvxN_!!6000000000238-2-tps-400-400.png" width="100" height="100"> | <img src="./assets/images/dingtalk_qr_code.png" width="100" height="100"> |
-
-<!-- START doctoc generated TOC please keep comment here to allow auto update -->
-<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
-## 📑 Table of Contents
-
-- [Quickstart](#quickstart)
-  - [Installation](#installation)
-    - [From PyPI](#from-pypi)
-    - [From source](#from-source)
-- [Hello AgentScope!](#hello-agentscope)
-- [Agent Service](#agent-service)
-- [Contributing](#contributing)
-- [License](#license)
-- [Publications](#publications)
-- [Contributors](#contributors)
-
-<!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 ## Quickstart
 
@@ -134,7 +117,7 @@ uv pip install -e .
 
 ## Hello AgentScope!
 
-Start your first agent in 5 minutes with AgentScope 2.0:
+Start your first agent with AgentScope 2.0:
 
 ```python
 from agentscope.agent import Agent
@@ -188,13 +171,45 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-## Agent Service
+## Hello Agent Service!
 
 An extensible FastAPI based **multi-tenancy**, **multi-session** agent service with pre-built Web UI in `examples/web_ui`
 
-```bash
-git clone https://github.com/agentscope-ai/agentscope
+<table>
+  <tr>
+    <td align="center">
+      <img src="assets/images/team.gif" alt="Agent team" width="100%"/>
+      <br/>
+      <sub><b>Agent team</b> — a leader agent spawns workers and coordinates them through the built-in team tools.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="assets/images/task.gif" alt="Task planning" width="100%"/>
+      <br/>
+      <sub><b>Task planning</b> — the agent breaks complex work into a tracked plan and updates it as it goes.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="assets/images/permission_bypass.gif" alt="Permission control in bypass mode" width="100%"/>
+      <br/>
+      <sub><b>Permission control in bypass mode</b> — the agent runs end-to-end without pausing for tool-call confirmations.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="assets/images/bg_tool.gif" alt="Background task offloading" width="100%"/>
+      <br/>
+      <sub><b>Background task offloading</b> — a long-running tool moves to the background; its result later wakes the agent up and the conversation resumes.</sub>
+    </td>
+  </tr>
+</table>
 
+Run the following commands to start the agent service backend and the web UI:
+
+```bash
+git clone -b main https://github.com/agentscope-ai/agentscope.git
 cd agentscope/examples/agent_service
 
 # start the agent service backend
@@ -210,10 +225,6 @@ cd agentscope/examples/web_ui
 pnpm install
 pnpm dev
 ```
-
-Experience a chat-style interface to interact with your agents.
-
-<img src="https://gw.alicdn.com/imgextra/i1/O1CN01vGGiBw20agWwpzmjy_!!6000000006866-2-tps-2934-1732.png" alt="Permission System" width="100%">
 
 
 ## Contributing

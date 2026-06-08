@@ -10,6 +10,7 @@ import {
 	DialogContent,
 	DialogHeader,
 	DialogTitle,
+	DialogDescription,
 	DialogFooter,
 } from '@/components/ui/dialog';
 import { useCredentials } from '@/hooks/useCredentials';
@@ -82,6 +83,7 @@ export function EditCredentialDialog({ open, onOpenChange, credential, onUpdated
 			<DialogContent className="!w-[500px] !max-w-[500px]">
 				<DialogHeader>
 					<DialogTitle>{t('dialog-credential-edit.title')}</DialogTitle>
+					<DialogDescription>{t('dialog-credential-edit.description')}</DialogDescription>
 				</DialogHeader>
 				{loadingSchema ? (
 					<p className="text-muted-foreground text-sm">{t('common.loading')}</p>

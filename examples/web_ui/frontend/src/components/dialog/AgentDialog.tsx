@@ -17,6 +17,7 @@ import {
 	DialogFooter,
 	DialogHeader,
 	DialogTitle,
+	DialogDescription,
 	DialogTrigger,
 } from '@/components/ui/dialog';
 import { useAgents } from '@/hooks/useAgents';
@@ -80,6 +81,9 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 			<DialogContent className="!w-[500px] !max-w-[500px]">
 				<DialogHeader>
 					<DialogTitle>{t('dialog-agent-create.title')}</DialogTitle>
+					<DialogDescription className="sr-only">
+						{t('dialog-agent-create.description')}
+					</DialogDescription>
 				</DialogHeader>
 				<div className="no-scrollbar -mx-4 max-h-[75vh] overflow-y-auto px-4">
 					{schema && values ? (

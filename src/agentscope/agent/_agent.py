@@ -1972,7 +1972,9 @@ class Agent:
         prompt = [self._system_prompt]
 
         # Skill related instructions
-        skill_instructions = await self.toolkit.get_skill_instructions()
+        skill_instructions = await self.toolkit.get_skill_instructions(
+            self.state.tool_context.activated_groups,
+        )
         if skill_instructions:
             prompt.append(skill_instructions)
 

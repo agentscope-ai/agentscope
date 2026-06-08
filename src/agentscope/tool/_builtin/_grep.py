@@ -7,6 +7,7 @@ import shutil
 from typing import Any, List, Literal
 
 from .._base import ToolBase
+from ..._logging import logger
 from ...permission import (
     PermissionContext,
     PermissionDecision,
@@ -159,6 +160,13 @@ class Grep(ToolBase):
     def __init__(self) -> None:
         """Initialize the grep tool."""
         self._rg_path = shutil.which("rg")
+        if self._rg_path is None:
+            logger.warning(
+                "ripgrep (rg) binary not found. To use the Grep tool, "
+                "install ripgrep: pip install agentscope[tools] or "
+                "brew install ripgrep / apt install ripgrep / "
+                "choco install ripgrep",
+            )
 
     async def check_permissions(
         self,

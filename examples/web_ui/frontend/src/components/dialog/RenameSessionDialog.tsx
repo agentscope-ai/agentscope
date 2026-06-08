@@ -8,6 +8,7 @@ import {
 	DialogFooter,
 	DialogHeader,
 	DialogTitle,
+	DialogDescription,
 } from '@/components/ui/dialog';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
@@ -45,6 +46,7 @@ export function RenameSessionDialog({ open, onOpenChange, currentName, onConfirm
 			<DialogContent>
 				<DialogHeader>
 					<DialogTitle>{t('dialog-session-rename.title')}</DialogTitle>
+					<DialogDescription>{t('dialog-session-rename.description')}</DialogDescription>
 				</DialogHeader>
 				<FieldGroup>
 					<Field>

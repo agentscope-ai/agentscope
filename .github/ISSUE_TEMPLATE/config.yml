@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Feature Request / Idea
+    url: https://github.com/agentscope-ai/agentscope/discussions/new?category=ideas
+    about: Suggest a new feature or share an idea. Maintainers will turn accepted proposals into roadmap issues.
+  - name: Question / Usage Help
+    url: https://github.com/agentscope-ai/agentscope/discussions/new?category=general
+    about: Ask a usage question or start a general discussion. Please do NOT open an issue for questions.

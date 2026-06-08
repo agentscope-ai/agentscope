@@ -69,7 +69,7 @@ function Button({
 
 	return (
 		<Tooltip>
-			<TooltipTrigger>
+			<TooltipTrigger asChild>
 				<Comp
 					data-slot="button"
 					data-variant={variant}

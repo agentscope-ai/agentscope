@@ -8,7 +8,7 @@
 
 <span align="center">
 
-[**English Homepage**](https://github.com/agentscope-ai/agentscope/blob/main/README.md) | [**教程**](https://docs.agentscope.io/) | [**路线图**](https://github.com/orgs/agentscope-ai/projects/2/views/1)
+[**English Homepage**](https://github.com/agentscope-ai/agentscope/blob/main/README.md) | [**文档**](https://docs.agentscope.io/) | [**路线图**](https://github.com/orgs/agentscope-ai/projects/2/views/1)
 
 </span>
 
@@ -32,11 +32,11 @@
         />
     </a>
     <a href="https://discord.gg/eYMpfnkG8h">
-        <img
-            src="https://img.shields.io/discord/1194846673529213039?label=Discord&logo=discord"
-            alt="discord"
-        />
-    </a>
+      <img
+          src="https://img.shields.io/badge/Discord-Join%20Us-5865F2?logo=discord&logoColor=white"
+          alt="discord"
+      />
+  </a>
     <a href="https://docs.agentscope.io/">
         <img
             src="https://img.shields.io/badge/Docs-English%7C%E4%B8%AD%E6%96%87-blue?logo=markdown"
@@ -57,7 +57,13 @@
 
 ## 什么是 AgentScope 2.0？
 
-AgentScope 2.0 是一款生产就绪、易于使用的智能体框架，提供与不断进化的模型能力相匹配的核心抽象，并内置对模型微调的支持。
+AgentScope 2.0 是一款面向生产、易于使用的智能体框架，提供与不断进化的模型能力相匹配的核心抽象。
+
+- [**事件系统** →](https://docs.agentscope.io/v2/building-blocks/message-and-event) 统一的事件总线，服务于前端智能体应用与 human-in-the-loop 协作。
+- [**权限系统** →](https://docs.agentscope.io/v2/building-blocks/permission-system) 对工具和资源进行细粒度、可配置的控制。
+- [**多租户与多会话服务** →](https://docs.agentscope.io/v2/deploy/agent-service) 提供生产级服务，在租户与会话之间实现隔离。
+- [**工作区 / 沙箱支持** →](https://docs.agentscope.io/v2/building-blocks/workspace) 在隔离环境中运行工具和代码，内置支持本地文件系统、Docker 和 E2B 后端。
+- [**可扩展中间件系统** →](https://docs.agentscope.io/v2/building-blocks/middleware) 可组合的钩子系统，用于自定义和扩展智能体的推理-行动循环。
 
 我们为日益自主的大语言模型而设计。
 我们的方法是充分发挥模型的推理与工具调用能力，
@@ -192,9 +198,41 @@ asyncio.run(main())
 
 一个基于 FastAPI 的可扩展**多租户**、**多会话**智能体服务，并在 `examples/web_ui` 中提供预构建的 Web UI
 
-```bash
-git clone https://github.com/agentscope-ai/agentscope
+<table>
+  <tr>
+    <td align="center">
+      <img src="assets/images/team.gif" alt="智能体团队" width="100%"/>
+      <br/>
+      <sub><b>智能体团队</b> —— leader 智能体派生 worker，并通过内置的团队工具进行协调。</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="assets/images/task.gif" alt="任务规划" width="100%"/>
+      <br/>
+      <sub><b>任务规划</b> —— 智能体将复杂工作拆解为可追踪的计划，并在执行过程中持续更新。</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="assets/images/permission_bypass.gif" alt="bypass 模式下的权限控制" width="100%"/>
+      <br/>
+      <sub><b>bypass 模式下的权限控制</b> —— 智能体端到端运行，无需为工具调用确认而暂停。</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="assets/images/bg_tool.gif" alt="后台任务卸载" width="100%"/>
+      <br/>
+      <sub><b>工具后台执行</b> —— 长时间运行的工具被转入后台；其结果稍后唤醒智能体并恢复对话。</sub>
+    </td>
+  </tr>
+</table>
 
+运行以下命令启动智能体服务后端和 Web UI：
+
+```bash
+git clone -b main https://github.com/agentscope-ai/agentscope.git
 cd agentscope/examples/agent_service
 
 # 启动智能体服务后端
@@ -211,9 +249,6 @@ pnpm install
 pnpm dev
 ```
 
-体验聊天式界面，与你的智能体进行交互。
-
-<img src="https://gw.alicdn.com/imgextra/i1/O1CN01vGGiBw20agWwpzmjy_!!6000000006866-2-tps-2934-1732.png" alt="Permission System" width="100%">
 
 
 ## 贡献

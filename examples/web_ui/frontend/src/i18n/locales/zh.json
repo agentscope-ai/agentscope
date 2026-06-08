@@ -106,6 +106,7 @@
 	},
 	"dialog-agent-create": {
 		"title": "创建 Agent",
+		"description": "定义新 Agent 的身份与行为。",
 		"trigger": "创建 Agent"
 	},
 	"agent-form": {
@@ -132,7 +133,8 @@
 		}
 	},
 	"dialog-agent-edit": {
-		"title": "编辑 Agent"
+		"title": "编辑 Agent",
+		"description": "更新此 Agent 的配置。"
 	},
 	"dialog-agent-delete": {
 		"entity": "Agent",
@@ -144,6 +146,7 @@
 	},
 	"dialog-session-rename": {
 		"title": "重命名会话",
+		"description": "为该会话设置新名称。",
 		"label": "名称",
 		"placeholder": "会话名称"
 	},
@@ -153,11 +156,13 @@
 	},
 	"dialog-credential-create": {
 		"title": "添加凭证",
+		"description": "为模型提供商添加凭证。",
 		"selectType": "提供商",
 		"selectTypePlaceholder": "选择提供商"
 	},
 	"dialog-credential-edit": {
-		"title": "编辑凭证"
+		"title": "编辑凭证",
+		"description": "更新该提供商已保存的凭证。"
 	},
 	"credential": {
 		"addConfig": "添加配置",

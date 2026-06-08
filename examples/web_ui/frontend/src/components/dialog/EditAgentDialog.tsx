@@ -17,6 +17,7 @@ import {
 	DialogFooter,
 	DialogHeader,
 	DialogTitle,
+	DialogDescription,
 } from '@/components/ui/dialog';
 import { useAgents } from '@/hooks/useAgents';
 import { useAgentSchema } from '@/hooks/useAgentSchema';
@@ -87,6 +88,9 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 			<DialogContent className="!w-[500px] !max-w-[500px]">
 				<DialogHeader>
 					<DialogTitle>{t('dialog-agent-edit.title')}</DialogTitle>
+					<DialogDescription className="sr-only">
+						{t('dialog-agent-edit.description')}
+					</DialogDescription>
 				</DialogHeader>
 				<div className="no-scrollbar -mx-4 max-h-[75vh] overflow-y-auto px-4">
 					{schema && values ? (

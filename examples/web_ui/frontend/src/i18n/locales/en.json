@@ -106,6 +106,7 @@
 	},
 	"dialog-agent-create": {
 		"title": "Create agent",
+		"description": "Define a new agent's identity and behaviour.",
 		"trigger": "Create agent"
 	},
 	"agent-form": {
@@ -132,7 +133,8 @@
 		}
 	},
 	"dialog-agent-edit": {
-		"title": "Edit agent"
+		"title": "Edit agent",
+		"description": "Update this agent's configuration."
 	},
 	"dialog-agent-delete": {
 		"entity": "agent",
@@ -144,6 +146,7 @@
 	},
 	"dialog-session-rename": {
 		"title": "Rename session",
+		"description": "Give this session a new name.",
 		"label": "Name",
 		"placeholder": "Session name"
 	},
@@ -153,11 +156,13 @@
 	},
 	"dialog-credential-create": {
 		"title": "Add credential",
+		"description": "Add credentials for a model provider.",
 		"selectType": "Provider",
 		"selectTypePlaceholder": "Select a provider"
 	},
 	"dialog-credential-edit": {
-		"title": "Edit Credential"
+		"title": "Edit Credential",
+		"description": "Update the saved credential for this provider."
 	},
 	"credential": {
 		"addConfig": "Add configuration",
