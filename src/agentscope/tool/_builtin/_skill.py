@@ -83,7 +83,7 @@ class SkillViewer(ToolBase):
             message="The skill viewer is always allowed to be called.",
         )
 
-    async def __call__(
+    async def call(
         self,
         skill: str,
         _agent_state: AgentState,

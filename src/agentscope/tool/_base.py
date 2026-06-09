@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=unused-argument
 """The tool protocol in agentscope."""
+import inspect
 import os
 from abc import abstractmethod, ABC
 from pathlib import Path
@@ -140,6 +141,8 @@ class ToolBase(ABC):
         have completed.
         """
         if not self._tool_middlewares:
+            if inspect.isasyncgenfunction(self.call):
+                return self.call(**kwargs)
             return await self.call(**kwargs)
 
         async def execute_chain(
@@ -147,12 +150,16 @@ class ToolBase(ABC):
         ) -> AsyncGenerator[ToolChunk, None]:
             """Execute the tool middleware chain."""
             if index >= len(self._tool_middlewares):
-                result = await self.call(**kwargs)
-                if isinstance(result, AsyncGenerator):
-                    async for chunk in result:
+                if inspect.isasyncgenfunction(self.call):
+                    async for chunk in self.call(**kwargs):
                         yield chunk
                 else:
-                    yield result
+                    result = await self.call(**kwargs)
+                    if isinstance(result, AsyncGenerator):
+                        async for chunk in result:
+                            yield chunk
+                    else:
+                        yield result
             else:
                 mw = self._tool_middlewares[index]
 

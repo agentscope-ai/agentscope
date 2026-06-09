@@ -304,7 +304,7 @@ class Grep(ToolBase):
         ]
         return lines
 
-    async def __call__(  # type: ignore[override]
+    async def call(  # type: ignore[override]
         self,
         pattern: str,
         path: str | None = None,

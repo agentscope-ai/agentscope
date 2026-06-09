@@ -85,7 +85,7 @@ class ResetTools(ToolBase):
             message="The meta tool is always allowed to be called.",
         )
 
-    async def __call__(
+    async def call(
         self,
         _agent_state: AgentState,
         **kwargs: Any,

@@ -132,7 +132,7 @@ Set up task dependencies:
 
     input_schema: dict = _TaskUpdateParams.model_json_schema()
 
-    async def __call__(
+    async def call(
         self,
         _agent_state: AgentState,
         task_id: str,

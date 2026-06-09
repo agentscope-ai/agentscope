@@ -659,7 +659,7 @@ easier to review tool calls and give permission.
 
         return False
 
-    async def __call__(  # type: ignore[override]
+    async def call(  # type: ignore[override]
         self,
         command: str,
         description: str = "",
