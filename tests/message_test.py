@@ -161,7 +161,12 @@ class MessageTest(IsolatedAsyncioTestCase):
                 "name": "assistant",
                 "role": "assistant",
                 "content": [
-                    {"type": "hint", "hint": "hint...", "id": AnyString()},
+                    {
+                        "type": "hint",
+                        "hint": "hint...",
+                        "id": AnyString(),
+                        "source": None,
+                    },
                 ],
                 "metadata": {},
                 "created_at": AnyString(),

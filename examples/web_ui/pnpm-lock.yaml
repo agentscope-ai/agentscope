@@ -58,8 +58,8 @@ importers:
   frontend:
     dependencies:
       '@agentscope-ai/agentscope':
-        specifier: ^0.0.6
-        version: 0.0.6
+        specifier: ^0.0.9
+        version: 0.0.9
       '@fontsource-variable/geist':
         specifier: ^5.2.8
         version: 5.2.8
@@ -199,8 +199,8 @@ importers:
 
 packages:
 
-  '@agentscope-ai/agentscope@0.0.6':
-    resolution: {integrity: sha512-qQdcXK9GT6kkxsXKhpKg8MuEFjPJHci8NKXCqoCr3Fx/r2bHK7jzhkJblzXM+kmmrzC/4OXmjCWcvUbEP0pkgQ==}
+  '@agentscope-ai/agentscope@0.0.9':
+    resolution: {integrity: sha512-FuELfct2hovIINATNPWEpYktyqe1SYoVb9TCJvQoXqQcj5upik0VJM+8+OBA2y79xWe+rTBO1lr0bhuSGcHrPA==}
 
   '@babel/code-frame@7.29.0':
     resolution: {integrity: sha512-9NhCeYjq9+3uxgdtp20LSiJXJvN0FeCtNGpJxuMFZ1Kv3cWUNb6DOhJwUvcVCzKGR66cw4njwM6hrJLqgOwbcw==}
@@ -2139,6 +2139,11 @@ packages:
     engines: {node: '>=6.0.0'}
     hasBin: true
 
+  baseline-browser-mapping@2.10.33:
+    resolution: {integrity: sha512-bA6+tcSLpz2tIEdDXZPpPTIuxBcC4+w6SieaYyfigIa4h8GlFxbA17v22Vx3JUtuZQj9SgOsnbK+aTBzyDyEuw==}
+    engines: {node: '>=6.0.0'}
+    hasBin: true
+
   binary-extensions@2.3.0:
     resolution: {integrity: sha512-Ceh+7ox5qe7LJuLHoY0feh3pHuUDHAcRUeyL2VYghZwfpkNIy/+8Ocg0a3UuSoYzavmylwuLWQOf3hl0jjMMIw==}
     engines: {node: '>=8'}
@@ -2190,6 +2195,9 @@ packages:
 
   caniuse-lite@1.0.30001792:
     resolution: {integrity: sha512-hVLMUZFgR4JJ6ACt1uEESvQN1/dBVqPAKY0hgrV70eN3391K6juAfTjKZLKvOMsx8PxA7gsY1/tLMMTcfFLLpw==}
+
+  caniuse-lite@1.0.30001793:
+    resolution: {integrity: sha512-iwSsYWaCOoh26cV8NwNRViHlrfUvYsHDfRVcbtmw0Kg6PJIZZXwMkj1442FYLBGkeUf1juAsU3DTfxW579mrPA==}
 
   ccount@2.0.1:
     resolution: {integrity: sha512-eyrF0jiFpY+3drT6383f1qhkbGsLSifNAjA61IUjZjmLCWjItY6LB9ft9YhoDgwfmclB2zhu51Lc7+95b8NRAg==}
@@ -3625,9 +3633,8 @@ packages:
     resolution: {integrity: sha512-smsWv2LzFjP03xmvFoJ331ss6h+jixfA4UUV/Bsiyuu4YJPfN+FIQGOIiv4w9/+MoHkfkJ22UIaQWRVFRfH6Vw==}
     engines: {node: '>=20'}
 
-  openai@6.39.0:
-    resolution: {integrity: sha512-O61LIsimY3acVabwvomwFhwrnN36yvHY2quIfy9keEcFytGgWeV35yLHQ6NVMLSBxRpHmcg2yuhCnlu2HT4pLQ==}
-    hasBin: true
+  openai@6.41.0:
+    resolution: {integrity: sha512-IGWPopZq6Rjoynjfb3NSLf/z2MTw7UiOsm9TAjPGAjUESH7Uq41Trg4QWehBEn58p74i+m7uoRPV2vXcpPXhyA==}
     peerDependencies:
       ws: ^8.18.0
       zod: ^3.25 || ^4.0
@@ -3980,6 +3987,11 @@ packages:
 
   semver@7.8.0:
     resolution: {integrity: sha512-AcM7dV/5ul4EekoQ29Agm5vri8JNqRyj39o0qpX6vDF2GZrtutZl5RwgD1XnZjiTAfncsJhMI48QQH3sN87YNA==}
+    engines: {node: '>=10'}
+    hasBin: true
+
+  semver@7.8.1:
+    resolution: {integrity: sha512-rkVq3IXh+4FDGch+KwzX3aV9W3kO54GyEgpvBzSyctDA6Xtd7RJQV1xmXbeQp5v7+VzLOfVqiutSE6GICgPFvg==}
     engines: {node: '>=10'}
     hasBin: true
 
@@ -4586,7 +4598,7 @@ packages:
 
 snapshots:
 
-  '@agentscope-ai/agentscope@0.0.6':
+  '@agentscope-ai/agentscope@0.0.9':
     dependencies:
       '@cfworker/json-schema': 4.1.1
       '@modelcontextprotocol/sdk': 1.29.0(@cfworker/json-schema@4.1.1)(zod@4.4.3)
@@ -4594,7 +4606,7 @@ snapshots:
       jsonrepair: 3.14.0
       mime-types: 3.0.2
       ollama: 0.6.3
-      openai: 6.39.0(zod@4.4.3)
+      openai: 6.41.0(zod@4.4.3)
       string-format: 2.0.0
       uuid: 13.0.2
       zod: 4.4.3
@@ -6507,6 +6519,8 @@ snapshots:
 
   baseline-browser-mapping@2.10.29: {}
 
+  baseline-browser-mapping@2.10.33: {}
+
   binary-extensions@2.3.0: {}
 
   body-parser@1.20.5:
@@ -6577,6 +6591,8 @@ snapshots:
   camelcase@6.3.0: {}
 
   caniuse-lite@1.0.30001792: {}
+
+  caniuse-lite@1.0.30001793: {}
 
   ccount@2.0.1: {}
 
@@ -8053,8 +8069,8 @@ snapshots:
     dependencies:
       '@next/env': 16.2.6
       '@swc/helpers': 0.5.15
-      baseline-browser-mapping: 2.10.29
-      caniuse-lite: 1.0.30001792
+      baseline-browser-mapping: 2.10.33
+      caniuse-lite: 1.0.30001793
       postcss: 8.4.31
       react: 19.2.6
       react-dom: 19.2.6(react@19.2.6)
@@ -8155,7 +8171,7 @@ snapshots:
       powershell-utils: 0.1.0
       wsl-utils: 0.3.1
 
-  openai@6.39.0(zod@4.4.3):
+  openai@6.41.0(zod@4.4.3):
     optionalDependencies:
       zod: 4.4.3
 
@@ -8582,6 +8598,9 @@ snapshots:
 
   semver@7.8.0: {}
 
+  semver@7.8.1:
+    optional: true
+
   send@0.19.2:
     dependencies:
       debug: 2.6.9
@@ -8689,7 +8708,7 @@ snapshots:
     dependencies:
       '@img/colour': 1.1.0
       detect-libc: 2.1.2
-      semver: 7.8.0
+      semver: 7.8.1
     optionalDependencies:
       '@img/sharp-darwin-arm64': 0.34.5
       '@img/sharp-darwin-x64': 0.34.5

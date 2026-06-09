@@ -52,6 +52,9 @@ class WorkspaceBase:
     workspace_id: str
     """Unique identifier for this workspace instance."""
 
+    workdir: str
+    """Agent-visible root directory for workspace file operations."""
+
     is_alive: bool
     """If the workspace is still operational."""
 

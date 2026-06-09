@@ -136,7 +136,7 @@ class DockerWorkspace(WorkspaceBase):
         *,
         workspace_id: str | None = None,
         base_image: str = DEFAULT_BASE_IMAGE,
-        workdir: str | None = None,
+        host_workdir: str | None = None,
         node_version: str | None = None,
         extra_pip: list[str] | None = None,
         gateway_port: int = DEFAULT_GATEWAY_PORT,
@@ -144,6 +144,7 @@ class DockerWorkspace(WorkspaceBase):
         instructions: str = _DEFAULT_INSTRUCTIONS,
         default_mcps: list[MCPClient] | None = None,
         skill_paths: list[str] | None = None,
+        **kwargs: Any,
     ) -> None:
         """Construct a :class:`DockerWorkspace`.
 
@@ -162,7 +163,7 @@ class DockerWorkspace(WorkspaceBase):
                 rebuilt on top of this base via the dynamic
                 Dockerfile (uv venv + agentscope install + optional
                 node + ``extra_pip``).
-            workdir (`str | None`, optional):
+            host_workdir (`str | None`, optional):
                 Host directory bind-mounted to ``/workspace`` inside
                 the container. ``None`` makes the workspace
                 ephemeral — files written under ``/workspace`` live
@@ -200,9 +201,19 @@ class DockerWorkspace(WorkspaceBase):
         """
         super().__init__(workspace_id=workspace_id)
 
+        # Backwards compatibility: accept legacy ``workdir`` kwarg.
+        if "workdir" in kwargs:
+            logger.warning(
+                "DockerWorkspace parameter 'workdir' is deprecated, "
+                "use 'host_workdir' instead.",
+            )
+            if host_workdir is None:
+                host_workdir = kwargs.pop("workdir")
+
         # ── serializable config ─────────────────────────────────
+        self.workdir = CONTAINER_WORKDIR
         self.base_image = base_image
-        self.workdir = workdir
+        self.host_workdir = host_workdir
         self.node_version = node_version
         self.extra_pip: list[str] = list(extra_pip or [])
         self.gateway_port = gateway_port
@@ -286,7 +297,7 @@ class DockerWorkspace(WorkspaceBase):
             c.name: c for c in await self._gateway.list_mcps()
         }
 
-        if self.workdir is not None:
+        if self.host_workdir is not None:
             await self._save_mcp_file()
             await self._seed_skills()
 
@@ -326,7 +337,7 @@ class DockerWorkspace(WorkspaceBase):
             # Rewrite ``.mcp`` to an empty list so a future restart does
             # not fall back to ``default_mcps`` (which would only happen
             # if the file were missing).
-            if self.workdir is not None:
+            if self.host_workdir is not None:
                 await self._save_mcp_file()
 
     async def close(self) -> None:
@@ -355,7 +366,7 @@ class DockerWorkspace(WorkspaceBase):
             # transparently, so this only matters on Linux. Best-effort:
             # exec failures are swallowed, and we still tear the
             # container down.
-            if self.workdir is not None and sys.platform == "linux":
+            if self.host_workdir is not None and sys.platform == "linux":
                 try:
                     await self._exec(
                         f"chown -R {os.getuid()}:{os.getgid()} "
@@ -495,7 +506,7 @@ class DockerWorkspace(WorkspaceBase):
             await gw_client.connect()
             self._mcps.append(mcp_client)
             self._gateway_clients[gw_client.name] = gw_client
-            if self.workdir is not None:
+            if self.host_workdir is not None:
                 await self._save_mcp_file()
 
     async def remove_mcp(self, name: str) -> None:
@@ -521,7 +532,7 @@ class DockerWorkspace(WorkspaceBase):
             except Exception as e:
                 logger.warning("MCP %r close failed: %s", name, e)
             self._mcps = [m for m in self._mcps if m.name != name]
-            if self.workdir is not None:
+            if self.host_workdir is not None:
                 await self._save_mcp_file()
 
     # ── dynamic skill management ────────────────────────────────
@@ -846,10 +857,10 @@ class DockerWorkspace(WorkspaceBase):
                 ],
             },
         }
-        if self.workdir is not None:
-            os.makedirs(self.workdir, exist_ok=True)
+        if self.host_workdir is not None:
+            os.makedirs(self.host_workdir, exist_ok=True)
             host_config["Binds"] = [
-                f"{os.path.abspath(self.workdir)}:{CONTAINER_WORKDIR}:rw",
+                f"{os.path.abspath(self.host_workdir)}:{CONTAINER_WORKDIR}:rw",
             ]
         config["HostConfig"] = host_config
 
@@ -893,9 +904,9 @@ class DockerWorkspace(WorkspaceBase):
         Returns:
             The MCPClient instances to register on the gateway.
         """
-        if self.workdir is None:
+        if self.host_workdir is None:
             return list(self.default_mcps)
-        host_mcp = os.path.join(self.workdir, ".mcp")
+        host_mcp = os.path.join(self.host_workdir, ".mcp")
         if not os.path.isfile(host_mcp):
             return list(self.default_mcps)
         try:
@@ -918,11 +929,11 @@ class DockerWorkspace(WorkspaceBase):
         not raised — losing the persistence file should not
         propagate as an MCP-add/remove error to the caller.
         """
-        if self.workdir is None:
+        if self.host_workdir is None:
             return
-        host_mcp = os.path.join(self.workdir, ".mcp")
+        host_mcp = os.path.join(self.host_workdir, ".mcp")
         try:
-            os.makedirs(self.workdir, exist_ok=True)
+            os.makedirs(self.host_workdir, exist_ok=True)
             with open(host_mcp, "w", encoding="utf-8") as f:
                 json.dump(
                     [m.model_dump() for m in self._mcps],
@@ -1024,9 +1035,9 @@ class DockerWorkspace(WorkspaceBase):
         Failures on individual paths are logged and skipped rather
         than raised, so that one bad skill cannot block startup.
         """
-        if not self.skill_paths or self.workdir is None:
+        if not self.skill_paths or self.host_workdir is None:
             return
-        skills_host = os.path.join(self.workdir, "skills")
+        skills_host = os.path.join(self.host_workdir, "skills")
         # The bind mount lazily materialises ``<workdir>/skills`` on
         # host the first time the container writes into it, so on a
         # fresh workdir the host path may not exist yet — create it

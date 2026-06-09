@@ -7,6 +7,9 @@ Tests cover both non-streaming and streaming modes, verifying that:
 - Stream mode yields n delta ChatResponses (is_last=False) followed by
   1 final ChatResponse (is_last=True) with the full accumulated content.
 """
+import base64
+import io
+import wave
 from typing import Any
 import unittest
 from unittest import IsolatedAsyncioTestCase
@@ -477,17 +480,35 @@ class TestOpenAIChatStream(IsolatedAsyncioTestCase):
         self,
         mock_client_cls: MagicMock,
     ) -> None:
-        """Stream audio deltas accumulate into a final DataBlock with the
-        concatenated base64 payload and a transcript TextBlock."""
+        """Stream PCM deltas produce per-chunk DataBlocks (first chunk
+        prefixed with a streaming WAV header) sharing a stable id, plus a
+        final fixed-size WAV block readable by the ``wave`` module.
+        Transcript chunks ride alongside as TextBlock deltas so the agent
+        can stream caption text live; the final block carries the full
+        accumulated transcript."""
+        pcm1 = bytes([1, 2, 3, 4])
+        pcm2 = bytes([5, 6, 7, 8])
+        pcm3 = bytes([9, 10, 11, 12])
+        pcm_full = pcm1 + pcm2 + pcm3
+
         chunks = [
             _make_stream_chunk(
-                delta_audio={"data": "AAAA", "transcript": "Hello"},
+                delta_audio={
+                    "data": base64.b64encode(pcm1).decode(),
+                    "transcript": "Hello",
+                },
             ),
             _make_stream_chunk(
-                delta_audio={"data": "BBBB", "transcript": " world"},
+                delta_audio={
+                    "data": base64.b64encode(pcm2).decode(),
+                    "transcript": " world",
+                },
             ),
             _make_stream_chunk(
-                delta_audio={"data": "CCCC", "transcript": "!"},
+                delta_audio={
+                    "data": base64.b64encode(pcm3).decode(),
+                    "transcript": "!",
+                },
             ),
             _make_stream_chunk(
                 has_choices=False,
@@ -499,27 +520,67 @@ class TestOpenAIChatStream(IsolatedAsyncioTestCase):
 
         gen = await self.model([])
         responses = [r async for r in gen]
+        self.assertEqual(len(responses), 4)
 
-        # Only the final response carries the assembled audio content; the
-        # per-chunk deltas have no text/thinking/tool_call so no delta
-        # ChatResponse is yielded mid-stream.
-        self.assertEqual(len(responses), 1)
-        final = responses[0]
-        self.assertTrue(final.is_last)
-        self.assertEqual(
-            final.content,
-            [
-                TextBlock.model_construct(id=A, text="Hello world!"),
-                DataBlock.model_construct(
-                    id=A,
-                    source=Base64Source.model_construct(
-                        type="base64",
-                        media_type="audio/wav",
-                        data="AAAABBBBCCCC",
-                    ),
-                ),
-            ],
+        # All four chunks (3 deltas + 1 final) must share the same audio
+        # block id so downstream consumers stitch them as one stream.
+        all_audio_ids = {
+            block.id
+            for r in responses
+            for block in r.content
+            if isinstance(block, DataBlock)
+        }
+        self.assertEqual(len(all_audio_ids), 1)
+
+        # First delta: WAV header (44 bytes, "RIFF"..."WAVE") + pcm1.
+        first_audio = next(
+            b for b in responses[0].content if isinstance(b, DataBlock)
         )
+        first_payload = base64.b64decode(first_audio.source.data)
+        self.assertEqual(len(first_payload), 44 + len(pcm1))
+        self.assertEqual(first_payload[:4], b"RIFF")
+        self.assertEqual(first_payload[8:12], b"WAVE")
+        self.assertEqual(first_payload[44:], pcm1)
+        self.assertEqual(first_audio.source.media_type, "audio/wav")
+
+        # Subsequent deltas: raw PCM only, no header.
+        for resp, pcm in zip(responses[1:3], [pcm2, pcm3]):
+            audio_block = next(
+                b for b in resp.content if isinstance(b, DataBlock)
+            )
+            self.assertEqual(base64.b64decode(audio_block.source.data), pcm)
+            self.assertEqual(audio_block.source.media_type, "audio/wav")
+
+        # Transcript rides alongside: each delta carries a TextBlock with
+        # only that chunk's text (so the agent emits TextBlockDeltaEvents
+        # in real time).
+        for resp, expected_text in zip(
+            responses[:3],
+            ["Hello", " world", "!"],
+        ):
+            text_block = next(
+                b for b in resp.content if isinstance(b, TextBlock)
+            )
+            self.assertEqual(text_block.text, expected_text)
+
+        # Final ``is_last`` block: a fixed-size WAV the ``wave`` module
+        # can parse end-to-end at 24kHz / mono / 16-bit.
+        final = responses[-1]
+        self.assertTrue(final.is_last)
+        final_audio = next(
+            b for b in final.content if isinstance(b, DataBlock)
+        )
+        wav_bytes = base64.b64decode(final_audio.source.data)
+        with wave.open(io.BytesIO(wav_bytes), "rb") as wav:
+            self.assertEqual(wav.getnchannels(), 1)
+            self.assertEqual(wav.getsampwidth(), 2)
+            self.assertEqual(wav.getframerate(), 24000)
+            frames = wav.readframes(wav.getnframes())
+        self.assertEqual(frames, pcm_full)
+
+        # Transcript is accumulated and emitted as a TextBlock alongside.
+        final_text = next(b for b in final.content if isinstance(b, TextBlock))
+        self.assertEqual(final_text.text, "Hello world!")
 
 
 class TestOpenAIChatModelParameters(unittest.TestCase):

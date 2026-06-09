@@ -1,0 +1,31 @@
+name: gpt-audio-mini
+label: GPT Audio Mini
+status: active
+
+input_types:
+  - text/plain
+  - audio/wav
+  - audio/mp3
+
+output_types:
+  - text/plain
+  - audio/wav
+
+context_size: 128000
+output_size: 16384
+
+parameter_overrides:
+  max_tokens:
+    maximum: 16384
+  thinking_enable:
+    hidden: true
+  # Source: https://platform.openai.com/docs/guides/text-to-speech
+  voice:
+    default: alloy
+    enum:
+      - alloy
+      - echo
+      - nova
+      - shimmer
+      - sage
+      - verse

@@ -1,0 +1,67 @@
+name: Bug Report
+description: Report a bug to help us improve AgentScope.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **<u>AgentScope is an open-source project. To involve a broader community, we recommend asking your questions in English.</u>**
+
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Prerequisites
+      description: Please confirm the following before submitting.
+      options:
+        - label: I have searched the existing [issues](https://github.com/agentscope-ai/agentscope/issues) and [discussions](https://github.com/agentscope-ai/agentscope/discussions), and this is not a duplicate.
+          required: true
+        - label: This is a bug, not a usage question. (For questions, please use [Discussions](https://github.com/agentscope-ai/agentscope/discussions/new?category=general) instead.)
+          required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Background / Description
+      description: A clear and concise description of the bug, including what you were trying to do and the expected behavior.
+      placeholder: What were you trying to do, what did you expect, and what actually happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: error
+    attributes:
+      label: Error Messages
+      description: Detailed error messages, stack traces, or logs.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: Provide a minimal reproducible example (code + commands) so we can reproduce the bug.
+      placeholder: |
+        1. Code:
+
+        ```python
+        ...
+        ```
+
+        2. Run: `python ...`
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Run `import agentscope; print(agentscope.__version__)` to get the AgentScope version.
+      value: |
+        - AgentScope Version:
+        - Python Version:
+        - OS:
+    validations:
+      required: true

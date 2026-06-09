@@ -43,7 +43,6 @@ dependencies = [
     "aiofiles",
     "tree_sitter",
     "tree_sitter_bash",
-    "ripgrep",
     "jsonschema",
 ]
 
@@ -73,6 +72,11 @@ workspace = [
     "aiodocker",
     "e2b",
 ]
+# ------------ Tools ------------
+tools = [
+    "ripgrep",
+]
+
 # ------------ Long-term memory ------------
 # Required by `agentscope.middleware._longterm_memory.Mem0Middleware`.
 # Pinned to mem0 v2.x because the middleware targets that
@@ -88,6 +92,7 @@ full = [
     "agentscope[service]",
     "agentscope[storage]",
     "agentscope[workspace]",
+    "agentscope[tools]",
     "agentscope[mem0]",
 ]
 

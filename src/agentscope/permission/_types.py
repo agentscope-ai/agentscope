@@ -24,31 +24,58 @@ class PermissionMode(Enum):
     +---------------+--------------------------------------------------+--------------------------------+
     | Mode          | Behavior                                         | Use Case                       |
     +===============+==================================================+================================+
-    | DEFAULT       | All operations require explicit permission       | Default mode, most secure      |
-    |               | (unless there are explicit allow rules)          |                                |
+    | DEFAULT       | Every operation asks for permission unless:      | Default mode, most secure      |
+    |               | - an allow rule matches, OR                      |                                |
+    |               | - the tool's ``check_permissions`` explicitly    |                                |
+    |               |   returns ALLOW for the invocation (currently   |                                |
+    |               |   only ``Bash`` auto-allows recognized          |                                |
+    |               |   read-only commands such as ``ls``/``git       |                                |
+    |               |   status``). Read/Glob/Grep return PASSTHROUGH  |                                |
+    |               |   and fall through to the default ASK unless    |                                |
+    |               |   an allow rule matches.                        |                                |
     +---------------+--------------------------------------------------+--------------------------------+
     | ACCEPT_EDITS  | - Auto-allow file writes in working directories | User present, rapid iteration  |
     |               | - Auto-allow file reads in working directories  | development                    |
-    |               | - Auto-allow filesystem commands (mkdir, rm, mv) |                                |
+    |               | - Auto-allow filesystem commands (mkdir, rm,     |                                |
+    |               |   mv, cp, ...) **only when all target paths**   |                                |
+    |               |   **resolve inside a working directory**         |                                |
     |               | - Other operations follow normal rules           |                                |
     +---------------+--------------------------------------------------+--------------------------------+
     | EXPLORE       | Read-only mode:                                  | Exploring codebase, planning   |
-    |               | - Allow: Read, Grep, Glob (read-only tools)     | implementation                 |
-    |               | - Deny: Write, Edit, Bash (modification tools)  |                                |
+    |               | - Allow: read-only tools (``Read``/``Grep``/    | implementation                 |
+    |               |   ``Glob``) and read-only bash commands         |                                |
+    |               |   (e.g. ``ls``, ``git status``)                  |                                |
+    |               | - Deny: any modification tool / command         |                                |
+    |               | - User-configured DENY or ASK rules take         |                                |
+    |               |   precedence over the read-only auto-allow      |                                |
     +---------------+--------------------------------------------------+--------------------------------+
-    | BYPASS        | All operations automatically allowed             | Testing environment, sandbox,  |
-    |               | (no permission checks)                           | fully trusted scenarios        |
+    | BYPASS        | Skip all permission checks except explicit       | Sandboxed environments         |
+    |               | user-configured deny / ask rules and tool       | (container, VM), unattended    |
+    |               | DENY. **Safety ASKs from tools are NOT**         | runs where you fully trust     |
+    |               | **enforced** — including ``rm -rf /``, writes   | the agent                      |
+    |               | to ``~/.bashrc``, command-injection patterns,    |                                |
+    |               | etc. Use deny rules to protect specific paths.   |                                |
+    |               | For unattended runs that still need safety,      |                                |
+    |               | prefer DONT_ASK.                                 |                                |
     +---------------+--------------------------------------------------+--------------------------------+
-    | DONT_ASK      | Convert all ASK decisions to DENY                | Scheduled tasks, background    |
-    |               | (user not available to answer prompts)           | execution when user is away    |
+    | DONT_ASK      | Convert every ASK (including safety ASKs and     | Scheduled tasks, background    |
+    |               | ASK-rule hits) to DENY. Safe-by-default for     | execution when user is away    |
+    |               | unattended execution.                            |                                |
     +---------------+--------------------------------------------------+--------------------------------+
 
     Attributes:
-        DEFAULT: Default mode - requires explicit permission for each action
-        ACCEPT_EDITS: Accept edits mode - automatically allows file edits within working directories
-        EXPLORE: Explore mode - read-only, no writes or command execution allowed
-        BYPASS: Bypass mode - allows all actions without permission checks
-        DONT_ASK: Don't ask mode - converts all ASK decisions to DENY (for unattended execution)
+        DEFAULT: Default mode - explicit permission per action. The
+            only auto-allow path is the tool's own ``check_permissions``
+            returning ALLOW (currently just ``Bash`` for recognized
+            read-only commands like ``ls``/``git status``).
+        ACCEPT_EDITS: Accept edits mode - automatically allows file
+            edits within working directories (including filesystem
+            bash commands whose every target is in a working dir).
+        EXPLORE: Explore mode - read-only; modifications are denied.
+        BYPASS: Bypass mode - skips safety checks; relies on user
+            deny / ask rules as the only guardrail.
+        DONT_ASK: Don't ask mode - converts all ASK decisions to DENY
+            (for unattended execution).
     """  # noqa: E501
 
     DEFAULT = "default"

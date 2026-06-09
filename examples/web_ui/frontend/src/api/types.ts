@@ -95,6 +95,13 @@ export interface SessionRecord extends RecordBase {
 	agent_id: string;
 	source: SessionSource;
 	source_schedule_id: string | null;
+	/**
+	 * The team this session participates in, if any. Set when the
+	 * session is the leader of a team (the session that called
+	 * `TeamCreate`) or a worker spawned by `AgentCreate`. `null` for
+	 * regular standalone sessions.
+	 */
+	team_id: string | null;
 	config: SessionConfig;
 	state: AgentState;
 }
@@ -125,8 +132,75 @@ export interface UpdateSessionRequest {
 }
 
 export interface SessionListResponse {
+	sessions: SessionView[];
+	total: number;
+}
+
+/**
+ * Response body for `GET /schedule/{id}/sessions`. Returns plain
+ * `SessionRecord[]` (no team / is_running enrichment) because
+ * scheduled-execution sessions are listed for audit purposes only,
+ * not for opening in the chat UI.
+ */
+export interface ScheduleSessionsResponse {
 	sessions: SessionRecord[];
 	total: number;
+}
+
+// ─── Team ─────────────────────────────────────────────────────────────────────
+
+export interface TeamData {
+	name: string;
+	description: string;
+	/** Worker agent ids belonging to the team. */
+	member_ids: string[];
+}
+
+export interface TeamRecord extends RecordBase {
+	user_id: string;
+	/** The leader session id — the session that called `TeamCreate`. */
+	session_id: string;
+	data: TeamData;
+}
+
+/**
+ * One member entry inside `TeamDetailResponse.members`. Pairs the
+ * worker's `AgentRecord` with its single `session_id` so the UI can
+ * navigate straight to the worker's chat.
+ */
+export interface TeamMemberInfo {
+	agent: AgentRecord;
+	/** `null` if the agent is in an inconsistent state (no session). */
+	session_id: string | null;
+}
+
+/**
+ * Resolved team detail returned inline inside `SessionView.team`.
+ *
+ * The leader's `AgentRecord` is looked up from the team's
+ * `session_id` → `session.agent_id` chain on the server side.
+ */
+export interface TeamDetailResponse {
+	team: TeamRecord;
+	leader_agent: AgentRecord | null;
+	members: TeamMemberInfo[];
+}
+
+/**
+ * Per-session bundle returned by `GET /sessions/?agent_id=...`.
+ *
+ * Bundles three pieces of information so the chat UI can render a
+ * session without follow-up requests: the persisted record (incl.
+ * `state`), whether a chat run is active, and — when the session
+ * participates in a team — the resolved team detail.
+ *
+ * Messages are intentionally separate (`GET /sessions/{id}/messages`)
+ * since they paginate independently.
+ */
+export interface SessionView {
+	session: SessionRecord;
+	is_running: boolean;
+	team: TeamDetailResponse | null;
 }
 
 // ─── JSON Schema ──────────────────────────────────────────────────────────────

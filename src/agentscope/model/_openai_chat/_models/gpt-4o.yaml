@@ -22,3 +22,7 @@ parameter_overrides:
     hidden: true
   reasoning_effort:
     hidden: true
+  # Voice only applies to omni-style models; hide the field for this
+  # non-omni model so the frontend popover doesn't render it.
+  voice:
+    hidden: true

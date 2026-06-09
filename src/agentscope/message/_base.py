@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The message class in agentscope."""
+import base64
 import uuid
 from datetime import datetime
 from typing import Literal, List, overload, Sequence, Self, TYPE_CHECKING, Any
@@ -283,7 +284,18 @@ class Msg(BaseModel):
                         event.block_id,
                     )
                 elif event.data:
-                    block.source.data += event.data
+                    # Each delta is an independently base64-encoded chunk
+                    # (with its own padding); naive string concat would
+                    # corrupt the byte stream. Decode, concat bytes, re-encode.
+                    existing = (
+                        base64.b64decode(block.source.data)
+                        if block.source.data
+                        else b""
+                    )
+                    incoming = base64.b64decode(event.data)
+                    block.source.data = base64.b64encode(
+                        existing + incoming,
+                    ).decode("ascii")
 
             case EventType.DATA_BLOCK_END:
                 pass
@@ -305,6 +317,18 @@ class Msg(BaseModel):
 
             case EventType.THINKING_BLOCK_END:
                 pass
+
+            case EventType.HINT_BLOCK:
+                # One-shot event — the full HintBlock content arrives in
+                # a single event, so just append it to ``content`` for
+                # persistence and replay.
+                self.content.append(
+                    HintBlock(
+                        id=event.block_id,
+                        source=event.source,
+                        hint=event.hint,
+                    ),
+                )
 
             case EventType.TOOL_CALL_START:
                 self.content.append(
@@ -392,6 +416,14 @@ class Msg(BaseModel):
                 else:
                     assert isinstance(block, ToolResultBlock)
                     block.state = event.state
+                # The paired ToolCallBlock's lifecycle ends with its
+                # result — flip it to FINISHED here so the SSE-rebuilt
+                # reply_msg matches ``agent.state.context``, which
+                # ``_update_tool_call_state`` mutates directly.
+                call_block = self._find_block("tool_call", event.tool_call_id)
+                if call_block is not None:
+                    assert isinstance(call_block, ToolCallBlock)
+                    call_block.state = ToolCallState.FINISHED
 
             case EventType.REQUIRE_USER_CONFIRM:
                 for tool_call in event.tool_calls:

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The agent storage class."""
 import uuid
+from typing import Literal
 
 from pydantic import Field, BaseModel
 
@@ -47,6 +48,17 @@ class AgentRecord(_RecordBase):
 
     user_id: str
     """The user id"""
+
+    source: Literal["user", "team"] = "user"
+    """How this agent was created.
+
+    - ``"user"``: created directly by the user (default). Can have multiple
+      sessions and is listed in the user's regular agent list.
+    - ``"team"``: spawned as a team worker by another agent's
+      ``create_team`` / ``team_add_member`` tool. Has exactly one session.
+      Team membership itself is session-level and stored on
+      :class:`SessionRecord.team_id`.
+    """
 
     data: AgentData
     """The agent data"""

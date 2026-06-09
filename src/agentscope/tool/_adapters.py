@@ -2,6 +2,7 @@
 """Adapters to convert functions and MCP tools to ToolProtocol."""
 import inspect
 import json
+import re
 from contextlib import _AsyncGeneratorContextManager
 from datetime import timedelta
 from typing import Callable, Any, AsyncGenerator, Generator
@@ -199,7 +200,22 @@ class MCPTool(ToolBase):
                 The timeout in seconds for tool execution.
         """
         self.mcp_name = mcp_name
-        self.name = f"mcp__{self.mcp_name}__{tool.name}"
+
+        # LLM providers enforce ^[a-zA-Z0-9_-]+$ on tool names.
+        # mcp_name is validated in MCPClient.model_post_init;
+        # tool.name comes from the MCP server and may contain dots,
+        # colons, etc. — replace illegal chars with "x" (not "_")
+        # to avoid collisions with the "__" separator.
+        # self._tool.name retains the original for server-side calls.
+        sanitized_tool = re.sub(r"[^a-zA-Z0-9_-]", "x", tool.name)
+        self.name = f"mcp__{mcp_name}__{sanitized_tool}"
+        if sanitized_tool != tool.name:
+            logger.debug(
+                "MCP tool name sanitized: '%s' -> '%s'.",
+                tool.name,
+                self.name,
+            )
+
         self.description = tool.description or ""
 
         # Preserve the full inputSchema (including $defs, anyOf, oneOf, etc.)

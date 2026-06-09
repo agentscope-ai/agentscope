@@ -3,11 +3,17 @@
 import uuid
 from datetime import datetime
 from enum import StrEnum
-from typing import Literal, List, TypeAlias
+from typing import Any, Dict, Literal, List, TypeAlias
 
 from pydantic import BaseModel, Field, ConfigDict
 
-from ..message import ToolCallBlock, ToolResultBlock, ToolResultState
+from ..message import (
+    DataBlock,
+    TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+    ToolResultState,
+)
 from ..permission import PermissionRule
 
 
@@ -32,6 +38,8 @@ class EventType(StrEnum):
     THINKING_BLOCK_DELTA = "THINKING_BLOCK_DELTA"
     THINKING_BLOCK_END = "THINKING_BLOCK_END"
 
+    HINT_BLOCK = "HINT_BLOCK"
+
     TOOL_CALL_START = "TOOL_CALL_START"
     TOOL_CALL_DELTA = "TOOL_CALL_DELTA"
     TOOL_CALL_END = "TOOL_CALL_END"
@@ -49,6 +57,8 @@ class EventType(StrEnum):
     USER_CONFIRM_RESULT = "USER_CONFIRM_RESULT"
     EXTERNAL_EXECUTION_RESULT = "EXTERNAL_EXECUTION_RESULT"
 
+    CUSTOM = "CUSTOM"
+
 
 class EventBase(BaseModel):
     """Base event class."""
@@ -59,6 +69,8 @@ class EventBase(BaseModel):
     """Unique event identifier."""
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     """ISO 8601 timestamp of when the event was created."""
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    """Optional metadata attached to the event."""
 
 
 class ReplyStartEvent(EventBase):
@@ -222,6 +234,31 @@ class ThinkingBlockEndEvent(EventBase):
     """ID of the reply message this block belongs to."""
     block_id: str
     """Unique identifier of the thinking block."""
+
+
+class HintBlockEvent(EventBase):
+    """One-shot hint block event.
+
+    Unlike text/thinking blocks, hint blocks are not streamed — the
+    full content is available at creation time (team messages,
+    background tool results, user interruptions, …). A single event
+    carries the complete :class:`~agentscope.message.HintBlock`.
+
+    The ``hint`` field mirrors :attr:`HintBlock.hint` and may be a
+    plain string or a list of :class:`TextBlock` / :class:`DataBlock`
+    for multimodal content.
+    """
+
+    type: Literal[EventType.HINT_BLOCK] = EventType.HINT_BLOCK
+    """Event type."""
+    reply_id: str
+    """ID of the reply message this block belongs to."""
+    block_id: str
+    """Unique identifier of the hint block."""
+    source: str | None = None
+    """Sender or origin of this hint (e.g. ``"alice"``, ``"system"``)."""
+    hint: str | List[TextBlock | DataBlock]
+    """Complete hint content — ``str`` or ``list[TextBlock | DataBlock]``."""
 
 
 class ToolCallStartEvent(EventBase):
@@ -402,6 +439,40 @@ class ExternalExecutionResultEvent(EventBase):
     """Results returned by the external executor."""
 
 
+class CustomEvent(EventBase):
+    """Generic extensible event for signals that don't fit a specific
+    ``AgentEvent`` subtype.
+
+    Used by service-layer middleware to notify front-end subscribers
+    about state changes (task progress, team membership, permission
+    updates, …) without polluting the core agent event enum with
+    application-specific types.
+
+    Front-end implementations should handle unknown ``name`` values
+    gracefully — skip with no error.
+
+    Attributes:
+        name (`str`):
+            Identifies the kind of notification. Well-known values:
+
+            - ``"state_updated"`` — agent state (tasks / permission)
+              changed during a tool call.
+            - ``"team_updated"`` — team membership changed (member
+              added / team created or dissolved).
+
+        value (`dict`):
+            Arbitrary JSON-serializable payload whose schema depends
+            on ``name``. May be empty.
+    """
+
+    type: Literal[EventType.CUSTOM] = EventType.CUSTOM
+    """Event type discriminator."""
+    name: str
+    """Kind of notification — see class docstring for well-known values."""
+    value: dict = Field(default_factory=dict)
+    """Arbitrary payload."""
+
+
 AgentEvent: TypeAlias = (
     ReplyStartEvent
     | ReplyEndEvent
@@ -419,6 +490,7 @@ AgentEvent: TypeAlias = (
     | ThinkingBlockStartEvent
     | ThinkingBlockDeltaEvent
     | ThinkingBlockEndEvent
+    | HintBlockEvent
     | ToolCallStartEvent
     | ToolCallDeltaEvent
     | ToolCallEndEvent
@@ -428,4 +500,5 @@ AgentEvent: TypeAlias = (
     | ToolResultEndEvent
     | UserConfirmResultEvent
     | ExternalExecutionResultEvent
+    | CustomEvent
 )

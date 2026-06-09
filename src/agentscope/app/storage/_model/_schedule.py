@@ -22,6 +22,21 @@ class ScheduleSource(str, Enum):
     AGENT = "AGENT"
 
 
+def _get_local_timezone() -> str:
+    """Get the local timezone.
+
+    Returns:
+        `str`:
+            The local timezone.
+    """
+    try:
+        from tzlocal import get_localzone
+
+        return str(get_localzone())
+    except Exception:
+        return "UTC"
+
+
 class ScheduleData(BaseModel):
     """The schedule configuration data."""
 
@@ -40,7 +55,7 @@ class ScheduleData(BaseModel):
     )
 
     timezone: str = Field(
-        default="UTC",
+        default=_get_local_timezone(),
         description="IANA timezone name used to evaluate the cron expression, "
         "e.g. 'America/New_York' or 'Asia/Shanghai'.",
     )
@@ -51,6 +66,7 @@ class ScheduleData(BaseModel):
 
     started_at: datetime = Field(
         description="The date and time the schedule was started.",
+        default_factory=datetime.now,
     )
 
     ended_at: datetime | None = Field(

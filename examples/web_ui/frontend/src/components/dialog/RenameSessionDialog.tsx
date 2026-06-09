@@ -1,3 +1,4 @@
+import { CheckCircle, CircleAlert, Loader2 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -7,6 +8,7 @@ import {
 	DialogFooter,
 	DialogHeader,
 	DialogTitle,
+	DialogDescription,
 } from '@/components/ui/dialog';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
@@ -44,6 +46,7 @@ export function RenameSessionDialog({ open, onOpenChange, currentName, onConfirm
 			<DialogContent>
 				<DialogHeader>
 					<DialogTitle>{t('dialog-session-rename.title')}</DialogTitle>
+					<DialogDescription>{t('dialog-session-rename.description')}</DialogDescription>
 				</DialogHeader>
 				<FieldGroup>
 					<Field>
@@ -60,15 +63,17 @@ export function RenameSessionDialog({ open, onOpenChange, currentName, onConfirm
 					</Field>
 				</FieldGroup>
 				<DialogFooter>
-					<Button
-						variant="outline"
-						onClick={() => onOpenChange(false)}
-						disabled={loading}
-					>
+					<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={loading}>
+						<CircleAlert className="size-3.5" />
 						{t('common.cancel')}
 					</Button>
 					<Button onClick={handleConfirm} disabled={loading || !name.trim()}>
-						{loading ? t('common.saving') : t('dialog-session-rename.confirm')}
+						{loading ? (
+							<Loader2 className="size-3.5 animate-spin" />
+						) : (
+							<CheckCircle className="size-3.5" />
+						)}
+						{t('common.confirm')}
 					</Button>
 				</DialogFooter>
 			</DialogContent>

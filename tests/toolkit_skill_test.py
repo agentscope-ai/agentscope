@@ -8,7 +8,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from utils import AnyString
 
 from agentscope.skill import SkillLoaderBase, Skill
-from agentscope.tool import Toolkit, ToolChunk, ToolResponse
+from agentscope.tool import Toolkit, ToolChunk, ToolResponse, ToolGroup
 from agentscope.message import ToolCallBlock
 from agentscope.state import AgentState
 
@@ -150,6 +150,61 @@ Skills are a collection of instructions, scripts, and resources to extend your c
 
         result = await toolkit.get_skill_instructions()
         self.assertIsNone(result)
+
+    async def test_get_skill_instructions_includes_tool_group_skills(
+        self,
+    ) -> None:
+        """Test that skill instructions include skills from custom groups."""
+        toolkit = Toolkit(
+            tool_groups=[
+                ToolGroup(
+                    name="repair",
+                    description="Repair tools",
+                    skills_or_loaders=[
+                        MockSkillLoader([_make_skill("repair_skill")]),
+                    ],
+                ),
+            ],
+        )
+
+        result = await toolkit.get_skill_instructions()
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertIn("<name>repair_skill</name>", result)
+
+    async def test_get_skill_instructions_filters_inactive_group_skills(
+        self,
+    ) -> None:
+        """Test that inactive group skills are hidden from the prompt."""
+        toolkit = Toolkit(
+            skills_or_loaders=[MockSkillLoader([_make_skill("basic_skill")])],
+            tool_groups=[
+                ToolGroup(
+                    name="repair",
+                    description="Repair tools",
+                    skills_or_loaders=[
+                        MockSkillLoader([_make_skill("repair_skill")]),
+                    ],
+                ),
+            ],
+        )
+
+        inactive_result = await toolkit.get_skill_instructions(
+            activated_groups=[],
+        )
+        active_result = await toolkit.get_skill_instructions(
+            activated_groups=["repair"],
+        )
+
+        self.assertIsNotNone(inactive_result)
+        self.assertIsNotNone(active_result)
+        assert inactive_result is not None
+        assert active_result is not None
+        self.assertIn("<name>basic_skill</name>", inactive_result)
+        self.assertNotIn("<name>repair_skill</name>", inactive_result)
+        self.assertIn("<name>basic_skill</name>", active_result)
+        self.assertIn("<name>repair_skill</name>", active_result)
 
 
 class ToolkitSkillViewerTest(IsolatedAsyncioTestCase):
@@ -311,4 +366,43 @@ class ToolkitSkillViewerTest(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "id": "test_call_2",
             },
+        )
+
+    async def test_skill_viewer_uses_active_tool_group_skills(self) -> None:
+        """Test that activated custom-group skills expose SkillViewer."""
+        skill = _make_skill("repair_skill")
+        skill.markdown = "# Repair Skill\nUse this for repair tasks."
+        toolkit = Toolkit(
+            tool_groups=[
+                ToolGroup(
+                    name="repair",
+                    description="Repair tools",
+                    skills_or_loaders=[MockSkillLoader([skill])],
+                ),
+            ],
+        )
+
+        schema_names = [
+            schema["function"]["name"]
+            for schema in await toolkit.get_tool_schemas(groups=["repair"])
+        ]
+        self.assertIn("Skill", schema_names)
+
+        tool_call = ToolCallBlock(
+            id="test_call_group_skill",
+            name="Skill",
+            input=json.dumps({"skill": "repair_skill"}),
+        )
+        state = AgentState()
+        state.tool_context.activated_groups.append("repair")
+
+        chunks = []
+        async for result in toolkit.call_tool(tool_call, state):
+            if isinstance(result, ToolChunk):
+                chunks.append(result)
+
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(
+            chunks[0].content[0].text,
+            "# Repair Skill\nUse this for repair tasks.",
         )

@@ -134,7 +134,7 @@ export const CreateMCPDialog = ({ children, onAdd }: Props) => {
 	return (
 		<Dialog open={open} onOpenChange={handleOpenChange}>
 			<DialogTrigger asChild>{children}</DialogTrigger>
-			<DialogContent>
+			<DialogContent className="!w-[500px] !max-w-[500px]">
 				<DialogHeader>
 					<DialogTitle>{t('dialog-mcp-create.title')}</DialogTitle>
 					<DialogDescription>{t('dialog-mcp-create.description')}</DialogDescription>
@@ -180,21 +180,24 @@ export const CreateMCPDialog = ({ children, onAdd }: Props) => {
 					</Alert>
 				)}
 				<DialogFooter>
+					<Button variant="ghost" onClick={() => handleOpenChange(false)}>
+						<CircleAlert className="size-3.5" />
+						{t('common.cancel')}
+					</Button>
 					<Button
 						onClick={handleAdd}
 						disabled={status === 'loading' || status === 'success'}
 					>
-						{status === 'loading' && <Loader2 className="animate-spin" />}
-						{status === 'success' && <Check />}
-						{status !== 'loading' && status !== 'success' && <PlusCircle />}
+						{status === 'loading' && <Loader2 className="size-3.5 animate-spin" />}
+						{status === 'success' && <Check className="size-3.5" />}
+						{status !== 'loading' && status !== 'success' && (
+							<PlusCircle className="size-3.5" />
+						)}
 						{status === 'loading'
 							? t('dialog-mcp-create.adding')
 							: status === 'success'
 								? t('dialog-mcp-create.added')
 								: t('common.add')}
-					</Button>
-					<Button variant="ghost" onClick={() => handleOpenChange(false)}>
-						{t('common.cancel')}
 					</Button>
 				</DialogFooter>
 			</DialogContent>

@@ -1,28 +1,22 @@
 # -*- coding: utf-8 -*-
-"""Chat router providing a streaming SSE chat endpoint."""
-from collections.abc import AsyncGenerator
+"""Chat router — fire-and-forget trigger for chat runs.
 
-from fastapi import APIRouter, Depends
-from fastapi.responses import StreamingResponse
+The endpoint no longer returns an SSE stream. Instead, it kicks off a
+chat run as a background task and returns immediately. Events produced
+by the run are published to the message bus and delivered to the
+frontend via the long-lived ``GET /sessions/{sid}/stream`` SSE
+connection provided by the session router.
+"""
+from fastapi import APIRouter, Depends, HTTPException, status
 
-from .._deps import (
+from ..deps import (
+    get_chat_run_registry,
+    get_chat_service,
     get_current_user_id,
-    get_extra_agent_middlewares,
-    get_extra_agent_tools,
-    get_session_manager,
-    get_storage,
-    get_workspace_manager,
-    get_background_task_manager,
 )
-from .._manager import (
-    SessionManager,
-    WorkspaceManagerBase,
-    BackgroundTaskManager,
-)
-from .._schema import ChatRequest
+from ._schema import ChatRequest, ChatTriggerResponse
+from .._manager import ChatRunRegistry
 from .._service import ChatService
-from .._types import AgentMiddlewareFactory, AgentToolFactory
-from ..storage import StorageBase
 
 chat_router = APIRouter(
     prefix="/chat",
@@ -31,100 +25,67 @@ chat_router = APIRouter(
 )
 
 
-async def _stream_events(
-    user_id: str,
-    request: ChatRequest,
-    storage: StorageBase,
-    session_manager: SessionManager,
-    workspace_manager: WorkspaceManagerBase,
-    background_task_manager: BackgroundTaskManager,
-    extra_agent_middlewares: AgentMiddlewareFactory | None,
-    extra_agent_tools: AgentToolFactory | None,
-) -> AsyncGenerator[str, None]:
-    """Encode :class:`~agentscope.event.AgentEvent` objects as SSE frames.
-
-    All execution + persistence lives in :class:`ChatService`; this is just
-    the HTTP-side encoder.
-
-    Each yielded string is a complete SSE frame: ``data: <json>\\n\\n``.
-    """
-    service = ChatService(
-        storage=storage,
-        session_manager=session_manager,
-        background_task_manager=background_task_manager,
-        workspace_manager=workspace_manager,
-        extra_agent_middlewares=extra_agent_middlewares,
-        extra_agent_tools=extra_agent_tools,
-    )
-    async for event in service.stream_chat(
-        user_id=user_id,
-        session_id=request.session_id,
-        agent_id=request.agent_id,
-        input_msg=request.input,
-    ):
-        yield f"data: {event.model_dump_json()}\n\n"
-
-
 @chat_router.post(
     "/",
-    summary="Chat with an agent (streaming)",
-    response_description="Server-Sent Events stream of AgentEvent objects",
+    response_model=ChatTriggerResponse,
+    summary="Trigger a chat run (fire-and-forget)",
 )
 async def chat(
     request: ChatRequest,
     user_id: str = Depends(get_current_user_id),
-    storage: StorageBase = Depends(get_storage),
-    session_manager: SessionManager = Depends(get_session_manager),
-    workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
-    background_task_manager: BackgroundTaskManager = Depends(
-        get_background_task_manager,
-    ),
-    extra_agent_middlewares: AgentMiddlewareFactory
-    | None = Depends(
-        get_extra_agent_middlewares,
-    ),
-    extra_agent_tools: AgentToolFactory
-    | None = Depends(
-        get_extra_agent_tools,
-    ),
-) -> StreamingResponse:
-    """Send a message to an agent and stream back the reply as SSE events.
+    chat_service: ChatService = Depends(get_chat_service),
+    chat_run_registry: ChatRunRegistry = Depends(get_chat_run_registry),
+) -> ChatTriggerResponse:
+    """Trigger a chat run for the specified session.
 
-    The response is a ``text/event-stream`` where each frame carries a
-    JSON-serialised :class:`~agentscope.event.AgentEvent`.
+    The run executes as a background task tracked by
+    :class:`ChatRunRegistry`. Events produced during the run are
+    published to the message bus and delivered to any active
+    ``GET /sessions/{session_id}/stream`` SSE subscriber. The caller
+    does **not** receive events from this endpoint's response body.
+
+    Accepts the same ``input`` payloads as before:
+
+    - ``Msg`` / ``list[Msg]``: new user message(s).
+    - ``UserConfirmResultEvent`` / ``ExternalExecutionResultEvent``:
+      resume a paused tool call (human-in-the-loop).
+    - ``None``: continue from current state.
 
     Args:
         request (`ChatRequest`):
             JSON body with ``agent_id``, ``session_id``, and ``input``.
         user_id (`str`):
             Injected user id.
-        storage (`StorageBase`):
-            Injected application storage backend.
-        session_manager (`SessionManager`):
-            Injected session manager.
-        workspace_manager (`WorkspaceManagerBase`):
-            Injected workspace manager.
-        background_task_manager (`BackgroundTaskManager`):
-            Injected background task manager.
+        chat_service (`ChatService`):
+            Injected application-wide chat service.
+        chat_run_registry (`ChatRunRegistry`):
+            Injected per-process chat-run registry.
 
     Returns:
-        `StreamingResponse`:
-            SSE stream of AgentEvent frames.
+        `ChatTriggerResponse`:
+            Confirms the run was scheduled.
+
+    Raises:
+        `HTTPException`:
+            409 if a chat run for this session is already in flight in
+            this process (the registry enforces single-run-per-session).
     """
-    return StreamingResponse(
-        _stream_events(
-            user_id,
-            request,
-            storage,
-            session_manager,
-            workspace_manager,
-            background_task_manager,
-            extra_agent_middlewares,
-            extra_agent_tools,
-        ),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
+    try:
+        chat_run_registry.spawn(
+            chat_service.run(
+                user_id=user_id,
+                session_id=request.session_id,
+                agent_id=request.agent_id,
+                input_msg=request.input,
+            ),
+            session_id=request.session_id,
+        )
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(e),
+        ) from e
+    return ChatTriggerResponse(
+        status="started",
+        session_id=request.session_id,
     )

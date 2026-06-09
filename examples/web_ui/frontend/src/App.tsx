@@ -1,6 +1,6 @@
 import { Onborda, OnbordaProvider } from 'onborda';
 import { useMemo, useState } from 'react';
-import { createBrowserRouter, RouterProvider, useNavigate } from 'react-router-dom';
+import { createBrowserRouter, Navigate, RouterProvider, useNavigate } from 'react-router-dom';
 import { Toaster } from 'sonner';
 
 import { AppLayout } from '@/components/layout/AppLayout';
@@ -28,8 +28,11 @@ const router = createBrowserRouter([
 	{
 		element: <AppLayout />,
 		children: [
-			{ path: '/', element: <ChatPage /> },
-			{ path: '/chat/:agentId/:sessionId', element: <ChatPage /> },
+			{ path: '/', element: <Navigate to="/chat" replace /> },
+			{
+				path: '/chat/:agentId?/:sessionId?/:memberId?',
+				element: <ChatPage />,
+			},
 			{ path: '/schedule', element: <SchedulePage /> },
 			{ path: '/credential', element: <CredentialPage /> },
 		],

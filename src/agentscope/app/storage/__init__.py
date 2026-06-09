@@ -2,7 +2,7 @@
 """The storage module in agentscope."""
 
 from ._base import StorageBase
-from ._redis_storage import RedisStorage, RedisKeyConfig
+from ._redis_storage import RedisStorage
 from ._model import (
     AgentData,
     AgentRecord,
@@ -14,13 +14,15 @@ from ._model import (
     SessionRecord,
     SessionSource,
     ChatModelConfig,
+    TeamData,
+    TeamRecord,
     UserRecord,
 )
 
 __all__ = [
     "StorageBase",
-    "RedisKeyConfig",
     "RedisStorage",
+    # The ORM models
     "AgentData",
     "AgentRecord",
     "CredentialRecord",
@@ -28,6 +30,8 @@ __all__ = [
     "SessionRecord",
     "SessionSource",
     "ChatModelConfig",
+    "TeamData",
+    "TeamRecord",
     "UserRecord",
     "ScheduleData",
     "ScheduleRecord",

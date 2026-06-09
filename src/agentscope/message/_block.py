@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import Literal, List, TypeAlias
 from pydantic import BaseModel, Field, AnyUrl, field_serializer, ConfigDict
 
-from agentscope.permission import PermissionRule
+from ..permission import PermissionRule
 
 
 class TextBlock(BaseModel):
@@ -33,20 +33,6 @@ class ThinkingBlock(BaseModel):
     """The type of the thinking block, which is always 'thinking'."""
     thinking: str
     """The thinking content of the block."""
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
-    """The unique identifier of the block."""
-
-
-class HintBlock(BaseModel):
-    """A block used to provide instructions or hints to the LLM during the
-    reasoning-acting loop. When passed to the LLM API, the hint block is
-    converted into a user message.
-    """
-
-    type: Literal["hint"] = "hint"
-    """The type of the hint block, which is always 'hint'."""
-    hint: str
-    """The hint content of the block."""
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     """The unique identifier of the block."""
 
@@ -90,6 +76,29 @@ class DataBlock(BaseModel):
     a URL."""
     name: str | None = None
     """The name of the data block, which is optional."""
+
+
+class HintBlock(BaseModel):
+    """A block used to provide instructions or hints to the LLM during the
+    reasoning-acting loop. When passed to the LLM API, the hint block is
+    converted into a user message.
+
+    The ``hint`` field can be a plain string (text-only) or a list of
+    :class:`TextBlock` / :class:`DataBlock` for multimodal content
+    (e.g. a background tool result containing both text and an image).
+    """
+
+    type: Literal["hint"] = "hint"
+    """The type of the hint block, which is always 'hint'."""
+    hint: str | list[TextBlock | DataBlock]
+    """The hint content — plain text or a list of content blocks for
+    multimodal data."""
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    """The unique identifier of the block."""
+    source: str | None = None
+    """The sender or origin of this hint. For team messages this is the
+    sender's display name (e.g. ``"alice"``); for system notifications
+    it may be ``"system"`` or ``None``."""
 
 
 class ToolCallState(StrEnum):

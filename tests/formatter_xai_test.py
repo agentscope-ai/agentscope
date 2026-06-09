@@ -19,6 +19,8 @@ from agentscope.message import (
     AssistantMsg,
     SystemMsg,
     TextBlock,
+    DataBlock,
+    Base64Source,
     ToolCallBlock,
     ToolResultBlock,
     ThinkingBlock,
@@ -555,6 +557,40 @@ class TestXAIFormatter(IsolatedAsyncioTestCase):
                 assistant("Let me think about that."),
                 user("Remember to be concise."),
                 assistant("Here is my answer."),
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_hint_block_multimodal(self) -> None:
+        """Multimodal HintBlock becomes one user() stub carrying text +
+        image."""
+        fmt = XAIChatFormatter()
+        image_b64 = "ZmFrZSBpbWFnZSBkYXRh"
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    HintBlock(
+                        hint=[
+                            TextBlock(text="Inspect this screenshot:"),
+                            DataBlock(
+                                source=Base64Source(
+                                    data=image_b64,
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                user(
+                    "Inspect this screenshot:",
+                    image(f"data:image/png;base64,{image_b64}"),
+                ),
             ],
             res,
         )
