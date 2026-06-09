@@ -790,7 +790,12 @@ class Agent:
             **kwargs,
         )
 
-        block_ids: dict = {"text": None, "thinking": None, "tools": []}
+        block_ids: dict = {
+            "text": None,
+            "thinking": None,
+            "tools": [],
+            "data": [],
+        }
         completed_response: ChatResponse | None = None
 
         # Check if res is an async generator (streaming response)
@@ -831,6 +836,11 @@ class Agent:
             yield ToolCallEndEvent(
                 reply_id=self.state.reply_id,
                 tool_call_id=tool_call_id,
+            )
+        for data_block_id in block_ids["data"]:
+            yield DataBlockEndEvent(
+                reply_id=self.state.reply_id,
+                block_id=data_block_id,
             )
 
         # Send the model call ended event with usage if available
@@ -2197,12 +2207,29 @@ class Agent:
             else None
         )
 
+        # Assistant-produced audio (e.g. qwen-omni speaking aloud) is delivered
+        # to the user via streaming events; the raw bytes don't belong in
+        # conversation memory. Filtering here keeps every downstream walker
+        # (formatter, count_tokens, persistence) honest without each having
+        # to remember.
+        persisted_blocks = [
+            b
+            for b in blocks
+            if not (
+                isinstance(b, DataBlock)
+                and isinstance(b.source, (Base64Source, URLSource))
+                and b.source.media_type.startswith("audio/")
+            )
+        ]
+        if not persisted_blocks and msg_usage is None:
+            return
+
         if len(self.state.context) == 0:
             self.state.context.append(
                 AssistantMsg(
                     id=self.state.reply_id,
                     name=self.name,
-                    content=list(blocks),
+                    content=persisted_blocks,
                     usage=msg_usage,
                 ),
             )
@@ -2211,7 +2238,7 @@ class Agent:
             if last_msg.role == "assistant" and last_msg.name == self.name:
                 if isinstance(last_msg.content, str):
                     last_msg.content = [TextBlock(text=last_msg.content)]
-                last_msg.content.extend(blocks)
+                last_msg.content.extend(persisted_blocks)
                 if msg_usage is not None:
                     if last_msg.usage is None:
                         last_msg.usage = msg_usage
@@ -2223,7 +2250,7 @@ class Agent:
                     AssistantMsg(
                         id=self.state.reply_id,
                         name=self.name,
-                        content=list(blocks),
+                        content=persisted_blocks,
                         usage=msg_usage,
                     ),
                 )
@@ -2384,6 +2411,7 @@ class Agent:
 
         # Classify the content blocks into different types
         text_blocks, thinking_blocks, tool_call_blocks = [], [], []
+        data_blocks: list = []
         for block in chunk.content:
             if isinstance(block, TextBlock):
                 text_blocks.append(block)
@@ -2391,8 +2419,17 @@ class Agent:
                 thinking_blocks.append(block)
             elif isinstance(block, ToolCallBlock):
                 tool_call_blocks.append(block)
+            elif isinstance(block, DataBlock):
+                data_blocks.append(block)
 
-        # Handle the text blocks
+        # Handle the text blocks. We only auto-close the open text block
+        # when the current chunk has neither text NOR data — a chunk that
+        # carries only data (e.g. an omni-style audio PCM delta arriving
+        # between two text deltas) must keep the text stream alive so the
+        # frontend doesn't fragment one logical text stream into many
+        # separate bubbles. A chunk with tool calls (and no text/data)
+        # still closes text, which preserves text → tool → text render
+        # order via distinct text blocks.
         if text_blocks:
             # If the current chunk has text blocks but no text block id,
             # start with a start event
@@ -2409,14 +2446,15 @@ class Agent:
                 delta="".join([_.text for _ in text_blocks]),
             )
 
-        elif block_ids.get("text"):
+        elif block_ids.get("text") and not data_blocks:
             yield TextBlockEndEvent(
                 reply_id=self.state.reply_id,
                 block_id=block_ids["text"],
             )
             block_ids["text"] = None
 
-        # Handle the thinking blocks
+        # Same reasoning as the text block above — keep the thinking
+        # stream open across data-only chunks.
         if thinking_blocks:
             # Generate a new thinking block id and start event
             if not block_ids.get("thinking"):
@@ -2432,7 +2470,7 @@ class Agent:
                 delta="".join([_.thinking for _ in thinking_blocks]),
             )
 
-        elif block_ids.get("thinking"):
+        elif block_ids.get("thinking") and not data_blocks:
             yield ThinkingBlockEndEvent(
                 reply_id=self.state.reply_id,
                 block_id=block_ids["thinking"],
@@ -2466,6 +2504,29 @@ class Agent:
                 tool_call_id=finished_id,
             )
             block_ids["tools"].remove(finished_id)
+
+        # Handle the data blocks (streaming binary content, e.g. omni audio).
+        # Each DataBlock chunk from the model carries a delta payload with a
+        # stable block id; we open a stream the first time we see an id and
+        # emit delta events for subsequent chunks with the same id.
+        for data_block in data_blocks:
+            if not isinstance(data_block.source, Base64Source):
+                # Only Base64Source carries inline delta bytes; URLSource is
+                # one-shot and not part of the streaming protocol.
+                continue
+            if data_block.id not in block_ids["data"]:
+                block_ids["data"].append(data_block.id)
+                yield DataBlockStartEvent(
+                    reply_id=self.state.reply_id,
+                    block_id=data_block.id,
+                    media_type=data_block.source.media_type,
+                )
+            yield DataBlockDeltaEvent(
+                reply_id=self.state.reply_id,
+                block_id=data_block.id,
+                data=data_block.source.data,
+                media_type=data_block.source.media_type,
+            )
 
     async def _convert_tool_chunk_to_event(
         self,

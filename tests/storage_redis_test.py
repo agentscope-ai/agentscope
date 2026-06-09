@@ -22,6 +22,7 @@ from agentscope.credential import OllamaCredential
 from agentscope.app.storage import AgentData
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.message import UserMsg, AssistantMsg, TextBlock
+from agentscope.state import AgentState
 
 
 def make_storage() -> RedisStorage:
@@ -225,6 +226,35 @@ class TestSession(IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(records_after), 1)
         self.assertEqual(records_after[0].id, first_id)
+
+    async def test_create_with_explicit_session_id_uses_that_key(self) -> None:
+        """A caller-provided session_id should be the stored record id."""
+        session_id = "session-from-router"
+
+        session = await self.storage.upsert_session(
+            self.user_id,
+            self.agent_id,
+            make_session_config(self.workspace_id),
+            session_id=session_id,
+        )
+
+        self.assertEqual(session.id, session_id)
+        fetched = await self.storage.get_session(
+            self.user_id,
+            self.agent_id,
+            session_id,
+        )
+        self.assertIsNotNone(fetched)
+        self.assertEqual(fetched.id, session_id)
+
+        await self.storage.update_session_state(
+            self.user_id,
+            self.agent_id,
+            session_id,
+            AgentState(),
+        )
+        records = await self.storage.list_sessions(self.user_id, self.agent_id)
+        self.assertEqual([record.id for record in records], [session_id])
 
     async def test_delete(self) -> None:
         """Delete a session and verify it is gone from Redis."""

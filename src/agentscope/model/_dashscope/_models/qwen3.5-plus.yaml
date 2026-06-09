@@ -1,24 +1,27 @@
-name: o3
-label: o3
+name: qwen3.5-plus
+label: Qwen3.5-Plus
 status: active
 
 input_types:
   - text/plain
+  - application/x-thinking
+  - image/bmp
   - image/jpeg
   - image/png
-  - image/gif
+  - image/tiff
   - image/webp
+  - image/heic
+  - video/mp4
 
 output_types:
   - text/plain
   - application/x-thinking
 
-context_size: 200000
-output_size: 100000
+context_size: 1000000
+output_size: 65536
 
 parameter_overrides:
-  max_tokens:
-    maximum: 100000
+  max_tokens: {"maximum": 65536}
   # Voice only applies to omni-style models; hide the field for this
   # non-omni model so the frontend popover doesn't render it.
   voice:

@@ -350,7 +350,9 @@ async def update_session(
     return await storage.upsert_session(
         user_id=user_id,
         agent_id=agent_id,
-        config=existing.config.model_copy(update=config_updates),
+        config=SessionConfig.model_validate(
+            {**existing.config.model_dump(mode="json"), **config_updates},
+        ),
         state=updated_state,
         session_id=session_id,
     )

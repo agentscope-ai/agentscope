@@ -12,12 +12,13 @@ import {
 	CalendarClock,
 	CheckCircle,
 	ChevronDownIcon,
+	CirclePlay,
 	Copy,
 	Loader2,
 	MessageSquareQuote,
 	Wrench,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -32,6 +33,7 @@ import {
 	CollapsibleTrigger,
 } from '@/components/ui/collapsible.tsx';
 import { Item, ItemContent } from '@/components/ui/item.tsx';
+import { useAudioBlock, useReplayController } from '@/context/AudioContext';
 import { useTranslation } from '@/i18n/useI18n';
 import { formatNumber, formatTime } from '@/utils/common';
 
@@ -144,6 +146,157 @@ function groupToolCalls(content: ContentBlock[]): ExtendedContentBlock[] {
 	return result;
 }
 
+const AUDIO_WAVE_LINES: Array<{ x: number; y1: number; y2: number }> = [
+	{ x: 2, y1: 10, y2: 13 },
+	{ x: 6, y1: 6, y2: 17 },
+	{ x: 10, y1: 3, y2: 21 },
+	{ x: 14, y1: 8, y2: 15 },
+	{ x: 18, y1: 5, y2: 18 },
+	{ x: 22, y1: 10, y2: 13 },
+];
+
+function AudioWave({ isPlaying = true, className }: { isPlaying?: boolean; className?: string }) {
+	return (
+		<>
+			{isPlaying && (
+				<style>{`
+					@keyframes audioWave {
+						0%, 100% { transform: scaleY(1); }
+						50%      { transform: scaleY(0.3); }
+					}
+				`}</style>
+			)}
+			<svg
+				xmlns="http://www.w3.org/2000/svg"
+				width="24"
+				height="24"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth={2}
+				strokeLinecap="round"
+				strokeLinejoin="round"
+				className={className}
+			>
+				{AUDIO_WAVE_LINES.map(({ x, y1, y2 }, i) => (
+					<line
+						key={x}
+						x1={x}
+						x2={x}
+						y1={y1}
+						y2={y2}
+						style={{
+							transformOrigin: `${x}px 12px`,
+							animation: isPlaying
+								? `audioWave 0.8s ease-in-out ${i * 0.12}s infinite`
+								: 'none',
+						}}
+					/>
+				))}
+			</svg>
+		</>
+	);
+}
+
+/**
+ * Inline audio control rendered *inside* the time/usage Badge so the play
+ * icon visually merges into the same chip rather than floating as its own
+ * pill.
+ */
+function AudioInlineControl({ block }: { block: DataBlock }) {
+	const { t } = useTranslation();
+	const audioState = useAudioBlock(block.id);
+	const replayController = useReplayController();
+	const audioRef = useRef<HTMLAudioElement | null>(null);
+	const [isPlaying, setIsPlaying] = useState(false);
+
+	const isStreaming = audioState?.status === 'streaming';
+
+	// Don't build the giant base64 data URL while bytes are still streaming —
+	// it would re-allocate on every DATA_BLOCK_DELTA. Live playback during
+	// that window is handled by the manager's WavStreamPlayer; we only need
+	// `src` for replay after the stream ends (or for historical messages).
+	let src: string | null = null;
+	if (!isStreaming) {
+		if (audioState?.url) {
+			src = audioState.url;
+		} else if (block.source.type === 'url') {
+			src = block.source.url;
+		} else if (block.source.type === 'base64' && block.source.data) {
+			src = `data:${block.source.media_type};base64,${block.source.data}`;
+		}
+	}
+
+	// Reset the hidden <audio> when the source URL changes (e.g. streaming
+	// just transitioned to a Blob URL). Without an explicit load() some
+	// browsers keep the previous (or empty) source bound to the element.
+	useEffect(() => {
+		const el = audioRef.current;
+		if (!el || !src) return;
+		setIsPlaying(false);
+		el.load();
+	}, [src]);
+
+	// Pause when a newer reply interrupts this block's playback.
+	const interruptCount = audioState?.interruptCount ?? 0;
+	useEffect(() => {
+		if (interruptCount === 0) return;
+		const el = audioRef.current;
+		if (el && !el.paused) {
+			el.pause();
+		}
+	}, [interruptCount]);
+
+	if (isStreaming) {
+		return <AudioWave isPlaying className="ml-1" />;
+	}
+
+	if (!src) return null;
+
+	const toggle = async () => {
+		const el = audioRef.current;
+		if (!el) return;
+		if (el.paused) {
+			replayController?.play(el);
+			try {
+				await el.play();
+			} catch (err) {
+				console.error('Audio playback failed', err);
+			}
+		} else {
+			el.pause();
+			replayController?.stop();
+		}
+	};
+
+	return (
+		<>
+			<button
+				type="button"
+				onClick={toggle}
+				aria-label={
+					isPlaying ? t('messageBubble.pauseAudio') : t('messageBubble.playAudio')
+				}
+				className="ml-1 inline-flex cursor-pointer items-center transition-opacity hover:opacity-70"
+			>
+				{isPlaying ? (
+					<AudioWave isPlaying className="size-3" />
+				) : (
+					<CirclePlay className="size-3" />
+				)}
+			</button>
+			<audio
+				ref={audioRef}
+				src={src}
+				preload="auto"
+				onPlay={() => setIsPlaying(true)}
+				onPause={() => setIsPlaying(false)}
+				onEnded={() => setIsPlaying(false)}
+			/>
+		</>
+	);
+}
+
 /**
  * Render a single content block. Tool call groups are dispatched to
  * `renderToolGroup`; the per-group truncation at the first `asking` call
@@ -237,6 +390,9 @@ function renderBlock(
 
 		case 'data': {
 			const dataType = block.source.media_type.split('/')[0];
+			// Audio data blocks render in the footer (see AudioFooterControl),
+			// not inline alongside text.
+			if (dataType === 'audio') return null;
 			let data: string;
 			if (block.source.type === 'url') {
 				data = block.source.url;
@@ -246,8 +402,6 @@ function renderBlock(
 			switch (dataType) {
 				case 'image':
 					return <img key={index} src={data} alt="Uploaded image" />;
-				case 'audio':
-					return <audio key={index} controls src={data} />;
 				case 'video':
 					return <video key={index} controls src={data} />;
 			}
@@ -358,7 +512,15 @@ export function MessageBubble({ message, onUserConfirm }: MessageBubbleProps) {
 	}, [isRunning]);
 
 	const blocks = groupToolCalls(message.content);
-	const showBody = blocks.length > 0;
+	const audioBlocks = message.content.filter(
+		(b): b is DataBlock => b.type === 'data' && b.source.media_type.split('/')[0] === 'audio',
+	);
+	// Audio data blocks are rendered in the footer, so they shouldn't keep an
+	// otherwise-empty body bubble alive.
+	const hasBodyContent = blocks.some(
+		(b) => !(b.type === 'data' && b.source.media_type.split('/')[0] === 'audio'),
+	);
+	const showBody = hasBodyContent;
 	const showFooter = !isUser;
 
 	const startMs = new Date(message.created_at).getTime();
@@ -417,6 +579,9 @@ export function MessageBubble({ message, onUserConfirm }: MessageBubbleProps) {
 								</span>
 							</>
 						)}
+						{audioBlocks.map((block) => (
+							<AudioInlineControl key={block.id} block={block} />
+						))}
 					</Badge>
 				</div>
 			)}

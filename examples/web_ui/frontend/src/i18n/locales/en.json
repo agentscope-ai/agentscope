@@ -76,6 +76,9 @@
 	},
 	"messageBubble": {
 		"thinking": "Thinking",
+		"audioGenerating": "Generating audio…",
+		"playAudio": "Play audio",
+		"pauseAudio": "Pause audio",
 		"running": "Running...",
 		"hintSource": {
 			"tool_output": "Tool Output",

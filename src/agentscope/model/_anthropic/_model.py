@@ -49,7 +49,7 @@ class AnthropicChatModel(ChatModelBase):
 
         thinking_budget: int | None = Field(
             default=None,
-            title="Thinking budget",
+            title="Thinking Budget",
             description="The thinking budget for the LLM output.",
             gt=0,
         )

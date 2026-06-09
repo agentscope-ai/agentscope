@@ -1,43 +1,48 @@
 # -*- coding: utf-8 -*-
 """The AgentCreate tool — spawns a worker into the current team."""
+from __future__ import annotations
+
+import copy
 import json
-from typing import Literal
+from typing import TYPE_CHECKING
 
 from pydantic import Field
 
 from ._team_tool_base import _TeamToolBase
+from .._types import SubAgentTemplate
 from ..storage import AgentData, AgentRecord, SessionConfig
-from ...agent import ContextConfig, ReActConfig
 from ...message import HintBlock, TextBlock, ToolResultState
-from ...permission import PermissionContext, PermissionMode
 from ...state import AgentState
 from ...tool import ToolChunk, ParamsBase
 
+if TYPE_CHECKING:
+    from ..message_bus import MessageBus
+    from ..storage import StorageBase
 
-_PERMISSION_MODE_BY_VALUE: dict[str, PermissionMode] = {
-    mode.value: mode for mode in PermissionMode
-}
 
+_DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
+    "You are {member_name}, a member of team '{team_name}' led by "
+    "{leader_name}.\n\n"
+    "Team purpose: {team_description}\n\n"
+    "Your role: {member_description}\n\n"
+    "You communicate with the team leader and other members "
+    "through the TeamSay tool. "
+    "Speak on the team only when you have something "
+    "external to share — your private reasoning stays private."
+)
 
-def _build_worker_system_prompt(
-    team_name: str,
-    team_description: str,
-    member_name: str,
-    member_description: str,
-) -> str:
-    """Compose the system prompt for a freshly spawned worker."""
-    sections = [f"You are {member_name}, a member of team {team_name!r}."]
-    if team_description:
-        sections.append(f"Team purpose: {team_description}")
-    if member_description:
-        sections.append(f"Your role: {member_description}")
-    sections.append(
-        "You communicate with the team leader and other members "
-        "through the TeamSay tool. Other tool calls execute in your "
-        "own session. Speak on the team only when you have something "
-        "external to share — your private reasoning stays private.",
-    )
-    return "\n\n".join(sections)
+DEFAULT_SUB_AGENT_TEMPLATE = SubAgentTemplate(
+    type="default",
+    description="Default worker agent with standard configuration.",
+    system_prompt_template=_DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+)
+# The built-in default sub-agent template.
+#
+# Used when no custom templates are registered, or when the leader
+# agent creates a member without specifying a ``subagent_type`` (or
+# explicitly specifies ``subagent_type="default"``).  Developers can
+# override this by registering their own template with
+# ``type="default"`` via :func:`~agentscope.app.create_app`.
 
 
 class _AgentCreateParams(ParamsBase):
@@ -67,40 +72,6 @@ class _AgentCreateParams(ParamsBase):
             '``"wait for instructions"`` (use TeamSay later instead). '
             "Include any context, constraints, deliverables, and "
             "deadlines the member needs."
-        ),
-    )
-    permission_mode: Literal[
-        "default",
-        "accept_edits",
-        "explore",
-        "bypass",
-        "dont_ask",
-    ] = Field(
-        default="default",
-        description=(
-            "Permission mode controlling how the member handles tool "
-            "calls that would otherwise require user confirmation.\n\n"
-            "Choose based on the member's responsibilities:\n\n"
-            '- ``"default"`` — Each tool call that touches the system '
-            "(file writes, shell commands, etc.) requires confirmation. "
-            "Pick this when the member's work has real-world side effects "
-            "you want the user to review.\n"
-            '- ``"accept_edits"`` — Auto-approve file edits and '
-            "filesystem-shaping commands inside the working directory; "
-            "still confirm other risky calls. Pick this for a member "
-            "doing rapid iteration on code under your supervision.\n"
-            '- ``"explore"`` — Read-only mode: allow Read/Grep/Glob, '
-            "deny anything that mutates state. Pick this for research / "
-            "audit / planning members that should never modify anything.\n"
-            '- ``"bypass"`` — Skip every permission check. Pick this '
-            "ONLY for fully sandboxed members where any operation is "
-            "guaranteed safe (e.g. a containerised worker on disposable "
-            "data).\n"
-            '- ``"dont_ask"`` — Convert every ASK decision to DENY. '
-            "Pick this for unattended/background members where the user "
-            'isn\'t around to answer prompts; safer than ``"bypass"`` '
-            "because risky calls fail-closed instead of executing.\n\n"
-            'When unsure, start with ``"default"``.'
         ),
     )
 
@@ -142,12 +113,83 @@ overall communication topology unnecessarily complex.
 
     input_schema: dict = _AgentCreateParams.model_json_schema()
 
+    def __init__(
+        self,
+        storage: "StorageBase",
+        message_bus: "MessageBus",
+        user_id: str,
+        session_id: str,
+        agent_id: str,
+        sub_agent_templates: dict[str, SubAgentTemplate] | None = None,
+    ) -> None:
+        """Bind request-scoped identifiers plus sub-agent templates.
+
+        Extends :meth:`_TeamToolBase.__init__` with an optional
+        template registry. The built-in ``"default"`` template is
+        always present as a fallback; developers can override it by
+        registering their own template with ``type="default"``.
+
+        When more than one template type is available (i.e. custom
+        templates were registered), the tool's ``input_schema`` is
+        dynamically extended with a ``subagent_type`` enum field so
+        the leader agent can choose which type to create.
+
+        Args:
+            storage (`StorageBase`):
+                Application storage backend.
+            message_bus (`MessageBus`):
+                Application message bus for inter-session delivery.
+            user_id (`str`):
+                The owner user id of the calling agent.
+            session_id (`str`):
+                The current session id of the calling agent.
+            agent_id (`str`):
+                The id of the agent invoking the tool.
+            sub_agent_templates (`dict[str, SubAgentTemplate] | None`, \
+optional):
+                Template registry keyed by template type. The
+                built-in ``"default"`` template is injected
+                automatically if not already present.
+        """
+        super().__init__(storage, message_bus, user_id, session_id, agent_id)
+
+        self._sub_agent_templates: dict[str, SubAgentTemplate] = dict(
+            sub_agent_templates or {},
+        )
+        if "default" not in self._sub_agent_templates:
+            self._sub_agent_templates["default"] = DEFAULT_SUB_AGENT_TEMPLATE
+
+        # Only expose subagent_type when the developer registered
+        # custom templates — a single "default" type is redundant in
+        # the schema and would confuse the LLM.
+        has_custom_templates = set(self._sub_agent_templates) != {"default"}
+        if has_custom_templates:
+            schema = copy.deepcopy(
+                _AgentCreateParams.model_json_schema(),
+            )
+            type_descriptions = "\n".join(
+                f"- ``{t.type!r}`` — {t.description}"
+                for t in self._sub_agent_templates.values()
+            )
+            schema["properties"]["subagent_type"] = {
+                "type": "string",
+                "enum": list(self._sub_agent_templates),
+                "description": (
+                    "The type of sub-agent template to use. "
+                    "Available types:\n\n"
+                    f"{type_descriptions}\n\n"
+                    "Each type has pre-configured system prompt, "
+                    "permissions, and task context."
+                ),
+            }
+            self.input_schema = schema
+
     async def __call__(
         self,
         name: str,
         description: str,
         prompt: str,
-        permission_mode: str = "default",
+        subagent_type: str = "default",
     ) -> ToolChunk:
         """Spawn the worker agent + session directly via storage.
 
@@ -155,15 +197,21 @@ overall communication topology unnecessarily complex.
         enforce two preconditions: the calling session must be in a
         team, and it must be that team's leader.
 
+        The worker's configuration (system prompt, context/react
+        config, permission context, task context) is determined by
+        the :class:`SubAgentTemplate` matching ``subagent_type``.
+
         Args:
             name (`str`):
-                Short identifier for the worker.
+                Short identifier for the worker, unique within the
+                team. Used as the ``to`` target in ``TeamSay``.
             description (`str`):
                 One-sentence summary of the worker's role.
             prompt (`str`):
                 First task delivered as a user message to the worker.
-            permission_mode (`str`, defaults to ``"default"``):
-                Permission mode the worker operates under.
+            subagent_type (`str`, defaults to ``"default"``):
+                Template type to use. Must match a registered
+                :class:`SubAgentTemplate.type`.
 
         Returns:
             `ToolChunk`:
@@ -239,20 +287,22 @@ overall communication topology unnecessarily complex.
                     state=ToolResultState.ERROR,
                 )
 
-            if permission_mode not in _PERMISSION_MODE_BY_VALUE:
+            # Resolve the template.
+            template = self._sub_agent_templates.get(subagent_type)
+            if template is None:
+                available = list(self._sub_agent_templates)
                 return ToolChunk(
                     content=[
                         TextBlock(
                             text=(
-                                f"AgentCreate: unknown permission_mode "
-                                f"{permission_mode!r}; expected one of "
-                                f"{list(_PERMISSION_MODE_BY_VALUE)}."
+                                f"AgentCreate: unknown subagent_type "
+                                f"{subagent_type!r}; expected one of "
+                                f"{available}."
                             ),
                         ),
                     ],
                     state=ToolResultState.ERROR,
                 )
-            mode_enum = _PERMISSION_MODE_BY_VALUE[permission_mode]
 
             # Enforce team-scoped name uniqueness. TeamSay routes by
             # ``name`` (not agent_id), so duplicates would be ambiguous
@@ -288,13 +338,22 @@ overall communication topology unnecessarily complex.
                     state=ToolResultState.ERROR,
                 )
 
+            # Resolve leader name early — needed both for the system
+            # prompt template and for the initial team-message hint.
+            leader_name = (
+                leader_agent_record.data.name
+                if leader_agent_record is not None
+                else leader_session.agent_id
+            )
+
             # 1. Build worker AgentRecord (source="team" so it's hidden
             #    from the global agent list).
-            system_prompt = _build_worker_system_prompt(
+            system_prompt = template.system_prompt_template.format(
                 team_name=team.data.name,
                 team_description=team.data.description,
                 member_name=name,
                 member_description=description,
+                leader_name=leader_name,
             )
             worker_agent = AgentRecord(
                 user_id=self._user_id,
@@ -302,8 +361,12 @@ overall communication topology unnecessarily complex.
                 data=AgentData(
                     name=name,
                     system_prompt=system_prompt,
-                    context_config=ContextConfig(),
-                    react_config=ReActConfig(),
+                    context_config=template.context_config.model_copy(
+                        deep=True,
+                    ),
+                    react_config=template.react_config.model_copy(
+                        deep=True,
+                    ),
                 ),
             )
             await self._storage.upsert_agent(self._user_id, worker_agent)
@@ -311,7 +374,12 @@ overall communication topology unnecessarily complex.
             # 2. Build worker SessionRecord, inheriting leader's model
             #    config.
             worker_state = AgentState(
-                permission_context=PermissionContext(mode=mode_enum),
+                permission_context=template.permission_context.model_copy(
+                    deep=True,
+                ),
+                tasks_context=template.tasks_context.model_copy(
+                    deep=True,
+                ),
             )
             worker_session = await self._storage.upsert_session(
                 user_id=self._user_id,
@@ -342,11 +410,6 @@ overall communication topology unnecessarily complex.
             await self._storage.upsert_team(self._user_id, team)
 
             # 4. Deliver the initial task to the worker's inbox + wakeup.
-            leader_name = (
-                leader_agent_record.data.name
-                if leader_agent_record is not None
-                else leader_session.agent_id
-            )
             hint = HintBlock(
                 hint=(
                     f'<team-message from="{leader_name}">\n'

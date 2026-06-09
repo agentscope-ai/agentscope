@@ -76,6 +76,9 @@
 	},
 	"messageBubble": {
 		"thinking": "思考中",
+		"audioGenerating": "正在生成音频…",
+		"playAudio": "播放音频",
+		"pauseAudio": "暂停音频",
 		"running": "运行中...",
 		"hintSource": {
 			"tool_output": "工具输出",
@@ -292,7 +295,7 @@
 		"username": "用户名",
 		"usernamePlaceholder": "请输入用户名",
 		"submit": "开始使用",
-		"hint": "此应用进提供前端服务，所有数据均来自填写的服务器地址，用户名仅用于服务端鉴权。"
+		"hint": "此应用仅提供前端服务，所有数据均来自填写的服务器地址，用户名仅用于服务端鉴权。"
 	},
 	"tour": {
 		"trigger": "新手引导",
