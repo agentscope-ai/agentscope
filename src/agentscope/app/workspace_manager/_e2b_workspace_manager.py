@@ -45,8 +45,9 @@ from agentscope.workspace._e2b._bootstrap import (
     DEFAULT_TEMPLATE,
     DEFAULT_TIMEOUT,
 )
+
 from ._base import WorkspaceManagerBase
-from .._manager._workspace_pool import PooledEntry, WorkspacePool
+from ._workspace_pool import PooledEntry, WorkspacePool
 
 DEFAULT_SWEEP_INTERVAL = 300.0
 
@@ -76,11 +77,10 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         sweep_interval: float = DEFAULT_SWEEP_INTERVAL,
         # ── pooling parameters (disabled by default) ──────────
         pool_enabled: bool = False,
-        min_idle: int = 1,
-        max_idle: int = 3,
-        total: int = 10,
-        create_batch_size: int = 2,
-        max_reuse: int = 50,
+        pool_min_ready: int = 1,
+        pool_max_ready: int = 3,
+        pool_capacity: int = 10,
+        pool_batch_size: int = 2,
     ) -> None:
         """Initialize the E2B workspace manager.
 
@@ -125,20 +125,25 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
                 Only used when ``pool_enabled=False``.
             pool_enabled (`bool`, defaults to `False`):
                 When ``True``, use a pre-warming pool instead of the
-                TTL cache. The pool provides stronger isolation by
-                destroying and recreating sandboxes on each release
-                (via :meth:`E2BWorkspace.heavy_reset_for_pool`).
-            min_idle (`int`, defaults to `1`):
-                Pool: minimum idle instances to maintain.
-            max_idle (`int`, defaults to `3`):
-                Pool: target idle count after replenishment.
-            total (`int`, defaults to `10`):
-                Pool: hard cap on total managed instances.
-            create_batch_size (`int`, defaults to `2`):
-                Pool: concurrent factory calls per replenishment.
-            max_reuse (`int`, defaults to `50`):
-                Pool: max recycling count per sandbox. ``0`` =
-                unlimited.
+                TTL cache. Each sandbox is used exactly once
+                (``max_reuse=1``) and destroyed on release; the pool
+                background loop creates fresh replacements.
+            pool_min_ready (`int`, defaults to `1`):
+                Pool: minimum number of ready-to-use instances kept
+                on standby. When the count drops below this threshold,
+                the pool automatically creates new instances in the
+                background.
+            pool_max_ready (`int`, defaults to `3`):
+                Pool: target number of ready-to-use instances after
+                replenishment. The pool will create instances up to
+                this count when triggered.
+            pool_capacity (`int`, defaults to `10`):
+                Pool: maximum total instances managed by the pool
+                (both in-use and standby combined). Requests beyond
+                this limit trigger overflow creation.
+            pool_batch_size (`int`, defaults to `2`):
+                Pool: how many instances to create concurrently per
+                replenishment cycle.
         """
         self._template = template
         self._api_key = api_key
@@ -165,16 +170,16 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         if pool_enabled:
             self._pool = WorkspacePool[E2BWorkspace](
                 factory=self._pool_factory,
-                reset_fn=self._pool_reset,
+                reset_fn=None,
                 health_check_fn=self._pool_health_check,
                 close_fn=self._pool_close,
                 pause_fn=self._pool_pause,
                 resume_fn=self._pool_resume,
-                min_idle=min_idle,
-                max_idle=max_idle,
-                total=total,
-                create_batch_size=create_batch_size,
-                max_reuse=max_reuse,
+                pool_min_ready=pool_min_ready,
+                pool_max_ready=pool_max_ready,
+                pool_capacity=pool_capacity,
+                pool_batch_size=pool_batch_size,
+                max_reuse=1,
             )
 
     # ── metadata helper ───────────────────────────────────────────
@@ -240,13 +245,6 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
             ws.workspace_id,
         )
         return ws
-
-    async def _pool_reset(self, ws: E2BWorkspace) -> None:
-        """Heavy reset: destroy sandbox and recreate for strong isolation."""
-        await ws.heavy_reset_for_pool(
-            default_mcps=self._default_mcps or None,
-            skill_paths=self._skill_paths or None,
-        )
 
     @staticmethod
     async def _pool_health_check(ws: E2BWorkspace) -> bool:
@@ -379,6 +377,13 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         agent_id: str,
         workspace_id: str,
     ) -> E2BWorkspace:
+        """Return an active workspace, checking out from the pool if needed.
+
+        If ``workspace_id`` is already active, its workspace is returned
+        directly. Otherwise a fresh entry is acquired from the pool,
+        sandbox metadata is updated, and the entry is registered as
+        active.
+        """
         async with self._lock:
             entry = self._active.get(workspace_id)
             if entry is not None:
@@ -388,19 +393,18 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         entry = await self._pool.acquire()
         ws = entry.workspace
 
-        ws.sandbox_metadata.update(
-            {
-                "agentscope.user.id": user_id,
-                "agentscope.agent.id": agent_id,
-                "agentscope.workspace.id": workspace_id,
-            },
-        )
-
         async with self._lock:
             existing = self._active.get(workspace_id)
             if existing is not None:
-                asyncio.create_task(self._pool.release(entry))
+                self._pool.release_background(entry)
                 return existing.workspace
+            ws.sandbox_metadata.update(
+                {
+                    "agentscope.user.id": user_id,
+                    "agentscope.agent.id": agent_id,
+                    "agentscope.workspace.id": workspace_id,
+                },
+            )
             self._active[workspace_id] = entry
 
         logger.info(
@@ -415,6 +419,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         user_id: str,
         agent_id: str,
     ) -> E2BWorkspace:
+        """Create a new workspace by generating an id and checking out."""
         workspace_id = uuid.uuid4().hex
         return await self._pool_get_workspace(
             user_id,
@@ -423,6 +428,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         )
 
     async def _pool_close_workspace(self, workspace_id: str) -> None:
+        """Close a single active workspace and release it back to the pool."""
         async with self._lock:
             entry = self._active.pop(workspace_id, None)
         if entry is None:
@@ -431,6 +437,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         await self._pool.release(entry)
 
     async def _pool_close_all(self) -> None:
+        """Close every active workspace and release them back to the pool."""
         async with self._lock:
             entries = list(self._active.items())
             self._active.clear()

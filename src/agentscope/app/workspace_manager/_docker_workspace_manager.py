@@ -26,7 +26,9 @@ constructor):
 """
 
 import asyncio
+import io
 import os
+import tarfile
 import time
 import uuid
 from typing import Self
@@ -38,10 +40,96 @@ from agentscope.workspace._docker._make_dockerfile import (
     DEFAULT_BASE_IMAGE,
     DEFAULT_GATEWAY_PORT,
 )
+
 from ._base import WorkspaceManagerBase
-from .._manager._workspace_pool import PooledEntry, WorkspacePool
+from ._workspace_pool import PooledEntry, WorkspacePool
 
 DEFAULT_SWEEP_INTERVAL = 300.0
+
+
+def _safe_extract_tar(
+    tar_obj: tarfile.TarFile,
+    dest_dir: str,
+) -> int:
+    """Extract *tar_obj* into *dest_dir* with safety filtering.
+
+    The archive produced by ``docker get_archive`` wraps the target
+    directory itself as the first entry (e.g. ``workspace/``).  This
+    function strips that leading prefix so that archive contents land
+    directly inside *dest_dir*.
+
+    Safety guarantees:
+
+    * Symlinks and hardlinks are silently skipped (prevents symlink
+      escape).
+    * Members whose resolved path falls outside *dest_dir* after
+      ``os.path.realpath`` are skipped (prevents path traversal).
+    * Absolute paths and ``..`` components are rejected.
+
+    Args:
+        tar_obj: An open :class:`tarfile.TarFile` to read from.
+            The caller is responsible for closing it afterwards.
+        dest_dir: Absolute host directory to extract into.  Must
+            already exist.
+
+    Returns:
+        Number of members actually extracted.
+    """
+    members = tar_obj.getmembers()
+
+    # Detect the archive-root directory prefix to strip.
+    prefix = ""
+    for m in members:
+        if m.isdir():
+            prefix = m.name.rstrip("/") + "/"
+            break
+
+    real_dest = os.path.realpath(dest_dir) + os.sep
+    extracted = 0
+
+    for member in members:
+        # Skip the root directory entry itself.
+        if member.name.rstrip("/") == prefix.rstrip("/"):
+            continue
+
+        # Strip the prefix so contents land directly in dest_dir.
+        if prefix and member.name.startswith(prefix):
+            member.name = member.name[len(prefix) :]
+        if not member.name:
+            continue
+
+        # Reject absolute paths and parent-directory references.
+        if member.name.startswith("/") or ".." in member.name.split("/"):
+            continue
+
+        # Reject symlinks and hardlinks (symlink escape risk).
+        if member.issym() or member.islnk():
+            logger.warning(
+                "_safe_extract_tar: skipping symlink/hardlink: %s",
+                member.name,
+            )
+            continue
+
+        # Verify the resolved path stays inside dest_dir.
+        resolved = os.path.realpath(os.path.join(dest_dir, member.name))
+        if not resolved.startswith(real_dest):
+            logger.warning(
+                "_safe_extract_tar: skipping path traversal: %s",
+                member.name,
+            )
+            continue
+
+        if member.isfile():
+            tar_obj.extract(member, path=dest_dir)
+            extracted += 1
+        elif member.isdir():
+            os.makedirs(
+                os.path.join(dest_dir, member.name),
+                exist_ok=True,
+            )
+            extracted += 1
+
+    return extracted
 
 
 class DockerWorkspaceManager(WorkspaceManagerBase):
@@ -72,11 +160,10 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         sweep_interval: float = DEFAULT_SWEEP_INTERVAL,
         # ── pooling parameters (disabled by default) ──────────
         pool_enabled: bool = False,
-        min_idle: int = 1,
-        max_idle: int = 3,
-        total: int = 10,
-        create_batch_size: int = 2,
-        max_reuse: int = 50,
+        pool_min_ready: int = 1,
+        pool_max_ready: int = 3,
+        pool_capacity: int = 10,
+        pool_batch_size: int = 2,
     ) -> None:
         """Initialize the docker workspace manager.
 
@@ -117,19 +204,25 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
                 ``pool_enabled=False``.
             pool_enabled (`bool`, defaults to `False`):
                 When ``True``, use a pre-warming pool instead of the
-                TTL cache. The pool provides stronger isolation by
-                destroying and recreating containers on each release
-                (via :meth:`DockerWorkspace.heavy_reset_for_pool`).
-            min_idle (`int`, defaults to `1`):
-                Pool: minimum idle instances to maintain.
-            max_idle (`int`, defaults to `3`):
-                Pool: target idle count after replenishment.
-            total (`int`, defaults to `10`):
-                Pool: hard cap on total managed instances.
-            create_batch_size (`int`, defaults to `2`):
-                Pool: concurrent factory calls per replenishment.
-            max_reuse (`int`, defaults to `50`):
-                Pool: max recycling count per container.
+                TTL cache. Each container is used exactly once
+                (``max_reuse=1``) and destroyed on release; the pool
+                background loop creates fresh replacements.
+            pool_min_ready (`int`, defaults to `1`):
+                Pool: minimum number of ready-to-use instances kept
+                on standby. When the count drops below this threshold,
+                the pool automatically creates new instances in the
+                background.
+            pool_max_ready (`int`, defaults to `3`):
+                Pool: target number of ready-to-use instances after
+                replenishment. The pool will create instances up to
+                this count when triggered.
+            pool_capacity (`int`, defaults to `10`):
+                Pool: maximum total instances managed by the pool
+                (both in-use and standby combined). Requests beyond
+                this limit trigger overflow creation.
+            pool_batch_size (`int`, defaults to `2`):
+                Pool: how many instances to create concurrently per
+                replenishment cycle.
         """
         self._basedir = os.path.abspath(basedir) if basedir else ""
         self._base_image = base_image
@@ -149,21 +242,22 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         self._sweep_task: asyncio.Task | None = None
 
         # ── Pool mode (pool_enabled=True) ─────────────────────
-        self._active: dict[str, PooledEntry[DockerWorkspace]] = {}
+        # workspace_id → (pool entry, host workdir or "")
+        self._active: dict[str, tuple[PooledEntry[DockerWorkspace], str]] = {}
         self._pool: WorkspacePool[DockerWorkspace] | None = None
         if pool_enabled:
             self._pool = WorkspacePool[DockerWorkspace](
                 factory=self._pool_factory,
-                reset_fn=self._pool_reset,
+                reset_fn=None,
                 health_check_fn=self._pool_health_check,
                 close_fn=self._pool_close,
                 pause_fn=self._pool_pause,
                 resume_fn=self._pool_resume,
-                min_idle=min_idle,
-                max_idle=max_idle,
-                total=total,
-                create_batch_size=create_batch_size,
-                max_reuse=max_reuse,
+                pool_min_ready=pool_min_ready,
+                pool_max_ready=pool_max_ready,
+                pool_capacity=pool_capacity,
+                pool_batch_size=pool_batch_size,
+                max_reuse=1,
             )
 
     # ── isolation helpers ─────────────────────────────────────────
@@ -220,13 +314,6 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         )
         return ws
 
-    async def _pool_reset(self, ws: DockerWorkspace) -> None:
-        """Heavy reset: destroy container and recreate for strong isolation."""
-        await ws.heavy_reset_for_pool(
-            default_mcps=self._default_mcps or None,
-            skill_paths=self._skill_paths or None,
-        )
-
     @staticmethod
     async def _pool_health_check(ws: DockerWorkspace) -> bool:
         """Probe gateway health."""
@@ -252,6 +339,61 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
                 "DockerWorkspaceManager[pool]: failed to close %s",
                 ws.workspace_id,
             )
+
+    # ── tar-based sync helpers (pool mode) ─────────────────────────
+
+    @staticmethod
+    async def _sync_host_to_container(
+        ws: DockerWorkspace,
+        host_workdir: str,
+    ) -> None:
+        """Tar the host workdir and upload into the container."""
+        if not os.path.isdir(host_workdir):
+            return
+        entries = os.listdir(host_workdir)
+        if not entries:
+            return
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tf:
+            for entry in entries:
+                tf.add(os.path.join(host_workdir, entry), arcname=entry)
+
+        await ws.upload_tar(buf.getvalue())
+        logger.info(
+            "DockerWorkspaceManager[pool]: synced host -> container "
+            "(%d entries)",
+            len(entries),
+        )
+
+    @staticmethod
+    async def _sync_container_to_host(
+        ws: DockerWorkspace,
+        host_workdir: str,
+    ) -> None:
+        """Download the container workspace tar and extract to host."""
+        os.makedirs(host_workdir, exist_ok=True)
+
+        try:
+            tar_obj = await ws.download_tar()
+        except Exception:
+            logger.warning(
+                "DockerWorkspaceManager[pool]: download_tar failed, "
+                "skipping sync-back",
+            )
+            return
+
+        try:
+            extracted = _safe_extract_tar(tar_obj, host_workdir)
+        finally:
+            tar_obj.close()
+
+        logger.info(
+            "DockerWorkspaceManager[pool]: synced container -> host %s "
+            "(%d entries)",
+            host_workdir,
+            extracted,
+        )
 
     # ── public API ────────────────────────────────────────────────
 
@@ -362,26 +504,55 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
 
     async def _pool_get_workspace(
         self,
-        user_id: str,  # noqa: W0613
-        agent_id: str,  # noqa: W0613
+        user_id: str,
+        agent_id: str,
         workspace_id: str,
     ) -> DockerWorkspace:
-        del user_id, agent_id
+        """Return an active workspace, checking out from the pool if needed.
+
+        If ``workspace_id`` is already active, its workspace is returned
+        directly. Otherwise a fresh entry is acquired from the pool,
+        the host workdir is synced into the container, and the entry is
+        registered as active.
+        """
         async with self._lock:
-            entry = self._active.get(workspace_id)
-            if entry is not None:
-                return entry.workspace
+            slot = self._active.get(workspace_id)
+            if slot is not None:
+                return slot[0].workspace
 
         assert self._pool is not None
         entry = await self._pool.acquire()
         ws = entry.workspace
 
+        host_workdir = (
+            self._workdir_for(user_id, agent_id) if self._basedir else ""
+        )
+
         async with self._lock:
             existing = self._active.get(workspace_id)
             if existing is not None:
-                asyncio.create_task(self._pool.release(entry))
-                return existing.workspace
-            self._active[workspace_id] = entry
+                self._pool.release_background(entry)
+                return existing[0].workspace
+            self._active[workspace_id] = (entry, host_workdir)
+
+        # Sync host workdir -> container so pool-mode workspaces get the
+        # same directory structure as bind-mount (TTL-cache) mode.
+        if host_workdir:
+            os.makedirs(host_workdir, exist_ok=True)
+            try:
+                await self._sync_host_to_container(ws, host_workdir)
+            except Exception:
+                logger.exception(
+                    "DockerWorkspaceManager[pool]: host->container sync "
+                    "failed for workspace_id=%s, rolling back",
+                    workspace_id,
+                )
+                # Roll back: remove from active tracking and release the
+                # entry back to the pool so it is not leaked.
+                async with self._lock:
+                    self._active.pop(workspace_id, None)
+                self._pool.release_background(entry)
+                raise
 
         logger.info(
             "DockerWorkspaceManager[pool]: checked out %s for workspace_id=%s",
@@ -395,6 +566,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         user_id: str,
         agent_id: str,
     ) -> DockerWorkspace:
+        """Create a new workspace by generating an id and checking out."""
         workspace_id = uuid.uuid4().hex
         return await self._pool_get_workspace(
             user_id,
@@ -403,22 +575,64 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         )
 
     async def _pool_close_workspace(self, workspace_id: str) -> None:
+        """Close a single active workspace and release it back to the pool.
+
+        Syncs the container filesystem back to the host workdir before
+        releasing so that data persists across pool cycles.
+        """
         async with self._lock:
-            entry = self._active.pop(workspace_id, None)
-        if entry is None:
+            slot = self._active.pop(workspace_id, None)
+        if slot is None:
             return
+        entry, host_workdir = slot
+
+        # Sync container -> host before releasing so data persists.
+        if host_workdir:
+            try:
+                await self._sync_container_to_host(
+                    entry.workspace,
+                    host_workdir,
+                )
+            except Exception:
+                logger.exception(
+                    "DockerWorkspaceManager[pool]: container->host sync "
+                    "failed for workspace_id=%s",
+                    workspace_id,
+                )
+
         assert self._pool is not None
         await self._pool.release(entry)
 
     async def _pool_close_all(self) -> None:
+        """Close every active workspace and release them back to the pool.
+
+        Syncs all active containers back to their host workdirs before
+        releasing.
+        """
         async with self._lock:
-            entries = list(self._active.items())
+            slots = list(self._active.items())
             self._active.clear()
-        if not entries:
+        if not slots:
             return
+
+        # Sync all active containers back to host before releasing.
+        for wid, (entry, host_workdir) in slots:
+            if host_workdir:
+                try:
+                    await self._sync_container_to_host(
+                        entry.workspace,
+                        host_workdir,
+                    )
+                except Exception:
+                    logger.exception(
+                        "DockerWorkspaceManager[pool]: container->host "
+                        "sync failed for workspace_id=%s during close_all",
+                        wid,
+                    )
+
         assert self._pool is not None
         await asyncio.gather(
-            *(self._pool.release(entry) for _, entry in entries),
+            *(self._pool.release(entry) for _, (entry, _) in slots),
             return_exceptions=True,
         )
 

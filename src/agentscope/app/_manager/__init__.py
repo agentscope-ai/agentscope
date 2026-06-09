@@ -5,7 +5,6 @@ application-wide resources."""
 from ._background_task_manager import BackgroundTaskManager
 from ._cancel_dispatcher import CancelDispatcher
 from ._chat_run_registry import ChatRunRegistry
-from ._rl_workspace_manager import RLWorkspaceManager
 from ._scheduler import SchedulerManager
 from ._wakeup_dispatcher import WakeupDispatcher
 
@@ -13,7 +12,6 @@ __all__ = [
     "BackgroundTaskManager",
     "CancelDispatcher",
     "ChatRunRegistry",
-    "RLWorkspaceManager",
     "SchedulerManager",
     "WakeupDispatcher",
 ]

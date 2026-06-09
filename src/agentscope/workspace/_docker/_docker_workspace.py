@@ -77,7 +77,6 @@ from ._make_dockerfile import (
     prepare_build_context,
 )
 
-
 _DEFAULT_INSTRUCTIONS = """<workspace>
 You have a Docker-based workspace. All tool calls execute **inside the
 container** at ``{workdir}``.
@@ -384,203 +383,6 @@ class DockerWorkspace(WorkspaceBase):
 
         self.is_alive = False
 
-    # ── pool lifecycle ──────────────────────────────────────────
-
-    async def light_reset_for_pool(
-        self,
-        default_mcps: list[MCPClient] | None = None,
-        skill_paths: list[str] | None = None,
-    ) -> None:
-        """Thorough reset for pool recycling.
-
-        Designed for the pooling lifecycle where a workspace must be
-        handed to a different user with no residual state.
-
-        Steps:
-
-        1. Kill the gateway process.
-        2. Delete ``sessions/``, ``data/``, ``skills/``, ``.mcp``.
-        3. Recreate empty directory structure.
-        4. Clear internal MCP / gateway-client state.
-        5. Mint a fresh bearer token and restart the gateway.
-        6. Wait for gateway ``/health``.
-        7. Re-seed ``default_mcps`` and ``skill_paths`` if provided.
-
-        Must be called while the container is **running**.
-
-        Args:
-            default_mcps: MCPs to register after reset. ``None`` means
-                the workspace stays MCP-free.
-            skill_paths: Local skill directories to upload after reset.
-                ``None`` means no skills.
-        """
-        if self._container is None:
-            raise RuntimeError(
-                "Cannot light_reset_for_pool: container is None",
-            )
-
-        # 1. Stop gateway
-        await self._stop_gateway_process()
-
-        # 2. Wipe
-        paths_to_remove = [
-            CONTAINER_SESSIONS_DIR,
-            CONTAINER_DATA_DIR,
-            CONTAINER_SKILLS_DIR,
-            f"{CONTAINER_WORKDIR}/.mcp",
-        ]
-        await self._exec(
-            "rm -rf " + " ".join(shlex.quote(p) for p in paths_to_remove),
-        )
-
-        # 3. Recreate
-        await self._exec(
-            f"mkdir -p {CONTAINER_DATA_DIR} {CONTAINER_SKILLS_DIR} "
-            f"{CONTAINER_SESSIONS_DIR}",
-        )
-
-        # 4. Clear in-memory state
-        async with self._mcp_lock, self._skill_lock:
-            self._gateway_clients.clear()
-            self._mcps = []
-
-        # 5. Restart gateway with fresh token
-        self._gateway_token = uuid.uuid4().hex
-        if self._gateway is not None:
-            try:
-                await self._gateway.aclose()
-            except Exception:
-                pass
-            self._gateway = None
-
-        await self._write_gateway_config()
-        await self._start_gateway_process()
-
-        host_port = self._port_mapping[self.gateway_port]
-        self._gateway = GatewayClient(
-            base_url=f"http://127.0.0.1:{host_port}",
-            token=self._gateway_token,
-            timeout=30.0,
-        )
-
-        # 6. Wait for healthy
-        await self._wait_for_gateway()
-
-        # 7. Re-seed
-        if default_mcps:
-            self._mcps = list(default_mcps)
-            if self.workdir is not None:
-                await self._save_mcp_file()
-            self._gateway_clients = {
-                c.name: c for c in await self._gateway.list_mcps()
-            }
-
-        if skill_paths:
-            for path in skill_paths:
-                try:
-                    await self.add_skill(path)
-                except Exception as e:
-                    logger.warning(
-                        "DockerWorkspace: skip skill %r "
-                        "during light_reset_for_pool: %s",
-                        path,
-                        e,
-                    )
-
-    async def heavy_reset_for_pool(
-        self,
-        default_mcps: list[MCPClient] | None = None,
-        skill_paths: list[str] | None = None,
-    ) -> None:
-        """Heavy reset for agent-app pool recycling.
-
-        Provides stronger isolation than :meth:`light_reset_for_pool` by
-        destroying the entire container and creating a fresh one from
-        the cached image. This ensures no residual processes, temp
-        files, or environment state leaks between users.
-
-        Steps:
-
-        1. Release gateway client.
-        2. Kill and remove the old container.
-        3. Create and start a fresh container (same image, new port).
-        4. Write gateway config and start gateway.
-        5. Wait for gateway ``/health``.
-        6. Re-seed ``default_mcps`` and ``skill_paths`` if provided.
-
-        The image (``self._image_tag``) must already be built.
-
-        Args:
-            default_mcps: MCPs to register after reset. ``None`` means
-                the workspace stays MCP-free.
-            skill_paths: Local skill directories to upload after reset.
-                ``None`` means no skills.
-        """
-        # 1. Release gateway
-        if self._gateway is not None:
-            try:
-                await self._gateway.aclose()
-            except Exception:
-                pass
-            self._gateway = None
-        self._gateway_clients.clear()
-
-        # 2. Kill and remove old container
-        if self._container is not None:
-            try:
-                await self._container.kill()
-            except Exception:
-                pass
-            try:
-                await self._container.delete(force=True)
-            except Exception:
-                pass
-            self._container = None
-        self._port_mapping.clear()
-
-        # 3. Create fresh container from cached image
-        await self._create_and_start_container()
-
-        # 4. Clear in-memory state + start gateway
-        async with self._mcp_lock, self._skill_lock:
-            self._mcps = list(default_mcps or [])
-
-        self._gateway_token = uuid.uuid4().hex
-        await self._write_gateway_config()
-        await self._start_gateway_process()
-
-        host_port = self._port_mapping[self.gateway_port]
-        self._gateway = GatewayClient(
-            base_url=f"http://127.0.0.1:{host_port}",
-            token=self._gateway_token,
-            timeout=30.0,
-        )
-
-        # 5. Wait for healthy
-        await self._wait_for_gateway()
-
-        # 6. Re-seed
-        if default_mcps:
-            if self.workdir is not None:
-                await self._save_mcp_file()
-            self._gateway_clients = {
-                c.name: c for c in await self._gateway.list_mcps()
-            }
-
-        if skill_paths:
-            for path in skill_paths:
-                try:
-                    await self.add_skill(path)
-                except Exception as e:
-                    logger.warning(
-                        "DockerWorkspace: skip skill %r "
-                        "during heavy_reset_for_pool: %s",
-                        path,
-                        e,
-                    )
-
-        self.is_alive = True
-
     async def pause(self) -> None:
         """Pause (freeze) the container to save resources.
 
@@ -650,6 +452,28 @@ class DockerWorkspace(WorkspaceBase):
             return await self._gateway.health()
         except Exception:
             return False
+
+    # ── bulk tar I/O (used by pool-mode sync) ───────────────────
+
+    async def upload_tar(self, tar_data: bytes) -> None:
+        """Upload a tar archive and extract it into ``/workspace``.
+
+        Args:
+            tar_data: Raw tar bytes whose entries are relative paths
+                (e.g. ``data/file.txt``). They will be extracted under
+                ``CONTAINER_WORKDIR``.
+        """
+        await self._container.put_archive(CONTAINER_WORKDIR, tar_data)
+
+    async def download_tar(self) -> tarfile.TarFile:
+        """Download ``/workspace`` as a tar archive.
+
+        Returns:
+            A :class:`tarfile.TarFile` whose top-level entry is the
+            ``workspace/`` directory itself. The caller is responsible
+            for closing it.
+        """
+        return await self._container.get_archive(CONTAINER_WORKDIR)
 
     # ── instructions ────────────────────────────────────────────
 
