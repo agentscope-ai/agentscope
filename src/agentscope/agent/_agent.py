@@ -2242,7 +2242,7 @@ class Agent:
         return None
 
     def _get_repeated_tool_error(self) -> tuple[str, int] | None:
-        """Return a trailing repeated-call error streak, if it crosses limit."""
+        """Return a repeated-call error streak once it crosses the limit."""
         last_msg = self._get_last_msg()
         if last_msg is None:
             return None
@@ -2271,7 +2271,10 @@ class Agent:
             elif isinstance(block, ToolResultBlock):
                 saw_result = True
                 signature = current_calls.get(block.id)
-                if signature is not None and block.state == ToolResultState.ERROR:
+                if (
+                    signature is not None
+                    and block.state == ToolResultState.ERROR
+                ):
                     current_failures.add(signature)
 
         if current_calls or saw_result:
