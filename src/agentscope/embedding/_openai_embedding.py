@@ -21,6 +21,7 @@ class OpenAITextEmbedding(EmbeddingModelBase):
         api_key: str,
         model_name: str,
         dimensions: int = 1024,
+        pass_dimensions: bool = True,
         embedding_cache: EmbeddingCacheBase | None = None,
         **kwargs: Any,
     ) -> None:
@@ -33,6 +34,9 @@ class OpenAITextEmbedding(EmbeddingModelBase):
                 The name of the embedding model.
             dimensions (`int`, defaults to 1024):
                 The dimension of the embedding vector.
+            pass_dimensions (`bool`, defaults to `True`):
+                Whether to pass the ``dimensions`` parameter to the API.
+                Some OpenAI-compatible providers do not support it.
             embedding_cache (`EmbeddingCacheBase | None`, defaults to `None`):
                 The embedding cache class instance, used to cache the
                 embedding results to avoid repeated API calls.
@@ -43,6 +47,7 @@ class OpenAITextEmbedding(EmbeddingModelBase):
 
         super().__init__(model_name, dimensions)
 
+        self.pass_dimensions = pass_dimensions
         self.client = openai.AsyncClient(api_key=api_key, **kwargs)
         self.embedding_cache = embedding_cache
 
@@ -71,10 +76,11 @@ class OpenAITextEmbedding(EmbeddingModelBase):
         kwargs = {
             "input": gather_text,
             "model": self.model_name,
-            "dimensions": self.dimensions,
             "encoding_format": "float",
             **kwargs,
         }
+        if self.pass_dimensions:
+            kwargs["dimensions"] = self.dimensions
 
         if self.embedding_cache:
             cached_embeddings = await self.embedding_cache.retrieve(
@@ -94,14 +100,23 @@ class OpenAITextEmbedding(EmbeddingModelBase):
         response = await self.client.embeddings.create(**kwargs)
         time = (datetime.now() - start_time).total_seconds()
 
+        # Map results back by index; fall back to dense_embedding
+        embeddings: list = [None] * len(gather_text)
+        for emb in response.data:
+            if 0 <= emb.index < len(gather_text):
+                embeddings[emb.index] = emb.embedding or getattr(
+                    emb,
+                    "dense_embedding",
+                )
+
         if self.embedding_cache:
             await self.embedding_cache.store(
                 identifier=kwargs,
-                embeddings=[_.embedding for _ in response.data],
+                embeddings=embeddings,
             )
 
         return EmbeddingResponse(
-            embeddings=[_.embedding for _ in response.data],
+            embeddings=embeddings,
             usage=EmbeddingUsage(
                 tokens=response.usage.total_tokens,
                 time=time,
