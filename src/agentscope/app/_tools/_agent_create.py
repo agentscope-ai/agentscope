@@ -338,6 +338,14 @@ optional):
                     state=ToolResultState.ERROR,
                 )
 
+            # Resolve leader name early — needed both for the system
+            # prompt template and for the initial team-message hint.
+            leader_name = (
+                leader_agent_record.data.name
+                if leader_agent_record is not None
+                else leader_session.agent_id
+            )
+
             # 1. Build worker AgentRecord (source="team" so it's hidden
             #    from the global agent list).
             system_prompt = template.system_prompt_template.format(
@@ -345,6 +353,7 @@ optional):
                 team_description=team.data.description,
                 member_name=name,
                 member_description=description,
+                leader_name=leader_name,
             )
             worker_agent = AgentRecord(
                 user_id=self._user_id,
@@ -393,11 +402,6 @@ optional):
             await self._storage.upsert_team(self._user_id, team)
 
             # 4. Deliver the initial task to the worker's inbox + wakeup.
-            leader_name = (
-                leader_agent_record.data.name
-                if leader_agent_record is not None
-                else leader_session.agent_id
-            )
             hint = HintBlock(
                 hint=(
                     f'<team-message from="{leader_name}">\n'

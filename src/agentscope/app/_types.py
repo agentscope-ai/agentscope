@@ -64,8 +64,8 @@ class SubAgentTemplate(BaseModel):
         description=(
             "A Python format string for the worker's system prompt. "
             "Available placeholders: ``{team_name}``, "
-            "``{team_description}``, ``{member_name}``, ``{leader_name}``"
-            "``{member_description}``."
+            "``{team_description}``, ``{member_name}``, "
+            "``{member_description}``, ``{leader_name}``."
         ),
     )
 
