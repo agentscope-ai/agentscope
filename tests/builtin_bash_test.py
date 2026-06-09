@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """Bash tool test case."""
-
 import sys
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase

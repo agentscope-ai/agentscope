@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """The bash tool in agentscope."""
-
 import os
 from typing import AsyncGenerator, Any, List
 import re
@@ -133,7 +132,10 @@ easier to review tool calls and give permission.
             },
             "timeout": {
                 "type": "integer",
-                "description": "Timeout in ms (default: 120000, max: 600000)",
+                "description": (
+                    "Optional timeout in milliseconds "
+                    "(default: 120000, max: 600000)"
+                ),
                 "default": 120000,
                 "maximum": 600000,
                 "minimum": 0,
@@ -157,8 +159,6 @@ easier to review tool calls and give permission.
         """Initialize the bash tool.
 
         Args:
-            cwd (`str | os.PathLike[str] | None`, optional):
-                The working directory used when executing bash commands.
             dangerous_files (`list[str]`, optional):
                 Sensitive files that require explicit user confirmation,
                 even in BYPASS mode. Matched by basename
@@ -172,6 +172,8 @@ easier to review tool calls and give permission.
                 `DEFAULT_DANGEROUS_DIRECTORIES`. Pass a custom list to
                 fully replace the defaults, or `[]` to disable the
                 directory check.
+            cwd (`str | os.PathLike[str] | None`, optional):
+                The working directory used when executing bash commands.
         """
 
         self._bash_parser = BashCommandParser()
@@ -277,7 +279,8 @@ easier to review tool calls and give permission.
                 behavior=PermissionBehavior.ASK,
                 message=f"Permission required: Command contains dangerous "
                 f"pattern: {dangerous_pattern}",
-                decision_reason="Safety check: dangerous pattern detected",
+                decision_reason="Safety check: dangerous command pattern "
+                "detected",
                 bypass_immune=True,
             )
 
@@ -343,11 +346,9 @@ easier to review tool calls and give permission.
                 "cp",
                 "sed",
             }
-            stripped_command = command.strip()
-            if stripped_command:
-                base_command = stripped_command.split()[0]
-            else:
-                base_command = ""
+            base_command = (
+                command.strip().split()[0] if command.strip() else ""
+            )
 
             if base_command in filesystem_commands:
                 # Collect every target path: file arguments AND output
