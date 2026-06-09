@@ -26,29 +26,25 @@ _id_factory: Callable[[], str] = _default_id_factory
 
 
 def set_id_factory(factory: Callable[[], str]) -> None:
-    """Set the global ID factory function used by AgentScope entities.
+    """Override the global ID factory used by all AgentScope entities.
 
-    By default, AgentScope uses ``uuid.uuid4().hex`` to generate IDs for
-    entities such as messages, blocks, events, states, tasks, tool responses,
-    model responses, credentials, and storage records.  This function allows
-    you to override the default strategy with a custom factory, e.g. to use
-    time-ordered UUIDs (UUIDv7) that align with your production database.
+    Entity IDs default to ``uuid.uuid4().hex``. Call this once at
+    startup to substitute a different strategy.
 
     .. note::
-        Security-sensitive tokens (gateway tokens, Redis lock tokens, etc.)
-        are **not** affected by this setting and always use
-        ``uuid.uuid4().hex``.
+        Security-sensitive tokens (gateway tokens, Redis lock tokens)
+        are **not** affected and always use ``uuid.uuid4().hex``.
 
     Args:
         factory (`Callable[[], str]`):
-            A callable that takes no arguments and returns a string ID.
+            A no-arg callable returning a string ID.
 
     Raises:
         TypeError: If ``factory`` is not callable.
 
     Example:
         >>> from agentscope import set_id_factory
-        >>> set_id_factory(lambda: uuid7().hex)  # use UUIDv7
+        >>> set_id_factory(lambda: uuid7().hex)
     """
     if not callable(factory):
         raise TypeError(
