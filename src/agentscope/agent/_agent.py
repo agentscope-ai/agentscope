@@ -2,7 +2,6 @@
 """The unified agent class in AgentScope library."""
 import asyncio
 import inspect
-import uuid
 
 from asyncio import Queue
 from copy import deepcopy
@@ -21,7 +20,7 @@ from ._config import ContextConfig, ReActConfig, ModelConfig
 from ..state import AgentState
 from ._utils import _ToolCallBatch
 from .._logging import logger
-from .._utils._common import _json_loads_with_repair
+from .._utils._common import _generate_id, _json_loads_with_repair
 from ..event import (
     AgentEvent,
     ModelCallEndEvent,
@@ -579,7 +578,7 @@ class Agent:
         else:
             await self._handle_incoming_messages(msgs)
             # Update the context with the incoming message and state
-            self.state.reply_id = uuid.uuid4().hex
+            self.state.reply_id = _generate_id()
             self.state.cur_iter = 0
 
             yield ReplyStartEvent(
@@ -2434,7 +2433,7 @@ class Agent:
             # If the current chunk has text blocks but no text block id,
             # start with a start event
             if not block_ids.get("text"):
-                block_ids["text"] = uuid.uuid4().hex
+                block_ids["text"] = _generate_id()
                 yield TextBlockStartEvent(
                     reply_id=self.state.reply_id,
                     block_id=block_ids["text"],
@@ -2458,7 +2457,7 @@ class Agent:
         if thinking_blocks:
             # Generate a new thinking block id and start event
             if not block_ids.get("thinking"):
-                block_ids["thinking"] = uuid.uuid4().hex
+                block_ids["thinking"] = _generate_id()
                 yield ThinkingBlockStartEvent(
                     reply_id=self.state.reply_id,
                     block_id=block_ids["thinking"],

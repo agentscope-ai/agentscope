@@ -3,7 +3,6 @@
 import warnings
 import base64
 import io
-import uuid
 import wave
 from collections import OrderedDict
 from datetime import datetime
@@ -11,10 +10,11 @@ from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 
 from pydantic import BaseModel, Field
 
+from ..._utils._audio import _build_streaming_wav_header
+from ..._utils._common import _generate_id
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse, StructuredResponse
 from .._model_usage import ChatUsage
-from ..._utils._audio import _build_streaming_wav_header
 from ...credential import OpenAICredential
 from ...formatter import FormatterBase, OpenAIChatFormatter
 from ...message import (
@@ -377,7 +377,7 @@ class OpenAIChatModel(ChatModelBase):
                         )
                     if audio_chunk:
                         if audio_block_id is None:
-                            audio_block_id = uuid.uuid4().hex
+                            audio_block_id = _generate_id()
                         pcm_bytes = base64.b64decode(audio_chunk)
                         acc_audio_data += pcm_bytes
                         if not audio_header_sent:

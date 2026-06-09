@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """The message class in agentscope."""
 import base64
-import uuid
 from datetime import datetime
 from typing import Literal, List, overload, Sequence, Self, TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field, model_validator
 
+from .._utils._common import _generate_id
 from ._block import (
     TextBlock,
     ThinkingBlock,
@@ -73,7 +73,7 @@ class Msg(BaseModel):
     """The message content as a list of content blocks."""
     role: Literal["user", "assistant", "system"]
     """The role of the sender."""
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    id: str = Field(default_factory=_generate_id)
     """The message identifier."""
     metadata: dict = Field(default_factory=dict)
     """The metadata of the message"""
@@ -504,7 +504,7 @@ def UserMsg(
         metadata=metadata or {},
         created_at=created_at,
         finished_at=finished_at,
-        id=id or uuid.uuid4().hex,
+        id=id or _generate_id(),
     )
 
 
@@ -552,7 +552,7 @@ def AssistantMsg(
         metadata=metadata or {},
         created_at=created_at or datetime.now().isoformat(),
         finished_at=finished_at,
-        id=id or uuid.uuid4().hex,
+        id=id or _generate_id(),
         usage=usage,
     )
 
@@ -601,5 +601,5 @@ def SystemMsg(
         metadata=metadata or {},
         created_at=created_at,
         finished_at=finished_at,
-        id=id or uuid.uuid4().hex,
+        id=id or _generate_id(),
     )
