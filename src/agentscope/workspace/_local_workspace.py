@@ -307,11 +307,6 @@ class LocalWorkspace(WorkspaceBase):
         """Get the workspace instructions."""
         return self.instructions
 
-    @property
-    def working_directory(self) -> str | None:
-        """Agent-visible root directory for local file operations."""
-        return self.workdir
-
     async def _load_skills_file(self, skills_dir: str) -> _SkillsFile:
         """Load the .skills index file, returning an empty structure if absent.
 

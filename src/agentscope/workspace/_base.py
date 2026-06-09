@@ -52,6 +52,9 @@ class WorkspaceBase:
     workspace_id: str
     """Unique identifier for this workspace instance."""
 
+    workdir: str
+    """Agent-visible root directory for workspace file operations."""
+
     is_alive: bool
     """If the workspace is still operational."""
 
@@ -103,11 +106,6 @@ class WorkspaceBase:
     @abstractmethod
     async def get_instructions(self) -> str:
         """Workspace-specific system prompt fragment."""
-
-    @property
-    @abstractmethod
-    def working_directory(self) -> str | None:
-        """Agent-visible root directory for workspace file operations."""
 
     # ── for Agent: tool & resource discovery ───────────────────────
 

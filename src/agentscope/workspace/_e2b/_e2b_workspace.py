@@ -211,6 +211,7 @@ class E2BWorkspace(WorkspaceBase):
         super().__init__(workspace_id=workspace_id)
 
         # ── serializable config ─────────────────────────────────
+        self.workdir = SANDBOX_WORKDIR
         self.template = template
         self.api_key = api_key
         self.domain = domain
@@ -400,11 +401,6 @@ class E2BWorkspace(WorkspaceBase):
         always sees sandbox-internal paths.
         """
         return self.instructions.format(workdir=SANDBOX_WORKDIR)
-
-    @property
-    def working_directory(self) -> str | None:
-        """Agent-visible root directory inside the E2B sandbox."""
-        return SANDBOX_WORKDIR
 
     # ── tool / MCP / skill discovery ────────────────────────────
 

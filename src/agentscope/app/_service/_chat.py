@@ -34,23 +34,7 @@ from ...event import (
     ExternalExecutionResultEvent,
 )
 from ...message import AssistantMsg, Msg, ToolCallState
-from ...permission import AdditionalWorkingDirectory, PermissionContext
-from ...workspace import WorkspaceBase
-
-
-def _include_workspace_working_directory(
-    permission_context: PermissionContext,
-    workspace: WorkspaceBase,
-) -> None:
-    """Allow workspace-local file operations in the current session."""
-    path = workspace.working_directory
-    if not path or path in permission_context.working_directories:
-        return
-
-    permission_context.working_directories[path] = AdditionalWorkingDirectory(
-        path=path,
-        source="workspace",
-    )
+from ...permission import AdditionalWorkingDirectory
 
 
 class ChatService:
@@ -217,10 +201,18 @@ optional):
             session_id,
             session_record.config.workspace_id,
         )
-        _include_workspace_working_directory(
-            session_record.state.permission_context,
-            workspace,
-        )
+
+        # Add workspace working directory to the permission context
+        if (
+            workspace.workdir
+            not in session_record.state.permission_context.working_directories
+        ):
+            session_record.state.permission_context.working_directories[
+                workspace.workdir
+            ] = AdditionalWorkingDirectory(
+                path=workspace.workdir,
+                source="session",
+            )
 
         # ----------------------------------------------------------------
         # 2. Toolkit (workspace tools + planning + TaskStop + schedule +
