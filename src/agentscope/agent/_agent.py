@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The unified agent class in AgentScope library."""
 import asyncio
+import json
 import inspect
 import uuid
 
@@ -606,9 +607,9 @@ class Agent:
             # Step 3.2: Execute reasoning if no more tools to be executed
             # ===============================================================
             if action == "reasoning":
-                self._inject_tool_error_hint_if_needed()
                 # Compressed the memory if needed before reasoning
                 await self.compress_context()
+                self._inject_tool_error_hint_if_needed()
                 # Perform reasoning
                 async for evt in self._reasoning():
                     # Exit the loop when no tool calls generated and the reply
@@ -2241,29 +2242,53 @@ class Agent:
         return None
 
     def _get_repeated_tool_error(self) -> tuple[str, int] | None:
-        """Return the trailing same-tool error streak, if it crosses limit."""
+        """Return a trailing repeated-call error streak, if it crosses limit."""
         last_msg = self._get_last_msg()
         if last_msg is None:
             return None
 
-        tool_name: str | None = None
-        count = 0
-        for block in reversed(last_msg.get_content_blocks()):
+        batches: list[set[tuple[str, str]]] = []
+        current_calls: dict[str, tuple[str, str]] = {}
+        current_failures: set[tuple[str, str]] = set()
+        saw_result = False
+
+        for block in last_msg.get_content_blocks():
             if isinstance(block, ToolCallBlock):
-                continue
-            if not isinstance(block, ToolResultBlock):
-                break
-            if block.state != ToolResultState.ERROR:
-                break
-            if tool_name is None:
-                tool_name = block.name
-            elif block.name != tool_name:
+                if saw_result:
+                    batches.append(current_failures)
+                    current_calls = {}
+                    current_failures = set()
+                    saw_result = False
+                try:
+                    normalized_input = json.dumps(
+                        json.loads(block.input),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                except (TypeError, ValueError):
+                    normalized_input = block.input.strip()
+                current_calls[block.id] = (block.name, normalized_input)
+            elif isinstance(block, ToolResultBlock):
+                saw_result = True
+                signature = current_calls.get(block.id)
+                if signature is not None and block.state == ToolResultState.ERROR:
+                    current_failures.add(signature)
+
+        if current_calls or saw_result:
+            batches.append(current_failures)
+        if not batches or len(batches[-1]) != 1:
+            return None
+
+        signature = next(iter(batches[-1]))
+        count = 0
+        for failures in reversed(batches):
+            if signature not in failures:
                 break
             count += 1
 
-        if tool_name is None or count < self.react_config.max_tool_retries:
+        if count < self.react_config.max_tool_retries:
             return None
-        return tool_name, count
+        return signature[0], count
 
     def _inject_tool_error_hint_if_needed(self) -> None:
         """Inject a hint after repeated errors from the same tool."""

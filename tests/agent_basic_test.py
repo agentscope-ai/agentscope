@@ -212,6 +212,47 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         blocks = self.agent.state.context[-1].get_content_blocks()
         self.assertNotIsInstance(blocks[-1], HintBlock)
 
+    def test_does_not_inject_hint_for_same_turn_fan_out(self) -> None:
+        """Different calls in one tool batch are not retries."""
+        self.agent.react_config = ReActConfig(max_tool_retries=2)
+        self.agent.state.context.append(
+            AssistantMsg(
+                name=self.agent.name,
+                content=[
+                    ToolCallBlock(
+                        id="tc-1",
+                        name="read",
+                        input='{"path": "a.py"}',
+                        state=ToolCallState.FINISHED,
+                    ),
+                    ToolCallBlock(
+                        id="tc-2",
+                        name="read",
+                        input='{"path": "b.py"}',
+                        state=ToolCallState.FINISHED,
+                    ),
+                    ToolResultBlock(
+                        id="tc-1",
+                        name="read",
+                        output="missing",
+                        state=ToolResultState.ERROR,
+                    ),
+                    ToolResultBlock(
+                        id="tc-2",
+                        name="read",
+                        output="missing",
+                        state=ToolResultState.ERROR,
+                    ),
+                ],
+            ),
+        )
+
+        # pylint: disable-next=protected-access
+        self.agent._inject_tool_error_hint_if_needed()
+
+        blocks = self.agent.state.context[-1].get_content_blocks()
+        self.assertNotIsInstance(blocks[-1], HintBlock)
+
     async def test_streaming_reasoning(self) -> None:
         """Test the streaming model inference without tool calls generated,
         only text in model response.
