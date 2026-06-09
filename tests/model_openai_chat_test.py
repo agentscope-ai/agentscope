@@ -201,17 +201,17 @@ class TestOpenAIChatNonStream(IsolatedAsyncioTestCase):
         self.assertNotIn("extra_body", mock_create.call_args.kwargs)
 
     @patch("openai.AsyncClient")
-    async def test_explicit_thinking_enable_forwarded_to_extra_body(
+    async def test_constructor_extra_body_forwarded(
         self,
         mock_client_cls: MagicMock,
     ) -> None:
-        """Explicit thinking_enable controls OpenAI-compatible Qwen mode."""
+        """Custom request fields are forwarded to OpenAI-compatible APIs."""
         model = OpenAIChatModel(
             credential=OpenAICredential(api_key="test"),
-            model="qwen3",
+            model="custom-model",
             stream=False,
             context_size=128_000,
-            parameters=OpenAIChatModel.Parameters(thinking_enable=False),
+            extra_body={"enable_thinking": False},
         )
         mock_create = AsyncMock(
             return_value=_mock_completion(text="Hello world!"),
@@ -226,26 +226,29 @@ class TestOpenAIChatNonStream(IsolatedAsyncioTestCase):
         )
 
     @patch("openai.AsyncClient")
-    async def test_openai_model_thinking_enable_not_forwarded(
+    async def test_generate_kwargs_extra_body_overrides_constructor(
         self,
         mock_client_cls: MagicMock,
     ) -> None:
-        """Official OpenAI models do not accept Qwen extra_body flags."""
+        """Per-call extra_body overrides the constructor default."""
         model = OpenAIChatModel(
             credential=OpenAICredential(api_key="test"),
-            model="gpt-4.1",
+            model="custom-model",
             stream=False,
             context_size=128_000,
-            parameters=OpenAIChatModel.Parameters(thinking_enable=True),
+            extra_body={"enable_thinking": False},
         )
         mock_create = AsyncMock(
             return_value=_mock_completion(text="Hello world!"),
         )
         mock_client_cls.return_value.chat.completions.create = mock_create
 
-        await model([])
+        await model([], extra_body={"custom_option": "value"})
 
-        self.assertNotIn("extra_body", mock_create.call_args.kwargs)
+        self.assertEqual(
+            mock_create.call_args.kwargs["extra_body"],
+            {"custom_option": "value"},
+        )
 
     @patch("openai.AsyncClient")
     async def test_tool_call_response(

@@ -122,6 +122,7 @@ class OpenAIChatModel(ChatModelBase):
         context_size: int = 128000,
         formatter: FormatterBase | None = None,
         client_kwargs: dict[str, Any] | None = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> None:
         """Initialize the OpenAI chat model.
 
@@ -149,6 +150,9 @@ class OpenAIChatModel(ChatModelBase):
             client_kwargs (`dict[str, Any] | None`, defaults to `None`):
                 Extra keyword arguments forwarded to ``openai.AsyncClient``
                 (e.g. ``timeout``, ``default_headers``, ``http_client``).
+            extra_body (`dict[str, Any] | None`, defaults to `None`):
+                Additional request body fields forwarded to
+                OpenAI-compatible APIs.
         """
         super().__init__(
             credential=credential,
@@ -161,6 +165,7 @@ class OpenAIChatModel(ChatModelBase):
         )
         self.formatter = formatter or OpenAIChatFormatter()
         self.client_kwargs = client_kwargs or {}
+        self.extra_body = dict(extra_body) if extra_body is not None else None
 
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
@@ -247,16 +252,10 @@ class OpenAIChatModel(ChatModelBase):
             }
             kwargs["modalities"] = ["text", "audio"]
 
-        kwargs.update(generate_kwargs)
+        if self.extra_body is not None:
+            kwargs["extra_body"] = dict(self.extra_body)
 
-        if (
-            "thinking_enable" in self.parameters.model_fields_set
-            and self._uses_qwen_extra_body(model_name)
-        ):
-            kwargs.setdefault("extra_body", {})
-            kwargs["extra_body"][
-                "enable_thinking"
-            ] = self.parameters.thinking_enable
+        kwargs.update(generate_kwargs)
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
 
@@ -683,12 +682,3 @@ class OpenAIChatModel(ChatModelBase):
             return tools, {"type": "function", "function": {"name": mode}}
 
         return tools, mode
-
-    def _uses_qwen_extra_body(self, model_name: str) -> bool:
-        base_url = str(self.credential.base_url or "").lower()
-        model = model_name.lower()
-        return (
-            "qwen" in model
-            or "dashscope" in base_url
-            or "aliyuncs.com" in base_url
-        )
