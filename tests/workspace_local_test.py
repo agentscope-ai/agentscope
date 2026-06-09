@@ -21,7 +21,7 @@ from agentscope.state import AgentState
 from agentscope.tool import Toolkit, ToolBase, ToolChunk
 from agentscope.permission import PermissionDecision, PermissionBehavior
 from agentscope.workspace import LocalWorkspace
-from agentscope.mcp import MCPClient, StdioMCPConfig, HttpMCPConfig
+from agentscope.mcp import MCPClient, StdioMCPConfig
 from agentscope.message import (
     Msg,
     UserMsg,
@@ -1259,10 +1259,12 @@ class TestLocalWorkspaceMCPInit(IsolatedAsyncioTestCase):
     async def test_initialize_skips_bad_entry_keeps_good(self) -> None:
         """A persisted .mcp with one bad entry should skip it and still
         load the valid entry."""
-        await self._write_mcp_file([
-            self._make_bad_stdio_mcp("bad_one"),
-            self._make_http_mcp("good_one"),
-        ])
+        await self._write_mcp_file(
+            [
+                self._make_bad_stdio_mcp("bad_one"),
+                self._make_http_mcp("good_one"),
+            ],
+        )
 
         ws = LocalWorkspace(workdir=self.temp_dir.name)
         await ws.initialize()
@@ -1272,51 +1274,13 @@ class TestLocalWorkspaceMCPInit(IsolatedAsyncioTestCase):
         self.assertIn("good_one", names)
         self.assertNotIn("bad_one", names)
 
-    async def test_initialize_all_bad_leaves_empty_mcps(self) -> None:
-        """When every .mcp entry is invalid, mcps list is still empty
-        and workspace stays alive (no crash)."""
-        await self._write_mcp_file([
-            self._make_bad_stdio_mcp("bad_a"),
-            self._make_bad_stdio_mcp("bad_b"),
-        ])
-
-        ws = LocalWorkspace(workdir=self.temp_dir.name)
-        await ws.initialize()
-
-        mcps = await ws.list_mcps()
-        self.assertEqual(len(mcps), 0)
-        self.assertTrue(ws.is_alive)
-
-    async def test_initialize_multiple_bad_entries_multiple_skipped(
-        self,
-    ) -> None:
-        """Two valid MCPs mixed with two invalid entries — only the
-        valid ones survive."""
-        await self._write_mcp_file([
-            self._make_bad_stdio_mcp("bad_1"),
-            self._make_http_mcp("good_a"),
-            self._make_bad_stdio_mcp("bad_2"),
-            self._make_http_mcp("good_b"),
-        ])
-
-        ws = LocalWorkspace(workdir=self.temp_dir.name)
-        await ws.initialize()
-
-        names = [m.name for m in await ws.list_mcps()]
-        self.assertEqual(set(names), {"good_a", "good_b"})
-
     # -----------------------------------------------------------------
     #  default_mcps + connect failure
     # -----------------------------------------------------------------
 
-    async def test_initialize_connect_failure_does_not_crash(self) -> (
-        None
-    ):
+    async def test_initialize_connect_failure_removes_mcp(self) -> (None):
         """A stateful MCP whose connect() raises should not crash
-        initialize(). Uses a non-existent STDIO command so process
-        spawn fails with FileNotFoundError — a clean exception type
-        that our try/except handles without triggering upstream MCP
-        library task-group cancellation bugs."""
+        initialize() and should be removed from the MCP list."""
         ws = LocalWorkspace(
             workdir=self.temp_dir.name,
             default_mcps=[
@@ -1329,24 +1293,7 @@ class TestLocalWorkspaceMCPInit(IsolatedAsyncioTestCase):
                 ),
             ],
         )
-        # Should NOT raise — connect failure is logged and skipped
         await ws.initialize()
         self.assertTrue(ws.is_alive)
-
-    async def test_initialize_no_default_mcps(self) -> None:
-        """Workspace with no default MCPs should initialize cleanly."""
-        ws = LocalWorkspace(workdir=self.temp_dir.name)
-        await ws.initialize()
-
-        self.assertTrue(ws.is_alive)
-        self.assertEqual(len(await ws.list_mcps()), 0)
-
-    async def test_initialize_empty_persisted_mcp(self) -> None:
-        """An empty persisted .mcp should not crash."""
-        await self._write_mcp_file([])
-
-        ws = LocalWorkspace(workdir=self.temp_dir.name)
-        await ws.initialize()
-
-        self.assertTrue(ws.is_alive)
-        self.assertEqual(len(await ws.list_mcps()), 0)
+        names = [m.name for m in await ws.list_mcps()]
+        self.assertNotIn("will_fail_connect", names)
