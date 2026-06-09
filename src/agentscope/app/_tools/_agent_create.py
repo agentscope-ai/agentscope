@@ -361,8 +361,12 @@ optional):
                 data=AgentData(
                     name=name,
                     system_prompt=system_prompt,
-                    context_config=template.context_config,
-                    react_config=template.react_config,
+                    context_config=template.context_config.model_copy(
+                        deep=True,
+                    ),
+                    react_config=template.react_config.model_copy(
+                        deep=True,
+                    ),
                 ),
             )
             await self._storage.upsert_agent(self._user_id, worker_agent)
@@ -370,8 +374,12 @@ optional):
             # 2. Build worker SessionRecord, inheriting leader's model
             #    config.
             worker_state = AgentState(
-                permission_context=template.permission_context,
-                tasks_context=template.tasks_context,
+                permission_context=template.permission_context.model_copy(
+                    deep=True,
+                ),
+                tasks_context=template.tasks_context.model_copy(
+                    deep=True,
+                ),
             )
             worker_session = await self._storage.upsert_session(
                 user_id=self._user_id,

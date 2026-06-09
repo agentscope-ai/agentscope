@@ -53,7 +53,7 @@ app = create_app(
         # The default MCP servers that will be added into the workspace
         default_mcps=default_mcps,
     ),
-    # Custom your own subagent template
+    # Customize your own subagent templates
     sub_agent_templates=[
         SubAgentTemplate(
             type="explorer",

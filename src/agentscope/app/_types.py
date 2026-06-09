@@ -82,9 +82,9 @@ class SubAgentTemplate(BaseModel):
     permission_context: PermissionContext = Field(
         default_factory=PermissionContext,
         description=(
-            "Permission context for the sub-agent. Overrides the "
-            "``permission_mode`` parameter in ``AgentCreate`` when "
-            "this template is used."
+            "Permission context applied to the sub-agent at "
+            "creation time. Controls what the worker is allowed "
+            "to do (e.g. read-only vs. full access)."
         ),
     )
 
