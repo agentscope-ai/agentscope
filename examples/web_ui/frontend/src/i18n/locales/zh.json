@@ -76,6 +76,9 @@
 	},
 	"messageBubble": {
 		"thinking": "思考中",
+		"audioGenerating": "正在生成音频…",
+		"playAudio": "播放音频",
+		"pauseAudio": "暂停音频",
 		"running": "运行中...",
 		"hintSource": {
 			"tool_output": "工具输出",

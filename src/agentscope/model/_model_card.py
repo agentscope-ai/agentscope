@@ -103,6 +103,15 @@ class ModelCard(BaseModel):
             properties.pop("thinking_enable", None)
             properties.pop("thinking_budget", None)
 
+        # Auto-filter: only omni-style models that declare an ``audio/*``
+        # output type expose the ``voice`` parameter to the frontend
+        # popover. Defense in depth — a model yaml can also drop ``voice``
+        # explicitly via ``parameter_overrides: { voice: { hidden: true } }``.
+        if not any(
+            isinstance(t, str) and t.startswith("audio/") for t in output_types
+        ):
+            properties.pop("voice", None)
+
         # Auto-inject: set max_tokens maximum from output_size
         if "max_tokens" in properties and "output_size" in config:
             properties["max_tokens"]["maximum"] = config["output_size"]

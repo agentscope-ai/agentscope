@@ -24,10 +24,12 @@ from utils import AnyString
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.app._tools import (
     AgentCreate,
+    DEFAULT_SUB_AGENT_TEMPLATE,
     TeamCreate,
     TeamDelete,
     TeamSay,
 )
+from agentscope.app._types import SubAgentTemplate
 from agentscope.app.message_bus import RedisMessageBus
 from agentscope.app.storage import (
     AgentData,
@@ -226,7 +228,6 @@ class TestAgentCreate(_TeamToolsTestBase):
             name="worker",
             description="does research",
             prompt="please look up X",
-            permission_mode="default",
         )
         self.assertDictEqual(
             chunk.model_dump(),
@@ -321,7 +322,6 @@ class TestAgentCreate(_TeamToolsTestBase):
             name="worker",
             description="d",
             prompt="p",
-            permission_mode="default",
         )
         self.assertDictEqual(
             chunk.model_dump(),
@@ -336,8 +336,8 @@ class TestAgentCreate(_TeamToolsTestBase):
             },
         )
 
-    async def test_rejects_unknown_permission_mode(self) -> None:
-        """An unrecognised ``permission_mode`` returns an error chunk."""
+    async def test_rejects_unknown_subagent_type(self) -> None:
+        """An unrecognised ``subagent_type`` returns an error chunk."""
         tool = AgentCreate(
             storage=self.storage,
             message_bus=self.bus,
@@ -349,7 +349,7 @@ class TestAgentCreate(_TeamToolsTestBase):
             name="w",
             description="d",
             prompt="p",
-            permission_mode="not-a-mode",  # type: ignore[arg-type]
+            subagent_type="not-a-type",
         )
         self.assertDictEqual(
             chunk.model_dump(),
@@ -378,7 +378,6 @@ class TestAgentCreate(_TeamToolsTestBase):
             name="worker",
             description="d",
             prompt="p",
-            permission_mode="default",
         )
         self.assertEqual(first.state.value, "running")
 
@@ -386,7 +385,6 @@ class TestAgentCreate(_TeamToolsTestBase):
             name="worker",
             description="d",
             prompt="p",
-            permission_mode="default",
         )
         self.assertEqual(second.state.value, "error")
 
@@ -414,7 +412,6 @@ class TestAgentCreate(_TeamToolsTestBase):
             name=self.leader_agent.data.name,  # "leader"
             description="d",
             prompt="p",
-            permission_mode="default",
         )
         self.assertEqual(chunk.state.value, "error")
 
@@ -426,6 +423,167 @@ class TestAgentCreate(_TeamToolsTestBase):
         )
         team = await self.storage.get_team(self.user_id, sess.team_id)
         self.assertEqual(team.data.member_ids, [])
+
+
+class TestAgentCreateTemplates(_TeamToolsTestBase):
+    """Template-aware ``AgentCreate`` behaviour: schema dynamics,
+    template routing, and config isolation."""
+
+    _explorer_template = SubAgentTemplate(
+        type="explorer",
+        description="Read-only exploration agent.",
+        system_prompt_template=(
+            "You are {member_name}, an explorer in team "
+            "'{team_name}' led by {leader_name}.\n\n"
+            "Team purpose: {team_description}\n\n"
+            "Your role: {member_description}"
+        ),
+    )
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        await TeamCreate(
+            storage=self.storage,
+            message_bus=self.bus,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+        )(name="team", description="team desc")
+
+    async def test_schema_omits_subagent_type_when_no_custom_templates(
+        self,
+    ) -> None:
+        """When only the built-in ``"default"`` template exists, the
+        ``input_schema`` must NOT contain a ``subagent_type`` field."""
+        tool = AgentCreate(
+            storage=self.storage,
+            message_bus=self.bus,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+        )
+        self.assertNotIn("subagent_type", tool.input_schema["properties"])
+
+    async def test_schema_includes_subagent_type_with_custom_templates(
+        self,
+    ) -> None:
+        """When custom templates are registered, ``subagent_type`` appears
+        in the schema with the correct enum values."""
+        templates = {"explorer": self._explorer_template}
+        tool = AgentCreate(
+            storage=self.storage,
+            message_bus=self.bus,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+            sub_agent_templates=templates,
+        )
+        self.assertIn("subagent_type", tool.input_schema["properties"])
+        enum_values = tool.input_schema["properties"]["subagent_type"]["enum"]
+        self.assertIn("default", enum_values)
+        self.assertIn("explorer", enum_values)
+
+    async def test_default_template_injected_when_missing(self) -> None:
+        """The built-in default template is always available even when
+        only custom templates are provided."""
+        templates = {"explorer": self._explorer_template}
+        tool = AgentCreate(
+            storage=self.storage,
+            message_bus=self.bus,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+            sub_agent_templates=templates,
+        )
+        self.assertIn("default", tool._sub_agent_templates)
+        self.assertIs(
+            tool._sub_agent_templates["default"],
+            DEFAULT_SUB_AGENT_TEMPLATE,
+        )
+
+    async def test_custom_template_applies_system_prompt(self) -> None:
+        """A worker created with a custom template gets the template's
+        system prompt (not the default one)."""
+        templates = {"explorer": self._explorer_template}
+        tool = AgentCreate(
+            storage=self.storage,
+            message_bus=self.bus,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+            sub_agent_templates=templates,
+        )
+        chunk = await tool(
+            name="scout",
+            description="explores code",
+            prompt="look around",
+            subagent_type="explorer",
+        )
+        self.assertEqual(chunk.state.value, "running")
+
+        sess = await self.storage.get_session(
+            self.user_id,
+            self.leader_agent.id,
+            self.leader_session.id,
+        )
+        team = await self.storage.get_team(self.user_id, sess.team_id)
+        worker_agent = await self.storage.get_agent(
+            self.user_id,
+            team.data.member_ids[0],
+        )
+        self.assertIn("an explorer in team", worker_agent.data.system_prompt)
+        self.assertNotIn(
+            "You communicate with the team leader",
+            worker_agent.data.system_prompt,
+        )
+
+    async def test_configs_are_deep_copied(self) -> None:
+        """Each spawned worker receives its own copy of the template's
+        config objects — mutations must not leak across agents."""
+        templates = {"explorer": self._explorer_template}
+        tool = AgentCreate(
+            storage=self.storage,
+            message_bus=self.bus,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+            sub_agent_templates=templates,
+        )
+        await tool(
+            name="w1",
+            description="d",
+            prompt="p",
+            subagent_type="explorer",
+        )
+        await tool(
+            name="w2",
+            description="d",
+            prompt="p",
+            subagent_type="explorer",
+        )
+
+        sess = await self.storage.get_session(
+            self.user_id,
+            self.leader_agent.id,
+            self.leader_session.id,
+        )
+        team = await self.storage.get_team(self.user_id, sess.team_id)
+        a1 = await self.storage.get_agent(
+            self.user_id,
+            team.data.member_ids[0],
+        )
+        a2 = await self.storage.get_agent(
+            self.user_id,
+            team.data.member_ids[1],
+        )
+        self.assertIsNot(
+            a1.data.context_config,
+            a2.data.context_config,
+        )
+        self.assertIsNot(
+            a1.data.react_config,
+            a2.data.react_config,
+        )
 
 
 class TestTeamSay(_TeamToolsTestBase):
@@ -453,13 +611,11 @@ class TestTeamSay(_TeamToolsTestBase):
             name="w1",
             description="d",
             prompt="p1",
-            permission_mode="default",
         )
         await agent_create(
             name="w2",
             description="d",
             prompt="p2",
-            permission_mode="default",
         )
         # Drain the pre-existing wakeups so subsequent assertions only
         # see what TeamSay enqueues.

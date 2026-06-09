@@ -63,7 +63,6 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
     def _format_dashscope_data_block(
         self,
         block: DataBlock,
-        role: str = "user",
     ) -> dict[str, Any] | None:
         """Format a DataBlock into the OpenAI-compatible format for
         DashScope API.
@@ -76,10 +75,6 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
         Args:
             block (`DataBlock`):
                 The DataBlock to format.
-            role (`str`, defaults to ``"user"``):
-                The role of the message containing this block. Audio blocks
-                in assistant messages are skipped to avoid errors in
-                subsequent model calls.
 
         Returns:
             `dict[str, Any] | None`:
@@ -107,8 +102,6 @@ class _DashScopeFormatterBase(FormatterBase, ABC):
             return self._format_video_source(block.source)
 
         if main_type == "audio":
-            if role == "assistant":
-                return None
             return self._format_audio_source(block.source)
 
         logger.warning(
@@ -263,7 +256,6 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                 elif isinstance(block, DataBlock):
                     formatted_block = self._format_dashscope_data_block(
                         block,
-                        role=msg.role,
                     )
                     if formatted_block:
                         content_blocks.append(formatted_block)
@@ -305,7 +297,6 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                                 formatted_sub = (
                                     self._format_dashscope_data_block(
                                         sub,
-                                        role="user",
                                     )
                                 )
                                 if formatted_sub:
@@ -372,7 +363,6 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                             elif isinstance(item, DataBlock):
                                 fmt_item = self._format_dashscope_data_block(
                                     item,
-                                    role="user",
                                 )
                                 if fmt_item is not None:
                                     promo_content.append(fmt_item)
@@ -519,7 +509,6 @@ class DashScopeMultiAgentFormatter(_DashScopeFormatterBase):
                 elif isinstance(block, DataBlock):
                     formatted_block = self._format_dashscope_data_block(
                         block,
-                        role=msg.role,
                     )
                     if formatted_block is not None:
                         media_blocks.append(formatted_block)

@@ -55,6 +55,7 @@ import {
 	SidebarMenuButton,
 	SidebarMenuItem,
 } from '@/components/ui/sidebar';
+import { AudioProvider } from '@/context/AudioContext';
 import { useAgents } from '@/hooks/useAgents';
 import { useSessions } from '@/hooks/useSessions';
 import { useTranslation } from '@/i18n/useI18n.ts';
@@ -434,4 +435,8 @@ const ChatPageInner = () => {
 	);
 };
 
-export const ChatPage = () => <ChatPageInner />;
+export const ChatPage = () => (
+	<AudioProvider>
+		<ChatPageInner />
+	</AudioProvider>
+);

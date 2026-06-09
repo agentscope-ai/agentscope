@@ -11,7 +11,7 @@ from typing import Any
 from .._manager import BackgroundTaskManager, SchedulerManager
 from ..message_bus import MessageBus
 from .._tools import AgentCreate, TeamCreate, TeamDelete, TeamSay
-from .._types import AgentToolFactory
+from .._types import AgentToolFactory, SubAgentTemplate
 from ..storage import AgentRecord, SessionRecord, StorageBase
 from ...tool import (
     TaskCreate,
@@ -35,6 +35,7 @@ async def get_toolkit(
     agent_record: AgentRecord,
     session_record: SessionRecord,
     extra_factory: AgentToolFactory | None = None,
+    sub_agent_templates: dict[str, SubAgentTemplate] | None = None,
 ) -> Toolkit:
     """Assemble the complete :class:`Toolkit` for one chat turn.
 
@@ -89,6 +90,12 @@ async def get_toolkit(
         extra_factory (`AgentToolFactory | None`, optional):
             Async factory invoked once per assembly to produce
             user/session-specific extra tools.
+        sub_agent_templates (`dict[str, SubAgentTemplate] | None`, \
+optional):
+            Sub-agent template registry, keyed by template type.
+            Passed to the ``AgentCreate`` tool so it can route to
+            the appropriate template when a ``subagent_type`` is
+            specified by the leader agent.
 
     Returns:
         `Toolkit`: Fully populated toolkit (tools + skills + MCPs).
@@ -150,7 +157,10 @@ time or interval"
     else:
         tools += [
             TeamCreate(**team_tool_kwargs),
-            AgentCreate(**team_tool_kwargs),
+            AgentCreate(
+                **team_tool_kwargs,
+                sub_agent_templates=sub_agent_templates or {},
+            ),
             TeamSay(**team_tool_kwargs, role="leader"),
             TeamDelete(**team_tool_kwargs),
         ]

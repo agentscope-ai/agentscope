@@ -14,3 +14,7 @@ output_size: 16384
 
 parameter_overrides:
   max_tokens: {"maximum": 16384}
+  # Voice only applies to omni-style models; hide the field for this
+  # non-omni model so the frontend popover doesn't render it.
+  voice:
+    hidden: true

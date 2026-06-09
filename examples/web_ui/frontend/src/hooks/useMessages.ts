@@ -2,6 +2,9 @@ import { EventType } from '@agentscope-ai/agentscope/event';
 import type {
 	AgentEvent,
 	CustomEvent,
+	DataBlockStartEvent,
+	DataBlockDeltaEvent,
+	DataBlockEndEvent,
 	ReplyStartEvent,
 	UserConfirmResultEvent,
 } from '@agentscope-ai/agentscope/event';
@@ -12,6 +15,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 
 import { sessionApi } from '@/api';
 import { chatApi } from '@/api';
+import { useAudioManager } from '@/context/AudioContext';
 
 /**
  * Manages messages for a single ``(agentId, sessionId)`` pair.
@@ -70,19 +74,12 @@ export function useMessages(
 	const abortRef = useRef<AbortController | null>(null);
 	const rafRef = useRef<number | null>(null);
 
-	// Mirror `options` into a ref so `processEvent` (a single-creation
-	// useCallback to keep the SSE stable) always reads the freshest
-	// callbacks. Without this, the closure freezes the first render's
-	// `options` — typically captured when `agentId` is still `null` —
-	// so `team_updated` / `state_updated` events fire stale no-op
-	// handlers, which in turn call `useSessions(null).refetch`
-	// (`if (!agentId) setSessions([])`) and blank out the session list.
+	const audioManager = useAudioManager();
+
 	const optionsRef = useRef(options);
 	useEffect(() => {
 		optionsRef.current = options;
 	}, [options]);
-
-	/** Batch UI updates via requestAnimationFrame. */
 	const scheduleUpdate = useCallback(() => {
 		if (rafRef.current !== null) return;
 		rafRef.current = requestAnimationFrame(() => {
@@ -106,6 +103,7 @@ export function useMessages(
 				return;
 			}
 			if (event.type === EventType.REPLY_START) {
+				audioManager?.stopAllPlayback();
 				const e = event as ReplyStartEvent;
 				const msg = AssistantMsg({ id: e.reply_id, name: e.name, content: [] });
 				msgsRef.current = [...msgsRef.current, msg];
@@ -120,9 +118,33 @@ export function useMessages(
 			} else if (currentReplyRef.current) {
 				appendEvent(currentReplyRef.current, event);
 			}
+
+			// Route streaming audio DataBlocks to the audio manager. They still
+			// flow through `appendEvent` above (which builds up `source.data`
+			// in the Msg), but MessageBubble reads playback state from the
+			// manager so it can show progress and autoplay on completion.
+			if (audioManager) {
+				if (event.type === EventType.DATA_BLOCK_START) {
+					const e = event as DataBlockStartEvent;
+					if (e.media_type.startsWith('audio/')) {
+						audioManager.start(e.block_id, e.media_type);
+					}
+				} else if (event.type === EventType.DATA_BLOCK_DELTA) {
+					const e = event as DataBlockDeltaEvent;
+					if (e.media_type.startsWith('audio/')) {
+						audioManager.append(e.block_id, e.data);
+					}
+				} else if (event.type === EventType.DATA_BLOCK_END) {
+					const e = event as DataBlockEndEvent;
+					// `end` is a no-op when the block isn't being tracked, so
+					// we can call it unconditionally.
+					audioManager.end(e.block_id);
+				}
+			}
+
 			scheduleUpdate();
 		},
-		[scheduleUpdate],
+		[scheduleUpdate, audioManager],
 	);
 
 	// ── Lifecycle: fetch history + open SSE stream ──────────────────
@@ -132,6 +154,7 @@ export function useMessages(
 		setMsgs([]);
 		setError(null);
 		setStreaming(false);
+		audioManager?.disposeAll();
 
 		if (!agentId || !sessionId) return;
 
@@ -176,7 +199,7 @@ export function useMessages(
 			controller.abort();
 			abortRef.current = null;
 		};
-	}, [agentId, sessionId, scheduleUpdate, processEvent]);
+	}, [agentId, sessionId, scheduleUpdate, processEvent, audioManager]);
 
 	/**
 	 * Send a user message. Appends the message to the local list
