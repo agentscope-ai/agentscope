@@ -226,7 +226,6 @@ class TestAgentCreate(_TeamToolsTestBase):
             name="worker",
             description="does research",
             prompt="please look up X",
-            permission_mode="default",
         )
         self.assertDictEqual(
             chunk.model_dump(),
@@ -321,7 +320,6 @@ class TestAgentCreate(_TeamToolsTestBase):
             name="worker",
             description="d",
             prompt="p",
-            permission_mode="default",
         )
         self.assertDictEqual(
             chunk.model_dump(),
@@ -336,8 +334,8 @@ class TestAgentCreate(_TeamToolsTestBase):
             },
         )
 
-    async def test_rejects_unknown_permission_mode(self) -> None:
-        """An unrecognised ``permission_mode`` returns an error chunk."""
+    async def test_rejects_unknown_subagent_type(self) -> None:
+        """An unrecognised ``subagent_type`` returns an error chunk."""
         tool = AgentCreate(
             storage=self.storage,
             message_bus=self.bus,
@@ -349,7 +347,7 @@ class TestAgentCreate(_TeamToolsTestBase):
             name="w",
             description="d",
             prompt="p",
-            permission_mode="not-a-mode",  # type: ignore[arg-type]
+            subagent_type="not-a-type",
         )
         self.assertDictEqual(
             chunk.model_dump(),
@@ -378,7 +376,6 @@ class TestAgentCreate(_TeamToolsTestBase):
             name="worker",
             description="d",
             prompt="p",
-            permission_mode="default",
         )
         self.assertEqual(first.state.value, "running")
 
@@ -386,7 +383,6 @@ class TestAgentCreate(_TeamToolsTestBase):
             name="worker",
             description="d",
             prompt="p",
-            permission_mode="default",
         )
         self.assertEqual(second.state.value, "error")
 
@@ -414,7 +410,6 @@ class TestAgentCreate(_TeamToolsTestBase):
             name=self.leader_agent.data.name,  # "leader"
             description="d",
             prompt="p",
-            permission_mode="default",
         )
         self.assertEqual(chunk.state.value, "error")
 
@@ -453,13 +448,11 @@ class TestTeamSay(_TeamToolsTestBase):
             name="w1",
             description="d",
             prompt="p1",
-            permission_mode="default",
         )
         await agent_create(
             name="w2",
             description="d",
             prompt="p2",
-            permission_mode="default",
         )
         # Drain the pre-existing wakeups so subsequent assertions only
         # see what TeamSay enqueues.
