@@ -18,6 +18,7 @@ from ._state_store import (
     SandboxStateStore,
 )
 from ._manager import SandboxManager
+from ._workspace_adapter import WorkspaceSandbox, WorkspaceSandboxClient
 
 __all__ = [
     "IsolationScope",
@@ -32,5 +33,7 @@ __all__ = [
     "SandboxState",
     "SandboxStateStore",
     "InMemorySandboxStateStore",
+    "WorkspaceSandbox",
+    "WorkspaceSandboxClient",
     "noop_execution_guard",
 ]

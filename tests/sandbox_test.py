@@ -25,8 +25,11 @@ from agentscope.sandbox import (
     SandboxState,
     SandboxStateStore,
     InMemorySandboxStateStore,
+    WorkspaceSandbox,
+    WorkspaceSandboxClient,
     noop_execution_guard,
 )
+from agentscope.workspace import WorkspaceBase
 
 
 # ---------------------------------------------------------------------------
@@ -463,3 +466,152 @@ async def test_lifecycle_middleware_handles_next_handler_exception():
     assert items == ["event1"]
     key = SandboxIsolationKey(IsolationScope.SESSION, "s1")
     assert await store.load(key) is not None
+
+
+# ---------------------------------------------------------------------------
+# WorkspaceSandbox adapter tests
+# ---------------------------------------------------------------------------
+
+class FakeWorkspace(WorkspaceBase):
+    """Minimal workspace for adapter testing."""
+
+    def __init__(self, workspace_id: str | None = None):
+        super().__init__(workspace_id)
+        self.initialized = False
+        self.closed = False
+        self._tools: list = []
+        self._mcps: list = []
+
+    async def initialize(self) -> None:
+        self.initialized = True
+        self.is_alive = True
+
+    async def close(self) -> None:
+        self.closed = True
+        self.is_alive = False
+
+    async def get_instructions(self) -> str:
+        return "fake"
+
+    async def list_tools(self) -> list:
+        return self._tools
+
+    async def list_mcps(self) -> list:
+        return self._mcps
+
+    async def list_skills(self) -> list:
+        return []
+
+    async def add_mcp(self, mcp):
+        self._mcps.append(mcp)
+
+    async def remove_mcp(self, name):
+        self._mcps = [m for m in self._mcps if m.name != name]
+
+    async def add_skill(self, skill):
+        pass
+
+    async def remove_skill(self, name):
+        pass
+
+    async def offload_context(self, session_id, msgs, tag=None):
+        return ""
+
+    async def offload_tool_result(self, session_id, result):
+        return ""
+
+
+def test_workspace_sandbox_lifecycle():
+    ws = FakeWorkspace("ws-1")
+    sandbox = WorkspaceSandbox(ws)
+
+    assert not sandbox.is_running
+    assert sandbox.state.session_id == "ws-1"
+
+
+@pytest.mark.asyncio
+async def test_workspace_sandbox_start_and_shutdown():
+    ws = FakeWorkspace("ws-1")
+    sandbox = WorkspaceSandbox(ws)
+
+    await sandbox.start()
+    assert ws.initialized
+    assert sandbox.is_running
+
+    await sandbox.stop()
+    # stop is a no-op for WorkspaceSandbox
+    assert sandbox.is_running
+
+    await sandbox.shutdown()
+    assert ws.closed
+    assert not sandbox.is_running
+
+
+@pytest.mark.asyncio
+async def test_workspace_sandbox_client_create():
+    def factory(**kw):
+        return FakeWorkspace(kw.get("workspace_id"))
+
+    client = WorkspaceSandboxClient(factory)
+    sandbox = await client.create(None, None, None)
+
+    assert isinstance(sandbox, WorkspaceSandbox)
+    assert sandbox.state.session_id  # auto-generated UUID
+    assert not sandbox.is_running
+
+    await sandbox.start()
+    assert sandbox.is_running
+
+
+@pytest.mark.asyncio
+async def test_workspace_sandbox_client_resume():
+    def factory(**kw):
+        return FakeWorkspace(kw.get("workspace_id"))
+
+    client = WorkspaceSandboxClient(factory)
+    state = SandboxState(session_id="ws-42")
+    sandbox = await client.resume(state)
+
+    assert isinstance(sandbox, WorkspaceSandbox)
+    assert sandbox.state.session_id == "ws-42"
+
+
+@pytest.mark.asyncio
+async def test_workspace_sandbox_client_serialize_round_trip():
+    client = WorkspaceSandboxClient(lambda **kw: FakeWorkspace())
+    state = SandboxState(session_id="x", workspace_root_ready=True)
+    json_str = client.serialize_state(state)
+    restored = client.deserialize_state(json_str)
+    assert restored.session_id == "x"
+    assert restored.workspace_root_ready is True
+
+
+@pytest.mark.asyncio
+async def test_workspace_sandbox_integration_with_manager():
+    def factory(**kw):
+        return FakeWorkspace(kw.get("workspace_id"))
+
+    client = WorkspaceSandboxClient(factory)
+    store = InMemorySandboxStateStore()
+    mgr = SandboxManager(client, store, "agent1")
+
+    ctx = SandboxContext(isolation_scope=IsolationScope.SESSION)
+    result = await mgr.acquire(ctx, session_id="s1")
+
+    assert isinstance(result.sandbox, WorkspaceSandbox)
+    assert not result.sandbox.is_running
+
+    await result.sandbox.start()
+    assert result.sandbox.is_running
+
+    await mgr.persist_state(result, ctx, session_id="s1")
+    await mgr.release(result)
+
+    assert not result.sandbox.is_running
+    assert result.sandbox.workspace.closed
+
+    # Resume from persisted state
+    result2 = await mgr.acquire(ctx, session_id="s1")
+    assert isinstance(result2.sandbox, WorkspaceSandbox)
+    # The resumed sandbox should carry the same session/workspace id
+    assert result2.sandbox.state.session_id == result.sandbox.state.session_id
