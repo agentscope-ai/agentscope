@@ -35,6 +35,7 @@ class _FakeBus(MessageBus):
     def __init__(self) -> None:
         self._channels: dict[str, asyncio.Queue] = {}
         self._locks: set[str] = set()
+        self._registries: dict[str, dict[str, str]] = {}
 
     def _channel(self, key: str) -> asyncio.Queue:
         return self._channels.setdefault(key, asyncio.Queue())
@@ -117,6 +118,30 @@ class _FakeBus(MessageBus):
     async def is_locked(self, key: str) -> bool:
         return key in self._locks
 
+    # Mode F — registry (in-memory dict)
+    async def registry_set(
+        self,
+        namespace: str,
+        field: str,
+        value: str,
+        *,
+        ttl_secs: int | None = None,
+    ) -> None:
+        self._registries.setdefault(namespace, {})[field] = value
+
+    async def registry_del(self, namespace: str, field: str) -> None:
+        if namespace in self._registries:
+            self._registries[namespace].pop(field, None)
+
+    async def registry_exists(self, namespace: str, field: str) -> bool:
+        return field in self._registries.get(namespace, {})
+
+    async def registry_getall(self, namespace: str) -> dict[str, str]:
+        return dict(self._registries.get(namespace, {}))
+
+    async def registry_drop(self, namespace: str) -> None:
+        self._registries.pop(namespace, None)
+
 
 async def _yield_a_few_times(ticks: int = 8) -> None:
     """Yield the event loop a few times so spawned tasks make progress."""
@@ -141,7 +166,7 @@ class TestCancelDispatcher(IsolatedAsyncioTestCase):
         cancels the registered asyncio task."""
         bus = _FakeBus()
         registry = ChatRunRegistry()
-        bg_manager = BackgroundTaskManager()
+        bg_manager = BackgroundTaskManager(message_bus=bus)
 
         async with bg_manager, registry, CancelDispatcher(
             message_bus=bus,
@@ -167,7 +192,7 @@ class TestCancelDispatcher(IsolatedAsyncioTestCase):
         cancels each of them; tasks for other sessions are untouched."""
         bus = _FakeBus()
         registry = ChatRunRegistry()
-        bg_manager = BackgroundTaskManager()
+        bg_manager = BackgroundTaskManager(message_bus=bus)
 
         async with bg_manager, registry, CancelDispatcher(
             message_bus=bus,
@@ -215,7 +240,7 @@ class TestCancelDispatcher(IsolatedAsyncioTestCase):
         ignored — no exception, no spurious cancel."""
         bus = _FakeBus()
         registry = ChatRunRegistry()
-        bg_manager = BackgroundTaskManager()
+        bg_manager = BackgroundTaskManager(message_bus=bus)
 
         async with bg_manager, registry, CancelDispatcher(
             message_bus=bus,
@@ -252,7 +277,7 @@ class TestCancelDispatcher(IsolatedAsyncioTestCase):
         and the local BG task(s) for the session, not just one."""
         bus = _FakeBus()
         registry = ChatRunRegistry()
-        bg_manager = BackgroundTaskManager()
+        bg_manager = BackgroundTaskManager(message_bus=bus)
 
         async with bg_manager, registry, CancelDispatcher(
             message_bus=bus,
@@ -288,7 +313,7 @@ class TestBackgroundTaskManagerCancelSessionTasks(IsolatedAsyncioTestCase):
     async def test_cancels_only_matching_session(self) -> None:
         """Only tasks whose ``session_id`` matches are cancelled; the
         return value reports the local count."""
-        bg_manager = BackgroundTaskManager()
+        bg_manager = BackgroundTaskManager(message_bus=_FakeBus())
         async with bg_manager:
             task_a = asyncio.create_task(_NeverEndingCoro.run())
             task_b = asyncio.create_task(_NeverEndingCoro.run())
@@ -319,7 +344,7 @@ class TestBackgroundTaskManagerCancelSessionTasks(IsolatedAsyncioTestCase):
     async def test_no_matches_returns_zero(self) -> None:
         """A session with no locally-registered tasks returns 0 and
         does no work."""
-        bg_manager = BackgroundTaskManager()
+        bg_manager = BackgroundTaskManager(message_bus=_FakeBus())
         async with bg_manager:
             task = asyncio.create_task(_NeverEndingCoro.run())
             await bg_manager.register_task(

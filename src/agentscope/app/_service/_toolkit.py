@@ -3,7 +3,7 @@
 
 The single entry point :func:`get_toolkit` gathers every tool source —
 workspace builtins, MCPs, skills, planning tools (Task*), background-task
-control (TaskStop), schedule control (Schedule*), team participation
+control (ToolStop), schedule control (Schedule*), team participation
 tools, and caller-supplied extras — into one :class:`Toolkit`.
 """
 from typing import Any
@@ -44,7 +44,7 @@ async def get_toolkit(
     1. Workspace builtins (Bash / Read / Write / Grep / …)
     2. Planning tools (:class:`TaskCreate` / :class:`TaskList` /
        :class:`TaskGet` / :class:`TaskUpdate`)
-    3. Background-task control (:class:`TaskStop`, from
+    3. Background-task control (:class:`ToolStop`, from
        :meth:`BackgroundTaskManager.list_tools`)
     4. Schedule control (:class:`ScheduleCreate` / :class:`ScheduleView`
        / :class:`ScheduleDelete` / :class:`ScheduleList`, from
@@ -74,7 +74,7 @@ async def get_toolkit(
             persists schedules through it.
         background_task_manager (`BackgroundTaskManager`):
             Application background-task registry. Provides the
-            :class:`TaskStop` tool bound to its live task dict.
+            :class:`ToolStop` tool bound to its live task dict.
         message_bus (`MessageBus`):
             Application message bus; passed to team tools so they can
             push HintBlocks + wakeups when delivering inter-session
@@ -110,7 +110,9 @@ optional):
     tools += [TaskCreate(), TaskList(), TaskGet(), TaskUpdate()]
 
     # Background-task control.
-    tools += await background_task_manager.list_tools()
+    tools += await background_task_manager.list_tools(
+        session_id=session_record.id,
+    )
 
     # Schedule control. Requires a model config on this session because
     # ``ScheduleCreate`` records it into new ``ScheduleRecord`` instances.

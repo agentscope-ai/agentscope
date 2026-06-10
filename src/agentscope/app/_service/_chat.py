@@ -80,7 +80,7 @@ class ChatService:
                 ``Schedule*`` tools.
             background_task_manager (`BackgroundTaskManager`):
                 Tracks offloaded long-running tool tasks. Also provides
-                the :class:`TaskStop` tool through
+                the :class:`ToolStop` tool through
                 :func:`get_toolkit`.
             message_bus (`MessageBus`):
                 Application-wide message bus. Provides session-level
@@ -214,7 +214,7 @@ class ChatService:
         )
 
         # ----------------------------------------------------------------
-        # 2. Toolkit (workspace tools + planning + TaskStop + schedule +
+        # 2. Toolkit (workspace tools + planning + ToolStop + schedule +
         # team + extras + skills + mcps).
         # ----------------------------------------------------------------
         toolkit = await get_toolkit(

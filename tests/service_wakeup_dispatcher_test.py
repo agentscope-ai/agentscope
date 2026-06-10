@@ -148,6 +148,29 @@ class _FakeBus(MessageBus):
     async def is_locked(self, key: str) -> bool:
         return key in self._locks
 
+    # Mode F — registry (in-memory dict)
+    async def registry_set(
+        self,
+        namespace: str,
+        field: str,
+        value: str,
+        *,
+        ttl_secs: int | None = None,
+    ) -> None:
+        pass
+
+    async def registry_del(self, namespace: str, field: str) -> None:
+        pass
+
+    async def registry_exists(self, namespace: str, field: str) -> bool:
+        return False
+
+    async def registry_getall(self, namespace: str) -> dict[str, str]:
+        return {}
+
+    async def registry_drop(self, namespace: str) -> None:
+        pass
+
 
 class _FakeChatService:
     """Records calls to :meth:`run` so tests can assert dispatch."""
