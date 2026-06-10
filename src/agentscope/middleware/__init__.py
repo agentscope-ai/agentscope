@@ -10,6 +10,7 @@ from ._dynamic_subagents import DynamicSubagentsMiddleware
 from ._memory_flush import MemoryFlushMiddleware, FlushTrigger, FlushMode
 from ._memory_maintenance import MemoryMaintenanceMiddleware
 from ._workspace_context import WorkspaceContextMiddleware
+from ._sandbox_lifecycle import SandboxLifecycleMiddleware
 
 __all__ = [
     "MiddlewareBase",
@@ -24,4 +25,5 @@ __all__ = [
     "FlushMode",
     "MemoryMaintenanceMiddleware",
     "WorkspaceContextMiddleware",
+    "SandboxLifecycleMiddleware",
 ]
