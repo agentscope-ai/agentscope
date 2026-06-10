@@ -1,16 +1,17 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
 """Unit tests for OpenAIEmbeddingModel."""
+from dataclasses import asdict
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from utils import AnyString
+from utils import AnyValue
 
 from agentscope.credential import OpenAICredential
 from agentscope.embedding import OpenAIEmbeddingModel
 
-A = AnyString()
+A = AnyValue()
 
 
 def _make_response(
@@ -93,7 +94,7 @@ class OpenAIEmbeddingCallTest(IsolatedAsyncioTestCase):
         result = await model(["hello", "world"])
 
         self.assertDictEqual(
-            dict(result),
+            asdict(result),
             {
                 "embeddings": [[0.1, 0.2], [0.3, 0.4]],
                 "id": A,
@@ -126,7 +127,7 @@ class OpenAIEmbeddingCallTest(IsolatedAsyncioTestCase):
         result = await model(["a", "b", "c"])
 
         self.assertDictEqual(
-            dict(result),
+            asdict(result),
             {
                 "embeddings": [[0.1], [0.2], [0.3]],
                 "id": A,
@@ -150,7 +151,7 @@ class OpenAIEmbeddingCallTest(IsolatedAsyncioTestCase):
         result = await model([])
 
         self.assertDictEqual(
-            dict(result),
+            asdict(result),
             {
                 "embeddings": [],
                 "id": A,

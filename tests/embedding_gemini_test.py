@@ -1,18 +1,21 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
 """Unit tests for GeminiEmbeddingModel."""
+from dataclasses import asdict
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock
 
-from utils import AnyString
+from utils import AnyValue
 
-from agentscope.embedding import GeminiEmbeddingModel
-from agentscope.embedding._embedding_response import EmbeddingResponse
-from agentscope.embedding._embedding_usage import EmbeddingUsage
+from agentscope.embedding import (
+    GeminiEmbeddingModel,
+    EmbeddingResponse,
+    EmbeddingUsage,
+)
 from agentscope.message import DataBlock, Base64Source
 
-A = AnyString()
+A = AnyValue()
 
 
 def _mock_resp(embeddings: list[list[float]]) -> EmbeddingResponse:
@@ -115,7 +118,7 @@ class GeminiTextCallTest(IsolatedAsyncioTestCase):
         )
         result = await model(["hello", "world"])
         self.assertDictEqual(
-            dict(result),
+            asdict(result),
             {
                 "embeddings": [[0.1, 0.2], [0.3, 0.4]],
                 "id": A,
@@ -166,7 +169,7 @@ class GeminiMultimodalCallTest(IsolatedAsyncioTestCase):
         )
         result = await model(["hello", "world"])
         self.assertDictEqual(
-            dict(result),
+            asdict(result),
             {
                 "embeddings": [[0.1], [0.2]],
                 "id": A,

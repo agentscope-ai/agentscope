@@ -1,18 +1,21 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
 """Unit tests for OllamaEmbeddingModel."""
+from dataclasses import asdict
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock
 
-from utils import AnyString
+from utils import AnyValue
 
 from agentscope.credential import OllamaCredential
-from agentscope.embedding import OllamaEmbeddingModel
-from agentscope.embedding._embedding_response import EmbeddingResponse
-from agentscope.embedding._embedding_usage import EmbeddingUsage
+from agentscope.embedding import (
+    OllamaEmbeddingModel,
+    EmbeddingResponse,
+    EmbeddingUsage,
+)
 
-A = AnyString()
+A = AnyValue()
 
 
 def _cred() -> OllamaCredential:
@@ -51,7 +54,7 @@ class OllamaEmbeddingCallTest(IsolatedAsyncioTestCase):
         )
         result = await model(["hello", "world"])
         self.assertDictEqual(
-            dict(result),
+            asdict(result),
             {
                 "embeddings": [[0.1, 0.2], [0.3, 0.4]],
                 "id": A,
@@ -90,7 +93,7 @@ class OllamaEmbeddingCallTest(IsolatedAsyncioTestCase):
         model._call_api = _mock  # type: ignore[assignment]
         result = await model(["a", "b", "c"])
         self.assertDictEqual(
-            dict(result),
+            asdict(result),
             {
                 "embeddings": [[0.1], [0.1], [0.1]],
                 "id": A,

@@ -1,19 +1,22 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access,unused-argument
 """Unit tests for DashScopeEmbeddingModel."""
+from dataclasses import asdict
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from utils import AnyString
+from utils import AnyValue
 
 from agentscope.credential import DashScopeCredential
-from agentscope.embedding import DashScopeEmbeddingModel
-from agentscope.embedding._embedding_response import EmbeddingResponse
-from agentscope.embedding._embedding_usage import EmbeddingUsage
+from agentscope.embedding import (
+    DashScopeEmbeddingModel,
+    EmbeddingResponse,
+    EmbeddingUsage,
+)
 from agentscope.message import DataBlock, Base64Source, URLSource
 
-A = AnyString()
+A = AnyValue()
 
 
 def _text_resp(
@@ -130,7 +133,7 @@ class DashScopeTextCallTest(IsolatedAsyncioTestCase):
         )
         result = await model(["hello", "world"])
         self.assertDictEqual(
-            dict(result),
+            asdict(result),
             {
                 "embeddings": [[0.1, 0.2], [0.3, 0.4]],
                 "id": A,
@@ -179,7 +182,7 @@ class DashScopeMultimodalCallTest(IsolatedAsyncioTestCase):
         )
         result = await model(["describe this", _img()])
         self.assertDictEqual(
-            dict(result),
+            asdict(result),
             {
                 "embeddings": [[0.1, 0.2], [0.3, 0.4]],
                 "id": A,
