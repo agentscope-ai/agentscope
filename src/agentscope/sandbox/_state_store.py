@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Sandbox state store implementations."""
 
+import asyncio
 from abc import ABC, abstractmethod
 
 from ._types import SandboxIsolationKey
@@ -30,15 +31,19 @@ class InMemorySandboxStateStore(SandboxStateStore):
 
     def __init__(self) -> None:
         self._data: dict[str, str] = {}
+        self._lock = asyncio.Lock()
 
     def _key(self, key: SandboxIsolationKey) -> str:
         return f"{key.scope.value}:{key.value}"
 
     async def load(self, key: SandboxIsolationKey) -> str | None:
-        return self._data.get(self._key(key))
+        async with self._lock:
+            return self._data.get(self._key(key))
 
     async def save(self, key: SandboxIsolationKey, state_json: str) -> None:
-        self._data[self._key(key)] = state_json
+        async with self._lock:
+            self._data[self._key(key)] = state_json
 
     async def delete(self, key: SandboxIsolationKey) -> None:
-        self._data.pop(self._key(key), None)
+        async with self._lock:
+            self._data.pop(self._key(key), None)

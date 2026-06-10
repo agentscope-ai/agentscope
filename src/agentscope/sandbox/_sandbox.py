@@ -49,3 +49,19 @@ class Sandbox(ABC):
     def is_running(self) -> bool:
         """Return whether the sandbox is currently running."""
         return False
+
+    async def __aenter__(self) -> "Sandbox":
+        """Async context manager: calls :meth:`start` on entry."""
+        await self.start()
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        """Async context manager: calls :meth:`stop` then :meth:`shutdown`."""
+        try:
+            await self.stop()
+        except Exception:
+            pass
+        try:
+            await self.shutdown()
+        except Exception:
+            pass

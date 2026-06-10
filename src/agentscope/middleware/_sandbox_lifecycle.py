@@ -13,6 +13,7 @@ once per run, injected into the toolkit, and the container is torn down
 later by the manager's background sweeper, not by the middleware.
 """
 
+import inspect
 import logging
 import typing
 from typing import AsyncGenerator, TYPE_CHECKING
@@ -150,8 +151,12 @@ class SandboxLifecycleMiddleware(MiddlewareBase):
 
         for client in self._injected_group.mcps:
             try:
-                if hasattr(client, "close") and callable(client.close):
-                    await client.close()
+                close_fn = getattr(client, "close", None)
+                if close_fn is not None and callable(close_fn):
+                    if inspect.iscoroutinefunction(close_fn):
+                        await close_fn()
+                    else:
+                        close_fn()
             except Exception as exc:
                 logger.warning(
                     "[sandbox-mw] Failed to close MCP client '%s': %s",
@@ -213,6 +218,10 @@ class SandboxLifecycleMiddleware(MiddlewareBase):
                     exc,
                     exc_info=exc,
                 )
+
+            # Reset so the next run starts fresh (important when the
+            # middleware instance is reused across runs).
+            self._result = None
 
             # IMPORTANT: we do NOT call sandbox.stop() or sandbox.shutdown()
             # here.  The container stays alive for the workspace manager's

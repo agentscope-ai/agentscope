@@ -81,10 +81,17 @@ class WorkspaceSandboxClient(SandboxClient):
         snapshot_spec: dict[str, Any] | None,
         options: dict[str, Any] | None,
     ) -> Sandbox:
-        options = dict(options or {})
+        """Create a new workspace sandbox.
+
+        The ``workspace_spec`` is passed through to the factory as keyword
+        arguments so each workspace subclass can pick the keys it recognises
+        (e.g. ``host_workdir`` for Docker, ``template`` for E2B, ``workdir``
+        for Local).
+        """
+        kwargs = dict(options or {})
         if workspace_spec:
-            options.setdefault("host_workdir", workspace_spec.get("root"))
-        ws = self._factory(**options)
+            kwargs.update(workspace_spec)
+        ws = self._factory(**kwargs)
         return WorkspaceSandbox(ws)
 
     async def resume(self, state: SandboxState) -> Sandbox:
