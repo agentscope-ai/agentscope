@@ -7,6 +7,7 @@ from ._manager import (
     BackgroundTaskManager,
     CancelDispatcher,
     ChatRunRegistry,
+    GracefulShutdownManager,
     SchedulerManager,
     WakeupDispatcher,
 )
@@ -98,4 +99,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             ),
         )
 
+        # Graceful shutdown manager — singleton that tracks active agent
+        # requests and coordinates clean termination on SIGTERM/SIGINT.
+        shutdown_mgr = GracefulShutdownManager.get_instance()
+        shutdown_mgr.install_signal_handlers()
+
         yield
+
+        # ------------------------------------------------------------------
+        # Shutdown phase
+        # ------------------------------------------------------------------
+        await shutdown_mgr.initiate_shutdown()
+        # Give active requests a chance to finish before AsyncExitStack
+        # tears down storage / bus. The stack will cancel dispatchers etc.
+        await shutdown_mgr.wait_for_termination(timeout=5.0)

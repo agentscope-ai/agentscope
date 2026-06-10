@@ -206,12 +206,17 @@ class Agent:
          re-send the requiring events for the unconfirmed or unexecuted tool
          calls.
         """
+        from ..app._manager import GracefulShutdownManager
+
+        mgr = GracefulShutdownManager.get_instance()
+        request_id = mgr.register_request(self)
+        mgr.bind_request_state(request_id, self.state)
         try:
             async for chunk in self._reply(inputs=inputs):
                 if not isinstance(chunk, Msg):
                     yield chunk
         finally:
-            pass
+            mgr.unregister_request(request_id)
 
     async def reply(
         self,
@@ -316,62 +321,83 @@ class Agent:
         kwargs = await self._prepare_model_input()
         estimated_tokens = await self.model.count_tokens(**kwargs)
 
-        # Skip if no compression is needed
-        threshold = cfg.trigger_ratio * self.model.context_size
-        if estimated_tokens < threshold:
+        # Determine if compression is needed
+        token_threshold = cfg.trigger_ratio * self.model.context_size
+        token_triggered = estimated_tokens >= token_threshold
+        msg_triggered = (
+            cfg.trigger_messages > 0
+            and len(self.state.context) > cfg.trigger_messages
+        )
+
+        if not token_triggered and not msg_triggered:
             return
 
+        trigger_reason = "token count" if token_triggered else "message count"
         logger.info(
-            "[AGENT %s]: Current token count %d exceeds the threshold %d, "
-            "activating compression.",
+            "[AGENT %s]: Current %s exceeds the threshold "
+            "(tokens=%d/%d, msgs=%d/%d), activating compression.",
             self.name,
+            trigger_reason,
             int(estimated_tokens),
-            int(threshold),
+            int(token_threshold),
+            len(self.state.context),
+            cfg.trigger_messages,
         )
 
         if len(self.state.context) == 0:
-            # The system prompt and the summary (if exists) exceeds the
-            # threshold, which cannot be compressed, raise the error to the
-            # developer!
             suffix = ""
             if self.state.summary:
                 suffix = "and the compression summary "
             raise RuntimeError(
                 f"The system prompt {suffix}exceed(s) the compression "
-                f"threshold ({threshold} tokens), cannot be compressed.",
+                f"threshold ({token_threshold} tokens), cannot be compressed.",
             )
+
+        # Optional: truncate tool-call arguments before counting
+        if cfg.truncate_args_length > 0:
+            await self._truncate_tool_call_args(cfg.truncate_args_length)
 
         # Split the context into the ones to be compressed, and the others to
         # be reserved
         tools = kwargs.get("tools", [])
+        reserve_budget = cfg.reserve_ratio * self.model.context_size
         (
             msgs_to_compress,
             msgs_to_reserve,
         ) = await self._split_context_for_compression(
-            cfg.reserve_ratio * self.model.context_size,
+            reserve_budget,
             tools,
+            keep_messages=cfg.keep_messages,
         )
 
         if len(msgs_to_compress) == 0:
-            # The reserve ratio is too large so that although it exceeds the
-            # trigger threshold, the context to be compressed is empty
-            # Fallback by lowering the reserve ratio to compress more context.
             logger.warning(
                 "The reserve ratio %.2f is too large to compress any context."
-                "Lower the reserve ratio to 0 as a fallback.",
+                "Lowering the reserve ratio to 0 as a fallback.",
                 cfg.reserve_ratio,
             )
             (
                 msgs_to_compress,
                 msgs_to_reserve,
             ) = await self._split_context_for_compression(
-                0 * self.model.context_size,
+                0,
                 tools,
+                keep_messages=cfg.keep_messages,
             )
 
-            # The msgs to be compressed cannot be empty here, unless the
-            # system prompt and summary (if any) already exceed the context
-            # length, which we have handled before.
+        # Optional: offload full conversation before replacing with summary
+        if cfg.offload_before_compress and self.offloader:
+            offload_path = await self.offloader.offload_context(
+                self.state.session_id,
+                msgs=msgs_to_compress,
+                tag="pre_compression",
+            )
+            logger.info(
+                "[AGENT %s]: Offloaded %d messages to %s before compression.",
+                self.name,
+                len(msgs_to_compress),
+                offload_path,
+            )
 
         # Prepare the messages to compress
         msgs_system = [
@@ -1701,6 +1727,7 @@ class Agent:
         self,
         to_reserved_tokens: float,
         tools: list[dict],
+        keep_messages: int = 0,
     ) -> tuple[list[Msg], list[Msg]]:
         """Split context into parts to compress and parts to keep recent.
 
@@ -1709,6 +1736,9 @@ class Agent:
                 The tokens to be reserved.
             tools (`list[dict]`):
                 The tools JSON schemas used for token counting.
+            keep_messages (`int`):
+                Minimum number of recent messages to preserve verbatim.
+                When > 0, overrides the token-based boundary for the tail.
 
         Returns:
             `tuple[list[Msg], list[Msg]]`:
@@ -1727,6 +1757,10 @@ class Agent:
                 UserMsg("user", self.state.summary),
             )
 
+        # If keep_messages is set, ensure at least that many messages are
+        # preserved, regardless of token budget.
+        min_reserve_index = len(self.state.context) - keep_messages
+
         msg_index = len(self.state.context) - 1
         while msg_index >= 0:
             # Count the tokens when msgs after msg_index are reserved
@@ -1739,12 +1773,24 @@ class Agent:
                 break
             msg_index -= 1
 
+        # Respect keep_messages: never compress more than min_reserve_index
+        msg_index = min(msg_index, min_reserve_index)
+
         if msg_index < 0:
             return [], deepcopy(self.state.context)
 
         # The msgs that won't exceed the reserved token limit
         msgs_to_compress = self.state.context[:msg_index]
         msgs_to_reserve = self.state.context[msg_index + 1 :]
+
+        # When keep_messages is set, the boundary message should be fully
+        # reserved rather than split, ensuring at least keep_messages recent
+        # messages survive verbatim even when the token budget is tiny.
+        if keep_messages > 0 and len(msgs_to_reserve) < keep_messages:
+            return (
+                msgs_to_compress,
+                [deepcopy(self.state.context[msg_index])] + msgs_to_reserve,
+            )
         boundary_msg = self.state.context[msg_index]
 
         # Handle the boundary Msg
@@ -1799,6 +1845,37 @@ class Agent:
             msgs_to_reserve = [boundary_msg_to_reserve] + msgs_to_reserve
 
         return msgs_to_compress, msgs_to_reserve
+
+    async def _truncate_tool_call_args(self, max_length: int) -> None:
+        """Truncate tool-call arguments in the context that exceed max_length.
+
+        This is a lightweight pre-compaction step that reduces token count
+        without requiring an LLM call.
+
+        Args:
+            max_length (`int`):
+                Maximum characters to keep per tool-call argument string.
+        """
+        import json
+
+        for msg in self.state.context:
+            for block in msg.get_content_blocks():
+                if isinstance(block, ToolCallBlock):
+                    if len(block.input) <= max_length:
+                        continue
+                    try:
+                        parsed = json.loads(block.input)
+                        # Truncate any string values that are too long
+                        truncated = False
+                        for key, value in parsed.items():
+                            if isinstance(value, str) and len(value) > max_length:
+                                parsed[key] = value[:max_length] + "\n... [truncated]"
+                                truncated = True
+                        if truncated:
+                            block.input = json.dumps(parsed, ensure_ascii=False)
+                    except Exception:
+                        # If not valid JSON, truncate the raw string
+                        block.input = block.input[:max_length] + "\n... [truncated]"
 
     async def _clear_unreserved_read_cache(
         self,

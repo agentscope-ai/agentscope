@@ -9,6 +9,7 @@ from ._glob import Glob
 from ._grep import Grep
 from ._read import Read
 from ._write import Write
+from ._plan_mode import PlanEnter, PlanWrite, PlanExit
 
 
 __all__ = [
@@ -20,4 +21,7 @@ __all__ = [
     "Grep",
     "Read",
     "Write",
+    "PlanEnter",
+    "PlanWrite",
+    "PlanExit",
 ]

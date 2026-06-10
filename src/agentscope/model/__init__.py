@@ -14,6 +14,7 @@ from ._openai_chat import OpenAIChatModel
 from ._xai import XAIChatModel
 from ._moonshot import MoonshotChatModel
 from ._openai_response import OpenAIResponseModel
+from ._fallback import FallbackChatModel
 
 __all__ = [
     "ChatUsage",
@@ -30,4 +31,5 @@ __all__ = [
     "XAIChatModel",
     "MoonshotChatModel",
     "OpenAIResponseModel",
+    "FallbackChatModel",
 ]

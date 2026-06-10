@@ -124,6 +124,45 @@ class ContextConfig(BaseModel):
     )
     """The tool result limit to avoid tool result bursting."""
 
+    trigger_messages: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Trigger compression when the number of conversation messages "
+            "exceeds this threshold. ``0`` disables message-count triggering."
+        ),
+    )
+    """Message count threshold for triggering compression."""
+
+    keep_messages: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Minimum number of recent messages to preserve verbatim during "
+            "compression. When ``0``, the reserve_ratio is used instead."
+        ),
+    )
+    """Minimum recent messages to keep during compression."""
+
+    truncate_args_length: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Truncate tool-call arguments longer than this many characters "
+            "before compression token counting. ``0`` disables truncation."
+        ),
+    )
+    """Argument truncation threshold for tool calls before compression."""
+
+    offload_before_compress: bool = Field(
+        default=False,
+        description=(
+            "Whether to offload the full conversation to a JSONL file "
+            "before replacing it with the summary."
+        ),
+    )
+    """Offload raw messages before compression."""
+
 
 class ReActConfig(BaseModel):
     """The reasoning related configuration"""

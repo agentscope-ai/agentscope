@@ -174,3 +174,14 @@ class AgentState(BaseModel):
     # =================================================================
     tasks_context: TaskContext = Field(default_factory=TaskContext)
     """The task context that records the agent tasks."""
+
+    shutdown_interrupted: bool = False
+    """Set to *True* when the agent's request was interrupted by a graceful
+    shutdown. Cleared on the next call so the retry can be treated as a
+    resume rather than a fresh request."""
+
+    plan_mode_active: bool = False
+    """Whether the agent is currently in read-only PLAN mode."""
+
+    plan_file: str = ""
+    """Workspace-relative path to the current plan markdown file."""
