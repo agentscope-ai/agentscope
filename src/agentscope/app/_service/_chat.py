@@ -22,6 +22,7 @@ from ..middleware import (
     StateChangeMiddleware,
     ToolOffloadMiddleware,
 )
+from ...middleware import WorkspaceContextMiddleware
 from .._types import (
     AgentMiddlewareFactory,
     AgentToolFactory,
@@ -255,6 +256,12 @@ class ChatService:
         # (any process) wakes an idle session — no in-process retrigger
         # plumbing is needed here.
         # ----------------------------------------------------------------
+        # Resolve a host-side workspace directory for context loading.
+        # DockerWorkspace may have host_workdir when bind-mounted;
+        # E2BWorkspace has no host path — WorkspaceContextMiddleware
+        # gracefully falls back to empty strings for missing files.
+        workspace_dir = getattr(workspace, "host_workdir", None) or workspace.workdir
+
         middlewares: list = [
             InboxMiddleware(self._message_bus),
             StateChangeMiddleware(
@@ -267,6 +274,7 @@ class ChatService:
                 user_id=user_id,
                 agent_id=agent_id,
             ),
+            WorkspaceContextMiddleware(workspace_dir=workspace_dir),
         ]
         if self._extra_agent_middlewares is not None:
             middlewares.extend(

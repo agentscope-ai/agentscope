@@ -499,6 +499,93 @@ class StorageBase(ABC):
             `list[TeamRecord]`: All team records belonging to the user.
         """
 
+    # ------------------------------------------------------------------
+    # Sandbox state persistence
+    # ------------------------------------------------------------------
+
+    async def get_sandbox_state(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        isolation_key: str,
+    ) -> str | None:
+        """Load sandbox resume state for the given isolation key.
+
+        Args:
+            user_id (`str`): The owner user id.
+            agent_id (`str`): The agent id.
+            session_id (`str`): The session id.
+            isolation_key (`str`): Encoded :class:`SandboxIsolationKey`
+                (e.g. ``"session:abc123"``).
+
+        Returns:
+            `str | None`: The serialized sandbox state JSON, or ``None``
+            when no state is present.
+
+        Raises:
+            NotImplementedError: If the storage backend does not support
+                sandbox state persistence.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support sandbox state "
+            "persistence.",
+        )
+
+    async def set_sandbox_state(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        isolation_key: str,
+        state_json: str,
+    ) -> None:
+        """Persist sandbox resume state for the given isolation key.
+
+        Args:
+            user_id (`str`): The owner user id.
+            agent_id (`str`): The agent id.
+            session_id (`str`): The session id.
+            isolation_key (`str`): Encoded :class:`SandboxIsolationKey`.
+            state_json (`str`): Serialized sandbox state JSON.
+
+        Raises:
+            NotImplementedError: If the storage backend does not support
+                sandbox state persistence.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support sandbox state "
+            "persistence.",
+        )
+
+    async def delete_sandbox_state(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        isolation_key: str,
+    ) -> bool:
+        """Remove sandbox resume state for the given isolation key.
+
+        Args:
+            user_id (`str`): The owner user id.
+            agent_id (`str`): The agent id.
+            session_id (`str`): The session id.
+            isolation_key (`str`): Encoded :class:`SandboxIsolationKey`.
+
+        Returns:
+            `bool`: ``True`` if state existed and was deleted,
+            ``False`` otherwise.
+
+        Raises:
+            NotImplementedError: If the storage backend does not support
+                sandbox state persistence.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support sandbox state "
+            "persistence.",
+        )
+
     @abstractmethod
     async def delete_team(self, user_id: str, team_id: str) -> bool:
         """Delete a team record and cascade-delete all of its workers.

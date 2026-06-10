@@ -25,6 +25,7 @@ from agentscope.sandbox import (
     SandboxState,
     SandboxStateStore,
     InMemorySandboxStateStore,
+    StorageBackedSandboxStateStore,
     WorkspaceSandbox,
     WorkspaceSandboxClient,
     noop_execution_guard,
@@ -818,4 +819,124 @@ async def test_mcp_injection_cleans_up_on_start_failure():
 
     # Group should have been removed even though start() failed
     assert len(agent.toolkit.tool_groups) == 0
+
+
+# ---------------------------------------------------------------------------
+# StorageBackedSandboxStateStore
+# ---------------------------------------------------------------------------
+
+class FakeStorage:
+    """Minimal storage stand-in for StorageBackedSandboxStateStore testing."""
+
+    def __init__(self):
+        self._data: dict[str, str] = {}
+        self.calls: list[tuple[str, tuple, dict]] = []
+
+    def _key(self, user_id, agent_id, session_id, isolation_key):
+        return f"{user_id}:{agent_id}:{session_id}:{isolation_key}"
+
+    async def get_sandbox_state(self, user_id, agent_id, session_id, isolation_key):
+        self.calls.append(("get", (user_id, agent_id, session_id, isolation_key), {}))
+        return self._data.get(self._key(user_id, agent_id, session_id, isolation_key))
+
+    async def set_sandbox_state(self, user_id, agent_id, session_id, isolation_key, state_json):
+        self.calls.append(("set", (user_id, agent_id, session_id, isolation_key, state_json), {}))
+        self._data[self._key(user_id, agent_id, session_id, isolation_key)] = state_json
+
+    async def delete_sandbox_state(self, user_id, agent_id, session_id, isolation_key):
+        self.calls.append(("delete", (user_id, agent_id, session_id, isolation_key), {}))
+        return self._data.pop(self._key(user_id, agent_id, session_id, isolation_key), None) is not None
+
+
+@pytest.mark.asyncio
+async def test_storage_backed_state_store_round_trip():
+    storage = FakeStorage()
+    store = StorageBackedSandboxStateStore(
+        storage=storage,
+        user_id="u1",
+        agent_id="a1",
+        session_id="s1",
+    )
+    key = SandboxIsolationKey(IsolationScope.SESSION, "s1")
+
+    assert await store.load(key) is None
+    await store.save(key, '{"session_id":"x"}')
+    assert await store.load(key) == '{"session_id":"x"}'
+    await store.delete(key)
+    assert await store.load(key) is None
+    await store.delete(key)  # idempotent
+
+    assert len(storage.calls) == 6
+    assert storage.calls[0][0] == "get"
+    assert storage.calls[1][0] == "set"
+    assert storage.calls[2][0] == "get"
+    assert storage.calls[3][0] == "delete"
+    assert storage.calls[4][0] == "get"
+    assert storage.calls[5][0] == "delete"
+
+
+# ---------------------------------------------------------------------------
+# SandboxLifecycleMiddleware MCP dedupe
+# ---------------------------------------------------------------------------
+
+class FakeToolkitWithMcps:
+    """Toolkit that already holds some MCPs."""
+
+    def __init__(self, mcps=None):
+        self.tool_groups = []
+        self.mcps = mcps or []
+
+
+class FakeAgentWithExistingMcps:
+    """Agent whose toolkit already contains an MCP named 'fs'."""
+
+    class State:
+        session_id = "s1"
+        tool_context = type("TC", (), {"activated_groups": []})()
+
+    state = State()
+    toolkit = FakeToolkitWithMcps(mcps=[FakeMCPClient("fs")])
+
+
+@pytest.mark.asyncio
+async def test_mcp_injection_skips_duplicates():
+    """If toolkit already has an MCP with the same name, skip it."""
+    mcp_existing = FakeMCPClient("fs")
+    mcp_new = FakeMCPClient("db")
+
+    def factory(**kw):
+        return FakeWorkspaceWithMcps(
+            kw.get("workspace_id"),
+            mcps=[mcp_existing, mcp_new],
+        )
+
+    client = WorkspaceSandboxClient(factory)
+    store = InMemorySandboxStateStore()
+    mgr = SandboxManager(client, store, "agent1")
+
+    from agentscope.middleware._sandbox_lifecycle import SandboxLifecycleMiddleware
+    mw = SandboxLifecycleMiddleware(mgr, inject_mcp_tools=True)
+
+    agent = FakeAgentWithExistingMcps()
+
+    injected_during_run: list = []
+
+    async def next_handler():
+        # _inject_tools runs before next_handler, so group is present here.
+        injected_during_run.extend(agent.toolkit.tool_groups)
+        yield "event1"
+
+    items = []
+    async for item in mw.on_reply(agent, {}, next_handler):
+        items.append(item)
+
+    # Only 'db' should have been injected; 'fs' was already present.
+    assert len(injected_during_run) == 1
+    injected = injected_during_run[0]
+    assert len(injected.mcps) == 1
+    assert injected.mcps[0].name == "db"
+
+    # After cleanup the group should be removed
+    assert len(agent.toolkit.tool_groups) == 0
+    assert "sandbox" not in agent.state.tool_context.activated_groups
     assert "sandbox" not in agent.state.tool_context.activated_groups

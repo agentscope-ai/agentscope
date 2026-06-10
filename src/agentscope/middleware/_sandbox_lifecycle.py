@@ -113,12 +113,37 @@ class SandboxLifecycleMiddleware(MiddlewareBase):
             )
             return
 
+        # Dedupe against MCPs already registered in the toolkit
+        # (e.g. ChatService.get_toolkit() already loaded them).
+        existing_names = {
+            getattr(m, "name", None)
+            for m in (getattr(agent.toolkit, "mcps", None) or [])
+        }
+        unique_mcps = [
+            m for m in mcps
+            if getattr(m, "name", None) not in existing_names
+        ]
+        if not unique_mcps:
+            logger.debug(
+                "[sandbox-mw] All MCPs already present in toolkit, "
+                "skipping injection",
+            )
+            return
+        if len(unique_mcps) < len(mcps):
+            logger.debug(
+                "[sandbox-mw] %d/%d MCPs already in toolkit, injecting "
+                "remaining %d",
+                len(mcps) - len(unique_mcps),
+                len(mcps),
+                len(unique_mcps),
+            )
+
         from ..tool import ToolGroup
 
         group = ToolGroup(
             name=self.tool_group_name,
             description=f"Sandbox tools from {type(workspace).__name__}",
-            mcps=list(mcps),
+            mcps=unique_mcps,
         )
 
         agent.toolkit.tool_groups.append(group)

@@ -74,6 +74,11 @@ class RedisStorage(StorageBase):
         team: str = "agentscope:user:{user_id}:team:{team_id}"
         team_index: str = "agentscope:user:{user_id}:teams"
 
+        sandbox_state: str = (
+            "agentscope:user:{user_id}:agent:{agent_id}:session:{session_id}:"
+            "sandbox:{isolation_key}"
+        )
+
     def __init__(
         self,
         host: str = "localhost",
@@ -1144,4 +1149,62 @@ class RedisStorage(StorageBase):
         existed = await self._client.delete(key)
         index_key = self._key(self.key_config.team_index, user_id=user_id)
         await self._client.srem(index_key, team_id)
+
+    # ------------------------------------------------------------------
+    # Sandbox state persistence
+    # ------------------------------------------------------------------
+
+    async def get_sandbox_state(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        isolation_key: str,
+    ) -> str | None:
+        """Load sandbox resume state for the given isolation key."""
+        key = self._key(
+            self.key_config.sandbox_state,
+            user_id=user_id,
+            agent_id=agent_id,
+            session_id=session_id,
+            isolation_key=isolation_key,
+        )
+        raw = await self._client.get(key)
+        return raw if raw else None
+
+    async def set_sandbox_state(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        isolation_key: str,
+        state_json: str,
+    ) -> None:
+        """Persist sandbox resume state for the given isolation key."""
+        key = self._key(
+            self.key_config.sandbox_state,
+            user_id=user_id,
+            agent_id=agent_id,
+            session_id=session_id,
+            isolation_key=isolation_key,
+        )
+        await self._set_with_ttl(key, state_json)
+
+    async def delete_sandbox_state(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        isolation_key: str,
+    ) -> bool:
+        """Remove sandbox resume state for the given isolation key."""
+        key = self._key(
+            self.key_config.sandbox_state,
+            user_id=user_id,
+            agent_id=agent_id,
+            session_id=session_id,
+            isolation_key=isolation_key,
+        )
+        deleted = await self._client.delete(key)
+        return deleted > 0
         return bool(existed)

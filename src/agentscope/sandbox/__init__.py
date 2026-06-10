@@ -16,6 +16,7 @@ from ._client import SandboxClient
 from ._state_store import (
     InMemorySandboxStateStore,
     SandboxStateStore,
+    StorageBackedSandboxStateStore,
 )
 from ._manager import SandboxManager
 from ._workspace_adapter import WorkspaceSandbox, WorkspaceSandboxClient
@@ -33,6 +34,7 @@ __all__ = [
     "SandboxState",
     "SandboxStateStore",
     "InMemorySandboxStateStore",
+    "StorageBackedSandboxStateStore",
     "WorkspaceSandbox",
     "WorkspaceSandboxClient",
     "noop_execution_guard",
