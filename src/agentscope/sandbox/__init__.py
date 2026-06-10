@@ -20,6 +20,34 @@ from ._state_store import (
 )
 from ._manager import SandboxManager
 from ._workspace_adapter import WorkspaceSandbox, WorkspaceSandboxClient
+from ._workspace_spec import (
+    WorkspaceSpec,
+    WorkspaceEntry,
+    FileEntry,
+    DirEntry,
+    LocalFileEntry,
+    LocalDirEntry,
+    BindMountEntry,
+    GitRepoEntry,
+    WorkspaceProjectionEntry,
+)
+from ._workspace_spec_applier import WorkspaceSpecApplier
+from ._workspace_archive_extractor import (
+    WorkspaceArchiveExtractor,
+    ArchiveExtractError,
+)
+from ._workspace_projection_applier import (
+    WorkspaceProjectionApplier,
+    ProjectionPayload,
+)
+from ._snapshot import (
+    SandboxSnapshot,
+    SandboxSnapshotSpec,
+    NoopSandboxSnapshot,
+    NoopSnapshotSpec,
+    LocalSandboxSnapshot,
+    LocalSnapshotSpec,
+)
 
 __all__ = [
     "IsolationScope",
@@ -38,4 +66,26 @@ __all__ = [
     "WorkspaceSandbox",
     "WorkspaceSandboxClient",
     "noop_execution_guard",
+    # Workspace spec
+    "WorkspaceSpec",
+    "WorkspaceEntry",
+    "FileEntry",
+    "DirEntry",
+    "LocalFileEntry",
+    "LocalDirEntry",
+    "BindMountEntry",
+    "GitRepoEntry",
+    "WorkspaceProjectionEntry",
+    "WorkspaceSpecApplier",
+    "WorkspaceArchiveExtractor",
+    "ArchiveExtractError",
+    "WorkspaceProjectionApplier",
+    "ProjectionPayload",
+    # Snapshot
+    "SandboxSnapshot",
+    "SandboxSnapshotSpec",
+    "NoopSandboxSnapshot",
+    "NoopSnapshotSpec",
+    "LocalSandboxSnapshot",
+    "LocalSnapshotSpec",
 ]

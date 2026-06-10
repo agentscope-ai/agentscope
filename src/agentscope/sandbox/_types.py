@@ -117,8 +117,8 @@ class SandboxContext:
     external_sandbox: "Sandbox | None" = None
     external_state: SandboxState | None = None
     isolation_scope: IsolationScope | None = IsolationScope.USER
-    workspace_spec: dict[str, Any] | None = None
-    snapshot_spec: dict[str, Any] | None = None
+    workspace_spec: Any | None = None
+    snapshot_spec: Any | None = None
     client_options: dict[str, Any] | None = None
 
 
