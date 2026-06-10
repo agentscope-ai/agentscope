@@ -99,6 +99,7 @@ class ToolBase(ABC):
 
     async def call(
         self,
+        *args: Any,
         **kwargs: Any,
     ) -> ToolChunk | AsyncGenerator[ToolChunk, None]:
         """Execute the tool logic.
