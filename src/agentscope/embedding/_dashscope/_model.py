@@ -413,9 +413,15 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
             **kwargs,
         }
 
+        # Exclude api_key from cache identifier to avoid persisting secrets
+        # and to keep cache valid across key rotations.
+        cache_identifier = {
+            k: v for k, v in api_kwargs.items() if k != "api_key"
+        }
+
         if self.embedding_cache:
             cached = await self.embedding_cache.retrieve(
-                identifier=api_kwargs,
+                identifier=cache_identifier,
             )
             if cached:
                 return EmbeddingResponse(
@@ -438,7 +444,7 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
         embeddings = [entry["embedding"] for entry in res.output["embeddings"]]
         if self.embedding_cache:
             await self.embedding_cache.store(
-                identifier=api_kwargs,
+                identifier=cache_identifier,
                 embeddings=embeddings,
             )
         return EmbeddingResponse(
