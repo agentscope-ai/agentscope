@@ -615,3 +615,211 @@ async def test_workspace_sandbox_integration_with_manager():
     assert isinstance(result2.sandbox, WorkspaceSandbox)
     # The resumed sandbox should carry the same session/workspace id
     assert result2.sandbox.state.session_id == result.sandbox.state.session_id
+
+
+# ---------------------------------------------------------------------------
+# MCP tool injection tests (direction B)
+# ---------------------------------------------------------------------------
+
+class FakeMCPClient:
+    """Minimal MCP client stand-in for testing injection."""
+
+    def __init__(self, name: str):
+        self.name = name
+        self.closed = False
+
+    async def close(self):
+        self.closed = True
+
+    async def list_tools(self):
+        return []
+
+
+class FakeWorkspaceWithMcps(WorkspaceBase):
+    """Workspace that returns MCP clients for injection testing."""
+
+    def __init__(self, workspace_id: str | None = None, mcps: list | None = None):
+        super().__init__(workspace_id)
+        self._mcps = mcps or []
+        self.initialized = False
+        self.closed = False
+
+    async def initialize(self) -> None:
+        self.initialized = True
+        self.is_alive = True
+
+    async def close(self) -> None:
+        self.closed = True
+        self.is_alive = False
+
+    async def get_instructions(self) -> str:
+        return "fake"
+
+    async def list_tools(self) -> list:
+        return []
+
+    async def list_mcps(self) -> list:
+        return list(self._mcps)
+
+    async def list_skills(self) -> list:
+        return []
+
+    async def add_mcp(self, mcp):
+        self._mcps.append(mcp)
+
+    async def remove_mcp(self, name):
+        pass
+
+    async def add_skill(self, skill):
+        pass
+
+    async def remove_skill(self, name):
+        pass
+
+    async def offload_context(self, session_id, msgs, tag=None):
+        return ""
+
+    async def offload_tool_result(self, session_id, result):
+        return ""
+
+
+class FakeToolkit:
+    """Minimal toolkit stand-in."""
+
+    def __init__(self):
+        self.tool_groups = []
+
+    def clear(self):
+        self.tool_groups.clear()
+
+
+class FakeAgentWithToolkit:
+    """Agent with toolkit and state for middleware testing."""
+
+    class State:
+        session_id = "s1"
+        tool_context = type("TC", (), {"activated_groups": []})()
+
+    state = State()
+    toolkit = FakeToolkit()
+
+
+@pytest.mark.asyncio
+async def test_mcp_injection_injects_tool_group():
+    mcp = FakeMCPClient("fs")
+
+    def factory(**kw):
+        return FakeWorkspaceWithMcps(kw.get("workspace_id"), mcps=[mcp])
+
+    client = WorkspaceSandboxClient(factory)
+    store = InMemorySandboxStateStore()
+    mgr = SandboxManager(client, store, "agent1")
+
+    from agentscope.middleware._sandbox_lifecycle import SandboxLifecycleMiddleware
+    mw = SandboxLifecycleMiddleware(mgr, inject_mcp_tools=True)
+
+    agent = FakeAgentWithToolkit()
+
+    async def next_handler():
+        yield "event1"
+
+    items = []
+    async for item in mw.on_reply(agent, {}, next_handler):
+        items.append(item)
+
+    assert items == ["event1"]
+    # After cleanup the group should be removed
+    assert len(agent.toolkit.tool_groups) == 0
+    assert "sandbox" not in agent.state.tool_context.activated_groups
+    assert mcp.closed
+
+
+@pytest.mark.asyncio
+async def test_mcp_injection_skips_when_no_mcps():
+    def factory(**kw):
+        return FakeWorkspaceWithMcps(kw.get("workspace_id"), mcps=[])
+
+    client = WorkspaceSandboxClient(factory)
+    store = InMemorySandboxStateStore()
+    mgr = SandboxManager(client, store, "agent1")
+
+    from agentscope.middleware._sandbox_lifecycle import SandboxLifecycleMiddleware
+    mw = SandboxLifecycleMiddleware(mgr, inject_mcp_tools=True)
+
+    agent = FakeAgentWithToolkit()
+
+    async def next_handler():
+        yield "event1"
+
+    items = []
+    async for item in mw.on_reply(agent, {}, next_handler):
+        items.append(item)
+
+    assert len(agent.toolkit.tool_groups) == 0
+
+
+@pytest.mark.asyncio
+async def test_mcp_injection_disabled():
+    mcp = FakeMCPClient("fs")
+
+    def factory(**kw):
+        return FakeWorkspaceWithMcps(kw.get("workspace_id"), mcps=[mcp])
+
+    client = WorkspaceSandboxClient(factory)
+    store = InMemorySandboxStateStore()
+    mgr = SandboxManager(client, store, "agent1")
+
+    from agentscope.middleware._sandbox_lifecycle import SandboxLifecycleMiddleware
+    mw = SandboxLifecycleMiddleware(mgr, inject_mcp_tools=False)
+
+    agent = FakeAgentWithToolkit()
+
+    async def next_handler():
+        yield "event1"
+
+    items = []
+    async for item in mw.on_reply(agent, {}, next_handler):
+        items.append(item)
+
+    assert len(agent.toolkit.tool_groups) == 0
+    assert not mcp.closed
+
+
+@pytest.mark.asyncio
+async def test_mcp_injection_cleans_up_on_start_failure():
+    """If sandbox.start() fails after tool injection, tools must be ejected."""
+    mcp = FakeMCPClient("x")
+
+    class BrokenWorkspace(WorkspaceBase):
+        async def initialize(self): raise RuntimeError("boom")
+        async def close(self): pass
+        async def get_instructions(self): return ""
+        async def list_tools(self): return []
+        async def list_mcps(self): return [mcp]
+        async def list_skills(self): return []
+        async def add_mcp(self, m): pass
+        async def remove_mcp(self, n): pass
+        async def add_skill(self, s): pass
+        async def remove_skill(self, n): pass
+        async def offload_context(self, s, m, t=None): return ""
+        async def offload_tool_result(self, s, r): return ""
+
+    client = WorkspaceSandboxClient(lambda **kw: BrokenWorkspace("ws-broken"))
+    store = InMemorySandboxStateStore()
+    mgr = SandboxManager(client, store, "agent1")
+
+    from agentscope.middleware._sandbox_lifecycle import SandboxLifecycleMiddleware
+    mw = SandboxLifecycleMiddleware(mgr, inject_mcp_tools=True)
+
+    agent = FakeAgentWithToolkit()
+
+    async def next_handler():
+        yield "event1"
+
+    with pytest.raises(RuntimeError, match="boom"):
+        async for _ in mw.on_reply(agent, {}, next_handler):
+            pass
+
+    # Group should have been removed even though start() failed
+    assert len(agent.toolkit.tool_groups) == 0
+    assert "sandbox" not in agent.state.tool_context.activated_groups
