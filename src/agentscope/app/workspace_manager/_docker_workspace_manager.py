@@ -263,7 +263,12 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
     # ── isolation helpers ─────────────────────────────────────────
 
     def _workdir_for(self, user_id: str, agent_id: str) -> str:
-        """Resolve the host workdir for ``(user_id, agent_id)``."""
+        """Resolve the host workdir for ``(user_id, agent_id)``.
+
+        Two-level layout — ``<basedir>/<user_id>/<agent_id>`` — so
+        different users never share a bind-mount even when their
+        ``agent_id`` collides.
+        """
         return os.path.join(self._basedir, user_id, agent_id)
 
     # ── workspace construction (TTL-cache mode) ───────────────────
@@ -275,7 +280,12 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         user_id: str,
         agent_id: str,
     ) -> DockerWorkspace:
-        """Create a :class:`DockerWorkspace` and run ``initialize``."""
+        """Create a :class:`DockerWorkspace` for ``(user_id, agent_id)``
+        and run its full ``initialize``.
+
+        ``workspace_id`` is forwarded so the container name is
+        deterministic and the same id round-trips through the cache.
+        """
         workdir = self._workdir_for(user_id, agent_id)
         os.makedirs(workdir, exist_ok=True)
         ws = DockerWorkspace(
@@ -404,12 +414,34 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         session_id: str,
         workspace_id: str,
     ) -> DockerWorkspace:
-        """Return an initialised workspace.
+        """Return an initialised workspace, building one on cache miss.
 
-        In TTL-cache mode, builds on cache miss. In pool mode,
-        checks out from the pool if not already active.
+        On miss the manager calls ``DockerWorkspace(workspace_id=…)``
+        with a deterministic workdir derived from ``(user_id,
+        agent_id)``. Image build, container creation and gateway
+        startup all happen inside the workspace's ``initialize``.
+
+        Eviction of idle workspaces is *not* performed here — the
+        background sweeper started by :meth:`__aenter__` handles that.
+
+        Args:
+            user_id (`str`):
+                Owning user identifier.
+            agent_id (`str`):
+                Agent identifier (controls the workdir).
+            session_id (`str`):
+                Session identifier (unused for isolation; sessions
+                share a workdir and partition under
+                ``sessions/<session_id>/``).
+            workspace_id (`str`):
+                Stable workspace identifier — used both as the cache
+                key and the container name suffix.
+
+        Returns:
+            `DockerWorkspace`:
+                A live, initialised workspace.
         """
-        del session_id
+        del session_id  # accepted for interface parity; not used here
 
         if self._pool_enabled:
             return await self._pool_get_workspace(
@@ -426,6 +458,9 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
                 self._cache[workspace_id] = (ws, time.monotonic())
                 return ws
 
+        # Cache miss: build under the lock to prevent two concurrent
+        # get_workspace(workspace_id=X) calls from creating two
+        # workspaces for the same id.
         async with self._lock:
             cached = self._cache.get(workspace_id)
             if cached is not None:
@@ -447,9 +482,26 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         agent_id: str,
         session_id: str,
     ) -> DockerWorkspace:
-        """Build or check out a workspace."""
-        del session_id
+        """Build a brand-new workspace and track it.
+        A fresh ``workspace_id`` is allocated by
+        :class:`DockerWorkspace` itself; the caller should persist
+        ``workspace.workspace_id`` for later :meth:`get_workspace`
+        calls.
 
+        Args:
+            user_id (`str`):
+                Owning user identifier.
+            agent_id (`str`):
+                Agent identifier (controls the workdir).
+            session_id (`str`):
+                Session identifier (accepted for parity; not used
+                here).
+
+        Returns:
+            `DockerWorkspace`:
+                The newly built workspace, already initialised.
+        """
+        del session_id  # accepted for interface parity; not used here
         if self._pool_enabled:
             return await self._pool_create_workspace(user_id, agent_id)
 
@@ -472,7 +524,14 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         return ws
 
     async def close(self, workspace_id: str) -> None:
-        """Close / release a workspace."""
+        """Close and evict a single workspace from the cache.
+
+        No-op when the workspace_id is not tracked.
+
+        Args:
+            workspace_id (`str`):
+                The workspace to close.
+        """
         if self._pool_enabled:
             return await self._pool_close_workspace(workspace_id)
 
@@ -485,7 +544,12 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         await self._safe_close(ws)
 
     async def close_all(self) -> None:
-        """Close / release every tracked workspace."""
+        """Close every cached workspace in parallel.
+
+        Docker ``kill + delete`` is slow per container; doing it
+        sequentially on app shutdown produces a noticeable stall, so
+        we fan the calls out with :func:`asyncio.gather`.
+        """
         if self._pool_enabled:
             return await self._pool_close_all()
 
@@ -667,7 +731,13 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
     # ── background sweeper (TTL-cache mode only) ──────────────────
 
     async def _sweep_loop(self) -> None:
-        """Periodically evict idle workspaces."""
+        """Periodically evict idle workspaces.
+
+        Runs forever until cancelled. Each tick pops every cache entry
+        whose last-access is older than ``ttl`` and closes it outside
+        the lock; exceptions during close are logged and swallowed so
+        one bad container does not poison the sweeper.
+        """
         while True:
             try:
                 await asyncio.sleep(self._sweep_interval)

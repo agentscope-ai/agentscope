@@ -160,6 +160,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         self._pool_enabled = pool_enabled
 
         # ── TTL-cache mode (pool_enabled=False) ───────────────
+        # workspace_id → (workspace, last_access_monotonic)
         self._cache: dict[str, tuple[E2BWorkspace, float]] = {}
         self._lock = asyncio.Lock()
         self._sweep_task: asyncio.Task | None = None
@@ -189,7 +190,12 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         user_id: str,
         agent_id: str,
     ) -> dict[str, str]:
-        """Build the extra sandbox metadata for ``(user_id, agent_id)``."""
+        """Build the extra sandbox metadata for ``(user_id, agent_id)``.
+
+        ``E2BWorkspace`` always sets ``agentscope.workspace.id`` itself;
+        we add the user/agent keys here so they show up alongside it
+        in the E2B dashboard's metadata filter UI.
+        """
         return {
             "agentscope.user.id": user_id,
             "agentscope.agent.id": agent_id,
@@ -205,7 +211,13 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         user_id: str,
         agent_id: str,
     ) -> E2BWorkspace:
-        """Construct an E2BWorkspace and run ``initialize``."""
+        """Construct an :class:`E2BWorkspace` and run its full ``initialize``.
+
+        ``workspace_id=None`` lets :class:`WorkspaceBase` allocate a
+        fresh UUID — used by :meth:`create_workspace`. Otherwise the
+        provided id is forwarded so reattachment by metadata works on
+        the second call.
+        """
         ws = E2BWorkspace(
             workspace_id=workspace_id,
             template=self._template,
@@ -281,12 +293,38 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         session_id: str,
         workspace_id: str,
     ) -> E2BWorkspace:
-        """Return an initialised workspace.
+        """Return an initialised workspace, reattaching on cache miss.
 
-        In TTL-cache mode, reattaches on cache miss. In pool mode,
-        checks out from the pool if not already active.
+        On miss the manager calls ``E2BWorkspace(workspace_id=…)`` and
+        relies on its ``initialize`` to find any existing sandbox via
+        ``AsyncSandbox.list(query=SandboxQuery(metadata=...))`` and
+        ``connect`` to it (auto-resuming if paused) — or to ``create``
+        a fresh sandbox otherwise.
+
+        Eviction of idle workspaces is *not* performed here — the
+        background sweeper started by :meth:`__aenter__` handles that.
+
+        Args:
+            user_id (`str`):
+                Owning user identifier (forwarded as sandbox metadata
+                only — not part of the cache key).
+            agent_id (`str`):
+                Agent identifier (forwarded as sandbox metadata only
+                — not part of the cache key).
+            session_id (`str`):
+                Session identifier (unused; sandboxes are
+                per-workspace, sessions partition under
+                ``sessions/<session_id>/``).
+            workspace_id (`str`):
+                Stable workspace identifier — the cache key and the
+                value stored in the sandbox's
+                ``agentscope.workspace.id`` metadata.
+
+        Returns:
+            `E2BWorkspace`:
+                A live, initialised workspace.
         """
-        del session_id
+        del session_id  # accepted for interface parity; not used here
 
         if self._pool_enabled:
             return await self._pool_get_workspace(
@@ -303,6 +341,9 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
                 self._cache[workspace_id] = (ws, time.monotonic())
                 return ws
 
+        # Cache miss: build under the lock to prevent two concurrent
+        # get_workspace(workspace_id=X) calls from creating two
+        # workspaces (and thus two sandboxes) for the same id.
         async with self._lock:
             cached = self._cache.get(workspace_id)
             if cached is not None:
@@ -324,8 +365,27 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         agent_id: str,
         session_id: str,
     ) -> E2BWorkspace:
-        """Build or check out a workspace."""
-        del session_id
+        """Build a brand-new workspace and track it.
+
+        A fresh ``workspace_id`` is allocated by
+        :class:`WorkspaceBase`; the caller should persist
+        ``workspace.workspace_id`` for later :meth:`get_workspace`
+        calls.
+
+        Args:
+            user_id (`str`):
+                Owning user identifier (forwarded as sandbox metadata).
+            agent_id (`str`):
+                Agent identifier (forwarded as sandbox metadata).
+            session_id (`str`):
+                Session identifier (accepted for parity; not used
+                here).
+
+        Returns:
+            `E2BWorkspace`:
+                The newly built workspace, already initialised.
+        """
+        del session_id  # accepted for interface parity; not used here
 
         if self._pool_enabled:
             return await self._pool_create_workspace(user_id, agent_id)
@@ -341,7 +401,14 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         return ws
 
     async def close(self, workspace_id: str) -> None:
-        """Close / release a workspace."""
+        """Close (= pause the sandbox) and evict a single workspace.
+
+        No-op when the workspace_id is not tracked.
+
+        Args:
+            workspace_id (`str`):
+                The workspace to close.
+        """
         if self._pool_enabled:
             return await self._pool_close_workspace(workspace_id)
 
@@ -354,7 +421,12 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         await self._safe_close(ws)
 
     async def close_all(self) -> None:
-        """Close / release every tracked workspace."""
+        """Close every cached workspace in parallel.
+
+        ``sandbox.pause()`` is a remote round-trip per sandbox; doing
+        it sequentially on app shutdown produces a noticeable stall,
+        so we fan the calls out with :func:`asyncio.gather`.
+        """
         if self._pool_enabled:
             return await self._pool_close_all()
 
@@ -480,7 +552,13 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
     # ── background sweeper (TTL-cache mode only) ──────────────────
 
     async def _sweep_loop(self) -> None:
-        """Periodically pause idle workspaces."""
+        """Periodically pause idle workspaces.
+
+        Runs forever until cancelled. Each tick pops every cache entry
+        whose last-access is older than ``ttl`` and closes it outside
+        the lock; exceptions during close are logged and swallowed so
+        one bad sandbox does not poison the sweeper.
+        """
         while True:
             try:
                 await asyncio.sleep(self._sweep_interval)
