@@ -1,5 +1,17 @@
 # -*- coding: utf-8 -*-
-"""Middleware that manages the sandbox session lifecycle around each agent call."""
+"""Middleware that wires a sandbox workspace into an agent's toolkit.
+
+Python-native style (direction B):
+- **Lazy acquire** on first ``on_reply`` — no per-call container churn.
+- **Persist state** after the reply so sandbox resume works next time.
+- **Eject MCP tools** so the agent doesn't carry stale references.
+- **Do NOT stop/shutdown the container** — that is the workspace manager's
+  job (TTL sweeper).  The sandbox stays alive across runs.
+
+This mirrors how ``ChatService`` already works: the workspace is resolved
+once per run, injected into the toolkit, and the container is torn down
+later by the manager's background sweeper, not by the middleware.
+"""
 
 import logging
 import typing
@@ -22,51 +34,57 @@ logger = logging.getLogger(__name__)
 
 
 class SandboxLifecycleMiddleware(MiddlewareBase):
-    """Middleware that manages the sandbox session lifecycle around each reply.
+    """Wires a sandbox into the agent toolkit for the duration of one run.
 
-    **Before** ``next_handler``:
-    1. Read :class:`SandboxContext` from the middleware config.
-    2. Acquire a sandbox via :class:`SandboxManager`.
-    3. Start the sandbox.
-    4. Optionally inject MCP tools from the sandbox workspace into the agent's
-       toolkit (direction B — uses the in-container MCP gateway).
-    5. Optionally inject the live sandbox into the agent (legacy mode).
-
-    **After** ``next_handler`` (in ``finally``):
-    1. Persist sandbox session state via :class:`SandboxManager`.
-    2. Release the sandbox (stop + optional shutdown).
-    3. Close the execution-guard lease.
-    4. Eject injected MCP tools from the toolkit.
-    5. Clear any injected workspace reference.
-
-    Post-call failures (persist, release) are logged but do not propagate —
-    this ensures the agent call result is always returned even if sandbox
-    cleanup fails.
+    - **Acquire** on first ``on_reply`` (lazy).
+    - **Inject** MCP tools from the sandbox workspace into ``agent.toolkit``.
+    - **Persist** sandbox state after the reply for next-run resume.
+    - **Eject** MCP tools before returning so the agent is clean.
+    - **Never stop/shutdown** the container — leave it running for the
+      workspace manager to recycle.
     """
 
     def __init__(
         self,
         sandbox_manager: SandboxManager,
         sandbox_context: SandboxContext | None = None,
-        inject_workspace: bool = False,
         inject_mcp_tools: bool = True,
         tool_group_name: str = "sandbox",
     ) -> None:
         self.sandbox_manager = sandbox_manager
         self.sandbox_context = sandbox_context or SandboxContext()
-        self.inject_workspace = inject_workspace
         self.inject_mcp_tools = inject_mcp_tools
         self.tool_group_name = tool_group_name
-        self._current_result: SandboxAcquireResult | None = None
+        self._result: SandboxAcquireResult | None = None
         self._injected_group = None
 
-    async def _inject_tools(self, agent: "Agent", sandbox) -> None:
-        """Inject MCP tools from the sandbox workspace into the agent toolkit.
+    async def _ensure_acquired(
+        self,
+        agent: "Agent",
+        session_id: str | None,
+        user_id: str | None,
+    ) -> SandboxAcquireResult:
+        """Lazy acquire: reuse if already held for this middleware instance."""
+        if self._result is not None:
+            return self._result
 
-        Direction B: if the sandbox wraps a WorkspaceBase (e.g. DockerWorkspace),
-        fetch its MCP clients (which talk to the in-container gateway) and
-        register them as a transient tool group on the agent's toolkit.
-        """
+        result = await self.sandbox_manager.acquire(
+            self.sandbox_context,
+            session_id=session_id,
+            user_id=user_id,
+        )
+        sandbox = result.sandbox
+        await sandbox.start()
+        await self._inject_tools(agent, sandbox)
+        self._result = result
+        logger.debug(
+            "[sandbox-mw] Acquired sandbox %s",
+            getattr(sandbox.state, "session_id", "?"),
+        )
+        return result
+
+    async def _inject_tools(self, agent: "Agent", sandbox) -> None:
+        """Inject MCP tools from the sandbox workspace into the toolkit."""
         if not self.inject_mcp_tools:
             return
 
@@ -117,23 +135,19 @@ class SandboxLifecycleMiddleware(MiddlewareBase):
         )
 
     async def _eject_tools(self, agent: "Agent") -> None:
-        """Remove the transient sandbox tool group from the agent toolkit."""
+        """Remove the transient sandbox tool group from the toolkit."""
         if self._injected_group is None:
             return
 
-        # Deactivate the group so the agent no longer sees its tools
         if self.tool_group_name in agent.state.tool_context.activated_groups:
             agent.state.tool_context.activated_groups.remove(
                 self.tool_group_name,
             )
 
-        # Remove the group from the toolkit (identity check to avoid removing
-        # a coincidentally same-named group added by something else).
         agent.toolkit.tool_groups = [
             g for g in agent.toolkit.tool_groups if g is not self._injected_group
         ]
 
-        # Close the MCP clients (stateful ones hold open connections).
         for client in self._injected_group.mcps:
             try:
                 if hasattr(client, "close") and callable(client.close):
@@ -158,48 +172,12 @@ class SandboxLifecycleMiddleware(MiddlewareBase):
         input_kwargs: dict,
         next_handler,
     ) -> AsyncGenerator:
-        """Acquire sandbox before the call, release after."""
+        """Acquire sandbox on first call, persist state after, never shutdown."""
         session_id = getattr(agent.state, "session_id", None)
         user_id = getattr(agent.state, "user_id", None)
 
-        result: SandboxAcquireResult | None = None
-        previous_workspace = None
-
         try:
-            result = await self.sandbox_manager.acquire(
-                self.sandbox_context,
-                session_id=session_id,
-                user_id=user_id,
-            )
-            sandbox = result.sandbox
-
-            try:
-                await sandbox.start()
-                await self._inject_tools(agent, sandbox)
-                if self.inject_workspace:
-                    previous_workspace = getattr(agent, "workspace", None)
-                    agent.workspace = sandbox
-                self._current_result = result
-                logger.debug(
-                    "[sandbox-mw] Acquired sandbox %s",
-                    getattr(sandbox.state, "session_id", "?"),
-                )
-            except Exception as exc:
-                await self._eject_tools(agent)
-                if self.inject_workspace:
-                    agent.workspace = previous_workspace
-                try:
-                    await self.sandbox_manager.release(result)
-                except Exception as release_err:
-                    logger.warning(
-                        "[sandbox-mw] Failed to release session after"
-                        " pre-call failure: %s",
-                        release_err,
-                        exc_info=release_err,
-                    )
-                result.lease.close()
-                raise exc
-
+            result = await self._ensure_acquired(agent, session_id, user_id)
         except Exception as exc:
             logger.error("[sandbox-mw] Failed to acquire/start sandbox: %s", exc)
             raise
@@ -208,8 +186,7 @@ class SandboxLifecycleMiddleware(MiddlewareBase):
             async for item in next_handler():
                 yield item
         finally:
-            # Always run cleanup, even if the reply handler raises.
-            self._current_result = None
+            # Persist state so next run can resume
             try:
                 await self.sandbox_manager.persist_state(
                     result,
@@ -223,14 +200,11 @@ class SandboxLifecycleMiddleware(MiddlewareBase):
                     exc,
                     exc_info=exc,
                 )
-            try:
-                await self.sandbox_manager.release(result)
-            except Exception as exc:
-                logger.warning(
-                    "[sandbox-mw] Failed to release sandbox session: %s",
-                    exc,
-                    exc_info=exc,
-                )
+
+            # Eject tools so the agent doesn't carry stale references
+            await self._eject_tools(agent)
+
+            # Release the execution-guard lease (NOT the container)
             try:
                 result.lease.close()
             except Exception as exc:
@@ -239,6 +213,7 @@ class SandboxLifecycleMiddleware(MiddlewareBase):
                     exc,
                     exc_info=exc,
                 )
-            await self._eject_tools(agent)
-            if self.inject_workspace:
-                agent.workspace = previous_workspace
+
+            # IMPORTANT: we do NOT call sandbox.stop() or sandbox.shutdown()
+            # here.  The container stays alive for the workspace manager's
+            # TTL sweeper to recycle it later.

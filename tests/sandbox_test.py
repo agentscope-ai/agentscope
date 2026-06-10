@@ -427,14 +427,10 @@ async def test_lifecycle_middleware_acquires_and_releases():
         items.append(item)
 
     assert items == ["event1", "event2"]
-    # One sandbox was created, started, stopped, and shutdown
+    # Sandbox was created and started
     assert len(client.created) == 1
-    sandbox = client.created[0]  # Actually the tuple, not the sandbox
-    # Let's fetch the actual sandbox from the first creation
-    # FakeSandboxClient.create stores the tuple, but we need the sandbox instance
-    # Actually FakeSandboxClient.create appends tuple, returns sandbox
-    # So client.created[0] is the tuple; we can't easily get the sandbox here.
-    # Let's just verify state persistence happened.
+    # Python-native style: container is NOT stopped/shutdown here
+    # (that is the workspace manager's TTL sweeper job).
     key = SandboxIsolationKey(IsolationScope.SESSION, "s1")
     assert await store.load(key) is not None
 
