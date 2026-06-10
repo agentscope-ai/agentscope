@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Type
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
+    from ..embedding import EmbeddingModelBase
     from ..model import ChatModelBase, ModelCard
 
 
@@ -48,3 +49,18 @@ class CredentialBase(BaseModel):
                 A list of candidate models described by their model cards.
         """
         return cls.get_chat_model_class().list_models()
+
+    @classmethod
+    def get_embedding_model_class(cls) -> Type["EmbeddingModelBase"] | None:
+        """Return the :class:`EmbeddingModelBase` subclass that consumes
+        this credential, or ``None`` if this provider does not support
+        embedding models.
+
+        Subclasses that have a matching embedding implementation should
+        override this method. The default returns ``None``.
+
+        Returns:
+            `Type[EmbeddingModelBase] | None`:
+                The embedding model class, or ``None``.
+        """
+        return None

@@ -7,6 +7,7 @@ from pydantic import ConfigDict, Field, SecretStr
 from ._base import CredentialBase
 
 if TYPE_CHECKING:
+    from ..embedding import EmbeddingModelBase
     from ..model import ChatModelBase
 
 _DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -41,3 +42,10 @@ class DashScopeCredential(CredentialBase):
         from ..model import DashScopeChatModel
 
         return DashScopeChatModel
+
+    @classmethod
+    def get_embedding_model_class(cls) -> Type["EmbeddingModelBase"]:
+        """Return the DashScopeEmbeddingModel class."""
+        from ..embedding import DashScopeEmbeddingModel
+
+        return DashScopeEmbeddingModel

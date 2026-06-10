@@ -32,6 +32,28 @@ class ChatModelConfig(BaseModel):
     """The model parameters."""
 
 
+class EmbeddingModelConfig(BaseModel):
+    """Configuration for constructing an embedding model from a credential.
+
+    Mirrors :class:`ChatModelConfig` but targets
+    :class:`~agentscope.embedding.EmbeddingModelBase` subclasses.
+    Used by :class:`KnowledgeBaseRecord` to persist the user's
+    embedding model selection.
+    """
+
+    type: str
+    """The provider type (e.g. ``"openai_credential"``)."""
+
+    credential_id: str
+    """The credential id to use for authentication."""
+
+    model: str
+    """The embedding model name (e.g. ``"text-embedding-3-small"``)."""
+
+    parameters: dict
+    """The embedding model parameters (e.g. ``{"dimensions": 1024}``)."""
+
+
 class SessionConfig(BaseModel):
     """Session configuration — set at creation, updatable via PATCH."""
 

@@ -1,0 +1,16 @@
+name: text-embedding-v3
+label: Text Embedding v3
+status: active
+
+input_types:
+  - text/plain
+
+output_types:
+  - application/x-embedding
+
+context_size: 8192
+
+parameter_overrides:
+  dimensions:
+    default: 1024
+    enum: [1024, 768, 512, 256, 128, 64]
