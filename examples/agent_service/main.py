@@ -54,7 +54,7 @@ app = create_app(
         default_mcps=default_mcps,
     ),
     # Customize your own subagent templates
-    sub_agent_templates=[
+    custom_subagent_templates=[
         SubAgentTemplate(
             type="explorer",
             description=(

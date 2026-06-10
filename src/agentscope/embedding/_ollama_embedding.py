@@ -38,11 +38,10 @@ class OllamaTextEmbedding(EmbeddingModelBase):
                 The embedding cache class instance, used to cache the
                 embedding results to avoid repeated API calls.
         """
-        import ollama
-
         super().__init__(model_name, dimensions)
 
-        self.client = ollama.AsyncClient(host=host, **kwargs)
+        self.host = host
+        self.client_kwargs = kwargs
         self.embedding_cache = embedding_cache
 
     async def __call__(
@@ -88,8 +87,15 @@ class OllamaTextEmbedding(EmbeddingModelBase):
                     source="cache",
                 )
 
+        import ollama
+
+        client = ollama.AsyncClient(
+            host=self.host,
+            **self.client_kwargs,
+        )
+
         start_time = datetime.now()
-        response = await self.client.embed(**kwargs)
+        response = await client.embed(**kwargs)
         time = (datetime.now() - start_time).total_seconds()
 
         if self.embedding_cache:

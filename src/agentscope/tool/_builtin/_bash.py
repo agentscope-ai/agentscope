@@ -154,6 +154,7 @@ easier to review tool calls and give permission.
         self,
         dangerous_files: list[str] = DEFAULT_DANGEROUS_FILES,
         dangerous_directories: list[str] = DEFAULT_DANGEROUS_DIRECTORIES,
+        cwd: str | os.PathLike[str] | None = None,
     ) -> None:
         """Initialize the bash tool.
 
@@ -171,12 +172,15 @@ easier to review tool calls and give permission.
                 `DEFAULT_DANGEROUS_DIRECTORIES`. Pass a custom list to
                 fully replace the defaults, or `[]` to disable the
                 directory check.
+            cwd (`str | os.PathLike[str] | None`, optional):
+                The working directory used when executing bash commands.
         """
 
         self._bash_parser = BashCommandParser()
 
         self.dangerous_files = list(dangerous_files)
         self.dangerous_directories = list(dangerous_directories)
+        self._cwd = os.fspath(cwd) if cwd is not None else None
 
     async def check_read_only(
         self,
@@ -682,11 +686,14 @@ easier to review tool calls and give permission.
 
         try:
             # Create subprocess
+            subprocess_kwargs = _subprocess_creation_kwargs()
+            if self._cwd is not None:
+                subprocess_kwargs["cwd"] = self._cwd
             process = await asyncio.create_subprocess_shell(
                 command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                **_subprocess_creation_kwargs(),
+                **subprocess_kwargs,
             )
 
             # Wait for completion with timeout

@@ -670,7 +670,7 @@ class LocalWorkspace(WorkspaceBase):
     async def list_tools(self) -> list[ToolBase]:
         """List all tools available in the workspace."""
         return [
-            Bash(),
+            Bash(cwd=self.workdir),
             Edit(),
             Glob(),
             Grep(),
