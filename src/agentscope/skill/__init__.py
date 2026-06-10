@@ -16,6 +16,12 @@ from ._security_scanner import (
     should_allow,
 )
 from ._curator import SkillCurator, SkillMeta, SkillState
+from ._catalog import (
+    SkillCatalog,
+    SkillEntry,
+    SkillPromptBuilder,
+    SkillRuntime,
+)
 
 __all__ = [
     "Category",
@@ -23,9 +29,13 @@ __all__ = [
     "ScanResult",
     "Severity",
     "Skill",
+    "SkillCatalog",
     "SkillCurator",
+    "SkillEntry",
     "SkillLoaderBase",
     "SkillMeta",
+    "SkillPromptBuilder",
+    "SkillRuntime",
     "SkillState",
     "LocalSkillLoader",
     "TrustLevel",

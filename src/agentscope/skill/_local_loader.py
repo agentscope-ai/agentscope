@@ -75,12 +75,31 @@ class LocalSkillLoader(SkillLoaderBase):
                 )
                 return None
 
+            # Collect metadata (everything from frontmatter)
+            metadata = dict(content.metadata)
+
+            # Discover resources: any files under skill_root except SKILL.md
+            resources: dict[str, str] = {}
+            for root, _, files in os.walk(skill_root):
+                for fname in files:
+                    if fname == "SKILL.md":
+                        continue
+                    fpath = os.path.join(root, fname)
+                    relpath = os.path.relpath(fpath, skill_root)
+                    try:
+                        with open(fpath, "r", encoding="utf-8") as rf:
+                            resources[relpath] = rf.read()
+                    except Exception:
+                        pass
+
             skill = Skill(
                 name=str(name),
                 description=str(description),
                 dir=skill_root,
                 markdown=content.content,
                 updated_at=updated_at,
+                metadata=metadata,
+                resources=resources,
             )
 
             # Update cache

@@ -768,20 +768,20 @@ description: {description}
             {
                 "name": "list_skill_1",
                 "description": "First skill for listing",
-                "dir": skills_sorted[0].dir,  # Use actual dir path
-                "markdown": skills_sorted[0].markdown,  # Use actual markdown
-                "updated_at": skills_sorted[
-                    0
-                ].updated_at,  # Use actual timestamp
+                "dir": skills_sorted[0].dir,
+                "markdown": skills_sorted[0].markdown,
+                "updated_at": skills_sorted[0].updated_at,
+                "metadata": skills_sorted[0].metadata,
+                "resources": skills_sorted[0].resources,
             },
             {
                 "name": "list_skill_2",
                 "description": "Second skill for listing",
-                "dir": skills_sorted[1].dir,  # Use actual dir path
-                "markdown": skills_sorted[1].markdown,  # Use actual markdown
-                "updated_at": skills_sorted[
-                    1
-                ].updated_at,  # Use actual timestamp
+                "dir": skills_sorted[1].dir,
+                "markdown": skills_sorted[1].markdown,
+                "updated_at": skills_sorted[1].updated_at,
+                "metadata": skills_sorted[1].metadata,
+                "resources": skills_sorted[1].resources,
             },
         ]
 

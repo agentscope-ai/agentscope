@@ -260,3 +260,80 @@ class TestMemoryMaintenanceMiddlewareIntegration(IsolatedAsyncioTestCase, _Model
             "Charlie" in content or "Rust" in content or "Project Beta" in content,
             f"Consolidated memory seems off-topic: {content[:200]}",
         )
+
+
+
+# ------------------------------------------------------------------
+# SkillRuntime integration test
+# ------------------------------------------------------------------
+class TestSkillRuntimeIntegration(IsolatedAsyncioTestCase):
+    """End-to-end skill loading with real filesystem."""
+
+    async def asyncSetUp(self) -> None:
+        self.tmpdir = tempfile.mkdtemp()
+        # Create a mock skill directory
+        skill_dir = Path(self.tmpdir) / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\n"
+            "name: my-skill\n"
+            "description: A test skill for integration\n"
+            "author: TestAuthor\n"
+            "---\n"
+            "# My Skill\n\n"
+            "This skill does testing.\n",
+            encoding="utf-8",
+        )
+        (skill_dir / "scripts").mkdir()
+        (skill_dir / "scripts" / "run.py").write_text(
+            "print('hello from skill')", encoding="utf-8"
+        )
+
+        from agentscope.skill import LocalSkillLoader
+        self.loader = LocalSkillLoader(directory=str(skill_dir), scan_subdir=False)
+
+    async def asyncTearDown(self) -> None:
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    async def test_full_runtime_flow(self) -> None:
+        from agentscope.skill import SkillRuntime, SkillCatalog, SkillEntry
+        from agentscope.tool._builtin._skill_load import SkillLoadTool
+        from agentscope.tool import Toolkit
+
+        # Load skills from filesystem
+        skills = await self.loader.list_skills()
+        self.assertEqual(len(skills), 1)
+        skill = skills[0]
+
+        # Build catalog and runtime
+        runtime = SkillRuntime()
+        cat = SkillCatalog.from_entries([
+            SkillEntry(skill=skill, files_root=skill.dir),
+        ])
+        toolkit = Toolkit()
+        runtime.install(cat, toolkit)
+
+        # Verify prompt rendering
+        prompt = runtime.render_prompt()
+        self.assertIn("my-skill_my-skill", prompt)
+        self.assertIn("A test skill for integration", prompt)
+        self.assertIn("TestAuthor", prompt)
+        self.assertIn("<files-root>", prompt)
+
+        # Verify load_skill tool is registered
+        tool_names = [t.name for t in toolkit.tool_groups[0].tools]
+        self.assertIn("load_skill", tool_names)
+
+        # Load SKILL.md via tool
+        load_tool = SkillLoadTool(lambda: cat)
+        result = await load_tool(skill_id=skill.skill_id, path="SKILL.md")
+        self.assertIn("My Skill", result.content[0].text)
+        self.assertIn("This skill does testing", result.content[0].text)
+
+        # Load resource via tool
+        result = await load_tool(skill_id=skill.skill_id, path="scripts/run.py")
+        self.assertIn("hello from skill", result.content[0].text)
+
+        # Not found
+        result = await load_tool(skill_id=skill.skill_id, path="missing.txt")
+        self.assertIn("Resource not found", result.content[0].text)

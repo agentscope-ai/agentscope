@@ -638,3 +638,156 @@ class TestMemoryMaintenanceMiddleware(IsolatedAsyncioTestCase):
         await mw._maybe_run_maintenance()
         # We just verify no exception and throttle works
         self.assertGreater(mw._last_run_at, 0)
+
+
+# ------------------------------------------------------------------
+# SkillRuntime / SkillCatalog / SkillPromptBuilder / SkillLoadTool
+# ------------------------------------------------------------------
+class TestSkillCatalog(IsolatedAsyncioTestCase):
+    """Skill catalog snapshot."""
+
+    def test_empty_catalog(self) -> None:
+        from agentscope.skill import SkillCatalog
+
+        cat = SkillCatalog.empty()
+        self.assertTrue(cat.is_empty())
+        self.assertEqual(cat.size(), 0)
+
+    def test_lookup(self) -> None:
+        from agentscope.skill import SkillCatalog, SkillEntry, Skill
+
+        skill = Skill(name="test", description="desc", dir="/tmp/test", markdown="# Test", updated_at=0.0)
+        entry = SkillEntry(skill=skill)
+        cat = SkillCatalog.from_entries([entry])
+        self.assertEqual(cat.size(), 1)
+        self.assertEqual(cat.get(skill.skill_id).skill.name, "test")
+
+
+class TestSkillPromptBuilder(IsolatedAsyncioTestCase):
+    """System prompt <available_skills> block rendering."""
+
+    def test_empty_catalog_returns_empty(self) -> None:
+        from agentscope.skill import SkillPromptBuilder, SkillCatalog
+
+        builder = SkillPromptBuilder()
+        self.assertEqual(builder.render(SkillCatalog.empty()), "")
+
+    def test_renders_skills_xml(self) -> None:
+        from agentscope.skill import SkillPromptBuilder, SkillCatalog, SkillEntry, Skill
+
+        skill = Skill(
+            name="data-analysis",
+            description="Analyze data with pandas",
+            dir="/skills/data-analysis",
+            markdown="# Data Analysis",
+            updated_at=0.0,
+            metadata={"author": "Alice", "tags": ["python", "data"]},
+        )
+        cat = SkillCatalog.from_entries([SkillEntry(skill=skill, files_root="/skills/data-analysis")])
+        builder = SkillPromptBuilder()
+        prompt = builder.render(cat)
+        self.assertIn("<available_skills>", prompt)
+        self.assertIn("data-analysis_data-analysis", prompt)
+        self.assertIn("<files-root>", prompt)
+        self.assertIn("Alice", prompt)  # from metadata
+        self.assertIn("</available_skills>", prompt)
+        self.assertIn("Code Execution", prompt)
+
+    def test_no_code_execution_without_files_root(self) -> None:
+        from agentscope.skill import SkillPromptBuilder, SkillCatalog, SkillEntry, Skill
+
+        skill = Skill(name="remote", description="Remote skill", dir="/remote", markdown="# R", updated_at=0.0)
+        cat = SkillCatalog.from_entries([SkillEntry(skill=skill, files_root=None)])
+        builder = SkillPromptBuilder()
+        prompt = builder.render(cat)
+        self.assertIn("<available_skills>", prompt)
+        self.assertNotIn("Code Execution", prompt)
+
+
+class TestSkillLoadTool(IsolatedAsyncioTestCase):
+    """Agent-facing skill resource loader."""
+
+    async def test_load_skill_md(self) -> None:
+        from agentscope.tool._builtin._skill_load import SkillLoadTool
+        from agentscope.skill import SkillCatalog, SkillEntry, Skill
+
+        skill = Skill(
+            name="test",
+            description="A test skill",
+            dir="/tmp/test",
+            markdown="# Hello",
+            updated_at=0.0,
+        )
+        cat = SkillCatalog.from_entries([SkillEntry(skill=skill)])
+        tool = SkillLoadTool(lambda: cat)
+        result = await tool(skill_id=skill.skill_id, path="SKILL.md")
+        self.assertIn("Hello", result.content[0].text)
+
+    async def test_load_resource(self) -> None:
+        from agentscope.tool._builtin._skill_load import SkillLoadTool
+        from agentscope.skill import SkillCatalog, SkillEntry, Skill
+
+        skill = Skill(
+            name="test",
+            description="desc",
+            dir="/tmp/test",
+            markdown="# Test",
+            updated_at=0.0,
+            resources={"guide.md": "# Guide\nStep 1..."},
+        )
+        cat = SkillCatalog.from_entries([SkillEntry(skill=skill)])
+        tool = SkillLoadTool(lambda: cat)
+        result = await tool(skill_id=skill.skill_id, path="guide.md")
+        self.assertIn("Step 1", result.content[0].text)
+
+    async def test_not_found(self) -> None:
+        from agentscope.tool._builtin._skill_load import SkillLoadTool
+        from agentscope.skill import SkillCatalog, SkillEntry, Skill
+
+        skill = Skill(name="test", description="desc", dir="/tmp/test", markdown="# T", updated_at=0.0)
+        cat = SkillCatalog.from_entries([SkillEntry(skill=skill)])
+        tool = SkillLoadTool(lambda: cat)
+        result = await tool(skill_id=skill.skill_id, path="missing.md")
+        self.assertIn("Resource not found", result.content[0].text)
+
+    async def test_skill_not_found(self) -> None:
+        from agentscope.tool._builtin._skill_load import SkillLoadTool
+        from agentscope.skill import SkillCatalog
+
+        tool = SkillLoadTool(lambda: SkillCatalog.empty())
+        result = await tool(skill_id="bad", path="SKILL.md")
+        self.assertIn("Skill not found", result.content[0].text)
+
+
+class TestSkillRuntime(IsolatedAsyncioTestCase):
+    """SkillRuntime integration of catalog + tool + prompt builder."""
+
+    async def asyncSetUp(self) -> None:
+        from agentscope.skill import Skill
+        self.skill = Skill(
+            name="runtime-test",
+            description="A runtime test skill",
+            dir="/tmp/rt",
+            markdown="# Runtime Test",
+            updated_at=0.0,
+        )
+
+    async def test_install_registers_tool(self) -> None:
+        from agentscope.skill import SkillRuntime, SkillCatalog, SkillEntry
+        from agentscope.tool import Toolkit
+
+        runtime = SkillRuntime()
+        cat = SkillCatalog.from_entries([SkillEntry(skill=self.skill)])
+        toolkit = Toolkit()
+        runtime.install(cat, toolkit)
+        tool_names = [t.name for t in toolkit.tool_groups[0].tools]
+        self.assertIn("load_skill", tool_names)
+
+    async def test_render_prompt(self) -> None:
+        from agentscope.skill import SkillRuntime, SkillCatalog, SkillEntry
+
+        runtime = SkillRuntime()
+        cat = SkillCatalog.from_entries([SkillEntry(skill=self.skill)])
+        runtime.install(cat)
+        prompt = runtime.render_prompt()
+        self.assertIn("runtime-test_rt", prompt)
