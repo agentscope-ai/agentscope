@@ -791,3 +791,105 @@ class TestSkillRuntime(IsolatedAsyncioTestCase):
         runtime.install(cat)
         prompt = runtime.render_prompt()
         self.assertIn("runtime-test_rt", prompt)
+
+
+# ------------------------------------------------------------------
+# PathPolicy
+# ------------------------------------------------------------------
+class TestPathPolicy(IsolatedAsyncioTestCase):
+    """Immutable allow-list for absolute paths."""
+
+    def test_empty_rejects_all(self) -> None:
+        from agentscope.workspace import PathPolicy
+
+        policy = PathPolicy.empty()
+        self.assertTrue(policy.is_empty())
+        self.assertFalse(policy.is_allowed("/etc/passwd"))
+        self.assertFalse(policy.is_allowed("/tmp/test"))
+
+    def test_allows_child_paths(self) -> None:
+        from agentscope.workspace import PathPolicy
+
+        policy = PathPolicy.of("/tmp/workspace")
+        self.assertTrue(policy.is_allowed("/tmp/workspace"))
+        self.assertTrue(policy.is_allowed("/tmp/workspace/data/file.txt"))
+        self.assertFalse(policy.is_allowed("/etc/passwd"))
+        self.assertFalse(policy.is_allowed("relative/path"))
+
+    def test_multiple_roots(self) -> None:
+        from agentscope.workspace import PathPolicy
+
+        policy = PathPolicy.of("/project", "/workspace")
+        self.assertTrue(policy.is_allowed("/project/src/main.py"))
+        self.assertTrue(policy.is_allowed("/workspace/memory/MEMORY.md"))
+        self.assertFalse(policy.is_allowed("/home/user/.bashrc"))
+
+
+# ------------------------------------------------------------------
+# WorkspaceContextMiddleware
+# ------------------------------------------------------------------
+class TestWorkspaceContextMiddleware(IsolatedAsyncioTestCase):
+    """Workspace context injection into system prompt."""
+
+    async def asyncSetUp(self) -> None:
+        self.tmpdir = tempfile.mkdtemp()
+        ws = Path(self.tmpdir)
+        (ws / "AGENTS.md").write_text("Be concise.", encoding="utf-8")
+        (ws / "MEMORY.md").write_text("- User likes Python", encoding="utf-8")
+        (ws / "knowledge").mkdir()
+        (ws / "knowledge" / "KNOWLEDGE.md").write_text("Domain: ML", encoding="utf-8")
+        (ws / "knowledge" / "ref.md").write_text("Reference", encoding="utf-8")
+
+    async def asyncTearDown(self) -> None:
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    async def test_injects_workspace_files(self) -> None:
+        from agentscope.middleware import WorkspaceContextMiddleware
+
+        mw = WorkspaceContextMiddleware(workspace_dir=self.tmpdir)
+        prompt = await mw.on_system_prompt(None, "You are helpful.")
+        self.assertIn("AGENTS.md", prompt)
+        self.assertIn("Be concise.", prompt)
+        self.assertIn("User likes Python", prompt)
+        self.assertIn("Domain: ML", prompt)
+        self.assertIn("knowledge/ref.md", prompt)
+        self.assertIn("Today's date is", prompt)
+
+    async def test_injects_project_vs_workspace(self) -> None:
+        from agentscope.middleware import WorkspaceContextMiddleware
+
+        project = Path(self.tmpdir) / "project"
+        project.mkdir()
+        mw = WorkspaceContextMiddleware(
+            workspace_dir=self.tmpdir,
+            project_dir=str(project),
+        )
+        prompt = await mw.on_system_prompt(None, "You are helpful.")
+        self.assertIn("Project (the user's source tree", prompt)
+        self.assertIn("Workspace (your home base", prompt)
+
+    async def test_truncate_long_memory(self) -> None:
+        from agentscope.middleware import WorkspaceContextMiddleware
+
+        ws = Path(self.tmpdir)
+        long_memory = "x" * 50000
+        (ws / "MEMORY.md").write_text(long_memory, encoding="utf-8")
+        mw = WorkspaceContextMiddleware(
+            workspace_dir=self.tmpdir,
+            max_context_tokens=1000,
+        )
+        prompt = await mw.on_system_prompt(None, "You are helpful.")
+        self.assertIn("memory truncated", prompt)
+
+    async def test_additional_files(self) -> None:
+        from agentscope.middleware import WorkspaceContextMiddleware
+
+        ws = Path(self.tmpdir)
+        (ws / ".cursorrules").write_text("Always use types.", encoding="utf-8")
+        mw = WorkspaceContextMiddleware(
+            workspace_dir=self.tmpdir,
+            additional_files=[".cursorrules"],
+        )
+        prompt = await mw.on_system_prompt(None, "You are helpful.")
+        self.assertIn("Always use types.", prompt)
+        self.assertIn("_cursorrules", prompt)
