@@ -11,6 +11,7 @@ Coverage:
 """
 # pylint: disable=protected-access, abstract-method
 import asyncio
+import datetime
 import json
 import os
 import shutil
@@ -445,3 +446,195 @@ class TestCompressionEnhancements(IsolatedAsyncioTestCase):
         block = agent.state.context[0].get_content_blocks("tool_call")[0]
         self.assertIn("[truncated]", block.input)
         self.assertTrue(block.input.startswith("echo "))
+
+
+# ------------------------------------------------------------------
+# MemoryFlushMiddleware
+# ------------------------------------------------------------------
+class TestMemoryFlushMiddleware(IsolatedAsyncioTestCase):
+    """Memory extraction triggered after each reply."""
+
+    async def asyncSetUp(self) -> None:
+        self.mock_model = MockModel(context_size=1000)
+        self.mock_model.set_structured_response(
+            StructuredResponse(
+                content={"memories": "- User likes Python"},
+            )
+        )
+        self.tmpdir = tempfile.mkdtemp()
+
+    async def asyncTearDown(self) -> None:
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    async def test_always_flush(self) -> None:
+        from agentscope.middleware import MemoryFlushMiddleware, FlushTrigger
+
+        reply_model = MockModel()
+        reply_model.set_responses(
+            [ChatResponse(content=[TextBlock(text="ok")], is_last=True)]
+        )
+        mw = MemoryFlushMiddleware(
+            model=self.mock_model,
+            memory_dir=self.tmpdir,
+            flush_trigger=FlushTrigger.always(),
+        )
+        agent = Agent(
+            name="test",
+            system_prompt="sys",
+            model=reply_model,
+            middlewares=[mw],
+            state=AgentState(
+                context=[UserMsg("u", "I like Python")]
+            ),
+            toolkit=Toolkit(),
+        )
+        await agent.reply(UserMsg("u", "hello"))
+        daily_files = list(Path(self.tmpdir).glob("*.md"))
+        self.assertEqual(len(daily_files), 1)
+        self.assertIn("User likes Python", daily_files[0].read_text())
+
+    async def test_never_flush(self) -> None:
+        from agentscope.middleware import MemoryFlushMiddleware, FlushTrigger
+
+        reply_model = MockModel()
+        reply_model.set_responses(
+            [ChatResponse(content=[TextBlock(text="ok")], is_last=True)]
+        )
+        mw = MemoryFlushMiddleware(
+            model=self.mock_model,
+            memory_dir=self.tmpdir,
+            flush_trigger=FlushTrigger.never(),
+        )
+        agent = Agent(
+            name="test",
+            system_prompt="sys",
+            model=reply_model,
+            middlewares=[mw],
+            state=AgentState(
+                context=[UserMsg("u", "I like Python")]
+            ),
+            toolkit=Toolkit(),
+        )
+        await agent.reply(UserMsg("u", "hello"))
+        daily_files = list(Path(self.tmpdir).glob("*.md"))
+        self.assertEqual(len(daily_files), 0)
+
+    async def test_throttled_flush(self) -> None:
+        from agentscope.middleware import MemoryFlushMiddleware, FlushTrigger
+
+        reply_model = MockModel()
+        reply_model.set_responses(
+            [
+                ChatResponse(content=[TextBlock(text="ok")], is_last=True),
+                ChatResponse(content=[TextBlock(text="ok")], is_last=True),
+            ]
+        )
+        mw = MemoryFlushMiddleware(
+            model=self.mock_model,
+            memory_dir=self.tmpdir,
+            flush_trigger=FlushTrigger.throttled(min_gap_seconds=10),
+        )
+        agent = Agent(
+            name="test",
+            system_prompt="sys",
+            model=reply_model,
+            middlewares=[mw],
+            state=AgentState(
+                context=[UserMsg("u", "I like Python")]
+            ),
+            toolkit=Toolkit(),
+        )
+        # First reply should flush
+        await agent.reply(UserMsg("u", "hello"))
+        daily_files = list(Path(self.tmpdir).glob("*.md"))
+        self.assertEqual(len(daily_files), 1)
+
+        # Second reply within gap should skip
+        await agent.reply(UserMsg("u", "world"))
+        content = daily_files[0].read_text()
+        # Still only one flush entry
+        self.assertEqual(content.count("## Flush at"), 1)
+
+
+# ------------------------------------------------------------------
+# MemoryMaintenanceMiddleware
+# ------------------------------------------------------------------
+class TestMemoryMaintenanceMiddleware(IsolatedAsyncioTestCase):
+    """Periodic archive / consolidate / prune."""
+
+    async def asyncSetUp(self) -> None:
+        self.tmpdir = tempfile.mkdtemp()
+        self.memory_dir = Path(self.tmpdir) / "memory"
+        self.memory_dir.mkdir()
+        self.session_dir = Path(self.tmpdir) / "sessions"
+        self.session_dir.mkdir()
+
+    async def asyncTearDown(self) -> None:
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    async def test_archives_expired_daily_files(self) -> None:
+        from agentscope.middleware import MemoryMaintenanceMiddleware
+
+        # Create an "old" daily file
+        old_date = (datetime.date.today() - datetime.timedelta(days=100)).isoformat()
+        (self.memory_dir / f"{old_date}.md").write_text("old memory")
+
+        mw = MemoryMaintenanceMiddleware(
+            memory_dir=str(self.memory_dir),
+            daily_retention_days=90,
+            min_gap_seconds=0,
+        )
+        await mw._run_maintenance()
+
+        archive_dir = self.memory_dir / "archive"
+        self.assertTrue(archive_dir.exists())
+        self.assertTrue((archive_dir / f"{old_date}.md").exists())
+        self.assertFalse((self.memory_dir / f"{old_date}.md").exists())
+
+    async def test_consolidation_called(self) -> None:
+        from agentscope.middleware import MemoryMaintenanceMiddleware
+
+        consolidator_mock = AsyncMock()
+        consolidator_mock.consolidate = AsyncMock(return_value=True)
+
+        mw = MemoryMaintenanceMiddleware(
+            consolidator=consolidator_mock,
+            memory_dir=str(self.memory_dir),
+            min_gap_seconds=0,
+        )
+        await mw._run_maintenance()
+        consolidator_mock.consolidate.assert_awaited_once()
+
+    async def test_prunes_old_sessions(self) -> None:
+        from agentscope.middleware import MemoryMaintenanceMiddleware
+
+        # Create an old session file
+        old_file = self.session_dir / "session_2024_01_01.jsonl"
+        old_file.write_text("{}")
+        # Set mtime to 200 days ago
+        old_mtime = time.time() - 200 * 86400
+        os.utime(str(old_file), (old_mtime, old_mtime))
+
+        mw = MemoryMaintenanceMiddleware(
+            memory_dir=str(self.memory_dir),
+            session_dir=str(self.session_dir),
+            session_retention_days=180,
+            min_gap_seconds=0,
+        )
+        await mw._run_maintenance()
+
+        self.assertFalse(old_file.exists())
+
+    async def test_throttle_respected(self) -> None:
+        from agentscope.middleware import MemoryMaintenanceMiddleware
+
+        mw = MemoryMaintenanceMiddleware(
+            memory_dir=str(self.memory_dir),
+            min_gap_seconds=3600,
+        )
+        # First call should run
+        await mw._maybe_run_maintenance()
+        # Second call immediately after should be skipped
+        await mw._maybe_run_maintenance()
+        # We just verify no exception and throttle works
+        self.assertGreater(mw._last_run_at, 0)

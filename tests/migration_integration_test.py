@@ -11,11 +11,14 @@ import tempfile
 from pathlib import Path
 from unittest.async_case import IsolatedAsyncioTestCase
 
+from agentscope.agent import Agent
+from agentscope.state import AgentState
 from agentscope.memory import MemoryFlushManager, MemoryConsolidator
 from agentscope.message import UserMsg, AssistantMsg, SystemMsg
 from agentscope.credential import OpenAICredential
 from agentscope.model import OpenAIChatModel
 from agentscope.skill import SkillCurator, TrustLevel, SkillState
+from agentscope.tool import Toolkit
 
 
 class _ModelMixin:
@@ -163,3 +166,97 @@ class TestSkillCuratorIntegration(IsolatedAsyncioTestCase):
             trust=TrustLevel.TRUSTED,
         )
         self.assertEqual(self.curator.get("fixable").state, SkillState.ACTIVE)
+
+
+
+# ------------------------------------------------------------------
+# Middleware integration tests
+# ------------------------------------------------------------------
+class TestMemoryFlushMiddlewareIntegration(IsolatedAsyncioTestCase, _ModelMixin):
+    """Live-model test for automatic memory flush middleware."""
+
+    async def asyncSetUp(self) -> None:
+        self.tmpdir = tempfile.mkdtemp()
+        self.model = self._get_model()
+        if self.model is None:
+            self.skipTest("Live model unavailable")
+        self.reply_model = self._get_model()
+
+    async def asyncTearDown(self) -> None:
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    async def test_middleware_extracts_memories_after_reply(self) -> None:
+        from agentscope.middleware import MemoryFlushMiddleware, FlushTrigger
+
+        mw = MemoryFlushMiddleware(
+            model=self.model,
+            memory_dir=self.tmpdir,
+            flush_trigger=FlushTrigger.always(),
+        )
+        agent = Agent(
+            name="test",
+            system_prompt="You are a helpful assistant.",
+            model=self.reply_model,
+            middlewares=[mw],
+            state=AgentState(
+                context=[
+                    UserMsg("user", "My name is Bob and I prefer TypeScript."),
+                ]
+            ),
+            toolkit=Toolkit(),
+        )
+        await agent.reply(UserMsg("user", "Hello!"))
+
+        daily_files = list(Path(self.tmpdir).glob("*.md"))
+        self.assertEqual(len(daily_files), 1)
+        content = daily_files[0].read_text()
+        self.assertTrue(
+            "Bob" in content or "TypeScript" in content,
+            f"Expected memory about Bob/TypeScript, got: {content[:200]}",
+        )
+
+
+class TestMemoryMaintenanceMiddlewareIntegration(IsolatedAsyncioTestCase, _ModelMixin):
+    """Live-model test for maintenance middleware with real consolidation."""
+
+    async def asyncSetUp(self) -> None:
+        self.tmpdir = tempfile.mkdtemp()
+        self.model = self._get_model()
+        if self.model is None:
+            self.skipTest("Live model unavailable")
+        self.memory_dir = Path(self.tmpdir) / "memory"
+        self.memory_dir.mkdir()
+        # Seed a daily ledger
+        from datetime import date
+        daily_path = self.memory_dir / f"{date.today().isoformat()}.md"
+        daily_path.write_text(
+            "- Charlie works on Project Beta\n- Prefers Rust for systems code\n",
+            encoding="utf-8",
+        )
+        self.consolidator = MemoryConsolidator(
+            model=self.model,
+            memory_dir=str(self.memory_dir),
+            max_memory_tokens=500,
+        )
+
+    async def asyncTearDown(self) -> None:
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    async def test_maintenance_consolidates_and_archives(self) -> None:
+        from agentscope.middleware import MemoryMaintenanceMiddleware
+
+        mw = MemoryMaintenanceMiddleware(
+            consolidator=self.consolidator,
+            memory_dir=str(self.memory_dir),
+            min_gap_seconds=0,
+        )
+        # Run maintenance directly
+        await mw._run_maintenance()
+
+        memory_md = self.memory_dir / "MEMORY.md"
+        self.assertTrue(memory_md.exists())
+        content = memory_md.read_text(encoding="utf-8")
+        self.assertTrue(
+            "Charlie" in content or "Rust" in content or "Project Beta" in content,
+            f"Consolidated memory seems off-topic: {content[:200]}",
+        )

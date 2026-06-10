@@ -7,6 +7,8 @@ from ._compaction import CompactionMiddleware
 from ._tool_result_eviction import ToolResultEvictionMiddleware
 from ._plan_mode import PlanModeMiddleware, PlanModeManager
 from ._dynamic_subagents import DynamicSubagentsMiddleware
+from ._memory_flush import MemoryFlushMiddleware, FlushTrigger, FlushMode
+from ._memory_maintenance import MemoryMaintenanceMiddleware
 
 __all__ = [
     "MiddlewareBase",
@@ -16,4 +18,8 @@ __all__ = [
     "PlanModeMiddleware",
     "PlanModeManager",
     "DynamicSubagentsMiddleware",
+    "MemoryFlushMiddleware",
+    "FlushTrigger",
+    "FlushMode",
+    "MemoryMaintenanceMiddleware",
 ]
