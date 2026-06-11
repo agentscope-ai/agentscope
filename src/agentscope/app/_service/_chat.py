@@ -20,6 +20,7 @@ from ..workspace_manager import WorkspaceManagerBase
 from ..middleware import (
     InboxMiddleware,
     StateChangeMiddleware,
+    TeamReportMiddleware,
     ToolOffloadMiddleware,
 )
 from ...middleware import TTSMiddleware
@@ -270,6 +271,8 @@ class ChatService:
                 agent_id=agent_id,
             ),
         ]
+        if agent_record.source == "team":
+            middlewares.append(TeamReportMiddleware())
         if self._extra_agent_middlewares is not None:
             middlewares.extend(
                 await self._extra_agent_middlewares(
