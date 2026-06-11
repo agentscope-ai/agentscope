@@ -12,11 +12,8 @@ Two pieces:
   ``agentscope.embedding.EmbeddingModelBase`` instance.
 
 mem0 calls these synchronously; AgentScope models are async. We bridge
-the two by running the coroutines on a persistent background event
-loop — necessary because async clients used inside AgentScope models
-(e.g. Ollama's ``AsyncClient``) bind their connection pool / SSL
-context to a specific loop, so spinning up a fresh ``asyncio.run`` per
-call breaks reuse.
+the two with ``asyncio.get_event_loop().run_until_complete()`` which
+executes the coroutine on the caller's event loop.
 
 Use :func:`build_mem0_config` to produce a ``MemoryConfig`` wired to
 AgentScope models:
@@ -34,12 +31,9 @@ AgentScope models:
 """
 from __future__ import annotations
 
-import asyncio
-import atexit
 import json
-import threading
 from collections.abc import AsyncGenerator
-from typing import Any, Coroutine, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from mem0.configs.embeddings.base import BaseEmbedderConfig
 from mem0.configs.llms.base import BaseLlmConfig
@@ -60,74 +54,21 @@ if TYPE_CHECKING:
 
 
 # ----------------------------------------------------------------------
-# Persistent background event loop — see module docstring for rationale.
+# Sync→async bridge
 # ----------------------------------------------------------------------
 
 
-class _PersistentLoop:
-    """Owns a long-lived event loop running in a daemon thread, so any
-    async client bound to it stays valid across many sync calls.
+def _run_sync(coro: Any) -> Any:
+    """Run an async coroutine synchronously.
 
-    A single instance suffices for the whole process; ``atexit`` stops
-    the loop and joins the thread on interpreter shutdown.
+    mem0's ``LLMBase.generate_response`` and ``EmbeddingBase.embed`` are
+    sync methods, but AgentScope models are async. This bridge executes
+    the coroutine on the running event loop via ``run_until_complete``.
     """
+    import asyncio
 
-    _START_TIMEOUT_S = 5.0
-
-    def __init__(self) -> None:
-        self._loop: asyncio.AbstractEventLoop | None = None
-        self._thread: threading.Thread | None = None
-        self._lock = threading.Lock()
-        self._started = threading.Event()
-        atexit.register(self._shutdown)
-
-    def get(self) -> asyncio.AbstractEventLoop:
-        """Return the persistent background loop, starting it on the
-        first call."""
-        with self._lock:
-            if self._loop is None or self._loop.is_closed():
-                self._started.clear()
-
-                def _run() -> None:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    self._loop = loop
-                    self._started.set()
-                    loop.run_forever()
-
-                self._thread = threading.Thread(
-                    target=_run,
-                    daemon=True,
-                    name="agentscope-mem0-adapter-loop",
-                )
-                self._thread.start()
-                if not self._started.wait(self._START_TIMEOUT_S):
-                    raise RuntimeError(
-                        "Background event loop failed to start within "
-                        f"{self._START_TIMEOUT_S}s.",
-                    )
-            assert self._loop is not None
-            return self._loop
-
-    def _shutdown(self) -> None:
-        with self._lock:
-            if self._loop is not None and not self._loop.is_closed():
-                self._loop.call_soon_threadsafe(self._loop.stop)
-                if self._thread is not None and self._thread.is_alive():
-                    self._thread.join(timeout=self._START_TIMEOUT_S)
-                self._loop.close()
-                self._loop = None
-                self._thread = None
-
-
-_persistent_loop = _PersistentLoop()
-
-
-def _run_sync(coro: Coroutine[Any, Any, Any]) -> Any:
-    """Run ``coro`` on the shared persistent loop and block for the
-    result."""
-    loop = _persistent_loop.get()
-    return asyncio.run_coroutine_threadsafe(coro, loop).result()
+    loop = asyncio.get_event_loop()
+    return loop.run_until_complete(coro)
 
 
 # ----------------------------------------------------------------------
@@ -170,9 +111,9 @@ class AgentScopeLLM(LLMBase):
         tools: list[dict] | None = None,
         tool_choice: str = "auto",  # mem0 contract — unused
     ) -> str | dict:
-        """mem0 ``LLMBase`` entry — runs the AgentScope chat model on
-        the persistent loop and returns str (or dict with tool_calls
-        when ``tools`` is given)."""
+        """mem0 ``LLMBase`` entry — runs the AgentScope chat model
+        synchronously and returns str (or dict with tool_calls when
+        ``tools`` is given)."""
         as_messages = _convert_messages_to_agentscope(messages)
         if not as_messages:
             raise ValueError(
@@ -191,6 +132,8 @@ async def _await_chat(
     messages: list[Msg],
     tools: list[dict] | None,
 ) -> "ChatResponse":
+    """Call the AgentScope chat model, handling both streaming and
+    non-streaming returns."""
     result = await model(messages, tools=tools)
     # Streaming model — drain the generator and keep the final chunk,
     # which carries the complete content per AgentScope's streaming
@@ -303,7 +246,7 @@ class AgentScopeEmbedding(EmbeddingBase):
         memory_action: str | None = None,  # mem0 contract — unused
     ) -> list[float]:
         """mem0 ``EmbeddingBase`` entry — runs the AgentScope embedding
-        model on the persistent loop and returns the first vector."""
+        model synchronously and returns the first vector."""
         text_list = [text] if isinstance(text, str) else list(text)
         response = _run_sync(self._agentscope_model(text_list))
         if not response.embeddings:
@@ -460,7 +403,8 @@ def _agentscope_config_classes() -> tuple[type, type]:
             raise ValueError(f"Unsupported LLM provider: {provider}")
 
     class _AgentScopeEmbedderConfig(EmbedderConfig):
-        """``EmbedderConfig`` subclass that accepts the AgentScope provider."""
+        """``EmbedderConfig`` subclass that accepts the AgentScope
+        provider."""
 
         @field_validator("config")
         @classmethod
@@ -470,6 +414,8 @@ def _agentscope_config_classes() -> tuple[type, type]:
             provider = values.data.get("provider")
             if provider == _AGENTSCOPE_PROVIDER:
                 return v
-            raise ValueError(f"Unsupported embedding provider: {provider}")
+            raise ValueError(
+                f"Unsupported embedding provider: {provider}",
+            )
 
     return _AgentScopeLlmConfig, _AgentScopeEmbedderConfig
