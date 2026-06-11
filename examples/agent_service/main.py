@@ -40,10 +40,12 @@ app = create_app(
     storage=RedisStorage(
         host="localhost",
         port=6379,
+        password="infini_rag_flow",
     ),
     message_bus=RedisMessageBus(
         host="localhost",
         port=6379,
+        password="infini_rag_flow",
     ),
     workspace_manager=LocalWorkspaceManager(
         basedir=os.path.join(
@@ -104,9 +106,10 @@ so anything you want them to see MUST be sent through `TeamSay`.""",
 
 if __name__ == "__main__":
     # Start the service
+    os.environ["AGENTSCOPE_RELOAD_MODE"] = "1"
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8000,
-        reload=True,
+        port=8011,
+        reload=False,
     )

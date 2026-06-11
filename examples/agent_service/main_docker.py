@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The example script to start the agent service with Docker workspaces."""
 import os
+from pickle import FALSE
 
 import uvicorn
 from fastapi.middleware import Middleware
@@ -13,16 +14,18 @@ from agentscope.app.workspace_manager import DockerWorkspaceManager
 from agentscope.mcp import MCPClient, StdioMCPConfig, HttpMCPConfig
 from agentscope.permission import PermissionContext, PermissionMode
 
-default_mcps = [
-    MCPClient(
-        name="browser-use",
-        mcp_config=StdioMCPConfig(
-            command="npx",
-            args=["@playwright/mcp@latest"],
-        ),
-        is_stateful=True,
-    ),
-]
+# default_mcps = [
+#     MCPClient(
+#         name="browser-use",
+#         mcp_config=StdioMCPConfig(
+#             command="npx",
+#             args=["@playwright/mcp@latest"],
+#         ),
+#         is_stateful=True,
+#     ),
+# ]
+
+default_mcps = []
 
 if os.getenv("AMAP_API_KEY"):
     default_mcps.append(
@@ -40,10 +43,12 @@ app = create_app(
     storage=RedisStorage(
         host="localhost",
         port=6379,
+        password="infini_rag_flow",
     ),
     message_bus=RedisMessageBus(
         host="localhost",
         port=6379,
+        password="infini_rag_flow",
     ),
     # Use DockerWorkspaceManager to run each workspace inside a Docker
     # container, with the local host directory bind-mounted as /workspace
@@ -106,9 +111,13 @@ so anything you want them to see MUST be sent through `TeamSay`.""",
 
 if __name__ == "__main__":
     # Start the service
+    # Set this so lifespan knows not to install signal handlers
+    # (uvicorn reload on macOS uses multiprocessing.spawn which
+    # conflicts with our graceful shutdown signal handlers).
+    os.environ["AGENTSCOPE_RELOAD_MODE"] = "1"
     uvicorn.run(
         "main_docker:app",
         host="0.0.0.0",
-        port=8000,
-        reload=True,
+        port=8011,
+        reload=False,
     )

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The lifespan of the agent service."""
+import os
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
@@ -103,8 +104,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         # Graceful shutdown manager — singleton that tracks active agent
         # requests and coordinates clean termination on SIGTERM/SIGINT.
+        # In uvicorn reload mode (macOS spawn) skip signal handler
+        # installation to avoid conflicts with uvicorn's own signal mgmt.
         shutdown_mgr = GracefulShutdownManager.get_instance()
-        shutdown_mgr.install_signal_handlers()
+        if not os.environ.get("AGENTSCOPE_RELOAD_MODE"):
+            shutdown_mgr.install_signal_handlers()
 
         yield
 

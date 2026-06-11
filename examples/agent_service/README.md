@@ -60,7 +60,7 @@ pnpm install
 pnpm dev
 ```
 
-After that, you can set the API endpoint `http://localhost:8000` in the Web UI and start experiencing the agent service.
+After that, you can set the API endpoint `http://localhost:8011` in the Web UI and start experiencing the agent service.
 
 <img src="https://gw.alicdn.com/imgextra/i2/O1CN01Phmg1G1brIVC8WXyU_!!6000000003518-2-tps-2938-1736.png" alt="Web UI Screenshot" width="100%">
 
