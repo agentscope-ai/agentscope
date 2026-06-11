@@ -1,5 +1,37 @@
 # -*- coding: utf-8 -*-
-"""Agent-facing filesystem abstractions and implementations."""
+"""Agent-facing filesystem abstractions and implementations.
+
+This module provides a family of filesystem implementations that let agents
+operate on files in a variety of environments — local disk, remote sandbox,
+or layered composites.
+
+**Core abstractions**
+
+- :class:`AbstractFilesystem` — The base interface (read, write, ls, grep, glob).
+- :class:`BaseStore` / :class:`StoreKey` / :class:`StoreValue` — Namespace-scoped
+  key-value storage used by :class:`RemoteFilesystem`.
+
+**Implementations**
+
+- :class:`LocalFilesystem` — Direct local-disk access with three security modes
+  (``STRICT``, ``WORKSPACE``, ``UNRESTRICTED``).
+- :class:`RemoteFilesystem` — KV-store-backed filesystem with optimistic
+  concurrency control. Suitable for stateless workers talking to a shared
+  storage backend (e.g. Redis, S3).
+- :class:`CompositeFilesystem` — Prefix-based router that shards paths across
+  multiple backend filesystems.
+- :class:`OverlayFilesystem` — Copy-on-write layering where an upper (writable)
+  layer masks a lower (read-only) layer.
+
+**Supporting types**
+
+- :class:`NamespaceFactory` — Derives namespace strings from ``user_id`` /
+  ``session_id`` pairs.
+- :class:`WorkspaceIndex` — SQLite-backed index for fast directory listings
+  and search.
+- :class:`InMemoryStore` — A trivial :class:`BaseStore` for tests and
+  single-process use.
+"""
 from __future__ import annotations
 
 from ._models import (

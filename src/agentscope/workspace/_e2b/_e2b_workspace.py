@@ -405,8 +405,29 @@ class E2BWorkspace(WorkspaceBase):
     # ── tool / MCP / skill discovery ────────────────────────────
 
     async def list_tools(self) -> list[ToolBase]:
-        """No built-in tools — every tool reaches the agent via MCP."""
-        return []
+        """Built-in tools that execute inside the E2B sandbox.
+
+        Returns remote-adapted versions of Bash, Read, Write, Edit,
+        Glob, and Grep that delegate to the sandbox's filesystem
+        via ``_exec`` / ``_read`` / ``_write``.
+        """
+        from .._remote_tools import (
+            RemoteBash,
+            RemoteRead,
+            RemoteWrite,
+            RemoteEdit,
+            RemoteGlob,
+            RemoteGrep,
+        )
+
+        return [
+            RemoteBash(self),
+            RemoteRead(self),
+            RemoteWrite(self),
+            RemoteEdit(self),
+            RemoteGlob(self),
+            RemoteGrep(self),
+        ]
 
     async def list_mcps(self) -> list[MCPClient]:
         """Return one :class:`GatewayMCPClient` per registered MCP.

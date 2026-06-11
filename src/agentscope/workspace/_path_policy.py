@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 """PathPolicy — immutable allow-list of directories for absolute-path access.
 
+.. note::
+    Currently **not wired into any code path**.
+    ``WorkspaceContextMiddleware`` imports it but does not use it.
+    Kept in the tree for a future permission-system integration.
+
 Ported from Java ``io.agentscope.harness.agent.workspace.PathPolicy``.
 """
 from __future__ import annotations

@@ -116,6 +116,22 @@ with enhanced deployment capabilities and practical features. Specifically, the 
   - Support session/state management
   - Provide sandbox for tool execution
 
+## Known Issues & Pending Cleanups
+
+The following TODOs / FIXMEs are tracked in source code and should be
+addressed in upcoming releases:
+
+| File | Line | Description | Priority |
+|------|------|-------------|----------|
+| `src/agentscope/agent/_agent.py` | 1372 | Better runtime handling of tool-input validation errors | Medium |
+| `src/agentscope/agent/_agent.py` | 1636 | Block background offloading for `is_state_injected=True` tools (safety) | **High** |
+| `src/agentscope/agent/_config.py` | 192 | Remove compatibility code after PR #1564 is merged | Low |
+| `src/agentscope/middleware/_tracing/_extractor.py` | 141 | Support non-"function" tool types (retrieval, code_interpreter) in tracing | Medium |
+| `src/agentscope/middleware/_tracing/_extractor.py` | 337 | Capture real `finish_reason` from chat response instead of hard-coding "stop" | Medium |
+| `src/agentscope/workspace/_docker/_make_dockerfile.py` | 227 | Replace dev-install branch with PyPI install once agentscope is published | Low |
+| `src/agentscope/workspace/_path_policy.py` | — | `PathPolicy` is defined but not wired into any permission check | Medium |
+| `src/agentscope/sandbox/_workspace_spec_applier.py` | 96 | `GitRepoEntry` materialisation is not implemented | Medium |
+
 Stay tuned for our detailed release notes and beta version, which will be available soon. Follow our GitHub
 repository and official channels for the latest updates. We look forward to your valuable feedback and continued
 support in shaping the future of AgentScope.

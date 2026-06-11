@@ -14,6 +14,11 @@ from ._builtin import (
     Grep,
     Read,
     Write,
+    SkillViewer,
+    SkillLoadTool,
+    PlanEnter,
+    PlanWrite,
+    PlanExit,
 )
 from ._task import (
     TaskUpdate,
@@ -44,6 +49,11 @@ __all__ = [
     "Grep",
     "Read",
     "Write",
+    "SkillViewer",
+    "SkillLoadTool",
+    "PlanEnter",
+    "PlanWrite",
+    "PlanExit",
     "TaskUpdate",
     "TaskGet",
     "TaskList",

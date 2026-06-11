@@ -23,6 +23,11 @@ from ..middleware import (
     ToolOffloadMiddleware,
 )
 from ...middleware import WorkspaceContextMiddleware, TTSMiddleware
+from ...sandbox import (
+    SandboxContext,
+    SandboxManager,
+)
+from ...middleware import SandboxLifecycleMiddleware
 from .._types import (
     AgentMiddlewareFactory,
     AgentToolFactory,
@@ -69,6 +74,8 @@ class ChatService:
         extra_agent_tools: AgentToolFactory | None = None,
         custom_subagent_templates: dict[str, SubAgentTemplate] | None = None,
         custom_agent_cls: type[Agent] | None = None,
+        sandbox_manager: SandboxManager | None = None,
+        sandbox_context: SandboxContext | None = None,
     ) -> None:
         """Initialize chat service.
 
@@ -107,6 +114,14 @@ class ChatService:
             custom_agent_cls (`type[Agent] | None`, optional):
                 Custom :class:`Agent` subclass for assembling agents.
                 Falls back to :class:`Agent` when ``None``.
+            sandbox_manager (`SandboxManager | None`, optional):
+                Optional sandbox manager. When provided, a
+                :class:`SandboxLifecycleMiddleware` is injected into every
+                agent reply so that the sandbox is acquired before the
+                call and released after.
+            sandbox_context (`SandboxContext | None`, optional):
+                Configuration passed to the sandbox manager on each
+                acquire. Defaults to an empty :class:`SandboxContext`.
         """
         self._storage = storage
         self._workspace_manager = workspace_manager
@@ -117,6 +132,8 @@ class ChatService:
         self._extra_agent_tools = extra_agent_tools
         self._sub_agent_templates = custom_subagent_templates
         self._agent_cls = custom_agent_cls or Agent
+        self._sandbox_manager = sandbox_manager
+        self._sandbox_context = sandbox_context or SandboxContext()
 
     async def run(
         self,
@@ -283,6 +300,19 @@ class ChatService:
                     user_id,
                     agent_id,
                     session_id,
+                ),
+            )
+
+        # ----------------------------------------------------------------
+        # 3a. Sandbox lifecycle middleware — acquire/start sandbox before
+        # the reply and persist/release after.
+        # ----------------------------------------------------------------
+        if self._sandbox_manager is not None:
+            middlewares.append(
+                SandboxLifecycleMiddleware(
+                    sandbox_manager=self._sandbox_manager,
+                    sandbox_context=self._sandbox_context,
+                    inject_workspace=True,
                 ),
             )
 

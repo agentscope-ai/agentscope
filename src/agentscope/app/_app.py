@@ -41,6 +41,8 @@ def create_app(
     extra_agent_tools: AgentToolFactory | None = None,
     custom_subagent_templates: list[SubAgentTemplate] | None = None,
     custom_agent_cls: Type[Agent] | None = None,
+    sandbox_manager: Any = None,
+    sandbox_context: Any = None,
     title: str = "AgentScope",
     version: str = __version__,
 ) -> FastAPI:
@@ -145,6 +147,8 @@ def create_app(
     app.state.extra_agent_middlewares = extra_agent_middlewares
     app.state.extra_agent_tools = extra_agent_tools
     app.state.custom_agent_cls = custom_agent_cls
+    app.state.sandbox_manager = sandbox_manager
+    app.state.sandbox_context = sandbox_context
 
     # Validate custom sub-agent templates for duplicate types and store in
     #  app.state

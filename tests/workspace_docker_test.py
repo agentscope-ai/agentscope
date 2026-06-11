@@ -709,15 +709,21 @@ class TestDockerWorkspaceLifecycle(IsolatedAsyncioTestCase):
         finally:
             await ws.close()
 
-    async def test_list_tools_empty(self) -> None:
-        """``list_tools`` is always empty — every tool is an MCP tool."""
+    async def test_list_tools_returns_builtin_tools(self) -> None:
+        """``list_tools`` returns remote built-in tools (Bash, Read, etc.)."""
         ws = DockerWorkspace(
             workspace_id=self.workspace_id,
             workdir=self.temp_dir.name,
         )
         try:
             await ws.initialize()
-            self.assertListEqual(await ws.list_tools(), [])
+            tools = await ws.list_tools()
+            self.assertEqual(len(tools), 6)
+            names = {t.name for t in tools}
+            self.assertEqual(
+                names,
+                {"Bash", "Read", "Write", "Edit", "Glob", "Grep"},
+            )
         finally:
             await ws.close()
 

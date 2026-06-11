@@ -72,6 +72,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             extra_agent_tools=app.state.extra_agent_tools,
             custom_subagent_templates=app.state.custom_subagent_templates,
             custom_agent_cls=app.state.custom_agent_cls,
+            sandbox_manager=getattr(app.state, "sandbox_manager", None),
+            sandbox_context=getattr(app.state, "sandbox_context", None),
         )
         app.state.chat_service = chat_service
 

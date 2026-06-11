@@ -17,19 +17,27 @@ from ..workspace import WorkspaceBase
 from ._types import SandboxState
 from ._sandbox import Sandbox
 from ._client import SandboxClient
+from ._workspace_spec import WorkspaceSpec
+from ._workspace_spec_applier import WorkspaceSpecApplier
+from .._logging import logger
 
 
 class WorkspaceSandbox(Sandbox):
     """Wraps a :class:`WorkspaceBase` to satisfy the :class:`Sandbox` contract.
 
     Lifecycle mapping:
-    - ``start()``  → ``workspace.initialize()``
+    - ``start()``  → ``WorkspaceSpecApplier.apply`` + ``workspace.initialize()``
     - ``stop()``   → no-op (WorkspaceBase state is filesystem-persistent)
     - ``shutdown()`` → ``workspace.close()``
     """
 
-    def __init__(self, workspace: WorkspaceBase) -> None:
+    def __init__(
+        self,
+        workspace: WorkspaceBase,
+        workspace_spec: WorkspaceSpec | None = None,
+    ) -> None:
         self._workspace = workspace
+        self._workspace_spec = workspace_spec
 
     @property
     def workspace(self) -> WorkspaceBase:
@@ -37,6 +45,25 @@ class WorkspaceSandbox(Sandbox):
         return self._workspace
 
     async def start(self) -> None:
+        """Materialise the workspace spec, then initialise the workspace."""
+        if self._workspace_spec is not None:
+            applier = WorkspaceSpecApplier()
+            try:
+                applier.apply(
+                    self._workspace_spec,
+                    self._workspace.workdir,
+                )
+                logger.debug(
+                    "WorkspaceSandbox: applied %d entries to %s",
+                    len(self._workspace_spec.entries),
+                    self._workspace.workdir,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "WorkspaceSandbox: failed to apply workspace spec: %s",
+                    exc,
+                    exc_info=exc,
+                )
         await self._workspace.initialize()
 
     async def stop(self) -> None:
@@ -87,12 +114,26 @@ class WorkspaceSandboxClient(SandboxClient):
         arguments so each workspace subclass can pick the keys it recognises
         (e.g. ``host_workdir`` for Docker, ``template`` for E2B, ``workdir``
         for Local).
+
+        If ``workspace_spec`` is a :class:`WorkspaceSpec` instance, it is
+        forwarded to :class:`WorkspaceSandbox` so that
+        :meth:`WorkspaceSpecApplier.apply` runs during ``start()``.
         """
         kwargs = dict(options or {})
-        if workspace_spec:
+        # Only merge plain dict keys into the factory kwargs — a WorkspaceSpec
+        # object carries layout entries that should not be treated as factory
+        # keyword arguments.
+        if workspace_spec is not None and not isinstance(
+            workspace_spec, WorkspaceSpec,
+        ):
             kwargs.update(workspace_spec)
         ws = self._factory(**kwargs)
-        return WorkspaceSandbox(ws)
+        spec = (
+            workspace_spec
+            if isinstance(workspace_spec, WorkspaceSpec)
+            else None
+        )
+        return WorkspaceSandbox(ws, workspace_spec=spec)
 
     async def resume(self, state: SandboxState) -> Sandbox:
         ws = self._factory(workspace_id=state.session_id)

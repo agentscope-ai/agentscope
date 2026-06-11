@@ -408,12 +408,29 @@ class DockerWorkspace(WorkspaceBase):
     # ── tool / MCP / skill discovery ────────────────────────────
 
     async def list_tools(self) -> list[ToolBase]:
-        """Built-in tools exposed by the workspace itself.
+        """Built-in tools that execute inside the container.
 
-        Always empty — every tool reaches the agent through an MCP
-        server registered on the in-container gateway.
+        Returns remote-adapted versions of Bash, Read, Write, Edit,
+        Glob, and Grep that delegate to the container's filesystem
+        via ``_exec`` / ``_read`` / ``_write``.
         """
-        return []
+        from .._remote_tools import (
+            RemoteBash,
+            RemoteRead,
+            RemoteWrite,
+            RemoteEdit,
+            RemoteGlob,
+            RemoteGrep,
+        )
+
+        return [
+            RemoteBash(self),
+            RemoteRead(self),
+            RemoteWrite(self),
+            RemoteEdit(self),
+            RemoteGlob(self),
+            RemoteGrep(self),
+        ]
 
     async def list_mcps(self) -> list[MCPClient]:
         """Return one :class:`GatewayMCPClient` per registered MCP.
