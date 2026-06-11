@@ -11,6 +11,7 @@ from ._memory_flush import MemoryFlushMiddleware, FlushTrigger, FlushMode
 from ._memory_maintenance import MemoryMaintenanceMiddleware
 from ._workspace_context import WorkspaceContextMiddleware
 from ._sandbox_lifecycle import SandboxLifecycleMiddleware
+from ._tts_middleware import TTSMiddleware
 
 __all__ = [
     "MiddlewareBase",
@@ -26,4 +27,5 @@ __all__ = [
     "MemoryMaintenanceMiddleware",
     "WorkspaceContextMiddleware",
     "SandboxLifecycleMiddleware",
+    "TTSMiddleware",
 ]

@@ -182,7 +182,8 @@
 		"maxContext": "最大上下文",
 		"maxOutput": "最大输出",
 		"inputTypes": "输入模态",
-		"outputTypes": "输出模态"
+		"outputTypes": "输出模态",
+		"availableTTSModels": "语音合成模型"
 	},
 	"llm-select": {
 		"placeholder": "选择模型",
@@ -285,7 +286,12 @@
 		"empty": "暂无可配置参数。",
 		"fallbackLabel": "兜底模型",
 		"fallbackLabelWithModel": "兜底模型（{{model}}）",
-		"parametersLabel": "参数"
+		"parametersLabel": "参数",
+		"ttsLabel": "语音合成",
+		"ttsEmpty": "暂无可用的语音合成模型。",
+		"ttsParameters": "参数",
+		"ttsParametersDescription": "调整所选语音合成模型的参数。",
+		"noTts": "不使用语音合成"
 	},
 	"setup": {
 		"title": "连接到服务器",
