@@ -7,6 +7,7 @@ translate between mem0's sync OpenAI-style contract and AgentScope's
 async ``Msg`` / ``ContentBlock`` / ``EmbeddingResponse`` shapes, and
 that ``register_with_mem0`` plugs them into mem0's factories.
 """
+import asyncio
 import json
 import unittest
 from typing import Any
@@ -138,8 +139,31 @@ class TestParseChatResponse(unittest.TestCase):
 
 
 # ----------------------------------------------------------------------
-# AgentScopeLLM end-to-end (fake AgentScope model on persistent loop)
+# AgentScopeLLM end-to-end (fake AgentScope model on caller event loop)
 # ----------------------------------------------------------------------
+
+
+class _CurrentEventLoopTestCase(unittest.TestCase):
+    """Provides a current event loop for the adapter's sync bridge."""
+
+    _event_loop: asyncio.AbstractEventLoop
+    _previous_event_loop: asyncio.AbstractEventLoop | None
+
+    def setUp(self) -> None:
+        """Install a fresh event loop for each sync-bridge test."""
+        super().setUp()
+        try:
+            self._previous_event_loop = asyncio.get_event_loop()
+        except RuntimeError:
+            self._previous_event_loop = None
+        self._event_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._event_loop)
+
+    def tearDown(self) -> None:
+        """Restore the previous event loop after each test."""
+        asyncio.set_event_loop(self._previous_event_loop)
+        self._event_loop.close()
+        super().tearDown()
 
 
 class _RecordingMockChatModel(MockModel):
@@ -157,7 +181,7 @@ class _RecordingMockChatModel(MockModel):
         return await super()._call_api(*args, **kwargs)
 
 
-class TestAgentScopeLLM(unittest.TestCase):
+class TestAgentScopeLLM(_CurrentEventLoopTestCase):
     """End-to-end tests for the mem0 LLM adapter."""
 
     def test_constructor_rejects_non_chatmodel(self) -> None:
@@ -281,7 +305,7 @@ class _FakeEmbeddingModel(EmbeddingModelBase):
         )
 
 
-class TestAgentScopeEmbedding(unittest.TestCase):
+class TestAgentScopeEmbedding(_CurrentEventLoopTestCase):
     """Tests for the mem0 embedding adapter."""
 
     def test_constructor_validation(self) -> None:
