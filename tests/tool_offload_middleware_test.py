@@ -366,11 +366,13 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(len(self.bg_manager.tasks), 1)
         task_id = next(iter(self.bg_manager.tasks))
-        asyncio_task = self.bg_manager.tasks[task_id].asyncio_task
+        bg_task = self.bg_manager.tasks[task_id]
+        asyncio_task = bg_task.asyncio_task
 
-        # Call ToolStop
+        # Call ToolStop bound to the same session as the registered
+        # background task, so the local cancel path matches.
         tool_stop_tools = await self.bg_manager.list_tools(
-            session_id="test-session",
+            session_id=bg_task.session_id,
         )
         tool_stop = tool_stop_tools[0]
         result = await tool_stop(task_id=task_id)

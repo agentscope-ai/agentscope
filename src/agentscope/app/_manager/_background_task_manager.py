@@ -149,15 +149,23 @@ class ToolStop(ToolBase):
                 The tool chunk.
         """
         # Path 1: task is on this worker — cancel directly.
-        if task_id in self.background_tasks:
-            task = self.background_tasks.pop(task_id)
-            task.asyncio_task.cancel()
+        # Only cancel when the task belongs to the same session as this
+        # ToolStop instance, so a leaked/guessed task_id from another
+        # session cannot trigger cross-session cancellation on a shared
+        # worker.
+        local_task = self.background_tasks.get(task_id)
+        if (
+            local_task is not None
+            and local_task.session_id == self._session_id
+        ):
+            self.background_tasks.pop(task_id, None)
+            local_task.asyncio_task.cancel()
             logger.info(
                 "Background task stopped via ToolStop (local): task_id=%s, "
                 "session_id=%s, agent_id=%s",
                 task_id,
-                task.session_id,
-                task.agent_id,
+                local_task.session_id,
+                local_task.agent_id,
             )
             return ToolChunk(
                 content=[
@@ -166,7 +174,8 @@ class ToolStop(ToolBase):
                 state=ToolResultState.SUCCESS,
             )
 
-        # Path 2: task exists in the global registry (another worker).
+        # Path 2: task exists in the global registry (another worker, or
+        # a different session on this worker).
         if await self._message_bus.bg_task_exists(
             self._session_id,
             task_id,
@@ -298,13 +307,13 @@ class BackgroundTaskManager:
 
         def _on_done(_t: asyncio.Task) -> None:
             self.tasks.pop(task_id, None)
-            # Schedule async Redis cleanup (fire-and-forget).
+            # Schedule async Redis cleanup (fire-and-forget). Wrap in a
+            # coroutine that logs failures so the bus error (e.g. Redis
+            # connection drop) does not surface as
+            # ``Task exception was never retrieved``.
             try:
                 asyncio.ensure_future(
-                    self._message_bus.bg_task_unregister(
-                        session_id,
-                        task_id,
-                    ),
+                    self._safe_bg_task_unregister(session_id, task_id),
                 )
             except RuntimeError:
                 # Event loop already closed during shutdown.
@@ -312,6 +321,33 @@ class BackgroundTaskManager:
 
         asyncio_task.add_done_callback(_on_done)
         return task_id
+
+    async def _safe_bg_task_unregister(
+        self,
+        session_id: str,
+        task_id: str,
+    ) -> None:
+        """Unregister a finished background task, logging any failure.
+
+        Args:
+            session_id (`str`):
+                The session id of the finished task.
+            task_id (`str`):
+                The task id to unregister from the global registry.
+        """
+        try:
+            await self._message_bus.bg_task_unregister(
+                session_id,
+                task_id,
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            logger.exception(
+                "Failed to unregister background task from the global "
+                "registry: task_id=%s, session_id=%s, error=%s",
+                task_id,
+                session_id,
+                str(e),
+            )
 
     # ------------------------------------------------------------------
     # Tool listing

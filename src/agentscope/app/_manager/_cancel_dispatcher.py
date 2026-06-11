@@ -116,6 +116,10 @@ class CancelDispatcher:
             logger.exception(
                 "CancelDispatcher session-cancel loop crashed.",
             )
+        finally:
+            # Unblock ``__aenter__`` even if subscribe failed before
+            # ``on_ready`` ran, so startup cannot deadlock.
+            ready.set()
 
     def _cancel_session(self, session_id: str) -> None:
         """Cancel every locally-tracked task for a session.
@@ -168,3 +172,7 @@ class CancelDispatcher:
             logger.exception(
                 "CancelDispatcher task-cancel loop crashed.",
             )
+        finally:
+            # Unblock ``__aenter__`` even if subscribe failed before
+            # ``on_ready`` ran, so startup cannot deadlock.
+            ready.set()
