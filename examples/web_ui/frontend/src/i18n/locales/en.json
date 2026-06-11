@@ -182,7 +182,8 @@
 		"maxContext": "Max. Context",
 		"maxOutput": "Max. Output",
 		"inputTypes": "Input",
-		"outputTypes": "Output"
+		"outputTypes": "Output",
+		"availableTTSModels": "TTS Models"
 	},
 	"llm-select": {
 		"placeholder": "Select a model",
@@ -285,7 +286,12 @@
 		"empty": "No configurable parameters.",
 		"fallbackLabel": "Fallback model",
 		"fallbackLabelWithModel": "Fallback model ({{model}})",
-		"parametersLabel": "Parameters"
+		"parametersLabel": "Parameters",
+		"ttsLabel": "TTS",
+		"ttsEmpty": "No TTS models available.",
+		"ttsParameters": "Parameters",
+		"ttsParametersDescription": "Adjust parameters for the selected TTS model.",
+		"noTts": "No TTS"
 	},
 	"setup": {
 		"title": "Connect to Service",

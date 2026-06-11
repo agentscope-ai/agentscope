@@ -1,0 +1,23 @@
+name: tongyi-embedding-vision-flash
+label: Tongyi Embedding Vision Flash
+status: active
+
+input_types:
+  - text/plain
+  - image/jpeg
+  - image/png
+  - image/webp
+  - image/bmp
+  - image/tiff
+  - video/mp4
+  - video/mpeg
+
+output_types:
+  - application/x-embedding
+
+context_size: 1024
+
+parameter_overrides:
+  dimensions:
+    default: 768
+    enum: [768, 512, 256, 128, 64]

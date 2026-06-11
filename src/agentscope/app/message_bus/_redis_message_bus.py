@@ -383,6 +383,13 @@ class RedisMessageBus(MessageBus):
     # Mode D — transient broadcast
     # ------------------------------------------------------------------
 
+    # Poll interval for the pub/sub read loop. Bounding each read keeps
+    # long-lived idle subscriptions resilient: an idle ``socket_timeout``
+    # read (raised when the connection defines one, or when the server
+    # drops idle connections) surfaces as a benign per-poll timeout that
+    # we ignore, instead of a fatal error that tears down the generator.
+    _SUBSCRIBE_POLL_TIMEOUT_SECS = 1.0
+
     async def publish(
         self,
         key: str,
@@ -422,12 +429,28 @@ class RedisMessageBus(MessageBus):
             `dict`:
                 Each payload originally passed to :meth:`publish`.
         """
+        from redis import exceptions as redis_exceptions
+
         pubsub = self._client.pubsub()
         try:
             await pubsub.subscribe(key)
             if on_ready is not None:
                 on_ready()
-            async for message in pubsub.listen():
+            while True:
+                try:
+                    message = await pubsub.get_message(
+                        ignore_subscribe_messages=True,
+                        timeout=self._SUBSCRIBE_POLL_TIMEOUT_SECS,
+                    )
+                except redis_exceptions.TimeoutError:
+                    # Idle read timeout (e.g. the connection defines a
+                    # ``socket_timeout`` or the server drops idle
+                    # connections). No message arrived in this window;
+                    # keep listening rather than crashing the loop.
+                    continue
+                if message is None:
+                    # No payload within the poll window — keep waiting.
+                    continue
                 if message.get("type") != "message":
                     # Skip ``subscribe`` ack and similar control frames.
                     continue

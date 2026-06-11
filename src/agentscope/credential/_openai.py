@@ -7,6 +7,7 @@ from pydantic import ConfigDict, Field, SecretStr
 from ._base import CredentialBase
 
 if TYPE_CHECKING:
+    from ..embedding import EmbeddingModelBase
     from ..model import ChatModelBase
 
 
@@ -46,3 +47,10 @@ class OpenAICredential(CredentialBase):
         from ..model import OpenAIChatModel
 
         return OpenAIChatModel
+
+    @classmethod
+    def get_embedding_model_class(cls) -> Type["EmbeddingModelBase"]:
+        """Return the OpenAIEmbeddingModel class."""
+        from ..embedding import OpenAIEmbeddingModel
+
+        return OpenAIEmbeddingModel
