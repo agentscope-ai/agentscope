@@ -36,7 +36,7 @@ from mem0.vector_stores.configs import VectorStoreConfig
 
 from agentscope.agent import Agent
 from agentscope.credential import DashScopeCredential
-from agentscope.embedding import DashScopeTextEmbedding
+from agentscope.embedding import DashScopeEmbeddingModel
 from agentscope.event import (
     ReplyStartEvent,
     TextBlockDeltaEvent,
@@ -183,10 +183,12 @@ async def main() -> None:
         model="qwen3.7-max",
         stream=False,
     )
-    embedding_model = DashScopeTextEmbedding(
-        api_key=api_key,
-        model_name="text-embedding-v2",
-        dimensions=1536,  # matches mem0's Qdrant default
+    embedding_model = DashScopeEmbeddingModel(
+        credential=DashScopeCredential(api_key=api_key),
+        model="text-embedding-v4",
+        parameters=DashScopeEmbeddingModel.Parameters(
+            dimensions=1536,  # matches mem0's Qdrant default
+        ),
     )
 
     # Explicit vector-store config (here we just spell out mem0's

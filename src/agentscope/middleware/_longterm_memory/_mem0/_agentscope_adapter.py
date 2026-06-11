@@ -31,7 +31,9 @@ AgentScope models:
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 from collections.abc import AsyncGenerator
 from typing import Any, TYPE_CHECKING
 
@@ -58,17 +60,30 @@ if TYPE_CHECKING:
 # ----------------------------------------------------------------------
 
 
-def _run_sync(coro: Any) -> Any:
-    """Run an async coroutine synchronously.
+class _AsyncBridge:
+    """Run async coroutines synchronously on a dedicated, long-lived
+    event loop.
 
-    mem0's ``LLMBase.generate_response`` and ``EmbeddingBase.embed`` are
-    sync methods, but AgentScope models are async. This bridge executes
-    the coroutine on the running event loop via ``run_until_complete``.
+    mem0's ``LLMBase.generate_response`` / ``EmbeddingBase.embed`` are
+    sync, but AgentScope models are async. The bridge owns one event
+    loop running on its own daemon thread and submits coroutines to it
+    via ``run_coroutine_threadsafe``, blocking for the result. The loop
+    stays alive for the bridge's lifetime, so async clients created
+    inside the model are reused and cleaned up against a live loop.
     """
-    import asyncio
 
-    loop = asyncio.get_event_loop()
-    return loop.run_until_complete(coro)
+    def __init__(self) -> None:
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(
+            target=self._loop.run_forever,
+            name="mem0-agentscope-bridge",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def run(self, coro: Any) -> Any:
+        """Submit ``coro`` to the bridge loop and block for its result."""
+        return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
 
 
 # ----------------------------------------------------------------------
@@ -101,6 +116,7 @@ class AgentScopeLLM(LLMBase):
                 f"{type(self.config.model).__name__}.",
             )
         self._agentscope_model: ChatModelBase = self.config.model
+        self._bridge = _AsyncBridge()
 
     # ----- LLMBase interface -----
     # pylint: disable=unused-argument
@@ -121,7 +137,7 @@ class AgentScopeLLM(LLMBase):
                 "(empty list or all roles unrecognized).",
             )
 
-        response = _run_sync(
+        response = self._bridge.run(
             _await_chat(self._agentscope_model, as_messages, tools),
         )
         return _parse_chat_response(response, has_tool=bool(tools))
@@ -237,6 +253,7 @@ class AgentScopeEmbedding(EmbeddingBase):
                 f"{type(self.config.model).__name__}.",
             )
         self._agentscope_model: EmbeddingModelBase = self.config.model
+        self._bridge = _AsyncBridge()
 
     # ----- EmbeddingBase interface -----
     # pylint: disable=unused-argument
@@ -248,7 +265,7 @@ class AgentScopeEmbedding(EmbeddingBase):
         """mem0 ``EmbeddingBase`` entry — runs the AgentScope embedding
         model synchronously and returns the first vector."""
         text_list = [text] if isinstance(text, str) else list(text)
-        response = _run_sync(self._agentscope_model(text_list))
+        response = self._bridge.run(self._agentscope_model(text_list))
         if not response.embeddings:
             raise RuntimeError(
                 "AgentScope embedding model returned no embeddings.",

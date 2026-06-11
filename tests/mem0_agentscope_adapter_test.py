@@ -12,6 +12,7 @@ import json
 import unittest
 from typing import Any
 
+from agentscope.credential import DashScopeCredential
 from agentscope.embedding import EmbeddingModelBase, EmbeddingResponse
 from agentscope.message import (
     Msg,
@@ -292,15 +293,26 @@ class _FakeEmbeddingModel(EmbeddingModelBase):
 
     def __init__(self) -> None:
         """Initialize the fake embedding model."""
-        super().__init__(model_name="fake-embed", dimensions=3)
+        super().__init__(
+            credential=DashScopeCredential(api_key="fake"),
+            model="fake-embed",
+            parameters=self.Parameters(dimensions=3),
+            context_size=8192,
+            batch_size=10,
+            max_retries=0,
+            retry_delay=0.0,
+        )
         self.received: list[list[str]] = []
 
-    async def __call__(self, *args: Any, **kwargs: Any) -> EmbeddingResponse:
+    async def _call_api(
+        self,
+        inputs: list[str],
+        **kwargs: Any,
+    ) -> EmbeddingResponse:
         """Return a fixed vector for every input text."""
-        texts = args[0] if args else kwargs.get("texts")
-        self.received.append(list(texts))
+        self.received.append(list(inputs))
         return EmbeddingResponse(
-            embeddings=[[0.1, 0.2, 0.3] for _ in texts],
+            embeddings=[[0.1, 0.2, 0.3] for _ in inputs],
             source="api",
         )
 
