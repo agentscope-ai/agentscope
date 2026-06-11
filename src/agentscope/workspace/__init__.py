@@ -8,7 +8,10 @@ from ._offload_protocol import Offloader
 from ._path_policy import PathPolicy
 from ._docker import DockerWorkspace
 from ._e2b import E2BWorkspace
-
+from ._workspace_mode import WorkspaceMode
+from ._workspace_manager import WorkspaceManager
+from ._workspace_skill_repository import WorkspaceSkillRepository
+from ._workspace_task_repository import WorkspaceTaskRepository
 
 __all__ = [
     "WorkspaceBase",
@@ -17,4 +20,8 @@ __all__ = [
     "E2BWorkspace",
     "Offloader",
     "PathPolicy",
+    "WorkspaceMode",
+    "WorkspaceManager",
+    "WorkspaceSkillRepository",
+    "WorkspaceTaskRepository",
 ]

@@ -80,9 +80,18 @@ class LocalFilesystem(AbstractFilesystem):
                 return p.resolve()
             return (self._root / p).resolve()
         # SANDBOXED
-        stripped = re.sub(r"^[A-Za-z]:[/\\]?", "", str(p))
-        stripped = stripped.lstrip("/")
-        p = Path(stripped)
+        if p.is_absolute():
+            resolved = p.resolve()
+            # If already under root, allow it (e.g. paths returned by glob)
+            try:
+                resolved.relative_to(self._root)
+                return resolved
+            except ValueError:
+                pass
+            # Strip Windows drive letters if present
+            stripped = re.sub(r"^[A-Za-z]:[/\\]?", "", str(p))
+            stripped = stripped.lstrip("/")
+            p = Path(stripped)
         resolved = (self._root / p).resolve()
         try:
             resolved.relative_to(self._root)
