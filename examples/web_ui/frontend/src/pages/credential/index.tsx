@@ -307,6 +307,8 @@ export const CredentialPage = () => {
 	const { t } = useTranslation();
 	const { credentials, loading, remove, refetch } = useCredentials();
 	const [schemas, setSchemas] = useState<CredentialSchema[]>([]);
+	const [loadingSchemas, setLoadingSchemas] = useState(true);
+	const [schemaError, setSchemaError] = useState<string | null>(null);
 	const [selectedId, setSelectedId] = useState<string | null>(null);
 	const [createOpen, setCreateOpen] = useState(false);
 	const [createDefaultType, setCreateDefaultType] = useState<string | undefined>();
@@ -314,8 +316,19 @@ export const CredentialPage = () => {
 	const [deleteOpen, setDeleteOpen] = useState(false);
 
 	useEffect(() => {
-		credentialApi.schemas().then((res) => setSchemas(res.schemas));
-	}, []);
+		setLoadingSchemas(true);
+		credentialApi
+			.schemas()
+			.then((res) => {
+				setSchemas(res.schemas);
+				setSchemaError(null);
+			})
+			.catch(() => {
+				setSchemas([]);
+				setSchemaError(t('credential.providerLoadError'));
+			})
+			.finally(() => setLoadingSchemas(false));
+	}, [t]);
 
 	// Auto-select first credential
 	useEffect(() => {
@@ -365,12 +378,19 @@ export const CredentialPage = () => {
 				</SidebarHeader>
 				{/*<Separator />*/}
 				<SidebarContent>
-					{loading ? (
+					{loading || loadingSchemas ? (
 						<div className="flex flex-col gap-y-2 p-4">
 							{Array.from({ length: 3 }).map((_, i) => (
 								<Skeleton key={i} className="h-8 rounded" />
 							))}
 						</div>
+					) : schemaError ? (
+						<Empty className="border-none px-4 py-8 text-center">
+							<EmptyHeader>
+								<EmptyTitle>{t('credential.providerLoadFailed')}</EmptyTitle>
+								<EmptyDescription>{schemaError}</EmptyDescription>
+							</EmptyHeader>
+						</Empty>
 					) : groupedByType.length === 0 ? (
 						<Empty className="border-none py-8">
 							<EmptyHeader>

@@ -161,15 +161,19 @@
 		"title": "添加凭证",
 		"description": "为模型提供商添加凭证。",
 		"selectType": "提供商",
-		"selectTypePlaceholder": "选择提供商"
+		"selectTypePlaceholder": "选择提供商",
+		"schemaLoadError": "凭证提供商架构加载失败。请检查当前连接的服务地址是否可从此浏览器访问，然后重试。"
 	},
 	"dialog-credential-edit": {
 		"title": "编辑凭证",
-		"description": "更新该提供商已保存的凭证。"
+		"description": "更新该提供商已保存的凭证。",
+		"schemaLoadError": "凭证提供商架构加载失败。请检查当前连接的服务地址是否可从此浏览器访问，然后重试。"
 	},
 	"credential": {
 		"addConfig": "添加配置",
 		"noProviders": "暂无可用提供商",
+		"providerLoadFailed": "提供商加载失败",
+		"providerLoadError": "请检查当前连接的服务地址是否可从此浏览器访问。",
 		"noConfigs": "暂无配置",
 		"selectHint": "未选择凭证",
 		"selectHintDescription": "从左侧选择一个凭证以查看详情。",
