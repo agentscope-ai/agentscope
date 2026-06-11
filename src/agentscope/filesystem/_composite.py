@@ -42,6 +42,9 @@ class CompositeFilesystem(AbstractFilesystem):
         """Return the backend and the relative path within that backend."""
         candidates = sorted(self._mounts.keys(), key=len, reverse=True)
         for prefix in candidates:
+            if prefix == "/":
+                # Root mount matches everything
+                return self._mounts[prefix], path
             if path == prefix or path.startswith(prefix + "/"):
                 rel = path[len(prefix) :] or "/"
                 return self._mounts[prefix], rel

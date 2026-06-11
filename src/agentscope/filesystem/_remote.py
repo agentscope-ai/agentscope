@@ -59,9 +59,13 @@ class RemoteFilesystem(AbstractFilesystem):
 
     async def _load_index(self, ns: str) -> dict[str, Any]:
         val = await self._store.get(self._idx_key(ns))
-        if val is None:
+        if val is None or not val.data:
             return {"files": {}, "dirs": {}}
-        return json.loads(val.data.decode("utf-8"))
+        try:
+            return json.loads(val.data.decode("utf-8"))
+        except json.JSONDecodeError as e:
+            logger.warning("Corrupt workspace index for %s, resetting: %s", ns, e)
+            return {"files": {}, "dirs": {}}
 
     async def _save_index(self, ns: str, index: dict[str, Any]) -> None:
         data = json.dumps(index, separators=(",", ":")).encode("utf-8")
@@ -80,10 +84,10 @@ class RemoteFilesystem(AbstractFilesystem):
         idx = await self._load_index(ns)
         idx["files"][path] = meta
         # Rebuild parent dirs
-        parts = Path(path).parts
-        for i in range(1, len(parts)):
-            parent = "/".join(parts[:i])
-            idx["dirs"].setdefault(parent, {"children": []})
+        for parent in Path(path).parents:
+            parent_str = str(parent).replace("\\", "/")
+            if parent_str and parent_str != ".":
+                idx["dirs"].setdefault(parent_str, {"children": []})
         await self._save_index(ns, idx)
 
     async def _remove_meta(self, ns: str, path: str) -> None:

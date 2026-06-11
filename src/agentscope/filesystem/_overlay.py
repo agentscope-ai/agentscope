@@ -35,6 +35,9 @@ class OverlayFilesystem(AbstractFilesystem):
         upper_result = await self._upper.ls(runtime_context, path)
         if upper_result.entries:
             return upper_result
+        # If upper explicitly has this path (empty dir or file), don't fallback
+        if await self._upper.exists(runtime_context, path):
+            return upper_result
         return await self._lower.ls(runtime_context, path)
 
     async def read(

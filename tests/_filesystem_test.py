@@ -145,7 +145,7 @@ class TestRemoteFilesystem:
         assert (await remote.read(CTX, "c.txt")).content == "foo qux baz"
 
     @pytest.mark.asyncio
-    async def edit_retries_on_conflict(self, remote: RemoteFilesystem) -> None:
+    async def test_edit_retries_on_conflict(self, remote: RemoteFilesystem) -> None:
         await remote.write(CTX, "d.txt", "x")
         # Manually simulate a concurrent edit by mocking store.get to return
         # different versions on first two calls.
@@ -154,7 +154,8 @@ class TestRemoteFilesystem:
 
         async def fake_get(key):
             calls[0] += 1
-            if calls[0] <= 2:
+            # Only intercept the actual file key; let __index__ etc. through
+            if key.key == "file:d.txt" and calls[0] <= 2:
                 # Return stale version
                 from agentscope.filesystem._base_store import StoreValue
                 return StoreValue(data=b"x", version=calls[0])

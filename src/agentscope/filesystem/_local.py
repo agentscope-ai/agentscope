@@ -115,6 +115,19 @@ class LocalFilesystem(AbstractFilesystem):
         resolved = self._resolve(path)
         if not resolved.exists():
             return LsResult(path=path, entries=[])
+        if resolved.is_file():
+            stat = resolved.stat()
+            return LsResult(
+                path=path,
+                entries=[
+                    FileInfo(
+                        name=resolved.name,
+                        is_directory=False,
+                        size_bytes=stat.st_size,
+                        modified_at=stat.st_mtime,
+                    ),
+                ],
+            )
         entries: list[FileInfo] = []
         for item in sorted(resolved.iterdir(), key=lambda p: p.name):
             stat = item.stat()
@@ -261,14 +274,17 @@ class LocalFilesystem(AbstractFilesystem):
 
         # Fallback: pure Python walk
         matches: list[GrepMatch] = []
-        needle = re.escape(pattern)
-        for root, _dirs, files in os.walk(str(resolved)):
+        for root, _dirs, files in await asyncio.to_thread(
+            lambda: list(os.walk(str(resolved))),
+        ):
             for fname in files:
                 if glob and not self._match_glob(fname, glob):
                     continue
                 fpath = Path(root) / fname
                 try:
-                    text = fpath.read_text(encoding="utf-8", errors="replace")
+                    text = await asyncio.to_thread(
+                        fpath.read_text, encoding="utf-8", errors="replace",
+                    )
                     for i, line in enumerate(text.splitlines(), 1):
                         if pattern in line:
                             matches.append(
@@ -289,9 +305,12 @@ class LocalFilesystem(AbstractFilesystem):
         path: str,
     ) -> GlobResult:
         resolved = self._resolve(path)
-        # Simple glob using Path.rglob for "**" or Path.glob otherwise
+        # Simple glob using Path.rglob for "**" or Path.glob otherwise.
+        # Note: Python 3.13 changed rglob("*") to be fully recursive;
+        # the pattern-munging below works correctly on 3.13+.
         if "**" in pattern:
-            gen = resolved.rglob(pattern.replace("**", "").lstrip("/"))
+            clean = pattern.replace("**", "").lstrip("/")
+            gen = resolved.rglob(clean if clean else "*")
         else:
             gen = resolved.glob(pattern)
         paths = [str(p) for p in gen if p.is_file()]

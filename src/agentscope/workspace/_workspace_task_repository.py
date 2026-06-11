@@ -11,6 +11,7 @@ map of ``taskId → task record``.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Coroutine
 from datetime import datetime, timezone
 from typing import Any
 
@@ -45,9 +46,13 @@ class WorkspaceTaskRepository:
         runtime_context: dict[str, Any],
         task_id: str,
         session_id: str,
-        coro: asyncio.Coroutine,
+        coro: Coroutine[Any, Any, str],
     ) -> asyncio.Task:
-        """Start a task, persist its PENDING record, and return the asyncio Task."""
+        """Start a task, persist its PENDING record, and return the asyncio Task.
+
+        .. warning::
+            *coro* is consumed internally; the caller must not await it again.
+        """
         record = self._make_record(task_id, session_id, "PENDING")
         await self._wm.write_task_record(
             runtime_context, self._parent_agent_id, session_id, record,

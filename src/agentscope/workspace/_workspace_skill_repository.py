@@ -136,17 +136,20 @@ class WorkspaceSkillRepository:
             return False
         if not skills:
             return False
+        # Pre-load existing names to avoid N+1 queries in the loop
+        existing_names = set(await self.get_all_skill_names())
         all_ok = True
         for skill in skills:
             if not skill or not skill.name:
                 all_ok = False
                 continue
-            if not force and await self.skill_exists(skill.name):
+            if not force and skill.name in existing_names:
                 logger.debug("Skill '%s' already exists; skipping", skill.name)
                 all_ok = False
                 continue
             try:
                 await self._write_skill(skill)
+                existing_names.add(skill.name)
             except Exception as e:
                 logger.warning("Failed to save skill '%s': %s", skill.name, e)
                 all_ok = False

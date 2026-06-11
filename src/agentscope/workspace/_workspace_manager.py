@@ -79,7 +79,7 @@ class WorkspaceManager:
     # Validation
     # ------------------------------------------------------------------
 
-    def validate(self) -> None:
+    async def validate(self) -> None:
         """Log warnings for missing key files."""
         if not self._workspace.is_dir():
             logger.warning(
@@ -91,9 +91,7 @@ class WorkspaceManager:
         agents_exists = self._workspace.joinpath(AGENTS_MD).is_file()
         if not agents_exists and self._fs is not None:
             try:
-                agents_exists = asyncio.get_event_loop().run_until_complete(
-                    self._fs.exists({}, AGENTS_MD),
-                )
+                agents_exists = await self._fs.exists({}, AGENTS_MD)
             except Exception:
                 pass
         if not agents_exists:
@@ -507,10 +505,14 @@ class WorkspaceManager:
             logger.warning("Refusing to write outside workspace: %s", relative_path)
             return
         local.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(self._append_local_file_sync, local, content)
+        if self._index is not None:
+            stat = await asyncio.to_thread(local.stat)
+            await self._index.upsert(relative_path, stat.st_size, stat.st_mtime)
+
+    def _append_local_file_sync(self, local: Path, content: str) -> None:
         with open(local, "a", encoding="utf-8") as f:
             f.write(content)
-        if self._index is not None:
-            await self._index.upsert(relative_path, local.stat().st_size, local.stat().st_mtime)
 
     async def _write_local_file(self, relative_path: str, content: str) -> None:
         local = (self._workspace / relative_path).resolve()
@@ -520,18 +522,22 @@ class WorkspaceManager:
         local.parent.mkdir(parents=True, exist_ok=True)
         temp = local.with_suffix(local.suffix + ".tmp." + uuid.uuid4().hex)
         try:
-            temp.write_text(content, encoding="utf-8")
-            temp.replace(local)
+            await asyncio.to_thread(self._write_local_file_sync, temp, local, content)
             if self._index is not None:
+                stat = await asyncio.to_thread(local.stat)
                 await self._index.upsert(
-                    relative_path, local.stat().st_size, local.stat().st_mtime,
+                    relative_path, stat.st_size, stat.st_mtime,
                 )
         except Exception as e:
             logger.warning("Failed to write %s: %s", local, e)
             try:
-                temp.unlink(missing_ok=True)
+                await asyncio.to_thread(temp.unlink, missing_ok=True)
             except Exception:
                 pass
+
+    def _write_local_file_sync(self, temp: Path, local: Path, content: str) -> None:
+        temp.write_text(content, encoding="utf-8")
+        temp.replace(local)
 
     # ------------------------------------------------------------------
     # Private: task map helpers
@@ -570,9 +576,11 @@ class WorkspaceManager:
     # ------------------------------------------------------------------
 
     def _lock_for(self, path: str) -> asyncio.Lock:
-        if path not in self._path_locks:
-            self._path_locks[path] = asyncio.Lock()
-        return self._path_locks[path]
+        lock = self._path_locks.get(path)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._path_locks[path] = lock
+        return lock
 
 
 # ------------------------------------------------------------------
