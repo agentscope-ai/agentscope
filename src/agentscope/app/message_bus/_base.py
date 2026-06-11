@@ -839,8 +839,17 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
     _BG_TASKS_KEY = "agentscope:bg_tasks:{sid}"
     """Per-session registry of in-flight background tasks."""
 
-    _BG_TASKS_TTL_SECS = 1800
-    """Sliding TTL for the per-session BG task registry (30 min)."""
+    _BG_TASKS_TTL_SECS = 86400
+    """Fallback TTL for the per-session BG task registry (24 h).
+
+    This TTL is *not* the primary cleanup path — finished tasks remove
+    themselves via :meth:`bg_task_unregister` and session deletion
+    triggers :meth:`bg_task_purge`. It is only a safety net for
+    abandoned entries left behind by a crashed worker whose session is
+    also never explicitly purged. Sized so that virtually every
+    realistic long-running tool finishes (and unregisters) before the
+    fallback kicks in, while still bounding orphan growth in Redis.
+    """
 
     _TASK_CANCEL_KEY = "agentscope:task:cancel"
     """Pub/Sub channel for single-task cancel broadcasts."""
@@ -859,8 +868,8 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
             task_id (`str`):
                 Unique task identifier.
             metadata (`str`):
-                JSON-serialized task metadata (worker_id, tool_name,
-                started_at, etc.).
+                JSON-serialized task metadata (e.g. ``tool_name``,
+                ``agent_id``, ``started_at``).
         """
         await self.registry_set(
             self._BG_TASKS_KEY.format(sid=session_id),

@@ -148,7 +148,9 @@ class _FakeBus(MessageBus):
     async def is_locked(self, key: str) -> bool:
         return key in self._locks
 
-    # Mode F — registry (in-memory dict)
+    # Mode F — registry (unused by WakeupDispatcher; raise so any
+    # accidental dependency surfaces immediately rather than silently
+    # passing through a stub).
     async def registry_set(
         self,
         namespace: str,
@@ -157,19 +159,19 @@ class _FakeBus(MessageBus):
         *,
         ttl_secs: int | None = None,
     ) -> None:
-        pass
+        raise NotImplementedError
 
     async def registry_del(self, namespace: str, field: str) -> None:
-        pass
+        raise NotImplementedError
 
     async def registry_exists(self, namespace: str, field: str) -> bool:
-        return False
+        raise NotImplementedError
 
     async def registry_getall(self, namespace: str) -> dict[str, str]:
-        return {}
+        raise NotImplementedError
 
     async def registry_drop(self, namespace: str) -> None:
-        pass
+        raise NotImplementedError
 
 
 class _FakeChatService:

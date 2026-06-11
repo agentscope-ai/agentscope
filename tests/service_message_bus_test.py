@@ -364,6 +364,214 @@ class TestInboxAndWakeupHelpers(IsolatedAsyncioTestCase):
         )
 
 
+class TestRegistryPrimitive(IsolatedAsyncioTestCase):
+    """Mode F — ``registry_*`` hash-keyed namespace operations."""
+
+    async def asyncSetUp(self) -> None:
+        self.fr = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        self._stack = AsyncExitStack()
+        self.bus = await self._stack.enter_async_context(_make_bus(self.fr))
+
+    async def asyncTearDown(self) -> None:
+        await self._stack.aclose()
+        await self.fr.aclose()
+
+    async def test_set_then_exists_and_getall(self) -> None:
+        """``registry_set`` stores a field under a namespace; ``exists``
+        is True, ``getall`` returns the full mapping."""
+        await self.bus.registry_set("ns", "f1", "v1")
+        await self.bus.registry_set("ns", "f2", "v2")
+
+        self.assertTrue(await self.bus.registry_exists("ns", "f1"))
+        self.assertTrue(await self.bus.registry_exists("ns", "f2"))
+        self.assertFalse(await self.bus.registry_exists("ns", "missing"))
+        self.assertFalse(await self.bus.registry_exists("other-ns", "f1"))
+
+        self.assertEqual(
+            await self.bus.registry_getall("ns"),
+            {"f1": "v1", "f2": "v2"},
+        )
+
+    async def test_set_overwrites_existing_field(self) -> None:
+        """A second ``registry_set`` for the same field overwrites the
+        previous value (``HSET`` semantics)."""
+        await self.bus.registry_set("ns", "f", "v1")
+        await self.bus.registry_set("ns", "f", "v2")
+        self.assertEqual(
+            await self.bus.registry_getall("ns"),
+            {"f": "v2"},
+        )
+
+    async def test_del_removes_only_the_named_field(self) -> None:
+        """``registry_del`` removes a single field; siblings survive."""
+        await self.bus.registry_set("ns", "keep", "k")
+        await self.bus.registry_set("ns", "drop", "d")
+
+        await self.bus.registry_del("ns", "drop")
+
+        self.assertFalse(await self.bus.registry_exists("ns", "drop"))
+        self.assertTrue(await self.bus.registry_exists("ns", "keep"))
+        self.assertEqual(
+            await self.bus.registry_getall("ns"),
+            {"keep": "k"},
+        )
+
+    async def test_del_missing_field_is_noop(self) -> None:
+        """Deleting a non-existent field does not raise."""
+        await self.bus.registry_del("ns", "nope")
+        await self.bus.registry_set("ns", "keep", "k")
+        await self.bus.registry_del("ns", "still-missing")
+        self.assertEqual(
+            await self.bus.registry_getall("ns"),
+            {"keep": "k"},
+        )
+
+    async def test_getall_on_missing_namespace_returns_empty_dict(
+        self,
+    ) -> None:
+        """``registry_getall`` for an unknown namespace returns ``{}``
+        rather than ``None``."""
+        self.assertEqual(await self.bus.registry_getall("ghost"), {})
+
+    async def test_drop_deletes_entire_namespace(self) -> None:
+        """``registry_drop`` removes every field under the namespace."""
+        await self.bus.registry_set("ns", "f1", "v1")
+        await self.bus.registry_set("ns", "f2", "v2")
+
+        await self.bus.registry_drop("ns")
+
+        self.assertFalse(await self.bus.registry_exists("ns", "f1"))
+        self.assertFalse(await self.bus.registry_exists("ns", "f2"))
+        self.assertEqual(await self.bus.registry_getall("ns"), {})
+
+    async def test_drop_missing_namespace_is_noop(self) -> None:
+        """Dropping a namespace that was never written does not raise."""
+        await self.bus.registry_drop("never-existed")
+
+    async def test_set_with_ttl_applies_expire_and_refreshes(self) -> None:
+        """``registry_set`` with ``ttl_secs`` sets a TTL on the hash key;
+        a subsequent set with a longer ``ttl_secs`` refreshes it."""
+        await self.bus.registry_set("ns", "f", "v", ttl_secs=60)
+        ttl_first = await self.fr.ttl("ns")
+        self.assertGreater(ttl_first, 0)
+        self.assertLessEqual(ttl_first, 60)
+
+        # Refresh with a much larger TTL — must overwrite the old one.
+        await self.bus.registry_set("ns", "f", "v", ttl_secs=3600)
+        ttl_refreshed = await self.fr.ttl("ns")
+        self.assertGreater(ttl_refreshed, 60)
+
+    async def test_set_without_ttl_leaves_namespace_persistent(
+        self,
+    ) -> None:
+        """Without ``ttl_secs`` the namespace has no expiry (TTL == -1)."""
+        await self.bus.registry_set("ns", "f", "v")
+        self.assertEqual(await self.fr.ttl("ns"), -1)
+
+
+class TestBackgroundTaskRegistryHelpers(IsolatedAsyncioTestCase):
+    """Domain helpers built on Mode F: ``bg_task_register / unregister /
+    exists / list / purge`` plus ``task_publish_cancel /
+    task_subscribe_cancel``."""
+
+    async def asyncSetUp(self) -> None:
+        self.fr = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        self._stack = AsyncExitStack()
+        self.bus = await self._stack.enter_async_context(_make_bus(self.fr))
+
+    async def asyncTearDown(self) -> None:
+        await self._stack.aclose()
+        await self.fr.aclose()
+
+    async def test_register_then_exists_list_unregister(self) -> None:
+        """End-to-end registry round-trip for a single session."""
+        sid = "s-bg"
+
+        self.assertFalse(await self.bus.bg_task_exists(sid, "t1"))
+
+        await self.bus.bg_task_register(sid, "t1", '{"tool":"a"}')
+        await self.bus.bg_task_register(sid, "t2", '{"tool":"b"}')
+
+        self.assertTrue(await self.bus.bg_task_exists(sid, "t1"))
+        self.assertTrue(await self.bus.bg_task_exists(sid, "t2"))
+        self.assertEqual(
+            await self.bus.bg_task_list(sid),
+            {"t1": '{"tool":"a"}', "t2": '{"tool":"b"}'},
+        )
+
+        await self.bus.bg_task_unregister(sid, "t1")
+        self.assertFalse(await self.bus.bg_task_exists(sid, "t1"))
+        self.assertTrue(await self.bus.bg_task_exists(sid, "t2"))
+        self.assertEqual(
+            await self.bus.bg_task_list(sid),
+            {"t2": '{"tool":"b"}'},
+        )
+
+    async def test_register_isolates_sessions(self) -> None:
+        """Tasks registered under one session id are invisible to other
+        session ids."""
+        await self.bus.bg_task_register("s1", "t", "{}")
+
+        self.assertTrue(await self.bus.bg_task_exists("s1", "t"))
+        self.assertFalse(await self.bus.bg_task_exists("s2", "t"))
+        self.assertEqual(await self.bus.bg_task_list("s2"), {})
+
+    async def test_register_applies_fallback_ttl(self) -> None:
+        """``bg_task_register`` sets the per-session fallback TTL on the
+        hash key so abandoned entries can't accumulate forever."""
+        sid = "s-ttl"
+        await self.bus.bg_task_register(sid, "t", "{}")
+
+        ttl = await self.fr.ttl(self.bus._BG_TASKS_KEY.format(sid=sid))
+        self.assertGreater(ttl, 0)
+        self.assertLessEqual(ttl, self.bus._BG_TASKS_TTL_SECS)
+
+        # A second register-call refreshes the TTL back near the cap.
+        await asyncio.sleep(0)  # let any fakeredis internals settle
+        await self.bus.bg_task_register(sid, "t2", "{}")
+        ttl_refreshed = await self.fr.ttl(
+            self.bus._BG_TASKS_KEY.format(sid=sid),
+        )
+        self.assertGreater(ttl_refreshed, 0)
+
+    async def test_purge_clears_all_session_entries(self) -> None:
+        """``bg_task_purge`` deletes every task entry for a session in
+        a single call (used during session deletion)."""
+        sid = "s-purge"
+        await self.bus.bg_task_register(sid, "t1", "{}")
+        await self.bus.bg_task_register(sid, "t2", "{}")
+        # Other session must survive.
+        await self.bus.bg_task_register("s-keep", "t", "{}")
+
+        await self.bus.bg_task_purge(sid)
+
+        self.assertEqual(await self.bus.bg_task_list(sid), {})
+        self.assertFalse(await self.bus.bg_task_exists(sid, "t1"))
+        self.assertTrue(await self.bus.bg_task_exists("s-keep", "t"))
+
+    async def test_task_publish_cancel_reaches_subscriber(self) -> None:
+        """``task_publish_cancel`` fans out to every active
+        ``task_subscribe_cancel`` listener; the yielded value is the
+        ``task_id`` from the payload."""
+        ready = asyncio.Event()
+        received: list[str] = []
+
+        async def _consumer() -> None:
+            async for tid in self.bus.task_subscribe_cancel(
+                on_ready=ready.set,
+            ):
+                received.append(tid)
+                break
+
+        task = asyncio.create_task(_consumer())
+        await asyncio.wait_for(ready.wait(), timeout=2.0)
+
+        await self.bus.task_publish_cancel("task-X")
+        await asyncio.wait_for(task, timeout=2.0)
+
+        self.assertEqual(received, ["task-X"])
+
+
 class TestBaseClassIsAbstract(IsolatedAsyncioTestCase):
     """``MessageBus`` itself cannot be instantiated."""
 
