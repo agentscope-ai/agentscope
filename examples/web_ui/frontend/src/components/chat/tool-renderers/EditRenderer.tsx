@@ -4,6 +4,7 @@ import {
 	defaultRenderGroup,
 	defaultRenderResult,
 } from './DefaultRenderer';
+import { DiffPreview } from './DiffPreview';
 import type { ToolRenderer } from './types';
 
 function parseInput(input: string): Record<string, unknown> {
@@ -19,8 +20,24 @@ function getFilePath(input: string): string {
 	return file_path || input;
 }
 
-// TODO: render old_string / new_string as a side-by-side or unified diff
-// inside `renderGroup` once a diff component is available.
+function renderEditDiff(input: string) {
+	const { file_path, old_string, new_string } = parseInput(input) as {
+		file_path?: string;
+		old_string?: string;
+		new_string?: string;
+	};
+
+	if (
+		typeof file_path !== 'string' ||
+		typeof old_string !== 'string' ||
+		typeof new_string !== 'string'
+	) {
+		return null;
+	}
+
+	return <DiffPreview filePath={file_path} oldText={old_string} newText={new_string} />;
+}
+
 export const EditRenderer: ToolRenderer = {
 	getDisplayName: (call) => call.name,
 
@@ -39,6 +56,7 @@ export const EditRenderer: ToolRenderer = {
 			renderCallArgs: (call) =>
 				EditRenderer.renderCallArgs?.(call, t) ?? defaultRenderCallArgs(call),
 			renderResult: (call, result) =>
+				(result.state === 'success' ? renderEditDiff(call.input) : null) ??
 				EditRenderer.renderResult?.(call, result, t) ??
 				defaultRenderResult(call, result, t),
 		}),
