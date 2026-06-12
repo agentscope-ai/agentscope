@@ -1,16 +1,13 @@
-name: cosyvoice-v3-plus
-label: CosyVoice-v3-Plus
+name: cosyvoice-v3-flash
+label: CosyVoice-v3-Flash
 status: active
-realtime: false
+realtime: true
 
 input_types:
   - text/plain
 
 output_types:
   - audio/wav
-  - audio/mpeg
-  - audio/pcm
-  - audio/ogg
 
 voices:
   # Source: https://help.aliyun.com/en/model-studio/cosyvoice-voice-list

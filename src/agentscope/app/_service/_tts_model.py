@@ -46,7 +46,11 @@ async def get_tts_model(
             detail=f"Provider {config.type!r} does not support TTS models.",
         )
 
-    tts_cls = _resolve_tts_class(tts_classes, config.model)
+    tts_cls = _resolve_tts_class(
+        tts_classes,
+        config.model,
+        config.realtime,
+    )
     parameters = (
         tts_cls.Parameters(**config.parameters) if config.parameters else None
     )
@@ -60,8 +64,16 @@ async def get_tts_model(
 def _resolve_tts_class(
     classes: list[Type[TTSModelBase]],
     model: str,
+    realtime: bool | None = None,
 ) -> Type[TTSModelBase]:
     """Pick the TTS class that lists the given model name."""
+    if realtime is not None:
+        for cls in classes:
+            if cls.realtime != realtime:
+                continue
+            if any(card.name == model for card in cls.list_models()):
+                return cls
+
     for cls in classes:
         if any(card.name == model for card in cls.list_models()):
             return cls

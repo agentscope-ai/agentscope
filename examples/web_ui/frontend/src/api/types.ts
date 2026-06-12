@@ -17,6 +17,7 @@ export interface TTSModelConfig {
 	type: string;
 	credential_id: string;
 	model: string;
+	realtime?: boolean | null;
 	parameters: Record<string, unknown>;
 }
 
