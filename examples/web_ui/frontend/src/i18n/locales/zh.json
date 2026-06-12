@@ -301,7 +301,7 @@
 		"title": "连接到服务器",
 		"description": "请输入服务器地址和用户名以开始使用。",
 		"serverUrl": "服务器地址",
-		"serverUrlPlaceholder": "https://...",
+		"serverUrlPlaceholder": "http://localhost:8000",
 		"username": "用户名",
 		"usernamePlaceholder": "请输入用户名",
 		"submit": "开始使用",
