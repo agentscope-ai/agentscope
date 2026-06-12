@@ -259,7 +259,7 @@ codebase."""  # ignore: E501
             A list of matched file paths
         """
         results: list[str] = []
-        parts = pattern.split("/")
+        parts = [p for p in re.split(r"[\\/]+", pattern) if p]
         self.match_parts(parts, 0, base_dir, results)
         return results
 

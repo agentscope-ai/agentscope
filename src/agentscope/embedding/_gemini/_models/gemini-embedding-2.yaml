@@ -1,0 +1,22 @@
+name: gemini-embedding-2
+label: Gemini Embedding 2
+status: active
+
+input_types:
+  - text/plain
+  - image/png
+  - image/jpeg
+  - video/mp4
+  - audio/mpeg
+  - audio/wav
+  - application/pdf
+
+output_types:
+  - application/x-embedding
+
+context_size: 8192
+
+parameter_overrides:
+  dimensions:
+    default: 3072
+    enum: [3072, 1536, 768]

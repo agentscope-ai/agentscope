@@ -1,0 +1,22 @@
+name: qwen2.5-vl-embedding
+label: Qwen2.5 VL Embedding
+status: active
+
+input_types:
+  - text/plain
+  - image/jpeg
+  - image/png
+  - image/webp
+  - image/bmp
+  - image/tiff
+  - video/mp4
+
+output_types:
+  - application/x-embedding
+
+context_size: 32000
+
+parameter_overrides:
+  dimensions:
+    default: 1024
+    enum: [2048, 1024, 768, 512]

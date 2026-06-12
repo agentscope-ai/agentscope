@@ -3,7 +3,7 @@
 
 The single entry point :func:`get_toolkit` gathers every tool source —
 workspace builtins, MCPs, skills, planning tools (Task*), background-task
-control (TaskStop), schedule control (Schedule*), team participation
+control (ToolStop), schedule control (Schedule*), team participation
 tools, and caller-supplied extras — into one :class:`Toolkit`.
 """
 from typing import Any
@@ -11,7 +11,7 @@ from typing import Any
 from .._manager import BackgroundTaskManager, SchedulerManager
 from ..message_bus import MessageBus
 from .._tools import AgentCreate, TeamCreate, TeamDelete, TeamSay
-from .._types import AgentToolFactory
+from .._types import AgentToolFactory, SubAgentTemplate
 from ..storage import AgentRecord, SessionRecord, StorageBase
 from ...tool import (
     TaskCreate,
@@ -35,6 +35,7 @@ async def get_toolkit(
     agent_record: AgentRecord,
     session_record: SessionRecord,
     extra_factory: AgentToolFactory | None = None,
+    sub_agent_templates: dict[str, SubAgentTemplate] | None = None,
 ) -> Toolkit:
     """Assemble the complete :class:`Toolkit` for one chat turn.
 
@@ -43,7 +44,7 @@ async def get_toolkit(
     1. Workspace builtins (Bash / Read / Write / Grep / …)
     2. Planning tools (:class:`TaskCreate` / :class:`TaskList` /
        :class:`TaskGet` / :class:`TaskUpdate`)
-    3. Background-task control (:class:`TaskStop`, from
+    3. Background-task control (:class:`ToolStop`, from
        :meth:`BackgroundTaskManager.list_tools`)
     4. Schedule control (:class:`ScheduleCreate` / :class:`ScheduleView`
        / :class:`ScheduleDelete` / :class:`ScheduleList`, from
@@ -73,7 +74,7 @@ async def get_toolkit(
             persists schedules through it.
         background_task_manager (`BackgroundTaskManager`):
             Application background-task registry. Provides the
-            :class:`TaskStop` tool bound to its live task dict.
+            :class:`ToolStop` tool bound to its live task dict.
         message_bus (`MessageBus`):
             Application message bus; passed to team tools so they can
             push HintBlocks + wakeups when delivering inter-session
@@ -89,6 +90,12 @@ async def get_toolkit(
         extra_factory (`AgentToolFactory | None`, optional):
             Async factory invoked once per assembly to produce
             user/session-specific extra tools.
+        sub_agent_templates (`dict[str, SubAgentTemplate] | None`, \
+optional):
+            Sub-agent template registry, keyed by template type.
+            Passed to the ``AgentCreate`` tool so it can route to
+            the appropriate template when a ``subagent_type`` is
+            specified by the leader agent.
 
     Returns:
         `Toolkit`: Fully populated toolkit (tools + skills + MCPs).
@@ -103,7 +110,9 @@ async def get_toolkit(
     tools += [TaskCreate(), TaskList(), TaskGet(), TaskUpdate()]
 
     # Background-task control.
-    tools += await background_task_manager.list_tools()
+    tools += await background_task_manager.list_tools(
+        session_id=session_record.id,
+    )
 
     # Schedule control. Requires a model config on this session because
     # ``ScheduleCreate`` records it into new ``ScheduleRecord`` instances.
@@ -150,7 +159,10 @@ time or interval"
     else:
         tools += [
             TeamCreate(**team_tool_kwargs),
-            AgentCreate(**team_tool_kwargs),
+            AgentCreate(
+                **team_tool_kwargs,
+                sub_agent_templates=sub_agent_templates or {},
+            ),
             TeamSay(**team_tool_kwargs, role="leader"),
             TeamDelete(**team_tool_kwargs),
         ]

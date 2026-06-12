@@ -41,6 +41,11 @@
 		"deleteTitle": "删除{{entity}} \"{{name}}\"？",
 		"deleteDescription": "此操作无法撤销。"
 	},
+	"error": {
+		"description": "页面遇到意外错误。你可以重试或返回首页。",
+		"retry": "重试",
+		"home": "返回首页"
+	},
 	"tool": {
 		"moreLines": "... 还有 {{count}} 行",
 		"read": {
@@ -76,6 +81,9 @@
 	},
 	"messageBubble": {
 		"thinking": "思考中",
+		"audioGenerating": "正在生成音频…",
+		"playAudio": "播放音频",
+		"pauseAudio": "暂停音频",
 		"running": "运行中...",
 		"hintSource": {
 			"tool_output": "工具输出",
@@ -165,7 +173,6 @@
 		"description": "更新该提供商已保存的凭证。"
 	},
 	"credential": {
-		"addConfig": "添加配置",
 		"noProviders": "暂无可用提供商",
 		"noConfigs": "暂无配置",
 		"selectHint": "未选择凭证",
@@ -175,11 +182,14 @@
 		"noModelsDescription": "该提供商未返回任何模型。",
 		"deleteEntity": "凭证",
 		"subtitle": "模型 API 授权配置",
+		"configured": "已配置",
+		"addProvider": "添加凭证",
 		"reasoning": "推理模型",
 		"maxContext": "最大上下文",
 		"maxOutput": "最大输出",
 		"inputTypes": "输入模态",
-		"outputTypes": "输出模态"
+		"outputTypes": "输出模态",
+		"availableTTSModels": "语音合成模型"
 	},
 	"llm-select": {
 		"placeholder": "选择模型",
@@ -282,7 +292,12 @@
 		"empty": "暂无可配置参数。",
 		"fallbackLabel": "兜底模型",
 		"fallbackLabelWithModel": "兜底模型（{{model}}）",
-		"parametersLabel": "参数"
+		"parametersLabel": "参数",
+		"ttsLabel": "语音合成",
+		"ttsEmpty": "暂无可用的语音合成模型。",
+		"ttsParameters": "参数",
+		"ttsParametersDescription": "调整所选语音合成模型的参数。",
+		"noTts": "不使用语音合成"
 	},
 	"setup": {
 		"title": "连接到服务器",
@@ -292,7 +307,7 @@
 		"username": "用户名",
 		"usernamePlaceholder": "请输入用户名",
 		"submit": "开始使用",
-		"hint": "此应用进提供前端服务，所有数据均来自填写的服务器地址，用户名仅用于服务端鉴权。"
+		"hint": "此应用仅提供前端服务，所有数据均来自填写的服务器地址，用户名仅用于服务端鉴权。"
 	},
 	"tour": {
 		"trigger": "新手引导",

@@ -1,7 +1,7 @@
 import type { TaskContext } from '@agentscope-ai/agentscope/state';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import type { ChatModelConfig, PermissionContext } from '@/api';
+import type { ChatModelConfig, PermissionContext, TTSModelConfig } from '@/api';
 import { sessionApi } from '@/api';
 import { ChatContent } from '@/components/chat/ChatContent.tsx';
 import { TaskPanel } from '@/components/chat/TaskPanel';
@@ -10,6 +10,7 @@ import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDial
 import { ModelParametersPopover } from '@/components/popover/ModelParametersPopover';
 import { LlmSelect } from '@/components/select/LlmSelect';
 import { PermissionModeSelect } from '@/components/select/PermissionModeSelect.tsx';
+import { SidebarTrigger } from '@/components/ui/sidebar';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useMessages } from '@/hooks/useMessages';
 import { useSessions } from '@/hooks/useSessions';
@@ -74,12 +75,12 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	const [selectedFallbackModel, setSelectedFallbackModel] = useState<ChatModelConfig | null>(
 		null,
 	);
+	const [selectedTTSModel, setSelectedTTSModel] = useState<TTSModelConfig | null>(null);
 	const [selectedPermissionMode, setSelectedPermissionMode] = useState<string>('default');
 	const [credentialOpen, setCredentialOpen] = useState(false);
 	const [credentialRefetchTrigger, setCredentialRefetchTrigger] = useState(0);
 	const [tasksContext, setTasksContext] = useState<TaskContext | null>(null);
 	const [permissionContext, setPermissionContext] = useState<PermissionContext | null>(null);
-	const [workspacePanelOpen, setWorkspacePanelOpen] = useState(false);
 
 	const handleStateUpdated = useCallback((value: Record<string, unknown>) => {
 		if (value.tasks_context) {
@@ -131,6 +132,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	useEffect(() => {
 		setSelectedModel(null);
 		setSelectedFallbackModel(null);
+		setSelectedTTSModel(null);
 	}, [sessionId]);
 
 	const selectedModelCard = useMemo(() => {
@@ -224,6 +226,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		}
 
 		setSelectedFallbackModel(view.session.config.fallback_chat_model_config ?? null);
+		setSelectedTTSModel(view.session.config.tts_model_config ?? null);
 	}, [view, groups, sessionId, agentId]);
 
 	// Sync selectedPermissionMode when the session changes. Same
@@ -276,6 +279,18 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	};
 
 	/**
+	 * Persist a TTS model change. `null` disables TTS.
+	 *
+	 * @param config - New TTS config or `null` to disable.
+	 */
+	const handleTTSChange = async (config: TTSModelConfig | null) => {
+		if (!sessionId || !agentId) return;
+		setSelectedTTSModel(config);
+		await sessionApi.update(sessionId, agentId, { tts_model_config: config });
+		await refetchSessions();
+	};
+
+	/**
 	 * Persist a permission-mode change.
 	 *
 	 * @param mode - New permission mode (e.g. `default`, `explore`).
@@ -293,6 +308,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 				<div className="flex flex-col flex-1 min-h-0 p-2">
 					<div className="flex flex-row gap-x-2 justify-between">
 						<div id="tour-llm-select" className="flex flex-row items-center gap-x-1">
+							<SidebarTrigger className="md:hidden" />
 							<LlmSelect
 								value={selectedModel}
 								onChange={handleLlmChange}
@@ -305,6 +321,8 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 								onChange={handleParametersChange}
 								selectedFallbackModel={selectedFallbackModel}
 								onFallbackChange={handleFallbackChange}
+								selectedTTSModel={selectedTTSModel}
+								onTTSChange={handleTTSChange}
 							/>
 						</div>
 						<div id="tour-permission-mode" className="flex flex-row gap-x-2">
@@ -379,8 +397,6 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 					</div>
 				</div>
 				<WorkspacePanel
-					open={workspacePanelOpen}
-					onOpenChange={setWorkspacePanelOpen}
 					mcps={mcps}
 					loading={mcpsLoading}
 					onAdd={addMcps}

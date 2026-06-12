@@ -1,0 +1,46 @@
+name: Web UI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/web-ui.yml"
+      - "examples/web_ui/**"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/web-ui.yml"
+      - "examples/web_ui/**"
+
+jobs:
+  check:
+    if: github.event_name != 'pull_request' || false == contains(github.event.pull_request.title, 'WIP')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/web_ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: examples/web_ui/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Check formatting
+        run: pnpm format:check
+
+      - name: Build
+        run: pnpm build

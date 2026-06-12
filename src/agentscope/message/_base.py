@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The message class in agentscope."""
+import base64
 import uuid
 from datetime import datetime
 from typing import Literal, List, overload, Sequence, Self, TYPE_CHECKING, Any
@@ -283,7 +284,18 @@ class Msg(BaseModel):
                         event.block_id,
                     )
                 elif event.data:
-                    block.source.data += event.data
+                    # Each delta is an independently base64-encoded chunk
+                    # (with its own padding); naive string concat would
+                    # corrupt the byte stream. Decode, concat bytes, re-encode.
+                    existing = (
+                        base64.b64decode(block.source.data)
+                        if block.source.data
+                        else b""
+                    )
+                    incoming = base64.b64decode(event.data)
+                    block.source.data = base64.b64encode(
+                        existing + incoming,
+                    ).decode("ascii")
 
             case EventType.DATA_BLOCK_END:
                 pass

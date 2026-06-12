@@ -1,12 +1,5 @@
-import {
-	PanelRightClose,
-	PanelRightOpen,
-	PlusCircle,
-	Search,
-	ShieldCheck,
-	Trash,
-} from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { PlusCircle, Search, ShieldCheck, SlidersHorizontal, Trash } from 'lucide-react';
+import { useMemo, useState, type ReactNode } from 'react';
 
 import type { MCPClient, MCPClientStatus, PermissionContext, PermissionRule, Skill } from '@/api';
 import { AddSkillDialog } from '@/components/dialog/AddSkillDialog.tsx';
@@ -14,18 +7,24 @@ import { DeleteDialog } from '@/components/dialog/DeleteDialog.tsx';
 import { CreateMCPDialog } from '@/components/dialog/MCPDialog.tsx';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+	DropdownMenu,
+	DropdownMenuCheckboxItem,
+	DropdownMenuContent,
+	DropdownMenuLabel,
+	DropdownMenuSeparator,
+	DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
 import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from '@/components/ui/item';
 import { Kbd, KbdGroup } from '@/components/ui/kbd';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { Separator } from '@/components/ui/separator';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.tsx';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useTranslation } from '@/i18n/useI18n.ts';
 import { cn } from '@/lib/utils';
 
 interface WorkspacePanelProps {
-	open: boolean;
-	onOpenChange: (open: boolean) => void;
 	mcps: MCPClientStatus[];
 	loading?: boolean;
 	onAdd: (mcps: MCPClient[]) => Promise<void>;
@@ -37,11 +36,72 @@ interface WorkspacePanelProps {
 	permissionContext: PermissionContext | null;
 }
 
+type PanelId = 'permissions' | 'mcp' | 'skills';
+
 type RuleGroup = {
 	label: string;
 	rules: Record<string, PermissionRule[]>;
 	variant: 'default' | 'secondary' | 'destructive';
 };
+
+type VisiblePanels = Record<PanelId, boolean>;
+
+const PANEL_VISIBILITY_KEY = 'agentscope.chat.workspacePanel.visibility';
+const PANEL_LAYOUT_KEY = 'agentscope.chat.workspacePanel.layout';
+const DEFAULT_VISIBLE_PANELS: VisiblePanels = {
+	permissions: false,
+	mcp: false,
+	skills: false,
+};
+
+const PANEL_LABELS: Record<PanelId, string> = {
+	permissions: 'Permissions',
+	mcp: 'MCPs',
+	skills: 'Skills',
+};
+
+function readVisiblePanels(): VisiblePanels {
+	if (typeof window === 'undefined') return DEFAULT_VISIBLE_PANELS;
+
+	try {
+		const parsed = JSON.parse(localStorage.getItem(PANEL_VISIBILITY_KEY) ?? '{}') as Partial<
+			Record<PanelId, unknown>
+		>;
+		return {
+			permissions:
+				typeof parsed.permissions === 'boolean'
+					? parsed.permissions
+					: DEFAULT_VISIBLE_PANELS.permissions,
+			mcp: typeof parsed.mcp === 'boolean' ? parsed.mcp : DEFAULT_VISIBLE_PANELS.mcp,
+			skills:
+				typeof parsed.skills === 'boolean' ? parsed.skills : DEFAULT_VISIBLE_PANELS.skills,
+		};
+	} catch {
+		return DEFAULT_VISIBLE_PANELS;
+	}
+}
+
+function writeVisiblePanels(value: VisiblePanels) {
+	localStorage.setItem(PANEL_VISIBILITY_KEY, JSON.stringify(value));
+}
+
+function readPanelLayout() {
+	if (typeof window === 'undefined') return undefined;
+
+	try {
+		const parsed = JSON.parse(localStorage.getItem(PANEL_LAYOUT_KEY) ?? '{}') as Record<
+			string,
+			number
+		>;
+		return Object.keys(parsed).length > 0 ? parsed : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function writePanelLayout(layout: Record<string, number>) {
+	localStorage.setItem(PANEL_LAYOUT_KEY, JSON.stringify(layout));
+}
 
 function entries<T>(value: Record<string, T> | undefined): Array<[string, T]> {
 	return Object.entries(value ?? {});
@@ -53,6 +113,33 @@ function ruleCount(rules: Record<string, PermissionRule[]> | undefined) {
 
 function EmptyLine({ children }: { children: string }) {
 	return <p className="text-muted-foreground text-sm text-center py-4">{children}</p>;
+}
+
+function PanelShell({
+	title,
+	description,
+	action,
+	children,
+}: {
+	title: string;
+	description?: string;
+	action?: ReactNode;
+	children: ReactNode;
+}) {
+	return (
+		<section className="flex h-full min-h-0 flex-col bg-background">
+			<header className="flex min-h-12 items-start justify-between gap-3 border-b px-3 py-2.5">
+				<div className="min-w-0">
+					<h2 className="truncate text-sm font-semibold">{title}</h2>
+					{description && (
+						<p className="truncate text-xs text-muted-foreground">{description}</p>
+					)}
+				</div>
+				{action}
+			</header>
+			<div className="min-h-0 flex-1 overflow-y-auto p-3">{children}</div>
+		</section>
+	);
 }
 
 function RuleList({ group }: { group: RuleGroup }) {
@@ -89,7 +176,7 @@ function RuleList({ group }: { group: RuleGroup }) {
 	);
 }
 
-function PermissionPanel({ permissionContext }: { permissionContext: PermissionContext | null }) {
+function PermissionsPanel({ permissionContext }: { permissionContext: PermissionContext | null }) {
 	const ruleGroups: RuleGroup[] = useMemo(
 		() => [
 			{
@@ -113,71 +200,219 @@ function PermissionPanel({ permissionContext }: { permissionContext: PermissionC
 	const workingDirectories = entries(permissionContext?.working_directories);
 	const totalRules = ruleGroups.reduce((total, group) => total + ruleCount(group.rules), 0);
 
-	if (!permissionContext) {
-		return <EmptyLine>No permission context</EmptyLine>;
-	}
+	return (
+		<PanelShell title="Permissions" description="Current permission context">
+			{!permissionContext ? (
+				<EmptyLine>No permission context</EmptyLine>
+			) : (
+				<div className="flex min-h-0 flex-col gap-3">
+					<div className="rounded-md border bg-background p-3">
+						<div className="flex items-center justify-between gap-2">
+							<div className="flex items-center gap-2">
+								<ShieldCheck className="size-4 text-muted-foreground" />
+								<span className="text-sm font-medium">Mode</span>
+							</div>
+							<Badge variant="outline">{permissionContext.mode}</Badge>
+						</div>
+						<div className="mt-3 flex flex-wrap gap-2">
+							<Badge variant="secondary">
+								{workingDirectories.length} directories
+							</Badge>
+							<Badge variant="secondary">{totalRules} rules</Badge>
+						</div>
+					</div>
+
+					<div className="flex flex-col gap-2">
+						<h3 className="text-sm font-medium">Working directories</h3>
+						{workingDirectories.length === 0 ? (
+							<EmptyLine>No directories</EmptyLine>
+						) : (
+							<div className="flex flex-col gap-2">
+								{workingDirectories.map(([key, directory]) => (
+									<div key={key} className="rounded-md border bg-background p-2">
+										<div className="break-all font-mono text-xs">
+											{directory.path}
+										</div>
+										<div className="mt-1 text-xs text-muted-foreground">
+											{directory.source}
+										</div>
+									</div>
+								))}
+							</div>
+						)}
+					</div>
+
+					<Separator />
+
+					{ruleGroups.map((group) => (
+						<div key={group.label} className="flex flex-col gap-2">
+							<div className="flex items-center justify-between gap-2">
+								<h3 className="text-sm font-medium">{group.label}</h3>
+								<Badge variant={group.variant}>{ruleCount(group.rules)}</Badge>
+							</div>
+							<RuleList group={group} />
+						</div>
+					))}
+				</div>
+			)}
+		</PanelShell>
+	);
+}
+
+function McpPanel({
+	mcps,
+	loading,
+	onAdd,
+	onRemoveRequest,
+}: {
+	mcps: MCPClientStatus[];
+	loading: boolean;
+	onAdd: (mcps: MCPClient[]) => Promise<void>;
+	onRemoveRequest: (name: string) => void;
+}) {
+	const [search, setSearch] = useState('');
+	const filtered = search
+		? mcps.filter((mcp) => mcp.name.toLowerCase().includes(search.toLowerCase()))
+		: mcps;
 
 	return (
-		<div className="flex min-h-0 flex-col gap-3">
-			<div className="rounded-md border bg-background p-3">
-				<div className="flex items-center justify-between gap-2">
-					<div className="flex items-center gap-2">
-						<ShieldCheck className="size-4 text-muted-foreground" />
-						<span className="text-sm font-medium">Mode</span>
-					</div>
-					<Badge variant="outline">{permissionContext.mode}</Badge>
-				</div>
-				<div className="mt-3 flex flex-wrap gap-2">
-					<Badge variant="secondary">{workingDirectories.length} directories</Badge>
-					<Badge variant="secondary">{totalRules} rules</Badge>
-				</div>
-			</div>
-
+		<PanelShell
+			title="MCPs"
+			description={`${mcps.length} servers`}
+			action={
+				<CreateMCPDialog onAdd={onAdd}>
+					<Button variant="outline" size="sm">
+						<PlusCircle />
+						Add
+					</Button>
+				</CreateMCPDialog>
+			}
+		>
 			<div className="flex flex-col gap-2">
-				<h3 className="text-sm font-medium">Working directories</h3>
-				{workingDirectories.length === 0 ? (
-					<EmptyLine>No directories</EmptyLine>
+				<InputGroup>
+					<InputGroupInput
+						placeholder="Search MCP"
+						value={search}
+						onChange={(event) => setSearch(event.target.value)}
+					/>
+					<InputGroupAddon align="inline-end">
+						<Search />
+					</InputGroupAddon>
+				</InputGroup>
+				{loading ? (
+					<EmptyLine>Loading...</EmptyLine>
+				) : filtered.length === 0 ? (
+					<EmptyLine>No MCPs found</EmptyLine>
 				) : (
-					<div className="flex flex-col gap-2">
-						{workingDirectories.map(([key, directory]) => (
-							<div key={key} className="rounded-md border bg-background p-2">
-								<div className="break-all font-mono text-xs">{directory.path}</div>
-								<div className="mt-1 text-xs text-muted-foreground">
-									{directory.source}
-								</div>
-							</div>
-						))}
-					</div>
+					filtered.map((mcp) => (
+						<Item key={mcp.name} variant="outline">
+							<ItemContent>
+								<ItemTitle className="flex items-center gap-x-2">
+									<span
+										className={cn(
+											'size-2 shrink-0 rounded-full',
+											mcp.is_healthy ? 'bg-green-500' : 'bg-red-500',
+										)}
+									/>
+									{mcp.name}
+								</ItemTitle>
+								<ItemDescription>
+									<KbdGroup>
+										<Kbd>
+											{mcp.mcp_config.type === 'stdio_mcp' ? 'STDIO' : 'HTTP'}
+										</Kbd>
+										<Kbd>{mcp.tools.length} tools</Kbd>
+									</KbdGroup>
+								</ItemDescription>
+							</ItemContent>
+							<ItemActions>
+								<Button
+									variant="outline"
+									size="icon-sm"
+									onClick={() => onRemoveRequest(mcp.name)}
+									aria-label={`Remove ${mcp.name}`}
+								>
+									<Trash />
+								</Button>
+							</ItemActions>
+						</Item>
+					))
 				)}
 			</div>
+		</PanelShell>
+	);
+}
 
-			<Separator />
+function SkillsPanel({
+	skills,
+	loading,
+	onAddSkill,
+	onRemoveRequest,
+}: {
+	skills: Skill[];
+	loading: boolean;
+	onAddSkill: (skillPath: string) => Promise<void>;
+	onRemoveRequest: (name: string) => void;
+}) {
+	const [search, setSearch] = useState('');
+	const filtered = search
+		? skills.filter((skill) => skill.name.toLowerCase().includes(search.toLowerCase()))
+		: skills;
 
-			<Tabs defaultValue="allow" className="min-h-0">
-				<TabsList className="grid w-full grid-cols-3">
-					{ruleGroups.map((group) => (
-						<TabsTrigger key={group.label} value={group.label.toLowerCase()}>
-							{group.label}
-						</TabsTrigger>
-					))}
-				</TabsList>
-				{ruleGroups.map((group) => (
-					<TabsContent
-						key={group.label}
-						value={group.label.toLowerCase()}
-						className="min-h-0 overflow-y-auto"
-					>
-						<RuleList group={group} />
-					</TabsContent>
-				))}
-			</Tabs>
-		</div>
+	return (
+		<PanelShell
+			title="Skills"
+			description={`${skills.length} skills`}
+			action={
+				<AddSkillDialog onAdd={onAddSkill}>
+					<Button variant="outline" size="sm">
+						<PlusCircle />
+						Add
+					</Button>
+				</AddSkillDialog>
+			}
+		>
+			<div className="flex flex-col gap-2">
+				<InputGroup>
+					<InputGroupInput
+						placeholder="Search skills"
+						value={search}
+						onChange={(event) => setSearch(event.target.value)}
+					/>
+					<InputGroupAddon align="inline-end">
+						<Search />
+					</InputGroupAddon>
+				</InputGroup>
+				{loading ? (
+					<EmptyLine>Loading...</EmptyLine>
+				) : filtered.length === 0 ? (
+					<EmptyLine>No skills found</EmptyLine>
+				) : (
+					filtered.map((skill) => (
+						<Item key={skill.name} variant="outline">
+							<ItemContent>
+								<ItemTitle>{skill.name}</ItemTitle>
+								<ItemDescription>{skill.description}</ItemDescription>
+							</ItemContent>
+							<ItemActions>
+								<Button
+									variant="outline"
+									size="icon-sm"
+									onClick={() => onRemoveRequest(skill.name)}
+									aria-label={`Remove ${skill.name}`}
+								>
+									<Trash />
+								</Button>
+							</ItemActions>
+						</Item>
+					))
+				)}
+			</div>
+		</PanelShell>
 	);
 }
 
 export function WorkspacePanel({
-	open,
-	onOpenChange,
 	mcps,
 	loading = false,
 	onAdd,
@@ -189,217 +424,115 @@ export function WorkspacePanel({
 	permissionContext,
 }: WorkspacePanelProps) {
 	const { t } = useTranslation();
-	const [search, setSearch] = useState('');
-	const [skillSearch, setSkillSearch] = useState('');
-	const [activeTab, setActiveTab] = useState('workspace');
+	const [visiblePanels, setVisiblePanels] = useState<VisiblePanels>(readVisiblePanels);
 	const [deleteOpen, setDeleteOpen] = useState(false);
 	const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 	const [skillDeleteOpen, setSkillDeleteOpen] = useState(false);
 	const [skillDeleteTarget, setSkillDeleteTarget] = useState<string | null>(null);
+	const [defaultLayout] = useState(readPanelLayout);
 
-	const filtered = search
-		? mcps.filter((m) => m.name.toLowerCase().includes(search.toLowerCase()))
-		: mcps;
+	const selectedPanels = (Object.keys(PANEL_LABELS) as PanelId[]).filter(
+		(id) => visiblePanels[id],
+	);
+	const hasVisiblePanels = selectedPanels.length > 0;
 
-	const filteredSkills = skillSearch
-		? skills.filter((s) => s.name.toLowerCase().includes(skillSearch.toLowerCase()))
-		: skills;
+	const togglePanel = (panelId: PanelId, checked: boolean) => {
+		const next = { ...visiblePanels, [panelId]: checked };
+		setVisiblePanels(next);
+		writeVisiblePanels(next);
+	};
 
 	return (
 		<TooltipProvider>
 			<div className="flex h-full shrink-0 border-l bg-background">
 				<div className="flex w-12 flex-col items-center gap-2 p-2">
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<Button
-								size="icon-sm"
-								variant={open ? 'secondary' : 'ghost'}
-								onClick={() => onOpenChange(!open)}
-								aria-controls="workspace-context-panel"
-								aria-expanded={open}
-								aria-label={open ? 'Close workspace panel' : 'Open workspace panel'}
-							>
-								{open ? <PanelRightClose /> : <PanelRightOpen />}
-							</Button>
-						</TooltipTrigger>
-						<TooltipContent side="left">
-							{open ? 'Close workspace panel' : 'Open workspace panel'}
-						</TooltipContent>
-					</Tooltip>
+					<DropdownMenu>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<DropdownMenuTrigger asChild>
+									<Button
+										size="icon-sm"
+										variant={hasVisiblePanels ? 'secondary' : 'ghost'}
+										aria-label="Configure session panels"
+									>
+										<SlidersHorizontal />
+									</Button>
+								</DropdownMenuTrigger>
+							</TooltipTrigger>
+							<TooltipContent side="left">Session panels</TooltipContent>
+						</Tooltip>
+						<DropdownMenuContent align="end" side="left" className="w-48">
+							<DropdownMenuLabel>Session panels</DropdownMenuLabel>
+							<DropdownMenuSeparator />
+							{(Object.keys(PANEL_LABELS) as PanelId[]).map((panelId) => (
+								<DropdownMenuCheckboxItem
+									key={panelId}
+									checked={visiblePanels[panelId]}
+									onCheckedChange={(checked) =>
+										togglePanel(panelId, checked === true)
+									}
+									onSelect={(event) => event.preventDefault()}
+								>
+									{PANEL_LABELS[panelId]}
+								</DropdownMenuCheckboxItem>
+							))}
+							<DropdownMenuCheckboxItem disabled checked={false}>
+								Background Tasks
+							</DropdownMenuCheckboxItem>
+						</DropdownMenuContent>
+					</DropdownMenu>
 				</div>
 
 				<aside
-					id="workspace-context-panel"
 					className={cn(
-						'flex h-full min-h-0 flex-col overflow-hidden transition-[width,opacity] duration-200',
-						open ? 'w-88 opacity-100' : 'w-0 opacity-0',
+						'flex h-full min-h-0 overflow-hidden transition-[width,opacity] duration-200',
+						hasVisiblePanels ? 'w-[min(72vw,72rem)] opacity-100' : 'w-0 opacity-0',
 					)}
-					aria-hidden={!open}
+					aria-hidden={!hasVisiblePanels}
 				>
-					{open && (
-						<div className="flex min-h-0 w-88 flex-1 flex-col gap-3 p-3">
-							<div className="flex items-center justify-between gap-2">
-								<div>
-									<h2 className="text-sm font-semibold">Session context</h2>
-									<p className="text-xs text-muted-foreground">
-										Workspace and permissions
-									</p>
-								</div>
-							</div>
-
-							<Tabs
-								value={activeTab}
-								onValueChange={setActiveTab}
-								className="min-h-0 flex-1"
+					{hasVisiblePanels && (
+						<div className="min-h-0 flex-1">
+							<ResizablePanelGroup
+								orientation="horizontal"
+								defaultLayout={defaultLayout}
+								onLayoutChanged={writePanelLayout}
+								className="h-full"
 							>
-								<TabsList className="grid w-full grid-cols-2">
-									<TabsTrigger value="workspace">Workspace</TabsTrigger>
-									<TabsTrigger value="permissions">Permissions</TabsTrigger>
-								</TabsList>
-
-								<TabsContent value="workspace" className="min-h-0 overflow-y-auto">
-									<Tabs defaultValue="mcp" className="min-h-0">
-										<TabsList className="grid w-full grid-cols-2">
-											<TabsTrigger value="mcp">MCP</TabsTrigger>
-											<TabsTrigger value="skill">Skill</TabsTrigger>
-										</TabsList>
-										<TabsContent value="mcp" asChild>
-											<div className="flex flex-col gap-2">
-												<InputGroup>
-													<InputGroupInput
-														placeholder="Search MCP"
-														value={search}
-														onChange={(e) => setSearch(e.target.value)}
-													/>
-													<InputGroupAddon align="inline-end">
-														<Search />
-													</InputGroupAddon>
-												</InputGroup>
-												{loading ? (
-													<EmptyLine>Loading...</EmptyLine>
-												) : filtered.length === 0 ? (
-													<EmptyLine>No MCPs found</EmptyLine>
-												) : (
-													filtered.map((mcp) => (
-														<Item key={mcp.name} variant="outline">
-															<ItemContent>
-																<ItemTitle className="flex items-center gap-x-2">
-																	<span
-																		className={cn(
-																			'size-2 shrink-0 rounded-full',
-																			mcp.is_healthy
-																				? 'bg-green-500'
-																				: 'bg-red-500',
-																		)}
-																	/>
-																	{mcp.name}
-																</ItemTitle>
-																<ItemDescription>
-																	<KbdGroup>
-																		<Kbd>
-																			{mcp.mcp_config.type ===
-																			'stdio_mcp'
-																				? 'STDIO'
-																				: 'HTTP'}
-																		</Kbd>
-																		<Kbd>
-																			{mcp.tools.length} tools
-																		</Kbd>
-																	</KbdGroup>
-																</ItemDescription>
-															</ItemContent>
-															<ItemActions>
-																<Button
-																	variant="outline"
-																	size="icon-sm"
-																	onClick={() => {
-																		setDeleteTarget(mcp.name);
-																		setDeleteOpen(true);
-																	}}
-																	aria-label={`Remove ${mcp.name}`}
-																>
-																	<Trash />
-																</Button>
-															</ItemActions>
-														</Item>
-													))
-												)}
-											</div>
-										</TabsContent>
-										<TabsContent value="skill" asChild>
-											<div className="flex flex-col gap-2">
-												<InputGroup>
-													<InputGroupInput
-														placeholder="Search skills"
-														value={skillSearch}
-														onChange={(e) =>
-															setSkillSearch(e.target.value)
-														}
-													/>
-													<InputGroupAddon align="inline-end">
-														<Search />
-													</InputGroupAddon>
-												</InputGroup>
-												{skillsLoading ? (
-													<EmptyLine>Loading...</EmptyLine>
-												) : filteredSkills.length === 0 ? (
-													<EmptyLine>No skills found</EmptyLine>
-												) : (
-													filteredSkills.map((skill) => (
-														<Item key={skill.name} variant="outline">
-															<ItemContent>
-																<ItemTitle>{skill.name}</ItemTitle>
-																<ItemDescription>
-																	{skill.description}
-																</ItemDescription>
-															</ItemContent>
-															<ItemActions>
-																<Button
-																	variant="outline"
-																	size="icon-sm"
-																	onClick={() => {
-																		setSkillDeleteTarget(
-																			skill.name,
-																		);
-																		setSkillDeleteOpen(true);
-																	}}
-																	aria-label={`Remove ${skill.name}`}
-																>
-																	<Trash />
-																</Button>
-															</ItemActions>
-														</Item>
-													))
-												)}
-											</div>
-										</TabsContent>
-									</Tabs>
-								</TabsContent>
-
-								<TabsContent
-									value="permissions"
-									className="min-h-0 overflow-y-auto"
-								>
-									<PermissionPanel permissionContext={permissionContext} />
-								</TabsContent>
-							</Tabs>
-
-							{activeTab === 'workspace' && (
-								<div className="flex gap-2">
-									<CreateMCPDialog onAdd={onAdd}>
-										<Button variant="outline" className="flex-1">
-											<PlusCircle />
-											Add MCP
-										</Button>
-									</CreateMCPDialog>
-									<AddSkillDialog onAdd={onAddSkill}>
-										<Button variant="outline" className="flex-1">
-											<PlusCircle />
-											Add Skill
-										</Button>
-									</AddSkillDialog>
-								</div>
-							)}
+								{selectedPanels.flatMap((panelId, index) => [
+									index > 0 ? (
+										<ResizableHandle key={`${panelId}-handle`} withHandle />
+									) : null,
+									<ResizablePanel key={panelId} id={panelId} minSize="18%">
+										{panelId === 'permissions' && (
+											<PermissionsPanel
+												permissionContext={permissionContext}
+											/>
+										)}
+										{panelId === 'mcp' && (
+											<McpPanel
+												mcps={mcps}
+												loading={loading}
+												onAdd={onAdd}
+												onRemoveRequest={(name) => {
+													setDeleteTarget(name);
+													setDeleteOpen(true);
+												}}
+											/>
+										)}
+										{panelId === 'skills' && (
+											<SkillsPanel
+												skills={skills}
+												loading={skillsLoading}
+												onAddSkill={onAddSkill}
+												onRemoveRequest={(name) => {
+													setSkillDeleteTarget(name);
+													setSkillDeleteOpen(true);
+												}}
+											/>
+										)}
+									</ResizablePanel>,
+								])}
+							</ResizablePanelGroup>
 						</div>
 					)}
 				</aside>

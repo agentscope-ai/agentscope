@@ -22,8 +22,14 @@ from ..middleware import (
     StateChangeMiddleware,
     ToolOffloadMiddleware,
 )
-from .._types import AgentMiddlewareFactory, AgentToolFactory
+from ...middleware import TTSMiddleware
+from .._types import (
+    AgentMiddlewareFactory,
+    AgentToolFactory,
+    SubAgentTemplate,
+)
 from ._model import get_model
+from ._tts_model import get_tts_model
 from ._toolkit import get_toolkit
 
 from ..._logging import logger
@@ -34,6 +40,7 @@ from ...event import (
     ExternalExecutionResultEvent,
 )
 from ...message import AssistantMsg, Msg, ToolCallState
+from ...permission import AdditionalWorkingDirectory
 
 
 class ChatService:
@@ -60,6 +67,8 @@ class ChatService:
         message_bus: MessageBus,
         extra_agent_middlewares: AgentMiddlewareFactory | None = None,
         extra_agent_tools: AgentToolFactory | None = None,
+        custom_subagent_templates: dict[str, SubAgentTemplate] | None = None,
+        custom_agent_cls: type[Agent] | None = None,
     ) -> None:
         """Initialize chat service.
 
@@ -75,7 +84,7 @@ class ChatService:
                 ``Schedule*`` tools.
             background_task_manager (`BackgroundTaskManager`):
                 Tracks offloaded long-running tool tasks. Also provides
-                the :class:`TaskStop` tool through
+                the :class:`ToolStop` tool through
                 :func:`get_toolkit`.
             message_bus (`MessageBus`):
                 Application-wide message bus. Provides session-level
@@ -83,12 +92,21 @@ class ChatService:
                 replay + live fan-out (via :meth:`session_publish_event`),
                 and inbox delivery (via :class:`InboxMiddleware`).
             extra_agent_middlewares (`AgentMiddlewareFactory | None`, \
-optional):
+             optional):
                 Async factory invoked at every chat turn to produce
                 user/session-specific middlewares to attach to the agent.
             extra_agent_tools (`AgentToolFactory | None`, optional):
                 Async factory invoked at every chat turn to produce
                 user/session-specific tools to register in the toolkit.
+            custom_subagent_templates (`dict[str, SubAgentTemplate] | None`,\
+             optional):
+                Sub-agent template registry, keyed by template type.
+                Passed through to :func:`get_toolkit` so that
+                ``AgentCreate`` can route to the appropriate template
+                when a ``subagent_type`` is specified.
+            custom_agent_cls (`type[Agent] | None`, optional):
+                Custom :class:`Agent` subclass for assembling agents.
+                Falls back to :class:`Agent` when ``None``.
         """
         self._storage = storage
         self._workspace_manager = workspace_manager
@@ -97,6 +115,8 @@ optional):
         self._message_bus = message_bus
         self._extra_agent_middlewares = extra_agent_middlewares
         self._extra_agent_tools = extra_agent_tools
+        self._sub_agent_templates = custom_subagent_templates
+        self._agent_cls = custom_agent_cls or Agent
 
     async def run(
         self,
@@ -201,8 +221,20 @@ optional):
             session_record.config.workspace_id,
         )
 
+        # Add workspace working directory to the permission context
+        if (
+            workspace.workdir
+            not in session_record.state.permission_context.working_directories
+        ):
+            session_record.state.permission_context.working_directories[
+                workspace.workdir
+            ] = AdditionalWorkingDirectory(
+                path=workspace.workdir,
+                source="session",
+            )
+
         # ----------------------------------------------------------------
-        # 2. Toolkit (workspace tools + planning + TaskStop + schedule +
+        # 2. Toolkit (workspace tools + planning + ToolStop + schedule +
         # team + extras + skills + mcps).
         # ----------------------------------------------------------------
         toolkit = await get_toolkit(
@@ -215,6 +247,7 @@ optional):
             agent_record=agent_record,
             session_record=session_record,
             extra_factory=self._extra_agent_tools,
+            sub_agent_templates=self._sub_agent_templates,
         )
 
         # ----------------------------------------------------------------
@@ -247,6 +280,18 @@ optional):
             )
 
         # ----------------------------------------------------------------
+        # 3b. TTS middleware — inject when the session has a TTS config.
+        # ----------------------------------------------------------------
+        tts_cfg = session_record.config.tts_model_config
+        if tts_cfg is not None:
+            tts_model = await get_tts_model(
+                user_id,
+                tts_cfg,
+                self._storage,
+            )
+            middlewares.append(TTSMiddleware(tts_model))
+
+        # ----------------------------------------------------------------
         # 4. Model + fallback (resolved from session's config).
         # ----------------------------------------------------------------
         model_cfg = session_record.config.chat_model_config
@@ -269,7 +314,7 @@ optional):
         # ----------------------------------------------------------------
         agent_state = session_record.state
         agent_state.session_id = session_id
-        agent = Agent(
+        agent = self._agent_cls(
             name=agent_record.data.name,
             system_prompt=agent_record.data.system_prompt,
             model=model,

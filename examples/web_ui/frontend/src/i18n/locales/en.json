@@ -41,6 +41,11 @@
 		"deleteTitle": "Delete {{entity}} \"{{name}}\"?",
 		"deleteDescription": "This action cannot be undone."
 	},
+	"error": {
+		"description": "The page hit an unexpected error. You can retry or go back home.",
+		"retry": "Retry",
+		"home": "Back to home"
+	},
 	"tool": {
 		"moreLines": "... {{count}} more lines",
 		"read": {
@@ -76,6 +81,9 @@
 	},
 	"messageBubble": {
 		"thinking": "Thinking",
+		"audioGenerating": "Generating audio…",
+		"playAudio": "Play audio",
+		"pauseAudio": "Pause audio",
 		"running": "Running...",
 		"hintSource": {
 			"tool_output": "Tool Output",
@@ -165,7 +173,6 @@
 		"description": "Update the saved credential for this provider."
 	},
 	"credential": {
-		"addConfig": "Add configuration",
 		"noProviders": "No providers available",
 		"noConfigs": "No configurations",
 		"selectHint": "No credential selected",
@@ -175,11 +182,14 @@
 		"noModelsDescription": "This provider returned no models.",
 		"deleteEntity": "credential",
 		"subtitle": "Model API credential configuration",
+		"configured": "Configured",
+		"addProvider": "Add credential",
 		"reasoning": "Reasoning",
 		"maxContext": "Max. Context",
 		"maxOutput": "Max. Output",
 		"inputTypes": "Input",
-		"outputTypes": "Output"
+		"outputTypes": "Output",
+		"availableTTSModels": "TTS Models"
 	},
 	"llm-select": {
 		"placeholder": "Select a model",
@@ -282,7 +292,12 @@
 		"empty": "No configurable parameters.",
 		"fallbackLabel": "Fallback model",
 		"fallbackLabelWithModel": "Fallback model ({{model}})",
-		"parametersLabel": "Parameters"
+		"parametersLabel": "Parameters",
+		"ttsLabel": "TTS",
+		"ttsEmpty": "No TTS models available.",
+		"ttsParameters": "Parameters",
+		"ttsParametersDescription": "Adjust parameters for the selected TTS model.",
+		"noTts": "No TTS"
 	},
 	"setup": {
 		"title": "Connect to Service",

@@ -31,7 +31,6 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
     def _format_openai_data_block(
         self,
         block: DataBlock,
-        role: str = "user",
     ) -> dict[str, Any] | None:
         """Format a DataBlock into the required format for OpenAI API.
 
@@ -42,10 +41,6 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
         Args:
             block (`DataBlock`):
                 The DataBlock to format.
-            role (`str`, defaults to ``"user"``):
-                The role of the message that contains this block. Audio blocks
-                in assistant messages are skipped to avoid errors in subsequent
-                model calls.
 
         Returns:
             `dict[str, Any] | None`:
@@ -70,10 +65,6 @@ class _OpenAIFormatterBase(FormatterBase, ABC):
             return self._format_image_source(block.source)
 
         if main_type == "audio":
-            # Filter out audio content when the multimodal model outputs both
-            # text and audio, to prevent errors in subsequent model calls
-            if role == "assistant":
-                return None
             return self._format_audio_source(block.source)
 
         logger.warning(
@@ -240,7 +231,6 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                 elif isinstance(block, DataBlock):
                     formatted = self._format_openai_data_block(
                         block,
-                        role=msg.role,
                     )
                     if formatted is not None:
                         content_blocks.append(formatted)
@@ -277,7 +267,6 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                             elif isinstance(sub, DataBlock):
                                 formatted_sub = self._format_openai_data_block(
                                     sub,
-                                    role="user",
                                 )
                                 if formatted_sub is not None:
                                     hint_parts.append(formatted_sub)
@@ -335,7 +324,6 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                             elif isinstance(item, DataBlock):
                                 fmt_item = self._format_openai_data_block(
                                     item,
-                                    role="user",
                                 )
                                 if fmt_item is not None:
                                     promo_content.append(fmt_item)
@@ -471,7 +459,6 @@ class OpenAIMultiAgentFormatter(_OpenAIFormatterBase):
                 elif isinstance(block, DataBlock):
                     formatted = self._format_openai_data_block(
                         block,
-                        role=msg.role,
                     )
                     if formatted is not None:
                         media_blocks.append(formatted)

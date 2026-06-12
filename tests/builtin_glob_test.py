@@ -11,6 +11,8 @@ from agentscope.permission import (
     PermissionRule,
 )
 
+from tests.utils import AnyString
+
 
 class GlobToolTest(IsolatedAsyncioTestCase):
     """The glob tool test case."""
@@ -100,6 +102,34 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         self.assertIn("test1.py", content)
         self.assertIn("test2.py", content)
         self.assertIn("test3.py", content)
+
+    async def test_windows_style_separator_pattern(self) -> None:
+        """Test glob patterns that use backslashes as path separators."""
+        chunk = await self.glob_tool(
+            pattern=r"subdir\*.py",
+            path=self.temp_dir,
+        )
+
+        self.assertDictEqual(
+            chunk.model_dump(),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": os.path.join(
+                            self.temp_dir,
+                            "subdir",
+                            "test3.py",
+                        ),
+                        "id": AnyString(),
+                    },
+                ],
+                "state": "running",
+                "is_last": True,
+                "metadata": {},
+                "id": AnyString(),
+            },
+        )
 
     async def test_no_matches(self) -> None:
         """Test pattern with no matches."""
