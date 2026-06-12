@@ -23,6 +23,7 @@ from ._base import ToolBase
 from ._response import ToolResponse, ToolChunk
 from ..skill import SkillLoaderBase, Skill
 from ._types import RegisteredTool
+from ._utils import _repair_arguments_by_schema
 from .._utils._common import _json_loads_with_repair
 from ..exception import (
     DeveloperOrientedException,
@@ -297,6 +298,10 @@ class Toolkit:
         try:
             # Prepare keyword arguments
             kwargs = _json_loads_with_repair(tool_call.input)
+            kwargs = _repair_arguments_by_schema(
+                kwargs,
+                tool_func.input_schema,
+            )
 
             # State injection
             if (

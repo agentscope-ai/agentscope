@@ -1046,6 +1046,99 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
         )
 
 
+class ToolArgumentRepairTest(IsolatedAsyncioTestCase):
+    """Test best-effort tool argument repair."""
+
+    async def _call_tool(
+        self,
+        toolkit: Toolkit,
+        name: str,
+        arguments: dict[str, Any],
+    ) -> ToolResponse:
+        state = AgentState()
+        tool_call = ToolCallBlock(
+            id=f"test_{name}",
+            name=name,
+            input=json.dumps(arguments),
+        )
+
+        response = None
+        async for result in toolkit.call_tool(tool_call, state):
+            if isinstance(result, ToolResponse):
+                response = result
+
+        self.assertIsNotNone(response)
+        return response
+
+    async def test_repairs_scalar_arguments_from_schema(self) -> None:
+        """Common scalar mismatches are repaired before invocation."""
+
+        def inspect_types(
+            count: int,
+            temperature: float,
+            enabled: bool,
+            label: str,
+        ) -> dict[str, Any]:
+            """Inspect repaired argument types."""
+            return {
+                "count": [count, type(count).__name__],
+                "temperature": [temperature, type(temperature).__name__],
+                "enabled": [enabled, type(enabled).__name__],
+                "label": [label, type(label).__name__],
+            }
+
+        toolkit = Toolkit(tools=[FunctionTool(inspect_types)])
+        response = await self._call_tool(
+            toolkit,
+            "inspect_types",
+            {
+                "count": "3.0",
+                "temperature": "0.75",
+                "enabled": "false",
+                "label": 123,
+            },
+        )
+
+        self.assertEqual(
+            json.loads(response.content[0].text),
+            {
+                "count": [3, "int"],
+                "temperature": [0.75, "float"],
+                "enabled": [False, "bool"],
+                "label": ["123", "str"],
+            },
+        )
+
+    async def test_repairs_array_items_from_schema(self) -> None:
+        """Array item schemas are applied recursively."""
+
+        def sum_values(values: list[int]) -> dict[str, Any]:
+            """Sum integer values."""
+            return {
+                "values": values,
+                "types": [type(value).__name__ for value in values],
+                "total": sum(values),
+            }
+
+        toolkit = Toolkit(tools=[FunctionTool(sum_values)])
+        response = await self._call_tool(
+            toolkit,
+            "sum_values",
+            {
+                "values": ["1", "2.0", 3],
+            },
+        )
+
+        self.assertEqual(
+            json.loads(response.content[0].text),
+            {
+                "values": [1, 2, 3],
+                "types": ["int", "int", "int"],
+                "total": 6,
+            },
+        )
+
+
 class ToolGroupTest(IsolatedAsyncioTestCase):
     """The tool group test case."""
 
