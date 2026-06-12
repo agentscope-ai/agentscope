@@ -115,7 +115,7 @@ include-package-data = true
 #   subdirs that ship with each model provider (they have no
 #   ``__init__.py`` and are not packages, but the files still
 #   live alongside the parent package's source on disk).
-"*" = ["py.typed", "_models/*.yaml"]
+"*" = ["py.typed", "_models/*.yaml", "_cosyvoice_models/*.yaml"]
 "agentscope.workspace._docker" = ["Dockerfile*.template"]
 
 [build-system]
