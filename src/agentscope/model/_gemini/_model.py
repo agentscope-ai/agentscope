@@ -3,12 +3,12 @@
 import base64
 import copy
 import json
-import uuid
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 
 from pydantic import BaseModel, Field
 
+from ..._utils._common import _generate_id
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
@@ -314,7 +314,7 @@ class GeminiChatModel(ChatModelBase):
             # Capture response_id from the first chunk that carries it
             if response_id is None:
                 response_id = (
-                    getattr(chunk, "response_id", None) or uuid.uuid4().hex
+                    getattr(chunk, "response_id", None) or _generate_id()
                 )
 
             delta_content: list = []
@@ -385,7 +385,7 @@ class GeminiChatModel(ChatModelBase):
             )
 
         yield ChatResponse(
-            id=response_id or uuid.uuid4().hex,
+            id=response_id or _generate_id(),
             content=final_content,
             is_last=True,
             usage=usage,
@@ -443,7 +443,7 @@ class GeminiChatModel(ChatModelBase):
         usage = self._extract_usage(response.usage_metadata, start_datetime)
 
         return ChatResponse(
-            id=getattr(response, "response_id", None) or uuid.uuid4().hex,
+            id=getattr(response, "response_id", None) or _generate_id(),
             content=content_blocks,
             is_last=True,
             usage=usage,

@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """Event types for agent execution."""
-import uuid
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Dict, Literal, List, TypeAlias
 
 from pydantic import BaseModel, Field, ConfigDict
 
+from .._utils._common import _generate_id
 from ..message import (
     DataBlock,
     TextBlock,
@@ -65,7 +65,7 @@ class EventBase(BaseModel):
 
     model_config = ConfigDict(use_enum_values=True)
 
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    id: str = Field(default_factory=_generate_id)
     """Unique event identifier."""
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     """ISO 8601 timestamp of when the event was created."""
@@ -337,7 +337,7 @@ class ToolResultDataDeltaEvent(EventBase):
     """ID of the reply message this tool result belongs to."""
     tool_call_id: str
     """ID of the corresponding tool call."""
-    block_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    block_id: str = Field(default_factory=_generate_id)
     """Unique identifier of the data block created by this event."""
     media_type: str
     """MIME type of the binary content."""
