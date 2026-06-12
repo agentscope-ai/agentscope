@@ -16,6 +16,7 @@ class IdFactoryTest(IsolatedAsyncioTestCase):
         """Save the current factory before each test."""
         import agentscope._utils._common as common
 
+        # pylint: disable=protected-access
         self._saved_factory = common._id_factory
 
     async def test_default_id_factory_returns_hex32(self) -> None:
@@ -44,4 +45,5 @@ class IdFactoryTest(IsolatedAsyncioTestCase):
         """Restore the original factory after each test."""
         import agentscope._utils._common as common
 
+        # pylint: disable=protected-access
         common._id_factory = self._saved_factory
