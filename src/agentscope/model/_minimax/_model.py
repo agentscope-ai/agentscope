@@ -1,5 +1,15 @@
 # -*- coding: utf-8 -*-
-"""The MiniMax chat model implementation."""
+"""The MiniMax chat model implementation.
+
+MiniMax officially recommends using the Anthropic-compatible API for calls
+(see https://platform.minimax.io/docs/api-reference/text-anthropic-api).
+This module routes ``MiniMaxChatModel`` through the ``anthropic`` SDK
+against MiniMax's ``/anthropic`` endpoint, matching the behaviour of
+:class:`agentscope.model.AnthropicChatModel` so users get the same
+``thinking_enable`` / ``thinking_budget`` controls, the same tool-call
+semantics, and a thinking block preserved across turns.
+"""
+
 from collections import OrderedDict
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
@@ -15,20 +25,25 @@ from ...message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
 from ...tool import ToolChoice
 
 if TYPE_CHECKING:
-    from openai.types.chat import ChatCompletion
-    from openai import AsyncStream
+    from anthropic.types.message import Message
+    from anthropic import AsyncStream
 else:
-    ChatCompletion = Any
+    Message = Any
     AsyncStream = Any
 
 
 class MiniMaxChatModel(ChatModelBase):
     """The MiniMax chat model.
 
-    MiniMax provides an OpenAI-compatible chat API. The model supports
-    image input (multimodal) and tool calls. Temperature must be in
-    ``(0.0, 1.0]`` and the default is ``1.0``.
+    Calls MiniMax via its officially recommended Anthropic-compatible API
+    (``https://api.minimax.io/anthropic``) using the ``anthropic`` SDK.
+    Supports extended thinking via the ``thinking_enable`` /
+    ``thinking_budget`` parameters in the same way as
+    :class:`agentscope.model.AnthropicChatModel`.
     """
+
+    type: Literal["minimax_chat"] = "minimax_chat"
+    """The type of the chat model."""
 
     class Parameters(BaseModel):
         """The parameters for the MiniMax chat model."""
@@ -36,31 +51,24 @@ class MiniMaxChatModel(ChatModelBase):
         max_tokens: int | None = Field(
             default=None,
             title="Max Tokens",
-            description="The maximum number of tokens for the LLM output.",
-            gt=0,
-        )
-
-        temperature: float | None = Field(
-            default=1.0,
-            title="Temperature",
             description=(
-                "The temperature for the LLM output. MiniMax requires "
-                "the value to be in (0.0, 1.0] — 0 is not accepted."
+                "The maximum number of tokens to generate in the chat completion."
             ),
-            gt=0.0,
-            le=1.0,
-        )
-
-        top_p: float | None = Field(
-            default=None,
-            title="Top P",
-            description="The top P value for the LLM output.",
             gt=0,
-            le=1,
         )
 
-    type: Literal["minimax_chat"] = "minimax_chat"
-    """The type of the chat model."""
+        thinking_enable: bool = Field(
+            default=False,
+            title="Thinking",
+            description="The thinking enable for the LLM output.",
+        )
+
+        thinking_budget: int | None = Field(
+            default=None,
+            title="Thinking budget",
+            description="The thinking budget for the LLM output.",
+            gt=0,
+        )
 
     def __init__(
         self,
@@ -95,11 +103,12 @@ class MiniMaxChatModel(ChatModelBase):
                 The model context size used for context compression.
             formatter (`FormatterBase | None`, defaults to `None`):
                 The formatter that converts ``Msg`` objects to the format
-                required by the MiniMax API. When ``None``, a
-                ``MiniMaxChatFormatter`` instance will be used.
+                required by the MiniMax Anthropic-compatible API. When
+                ``None``, a ``MiniMaxChatFormatter`` instance will be used.
             client_kwargs (`dict[str, Any] | None`, defaults to `None`):
-                Extra keyword arguments forwarded to ``openai.AsyncClient``
-                (e.g. ``timeout``, ``default_headers``, ``http_client``).
+                Extra keyword arguments forwarded to
+                ``anthropic.AsyncAnthropic`` (e.g. ``timeout``,
+                ``default_headers``, ``http_client``, ``auth_token``).
         """
         super().__init__(
             credential=credential,
@@ -115,13 +124,13 @@ class MiniMaxChatModel(ChatModelBase):
 
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
-        import openai
+        import anthropic
 
         return (
-            openai.APIConnectionError,
-            openai.APITimeoutError,
-            openai.RateLimitError,
-            openai.InternalServerError,
+            anthropic.APIConnectionError,
+            anthropic.APITimeoutError,
+            anthropic.RateLimitError,
+            anthropic.InternalServerError,
         )
 
     async def _call_api(
@@ -132,19 +141,20 @@ class MiniMaxChatModel(ChatModelBase):
         tool_choice: ToolChoice | None = None,
         **generate_kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
-        """Call the MiniMax chat completions API.
+        """Call MiniMax's Anthropic-compatible chat completions API.
 
         Args:
             model_name (`str`):
                 The model name to use for this call.
-            messages (`list`):
-                A list of message dicts with ``role`` and ``content`` keys.
+            messages (`list[dict]`):
+                A list of dictionaries, where `role` and `content` fields are
+                required.
             tools (`list[dict]`, default `None`):
                 The tools JSON schemas.
             tool_choice (`ToolChoice | None`, optional):
                 Controls which (if any) tool is called by the model.
             **generate_kwargs (`Any`):
-                Extra keyword arguments forwarded to the API.
+                The keyword arguments for the Anthropic-compatible API.
 
         Returns:
             `ChatResponse | AsyncGenerator[ChatResponse, None]`:
@@ -152,9 +162,9 @@ class MiniMaxChatModel(ChatModelBase):
                 generator of ``ChatResponse`` objects when streaming is
                 enabled.
         """
-        import openai
+        import anthropic
 
-        client = openai.AsyncClient(
+        client = anthropic.AsyncAnthropic(
             **{
                 "api_key": self.credential.api_key.get_secret_value(),
                 "base_url": self.credential.base_url,
@@ -162,224 +172,124 @@ class MiniMaxChatModel(ChatModelBase):
             },
         )
 
-        formatted_messages = await self.formatter.format(messages)
+        # The Anthropic-compatible endpoint requires `max_tokens`; fall back
+        # to a safe default when the user hasn't configured one explicitly.
+        max_tokens = self.parameters.max_tokens or 8192
 
         kwargs: dict[str, Any] = {
             "model": model_name,
-            "messages": formatted_messages,
+            "max_tokens": max_tokens,
             "stream": self.stream,
+            **generate_kwargs,
         }
 
-        if self.parameters.max_tokens is not None:
-            kwargs["max_tokens"] = self.parameters.max_tokens
-
-        if self.parameters.temperature is not None:
-            kwargs["temperature"] = self.parameters.temperature
-
-        if self.parameters.top_p is not None:
-            kwargs["top_p"] = self.parameters.top_p
-
-        kwargs.update(generate_kwargs)
+        # Extended thinking — only set when explicitly enabled. The
+        # Anthropic-compatible API requires `max_tokens > budget_tokens`
+        # strictly, so auto-expand max_tokens if the user-supplied budget
+        # is too large.
+        if self.parameters.thinking_enable and "thinking" not in kwargs:
+            budget = self.parameters.thinking_budget or (max_tokens // 2)
+            if budget >= max_tokens:
+                max_tokens = budget + 1024
+                kwargs["max_tokens"] = max_tokens
+            kwargs["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": budget,
+            }
 
         fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
-
         if fmt_tools:
             kwargs["tools"] = fmt_tools
-
         if fmt_tool_choice is not None:
             kwargs["tool_choice"] = fmt_tool_choice
 
-        if self.stream:
-            kwargs["stream_options"] = {"include_usage": True}
+        formatted_messages = await self.formatter.format(messages)
+
+        # Extract the system message — Anthropic-compatible APIs expect it
+        # as a top-level `system` parameter, not in the messages array.
+        if formatted_messages and formatted_messages[0]["role"] == "system":
+            kwargs["system"] = formatted_messages[0]["content"]
+            formatted_messages = formatted_messages[1:]
+
+        kwargs["messages"] = formatted_messages
 
         start_datetime = datetime.now()
-        response = await client.chat.completions.create(**kwargs)
+
+        response = await client.messages.create(**kwargs)
 
         if self.stream:
-            return self._parse_stream_response(start_datetime, response)
-
-        return self._parse_completion_response(start_datetime, response)
-
-    async def _parse_stream_response(
-        self,
-        start_datetime: datetime,
-        response: AsyncStream,
-    ) -> AsyncGenerator[ChatResponse, None]:
-        """Parse the MiniMax streaming response.
-
-        Args:
-            start_datetime (`datetime`):
-                The start datetime of the response generation.
-            response (`AsyncStream`):
-                The OpenAI-compatible async stream object.
-
-        Yields:
-            `ChatResponse`:
-                Incremental ``ChatResponse`` objects with ``is_last=False``
-                followed by a final one with ``is_last=True``.
-        """
-        usage = None
-        response_id: str | None = None
-        acc_text = TextBlock(text="")
-        acc_thinking = ThinkingBlock(thinking="")
-        acc_tool_calls: OrderedDict = OrderedDict()
-
-        async with response as stream:
-            async for chunk in stream:
-                if chunk.usage:
-                    u = chunk.usage
-                    details = getattr(u, "prompt_tokens_details", None)
-                    usage = ChatUsage(
-                        input_tokens=u.prompt_tokens,
-                        output_tokens=u.completion_tokens,
-                        time=(datetime.now() - start_datetime).total_seconds(),
-                        cache_input_tokens=getattr(
-                            details,
-                            "cached_tokens",
-                            0,
-                        )
-                        if details
-                        else 0,
-                    )
-
-                response_id = response_id or getattr(chunk, "id", None)
-
-                if not chunk.choices:
-                    continue
-
-                choice = chunk.choices[0]
-                delta = choice.delta
-
-                delta_thinking = (
-                    getattr(delta, "reasoning_content", None) or ""
-                )
-                delta_text = getattr(delta, "content", None) or ""
-
-                acc_thinking.thinking += delta_thinking
-                acc_text.text += delta_text
-
-                delta_tool_call_blocks: List[ToolCallBlock] = []
-                for tool_call in getattr(delta, "tool_calls", None) or []:
-                    idx = tool_call.index
-                    args = tool_call.function.arguments or ""
-                    if idx in acc_tool_calls:
-                        acc_tool_calls[idx]["input"] += args
-                    else:
-                        acc_tool_calls[idx] = {
-                            "id": tool_call.id,
-                            "name": tool_call.function.name,
-                            "input": args,
-                        }
-                    tc = acc_tool_calls[idx]
-                    delta_tool_call_blocks.append(
-                        ToolCallBlock(
-                            id=tc["id"],
-                            name=tc["name"],
-                            input=args,
-                        ),
-                    )
-
-                delta_contents: List[
-                    TextBlock | ToolCallBlock | ThinkingBlock
-                ] = []
-                if delta_thinking:
-                    delta_contents.append(
-                        ThinkingBlock(
-                            id=acc_thinking.id,
-                            thinking=delta_thinking,
-                        ),
-                    )
-                if delta_text:
-                    delta_contents.append(
-                        TextBlock(id=acc_text.id, text=delta_text),
-                    )
-                delta_contents.extend(delta_tool_call_blocks)
-
-                if delta_contents:
-                    _kwargs: dict[str, Any] = {
-                        "content": delta_contents,
-                        "usage": usage,
-                        "is_last": False,
-                    }
-                    if response_id:
-                        _kwargs["id"] = response_id
-                    yield ChatResponse(**_kwargs)
-
-        final_contents: List[TextBlock | ToolCallBlock | ThinkingBlock] = []
-        if acc_thinking.thinking:
-            final_contents.append(acc_thinking)
-        if acc_text.text:
-            final_contents.append(acc_text)
-        for tc in acc_tool_calls.values():
-            final_contents.append(
-                ToolCallBlock(
-                    id=tc["id"],
-                    name=tc["name"],
-                    input=tc["input"],
-                ),
+            return self._parse_stream_response(
+                start_datetime,
+                response,
             )
 
-        _final_kwargs: dict[str, Any] = {
-            "content": final_contents,
-            "usage": usage,
-            "is_last": True,
-        }
-        if response_id:
-            _final_kwargs["id"] = response_id
-        yield ChatResponse(**_final_kwargs)
+        return await self._parse_completion_response(
+            start_datetime,
+            response,
+        )
 
-    def _parse_completion_response(
+    async def _parse_completion_response(
         self,
         start_datetime: datetime,
-        response: ChatCompletion,
+        response: Message,
     ) -> ChatResponse:
-        """Parse the MiniMax non-streaming response.
+        """Parse a non-streaming Anthropic-compatible response.
 
         Args:
             start_datetime (`datetime`):
                 The start datetime of the response generation.
-            response (`ChatCompletion`):
-                The OpenAI-compatible chat completion object.
+            response (`Message`):
+                Anthropic-compatible Message object to parse.
 
         Returns:
             `ChatResponse`:
-                A single ``ChatResponse`` with ``is_last=True``.
+                A single ``ChatResponse`` with ``is_last=True`` containing
+                the extracted content blocks and usage.
         """
-        content_blocks: List[TextBlock | ToolCallBlock | ThinkingBlock] = []
+        content_blocks: List[ThinkingBlock | TextBlock | ToolCallBlock] = []
 
-        if response.choices:
-            choice = response.choices[0]
-            reasoning = getattr(choice.message, "reasoning_content", None)
-            if isinstance(reasoning, str) and reasoning:
-                content_blocks.append(ThinkingBlock(thinking=reasoning))
+        if hasattr(response, "content") and response.content:
+            for content_block in response.content:
+                block_type = getattr(content_block, "type", None)
+                if block_type == "thinking":
+                    content_blocks.append(
+                        ThinkingBlock(
+                            thinking=content_block.thinking,
+                            signature=getattr(content_block, "signature", "") or "",
+                        ),
+                    )
+                elif block_type == "text":
+                    content_blocks.append(
+                        TextBlock(text=content_block.text),
+                    )
+                elif block_type == "tool_use":
+                    import json
 
-            if choice.message.content:
-                content_blocks.append(TextBlock(text=choice.message.content))
-
-            for tool_call in choice.message.tool_calls or []:
-                content_blocks.append(
-                    ToolCallBlock(
-                        id=tool_call.id,
-                        name=tool_call.function.name,
-                        input=tool_call.function.arguments,
-                    ),
-                )
+                    content_blocks.append(
+                        ToolCallBlock(
+                            id=content_block.id,
+                            name=content_block.name,
+                            input=json.dumps(content_block.input),
+                        ),
+                    )
 
         usage = None
         if response.usage:
             u = response.usage
-            details = getattr(u, "prompt_tokens_details", None)
             usage = ChatUsage(
-                input_tokens=u.prompt_tokens,
-                output_tokens=u.completion_tokens,
+                input_tokens=u.input_tokens,
+                output_tokens=u.output_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
-                cache_input_tokens=getattr(
-                    details,
-                    "cached_tokens",
+                cache_creation_input_tokens=getattr(
+                    u,
+                    "cache_creation_input_tokens",
                     0,
-                )
-                if details
-                else 0,
+                ),
+                cache_input_tokens=getattr(
+                    u,
+                    "cache_read_input_tokens",
+                    0,
+                ),
             )
 
         resp_kwargs: dict[str, Any] = {
@@ -393,18 +303,150 @@ class MiniMaxChatModel(ChatModelBase):
 
         return ChatResponse(**resp_kwargs)
 
+    async def _parse_stream_response(
+        self,
+        start_datetime: datetime,
+        response: AsyncStream,
+    ) -> AsyncGenerator[ChatResponse, None]:
+        """Parse a streaming Anthropic-compatible response.
+
+        Args:
+            start_datetime (`datetime`):
+                The start datetime of the response generation.
+            response (`AsyncStream`):
+                Anthropic-compatible AsyncStream object to parse.
+
+        Yields:
+            `ChatResponse`:
+                Incremental ``ChatResponse`` objects with ``is_last=False``
+                followed by a final one with ``is_last=True`` containing the
+                fully accumulated content blocks and usage.
+        """
+        usage = None
+        response_id: str | None = None
+        acc_text = TextBlock(text="")
+        acc_thinking = ThinkingBlock(thinking="")
+        thinking_signature = ""
+        acc_tool_calls: OrderedDict = OrderedDict()
+
+        async for event in response:
+            delta_content: list = []
+
+            if event.type == "message_start":
+                message = event.message
+                if response_id is None:
+                    response_id = getattr(message, "id", None)
+                if message.usage:
+                    u = message.usage
+                    usage = ChatUsage(
+                        input_tokens=u.input_tokens,
+                        output_tokens=getattr(u, "output_tokens", 0),
+                        time=(datetime.now() - start_datetime).total_seconds(),
+                        cache_creation_input_tokens=getattr(
+                            u,
+                            "cache_creation_input_tokens",
+                            0,
+                        ),
+                        cache_input_tokens=getattr(
+                            u,
+                            "cache_read_input_tokens",
+                            0,
+                        ),
+                    )
+
+            elif event.type == "content_block_start":
+                if event.content_block.type == "tool_use":
+                    block_index = event.index
+                    tool_block = event.content_block
+                    acc_tool_calls[block_index] = {
+                        "id": tool_block.id,
+                        "name": tool_block.name,
+                        "input": "",
+                    }
+
+            elif event.type == "content_block_delta":
+                block_index = event.index
+                delta = event.delta
+                if delta.type == "text_delta":
+                    acc_text.text += delta.text
+                    delta_content.append(
+                        TextBlock(id=acc_text.id, text=delta.text),
+                    )
+                elif delta.type == "thinking_delta":
+                    acc_thinking.thinking += delta.thinking
+                    delta_content.append(
+                        ThinkingBlock(
+                            id=acc_thinking.id,
+                            thinking=delta.thinking,
+                        ),
+                    )
+                elif delta.type == "signature_delta":
+                    thinking_signature = delta.signature
+                elif delta.type == "input_json_delta" and block_index in acc_tool_calls:
+                    fragment = delta.partial_json or ""
+                    acc_tool_calls[block_index]["input"] += fragment
+                    tc = acc_tool_calls[block_index]
+                    delta_content.append(
+                        ToolCallBlock(
+                            id=tc["id"],
+                            name=tc["name"],
+                            input=fragment,
+                        ),
+                    )
+
+            elif event.type == "message_delta":
+                if event.usage and usage:
+                    usage.output_tokens = event.usage.output_tokens
+
+            if delta_content:
+                _kwargs: dict[str, Any] = {
+                    "content": delta_content,
+                    "is_last": False,
+                    "usage": usage,
+                }
+                if response_id:
+                    _kwargs["id"] = response_id
+                yield ChatResponse(**_kwargs)
+
+        # Build final accumulated content
+        final_content: list = []
+        if acc_thinking.thinking:
+            acc_thinking.signature = thinking_signature
+            final_content.append(acc_thinking)
+        if acc_text.text:
+            final_content.append(acc_text)
+        for tc in acc_tool_calls.values():
+            final_content.append(
+                ToolCallBlock(
+                    id=tc["id"],
+                    name=tc["name"],
+                    input=tc["input"],
+                ),
+            )
+
+        _final_kwargs: dict[str, Any] = {
+            "content": final_content,
+            "is_last": True,
+            "usage": usage,
+        }
+        if response_id:
+            _final_kwargs["id"] = response_id
+        yield ChatResponse(**_final_kwargs)
+
     def _format_tools(
         self,
         tools: list[dict] | None,
         tool_choice: ToolChoice | None,
-    ) -> tuple[list[dict] | None, str | dict | None]:
-        """Validate, filter, and format tools and tool_choice for the MiniMax
-        API.
+    ) -> tuple[list[dict] | None, dict | None]:
+        """Validate and format tools and tool_choice for the
+        Anthropic-compatible API.
 
-        When ``tool_choice.tools`` is specified the schemas list is filtered
-        to only those tools. When ``tool_choice.mode`` is a specific tool name
-        (str) the model is forced to call exactly that tool without needing to
-        filter the list, preserving prompt-cache efficiency.
+        Converts OpenAI-style tool schemas to Anthropic's flat format and
+        maps tool_choice modes to Anthropic's type-based format. When
+        ``tool_choice.tools`` is specified the schemas list is filtered to
+        only those tools. When ``tool_choice.mode`` is a specific tool name
+        (str) the model is forced to call exactly that tool without needing
+        to filter the list, preserving prompt-cache efficiency.
 
         Args:
             tools (`list[dict] | None`, optional):
@@ -413,7 +455,7 @@ class MiniMaxChatModel(ChatModelBase):
                 The tool choice configuration.
 
         Returns:
-            `tuple[list[dict] | None, str | dict | None]`:
+            `tuple[list[dict] | None, dict | None]`:
                 A tuple of (formatted_tools, formatted_tool_choice).
         """
         if tool_choice and tools:
@@ -422,15 +464,45 @@ class MiniMaxChatModel(ChatModelBase):
                 allowed = set(tool_choice.tools)
                 tools = [t for t in tools if t["function"]["name"] in allowed]
 
+        fmt_tools = None
+        if tools:
+            fmt_tools = []
+            for schema in tools:
+                assert "function" in schema, (
+                    f"Invalid schema: {schema}, expect key 'function'."
+                )
+                assert "name" in schema["function"], (
+                    f"Invalid schema: {schema}, expect key 'name' in 'function' field."
+                )
+                fmt_tools.append(
+                    {
+                        "name": schema["function"]["name"],
+                        "description": schema["function"].get(
+                            "description",
+                            "",
+                        ),
+                        "input_schema": schema["function"].get(
+                            "parameters",
+                            {},
+                        ),
+                    },
+                )
+
         if not tool_choice:
-            return tools, None
+            return fmt_tools, None
 
         mode = tool_choice.mode
 
         if mode not in _TOOL_CHOICE_LITERAL_MODES:
-            return tools, {"type": "function", "function": {"name": mode}}
+            # mode is a specific tool name — force call it
+            return fmt_tools, {"type": "tool", "name": mode}
 
-        return tools, mode
+        type_mapping = {
+            "auto": {"type": "auto"},
+            "none": {"type": "none"},
+            "required": {"type": "any"},
+        }
+        return fmt_tools, type_mapping[mode]
 
     async def _call_api_with_structured_output(
         self,
@@ -442,12 +514,10 @@ class MiniMaxChatModel(ChatModelBase):
     ) -> StructuredResponse:
         """MiniMax-specific override for structured output.
 
-        MiniMax does not support ``response_format``. The base class uses
-        ``response_format`` to drive structured output via JSON schema; here
-        we delegate to the base implementation, but the request that reaches
-        MiniMax will not include ``response_format`` because we never forward
-        it from ``_call_api``. Tool calls are used as the structured-output
-        channel.
+        Mirrors :class:`AnthropicChatModel`'s behaviour: when thinking is
+        enabled, force ``tool_choice="auto"`` because the
+        Anthropic-compatible API rejects any forcing form (``"any"`` or a
+        specific tool) while extended thinking is on.
 
         Args:
             model_name (`str`):
@@ -458,7 +528,10 @@ class MiniMaxChatModel(ChatModelBase):
                 A Pydantic model class or a JSON schema dict describing the
                 required output structure.
             tool_choice (`ToolChoice | None`, defaults to `None`):
-                The tool_choice forwarded to ``_call_api``.
+                The tool_choice forwarded to ``_call_api``. When ``None``
+                and thinking mode is enabled, it is downgraded to
+                ``ToolChoice(mode="auto")``; otherwise the base default
+                (force the structured-output tool) is used.
             **kwargs (`Any`):
                 Additional keyword arguments forwarded to ``_call_api``.
 
@@ -467,6 +540,8 @@ class MiniMaxChatModel(ChatModelBase):
                 The structured response whose ``content`` is the validated
                 output dict matching ``structured_model``.
         """
+        if tool_choice is None and self.parameters.thinking_enable:
+            tool_choice = ToolChoice(mode="auto")
         return await super()._call_api_with_structured_output(
             model_name=model_name,
             messages=messages,

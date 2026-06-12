@@ -1,29 +1,35 @@
 # -*- coding: utf-8 -*-
-"""The MiniMax formatter for agentscope."""
-from typing import Any
+"""The MiniMax formatter for agentscope.
+
+MiniMax officially recommends using its Anthropic-compatible API
+(``https://api.minimax.io/anthropic``) for chat completions, so the
+formatters here are thin wrappers around
+:class:`AnthropicChatFormatter` / :class:`AnthropicMultiAgentFormatter`.
+The only structural difference is that the MiniMax-Speech models accept
+audio input on the Anthropic-compatible endpoint while Anthropic itself
+does not; the default ``input_types`` here matches Anthropic (text +
+image), which covers the MiniMax M-series chat models like
+``MiniMax-M3``.
+"""
 
 from pydantic import Field
 
-from ._openai_formatter import _OpenAIFormatterBase
-from .._logging import logger
-from ..message import (
-    Msg,
-    TextBlock,
-    DataBlock,
-    HintBlock,
-    ToolCallBlock,
-    ToolResultBlock,
-    ThinkingBlock,
+from ._anthropic_formatter import (
+    AnthropicChatFormatter,
+    AnthropicMultiAgentFormatter,
 )
 
 
-class MiniMaxChatFormatter(_OpenAIFormatterBase):
+class MiniMaxChatFormatter(AnthropicChatFormatter):
     """The MiniMax formatter for chatbot scenario.
 
-    MiniMax exposes an OpenAI-compatible chat API. The M3 model supports
-    image input (image/* media types) but does not support audio input.
-    This formatter is structurally identical to :class:`OpenAIChatFormatter`
-    but advertises only image and text input types.
+    MiniMax's M-series chat models (e.g. ``MiniMax-M3``) are exposed
+    through an Anthropic-compatible API. The serialised request format is
+    identical to Anthropic's so this class inherits the entire formatter,
+    including the
+    `documented thinking-block round-trip behaviour
+    <https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#preserving-thinking-blocks>`_
+    that preserves reasoning continuity across turns.
     """
 
     input_types: list[str] = Field(
@@ -31,167 +37,18 @@ class MiniMaxChatFormatter(_OpenAIFormatterBase):
         description=(
             "The supported input types. "
             'Defaults to ``["text/plain", "image/*"]``. '
-            "MiniMax does not support audio input."
+            "MiniMax's M-series chat endpoint does not accept audio "
+            "input."
         ),
     )
 
-    async def format(
-        self,
-        msgs: list[Msg],
-    ) -> list[dict[str, Any]]:
-        """Format message objects into MiniMax API required format.
 
-        Args:
-            msgs (`list[Msg]`):
-                The list of message objects to format.
-
-        Returns:
-            `list[dict[str, Any]]`:
-                A list of dictionaries, where each dictionary has
-                ``role`` and ``content`` keys.
-        """
-        self.assert_list_of_msgs(msgs)
-
-        messages: list[dict] = []
-        i = 0
-        while i < len(msgs):
-            msg = msgs[i]
-            content_blocks: list[dict] = []
-            tool_calls: list[dict] = []
-
-            for block in msg.get_content_blocks():
-                if isinstance(block, TextBlock):
-                    content_blocks.append(
-                        {"type": "text", "text": block.text},
-                    )
-
-                elif isinstance(block, DataBlock):
-                    formatted = self._format_openai_data_block(
-                        block,
-                        role=msg.role,
-                    )
-                    if formatted is not None:
-                        content_blocks.append(formatted)
-
-                elif isinstance(block, HintBlock):
-                    if content_blocks or tool_calls:
-                        msg_minimax = {
-                            "role": msg.role,
-                            "name": msg.name,
-                            "content": content_blocks or None,
-                        }
-                        if tool_calls:
-                            msg_minimax["tool_calls"] = tool_calls
-                        messages.append(msg_minimax)
-                        content_blocks = []
-                        tool_calls = []
-
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": block.hint},
-                            ],
-                        },
-                    )
-
-                elif isinstance(block, ToolCallBlock):
-                    tool_calls.append(
-                        {
-                            "id": block.id,
-                            "type": "function",
-                            "function": {
-                                "name": block.name,
-                                "arguments": block.input,
-                            },
-                        },
-                    )
-
-                elif isinstance(block, ToolResultBlock):
-                    if content_blocks or tool_calls:
-                        msg_flush = {
-                            "role": msg.role,
-                            "name": msg.name,
-                            "content": content_blocks or None,
-                        }
-                        if tool_calls:
-                            msg_flush["tool_calls"] = tool_calls
-                        messages.append(msg_flush)
-                        content_blocks = []
-                        tool_calls = []
-
-                    (
-                        textual_output,
-                        multimodal_data,
-                    ) = self.convert_tool_result_to_string(block.output)
-
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": block.id,
-                            "content": textual_output,
-                            "name": block.name,
-                        },
-                    )
-
-                    if multimodal_data:
-                        promo_content = []
-                        for item in multimodal_data:
-                            if isinstance(item, TextBlock):
-                                promo_content.append(
-                                    {"type": "text", "text": item.text},
-                                )
-                            elif isinstance(item, DataBlock):
-                                fmt_item = self._format_openai_data_block(
-                                    item,
-                                    role="user",
-                                )
-                                if fmt_item is not None:
-                                    promo_content.append(fmt_item)
-                        if promo_content:
-                            messages.append(
-                                {
-                                    "role": "user",
-                                    "name": "system-reminder",
-                                    "content": promo_content,
-                                },
-                            )
-
-                elif isinstance(block, ThinkingBlock):
-                    # MiniMax does not accept reasoning/thinking content
-                    # in conversation history — skip thinking blocks silently.
-                    pass
-
-                else:
-                    logger.warning(
-                        "Unsupported block type %s in the message, skipped.",
-                        type(block),
-                    )
-
-            msg_minimax = {
-                "role": msg.role,
-                "name": msg.name,
-                "content": content_blocks or None,
-            }
-
-            if tool_calls:
-                msg_minimax["tool_calls"] = tool_calls
-
-            if msg_minimax["content"] or msg_minimax.get("tool_calls"):
-                messages.append(msg_minimax)
-
-            i += 1
-
-        return messages
-
-
-class MiniMaxMultiAgentFormatter(_OpenAIFormatterBase):
+class MiniMaxMultiAgentFormatter(AnthropicMultiAgentFormatter):
     """The MiniMax formatter for multi-agent conversations.
 
-    MiniMax exposes an OpenAI-compatible chat API, so the multi-agent
-    history collapsing strategy is the same as
-    :class:`OpenAIMultiAgentFormatter`. Tool sequences are delegated to
-    :class:`MiniMaxChatFormatter`.
+    MiniMax's M-series chat models follow Anthropic's API conventions, so
+    the multi-agent history-collapsing logic is reused verbatim from
+    :class:`AnthropicMultiAgentFormatter`.
     """
 
     conversation_history_prompt: str = Field(
@@ -200,9 +57,7 @@ class MiniMaxMultiAgentFormatter(_OpenAIFormatterBase):
             "The content between <history></history> tags contains "
             "your conversation history\n"
         ),
-        description=(
-            "The prompt to use for the conversation history section.",
-        ),
+        description="The prompt to use for the conversation history section.",
     )
 
     input_types: list[str] = Field(
@@ -210,99 +65,7 @@ class MiniMaxMultiAgentFormatter(_OpenAIFormatterBase):
         description=(
             "The supported input types. "
             'Defaults to ``["text/plain", "image/*"]``. '
-            "MiniMax does not support audio input."
+            "MiniMax's M-series chat endpoint does not accept audio "
+            "input."
         ),
     )
-
-    async def format(self, msgs: list[Msg]) -> list[dict[str, Any]]:
-        """Format input messages into the structure required by the MiniMax
-        API for multi-agent conversations."""
-        self.assert_list_of_msgs(msgs)
-
-        formatted_msgs: list[dict] = []
-        start_index = 0
-        if msgs and msgs[0].role == "system":
-            formatted_msgs.append(
-                await self._format_system_message(msgs[0]),
-            )
-            start_index = 1
-
-        is_first_agent_message = True
-        async for typ, group in self._group_messages(msgs[start_index:]):
-            if typ == "tool_sequence":
-                formatted_msgs.extend(
-                    await self._format_tool_sequence(group),
-                )
-            elif typ == "agent_message":
-                formatted_msgs.extend(
-                    await self._format_agent_message(
-                        group,
-                        is_first_agent_message,
-                    ),
-                )
-                is_first_agent_message = False
-
-        return formatted_msgs
-
-    async def _format_tool_sequence(
-        self,
-        msgs: list[Msg],
-    ) -> list[dict[str, Any]]:
-        """Format a sequence of tool-related messages using
-        MiniMaxChatFormatter."""
-        return await MiniMaxChatFormatter(
-            input_types=self.input_types,
-        ).format(msgs)
-
-    async def _format_agent_message(
-        self,
-        msgs: list[Msg],
-        is_first: bool = True,
-    ) -> list[dict[str, Any]]:
-        """Collapse agent messages into a ``<history>`` user message."""
-        if is_first:
-            conversation_history_prompt = self.conversation_history_prompt
-        else:
-            conversation_history_prompt = ""
-
-        accumulated_text: list[str] = []
-        media_blocks: list[dict] = []
-
-        for msg in msgs:
-            for block in msg.get_content_blocks():
-                if isinstance(block, TextBlock):
-                    accumulated_text.append(f"{msg.name}: {block.text}")
-                elif isinstance(block, DataBlock):
-                    formatted = self._format_openai_data_block(
-                        block,
-                        role=msg.role,
-                    )
-                    if formatted is not None:
-                        media_blocks.append(formatted)
-
-        if not accumulated_text and not media_blocks:
-            return []
-
-        history_text = "\n".join(accumulated_text)
-        if history_text:
-            history_text = (
-                conversation_history_prompt
-                + "<history>\n"
-                + history_text
-                + "\n</history>"
-            )
-
-        content_list: list[dict[str, Any]] = []
-        if history_text:
-            content_list.append({"type": "text", "text": history_text})
-        content_list.extend(media_blocks)
-
-        return [{"role": "user", "content": content_list}]
-
-    @staticmethod
-    async def _format_system_message(msg: Msg) -> dict[str, Any]:
-        """Format a system message for the MiniMax API."""
-        return {
-            "role": "system",
-            "content": msg.get_text_content(),
-        }
