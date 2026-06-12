@@ -42,7 +42,10 @@ async def example_multiagent() -> None:
             name="system",
             content=[
                 TextBlock(
-                    text="You are a helpful moderator. Summarize the conversation.",
+                    text=(
+                        "You are a helpful moderator. Summarize the "
+                        "conversation."
+                    ),
                 ),
             ],
             role="system",
@@ -60,7 +63,10 @@ async def example_multiagent() -> None:
             name="bob",
             content=[
                 TextBlock(
-                    text="It's quite sunny and warm, Alice. Perfect for a walk!",
+                    text=(
+                        "It's quite sunny and warm, Alice. Perfect for a "
+                        "walk!"
+                    ),
                 ),
             ],
             role="assistant",
@@ -85,7 +91,10 @@ async def example_multiagent() -> None:
             name="moderator",
             content=[
                 TextBlock(
-                    text="Please summarize the conversation above in one sentence.",
+                    text=(
+                        "Please summarize the conversation above in one "
+                        "sentence."
+                    ),
                 ),
             ],
             role="user",

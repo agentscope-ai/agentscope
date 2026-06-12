@@ -92,7 +92,10 @@ async def example_image_local_path() -> None:
             name="user",
             content=[
                 TextBlock(
-                    text="What is happening in this image? Describe it briefly.",
+                    text=(
+                        "What is happening in this image? Describe it "
+                        "briefly."
+                    ),
                 ),
                 image_block,
             ],
@@ -127,7 +130,10 @@ async def example_image_base64() -> None:
             name="user",
             content=[
                 TextBlock(
-                    text="What is happening in this image? Describe it briefly.",
+                    text=(
+                        "What is happening in this image? Describe it "
+                        "briefly."
+                    ),
                 ),
                 image_block,
             ],

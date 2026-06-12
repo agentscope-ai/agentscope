@@ -52,7 +52,8 @@ class MiniMaxChatModel(ChatModelBase):
             default=None,
             title="Max Tokens",
             description=(
-                "The maximum number of tokens to generate in the chat completion."
+                "The maximum number of tokens to generate in the chat "
+                "completion."
             ),
             gt=0,
         )
@@ -255,7 +256,8 @@ class MiniMaxChatModel(ChatModelBase):
                     content_blocks.append(
                         ThinkingBlock(
                             thinking=content_block.thinking,
-                            signature=getattr(content_block, "signature", "") or "",
+                            signature=getattr(content_block, "signature", "")
+                            or "",
                         ),
                     )
                 elif block_type == "text":
@@ -382,7 +384,10 @@ class MiniMaxChatModel(ChatModelBase):
                     )
                 elif delta.type == "signature_delta":
                     thinking_signature = delta.signature
-                elif delta.type == "input_json_delta" and block_index in acc_tool_calls:
+                elif (
+                    delta.type == "input_json_delta"
+                    and block_index in acc_tool_calls
+                ):
                     fragment = delta.partial_json or ""
                     acc_tool_calls[block_index]["input"] += fragment
                     tc = acc_tool_calls[block_index]
@@ -468,11 +473,12 @@ class MiniMaxChatModel(ChatModelBase):
         if tools:
             fmt_tools = []
             for schema in tools:
-                assert "function" in schema, (
-                    f"Invalid schema: {schema}, expect key 'function'."
-                )
+                assert (
+                    "function" in schema
+                ), f"Invalid schema: {schema}, expect key 'function'."
                 assert "name" in schema["function"], (
-                    f"Invalid schema: {schema}, expect key 'name' in 'function' field."
+                    f"Invalid schema: {schema}, expect key 'name' in "
+                    "'function' field."
                 )
                 fmt_tools.append(
                     {
