@@ -301,7 +301,7 @@
 		"title": "Connect to Service",
 		"description": "Enter your server URL and username to get started.",
 		"serverUrl": "Server URL",
-		"serverUrlPlaceholder": "https://...",
+		"serverUrlPlaceholder": "http://localhost:8000",
 		"username": "Username",
 		"usernamePlaceholder": "Your username",
 		"submit": "Get Started",
