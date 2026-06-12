@@ -3,6 +3,7 @@
 
 from ._meta import ResetTools
 from ._skill import SkillViewer
+from ._memory import MemoryTool
 from ._bash import Bash
 from ._edit import Edit
 from ._glob import Glob
@@ -14,6 +15,7 @@ from ._write import Write
 __all__ = [
     "ResetTools",
     "SkillViewer",
+    "MemoryTool",
     "Bash",
     "Edit",
     "Glob",

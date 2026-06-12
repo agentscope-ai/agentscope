@@ -130,6 +130,66 @@ class ToolContext(BaseModel):
         ]
 
 
+class MemoryEntry(BaseModel):
+    """A single memory entry stored by the agent."""
+
+    key: str
+    """The unique key for this memory entry."""
+    value: str
+    """The content of the memory entry."""
+    created_at: float
+    """The timestamp when this memory was created."""
+
+
+class MemoryContext(BaseModel):
+    """The memory context for explicit agent memory management.
+
+    Allows agents to store, retrieve, update, and delete named memories
+    that persist within the session. This complements the automatic
+    context compression by giving agents explicit control over what
+    information to remember."""
+
+    max_entries: int = Field(default=50, gt=0)
+    """The maximum number of memory entries to retain."""
+    entries: dict[str, MemoryEntry] = Field(default_factory=dict)
+    """The stored memory entries, keyed by name."""
+
+    def set(self, key: str, value: str, timestamp: float) -> None:
+        """Store or update a memory entry.
+
+        Args:
+            key: The unique key for the memory.
+            value: The content to store.
+            timestamp: The creation/update timestamp.
+        """
+        # Evict oldest entry if at capacity and adding a new key
+        if key not in self.entries and len(self.entries) >= self.max_entries:
+            oldest = min(
+                self.entries.values(),
+                key=lambda e: e.created_at,
+            )
+            del self.entries[oldest.key]
+        self.entries[key] = MemoryEntry(
+            key=key,
+            value=value,
+            created_at=timestamp,
+        )
+
+    def delete(self, key: str) -> bool:
+        """Delete a memory entry.
+
+        Args:
+            key: The key of the memory to delete.
+
+        Returns:
+            True if the entry was deleted, False if it didn't exist.
+        """
+        if key in self.entries:
+            del self.entries[key]
+            return True
+        return False
+
+
 class TaskContext(BaseModel):
     """The task context."""
 
@@ -174,3 +234,10 @@ class AgentState(BaseModel):
     # =================================================================
     tasks_context: TaskContext = Field(default_factory=TaskContext)
     """The task context that records the agent tasks."""
+
+    # =================================================================
+    # The memory context
+    # =================================================================
+    memory_context: MemoryContext = Field(default_factory=MemoryContext)
+    """The memory context for explicit agent memory storage and
+    retrieval."""

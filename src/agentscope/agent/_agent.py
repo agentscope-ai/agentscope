@@ -2014,6 +2014,24 @@ class Agent:
         messages = [
             SystemMsg(name="system", content=await self._get_system_prompt()),
         ]
+        # The agent's explicit memories
+        if self.state.memory_context.entries:
+            mem_lines = [
+                f"- {e.key}: {e.value}"
+                for e in sorted(
+                    self.state.memory_context.entries.values(),
+                    key=lambda e: e.created_at,
+                    reverse=True,
+                )
+            ]
+            messages.append(
+                UserMsg(
+                    name="user",
+                    content="<agent-memories>\n"
+                    + "\n".join(mem_lines)
+                    + "\n</agent-memories>",
+                ),
+            )
         # The compressed summary
         if self.state.summary:
             messages.append(
