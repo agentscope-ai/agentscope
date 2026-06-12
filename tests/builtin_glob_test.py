@@ -11,6 +11,8 @@ from agentscope.permission import (
     PermissionRule,
 )
 
+from tests.utils import AnyString
+
 
 class GlobToolTest(IsolatedAsyncioTestCase):
     """The glob tool test case."""
@@ -108,11 +110,26 @@ class GlobToolTest(IsolatedAsyncioTestCase):
             path=self.temp_dir,
         )
 
-        content = chunk.content[0].text
-
-        self.assertIn("test3.py", content)
-        self.assertNotIn("test1.py", content)
-        self.assertNotIn("test2.py", content)
+        self.assertDictEqual(
+            chunk.model_dump(),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": os.path.join(
+                            self.temp_dir,
+                            "subdir",
+                            "test3.py",
+                        ),
+                        "id": AnyString(),
+                    },
+                ],
+                "state": "running",
+                "is_last": True,
+                "metadata": {},
+                "id": AnyString(),
+            },
+        )
 
     async def test_no_matches(self) -> None:
         """Test pattern with no matches."""
