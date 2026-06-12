@@ -1,17 +1,15 @@
 import type { TaskContext } from '@agentscope-ai/agentscope/state';
-import { Toolbox } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import type { ChatModelConfig, TTSModelConfig } from '@/api';
+import type { ChatModelConfig, PermissionContext, TTSModelConfig } from '@/api';
 import { sessionApi } from '@/api';
 import { ChatContent } from '@/components/chat/ChatContent.tsx';
 import { TaskPanel } from '@/components/chat/TaskPanel';
+import { WorkspacePanel } from '@/components/chat/WorkspacePanel';
 import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDialog';
-import { WorkspaceDrawer } from '@/components/drawer/WorkspaceDrawer.tsx';
 import { ModelParametersPopover } from '@/components/popover/ModelParametersPopover';
 import { LlmSelect } from '@/components/select/LlmSelect';
 import { PermissionModeSelect } from '@/components/select/PermissionModeSelect.tsx';
-import { Button } from '@/components/ui/button';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useMessages } from '@/hooks/useMessages';
@@ -82,12 +80,17 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	const [credentialOpen, setCredentialOpen] = useState(false);
 	const [credentialRefetchTrigger, setCredentialRefetchTrigger] = useState(0);
 	const [tasksContext, setTasksContext] = useState<TaskContext | null>(null);
+	const [permissionContext, setPermissionContext] = useState<PermissionContext | null>(null);
 
 	const handleStateUpdated = useCallback((value: Record<string, unknown>) => {
 		if (value.tasks_context) {
 			setTasksContext(value.tasks_context as TaskContext);
 		}
-		// TODO: handle permission_context updates when permission UI is built
+		if (value.permission_context) {
+			const context = value.permission_context as PermissionContext;
+			setPermissionContext(context);
+			setSelectedPermissionMode(context.mode ?? 'default');
+		}
 	}, []);
 
 	const { msgs, streaming, send, onUserConfirm } = useMessages(agentId, sessionId, {
@@ -178,12 +181,17 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	useEffect(() => {
 		if (!view) {
 			setTasksContext(null);
+			setPermissionContext(null);
 			return;
 		}
 		const tc = (view.session.state as Record<string, unknown>)?.tasks_context as
 			| TaskContext
 			| undefined;
+		const pc = (view.session.state as Record<string, unknown>)?.permission_context as
+			| PermissionContext
+			| undefined;
 		setTasksContext(tc ?? null);
+		setPermissionContext(pc ?? null);
 	}, [view]);
 
 	// Sync selectedModel + selectedFallbackModel from the session
@@ -388,22 +396,17 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 						/>
 					</div>
 				</div>
-				<div className="flex flex-col h-full gap-2 p-2">
-					<WorkspaceDrawer
-						mcps={mcps}
-						loading={mcpsLoading}
-						onAdd={addMcps}
-						onRemove={removeMcp}
-						skills={skills}
-						skillsLoading={skillsLoading}
-						onAddSkill={addSkill}
-						onRemoveSkill={removeSkill}
-					>
-						<Button size="icon-sm" variant="ghost">
-							<Toolbox />
-						</Button>
-					</WorkspaceDrawer>
-				</div>
+				<WorkspacePanel
+					mcps={mcps}
+					loading={mcpsLoading}
+					onAdd={addMcps}
+					onRemove={removeMcp}
+					skills={skills}
+					skillsLoading={skillsLoading}
+					onAddSkill={addSkill}
+					onRemoveSkill={removeSkill}
+					permissionContext={permissionContext}
+				/>
 			</main>
 			<CreateCredentialDialog
 				open={credentialOpen}

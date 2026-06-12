@@ -362,6 +362,26 @@ export type PermissionMode =
 	| 'dont_ask'
 	| (string & {});
 
+export interface AdditionalWorkingDirectory {
+	path: string;
+	source: string;
+}
+
+export interface PermissionRule {
+	tool_name: string;
+	rule_content: string | null;
+	behavior: 'allow' | 'deny' | 'ask' | (string & {});
+	source: string;
+}
+
+export interface PermissionContext {
+	mode: PermissionMode;
+	working_directories: Record<string, AdditionalWorkingDirectory>;
+	allow_rules: Record<string, PermissionRule[]>;
+	deny_rules: Record<string, PermissionRule[]>;
+	ask_rules: Record<string, PermissionRule[]>;
+}
+
 export type ScheduleSource = 'USER' | 'AGENT';
 
 export interface ScheduleData {
