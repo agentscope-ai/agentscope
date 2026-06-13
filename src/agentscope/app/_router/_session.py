@@ -2,12 +2,12 @@
 """Session router — create, list, update, delete, stream, and get messages."""
 import asyncio
 import json
-import uuid
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
+from ..._utils._common import _id_factory
 from ..deps import (
     get_current_user_id,
     get_message_bus,
@@ -237,7 +237,7 @@ async def create_session(
         user_id=user_id,
         agent_id=body.agent_id,
         config=SessionConfig(
-            workspace_id=body.workspace_id or uuid.uuid4().hex,
+            workspace_id=body.workspace_id or _id_factory(),
             chat_model_config=body.chat_model_config,
             fallback_chat_model_config=body.fallback_chat_model_config,
             tts_model_config=body.tts_model_config,

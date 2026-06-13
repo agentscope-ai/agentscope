@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """The message class in agentscope."""
 import base64
-import uuid
 from datetime import datetime
 from typing import Literal, List, overload, Sequence, Self, TYPE_CHECKING, Any
 
@@ -22,6 +21,7 @@ from ._block import (
     ContentBlockTypes,
 )
 from .._logging import logger
+from .._utils._common import _id_factory
 
 if TYPE_CHECKING:
     from ..event import AgentEvent
@@ -73,7 +73,7 @@ class Msg(BaseModel):
     """The message content as a list of content blocks."""
     role: Literal["user", "assistant", "system"]
     """The role of the sender."""
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    id: str = Field(default_factory=_id_factory)
     """The message identifier."""
     metadata: dict = Field(default_factory=dict)
     """The metadata of the message"""
@@ -487,7 +487,7 @@ def UserMsg(
             ISO-format timestamp for when the message was finished. Defaults to
             the same value as ``created_at`` when not provided.
         id (`str | None`, optional):
-            A unique identifier for the message. A random UUID hex string is
+            A unique identifier for the message. A generated string is
             generated when not provided.
 
     Returns:
@@ -504,7 +504,7 @@ def UserMsg(
         metadata=metadata or {},
         created_at=created_at,
         finished_at=finished_at,
-        id=id or uuid.uuid4().hex,
+        id=id or _id_factory(),
     )
 
 
@@ -536,7 +536,7 @@ def AssistantMsg(
             ISO-format timestamp for when the message was finished. Not set by
             default for assistant messages.
         id (`str | None`, optional):
-            A unique identifier for the message. A random UUID hex string is
+            A unique identifier for the message. A generated string is
             generated when not provided.
         usage (`Usage | None`, optional):
             The token usage information of the message.
@@ -552,7 +552,7 @@ def AssistantMsg(
         metadata=metadata or {},
         created_at=created_at or datetime.now().isoformat(),
         finished_at=finished_at,
-        id=id or uuid.uuid4().hex,
+        id=id or _id_factory(),
         usage=usage,
     )
 
@@ -584,7 +584,7 @@ def SystemMsg(
             ISO-format timestamp for when the message was finished. Defaults to
             the same value as ``created_at`` when not provided.
         id (`str | None`, optional):
-            A unique identifier for the message. A random UUID hex string is
+            A unique identifier for the message. A generated string is
             generated when not provided.
 
     Returns:
@@ -601,5 +601,5 @@ def SystemMsg(
         metadata=metadata or {},
         created_at=created_at,
         finished_at=finished_at,
-        id=id or uuid.uuid4().hex,
+        id=id or _id_factory(),
     )

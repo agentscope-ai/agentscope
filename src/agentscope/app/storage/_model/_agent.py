@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """The agent storage class."""
-import uuid
 from typing import Literal
 
 from pydantic import Field, BaseModel
 
 from ._base import _RecordBase
+from ...._utils._common import _id_factory
 from ....agent import ContextConfig, ReActConfig
 
 
@@ -14,7 +14,7 @@ class AgentData(BaseModel):
 
     id: str = Field(
         description="Unique agent id",
-        default_factory=lambda: uuid.uuid4().hex,
+        default_factory=_id_factory,
     )
     """The agent id."""
 

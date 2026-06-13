@@ -420,7 +420,7 @@ class TestMoonshotFormatter(IsolatedAsyncioTestCase):
         )
 
     @patch(
-        "agentscope.formatter._formatter_base.shortuuid.uuid",
+        "agentscope.formatter._formatter_base._id_factory",
         return_value=_FIXED_ID,
     )
     async def test_chat_formatter_url_image_in_tool_result(

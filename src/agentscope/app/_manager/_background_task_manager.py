@@ -7,9 +7,9 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Self, TYPE_CHECKING
 
-import shortuuid
 from pydantic import BaseModel, Field
 
+from agentscope._utils._common import _id_factory
 from agentscope.message import TextBlock, ToolResultState
 from agentscope.permission import (
     PermissionContext,
@@ -57,7 +57,7 @@ class BackgroundTask:
     tool_name: str
     """The name of the offloaded tool."""
 
-    id: str = field(default_factory=shortuuid.uuid)
+    id: str = field(default_factory=_id_factory)
     """The background task id."""
 
 

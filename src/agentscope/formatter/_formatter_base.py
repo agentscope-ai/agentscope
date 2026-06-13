@@ -7,9 +7,9 @@ from abc import abstractmethod
 from fnmatch import fnmatch
 from typing import Any, List, AsyncGenerator
 
-import shortuuid
 from pydantic import BaseModel, Field
 
+from .._utils._common import _id_factory
 from ..message import (
     Msg,
     DataBlock,
@@ -111,7 +111,7 @@ class FormatterBase(BaseModel):
 
                     # Create an identifier for such multimodal data for
                     # accurate reference (in terms of order, position, etc.)
-                    identifier = shortuuid.uuid()
+                    identifier = _id_factory()
 
                     textual_output.append(
                         f"<system-reminder>A(n) {main_type} file is returned "

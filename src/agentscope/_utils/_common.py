@@ -11,11 +11,32 @@ import uuid
 from datetime import datetime
 from typing import Any, Callable
 
-import requests
 from json_repair import repair_json
 
 from .._logging import logger
 from ..exception import ToolJSONDecodeError
+
+
+_id_factory_impl: Callable[[], str] = lambda: uuid.uuid4().hex
+
+
+def _id_factory() -> str:
+    """Generate a new AgentScope entity identifier."""
+    return _id_factory_impl()
+
+
+def set_id_factory(factory: Callable[[], str]) -> None:
+    """Set the global factory used for AgentScope entity identifiers.
+
+    Args:
+        factory (`Callable[[], str]`):
+            A no-argument callable returning a string identifier.
+    """
+    if not callable(factory):
+        raise TypeError("ID factory must be callable.")
+
+    global _id_factory_impl
+    _id_factory_impl = factory
 
 
 def _json_loads_with_repair(
@@ -162,6 +183,8 @@ def _get_bytes_from_web_url(
         max_retries (`int`, defaults to `3`):
             The maximum number of retries.
     """
+    import requests
+
     for _ in range(max_retries):
         try:
             response = requests.get(url)

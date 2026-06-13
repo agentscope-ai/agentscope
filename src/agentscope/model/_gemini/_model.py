@@ -3,7 +3,6 @@
 import base64
 import copy
 import json
-import uuid
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 
@@ -17,6 +16,7 @@ from ...formatter import FormatterBase, GeminiChatFormatter
 from ...message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
 from ...tool import ToolChoice
 from ..._logging import logger
+from ..._utils._common import _id_factory
 
 if TYPE_CHECKING:
     from google.genai.types import GenerateContentResponse
@@ -314,7 +314,7 @@ class GeminiChatModel(ChatModelBase):
             # Capture response_id from the first chunk that carries it
             if response_id is None:
                 response_id = (
-                    getattr(chunk, "response_id", None) or uuid.uuid4().hex
+                    getattr(chunk, "response_id", None) or _id_factory()
                 )
 
             delta_content: list = []
@@ -385,7 +385,7 @@ class GeminiChatModel(ChatModelBase):
             )
 
         yield ChatResponse(
-            id=response_id or uuid.uuid4().hex,
+            id=response_id or _id_factory(),
             content=final_content,
             is_last=True,
             usage=usage,
@@ -443,7 +443,7 @@ class GeminiChatModel(ChatModelBase):
         usage = self._extract_usage(response.usage_metadata, start_datetime)
 
         return ChatResponse(
-            id=getattr(response, "response_id", None) or uuid.uuid4().hex,
+            id=getattr(response, "response_id", None) or _id_factory(),
             content=content_blocks,
             is_last=True,
             usage=usage,
