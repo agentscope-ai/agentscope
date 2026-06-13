@@ -56,21 +56,21 @@ class MemStorage(StorageBase):
         # Structure: _records[user_id][entity_kind][entity_id] = json_str
         # Backed by nested defaultdicts for auto-vivification.
         self._records: defaultdict[
-            str, defaultdict[str, dict[str, str]]
+            str, defaultdict[str, dict[str, str]],
         ] = defaultdict(lambda: defaultdict(dict))
 
         # ── Index storage ───────────────────────────────────────────
         # Structure: _indexes[user_id][index_name] = set of ids
         # Backed by nested defaultdicts for auto-vivification.
         self._indexes: defaultdict[
-            str, defaultdict[str, set[str]]
+            str, defaultdict[str, set[str]],
         ] = defaultdict(lambda: defaultdict(set))
 
         # ── Message storage ─────────────────────────────────────────
         # Structure: _messages[user_id][session_key] = list[Msg]
         # Backed by nested defaultdicts for auto-vivification.
         self._messages: defaultdict[
-            str, defaultdict[str, list[Msg]]
+            str, defaultdict[str, list[Msg]],
         ] = defaultdict(lambda: defaultdict(list))
 
     # ==================================================================

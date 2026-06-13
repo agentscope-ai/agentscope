@@ -54,7 +54,7 @@ class MemMessageBus(MessageBus):
 
         # Mode D — transient broadcast: channel → set of subscriber queues
         self._channels: dict[
-            str, set[asyncio.Queue[dict]]
+            str, set[asyncio.Queue[dict]],
         ] = defaultdict(set)
 
         # Mode E — distributed locks: key → asyncio.Lock
@@ -141,8 +141,9 @@ class MemMessageBus(MessageBus):
         entry_id = self._log_counters[key]
         self._log_counters[key] = entry_id + 1
         self._logs[key].append((entry_id, payload))
-        if max_len is not None and len(self._logs[key]) > max_len:
-            self._logs[key] = self._logs[key][-max_len:]
+        if max_len is not None:
+            if len(self._logs[key]) > max_len:
+                self._logs[key] = self._logs[key][-max_len:]
         return str(entry_id)
 
     async def log_read(
@@ -252,7 +253,9 @@ class MemMessageBus(MessageBus):
         # _LOCK_HEARTBEAT_RATIO work the same way.
         async def _heartbeat() -> None:
             while True:
-                await asyncio.sleep(max(1.0, ttl_secs * self._LOCK_HEARTBEAT_RATIO))
+                await asyncio.sleep(
+                    max(1.0, ttl_secs * self._LOCK_HEARTBEAT_RATIO),
+                )
 
         async with lock:
             hb_task = asyncio.create_task(
