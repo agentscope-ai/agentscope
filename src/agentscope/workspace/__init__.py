@@ -7,6 +7,7 @@ from ._local_workspace import LocalWorkspace
 from ._offload_protocol import Offloader
 from ._docker import DockerWorkspace
 from ._e2b import E2BWorkspace
+from ._k8s import K8SWorkspace
 
 
 __all__ = [
@@ -14,5 +15,6 @@ __all__ = [
     "LocalWorkspace",
     "DockerWorkspace",
     "E2BWorkspace",
+    "K8SWorkspace",
     "Offloader",
 ]
