@@ -5,8 +5,9 @@ event stream.
 
 Two kinds of change are detected:
 
-- **State change** — ``tasks_context`` or ``permission_context``
-  modified during the tool call (detected via hash comparison).
+- **State change** — ``tasks_context``, ``permission_context``, or
+  ``context_usage`` modified during the tool call (detected via hash
+  comparison).
   Pushes ``CustomEvent(name="state_updated", value={...})``.
 - **Team change** — the tool that just ran is one of the team tools
   (``TeamCreate``, ``AgentCreate``, ``TeamDelete``). These tools
@@ -63,7 +64,8 @@ class StateChangeMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
     def _state_hash(agent: Any) -> str:
         """Compute a fast hash of the state fields we track.
 
-        Only ``tasks_context`` and ``permission_context`` are included;
+        Only ``tasks_context``, ``permission_context``, and
+        ``context_usage`` are included;
         ``context`` (the message history) is intentionally excluded
         because it changes on every reasoning step and is not what
         this middleware cares about.
@@ -78,6 +80,7 @@ class StateChangeMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         raw = (
             agent.state.tasks_context.model_dump_json()
             + agent.state.permission_context.model_dump_json()
+            + agent.state.context_usage.model_dump_json()
         )
         return hashlib.md5(raw.encode()).hexdigest()
 
@@ -121,6 +124,9 @@ class StateChangeMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                         agent.state.permission_context.model_dump(
                             mode="json",
                         )
+                    ),
+                    "context_usage": agent.state.context_usage.model_dump(
+                        mode="json",
                     ),
                 },
             )

@@ -35,6 +35,7 @@ from ._toolkit import get_toolkit
 from ..._logging import logger
 from ...agent import Agent, ModelConfig
 from ...event import (
+    CustomEvent,
     ReplyStartEvent,
     UserConfirmResultEvent,
     ExternalExecutionResultEvent,
@@ -443,6 +444,26 @@ class ChatService:
                 agent_id=agent_id,
                 session_id=session_id,
                 state=agent.state,
+            )
+            state_event = CustomEvent(
+                name="state_updated",
+                value={
+                    "tasks_context": agent.state.tasks_context.model_dump(
+                        mode="json",
+                    ),
+                    "permission_context": (
+                        agent.state.permission_context.model_dump(
+                            mode="json",
+                        )
+                    ),
+                    "context_usage": agent.state.context_usage.model_dump(
+                        mode="json",
+                    ),
+                },
+            )
+            await self._message_bus.session_publish_event(
+                session_id,
+                state_event.model_dump(mode="json"),
             )
 
         # ``session_run.__aexit__`` trims the replay log before
