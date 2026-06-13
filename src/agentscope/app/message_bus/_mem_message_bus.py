@@ -198,7 +198,8 @@ class MemMessageBus(MessageBus):
         subscribers = self._channels.get(key)
         if subscribers is None:
             return
-        # Snapshot subscribers to avoid mutation-during-iteration issues
+        # Snapshot subscribers to avoid mutation-during-iteration issues.
+        # Queues are unbounded by default, so put() completes immediately.
         for q in list(subscribers):
             await q.put(payload)
 
@@ -218,9 +219,11 @@ class MemMessageBus(MessageBus):
                 payload = await q.get()
                 yield payload
         finally:
-            self._channels[key].discard(q)
-            if not self._channels[key]:
-                _ = self._channels.pop(key, None)
+            subscribers = self._channels.get(key)
+            if subscribers is not None:
+                subscribers.discard(q)
+                if not subscribers:
+                    _ = self._channels.pop(key, None)
 
     # ==================================================================
     # Mode E — distributed lock
@@ -270,9 +273,9 @@ class MemMessageBus(MessageBus):
                     await hb_task
                 except asyncio.CancelledError:
                     pass
-                # Clean up lock dict entry if no one is waiting.
-                if not lock.locked():
-                    _ = self._locks.pop(key, None)
+        # Clean up lock dict entry if no one is waiting.
+        if not lock.locked():
+            _ = self._locks.pop(key, None)
 
     async def is_locked(self, key: str) -> bool:
         """Return whether ``key`` is currently locked."""

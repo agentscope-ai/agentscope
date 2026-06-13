@@ -800,10 +800,11 @@ class MemStorage(StorageBase):
         """
         key = self._message_key(user_id, session_id)
         msgs = self._messages[user_id][key]
-        if msgs and msgs[-1].id == msg.id:
-            msgs[-1] = msg
+        msg_copy = msg.model_copy(deep=True)
+        if msgs and msgs[-1].id == msg_copy.id:
+            msgs[-1] = msg_copy
         else:
-            msgs.append(msg)
+            msgs.append(msg_copy)
 
     async def get_message(
         self,
@@ -982,10 +983,12 @@ class MemStorage(StorageBase):
         if team is None:
             kind = self._entity_kind("team")
             index = self._index_name("team")
-            if team_id in self._records[user_id][kind]:
+            # Defensive cleanup: remove orphan index entries
+            deleted_record = team_id in self._records[user_id][kind]
+            if deleted_record:
                 del self._records[user_id][kind][team_id]
             self._indexes[user_id][index].discard(team_id)
-            return False
+            return deleted_record
 
         # Cascade: delete each worker agent (which cascades its session)
         for member_id in team.data.member_ids:
