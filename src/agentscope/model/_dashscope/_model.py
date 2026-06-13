@@ -2,7 +2,6 @@
 """The DashScope chat model class (OpenAI-compatible implementation)."""
 import base64
 import io
-import uuid
 import warnings
 import wave
 from collections import OrderedDict
@@ -15,6 +14,7 @@ from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse, StructuredResponse
 from .._model_usage import ChatUsage
 from ..._utils._audio import _build_streaming_wav_header
+from ..._utils._common import _id_factory
 from ...credential import DashScopeCredential
 from ...formatter import FormatterBase, DashScopeChatFormatter
 from ...message import (
@@ -349,7 +349,7 @@ class DashScopeChatModel(ChatModelBase):
                         audio_chunk = getattr(delta_audio, "data", "") or ""
                     if audio_chunk:
                         if audio_block_id is None:
-                            audio_block_id = uuid.uuid4().hex
+                            audio_block_id = _id_factory()
                         pcm_bytes = base64.b64decode(audio_chunk)
                         acc_audio_data += pcm_bytes
                         if not audio_header_sent:

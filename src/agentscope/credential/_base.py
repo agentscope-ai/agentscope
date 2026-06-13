@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """The credential base class."""
-import uuid
 from typing import TYPE_CHECKING, Type
 
 from pydantic import BaseModel, Field
+
+from .._utils._common import _id_factory
 
 if TYPE_CHECKING:
     from ..embedding import EmbeddingModelBase
@@ -16,7 +17,7 @@ class CredentialBase(BaseModel):
     """The credential base class."""
 
     id: str = Field(
-        default_factory=lambda: uuid.uuid4().hex,
+        default_factory=_id_factory,
         description="The credential id",
     )
 

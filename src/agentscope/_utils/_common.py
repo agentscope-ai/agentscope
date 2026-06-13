@@ -18,6 +18,28 @@ from .._logging import logger
 from ..exception import ToolJSONDecodeError
 
 
+_id_factory_impl: Callable[[], str] = lambda: uuid.uuid4().hex
+
+
+def _id_factory() -> str:
+    """Generate a new AgentScope entity identifier."""
+    return _id_factory_impl()
+
+
+def set_id_factory(factory: Callable[[], str]) -> None:
+    """Set the global factory used for AgentScope entity identifiers.
+
+    Args:
+        factory (`Callable[[], str]`):
+            A no-argument callable returning a string identifier.
+    """
+    if not callable(factory):
+        raise TypeError("ID factory must be callable.")
+
+    global _id_factory_impl
+    _id_factory_impl = factory
+
+
 def _json_loads_with_repair(
     json_str: str,
     schema: dict | None = None,
