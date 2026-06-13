@@ -787,6 +787,7 @@ class Agent:
         # Get the input arguments for the chat model, including messages and
         # tools
         kwargs = await self._prepare_model_input()
+        system_prompt = kwargs["messages"][0].content
 
         # Call the chat model
         res = await self._call_model(
@@ -862,7 +863,9 @@ class Agent:
             list(completed_response.content),
             completed_response.usage,
         )
-        kwargs = await self._prepare_model_input()
+        kwargs = await self._prepare_model_input(
+            system_prompt=system_prompt,
+        )
         estimated_tokens = await self.model.count_tokens(**kwargs)
         self._update_context_usage(estimated_tokens, self.context_config)
 
@@ -2009,9 +2012,17 @@ class Agent:
 
         return result
 
-    async def _prepare_model_input(self) -> dict[str, Any]:
+    async def _prepare_model_input(
+        self,
+        system_prompt: str | None = None,
+    ) -> dict[str, Any]:
         """A unified method to prepare the chat model input according to
         the current context.
+
+        Args:
+            system_prompt (`str | None`, optional):
+                The already resolved system prompt. When provided, system
+                prompt middlewares are not re-applied.
 
         Returns:
             `dict[str, Any]`
@@ -2019,7 +2030,12 @@ class Agent:
         """
         # The system prompt
         messages = [
-            SystemMsg(name="system", content=await self._get_system_prompt()),
+            SystemMsg(
+                name="system",
+                content=system_prompt
+                if system_prompt is not None
+                else await self._get_system_prompt(),
+            ),
         ]
         # The compressed summary
         if self.state.summary:
