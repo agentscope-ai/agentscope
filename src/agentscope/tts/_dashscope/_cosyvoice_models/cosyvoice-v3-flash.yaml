@@ -1,0 +1,25 @@
+name: cosyvoice-v3-flash
+label: CosyVoice-v3-Flash
+status: active
+realtime: true
+
+input_types:
+  - text/plain
+
+output_types:
+  - audio/wav
+
+voices:
+  # Source: https://help.aliyun.com/en/model-studio/cosyvoice-voice-list
+  - longanyang
+  - longanhuan
+  - longhuhu_v3
+  - longyingmu_v3
+  - longxiaochun
+  - longxiaoxia
+  - longlaotie
+  - longshuo
+  - longjing
+  - longshu
+
+parameter_overrides: {}
