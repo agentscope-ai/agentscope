@@ -78,41 +78,50 @@ class InboxMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 One ``HintBlockEvent`` per drained inbox entry,
                 followed by events from downstream.
         """
+        for event in await self.drain(agent):
+            yield event
+
+        async for evt in next_handler(**input_kwargs):
+            yield evt
+
+    async def drain(self, agent: Agent) -> list[HintBlockEvent]:
+        """Drain pending inbox entries into the agent context.
+
+        Args:
+            agent (`Agent`):
+                The executing agent. ``agent.state.session_id`` selects
+                the inbox to drain.
+
+        Returns:
+            `list[HintBlockEvent]`:
+                One event per injected :class:`HintBlock`. Empty when
+                the inbox had no pending entries.
+        """
         entries = await self._bus.inbox_drain(
             agent.state.session_id,
             max_count=self._max_count,
         )
 
-        if entries:
-            hint_blocks = [
-                HintBlock.model_validate(payload)
-                for _entry_id, payload in entries
-            ]
+        if not entries:
+            return []
 
-            logger.info(
-                "InboxMiddleware: injecting %d HintBlock(s) into context "
-                "for session %s",
-                len(hint_blocks),
-                agent.state.session_id,
-            )
+        hint_blocks = [
+            HintBlock.model_validate(payload)
+            for _entry_id, payload in entries
+        ]
 
-            # Inject into agent context (same pattern as
-            # ToolOffloadMiddleware).
-            if len(agent.state.context) > 0:
-                last_msg = agent.state.context[-1]
-                if (
-                    last_msg.role == "assistant"
-                    and last_msg.name == agent.name
-                ):
-                    last_msg.content.extend(hint_blocks)
-                else:
-                    agent.state.context.append(
-                        AssistantMsg(
-                            id=agent.state.reply_id,
-                            name=agent.name,
-                            content=list(hint_blocks),
-                        ),
-                    )
+        logger.info(
+            "InboxMiddleware: injecting %d HintBlock(s) into context "
+            "for session %s",
+            len(hint_blocks),
+            agent.state.session_id,
+        )
+
+        # Inject into agent context (same pattern as ToolOffloadMiddleware).
+        if len(agent.state.context) > 0:
+            last_msg = agent.state.context[-1]
+            if last_msg.role == "assistant" and last_msg.name == agent.name:
+                last_msg.content.extend(hint_blocks)
             else:
                 agent.state.context.append(
                     AssistantMsg(
@@ -121,16 +130,23 @@ class InboxMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                         content=list(hint_blocks),
                     ),
                 )
+        else:
+            agent.state.context.append(
+                AssistantMsg(
+                    id=agent.state.reply_id,
+                    name=agent.name,
+                    content=list(hint_blocks),
+                ),
+            )
 
-            # Yield one-shot events so the front-end SSE stream sees
-            # each HintBlock.
-            for hint in hint_blocks:
-                yield HintBlockEvent(
-                    reply_id=agent.state.reply_id,
-                    block_id=hint.id,
-                    source=hint.source,
-                    hint=hint.hint,
-                )
-
-        async for evt in next_handler(**input_kwargs):
-            yield evt
+        # Return one-shot events so the front-end SSE stream sees each
+        # HintBlock.
+        return [
+            HintBlockEvent(
+                reply_id=agent.state.reply_id,
+                block_id=hint.id,
+                source=hint.source,
+                hint=hint.hint,
+            )
+            for hint in hint_blocks
+        ]
