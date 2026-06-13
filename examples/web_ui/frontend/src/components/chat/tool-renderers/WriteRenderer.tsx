@@ -4,6 +4,7 @@ import {
 	defaultRenderGroup,
 	defaultRenderResult,
 } from './DefaultRenderer';
+import { DiffPreview } from './DiffPreview';
 import type { ToolRenderer } from './types';
 
 function parseInput(input: string): Record<string, unknown> {
@@ -17,6 +18,27 @@ function parseInput(input: string): Record<string, unknown> {
 function getFilePath(input: string): string {
 	const { file_path } = parseInput(input) as { file_path?: string };
 	return file_path || input;
+}
+
+function renderWriteDiff(input: string) {
+	const { file_path, content } = parseInput(input) as {
+		file_path?: string;
+		content?: string;
+	};
+
+	if (typeof file_path !== 'string' || typeof content !== 'string') {
+		return null;
+	}
+
+	return (
+		<DiffPreview
+			filePath={file_path}
+			oldText=""
+			newText={content}
+			oldFileName="/dev/null"
+			newFileName={`b/${file_path}`}
+		/>
+	);
 }
 
 export const WriteRenderer: ToolRenderer = {
@@ -37,6 +59,7 @@ export const WriteRenderer: ToolRenderer = {
 			renderCallArgs: (call) =>
 				WriteRenderer.renderCallArgs?.(call, t) ?? defaultRenderCallArgs(call),
 			renderResult: (call, result) =>
+				(result.state === 'success' ? renderWriteDiff(call.input) : null) ??
 				WriteRenderer.renderResult?.(call, result, t) ??
 				defaultRenderResult(call, result, t),
 		}),
