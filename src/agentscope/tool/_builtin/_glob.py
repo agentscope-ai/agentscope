@@ -263,7 +263,7 @@ codebase."""  # ignore: E501
         self.match_parts(parts, 0, base_dir, results)
         return results
 
-    async def __call__(  # type: ignore[override]
+    async def call(  # type: ignore[override]
         self,
         pattern: str,
         path: str | None = None,

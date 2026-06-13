@@ -663,7 +663,7 @@ easier to review tool calls and give permission.
 
         return False
 
-    async def __call__(  # type: ignore[override]
+    async def call(  # type: ignore[override] # pylint: disable=unused-argument
         self,
         command: str,
         description: str = "",

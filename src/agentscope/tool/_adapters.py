@@ -102,7 +102,7 @@ class FunctionTool(ToolBase):
             "by the user.",
         )
 
-    async def __call__(
+    async def call(
         self,
         **kwargs: Any,
     ) -> ToolChunk | AsyncGenerator[ToolChunk, None]:
@@ -278,7 +278,7 @@ class MCPTool(ToolBase):
             message="MCP tools must be explicitly allowed by the user.",
         )
 
-    async def __call__(
+    async def call(
         self,
         **kwargs: Any,
     ) -> ToolChunk:

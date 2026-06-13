@@ -86,7 +86,7 @@ class BashToolTest(IsolatedAsyncioTestCase):
     async def test_simple_command(self) -> None:
         """Test executing a simple bash command."""
         chunks = []
-        async for chunk in self.bash_tool(command="echo 'Hello World'"):
+        async for chunk in await self.bash_tool(command="echo 'Hello World'"):
             chunks.append(chunk)
 
         self.assertEqual(len(chunks), 1)
@@ -100,7 +100,7 @@ class BashToolTest(IsolatedAsyncioTestCase):
     async def test_command_with_error(self) -> None:
         """Test executing a command that fails."""
         chunks = []
-        async for chunk in self.bash_tool(command="exit 1"):
+        async for chunk in await self.bash_tool(command="exit 1"):
             chunks.append(chunk)
 
         self.assertEqual(len(chunks), 1)
@@ -114,7 +114,7 @@ class BashToolTest(IsolatedAsyncioTestCase):
     async def test_command_timeout(self) -> None:
         """Test command timeout."""
         chunks = []
-        async for chunk in self.bash_tool(
+        async for chunk in await self.bash_tool(
             command="sleep 10",
             timeout=100,  # 100ms timeout
         ):

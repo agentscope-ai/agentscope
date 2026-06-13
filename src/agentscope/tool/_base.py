@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=unused-argument
 """The tool protocol in agentscope."""
+import inspect
 import os
 from abc import abstractmethod, ABC
 from pathlib import Path
-from typing import AsyncGenerator, Any, List
+from typing import AsyncGenerator, Any, Callable, List
 
 from pydantic import BaseModel
 
@@ -66,6 +67,113 @@ class ToolBase(ABC):
     dangerous_directories: list[str] = DEFAULT_DANGEROUS_DIRECTORIES
     """List of dangerous directories that should be protected from
     auto-editing."""
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> "ToolBase":
+        instance = super().__new__(cls)
+        instance._tool_middlewares = []
+        return instance
+
+    def add_middleware(
+        self,
+        middleware: Callable[
+            [Callable[..., AsyncGenerator[ToolChunk, None]]],
+            Callable[..., AsyncGenerator[ToolChunk, None]],
+        ],
+    ) -> None:
+        """Register a tool-level onion middleware.
+
+        Each middleware is a callable that accepts a ``next_handler``
+        (the next layer in the chain) and returns an async generator
+        function with the same signature as :meth:`call`.  Middlewares
+        are applied in registration order — the first registered is the
+        outermost layer.
+
+        Args:
+            middleware (`Callable`):
+                A callable ``(next_handler) -> handler`` where both
+                ``next_handler`` and the returned ``handler`` are async
+                generator functions that accept ``**kwargs`` and yield
+                :class:`~agentscope.tool.ToolChunk` objects.
+        """
+        self._tool_middlewares.append(middleware)
+
+    async def call(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ) -> ToolChunk | AsyncGenerator[ToolChunk, None]:
+        """Execute the tool logic.
+
+        This is the new override point for tool implementations.
+        Subclasses should override this method instead of
+        :meth:`__call__`.  The base implementation raises
+        :exc:`NotImplementedError` for non-external tools and
+        :exc:`RuntimeError` for external tools.
+
+        Args:
+            **kwargs: Tool input arguments.
+
+        Returns:
+            `ToolChunk | AsyncGenerator[ToolChunk, None]`:
+                A single :class:`~agentscope.tool.ToolChunk` or an
+                async generator that yields them.
+        """
+        if not self.is_external_tool:
+            raise NotImplementedError(
+                f"{self.__class__.__name__} does not implement call",
+            )
+
+        raise RuntimeError(
+            f"{self.__class__.__name__} is an external tool and should not "
+            f"be called directly",
+        )
+
+    async def __call__(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ) -> ToolChunk | AsyncGenerator[ToolChunk, None]:
+        """Invoke the tool, layering any registered middlewares around
+        :meth:`call`.
+
+        Middlewares are applied in an onion fashion: the first registered
+        middleware is the outermost layer and runs its pre-logic before
+        any inner layers, then its post-logic after all inner layers
+        have completed.
+        """
+        if not self._tool_middlewares:
+            if inspect.isasyncgenfunction(self.call):
+                return self.call(**kwargs)
+            return await self.call(**kwargs)
+
+        async def execute_chain(
+            index: int = 0,
+        ) -> AsyncGenerator[ToolChunk, None]:
+            """Execute the tool middleware chain."""
+            if index >= len(self._tool_middlewares):
+                if inspect.isasyncgenfunction(self.call):
+                    async for chunk in self.call(**kwargs):
+                        yield chunk
+                else:
+                    result = await self.call(**kwargs)
+                    if isinstance(result, AsyncGenerator):
+                        async for chunk in result:
+                            yield chunk
+                    else:
+                        yield result
+            else:
+                mw = self._tool_middlewares[index]
+
+                async def next_handler(
+                    **kw: Any,
+                ) -> AsyncGenerator[ToolChunk, None]:
+                    async for chunk in execute_chain(index + 1):
+                        yield chunk
+
+                async for chunk in mw(next_handler)(**kwargs):
+                    yield chunk
+
+        return execute_chain()
 
     @abstractmethod
     async def check_permissions(
@@ -269,19 +377,3 @@ class ToolBase(ABC):
                 return True
 
         return False
-
-    async def __call__(
-        self,
-        *args: Any,
-        **kwargs: Any,
-    ) -> ToolChunk | AsyncGenerator[ToolChunk, None]:
-        """Invoke the tool with the given arguments."""
-        if not self.is_external_tool:
-            raise NotImplementedError(
-                f"{self.__class__.__name__} does not implement __call__",
-            )
-
-        raise RuntimeError(
-            f"{self.__class__.__name__} is an external tool and should not "
-            f"be called directly",
-        )
