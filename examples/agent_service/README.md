@@ -40,6 +40,28 @@ sudo systemctl start redis-server
 docker run --rm -p 6379:6379 redis:7
 ```
 
+> **Tip: Run without Redis**
+>
+> If you want to try the example quickly without setting up Redis, you can use the in-memory storage and message bus instead. In `main.py`, replace `RedisStorage` and `RedisMessageBus` with `MemStorage` and `MemMessageBus`:
+>
+> ```python
+> # Before (requires Redis)
+> from agentscope.app.storage import RedisStorage
+> from agentscope.app.message_bus import RedisMessageBus
+>
+> storage = RedisStorage(host="localhost", port=6379)
+> message_bus = RedisMessageBus(host="localhost", port=6379)
+>
+> # After (no Redis required)
+> from agentscope.app.storage import MemStorage
+> from agentscope.app.message_bus import MemMessageBus
+>
+> storage = MemStorage()
+> message_bus = MemMessageBus()
+> ```
+>
+> Note: In-memory storage loses all data when the process exits and cannot coordinate across multiple processes. Use it for development and testing only.
+
 Start the agent service:
 
 ```bash
