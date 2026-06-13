@@ -106,8 +106,7 @@ class InboxMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             return []
 
         hint_blocks = [
-            HintBlock.model_validate(payload)
-            for _entry_id, payload in entries
+            HintBlock.model_validate(payload) for _entry_id, payload in entries
         ]
 
         logger.info(
