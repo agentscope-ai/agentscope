@@ -315,6 +315,7 @@ class Agent:
         # Count the current tokens
         kwargs = await self._prepare_model_input()
         estimated_tokens = await self.model.count_tokens(**kwargs)
+        self._update_context_usage(estimated_tokens, cfg)
 
         # Skip if no compression is needed
         threshold = cfg.trigger_ratio * self.model.context_size
@@ -484,6 +485,9 @@ class Agent:
 
         # Update the context
         self.state.context = msgs_to_reserve
+        kwargs = await self._prepare_model_input()
+        estimated_tokens = await self.model.count_tokens(**kwargs)
+        self._update_context_usage(estimated_tokens, cfg)
 
         logger.info(
             "[AGENT %s]: The context compression finished.",
@@ -858,6 +862,9 @@ class Agent:
             list(completed_response.content),
             completed_response.usage,
         )
+        kwargs = await self._prepare_model_input()
+        estimated_tokens = await self.model.count_tokens(**kwargs)
+        self._update_context_usage(estimated_tokens, self.context_config)
 
         # If no tool call is generated, return the final message directly
         if not any(
@@ -2254,6 +2261,23 @@ class Agent:
                         usage=msg_usage,
                     ),
                 )
+
+    def _update_context_usage(
+        self,
+        current_tokens: int | float,
+        context_config: ContextConfig,
+    ) -> None:
+        """Record the latest context-window usage in agent state."""
+        current = max(0, int(current_tokens))
+        context_window = max(0, int(self.model.context_size))
+        threshold = max(
+            0,
+            int(context_config.trigger_ratio * self.model.context_size),
+        )
+        self.state.context_usage.current_tokens = current
+        self.state.context_usage.compression_threshold_tokens = threshold
+        self.state.context_usage.context_window_tokens = context_window
+        self.state.context_usage.trigger_ratio = context_config.trigger_ratio
 
     def _get_last_msg(self) -> Msg | None:
         """Get the last message in the context that belongs to this agent."""

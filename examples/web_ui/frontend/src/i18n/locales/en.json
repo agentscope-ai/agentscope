@@ -110,6 +110,10 @@
 			"emptyTitle": "No sessions",
 			"emptyNoAgent": "Select an agent first.",
 			"emptyHasAgent": "Create a session to start chatting."
+		},
+		"contextUsage": {
+			"ariaLabel": "Context usage {{current}} of {{threshold}} tokens",
+			"tooltip": "{{current}} / {{threshold}} tokens. Compression triggers at {{ratio}}% of the {{window}} token context window."
 		}
 	},
 	"dialog-agent-create": {
