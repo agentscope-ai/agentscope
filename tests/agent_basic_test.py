@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The basic test of the agent class."""
+import json
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
@@ -91,6 +92,46 @@ class MockConcurrentTool(ToolBase):
         """Execute the tool."""
         return ToolChunk(
             content=[TextBlock(text=f"Concurrent result: {input}")],
+        )
+
+
+class MockTypedTool(ToolBase):
+    """A mock tool with a typed integer argument."""
+
+    name: str = "mock_typed_tool"
+    description: str = "A mock typed tool for testing"
+    input_schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "count": {"type": "integer", "description": "Count value"},
+        },
+        "required": ["count"],
+    }
+    is_concurrency_safe: bool = True
+    is_read_only: bool = True
+    is_external_tool: bool = False
+    is_mcp: bool = False
+
+    async def check_permissions(
+        self,
+        tool_input: dict[str, Any],
+        context: PermissionContext,
+    ) -> PermissionDecision:
+        """Check permissions for the tool usage."""
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            decision_reason="Mock tool always allows",
+            message="Mock tool always allows",
+        )
+
+    async def __call__(self, count: int, **kwargs: Any) -> ToolChunk:
+        """Execute the tool."""
+        return ToolChunk(
+            content=[
+                TextBlock(
+                    text=f"Typed result: {count}:{type(count).__name__}",
+                ),
+            ],
         )
 
 
@@ -785,6 +826,34 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
         expected_context = [{**msg_base, **_} for _ in expected_context]
         self.assertListEqual(context_dicts, expected_context)
+
+    async def test_tool_argument_repair_before_validation(self) -> None:
+        """Tool arguments are repaired before Agent schema validation."""
+        # pylint: disable=protected-access
+        self.agent.toolkit = Toolkit(tools=[MockTypedTool()])
+
+        tool_call = ToolCallBlock(
+            id="tool_call_1",
+            name="mock_typed_tool",
+            input='{"count": "2"}',
+        )
+
+        events = []
+        async for event in self.agent._execute_tool_call(
+            tool_call,
+        ):
+            events.append(event.model_dump())
+
+        self.assertEqual(json.loads(tool_call.input), {"count": 2})
+        self.assertEqual(
+            [event["type"] for event in events],
+            [
+                "TOOL_RESULT_START",
+                "TOOL_RESULT_TEXT_DELTA",
+                "TOOL_RESULT_END",
+            ],
+        )
+        self.assertEqual(events[1]["delta"], "Typed result: 2:int")
 
     async def test_streaming_concurrent_tool_calls(self) -> None:
         """Test the streaming model inference with tool calls generated.
