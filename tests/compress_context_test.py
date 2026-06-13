@@ -605,6 +605,19 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
 
         await agent.compress_context()
 
+        kwargs = await agent._prepare_model_input()
+        expected_tokens = await model.count_tokens(**kwargs)
+        self.assertEqual(
+            agent.state.context_usage.current_tokens,
+            expected_tokens,
+        )
+        self.assertEqual(
+            agent.state.context_usage.compression_threshold_tokens,
+            70,
+        )
+        self.assertEqual(agent.state.context_usage.context_window_tokens, 100)
+        self.assertEqual(agent.state.context_usage.trigger_ratio, 0.7)
+
         self.assertEqual(
             agent.state.summary,
             """<system-info>Here is a summary of your previous work

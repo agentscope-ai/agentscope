@@ -5,6 +5,7 @@ import type {
 	DataBlockStartEvent,
 	DataBlockDeltaEvent,
 	DataBlockEndEvent,
+	ModelCallEndEvent,
 	ReplyStartEvent,
 	UserConfirmResultEvent,
 } from '@agentscope-ai/agentscope/event';
@@ -15,6 +16,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 
 import { sessionApi } from '@/api';
 import { chatApi } from '@/api';
+import type { ContextUsage } from '@/api/types';
 import { useAudioManager } from '@/context/AudioContext';
 
 /**
@@ -62,6 +64,11 @@ export function useMessages(
 		 * ``tasks_context`` and ``permission_context``.
 		 */
 		onStateUpdated?: (value: Record<string, unknown>) => void;
+		/**
+		 * Called as soon as a model call reports usage. The final
+		 * persisted context usage arrives later through ``state_updated``.
+		 */
+		onContextUsageUpdated?: (usage: Partial<ContextUsage>) => void;
 	},
 ) {
 	const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -109,6 +116,14 @@ export function useMessages(
 				msgsRef.current = [...msgsRef.current, msg];
 				currentReplyRef.current = msg;
 				setStreaming(true);
+			} else if (event.type === EventType.MODEL_CALL_END) {
+				const e = event as ModelCallEndEvent;
+				optionsRef.current?.onContextUsageUpdated?.({
+					current_tokens: (e.input_tokens ?? 0) + (e.output_tokens ?? 0),
+				});
+				if (currentReplyRef.current) {
+					appendEvent(currentReplyRef.current, event);
+				}
 			} else if (event.type === EventType.REPLY_END) {
 				if (currentReplyRef.current) {
 					appendEvent(currentReplyRef.current, event);

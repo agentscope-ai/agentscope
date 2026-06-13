@@ -96,8 +96,16 @@ export interface SessionConfig {
 	workspace_id: string;
 }
 
-// TODO: update when Python side is finalised
-export type AgentState = Record<string, unknown>;
+export interface ContextUsage {
+	current_tokens: number;
+	compression_threshold_tokens: number;
+	context_window_tokens: number;
+	trigger_ratio: number;
+}
+
+export interface AgentState extends Record<string, unknown> {
+	context_usage?: ContextUsage;
+}
 
 export interface SessionRecord extends RecordBase {
 	user_id: string;
