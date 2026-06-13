@@ -71,11 +71,11 @@ from ._make_dockerfile import (
     GATEWAY_CONFIG,
     GATEWAY_HOME,
     GATEWAY_LOG,
+    GATEWAY_PID,
     GATEWAY_SCRIPT,
     GATEWAY_VENV,
     prepare_build_context,
 )
-
 
 _DEFAULT_INSTRUCTIONS = """<workspace>
 You have a Docker-based workspace. All tool calls execute **inside the
@@ -394,6 +394,98 @@ class DockerWorkspace(WorkspaceBase):
 
         self.is_alive = False
 
+    async def pause(self) -> None:
+        """Pause (freeze) the container to save resources.
+
+        Uses Docker's pause mechanism (cgroups freezer) which freezes
+        all processes instantly without a full stop/start cycle. The
+        gateway client is released since the gateway is frozen and
+        cannot respond.
+
+        Unlike :meth:`close`, the ``_container`` reference is **kept**
+        so :meth:`resume` can unpause it.
+        """
+        if self._gateway is not None:
+            try:
+                await self._gateway.aclose()
+            except Exception:
+                pass
+            self._gateway = None
+        self._gateway_clients.clear()
+
+        if self._container is not None:
+            await self._container.pause()
+        self.is_alive = False
+
+    async def resume(self) -> None:
+        """Resume a paused container and restart the gateway.
+
+        Unpauses the container, kills the frozen gateway process, mints
+        a fresh bearer token, and starts a new gateway instance.
+        """
+        if self._container is None:
+            raise RuntimeError(
+                f"Cannot resume workspace {self.workspace_id}: "
+                "container is None",
+            )
+
+        await self._container.unpause()
+
+        # Stop the previously frozen gateway and restart with a new token.
+        await self._stop_gateway_process()
+
+        self._gateway_token = uuid.uuid4().hex
+        await self._write_gateway_config()
+        await self._start_gateway_process()
+
+        host_port = self._port_mapping[self.gateway_port]
+        self._gateway = GatewayClient(
+            base_url=f"http://127.0.0.1:{host_port}",
+            token=self._gateway_token,
+            timeout=30.0,
+        )
+        await self._wait_for_gateway()
+
+        self._gateway_clients = {
+            c.name: c for c in await self._gateway.list_mcps()
+        }
+        self.is_alive = True
+
+    async def gateway_health(self) -> bool:
+        """Probe the gateway's ``/health`` endpoint.
+
+        Returns ``True`` if the gateway responds with 200, ``False``
+        on any error or if no gateway client is configured.
+        """
+        if self._gateway is None:
+            return False
+        try:
+            return await self._gateway.health()
+        except Exception:
+            return False
+
+    # ── bulk tar I/O (used by pool-mode sync) ───────────────────
+
+    async def upload_tar(self, tar_data: bytes) -> None:
+        """Upload a tar archive and extract it into ``/workspace``.
+
+        Args:
+            tar_data: Raw tar bytes whose entries are relative paths
+                (e.g. ``data/file.txt``). They will be extracted under
+                ``CONTAINER_WORKDIR``.
+        """
+        await self._container.put_archive(CONTAINER_WORKDIR, tar_data)
+
+    async def download_tar(self) -> tarfile.TarFile:
+        """Download ``/workspace`` as a tar archive.
+
+        Returns:
+            A :class:`tarfile.TarFile` whose top-level entry is the
+            ``workspace/`` directory itself. The caller is responsible
+            for closing it.
+        """
+        return await self._container.get_archive(CONTAINER_WORKDIR)
+
     # ── instructions ────────────────────────────────────────────
 
     async def get_instructions(self) -> str:
@@ -439,8 +531,7 @@ class DockerWorkspace(WorkspaceBase):
         import frontmatter as fm
 
         result = await self._exec(
-            f"find {CONTAINER_SKILLS_DIR} -name SKILL.md "
-            f"2>/dev/null || true",
+            f"find {CONTAINER_SKILLS_DIR} -name SKILL.md 2>/dev/null || true",
         )
         if not result.ok():
             return []
@@ -570,7 +661,7 @@ class DockerWorkspace(WorkspaceBase):
             # mirrors the conflict-rejection behaviour of ``mkdir`` here
             # rather than LocalWorkspace's full hash-dedup index.
             check = await self._exec(
-                f"test -e "
+                "test -e "
                 f"{shlex.quote(CONTAINER_SKILLS_DIR + '/' + dir_name)}",
             )
             if check.ok():
@@ -875,8 +966,8 @@ class DockerWorkspace(WorkspaceBase):
         bindings = ports_info.get(f"{self.gateway_port}/tcp", []) or []
         if not bindings:
             raise RuntimeError(
-                f"gateway port {self.gateway_port} did not bind to a "
-                "host port",
+                f"gateway port {self.gateway_port} "
+                "did not bind to a host port",
             )
         self._port_mapping[self.gateway_port] = int(bindings[0]["HostPort"])
 
@@ -915,8 +1006,8 @@ class DockerWorkspace(WorkspaceBase):
             return [MCPClient.model_validate(m) for m in data]
         except Exception as e:
             logger.warning(
-                "DockerWorkspace: failed to read %s, falling back to "
-                "default_mcps: %s",
+                "DockerWorkspace: failed to read %s, "
+                "falling back to default_mcps: %s",
                 host_mcp,
                 e,
             )
@@ -978,25 +1069,58 @@ class DockerWorkspace(WorkspaceBase):
         tail when startup fails.
 
         We do not block on this exec call; readiness is detected via
-        the ``/health`` poll instead.
+        the ``/health`` and authenticated ``/mcps`` poll instead.
         """
         cmd = (
+            f"rm -f {shlex.quote(GATEWAY_PID)}; "
             f"nohup {shlex.quote(GATEWAY_VENV + '/bin/python')} -u "
             f"{shlex.quote(GATEWAY_SCRIPT)} "
             f"--config {shlex.quote(GATEWAY_CONFIG)} "
             f"--port {self.gateway_port} "
-            f"> {shlex.quote(GATEWAY_LOG)} 2>&1 &"
+            f"> {shlex.quote(GATEWAY_LOG)} 2>&1 & "
+            f"echo $! > {shlex.quote(GATEWAY_PID)}"
         )
         # Detach: we don't await stream completion, just kick it off.
         await self._exec(cmd)
 
-    async def _wait_for_gateway(self, timeout: float = 30.0) -> None:
-        """Block until the gateway answers ``/health`` with 200.
+    async def _stop_gateway_process(self) -> None:
+        """Stop the gateway process recorded by :data:`GATEWAY_PID`.
 
-        Uses an exponentially-backed-off poll capped at 1 s.  When
-        the deadline expires, attempts to read the gateway log and
-        surfaces the tail in the raised error so callers can see the
-        actual startup failure.
+        The Docker image is intentionally slim and does not ship
+        process-management helpers such as ``pkill``.  Use the shell's
+        built-in ``kill`` against the PID captured when the gateway was
+        started, then remove the pidfile so stale values are not reused.
+        """
+        cmd = (
+            f"pid_file={shlex.quote(GATEWAY_PID)}; "
+            'if [ -f "$pid_file" ]; then '
+            'pid=$(cat "$pid_file" 2>/dev/null || true); '
+            'if [ -n "$pid" ]; then '
+            'kill "$pid" 2>/dev/null || true; '
+            "i=0; "
+            'while [ "$i" -lt 50 ] && kill -0 "$pid" 2>/dev/null; do '
+            "sleep 0.1; "
+            "i=$((i+1)); "
+            "done; "
+            'if kill -0 "$pid" 2>/dev/null; then '
+            'kill -9 "$pid" 2>/dev/null || true; '
+            "fi; "
+            "fi; "
+            'rm -f "$pid_file"; '
+            "fi"
+        )
+        await self._exec(cmd)
+
+    async def _wait_for_gateway(self, timeout: float = 30.0) -> None:
+        """Block until the gateway answers authenticated requests.
+
+        Uses an exponentially-backed-off poll capped at 1 s.  Readiness
+        requires both the public ``/health`` endpoint and the
+        bearer-protected ``/mcps`` endpoint to succeed, so a stale
+        gateway that still owns the port cannot be mistaken for the
+        freshly started process.  When the deadline expires, attempts
+        to read the gateway log and surfaces the tail in the raised
+        error so callers can see the actual startup failure.
 
         Args:
             timeout: Maximum seconds to wait for readiness.
@@ -1010,7 +1134,11 @@ class DockerWorkspace(WorkspaceBase):
         delay = 0.1
         while asyncio.get_event_loop().time() < deadline:
             if await self._gateway.health():
-                return
+                try:
+                    await self._gateway.list_mcps()
+                    return
+                except Exception:
+                    pass
             await asyncio.sleep(delay)
             delay = min(delay * 1.5, 1.0)
         # Last-ditch: dump the gateway log to help debug startup failures.
@@ -1020,7 +1148,7 @@ class DockerWorkspace(WorkspaceBase):
         except Exception:
             tail = "<no gateway log available>"
         raise RuntimeError(
-            f"gateway did not become healthy within {timeout}s. "
+            f"gateway did not become ready within {timeout}s. "
             f"Tail of {GATEWAY_LOG}:\n{tail}",
         )
 

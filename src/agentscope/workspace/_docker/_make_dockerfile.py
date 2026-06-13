@@ -57,6 +57,7 @@ GATEWAY_HOME = "/root/.agentscope"
 GATEWAY_VENV = f"{GATEWAY_HOME}/.venv"
 GATEWAY_CONFIG = f"{GATEWAY_HOME}/gateway.config.json"
 GATEWAY_LOG = f"{GATEWAY_HOME}/gateway.log"
+GATEWAY_PID = f"{GATEWAY_HOME}/gateway.pid"
 # Standalone gateway script copied into the image. We invoke this
 # directly rather than via ``python -m agentscope.workspace._mcp_gateway``
 # so Python does not auto-import ``agentscope.workspace.__init__`` (which
