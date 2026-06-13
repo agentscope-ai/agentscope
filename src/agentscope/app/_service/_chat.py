@@ -118,6 +118,37 @@ class ChatService:
         self._sub_agent_templates = custom_subagent_templates
         self._agent_cls = custom_agent_cls or Agent
 
+    async def _build_agent(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        agent: "Agent",
+    ) -> "Agent":
+        """Hook for post-assembly agent customization.
+
+        Override this method in a subclass to inject extra tools or
+        middlewares into the assembled agent before it runs.
+
+        Contract for overriders:
+
+        - Call ``await super()._build_agent(...)`` to obtain the base agent.
+        - Mutate the agent (e.g. register additional tools via
+          ``agent.toolkit.register(...)``) and return it.
+        - The agent's middlewares are already wired in at construction time;
+          use ``agent.middlewares.append(...)`` to add more if needed.
+
+        Args:
+            user_id (`str`): Authenticated caller's user ID.
+            agent_id (`str`): Agent ID being assembled.
+            session_id (`str`): Target session ID.
+            agent (`Agent`): The fully assembled agent.
+
+        Returns:
+            `Agent`: The agent ready to run (may be the same object, mutated).
+        """
+        return agent
+
     async def run(
         self,
         user_id: str,
@@ -325,6 +356,12 @@ class ChatService:
             state=agent_state,
             middlewares=middlewares,
             offloader=workspace,
+        )
+        agent = await self._build_agent(
+            user_id=user_id,
+            agent_id=agent_id,
+            session_id=session_id,
+            agent=agent,
         )
 
         # ----------------------------------------------------------------
