@@ -91,7 +91,9 @@ class _FakeWorkspaceManager:
     """Workspace manager returning one fake workspace."""
 
     async def get_workspace(
-        self, *_args: Any, **_kwargs: Any
+        self,
+        *_args: Any,
+        **_kwargs: Any,
     ) -> _FakeWorkspace:
         """Return the fake workspace."""
         return _FakeWorkspace()
