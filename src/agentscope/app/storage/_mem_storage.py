@@ -34,9 +34,9 @@ class MemStorage(StorageBase):
 
     Record objects are isolated via JSON round-trip
     (``model_dump_json`` / ``model_validate_json``) on both read and write,
-    matching the semantics of :class:`RedisStorage`.  Messages are stored as
-    live :class:`Msg` objects for efficiency — callers must not mutate
-    returned message objects.
+    matching the semantics of :class:`RedisStorage`.  Messages use
+    ``Msg.model_copy(deep=True)`` on both write and read for the same
+    isolation guarantee.
 
     Usage::
 
@@ -78,10 +78,14 @@ class MemStorage(StorageBase):
     # ==================================================================
 
     async def aclose(self) -> None:
-        """Release resources — no-op for the in-memory backend."""
-        self._records.clear()
-        self._indexes.clear()
-        self._messages.clear()
+        """Release resources — a true no-op for the in-memory backend.
+
+        Unlike :class:`RedisStorage`, there are no connections or pools to
+        close. The in-memory state stays attached to this instance and is
+        released naturally when the instance is garbage-collected, matching
+        the Redis semantics where data outlives ``aclose()`` (Redis keeps
+        the data; only the connection is closed).
+        """
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -110,6 +114,66 @@ class MemStorage(StorageBase):
             "team": "team_ids",
         }
         return _MAP[entity]
+
+    def _get_record_raw(
+        self,
+        user_id: str,
+        kind: str,
+        entity_id: str,
+    ) -> str | None:
+        """Read a record without triggering ``defaultdict`` auto-creation.
+
+        Plain ``self._records[user_id][kind].get(entity_id)`` would create
+        empty ``user_id`` and ``kind`` nodes for unknown users — leaking
+        memory and producing ghost entries that confuse later iteration.
+        """
+        kind_dict = self._records.get(user_id, {}).get(kind)
+        if kind_dict is None:
+            return None
+        return kind_dict.get(entity_id)
+
+    def _get_index_set(self, user_id: str, index_name: str) -> set[str]:
+        """Read an index set without triggering ``defaultdict`` auto-creation.
+
+        Returns an empty set for unknown ``(user_id, index_name)`` pairs
+        without writing anything to ``self._indexes``.
+        """
+        return self._indexes.get(user_id, {}).get(index_name, set())
+
+    def _discard_from_index(
+        self,
+        user_id: str,
+        index_name: str,
+        entity_id: str,
+    ) -> None:
+        """Remove ``entity_id`` from an index set and reclaim empty containers.
+
+        Plain ``self._indexes[user_id][index_name].discard(entity_id)`` would
+        auto-create both nodes via ``defaultdict`` when the user is unknown,
+        and would leave behind an empty ``set`` after the last ``discard``.
+        This helper avoids both leaks by reading via ``.get()`` and dropping
+        empty sets / empty user dicts.
+        """
+        user_indexes = self._indexes.get(user_id)
+        if user_indexes is None:
+            return
+        index_set = user_indexes.get(index_name)
+        if index_set is None:
+            return
+        index_set.discard(entity_id)
+        if not index_set:
+            del user_indexes[index_name]
+            if not user_indexes:
+                del self._indexes[user_id]
+
+    def _drop_index_key(self, user_id: str, index_name: str) -> None:
+        """Drop an entire index key and reclaim the user dict if empty."""
+        user_indexes = self._indexes.get(user_id)
+        if user_indexes is None:
+            return
+        user_indexes.pop(index_name, None)
+        if not user_indexes:
+            del self._indexes[user_id]
 
     def _session_index_key(self, _user_id: str, agent_id: str) -> str:
         """Composite key for per-(user, agent) session indexes."""
@@ -206,9 +270,11 @@ class MemStorage(StorageBase):
         kind = self._entity_kind("credential")
         index = self._index_name("credential")
 
-        if credential_data.id and credential_data.id in self._records[
-            user_id
-        ][kind]:
+        if credential_data.id and self._get_record_raw(
+            user_id,
+            kind,
+            credential_data.id,
+        ):
             record = CredentialRecord.model_validate_json(
                 self._records[user_id][kind][credential_data.id],
             )
@@ -242,8 +308,8 @@ class MemStorage(StorageBase):
         kind = self._entity_kind("credential")
         index = self._index_name("credential")
         records: list[CredentialRecord] = []
-        for cred_id in self._indexes[user_id][index]:
-            raw = self._records[user_id][kind].get(cred_id)
+        for cred_id in self._get_index_set(user_id, index):
+            raw = self._get_record_raw(user_id, kind, cred_id)
             if raw:
                 records.append(CredentialRecord.model_validate_json(raw))
         return records
@@ -263,7 +329,7 @@ class MemStorage(StorageBase):
             `CredentialRecord | None`: The record, or ``None`` if not found.
         """
         kind = self._entity_kind("credential")
-        raw = self._records[user_id][kind].get(credential_id)
+        raw = self._get_record_raw(user_id, kind, credential_id)
         if not raw:
             return None
         return CredentialRecord.model_validate_json(raw)
@@ -285,11 +351,10 @@ class MemStorage(StorageBase):
         """
         kind = self._entity_kind("credential")
         index = self._index_name("credential")
-        record_kind = self._records[user_id][kind]
-        if credential_id not in record_kind:
+        if self._get_record_raw(user_id, kind, credential_id) is None:
             return False
-        del record_kind[credential_id]
-        self._indexes[user_id][index].discard(credential_id)
+        del self._records[user_id][kind][credential_id]
+        self._discard_from_index(user_id, index, credential_id)
         return True
 
     # ==================================================================
@@ -342,8 +407,8 @@ class MemStorage(StorageBase):
         kind = self._entity_kind("agent")
         index = self._index_name("agent")
         records: list[AgentRecord] = []
-        for agent_id in self._indexes[user_id][index]:
-            raw = self._records[user_id][kind].get(agent_id)
+        for agent_id in self._get_index_set(user_id, index):
+            raw = self._get_record_raw(user_id, kind, agent_id)
             if raw:
                 record = AgentRecord.model_validate_json(raw)
                 if record.source == "user":
@@ -365,7 +430,7 @@ class MemStorage(StorageBase):
             `AgentRecord | None`: The record, or ``None`` if not found.
         """
         kind = self._entity_kind("agent")
-        raw = self._records[user_id][kind].get(agent_id)
+        raw = self._get_record_raw(user_id, kind, agent_id)
         if not raw:
             return None
         return AgentRecord.model_validate_json(raw)
@@ -403,7 +468,7 @@ class MemStorage(StorageBase):
         """
         kind = self._entity_kind("agent")
         index = self._index_name("agent")
-        if agent_id not in self._records[user_id][kind]:
+        if self._get_record_raw(user_id, kind, agent_id) is None:
             return False
 
         # Cascade: sessions
@@ -429,7 +494,7 @@ class MemStorage(StorageBase):
                 _ = await self.upsert_team(user_id, team)
 
         del self._records[user_id][kind][agent_id]
-        self._indexes[user_id][index].discard(agent_id)
+        self._discard_from_index(user_id, index, agent_id)
         return True
 
     # ==================================================================
@@ -469,15 +534,18 @@ class MemStorage(StorageBase):
         index = self._index_name("session")
         session_idx_key = self._session_index_key(user_id, agent_id)
 
-        if session_id and session_id in self._records[user_id][kind]:
-            raw = self._records[user_id][kind][session_id]
-            record = SessionRecord.model_validate_json(raw)
-            record.config = config
-            if state is not None:
-                record.state = state
-            record.updated_at = datetime.now()
-            self._records[user_id][kind][session_id] = record.model_dump_json()
-            return record
+        if session_id:
+            raw = self._get_record_raw(user_id, kind, session_id)
+            if raw:
+                record = SessionRecord.model_validate_json(raw)
+                record.config = config
+                if state is not None:
+                    record.state = state
+                record.updated_at = datetime.now()
+                self._records[user_id][kind][session_id] = (
+                    record.model_dump_json()
+                )
+                return record
 
         new_id_kwargs: dict[str, Any] = (
             {"id": session_id} if session_id else {}
@@ -516,7 +584,7 @@ class MemStorage(StorageBase):
             KeyError: If the session does not exist.
         """
         kind = self._entity_kind("session")
-        raw = self._records[user_id][kind].get(session_id)
+        raw = self._get_record_raw(user_id, kind, session_id)
         if raw is None:
             raise KeyError(f"Session {session_id!r} not found.")
         record = SessionRecord.model_validate_json(raw)
@@ -542,8 +610,8 @@ class MemStorage(StorageBase):
         kind = self._entity_kind("session")
         session_idx_key = self._session_index_key(user_id, agent_id)
         records: list[SessionRecord] = []
-        for session_id in self._indexes[user_id][session_idx_key]:
-            raw = self._records[user_id][kind].get(session_id)
+        for session_id in self._get_index_set(user_id, session_idx_key):
+            raw = self._get_record_raw(user_id, kind, session_id)
             if raw:
                 records.append(SessionRecord.model_validate_json(raw))
         records.sort(key=lambda r: r.created_at, reverse=True)
@@ -566,7 +634,7 @@ class MemStorage(StorageBase):
             `SessionRecord | None`: The record, or ``None`` if not found.
         """
         kind = self._entity_kind("session")
-        raw = self._records[user_id][kind].get(session_id)
+        raw = self._get_record_raw(user_id, kind, session_id)
         if not raw:
             return None
         return SessionRecord.model_validate_json(raw)
@@ -599,7 +667,7 @@ class MemStorage(StorageBase):
         session_idx_key = self._session_index_key(user_id, agent_id)
         msg_key = self._message_key(user_id, session_id)
 
-        raw = self._records[user_id][kind].get(session_id)
+        raw = self._get_record_raw(user_id, kind, session_id)
         if raw is None:
             return False
 
@@ -612,14 +680,15 @@ class MemStorage(StorageBase):
                 _ = await self.delete_team(user_id, record.team_id)
 
         del self._records[user_id][kind][session_id]
-        self._indexes[user_id][index].discard(session_id)
-        self._indexes[user_id][session_idx_key].discard(session_id)
-        _ = self._messages[user_id].pop(msg_key, None)
+        self._discard_from_index(user_id, index, session_id)
+        self._discard_from_index(user_id, session_idx_key, session_id)
+        if user_id in self._messages:
+            self._messages[user_id].pop(msg_key, None)
 
         if record.source_schedule_id:
             sched_key_base = self._schedule_session_index_key(user_id)
             sched_key = f"{sched_key_base}:{record.source_schedule_id}"
-            self._indexes[user_id][sched_key].discard(session_id)
+            self._discard_from_index(user_id, sched_key, session_id)
 
         return True
 
@@ -642,8 +711,8 @@ class MemStorage(StorageBase):
         sched_key_base = self._schedule_session_index_key(user_id)
         sched_key = f"{sched_key_base}:{schedule_id}"
         records: list[SessionRecord] = []
-        for session_id in self._indexes[user_id][sched_key]:
-            raw = self._records[user_id][kind].get(session_id)
+        for session_id in self._get_index_set(user_id, sched_key):
+            raw = self._get_record_raw(user_id, kind, session_id)
             if raw:
                 records.append(SessionRecord.model_validate_json(raw))
         records.sort(key=lambda r: r.created_at, reverse=True)
@@ -693,7 +762,7 @@ class MemStorage(StorageBase):
             `ScheduleRecord | None`: The record, or ``None`` if not found.
         """
         kind = self._entity_kind("schedule")
-        raw = self._records[user_id][kind].get(schedule_id)
+        raw = self._get_record_raw(user_id, kind, schedule_id)
         if not raw:
             return None
         return ScheduleRecord.model_validate_json(raw)
@@ -710,8 +779,8 @@ class MemStorage(StorageBase):
         kind = self._entity_kind("schedule")
         index = self._index_name("schedule")
         records: list[ScheduleRecord] = []
-        for schedule_id in self._indexes[user_id][index]:
-            raw = self._records[user_id][kind].get(schedule_id)
+        for schedule_id in self._get_index_set(user_id, index):
+            raw = self._get_record_raw(user_id, kind, schedule_id)
             if raw:
                 records.append(ScheduleRecord.model_validate_json(raw))
         return records
@@ -731,7 +800,7 @@ class MemStorage(StorageBase):
         index = self._index_name("schedule")
         global_index = "schedule_global_ids"
 
-        raw = self._records[user_id][kind].get(schedule_id)
+        raw = self._get_record_raw(user_id, kind, schedule_id)
         if raw is None:
             return False
 
@@ -749,11 +818,13 @@ class MemStorage(StorageBase):
         # Clean up the schedule-session index key
         sched_key_base = self._schedule_session_index_key(user_id)
         sched_key = f"{sched_key_base}:{schedule_id}"
-        _ = self._indexes[user_id].pop(sched_key, None)
+        self._drop_index_key(user_id, sched_key)
 
         del self._records[user_id][kind][schedule_id]
-        self._indexes[user_id][index].discard(schedule_id)
-        self._indexes["__global__"][global_index].discard(
+        self._discard_from_index(user_id, index, schedule_id)
+        self._discard_from_index(
+            "__global__",
+            global_index,
             f"{user_id}:{schedule_id}",
         )
         return True
@@ -770,9 +841,9 @@ class MemStorage(StorageBase):
         global_index = "schedule_global_ids"
         kind = self._entity_kind("schedule")
         records: list[ScheduleRecord] = []
-        for entry in self._indexes["__global__"][global_index]:
+        for entry in self._get_index_set("__global__", global_index):
             user_id, schedule_id = entry.split(":", 1)
-            raw = self._records[user_id][kind].get(schedule_id)
+            raw = self._get_record_raw(user_id, kind, schedule_id)
             if raw:
                 records.append(ScheduleRecord.model_validate_json(raw))
         return records
@@ -814,6 +885,8 @@ class MemStorage(StorageBase):
     ) -> Msg | None:
         """Fetch a single message by id from the session's message list.
 
+        Returns a deep copy so callers cannot mutate the stored object.
+
         Args:
             user_id (`str`): The owner user id.
             session_id (`str`): The session id.
@@ -823,9 +896,10 @@ class MemStorage(StorageBase):
             `Msg | None`: The message, or ``None`` if not found.
         """
         key = self._message_key(user_id, session_id)
-        for msg in reversed(self._messages[user_id][key]):
+        msgs = self._messages.get(user_id, {}).get(key, [])
+        for msg in reversed(msgs):
             if msg.id == message_id:
-                return msg
+                return msg.model_copy(deep=True)
         return None
 
     async def list_messages(
@@ -837,6 +911,8 @@ class MemStorage(StorageBase):
     ) -> list[Msg]:
         """Return messages for a session with pagination.
 
+        Returns deep copies so callers cannot mutate the stored objects.
+
         Args:
             user_id (`str`): The owner user id.
             session_id (`str`): The session id.
@@ -847,8 +923,8 @@ class MemStorage(StorageBase):
             `list[Msg]`: Messages in chronological order.
         """
         key = self._message_key(user_id, session_id)
-        msgs = self._messages[user_id][key]
-        return msgs[offset : offset + limit]
+        msgs = self._messages.get(user_id, {}).get(key, [])
+        return [m.model_copy(deep=True) for m in msgs[offset : offset + limit]]
 
     # ==================================================================
     # Team persistence
@@ -900,7 +976,7 @@ class MemStorage(StorageBase):
                 The record, or ``None`` if no record exists.
         """
         kind = self._entity_kind("team")
-        raw = self._records[user_id][kind].get(team_id)
+        raw = self._get_record_raw(user_id, kind, team_id)
         if not raw:
             return None
         return TeamRecord.model_validate_json(raw)
@@ -919,8 +995,8 @@ class MemStorage(StorageBase):
         kind = self._entity_kind("team")
         index = self._index_name("team")
         records: list[TeamRecord] = []
-        for team_id in self._indexes[user_id][index]:
-            raw = self._records[user_id][kind].get(team_id)
+        for team_id in self._get_index_set(user_id, index):
+            raw = self._get_record_raw(user_id, kind, team_id)
             if raw:
                 records.append(TeamRecord.model_validate_json(raw))
         return records
@@ -947,7 +1023,7 @@ class MemStorage(StorageBase):
                 team.
         """
         kind = self._entity_kind("session")
-        raw = self._records[user_id][kind].get(session_id)
+        raw = self._get_record_raw(user_id, kind, session_id)
         if raw is None:
             return
         record = SessionRecord.model_validate_json(raw)
@@ -983,11 +1059,12 @@ class MemStorage(StorageBase):
         if team is None:
             kind = self._entity_kind("team")
             index = self._index_name("team")
-            # Defensive cleanup: remove orphan index entries
-            deleted_record = team_id in self._records[user_id][kind]
+            deleted_record = (
+                self._get_record_raw(user_id, kind, team_id) is not None
+            )
             if deleted_record:
                 del self._records[user_id][kind][team_id]
-            self._indexes[user_id][index].discard(team_id)
+            self._discard_from_index(user_id, index, team_id)
             return deleted_record
 
         # Cascade: delete each worker agent (which cascades its session)
@@ -1001,5 +1078,5 @@ class MemStorage(StorageBase):
         index = self._index_name("team")
         existed = team_id in self._records[user_id][kind]
         _ = self._records[user_id][kind].pop(team_id, None)
-        self._indexes[user_id][index].discard(team_id)
+        self._discard_from_index(user_id, index, team_id)
         return existed

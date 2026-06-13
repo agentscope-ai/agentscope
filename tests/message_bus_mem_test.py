@@ -22,18 +22,22 @@ class TestLifecycle(IsolatedAsyncioTestCase):
             # push something to verify it's alive
             await bus.queue_push("k", {"v": 1})
 
-    async def test_aclose_clears_all_state(self) -> None:
-        """aclose clears all internal data structures."""
+    async def test_aclose_preserves_data(self) -> None:
+        """aclose is a no-op — data survives until GC, mirroring Redis."""
         await self.bus.queue_push("q", {"x": 1})
         await self.bus.log_append("l", {"y": 2})
         await self.bus.registry_set("ns", "f", "val")
+
         await self.bus.aclose()
-        self.assertEqual(self.bus._queues, {})
-        self.assertEqual(self.bus._logs, {})
-        self.assertEqual(self.bus._log_counters, {})
-        self.assertEqual(self.bus._channels, {})
-        self.assertEqual(self.bus._locks, {})
-        self.assertEqual(self.bus._registries, {})
+
+        drained = await self.bus.queue_drain("q")
+        self.assertEqual([payload for _eid, payload in drained], [{"x": 1}])
+        log = await self.bus.log_read("l")
+        self.assertEqual([payload for _eid, payload in log], [{"y": 2}])
+        self.assertEqual(
+            await self.bus.registry_getall("ns"),
+            {"f": "val"},
+        )
 
 
 class TestDrainQueue(IsolatedAsyncioTestCase):
@@ -372,11 +376,16 @@ class TestLock(IsolatedAsyncioTestCase):
             ["a-enter", "a-exit", "b-enter", "b-exit"],
         )
 
-    async def test_lock_cleans_up_after_release(self) -> None:
-        """After release with no waiters, the lock key is removed from _locks."""
+    async def test_lock_persists_after_release(self) -> None:
+        """The lock object stays in _locks after release.
+
+        Removing it would race with pending waiters and let a fresh
+        :class:`asyncio.Lock` be created for a key that another
+        coroutine is still waiting on, breaking mutual exclusion.
+        """
         async with self.bus.acquire_lock("lk-e"):
             self.assertIn("lk-e", self.bus._locks)
-        self.assertNotIn("lk-e", self.bus._locks)
+        self.assertIn("lk-e", self.bus._locks)
         self.assertFalse(await self.bus.is_locked("lk-e"))
 
     async def test_ttl_parameter_accepted(self) -> None:
@@ -462,3 +471,115 @@ class TestRegistry(IsolatedAsyncioTestCase):
         """ttl_secs parameter is accepted but has no effect."""
         await self.bus.registry_set("ns-f", "k", "v", ttl_secs=60)
         self.assertTrue(await self.bus.registry_exists("ns-f", "k"))
+
+
+class TestLockMutualExclusionUnderRace(IsolatedAsyncioTestCase):
+    """Regression: acquire_lock must hold mutual exclusion under contention."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.bus = MemMessageBus()
+
+    async def test_three_way_contention_no_overlap(self) -> None:
+        """A/B/C contending for the same key never overlap.
+
+        The previous implementation popped the asyncio.Lock from
+        ``_locks`` after the holder released, racing with pending
+        waiters: a third coroutine arriving in that window would create
+        a fresh Lock object while the original waiter was about to
+        acquire the old one, producing two simultaneous holders.
+        """
+        in_critical: list[str] = []
+        overlaps: list[list[str]] = []
+
+        async def worker(
+            name: str,
+            hold: float,
+            start_delay: float,
+        ) -> None:
+            await asyncio.sleep(start_delay)
+            async with self.bus.acquire_lock("shared"):
+                in_critical.append(name)
+                if len(in_critical) > 1:
+                    overlaps.append(list(in_critical))
+                await asyncio.sleep(hold)
+                in_critical.remove(name)
+
+        for _ in range(20):
+            in_critical.clear()
+            await asyncio.gather(
+                worker("A", hold=0.005, start_delay=0.0),
+                worker("B", hold=0.010, start_delay=0.001),
+                worker("C", hold=0.010, start_delay=0.006),
+            )
+
+        self.assertEqual(overlaps, [])
+
+
+class TestLogAppendMaxLenBoundary(IsolatedAsyncioTestCase):
+    """Regression: log_append max_len boundary handling."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.bus = MemMessageBus()
+
+    async def test_max_len_zero_trims_to_empty(self) -> None:
+        """max_len=0 must keep zero entries, not the whole list."""
+        await self.bus.log_append("k", {"v": 1}, max_len=0)
+        await self.bus.log_append("k", {"v": 2}, max_len=0)
+        await self.bus.log_append("k", {"v": 3}, max_len=0)
+        entries = await self.bus.log_read("k")
+        self.assertEqual(entries, [])
+
+    async def test_max_len_negative_trims_to_empty(self) -> None:
+        """Negative max_len behaves like zero — slice [-(-1):] gave junk before."""
+        await self.bus.log_append("k", {"v": 1}, max_len=-1)
+        entries = await self.bus.log_read("k")
+        self.assertEqual(entries, [])
+
+    async def test_max_len_one_keeps_only_latest(self) -> None:
+        """max_len=1 keeps only the most recently appended entry."""
+        await self.bus.log_append("k", {"v": 1}, max_len=1)
+        await self.bus.log_append("k", {"v": 2}, max_len=1)
+        await self.bus.log_append("k", {"v": 3}, max_len=1)
+        entries = await self.bus.log_read("k")
+        self.assertEqual([payload for _eid, payload in entries], [{"v": 3}])
+
+
+class TestRegistryNamespaceCleanup(IsolatedAsyncioTestCase):
+    """Regression: registry_del reclaims empty namespace dicts."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.bus = MemMessageBus()
+
+    async def test_delete_last_field_drops_namespace(self) -> None:
+        """Removing the last field reclaims the empty namespace dict."""
+        await self.bus.registry_set("ns", "f", "v")
+        self.assertIn("ns", self.bus._registries)
+        await self.bus.registry_del("ns", "f")
+        self.assertNotIn("ns", self.bus._registries)
+
+    async def test_partial_delete_keeps_namespace(self) -> None:
+        """Removing one of two fields keeps the namespace populated."""
+        await self.bus.registry_set("ns", "f1", "v1")
+        await self.bus.registry_set("ns", "f2", "v2")
+        await self.bus.registry_del("ns", "f1")
+        self.assertEqual(
+            self.bus._registries["ns"],
+            {"f2": "v2"},
+        )
+
+    async def test_delete_unknown_namespace_no_ghost(self) -> None:
+        """registry_del on a namespace that never existed creates no ghost."""
+        await self.bus.registry_del("never-set", "f")
+        self.assertNotIn("never-set", self.bus._registries)
+
+    async def test_delete_unknown_field_keeps_namespace(self) -> None:
+        """Deleting a missing field from a populated namespace is a no-op."""
+        await self.bus.registry_set("ns", "real", "v")
+        await self.bus.registry_del("ns", "missing")
+        self.assertEqual(
+            self.bus._registries["ns"],
+            {"real": "v"},
+        )

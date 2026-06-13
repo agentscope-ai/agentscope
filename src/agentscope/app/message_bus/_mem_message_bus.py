@@ -68,13 +68,16 @@ class MemMessageBus(MessageBus):
     # ==================================================================
 
     async def aclose(self) -> None:
-        """Release resources — clear all stored data."""
-        self._queues.clear()
-        self._logs.clear()
-        self._log_counters.clear()
-        self._channels.clear()
-        self._locks.clear()
-        self._registries.clear()
+        """Release transport resources — a true no-op for the in-memory bus.
+
+        Mirrors :meth:`RedisMessageBus.aclose`, which only closes the
+        connection pool and leaves Redis-side data intact. There are no
+        connections to release here, so the in-memory state stays
+        attached to this instance and is reclaimed naturally when the
+        instance is garbage-collected. Callers that genuinely need to
+        wipe state should drop their reference to the bus and create a
+        new one.
+        """
 
     # ==================================================================
     # Mode A — drain queue
@@ -142,7 +145,9 @@ class MemMessageBus(MessageBus):
         self._log_counters[key] = entry_id + 1
         self._logs[key].append((entry_id, payload))
         if max_len is not None:
-            if len(self._logs[key]) > max_len:
+            if max_len <= 0:
+                self._logs[key] = []
+            elif len(self._logs[key]) > max_len:
                 self._logs[key] = self._logs[key][-max_len:]
         return str(entry_id)
 
@@ -245,6 +250,15 @@ class MemMessageBus(MessageBus):
         The ``ttl_secs`` parameter is accepted for interface parity but
         the lock has no expiry — it is released only when the context
         manager exits.
+
+        The :class:`asyncio.Lock` instance for each ``key`` is cached
+        permanently in :attr:`_locks` so that all coroutines waiting on
+        the same key share the same underlying primitive. Removing
+        entries here would race with pending waiters and let two
+        coroutines hold "the lock" simultaneously after the entry is
+        recreated. The dict is bounded by the set of distinct keys
+        (typically session ids), which is small enough to live for the
+        lifetime of the process.
         """
         if key not in self._locks:
             self._locks[key] = asyncio.Lock()
@@ -273,9 +287,6 @@ class MemMessageBus(MessageBus):
                     await hb_task
                 except asyncio.CancelledError:
                     pass
-        # Clean up lock dict entry if no one is waiting.
-        if not lock.locked():
-            _ = self._locks.pop(key, None)
 
     async def is_locked(self, key: str) -> bool:
         """Return whether ``key`` is currently locked."""
@@ -304,8 +315,11 @@ class MemMessageBus(MessageBus):
     async def registry_del(self, namespace: str, field: str) -> None:
         """Remove ``field`` from the registry at ``namespace``."""
         reg = self._registries.get(namespace)
-        if reg is not None:
-            _ = reg.pop(field, None)
+        if reg is None:
+            return
+        _ = reg.pop(field, None)
+        if not reg:
+            _ = self._registries.pop(namespace, None)
 
     async def registry_exists(self, namespace: str, field: str) -> bool:
         """Return whether ``field`` exists in the registry."""
