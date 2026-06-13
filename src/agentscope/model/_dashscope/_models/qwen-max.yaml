@@ -1,0 +1,16 @@
+name: qwen-max
+label: Qwen Max
+status: active
+
+input_types:
+  - text/plain
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 32768
+output_size: 8192
+
+parameter_overrides:
+  max_tokens: {"maximum": 8192}
