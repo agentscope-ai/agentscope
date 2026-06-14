@@ -11,8 +11,6 @@ import uuid
 from datetime import datetime
 from typing import Any, Callable
 
-from json_repair import repair_json
-
 from .._logging import logger
 from ..exception import ToolJSONDecodeError
 
@@ -62,6 +60,8 @@ def _json_loads_with_repair(
             A dictionary parsed from the JSON string after repair attempts.
             Returns an empty dict if all repair attempts fail.
     """
+    from json_repair import repair_json
+
     try:
         # Loads directly
         res = json.loads(json_str)
