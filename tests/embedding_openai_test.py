@@ -104,6 +104,37 @@ class OpenAIEmbeddingCallTest(IsolatedAsyncioTestCase):
                 "source": "api",
             },
         )
+        mock_client.embeddings.create.assert_awaited_once_with(
+            input=["hello", "world"],
+            model="text-embedding-3-small",
+            encoding_format="float",
+            dimensions=2,
+        )
+
+    @patch("openai.AsyncClient")
+    async def test_default_parameters_omit_dimensions(
+        self,
+        mock_client_cls: Any,
+    ) -> None:
+        """Default parameters should not override provider dimensions."""
+        mock_client = MagicMock()
+        mock_client.embeddings.create = AsyncMock(
+            return_value=_make_response([[0.1, 0.2]], 2),
+        )
+        mock_client_cls.return_value = mock_client
+
+        model = OpenAIEmbeddingModel(
+            credential=OpenAICredential(api_key="k"),
+            model="Qwen3-Embedding-0.6B",
+        )
+        result = await model(["hello"])
+
+        self.assertEqual(result["embeddings"], [[0.1, 0.2]])
+        mock_client.embeddings.create.assert_awaited_once_with(
+            input=["hello"],
+            model="Qwen3-Embedding-0.6B",
+            encoding_format="float",
+        )
 
     @patch("openai.AsyncClient")
     async def test_multi_batch(self, mock_client_cls: Any) -> None:

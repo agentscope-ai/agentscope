@@ -69,7 +69,7 @@ class EmbeddingModelBase(Generic[InputT]):
     model: str
     """The embedding model name."""
 
-    dimensions: int
+    dimensions: int | None
     """The dimensions of the embedding vector.
 
     Shortcut for ``self.parameters.dimensions``, set during ``__init__``.
