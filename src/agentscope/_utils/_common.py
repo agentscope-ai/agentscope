@@ -89,6 +89,14 @@ def _parse_streaming_json_dict(
 
     repaired_input = _json_loads_with_repair(json_str)
     last_input = last_input or {}
+
+    # If repair failed to produce a non-empty dict but we had good
+    # accumulated state from previous chunks, keep it rather than regress.
+    if not repaired_input and last_input:
+        return last_input
+
+    # Prevent regression: if the current repair would lose more content
+    # than the previously accumulated input, keep the old state.
     if len(json.dumps(last_input)) > len(json.dumps(repaired_input)):
         return last_input
     return repaired_input
