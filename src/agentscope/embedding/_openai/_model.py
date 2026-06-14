@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Type
 
+from pydantic import Field
+
 from .._embedding_response import EmbeddingResponse
 from .._embedding_usage import EmbeddingUsage
 from .._cache_base import EmbeddingCacheBase
@@ -24,6 +26,16 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str]):
     #: the constraint is on total tokens.  We use a conservative
     #: default that works well in practice.
     _TEXT_BATCH_SIZE: int = 2048
+
+    class Parameters(EmbeddingModelBase.Parameters):
+        """Parameters for OpenAI and OpenAI-compatible embedding models."""
+
+        dimensions: int | None = Field(
+            default=None,
+            title="Dimensions",
+            description="The output embedding vector dimensions.",
+            gt=0,
+        )
 
     def __init__(
         self,
@@ -114,10 +126,11 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str]):
         api_kwargs: dict[str, Any] = {
             "input": inputs,
             "model": self.model,
-            "dimensions": self.dimensions,
             "encoding_format": "float",
             **kwargs,
         }
+        if self.dimensions is not None:
+            api_kwargs["dimensions"] = self.dimensions
 
         if self.embedding_cache:
             cached = await self.embedding_cache.retrieve(
