@@ -78,7 +78,6 @@ class AGUIProtocolMiddleware(ProtocolMiddlewareBase):
             ReasoningMessageContentEvent as AGUIReasoningMessageContentEvent,
             ReasoningMessageEndEvent as AGUIReasoningMessageEndEvent,
             ReasoningMessageStartEvent as AGUIReasoningMessageStartEvent,
-            RunErrorEvent as AGUIRunErrorEvent,
             RunFinishedEvent as AGUIRunFinishedEvent,
             RunStartedEvent as AGUIRunStartedEvent,
             StepFinishedEvent as AGUIStepFinishedEvent,
@@ -105,9 +104,9 @@ class AGUIProtocolMiddleware(ProtocolMiddlewareBase):
             )
 
         if isinstance(event, ExceedMaxItersEvent):
-            return AGUIRunErrorEvent(
-                message=(f"Agent '{event.name}' exceeded max iterations"),
-                code="exceed_max_iters",
+            return AGUICustomEvent(
+                name="exceed_max_iters",
+                value=event.model_dump(exclude_none=True),
             )
 
         if isinstance(event, ModelCallStartEvent):

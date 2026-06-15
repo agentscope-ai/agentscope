@@ -1,23 +1,25 @@
 # -*- coding: utf-8 -*-
 """The basic test of the agent class."""
+from copy import deepcopy
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString, MockModel
 
-from agentscope.agent import Agent
+from agentscope.agent import Agent, ReActConfig
 from agentscope.model import ChatResponse
 from agentscope.tool import (
     ToolBase,
     Toolkit,
     ToolChunk,
+    ToolChoice,
 )
 from agentscope.permission import (
     PermissionDecision,
     PermissionBehavior,
     PermissionContext,
 )
-from agentscope.message import TextBlock, ToolCallBlock, UserMsg
+from agentscope.message import HintBlock, TextBlock, ToolCallBlock, UserMsg
 
 
 class MockSequentialTool(ToolBase):
@@ -522,6 +524,145 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         ]
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
         self.assertListEqual(context_dicts, expected_context_after_reply)
+
+    async def test_max_iters_finalizes_with_text_only_model_turn(self) -> None:
+        """Test max_iters finalization uses a text-only model turn."""
+
+        received_calls: list[dict] = []
+
+        class TrackingModel(MockModel):
+            """Model that records prepared inputs for each call."""
+
+            async def _call_api(
+                self,
+                *args: Any,
+                **kwargs: Any,
+            ) -> ChatResponse:
+                received_calls.append(
+                    {
+                        "messages": deepcopy(kwargs.get("messages")),
+                        "tools": kwargs.get("tools"),
+                        "tool_choice": kwargs.get("tool_choice"),
+                    },
+                )
+                return await super()._call_api(*args, **kwargs)
+
+        model = TrackingModel()
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="tool_call_1",
+                            name="mock_sequential_tool",
+                            input='{"input": "first step"}',
+                        ),
+                    ],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[
+                        TextBlock(
+                            text="Maximum iterations reached. Completed the "
+                            "first step and recommend continuing next.",
+                        ),
+                    ],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are a helpful assistant.",
+            model=model,
+            toolkit=Toolkit(tools=[MockSequentialTool()]),
+            react_config=ReActConfig(max_iters=1),
+        )
+
+        msg = await agent.reply(UserMsg(name="user", content="Keep working"))
+
+        final_text = msg.get_text_content()
+        self.assertEqual(model.cnt, 2)
+        self.assertIn("Maximum iterations reached", final_text)
+        self.assertNotIn(
+            "Executed maximum iterations of reasoning-acting loop",
+            final_text,
+        )
+
+        final_call = received_calls[-1]
+        self.assertIsInstance(final_call["tool_choice"], ToolChoice)
+        self.assertEqual(final_call["tool_choice"].mode, "none")
+        final_message_blocks = final_call["messages"][-1].get_content_blocks()
+        self.assertGreater(len(final_message_blocks), 1)
+        final_hint_blocks = final_call["messages"][-1].get_content_blocks(
+            "hint",
+        )
+        self.assertEqual(len(final_hint_blocks), 1)
+        self.assertIsInstance(final_hint_blocks[0], HintBlock)
+        self.assertEqual(final_hint_blocks[0].source, "max_iters")
+        self.assertIn(
+            "reasoning-acting iterations",
+            final_hint_blocks[0].hint.lower(),
+        )
+        self.assertTrue(
+            any(
+                block.source == "max_iters"
+                for msg_in_context in agent.state.context
+                for block in msg_in_context.content
+                if isinstance(block, HintBlock)
+            ),
+        )
+
+    async def test_max_iters_finalization_streams_as_completed_reply(
+        self,
+    ) -> None:
+        """Test max_iters finalization streams text without an error event."""
+
+        model = MockModel()
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="tool_call_1",
+                            name="mock_sequential_tool",
+                            input='{"input": "first step"}',
+                        ),
+                    ],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[
+                        TextBlock(text="Maximum iterations reached. Summary."),
+                    ],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are a helpful assistant.",
+            model=model,
+            toolkit=Toolkit(tools=[MockSequentialTool()]),
+            react_config=ReActConfig(max_iters=1),
+        )
+
+        events = [
+            event.model_dump(mode="json")
+            async for event in agent.reply_stream(
+                UserMsg(name="user", content="Keep working"),
+            )
+        ]
+
+        event_types = [event["type"] for event in events]
+        self.assertIn("EXCEED_MAX_ITERS", event_types)
+        self.assertEqual(event_types[-1], "REPLY_END")
+        self.assertIn(
+            "Maximum iterations reached. Summary.",
+            [event.get("delta") for event in events],
+        )
 
     async def test_streaming_sequential_tool_calls(self) -> None:
         """Test the streaming model inference with tool calls generated.
