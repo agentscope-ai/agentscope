@@ -9,6 +9,7 @@ from ._dashscope import (
     DashScopeRealtimeTTSModel,
     DashScopeCosyVoiceRealtimeTTSModel,
 )
+from ._gemini import GeminiTTSModel
 
 __all__ = [
     "TTSModelBase",
@@ -18,4 +19,5 @@ __all__ = [
     "DashScopeTTSModel",
     "DashScopeRealtimeTTSModel",
     "DashScopeCosyVoiceRealtimeTTSModel",
+    "GeminiTTSModel",
 ]
