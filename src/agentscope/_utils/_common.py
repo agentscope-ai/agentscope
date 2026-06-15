@@ -11,9 +11,6 @@ import uuid
 from datetime import datetime
 from typing import Any, Callable
 
-import requests
-from json_repair import repair_json
-
 from .._logging import logger
 from ..exception import ToolJSONDecodeError
 
@@ -101,6 +98,8 @@ def _json_loads_with_repair(
 
     try:
         # Try to repair with json_repair
+        from json_repair import repair_json
+
         repaired = repair_json(json_str, stream_stable=True, schema=schema)
         res = json.loads(repaired)
         if isinstance(res, dict):
@@ -203,6 +202,8 @@ def _get_bytes_from_web_url(
         max_retries (`int`, defaults to `3`):
             The maximum number of retries.
     """
+    import requests
+
     for _ in range(max_retries):
         try:
             response = requests.get(url)
