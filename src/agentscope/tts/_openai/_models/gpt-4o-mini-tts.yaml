@@ -1,0 +1,30 @@
+name: gpt-4o-mini-tts
+label: GPT-4o Mini TTS
+status: active
+
+input_types:
+  - text/plain
+
+output_types:
+  - audio/mpeg
+  - audio/opus
+  - audio/aac
+  - audio/flac
+  - audio/wav
+  - audio/pcm
+
+voices:
+  # Source: https://platform.openai.com/docs/guides/text-to-speech
+  - alloy
+  - ash
+  - ballad
+  - coral
+  - echo
+  - fable
+  - onyx
+  - nova
+  - sage
+  - shimmer
+  - verse
+
+parameter_overrides: {}
