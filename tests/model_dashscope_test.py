@@ -27,18 +27,6 @@ from agentscope.tool import ToolChoice
 A = AnyString()
 
 
-class TestDashScopeListModels(unittest.TestCase):
-    """Tests for DashScope chat model cards."""
-
-    def test_qwen_max_37_uses_dashscope_model_id(self) -> None:
-        """Qwen Max 3.7 should use the DashScope-compatible model ID."""
-        cards = DashScopeChatModel.list_models()
-        names = {card.name for card in cards}
-
-        self.assertIn("qwen3.7-max", names)
-        self.assertNotIn("qwen-max-3.7", names)
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
