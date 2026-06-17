@@ -56,7 +56,7 @@ if TYPE_CHECKING:
 
 
 # ----------------------------------------------------------------------
-# Sync→async bridge
+# Sync → async bridge
 # ----------------------------------------------------------------------
 
 
@@ -95,8 +95,8 @@ class AgentScopeLLM(LLMBase):
     """mem0 ``LLMBase`` backed by an AgentScope ``ChatModelBase``.
 
     Pass your AgentScope model into ``config["model"]``; mem0's memory
-    extraction calls then route through it. Both streaming and non-
-    streaming AgentScope models are accepted (streaming responses are
+    extraction calls then route through it. Both streaming and
+    non-streaming AgentScope models are accepted (streaming responses are
     drained and the final chunk is used).
     """
 
@@ -104,6 +104,7 @@ class AgentScopeLLM(LLMBase):
         self,
         config: BaseLlmConfig | dict | None = None,
     ) -> None:
+        """Initialize the AgentScope LLM for mem0."""
         super().__init__(config)
         if self.config.model is None:
             raise ValueError(
@@ -205,7 +206,7 @@ def _parse_chat_response(
             thinking_parts.append(f"[Thinking: {block.thinking or ''}]")
         elif block_type == "tool_call":
             # AgentScope 2.0 stores tool args as a JSON string; mem0
-            # expects an arguments dict.
+            # expects an arguments' dict.
             raw_input = block.input or "{}"
             try:
                 arguments = json.loads(raw_input)

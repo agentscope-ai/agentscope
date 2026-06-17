@@ -85,7 +85,7 @@ tools = [
 # v3 phased pipeline in `_add_to_vector_store`. Running on mem0 1.x
 # wouldn't crash but the 2-tier add fallback degenerates into a
 # wasted LLM call.
-mem0 = ["mem0ai>=2.0.0,<3.0.0"]
+mem0 = ["mem0ai>=2.0.0"]
 # ------------ Full ------------
 full = [
     "agentscope[models]",

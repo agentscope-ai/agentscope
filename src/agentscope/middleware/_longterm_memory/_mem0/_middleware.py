@@ -427,7 +427,7 @@ class Mem0Middleware(MiddlewareBase):
         ``client=`` takes absolute precedence — if given, the other
         three (``chat_model`` / ``embedding_model`` / ``mem0_config``)
         are ignored (a warning is logged so the mismatch is not
-        invisible). Otherwise the rest are combined by
+        invisible). Otherwise, the rest are combined by
         :func:`build_mem0_config` into an ``AsyncMemory``.
         """
         if client is not None:
@@ -675,7 +675,7 @@ class Mem0Middleware(MiddlewareBase):
         """Persist a completed user/assistant exchange to mem0.
 
         When ``await_write`` is enabled, the add call is awaited inline so
-        errors can be logged before reply cleanup completes. Otherwise the
+        errors can be logged before reply cleanup completes. Otherwise, to
         write is scheduled as a background task and failures are logged there.
 
         Args:
