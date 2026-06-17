@@ -22,6 +22,20 @@ class AnyString(str):
         return "<AnyString>"
 
 
+class AnyValue:
+    """A helper class for asserting any value (str, int, float, etc.)
+    in unit tests.  Useful for dynamic fields like timestamps, tokens,
+    or durations where the exact value is unpredictable."""
+
+    def __eq__(self, other: object) -> bool:
+        """Override equality check to match any value."""
+        return True
+
+    def __repr__(self) -> str:
+        """Return a string representation for debugging purposes."""
+        return "<AnyValue>"
+
+
 class MockCredential(CredentialBase):
     """The mock credential class."""
 

@@ -4,6 +4,9 @@
 
 Tests cover both non-streaming and streaming modes.
 """
+import base64
+import io
+import wave
 from typing import Any
 import unittest
 from unittest import IsolatedAsyncioTestCase
@@ -11,7 +14,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from utils import AnyString
 
-from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
+from agentscope.message import (
+    TextBlock,
+    ToolCallBlock,
+    ThinkingBlock,
+    DataBlock,
+)
 from agentscope.model import DashScopeChatModel
 from agentscope.credential import DashScopeCredential
 from agentscope.tool import ToolChoice
@@ -78,6 +86,7 @@ def _make_stream_chunk(
     delta_text: str | None = None,
     delta_reasoning: str | None = None,
     tool_calls: list | None = None,
+    delta_audio: dict | None = None,
     response_id: str = "req-1",
     usage: dict | None = None,
     has_choices: bool = True,
@@ -99,7 +108,7 @@ def _make_stream_chunk(
         delta.content = delta_text
         delta.reasoning_content = delta_reasoning
         delta.tool_calls = tool_calls
-        delta.audio = None
+        delta.audio = delta_audio
         choice = MagicMock()
         choice.delta = delta
         chunk.choices = [choice]
@@ -410,6 +419,78 @@ class TestDashScopeStream(IsolatedAsyncioTestCase):
         )
         self.assertEqual(responses[-1].usage.input_tokens, 50)
         self.assertEqual(responses[-1].usage.output_tokens, 10)
+
+    @patch("openai.AsyncClient")
+    async def test_stream_audio_response(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Stream PCM deltas produce per-chunk DataBlocks (first chunk
+        prefixed with a streaming WAV header) sharing a stable id, plus a
+        final fixed-size WAV block readable by the ``wave`` module."""
+        pcm1 = bytes([1, 2, 3, 4])
+        pcm2 = bytes([5, 6, 7, 8])
+        pcm3 = bytes([9, 10, 11, 12])
+        pcm_full = pcm1 + pcm2 + pcm3
+
+        chunks = [
+            _make_stream_chunk(
+                delta_audio={"data": base64.b64encode(pcm1).decode()},
+            ),
+            _make_stream_chunk(
+                delta_audio={"data": base64.b64encode(pcm2).decode()},
+            ),
+            _make_stream_chunk(
+                delta_audio={"data": base64.b64encode(pcm3).decode()},
+            ),
+            _make_stream_chunk(
+                has_choices=False,
+                usage={"prompt_tokens": 5, "completion_tokens": 3},
+            ),
+        ]
+        mock_create = AsyncMock(return_value=_MockAsyncStream(chunks))
+        mock_client_cls.return_value.chat.completions.create = mock_create
+
+        gen = await self.model([])
+        responses = [r async for r in gen]
+        self.assertEqual(len(responses), 4)
+
+        # All four chunks (3 deltas + 1 final) must share the same audio
+        # block id so downstream consumers stitch them as one stream.
+        all_audio_ids = {
+            block.id
+            for r in responses
+            for block in r.content
+            if isinstance(block, DataBlock)
+        }
+        self.assertEqual(len(all_audio_ids), 1)
+
+        # First delta: WAV header (44 bytes, "RIFF"..."WAVE") + pcm1.
+        first_payload = base64.b64decode(responses[0].content[0].source.data)
+        self.assertEqual(len(first_payload), 44 + len(pcm1))
+        self.assertEqual(first_payload[:4], b"RIFF")
+        self.assertEqual(first_payload[8:12], b"WAVE")
+        self.assertEqual(first_payload[44:], pcm1)
+
+        # Subsequent deltas: raw PCM only, no header.
+        for resp, pcm in zip(responses[1:3], [pcm2, pcm3]):
+            payload = base64.b64decode(resp.content[0].source.data)
+            self.assertEqual(payload, pcm)
+
+        # Final ``is_last`` block: a fixed-size WAV the ``wave`` module
+        # can parse end-to-end at 24kHz / mono / 16-bit.
+        final = responses[-1]
+        self.assertTrue(final.is_last)
+        final_audio = next(
+            b for b in final.content if isinstance(b, DataBlock)
+        )
+        wav_bytes = base64.b64decode(final_audio.source.data)
+        with wave.open(io.BytesIO(wav_bytes), "rb") as wav:
+            self.assertEqual(wav.getnchannels(), 1)
+            self.assertEqual(wav.getsampwidth(), 2)
+            self.assertEqual(wav.getframerate(), 24000)
+            frames = wav.readframes(wav.getnframes())
+        self.assertEqual(frames, pcm_full)
 
 
 # ---------------------------------------------------------------------------

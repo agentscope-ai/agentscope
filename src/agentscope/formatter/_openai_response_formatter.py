@@ -38,7 +38,6 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
     def _format_response_data_block(
         self,
         block: DataBlock,
-        role: str = "user",
     ) -> dict[str, Any] | None:
         """Format a DataBlock into the Response API format.
 
@@ -53,8 +52,6 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
         Args:
             block (`DataBlock`):
                 The DataBlock to format.
-            role (`str`, defaults to ``"user"``):
-                The role of the message that contains this block.
 
         Returns:
             `dict[str, Any] | None`:
@@ -75,7 +72,7 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
             )
             return None
 
-        base_result = self._format_openai_data_block(block, role)
+        base_result = self._format_openai_data_block(block)
         if base_result is None:
             return None
 
@@ -103,6 +100,7 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
       echoed back verbatim as required by reasoning models (e.g. ``o1``).
     """
 
+    # pylint: disable=too-many-branches
     async def format(
         self,
         msgs: list[Msg],
@@ -133,10 +131,7 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                     )
 
                 elif isinstance(block, DataBlock):
-                    formatted = self._format_response_data_block(
-                        block,
-                        role=msg.role,
-                    )
+                    formatted = self._format_response_data_block(block)
                     if formatted is not None:
                         content_parts.append(formatted)
 
@@ -161,17 +156,40 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                         )
                         content_parts = []
 
-                    items.append(
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "input_text",
-                                    "text": block.hint,
-                                },
-                            ],
-                        },
-                    )
+                    if isinstance(block.hint, str):
+                        items.append(
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "input_text",
+                                        "text": block.hint,
+                                    },
+                                ],
+                            },
+                        )
+                    else:
+                        hint_parts: list[dict] = []
+                        for sub in block.hint:
+                            if isinstance(sub, TextBlock):
+                                hint_parts.append(
+                                    {
+                                        "type": "input_text",
+                                        "text": sub.text,
+                                    },
+                                )
+                            elif isinstance(sub, DataBlock):
+                                formatted_sub = (
+                                    self._format_response_data_block(
+                                        sub,
+                                    )
+                                )
+                                if formatted_sub is not None:
+                                    hint_parts.append(formatted_sub)
+                        if hint_parts:
+                            items.append(
+                                {"role": "user", "content": hint_parts},
+                            )
 
                 elif isinstance(block, ThinkingBlock):
                     # When reasoning_item_id is present the block originated
@@ -277,7 +295,6 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                             elif isinstance(item, DataBlock):
                                 fmt_item = self._format_response_data_block(
                                     item,
-                                    role="user",
                                 )
                                 if fmt_item is not None:
                                     promo_content.append(fmt_item)
@@ -427,10 +444,7 @@ class OpenAIResponseMultiAgentFormatter(_OpenAIResponseFormatterBase):
                 if isinstance(block, TextBlock):
                     accumulated_text.append(f"{msg.name}: {block.text}")
                 elif isinstance(block, DataBlock):
-                    formatted = self._format_response_data_block(
-                        block,
-                        role=msg.role,
-                    )
+                    formatted = self._format_response_data_block(block)
                     if formatted is not None:
                         media_blocks.append(formatted)
 

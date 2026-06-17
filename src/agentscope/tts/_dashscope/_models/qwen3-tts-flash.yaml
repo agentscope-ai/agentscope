@@ -1,0 +1,18 @@
+name: qwen3-tts-flash
+label: Qwen3-TTS-Flash
+status: active
+
+input_types:
+  - text/plain
+
+output_types:
+  - audio/wav
+
+voices:
+  # Source: https://help.aliyun.com/zh/model-studio/qwen-tts-voice-list
+  - Cherry
+  - Serena
+  - Ethan
+  - Chelsie
+
+parameter_overrides: {}

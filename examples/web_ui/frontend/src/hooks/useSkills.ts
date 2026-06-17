@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 
-import { skillApi } from '../api';
+import { workspaceApi } from '../api';
 import type { Skill } from '../api';
 
 /**
@@ -23,7 +23,7 @@ export function useSkills(agentId: string | null, sessionId: string | null) {
 		setLoading(true);
 		setError(null);
 		try {
-			setSkills(await skillApi.list(agentId, sessionId));
+			setSkills(await workspaceApi.skill.list(agentId, sessionId));
 		} catch (e) {
 			setError(e as Error);
 		} finally {
@@ -39,7 +39,7 @@ export function useSkills(agentId: string | null, sessionId: string | null) {
 	const add = useCallback(
 		async (skillPath: string) => {
 			if (!agentId || !sessionId) throw new Error('No agent/session selected');
-			await skillApi.add(agentId, sessionId, { skill_path: skillPath });
+			await workspaceApi.skill.add(agentId, sessionId, { skill_path: skillPath });
 			await refetch();
 		},
 		[agentId, sessionId, refetch],
@@ -49,7 +49,7 @@ export function useSkills(agentId: string | null, sessionId: string | null) {
 	const remove = useCallback(
 		async (skillName: string) => {
 			if (!agentId || !sessionId) throw new Error('No agent/session selected');
-			await skillApi.remove(skillName, agentId, sessionId);
+			await workspaceApi.skill.remove(skillName, agentId, sessionId);
 			await refetch();
 		},
 		[agentId, sessionId, refetch],

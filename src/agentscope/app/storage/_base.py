@@ -12,6 +12,7 @@ from ._model import (
     SessionRecord,
     SessionConfig,
     SessionSource,
+    TeamRecord,
 )
 from ...credential import CredentialBase
 from ...message import Msg
@@ -199,6 +200,31 @@ class StorageBase(ABC):
 
         Returns:
             `SessionRecord`: The created or updated record.
+        """
+
+    @abstractmethod
+    async def set_session_team_id(
+        self,
+        user_id: str,
+        session_id: str,
+        team_id: str | None,
+    ) -> None:
+        """Set or clear ``team_id`` on an existing session record.
+
+        Bypasses :meth:`upsert_session` because that method does not
+        write ``team_id``. Used by team operations (create/dissolve/
+        leave) to keep the leader/worker → team relationship consistent.
+        Idempotent: a no-op if the session does not exist or already
+        holds the given value.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            session_id (`str`):
+                The session whose ``team_id`` should be updated.
+            team_id (`str | None`):
+                The new value. ``None`` detaches the session from any
+                team.
         """
 
     @abstractmethod
@@ -422,4 +448,80 @@ class StorageBase(ABC):
 
         Returns:
             `list[Msg]`: Messages in chronological order.
+        """
+
+    # ------------------------------------------------------------------
+    # Team persistence
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    async def upsert_team(
+        self,
+        user_id: str,
+        record: TeamRecord,
+    ) -> TeamRecord:
+        """Create or update a team record.
+
+        Args:
+            user_id (`str`): The owner user id.
+            record (`TeamRecord`): The team record to persist. The record's
+                ``id`` is used as the primary key; if a record with the same
+                id already exists it is overwritten.
+
+        Returns:
+            `TeamRecord`: The stored record (with ``updated_at`` refreshed).
+        """
+
+    @abstractmethod
+    async def get_team(
+        self,
+        user_id: str,
+        team_id: str,
+    ) -> TeamRecord | None:
+        """Fetch a single team record by id.
+
+        Args:
+            user_id (`str`): The owner user id.
+            team_id (`str`): The team id.
+
+        Returns:
+            `TeamRecord | None`: The record, or ``None`` if not found.
+        """
+
+    @abstractmethod
+    async def list_teams(self, user_id: str) -> list[TeamRecord]:
+        """List all teams owned by a given user.
+
+        Args:
+            user_id (`str`): The user id.
+
+        Returns:
+            `list[TeamRecord]`: All team records belonging to the user.
+        """
+
+    @abstractmethod
+    async def delete_team(self, user_id: str, team_id: str) -> bool:
+        """Delete a team record and cascade-delete all of its workers.
+
+        The cascade mirrors SQL's ``ON DELETE CASCADE`` semantics:
+
+        1. For each ``member_id`` in :attr:`TeamData.member_ids`, call
+           :meth:`delete_agent` (which cascades that worker's session).
+        2. Clear ``team_id`` on the leader session referenced by
+           :attr:`TeamRecord.session_id` (``ON DELETE SET NULL`` for the
+           leader's back-reference to the team). Idempotent if the
+           session has already been deleted.
+        3. Delete the :class:`TeamRecord` key and the per-user team
+           index entry.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            team_id (`str`):
+                The id of the team to delete.
+
+        Returns:
+            `bool`:
+                ``True`` if the team record existed and was deleted,
+                ``False`` if not found.
         """

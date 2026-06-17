@@ -1,24 +1,24 @@
 # -*- coding: utf-8 -*-
 """The cron scheduler manager class."""
+import json
 from collections.abc import Callable, Coroutine
-from typing import TYPE_CHECKING
 
+from typing import Self
 
-from ....message import UserMsg
+from ....message import HintBlock
+from ....permission import PermissionContext
+from ....state import AgentState
 from ....tool import ToolBase
 from ...._logging import logger
-from ._tools import ScheduleCreate, ScheduleList, ScheduleStop, ScheduleView
+from ._tools import ScheduleCreate, ScheduleDelete, ScheduleList, ScheduleView
+from ...message_bus import MessageBus
 from ...storage import (
     StorageBase,
     ScheduleRecord,
     ChatModelConfig,
+    SessionConfig,
+    SessionSource,
 )
-from .._background_task_manager import BackgroundTaskManager
-from .._session_manager import SessionManager
-from .._workspace_manager import WorkspaceManagerBase
-
-if TYPE_CHECKING:
-    from ..._types import AgentMiddlewareFactory, AgentToolFactory
 
 
 class SchedulerManager:
@@ -26,64 +26,63 @@ class SchedulerManager:
     lifecycle within the agent service.
 
     The manager owns both the in-memory APScheduler instance and the trigger
-    logic that runs agents on schedule.  Inject it with ``storage`` and
-    ``session_manager`` so it can build self-contained trigger coroutines
-    without external callbacks.
+    logic that fires scheduled tasks. Triggers do not call ``ChatService``
+    directly; instead they push a :class:`HintBlock` to the target session's
+    inbox and enqueue a wakeup, so that the application-wide
+    :class:`WakeupDispatcher` (running on any process) picks up the work.
+    This keeps the scheduler decoupled from ``ChatService`` and makes the
+    fire path consistent with team / background-tool result delivery.
     """
 
     def __init__(
         self,
         storage: StorageBase,
-        session_manager: SessionManager,
-        background_task_manager: BackgroundTaskManager,
-        workspace_manager: WorkspaceManagerBase,
-        extra_agent_middlewares: "AgentMiddlewareFactory | None" = None,
-        extra_agent_tools: "AgentToolFactory | None" = None,
+        message_bus: MessageBus,
     ) -> None:
         """Initialize the scheduler manager.
 
         Args:
             storage (`StorageBase`):
-                The storage backend used for persistence and session creation.
-            session_manager (`SessionManager`):
-                The session manager used when running agent chat sessions.
-            background_task_manager (`BackgroundTaskManager`):
-                The background task manager passed through to
-                :class:`ChatService` so triggered agents can offload
-                long-running tools.
-            workspace_manager (`WorkspaceManagerBase`):
-                The workspace manager passed through to :class:`ChatService`
-                so triggered agents get the configured toolkit and MCPs.
-            extra_agent_middlewares (`AgentMiddlewareFactory | None`, \
-optional):
-                Async factory passed through to :class:`ChatService` to
-                produce extra agent middlewares per scheduled trigger.
-            extra_agent_tools (`AgentToolFactory | None`, optional):
-                Async factory passed through to :class:`ChatService` to
-                produce extra agent tools per scheduled trigger.
+                The storage backend used for persistence and session
+                creation.
+            message_bus (`MessageBus`):
+                The application message bus. Each scheduled fire pushes
+                a :class:`HintBlock` to the target session's inbox and
+                enqueues a wakeup via this bus.
         """
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
         self._storage = storage
-        self._session_manager = session_manager
-        self._background_task_manager = background_task_manager
-        self._workspace_manager = workspace_manager
-        self._extra_agent_middlewares = extra_agent_middlewares
-        self._extra_agent_tools = extra_agent_tools
+        self._message_bus = message_bus
         self._scheduler = AsyncIOScheduler()
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
-    async def start(self) -> None:
-        """Start the underlying APScheduler."""
+    async def __aenter__(self) -> Self:
+        """Start APScheduler and re-register persisted schedules.
+
+        Reading all schedules from storage and restoring them is the
+        only thing a caller would ever do right after starting this
+        manager, so the work lives inside the context entry — the
+        lifespan does not need to remember to call :meth:`restore`.
+
+        Returns:
+            `Self`: This manager instance.
+        """
         logger.info("SchedulerManager starting APScheduler")
         self._scheduler.start()
         logger.info("SchedulerManager APScheduler started")
 
-    async def shutdown(self) -> None:
-        """Shut down the underlying APScheduler."""
+        records = await self._storage.list_all_schedules()
+        if records:
+            await self.restore(records)
+
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        """Shut down the underlying APScheduler on context exit."""
         logger.info("SchedulerManager shutting down APScheduler")
         self._scheduler.shutdown()
         logger.info("SchedulerManager APScheduler shut down")
@@ -117,16 +116,10 @@ optional):
             `Callable[[], Coroutine]`:
                 A zero-argument async callable suitable for APScheduler.
         """
-        # Collect closure-friendly references to avoid re-looking them up
-        # on every fire.  ChatService is imported lazily inside the closure to
-        # break the circular dependency:
-        #   _manager._scheduler → _service._chat → _manager
+        # Closure-friendly references so APScheduler doesn't have to
+        # re-look these up on every fire.
         storage = self._storage
-        session_manager = self._session_manager
-        background_task_manager = self._background_task_manager
-        workspace_manager = self._workspace_manager
-        extra_agent_middlewares = self._extra_agent_middlewares
-        extra_agent_tools = self._extra_agent_tools
+        message_bus = self._message_bus
 
         async def _trigger() -> None:
             logger.info(
@@ -142,17 +135,6 @@ optional):
                     record.data.name,
                 )
                 return
-
-            # Lazy import to break circular dependency
-            from ..._service._chat import ChatService  # noqa: PLC0415
-            from ....permission._context import (
-                PermissionContext,
-            )  # noqa: PLC0415
-            from ....state import AgentState  # noqa: PLC0415
-            from ...storage._model._session import (  # noqa: PLC0415
-                SessionConfig,
-                SessionSource,
-            )
 
             try:
                 if record.data.stateful:
@@ -226,36 +208,42 @@ optional):
 
                 logger.info(
                     "[Schedule:%s(%s)] Session ready: %s, "
-                    "starting chat execution",
+                    "delivering prompt via inbox + wakeup",
                     record.id,
                     record.data.name,
                     session.id,
                 )
 
-                input_msg = UserMsg(
-                    name=record.user_id,
-                    content=record.data.description,
+                # Wrap the schedule prompt in an XML tag so the LLM
+                # recognises it as a system-driven trigger rather than
+                # a regular user turn — same shape as team / system
+                # notification hints.
+                hint = HintBlock(
+                    hint=(
+                        f"<scheduled-task>\n"
+                        f"{record.data.description}\n"
+                        f"</scheduled-task>"
+                    ),
+                    source=json.dumps(
+                        {
+                            "label": "schedule",
+                            "sublabel": record.data.name,
+                        },
+                        ensure_ascii=False,
+                    ),
                 )
-
-                chat_service = ChatService(
-                    storage=storage,
-                    session_manager=session_manager,
-                    background_task_manager=background_task_manager,
-                    workspace_manager=workspace_manager,
-                    extra_agent_middlewares=extra_agent_middlewares,
-                    extra_agent_tools=extra_agent_tools,
+                await message_bus.inbox_push(
+                    session.id,
+                    hint.model_dump(mode="json"),
                 )
-                async for _ in chat_service.stream_chat(
+                await message_bus.enqueue_wakeup(
                     user_id=record.user_id,
                     session_id=session.id,
                     agent_id=record.agent_id,
-                    input_msg=input_msg,
-                ):
-                    pass
+                )
 
                 logger.info(
-                    "[Schedule:%s(%s)] Chat execution completed "
-                    "for session %s",
+                    "[Schedule:%s(%s)] Wakeup enqueued for session %s",
                     record.id,
                     record.data.name,
                     session.id,
@@ -300,12 +288,30 @@ optional):
             record.data.timezone,
         )
 
+        # ``CronTrigger.from_crontab`` is a thin helper that only forwards
+        # the 5 parsed fields and ``timezone`` — it has no parameter for
+        # ``start_date`` / ``end_date``.  Parse the expression ourselves so
+        # the configured activation window is honoured.
+        fields = record.data.cron_expression.split()
+        if len(fields) != 5:
+            raise ValueError(
+                "Expected a 5-field cron expression, got "
+                f"{record.data.cron_expression!r}",
+            )
+        minute, hour, day, month, day_of_week = fields
+
         trigger = self._build_trigger(record)
         job = self._scheduler.add_job(
             trigger,
-            trigger=CronTrigger.from_crontab(
-                record.data.cron_expression,
+            trigger=CronTrigger(
+                minute=minute,
+                hour=hour,
+                day=day,
+                month=month,
+                day_of_week=day_of_week,
                 timezone=record.data.timezone,
+                start_date=record.data.started_at,
+                end_date=record.data.ended_at,
             ),
             id=record.id,
             name=record.data.name,
@@ -394,7 +400,7 @@ optional):
         Returns:
             `list[ToolBase]`:
                 The four schedule tools: :class:`ScheduleCreate`,
-                :class:`ScheduleView`, :class:`ScheduleStop`, and
+                :class:`ScheduleView`, :class:`ScheduleDelete`, and
                 :class:`ScheduleList`.
         """
         return [
@@ -410,10 +416,11 @@ optional):
                 scheduler=self._scheduler,
                 storage=self._storage,
             ),
-            ScheduleStop(
+            ScheduleDelete(
                 user_id=user_id,
                 scheduler=self._scheduler,
                 storage=self._storage,
+                message_bus=self._message_bus,
             ),
             ScheduleList(
                 user_id=user_id,

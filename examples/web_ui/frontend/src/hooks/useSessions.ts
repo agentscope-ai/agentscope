@@ -1,16 +1,22 @@
 import { useState, useEffect, useCallback } from 'react';
 
 import { sessionApi } from '../api';
-import type { SessionRecord, CreateSessionRequest, UpdateSessionRequest } from '../api';
+import type { SessionView, CreateSessionRequest, UpdateSessionRequest } from '../api';
 
 /**
- * Manages sessions for a given agent.
- * Clears and re-fetches whenever agentId changes.
+ * Manages session views for a given agent.
+ *
+ * Each entry is a `SessionView` (record + is_running + optional team
+ * detail) — the same shape the backend returns. The hook clears and
+ * re-fetches whenever agentId changes.
  *
  * @param agentId - The agent whose sessions to load. Pass null to skip fetching.
+ * @returns Object with the loaded `sessions` array plus `loading` /
+ *   `error` flags and `refetch` / `create` / `update` / `remove`
+ *   helpers that all keep the local list in sync.
  */
 export function useSessions(agentId: string | null) {
-	const [sessions, setSessions] = useState<SessionRecord[]>([]);
+	const [sessions, setSessions] = useState<SessionView[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<Error | null>(null);
 

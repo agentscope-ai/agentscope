@@ -2,8 +2,8 @@
 """Credential router — CRUD endpoints for API key credentials."""
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from .._deps import get_current_user_id, get_storage
-from .._schema import (
+from ..deps import get_current_user_id, get_storage
+from ._schema import (
     CreateCredentialRequest,
     CreateCredentialResponse,
     ListCredentialsResponse,

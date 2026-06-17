@@ -33,8 +33,18 @@
 		"switchToZh": "切换为中文",
 		"switchToEn": "Switch to English",
 		"success": "Success",
+		"team": "Team",
+		"leader": "Leader",
+		"worker": "Worker",
 		"time": "Time",
-		"yes": "Yes"
+		"yes": "Yes",
+		"deleteTitle": "Delete {{entity}} \"{{name}}\"?",
+		"deleteDescription": "This action cannot be undone."
+	},
+	"error": {
+		"description": "The page hit an unexpected error. You can retry or go back home.",
+		"retry": "Retry",
+		"home": "Back to home"
 	},
 	"tool": {
 		"moreLines": "... {{count}} more lines",
@@ -47,6 +57,12 @@
 		},
 		"glob": {
 			"name": "Glob"
+		},
+		"taskCreate": {
+			"name": "TaskCreate",
+			"label": "Create",
+			"count_one": "{{count}} task",
+			"count_other": "{{count}} tasks"
 		},
 		"grep": {
 			"name": "Grep"
@@ -65,7 +81,15 @@
 	},
 	"messageBubble": {
 		"thinking": "Thinking",
-		"running": "Running..."
+		"audioGenerating": "Generating audio…",
+		"playAudio": "Play audio",
+		"pauseAudio": "Pause audio",
+		"running": "Running...",
+		"hintSource": {
+			"tool_output": "Tool Output",
+			"team_message": "Team Message",
+			"schedule": "Schedule"
+		}
 	},
 	"chat": {
 		"inputPlaceholder": "Type a message...",
@@ -90,6 +114,7 @@
 	},
 	"dialog-agent-create": {
 		"title": "Create agent",
+		"description": "Define a new agent's identity and behaviour.",
 		"trigger": "Create agent"
 	},
 	"agent-form": {
@@ -116,22 +141,22 @@
 		}
 	},
 	"dialog-agent-edit": {
-		"title": "Edit agent"
+		"title": "Edit agent",
+		"description": "Update this agent's configuration."
 	},
 	"dialog-agent-delete": {
-		"title": "Delete agent",
-		"description": "This action cannot be undone.",
+		"entity": "agent",
 		"confirm": "Delete"
 	},
 	"dialog-session-delete": {
-		"title": "Delete session",
-		"description": "This action cannot be undone."
+		"entity": "session",
+		"confirm": "Delete"
 	},
 	"dialog-session-rename": {
 		"title": "Rename session",
+		"description": "Give this session a new name.",
 		"label": "Name",
-		"placeholder": "Session name",
-		"confirm": "Rename"
+		"placeholder": "Session name"
 	},
 	"session-menu": {
 		"rename": "Rename",
@@ -139,14 +164,15 @@
 	},
 	"dialog-credential-create": {
 		"title": "Add credential",
+		"description": "Add credentials for a model provider.",
 		"selectType": "Provider",
 		"selectTypePlaceholder": "Select a provider"
 	},
 	"dialog-credential-edit": {
-		"title": "Edit Credential"
+		"title": "Edit Credential",
+		"description": "Update the saved credential for this provider."
 	},
 	"credential": {
-		"addConfig": "Add configuration",
 		"noProviders": "No providers available",
 		"noConfigs": "No configurations",
 		"selectHint": "No credential selected",
@@ -154,14 +180,16 @@
 		"availableModels": "Available Models",
 		"noModels": "No models available",
 		"noModelsDescription": "This provider returned no models.",
-		"deleteTitle": "Delete \"{{name}}\"?",
-		"deleteDescription": "This action cannot be undone. The credential will be permanently removed.",
+		"deleteEntity": "credential",
 		"subtitle": "Model API credential configuration",
+		"configured": "Configured",
+		"addProvider": "Add credential",
 		"reasoning": "Reasoning",
 		"maxContext": "Max. Context",
 		"maxOutput": "Max. Output",
 		"inputTypes": "Input",
-		"outputTypes": "Output"
+		"outputTypes": "Output",
+		"availableTTSModels": "TTS Models"
 	},
 	"llm-select": {
 		"placeholder": "Select a model",
@@ -199,8 +227,15 @@
 		"emptyMcpServers": "No MCP servers found in configuration."
 	},
 	"dialog-mcp-delete": {
-		"title": "Delete MCP server \"{{name}}\"?",
-		"description": "This action cannot be undone."
+		"entity": "MCP server",
+		"skillEntity": "skill",
+		"skillDescription": "Are you sure you want to remove this skill from the workspace?"
+	},
+	"dialog-skill-add": {
+		"title": "Add skill",
+		"description": "Enter the path to a skill directory to add it to the workspace.",
+		"pathLabel": "Skill path",
+		"pathPlaceholder": "/path/to/skill"
 	},
 	"schedule": {
 		"calendar": "Calendar",
@@ -212,9 +247,8 @@
 			"title": "Create Schedule"
 		},
 		"deleteSchedule": {
-			"description": "This action cannot be undone. The scheduled task will be permanently removed.",
-			"successToast": "Schedule deleted successfully.",
-			"title": "Delete Schedule"
+			"entity": "schedule",
+			"successToast": "Schedule deleted successfully."
 		},
 		"endAt": "End Date",
 		"end_at": "End At",
@@ -258,7 +292,12 @@
 		"empty": "No configurable parameters.",
 		"fallbackLabel": "Fallback model",
 		"fallbackLabelWithModel": "Fallback model ({{model}})",
-		"parametersLabel": "Parameters"
+		"parametersLabel": "Parameters",
+		"ttsLabel": "TTS",
+		"ttsEmpty": "No TTS models available.",
+		"ttsParameters": "Parameters",
+		"ttsParametersDescription": "Adjust parameters for the selected TTS model.",
+		"noTts": "No TTS"
 	},
 	"setup": {
 		"title": "Connect to Service",
@@ -297,5 +336,20 @@
 			"title": "Start chatting",
 			"content": "Type a message and press Enter. Paperclip attaches files."
 		}
+	},
+	"task-panel": {
+		"heading": "Tasks",
+		"noTasks": "No tasks yet.",
+		"pending": "Pending",
+		"inProgress": "In Progress",
+		"completed": "Completed",
+		"blockedBy": "blocked by"
+	},
+	"team-sidebar": {
+		"membersHeading": "Members",
+		"noMembers": "No members yet — ask the leader to spawn one with AgentCreate.",
+		"running": "Running",
+		"idle": "Idle",
+		"missingSession": "(no session)"
 	}
 }

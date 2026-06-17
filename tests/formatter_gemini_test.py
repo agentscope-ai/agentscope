@@ -675,3 +675,44 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+    async def test_chat_formatter_hint_block_multimodal(self) -> None:
+        """Multimodal HintBlock becomes a single user message with text +
+        image."""
+        fmt = GeminiChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    HintBlock(
+                        hint=[
+                            TextBlock(text="Inspect this screenshot:"),
+                            DataBlock(
+                                source=Base64Source(
+                                    data=self.image_b64,
+                                    media_type="image/png",
+                                ),
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": "Inspect this screenshot:"},
+                        {
+                            "inline_data": {
+                                "data": self.image_b64,
+                                "mime_type": "image/png",
+                            },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )

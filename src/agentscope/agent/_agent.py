@@ -83,7 +83,7 @@ from ..permission import (
     PermissionEngine,
     PermissionDecision,
 )
-from ..workspace import Offloader
+from ..workspace import Offloader, WorkspaceBase
 
 if TYPE_CHECKING:
     from ..middleware import MiddlewareBase
@@ -180,6 +180,9 @@ class Agent:
         self._system_prompt_middlewares = [
             _ for _ in middlewares if _.is_implemented("on_system_prompt")
         ]
+        self._compress_context_middlewares = [
+            _ for _ in middlewares if _.is_implemented("on_compress_context")
+        ]
 
     # =======================================================================
     # Agent public methods
@@ -254,6 +257,47 @@ class Agent:
         await self._handle_incoming_messages(msgs)
 
     async def compress_context(
+        self,
+        context_config: ContextConfig | None = None,
+    ) -> None:
+        """Compress the agent's context if the token count exceeds the
+        threshold.
+
+        Args:
+            context_config (`ContextConfig | None`, optional):
+                If provided, compress the context with the given context
+                config. Otherwise, use the default context config in the
+                agent.
+        """
+        if not self._compress_context_middlewares:
+            await self._compress_context_impl(context_config=context_config)
+        else:
+
+            async def execute_chain(
+                index: int = 0,
+                context_config: ContextConfig | None = context_config,
+            ) -> None:
+                """Execute the compress_context middleware chain."""
+                if index >= len(self._compress_context_middlewares):
+                    await self._compress_context_impl(
+                        context_config=context_config,
+                    )
+                else:
+                    mw = self._compress_context_middlewares[index]
+                    input_kwargs = {"context_config": context_config}
+
+                    async def next_handler(**kwargs: Any) -> None:
+                        await execute_chain(index + 1, **kwargs)
+
+                    await mw.on_compress_context(
+                        agent=self,
+                        input_kwargs=input_kwargs,
+                        next_handler=next_handler,
+                    )
+
+            await execute_chain()
+
+    async def _compress_context_impl(
         self,
         context_config: ContextConfig | None = None,
     ) -> None:
@@ -435,6 +479,8 @@ class Agent:
                 f"\n<system-reminder>The compressed context is offloaded to "
                 f"'{path}', you can refer to it when needed.</system-reminder>"
             )
+
+        await self._clear_unreserved_read_cache(msgs_to_reserve)
 
         # Update the context
         self.state.context = msgs_to_reserve
@@ -630,6 +676,20 @@ class Agent:
             reply_id=self.state.reply_id,
             name=self.name,
         )
+        logger.warning(
+            "Agent %s exceeds the max iteration numbers %d. "
+            "Stop the react loop.",
+            self.name,
+            self.react_config.max_iters,
+        )
+
+        # Mirror the normal-exit path so subscribers (e.g. SSE clients
+        # waiting on a terminal event) don't hang when the loop bails
+        # out on max_iters.
+        yield ReplyEndEvent(
+            session_id=self.state.session_id,
+            reply_id=self.state.reply_id,
+        )
 
         yield AssistantMsg(
             id=self.state.reply_id,
@@ -730,7 +790,12 @@ class Agent:
             **kwargs,
         )
 
-        block_ids: dict = {"text": None, "thinking": None, "tools": []}
+        block_ids: dict = {
+            "text": None,
+            "thinking": None,
+            "tools": [],
+            "data": [],
+        }
         completed_response: ChatResponse | None = None
 
         # Check if res is an async generator (streaming response)
@@ -771,6 +836,11 @@ class Agent:
             yield ToolCallEndEvent(
                 reply_id=self.state.reply_id,
                 tool_call_id=tool_call_id,
+            )
+        for data_block_id in block_ids["data"]:
+            yield DataBlockEndEvent(
+                reply_id=self.state.reply_id,
+                block_id=data_block_id,
             )
 
         # Send the model call ended event with usage if available
@@ -1730,6 +1800,32 @@ class Agent:
 
         return msgs_to_compress, msgs_to_reserve
 
+    async def _clear_unreserved_read_cache(
+        self,
+        msgs_to_reserve: list[Msg],
+    ) -> None:
+        """Clean Read caches not referenced by reserved Read tool calls."""
+        reserved_paths: set[str] = set()
+        for msg in msgs_to_reserve:
+            for block in msg.get_content_blocks("tool_call"):
+                if not (
+                    isinstance(block, ToolCallBlock) and block.name == "Read"
+                ):
+                    continue
+
+                try:
+                    tool_input = _json_loads_with_repair(block.input)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    continue
+
+                file_path = tool_input.get("file_path")
+                if isinstance(file_path, str):
+                    reserved_paths.add(file_path)
+
+        await self.state.tool_context.clean_file_cache(
+            reserved_file_paths=reserved_paths,
+        )
+
     async def _split_tool_result_for_compression(
         self,
         tool_result: ToolResultBlock,
@@ -1886,9 +1982,17 @@ class Agent:
         prompt = [self._system_prompt]
 
         # Skill related instructions
-        skill_instructions = await self.toolkit.get_skill_instructions()
+        skill_instructions = await self.toolkit.get_skill_instructions(
+            self.state.tool_context.activated_groups,
+        )
         if skill_instructions:
             prompt.append(skill_instructions)
+
+        # Workspace & offloader instructions
+        if isinstance(self.offloader, WorkspaceBase):
+            offload_instructions = await self.offloader.get_instructions()
+            if offload_instructions:
+                prompt.append(offload_instructions)
 
         result = "\n".join(prompt)
 
@@ -2103,12 +2207,29 @@ class Agent:
             else None
         )
 
+        # Assistant-produced audio (e.g. qwen-omni speaking aloud) is delivered
+        # to the user via streaming events; the raw bytes don't belong in
+        # conversation memory. Filtering here keeps every downstream walker
+        # (formatter, count_tokens, persistence) honest without each having
+        # to remember.
+        persisted_blocks = [
+            b
+            for b in blocks
+            if not (
+                isinstance(b, DataBlock)
+                and isinstance(b.source, (Base64Source, URLSource))
+                and b.source.media_type.startswith("audio/")
+            )
+        ]
+        if not persisted_blocks and msg_usage is None:
+            return
+
         if len(self.state.context) == 0:
             self.state.context.append(
                 AssistantMsg(
                     id=self.state.reply_id,
                     name=self.name,
-                    content=list(blocks),
+                    content=persisted_blocks,
                     usage=msg_usage,
                 ),
             )
@@ -2117,7 +2238,7 @@ class Agent:
             if last_msg.role == "assistant" and last_msg.name == self.name:
                 if isinstance(last_msg.content, str):
                     last_msg.content = [TextBlock(text=last_msg.content)]
-                last_msg.content.extend(blocks)
+                last_msg.content.extend(persisted_blocks)
                 if msg_usage is not None:
                     if last_msg.usage is None:
                         last_msg.usage = msg_usage
@@ -2129,7 +2250,7 @@ class Agent:
                     AssistantMsg(
                         id=self.state.reply_id,
                         name=self.name,
-                        content=list(blocks),
+                        content=persisted_blocks,
                         usage=msg_usage,
                     ),
                 )
@@ -2290,6 +2411,7 @@ class Agent:
 
         # Classify the content blocks into different types
         text_blocks, thinking_blocks, tool_call_blocks = [], [], []
+        data_blocks: list = []
         for block in chunk.content:
             if isinstance(block, TextBlock):
                 text_blocks.append(block)
@@ -2297,8 +2419,17 @@ class Agent:
                 thinking_blocks.append(block)
             elif isinstance(block, ToolCallBlock):
                 tool_call_blocks.append(block)
+            elif isinstance(block, DataBlock):
+                data_blocks.append(block)
 
-        # Handle the text blocks
+        # Handle the text blocks. We only auto-close the open text block
+        # when the current chunk has neither text NOR data — a chunk that
+        # carries only data (e.g. an omni-style audio PCM delta arriving
+        # between two text deltas) must keep the text stream alive so the
+        # frontend doesn't fragment one logical text stream into many
+        # separate bubbles. A chunk with tool calls (and no text/data)
+        # still closes text, which preserves text → tool → text render
+        # order via distinct text blocks.
         if text_blocks:
             # If the current chunk has text blocks but no text block id,
             # start with a start event
@@ -2315,14 +2446,15 @@ class Agent:
                 delta="".join([_.text for _ in text_blocks]),
             )
 
-        elif block_ids.get("text"):
+        elif block_ids.get("text") and not data_blocks:
             yield TextBlockEndEvent(
                 reply_id=self.state.reply_id,
                 block_id=block_ids["text"],
             )
             block_ids["text"] = None
 
-        # Handle the thinking blocks
+        # Same reasoning as the text block above — keep the thinking
+        # stream open across data-only chunks.
         if thinking_blocks:
             # Generate a new thinking block id and start event
             if not block_ids.get("thinking"):
@@ -2338,7 +2470,7 @@ class Agent:
                 delta="".join([_.thinking for _ in thinking_blocks]),
             )
 
-        elif block_ids.get("thinking"):
+        elif block_ids.get("thinking") and not data_blocks:
             yield ThinkingBlockEndEvent(
                 reply_id=self.state.reply_id,
                 block_id=block_ids["thinking"],
@@ -2372,6 +2504,29 @@ class Agent:
                 tool_call_id=finished_id,
             )
             block_ids["tools"].remove(finished_id)
+
+        # Handle the data blocks (streaming binary content, e.g. omni audio).
+        # Each DataBlock chunk from the model carries a delta payload with a
+        # stable block id; we open a stream the first time we see an id and
+        # emit delta events for subsequent chunks with the same id.
+        for data_block in data_blocks:
+            if not isinstance(data_block.source, Base64Source):
+                # Only Base64Source carries inline delta bytes; URLSource is
+                # one-shot and not part of the streaming protocol.
+                continue
+            if data_block.id not in block_ids["data"]:
+                block_ids["data"].append(data_block.id)
+                yield DataBlockStartEvent(
+                    reply_id=self.state.reply_id,
+                    block_id=data_block.id,
+                    media_type=data_block.source.media_type,
+                )
+            yield DataBlockDeltaEvent(
+                reply_id=self.state.reply_id,
+                block_id=data_block.id,
+                data=data_block.source.data,
+                media_type=data_block.source.media_type,
+            )
 
     async def _convert_tool_chunk_to_event(
         self,

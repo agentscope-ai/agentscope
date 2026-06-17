@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """Adapters to convert functions and MCP tools to ToolProtocol."""
 import inspect
+import json
+import re
 from contextlib import _AsyncGeneratorContextManager
 from datetime import timedelta
-from typing import Callable, Any, AsyncGenerator
+from typing import Callable, Any, AsyncGenerator, Generator
 
 from mcp import ClientSession
 import mcp
@@ -32,7 +34,7 @@ class FunctionTool(ToolBase):
     This class wraps a regular Python function and makes it compatible with
     the ToolProtocol interface. It automatically extracts metadata from the
     function's signature and docstring, and normalizes the return value to
-    AsyncGenerator[ToolChunk, None].
+    ToolChunk or AsyncGenerator[ToolChunk, None].
     """
 
     is_external_tool: bool = False
@@ -115,7 +117,47 @@ class FunctionTool(ToolBase):
         else:
             result = self._func(**kwargs)
 
-        return result
+        if isinstance(result, AsyncGenerator):
+
+            async def _stream() -> AsyncGenerator[ToolChunk, None]:
+                async for chunk in result:
+                    if isinstance(chunk, ToolChunk):
+                        yield chunk
+                    else:
+                        yield self._convert_func_result_to_chunk(chunk)
+
+            return _stream()
+
+        if isinstance(result, Generator):
+
+            async def _stream() -> AsyncGenerator[ToolChunk, None]:
+                for chunk in result:
+                    if isinstance(chunk, ToolChunk):
+                        yield chunk
+                    else:
+                        yield self._convert_func_result_to_chunk(chunk)
+
+            return _stream()
+
+        return self._convert_func_result_to_chunk(result)
+
+    @staticmethod
+    def _convert_func_result_to_chunk(
+        result: Any,
+    ) -> ToolChunk:
+        if isinstance(result, ToolChunk):
+            return result
+        if isinstance(result, str):
+            text = result
+        else:
+            try:
+                text = json.dumps(result, ensure_ascii=False)
+            except (TypeError, ValueError):
+                text = str(result)
+        return ToolChunk(
+            content=[TextBlock(text=text)],
+            state=ToolResultState.RUNNING,
+        )
 
 
 class MCPTool(ToolBase):
@@ -158,7 +200,22 @@ class MCPTool(ToolBase):
                 The timeout in seconds for tool execution.
         """
         self.mcp_name = mcp_name
-        self.name = f"mcp__{self.mcp_name}__{tool.name}"
+
+        # LLM providers enforce ^[a-zA-Z0-9_-]+$ on tool names.
+        # mcp_name is validated in MCPClient.model_post_init;
+        # tool.name comes from the MCP server and may contain dots,
+        # colons, etc. — replace illegal chars with "x" (not "_")
+        # to avoid collisions with the "__" separator.
+        # self._tool.name retains the original for server-side calls.
+        sanitized_tool = re.sub(r"[^a-zA-Z0-9_-]", "x", tool.name)
+        self.name = f"mcp__{mcp_name}__{sanitized_tool}"
+        if sanitized_tool != tool.name:
+            logger.debug(
+                "MCP tool name sanitized: '%s' -> '%s'.",
+                tool.name,
+                self.name,
+            )
+
         self.description = tool.description or ""
 
         # Preserve the full inputSchema (including $defs, anyOf, oneOf, etc.)

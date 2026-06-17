@@ -208,8 +208,11 @@ export function ScheduleDetailDrawer({
 			<DeleteDialog
 				open={openDeleteDialog}
 				onOpenChange={setOpenDeleteDialog}
-				title={t('schedule.deleteSchedule.title')}
-				description={t('schedule.deleteSchedule.description')}
+				title={t('common.deleteTitle', {
+					entity: t('schedule.deleteSchedule.entity'),
+					name: data.name,
+				})}
+				description={t('common.deleteDescription')}
 				onConfirm={handleDelete}
 			/>
 		</>

@@ -209,8 +209,11 @@ export function WorkspaceDrawer({
 			<DeleteDialog
 				open={deleteOpen}
 				onOpenChange={setDeleteOpen}
-				title={t('dialog-mcp-delete.title', { name: deleteTarget ?? '' })}
-				description={t('dialog-mcp-delete.description')}
+				title={t('common.deleteTitle', {
+					entity: t('dialog-mcp-delete.entity'),
+					name: deleteTarget ?? '',
+				})}
+				description={t('common.deleteDescription')}
 				onConfirm={async () => {
 					if (deleteTarget) await onRemove(deleteTarget);
 				}}
@@ -218,8 +221,11 @@ export function WorkspaceDrawer({
 			<DeleteDialog
 				open={skillDeleteOpen}
 				onOpenChange={setSkillDeleteOpen}
-				title={`Remove skill "${skillDeleteTarget ?? ''}"`}
-				description="Are you sure you want to remove this skill from the workspace?"
+				title={t('common.deleteTitle', {
+					entity: t('dialog-mcp-delete.skillEntity'),
+					name: skillDeleteTarget ?? '',
+				})}
+				description={t('dialog-mcp-delete.skillDescription')}
 				onConfirm={async () => {
 					if (skillDeleteTarget) await onRemoveSkill(skillDeleteTarget);
 				}}

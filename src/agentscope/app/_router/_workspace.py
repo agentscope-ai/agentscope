@@ -3,12 +3,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from .._deps import (
+from ..deps import (
     get_current_user_id,
     get_storage,
     get_workspace_manager,
 )
-from .._manager import WorkspaceManagerBase
+from ..workspace_manager import WorkspaceManagerBase
 from ..storage import StorageBase
 from ...mcp import MCPClient
 from ...skill import Skill

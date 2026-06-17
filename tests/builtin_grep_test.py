@@ -4,6 +4,7 @@ import os
 import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
 
+from agentscope.message import ToolResultState
 from agentscope.tool import Grep
 from agentscope.permission import (
     PermissionContext,
@@ -86,7 +87,7 @@ class GrepToolTest(IsolatedAsyncioTestCase):
             output_mode="files_with_matches",
         )
 
-        self.assertEqual(chunk.state, "running")
+        self.assertEqual(chunk.state, ToolResultState.SUCCESS)
 
         content = chunk.content[0].text
         # Should find files containing "Hello"

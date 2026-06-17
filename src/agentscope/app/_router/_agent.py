@@ -5,14 +5,15 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from ...agent import ContextConfig, ReActConfig
-from .._deps import get_current_user_id, get_storage
-from .._schema import (
+from ..deps import get_current_user_id, get_session_service, get_storage
+from ._schema import (
     AgentSchemaResponse,
     ListAgentsResponse,
     CreateAgentRequest,
     CreateAgentResponse,
     UpdateAgentRequest,
 )
+from .._service import SessionService
 from ..storage import StorageBase, AgentData, AgentRecord
 
 agent_router = APIRouter(
@@ -188,20 +189,24 @@ async def update_agent(
 async def delete_agent(
     agent_id: str,
     user_id: str = Depends(get_current_user_id),
-    storage: StorageBase = Depends(get_storage),
+    session_service: SessionService = Depends(get_session_service),
 ) -> None:
     """Permanently delete an agent configuration.
+
+    Cascades through every session owned by this agent (and, for team
+    leaders, through every worker session) — cancelling any in-flight
+    chat run, removing storage records, and purging bus state.
 
     Args:
         agent_id (`str`): The agent to delete.
         user_id (`str`): Injected authenticated user ID.
-        storage (`StorageBase`): Injected storage backend.
+        session_service (`SessionService`): Injected session service.
 
     Raises:
         `HTTPException`: 404 if the agent does not exist or does not belong
             to the authenticated user.
     """
-    deleted = await storage.delete_agent(user_id, agent_id)
+    deleted = await session_service.delete_agent(user_id, agent_id)
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

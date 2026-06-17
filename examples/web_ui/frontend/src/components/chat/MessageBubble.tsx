@@ -1,14 +1,40 @@
-import type { ContentBlock, Msg, ToolCallBlock } from '@agentscope-ai/agentscope/message';
-import { ArrowDown, ArrowUp, CheckCircle, Copy, Loader2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import type {
+	ContentBlock,
+	DataBlock,
+	Msg,
+	TextBlock,
+	ToolCallBlock,
+} from '@agentscope-ai/agentscope/message';
+import {
+	ArrowDown,
+	ArrowUp,
+	Bot,
+	CalendarClock,
+	CheckCircle,
+	ChevronDownIcon,
+	CirclePlay,
+	Copy,
+	Loader2,
+	MessageSquareQuote,
+	Wrench,
+} from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import { ConfirmCard } from './ConfirmCard';
+import { FileAttachment } from './FileAttachment';
 import { renderToolGroup } from './tool-renderers';
 import type { TFunction, ToolCallWithResult } from './tool-renderers/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+	Collapsible,
+	CollapsibleContent,
+	CollapsibleTrigger,
+} from '@/components/ui/collapsible.tsx';
+import { Item, ItemContent } from '@/components/ui/item.tsx';
+import { useAudioBlock, useReplayController } from '@/context/AudioContext';
 import { useTranslation } from '@/i18n/useI18n';
 import { formatNumber, formatTime } from '@/utils/common';
 
@@ -22,12 +48,46 @@ interface ToolCallGroupBlock {
 type ExtendedContentBlock = ContentBlock | ToolCallGroupBlock;
 
 /**
- * Group consecutive tool_call blocks of the same name into a single
- * `tool_call_group`. tool_result blocks are matched by id back onto the
- * call inside the current group. Any non-tool block (or a tool_call with
- * a different name) flushes the current group.
+ * Group tool_call blocks of the same name into a single
+ * `tool_call_group`, with each call paired to its matching
+ * tool_result by id.
+ *
+ * Unlike the previous implementation this does NOT require calls of
+ * the same name to be consecutive. When the agent issues multiple
+ * concurrent tool calls (e.g. Glob + Grep), the content layout is
+ * `[call_Glob, call_Grep, result_Glob, result_Grep]` — the old
+ * "consecutive-same-name" approach would split call and result into
+ * separate groups. This version collects all calls first (preserving
+ * encounter order), then matches results, and finally emits groups
+ * in the order the first call of each tool name appeared,
+ * interleaved with non-tool blocks at their original positions.
  */
 function groupToolCalls(content: ContentBlock[]): ExtendedContentBlock[] {
+	// Pass 1: pair calls ↔ results by id, track non-tool blocks.
+	const callMap = new Map<string, ToolCallWithResult>();
+	const resultMap = new Map<string, ContentBlock>();
+	const ordering: Array<{ type: 'tool'; id: string } | { type: 'other'; block: ContentBlock }> =
+		[];
+
+	for (const block of content) {
+		if (block.type === 'tool_call') {
+			const entry: ToolCallWithResult = { call: block };
+			callMap.set(block.id, entry);
+			ordering.push({ type: 'tool', id: block.id });
+		} else if (block.type === 'tool_result') {
+			const matching = callMap.get(block.id);
+			if (matching) {
+				matching.result = block;
+			} else {
+				resultMap.set(block.id, block);
+			}
+		} else {
+			ordering.push({ type: 'other', block });
+		}
+	}
+
+	// Pass 2: walk the ordering, group consecutive same-name calls
+	// (now that results are already attached).
 	const result: ExtendedContentBlock[] = [];
 	let currentGroup: ToolCallWithResult[] = [];
 	let currentToolName: string | null = null;
@@ -45,42 +105,197 @@ function groupToolCalls(content: ContentBlock[]): ExtendedContentBlock[] {
 		}
 	};
 
-	for (const block of content) {
-		if (block.type === 'tool_call') {
-			if (currentToolName !== null && currentToolName !== block.name) {
-				flush();
-			}
-			currentToolName = block.name;
-			currentGroup.push({ call: block });
-		} else if (block.type === 'tool_result') {
-			const matchingCall = currentGroup.find((item) => item.call.id === block.id);
-			if (matchingCall) {
-				matchingCall.result = block;
-			} else {
-				// No matching call in the current group — emit a synthetic group
-				// so the result still renders. Should not happen in practice.
-				flush();
-				currentToolName = block.name;
-				currentGroup.push({
-					call: {
-						type: 'tool_call',
-						id: block.id,
-						name: block.name,
-						input: '',
-						state: 'finished',
-					},
-					result: block,
-				});
-				flush();
-			}
-		} else {
+	for (const item of ordering) {
+		if (item.type === 'other') {
 			flush();
-			result.push(block);
+			result.push(item.block);
+		} else {
+			const entry = callMap.get(item.id);
+			if (!entry) continue;
+			if (currentToolName !== null && currentToolName !== entry.call.name) {
+				flush();
+			}
+			currentToolName = entry.call.name;
+			currentGroup.push(entry);
+		}
+	}
+	flush();
+
+	// Orphan results (no matching call) — render as synthetic groups.
+	for (const [id, block] of resultMap) {
+		if (block.type === 'tool_result') {
+			result.push({
+				type: 'tool_call_group',
+				id: crypto.randomUUID(),
+				toolName: block.name,
+				calls: [
+					{
+						call: {
+							type: 'tool_call',
+							id,
+							name: block.name,
+							input: '',
+							state: 'finished' as const,
+						},
+						result: block,
+					},
+				],
+			});
 		}
 	}
 
-	flush();
 	return result;
+}
+
+const AUDIO_WAVE_LINES: Array<{ x: number; y1: number; y2: number }> = [
+	{ x: 2, y1: 10, y2: 13 },
+	{ x: 6, y1: 6, y2: 17 },
+	{ x: 10, y1: 3, y2: 21 },
+	{ x: 14, y1: 8, y2: 15 },
+	{ x: 18, y1: 5, y2: 18 },
+	{ x: 22, y1: 10, y2: 13 },
+];
+
+function AudioWave({ isPlaying = true, className }: { isPlaying?: boolean; className?: string }) {
+	return (
+		<>
+			{isPlaying && (
+				<style>{`
+					@keyframes audioWave {
+						0%, 100% { transform: scaleY(1); }
+						50%      { transform: scaleY(0.3); }
+					}
+				`}</style>
+			)}
+			<svg
+				xmlns="http://www.w3.org/2000/svg"
+				width="24"
+				height="24"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth={2}
+				strokeLinecap="round"
+				strokeLinejoin="round"
+				className={className}
+			>
+				{AUDIO_WAVE_LINES.map(({ x, y1, y2 }, i) => (
+					<line
+						key={x}
+						x1={x}
+						x2={x}
+						y1={y1}
+						y2={y2}
+						style={{
+							transformOrigin: `${x}px 12px`,
+							animation: isPlaying
+								? `audioWave 0.8s ease-in-out ${i * 0.12}s infinite`
+								: 'none',
+						}}
+					/>
+				))}
+			</svg>
+		</>
+	);
+}
+
+/**
+ * Inline audio control rendered *inside* the time/usage Badge so the play
+ * icon visually merges into the same chip rather than floating as its own
+ * pill.
+ */
+function AudioInlineControl({ block }: { block: DataBlock }) {
+	const { t } = useTranslation();
+	const audioState = useAudioBlock(block.id);
+	const replayController = useReplayController();
+	const audioRef = useRef<HTMLAudioElement | null>(null);
+	const [isPlaying, setIsPlaying] = useState(false);
+
+	const isStreaming = audioState?.status === 'streaming';
+
+	// Don't build the giant base64 data URL while bytes are still streaming —
+	// it would re-allocate on every DATA_BLOCK_DELTA. Live playback during
+	// that window is handled by the manager's WavStreamPlayer; we only need
+	// `src` for replay after the stream ends (or for historical messages).
+	let src: string | null = null;
+	if (!isStreaming) {
+		if (audioState?.url) {
+			src = audioState.url;
+		} else if (block.source.type === 'url') {
+			src = block.source.url;
+		} else if (block.source.type === 'base64' && block.source.data) {
+			src = `data:${block.source.media_type};base64,${block.source.data}`;
+		}
+	}
+
+	// Reset the hidden <audio> when the source URL changes (e.g. streaming
+	// just transitioned to a Blob URL). Without an explicit load() some
+	// browsers keep the previous (or empty) source bound to the element.
+	useEffect(() => {
+		const el = audioRef.current;
+		if (!el || !src) return;
+		setIsPlaying(false);
+		el.load();
+	}, [src]);
+
+	// Pause when a newer reply interrupts this block's playback.
+	const interruptCount = audioState?.interruptCount ?? 0;
+	useEffect(() => {
+		if (interruptCount === 0) return;
+		const el = audioRef.current;
+		if (el && !el.paused) {
+			el.pause();
+		}
+	}, [interruptCount]);
+
+	if (isStreaming) {
+		return <AudioWave isPlaying className="ml-1" />;
+	}
+
+	if (!src) return null;
+
+	const toggle = async () => {
+		const el = audioRef.current;
+		if (!el) return;
+		if (el.paused) {
+			replayController?.play(el);
+			try {
+				await el.play();
+			} catch (err) {
+				console.error('Audio playback failed', err);
+			}
+		} else {
+			el.pause();
+			replayController?.stop();
+		}
+	};
+
+	return (
+		<>
+			<button
+				type="button"
+				onClick={toggle}
+				aria-label={
+					isPlaying ? t('messageBubble.pauseAudio') : t('messageBubble.playAudio')
+				}
+				className="ml-1 inline-flex cursor-pointer items-center transition-opacity hover:opacity-70"
+			>
+				{isPlaying ? (
+					<AudioWave isPlaying className="size-3" />
+				) : (
+					<CirclePlay className="size-3" />
+				)}
+			</button>
+			<audio
+				ref={audioRef}
+				src={src}
+				preload="auto"
+				onPlay={() => setIsPlaying(true)}
+				onPause={() => setIsPlaying(false)}
+				onEnded={() => setIsPlaying(false)}
+			/>
+		</>
+	);
 }
 
 /**
@@ -120,7 +335,7 @@ function renderBlock(
 		}
 		case 'text':
 			return (
-				<div key={index} className="prose text-sm w-full min-w-full">
+				<div key={index} className="prose w-full min-w-full">
 					<ReactMarkdown
 						remarkPlugins={[remarkGfm]}
 						components={{
@@ -166,7 +381,7 @@ function renderBlock(
 
 		case 'thinking':
 			return (
-				<details key={index} className="text-xs text-muted-foreground">
+				<details key={index} className="text-muted-foreground">
 					<summary className="cursor-pointer select-none">
 						{t('messageBubble.thinking')}
 					</summary>
@@ -176,22 +391,98 @@ function renderBlock(
 
 		case 'data': {
 			const dataType = block.source.media_type.split('/')[0];
-			let data: string;
-			if (block.source.type === 'url') {
-				data = block.source.url;
-			} else {
-				data = `data:${block.source.media_type};base64,${block.source.data}`;
-			}
+			// Audio data blocks render in the footer (see AudioFooterControl),
+			// not inline alongside text.
+			if (dataType === 'audio') return null;
+			const data =
+				block.source.type === 'url'
+					? block.source.url
+					: `data:${block.source.media_type};base64,${block.source.data}`;
 			switch (dataType) {
 				case 'image':
-					return <img key={index} src={data} alt="Uploaded image" />;
-				case 'audio':
-					return <audio key={index} controls src={data} />;
+					return (
+						<img
+							key={index}
+							src={data}
+							alt={block.name || 'Uploaded image'}
+							className="max-h-80 max-w-full rounded-lg object-contain"
+						/>
+					);
 				case 'video':
-					return <video key={index} controls src={data} />;
+					return (
+						<video
+							key={index}
+							controls
+							src={data}
+							className="max-h-80 max-w-full rounded-lg"
+						/>
+					);
+				default:
+					return (
+						<FileAttachment
+							key={index}
+							name={block.name}
+							href={data}
+							mediaType={block.source.media_type}
+						/>
+					);
 			}
-			return null;
 		}
+
+		case 'hint': {
+			// Parse source: try JSON, fall back to plain string, default to t('common.message').
+			let hintLabel: string;
+			let hintSublabel: string | null = null;
+			let HintIcon = MessageSquareQuote;
+
+			if (block.source) {
+				try {
+					const parsed = JSON.parse(block.source) as {
+						label?: string;
+						sublabel?: string;
+					};
+					hintLabel = parsed.label
+						? t(`messageBubble.hintSource.${parsed.label}`)
+						: block.source;
+					hintSublabel = parsed.sublabel ?? null;
+					if (parsed.label === 'team_message') HintIcon = Bot;
+					else if (parsed.label === 'schedule') HintIcon = CalendarClock;
+					else if (parsed.label === 'tool_output') HintIcon = Wrench;
+				} catch {
+					hintLabel = block.source;
+				}
+			} else {
+				hintLabel = t('common.message');
+			}
+			const items: (TextBlock | DataBlock)[] =
+				typeof block.hint === 'string'
+					? [{ type: 'text', id: `${block.id}-text`, text: block.hint }]
+					: block.hint;
+			return (
+				<Item variant={'outline'} className="max-w-full">
+					<ItemContent className="max-w-full">
+						<Collapsible>
+							<CollapsibleTrigger asChild>
+								<Button className="group w-full max-w-full" variant="ghost">
+									<HintIcon className="size-3.5" />
+									<span className="tracking-tight">{hintLabel}</span>
+									{hintSublabel && (
+										<span className="text-muted-foreground font-normal truncate max-w-[200px]">
+											{hintSublabel}
+										</span>
+									)}
+									<ChevronDownIcon className="ml-auto group-data-[state=open]:rotate-180" />
+								</Button>
+							</CollapsibleTrigger>
+							<CollapsibleContent className="p-2.5 pt-0 max-w-full overflow-hidden break-all text-muted-foreground">
+								{items.map((inner, i) => renderBlock(inner, i, t))}
+							</CollapsibleContent>
+						</Collapsible>
+					</ItemContent>
+				</Item>
+			);
+		}
+
 		default:
 			return null;
 	}
@@ -242,7 +533,15 @@ export function MessageBubble({ message, onUserConfirm }: MessageBubbleProps) {
 	}, [isRunning]);
 
 	const blocks = groupToolCalls(message.content);
-	const showBody = blocks.length > 0;
+	const audioBlocks = message.content.filter(
+		(b): b is DataBlock => b.type === 'data' && b.source.media_type.split('/')[0] === 'audio',
+	);
+	// Audio data blocks are rendered in the footer, so they shouldn't keep an
+	// otherwise-empty body bubble alive.
+	const hasBodyContent = blocks.some(
+		(b) => !(b.type === 'data' && b.source.media_type.split('/')[0] === 'audio'),
+	);
+	const showBody = hasBodyContent;
 	const showFooter = !isUser;
 
 	const startMs = new Date(message.created_at).getTime();
@@ -301,6 +600,9 @@ export function MessageBubble({ message, onUserConfirm }: MessageBubbleProps) {
 								</span>
 							</>
 						)}
+						{audioBlocks.map((block) => (
+							<AudioInlineControl key={block.id} block={block} />
+						))}
 					</Badge>
 				</div>
 			)}

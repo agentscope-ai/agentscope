@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Test cases for PermissionEngine."""
-import os
+"""Test cases for PermissionEngine.
+
+Mode-specific tests live in :mod:`tests.permission_mode_test`. This file
+covers rule priority, rule pattern matching (Bash / file glob), dangerous
+path detection, suggestion generation, Bash read-only command analysis,
+and bypass-immune safety checks.
+"""
 import sys
-import tempfile
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
 
@@ -12,6 +16,7 @@ from agentscope.permission import (
     PermissionContext,
     PermissionRule,
     PermissionBehavior,
+    PermissionDecision,
     AdditionalWorkingDirectory,
 )
 from agentscope.tool import (
@@ -19,6 +24,7 @@ from agentscope.tool import (
     Write,
     Read,
     Edit,
+    ToolBase,
 )
 
 
@@ -126,218 +132,6 @@ class PermissionEngineRulePriorityTest(IsolatedAsyncioTestCase):
         """Clean up test fixtures."""
         self.engine = None
         self.context = None
-
-
-class PermissionEngineModeTest(IsolatedAsyncioTestCase):
-    """Test cases for different permission modes."""
-
-    async def test_bypass_mode(self) -> None:
-        """Test BYPASS mode allows operations without explicit rules."""
-        context = PermissionContext(mode=PermissionMode.BYPASS)
-        engine = PermissionEngine(context)
-
-        # No rules added - should default to ALLOW in BYPASS mode
-        decision = await engine.check_permission(
-            Bash(),
-            {"command": "npm install"},
-        )
-
-        # BYPASS mode should allow by default
-        self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
-
-    async def test_bypass_mode_with_deny_rule(self) -> None:
-        """Test that deny rules still work in BYPASS mode (deny has the
-        highest priority)."""
-        context = PermissionContext(mode=PermissionMode.BYPASS)
-        engine = PermissionEngine(context)
-
-        # Add a deny rule
-        engine.add_rule(
-            PermissionRule(
-                tool_name="Bash",
-                rule_content="rm:*",
-                behavior=PermissionBehavior.DENY,
-                source="test",
-            ),
-        )
-
-        decision = await engine.check_permission(
-            Bash(),
-            {"command": "rm -rf /tmp"},
-        )
-
-        # Deny rules have the highest priority, even in BYPASS mode
-        self.assertEqual(decision.behavior, PermissionBehavior.DENY)
-
-    async def test_bypass_mode_with_dangerous_path(self) -> None:
-        """Test that dangerous paths require confirmation even in
-        BYPASS mode.
-        """
-        context = PermissionContext(mode=PermissionMode.BYPASS)
-        engine = PermissionEngine(context)
-
-        # Try to write to a dangerous file
-        decision = await engine.check_permission(
-            Write(),
-            {"file_path": "/home/user/.bashrc"},
-        )
-
-        # Safety checks are bypass-immune
-        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
-
-    async def test_dont_ask_mode(self) -> None:
-        """Test DONT_ASK mode denies operations that would normally ask."""
-        context = PermissionContext(mode=PermissionMode.DONT_ASK)
-        engine = PermissionEngine(context)
-
-        # No rules added, should default to ASK in DEFAULT mode
-        decision = await engine.check_permission(
-            Bash(),
-            {"command": "npm install"},
-        )
-
-        # DONT_ASK mode should deny instead of ask
-        self.assertEqual(decision.behavior, PermissionBehavior.DENY)
-
-    async def test_accept_edits_mode_within_working_directory(self) -> None:
-        """Test ACCEPT_EDITS mode allows to Write/Read/Edit within working
-        directories."""
-        context = PermissionContext(
-            mode=PermissionMode.ACCEPT_EDITS,
-            working_directories={
-                "/tmp/project": AdditionalWorkingDirectory(
-                    path="/tmp/project",
-                    source="test",
-                ),
-            },
-        )
-        engine = PermissionEngine(context)
-
-        # Write tool within working directory
-        decision = await engine.check_permission(
-            Write(),
-            {"file_path": "/tmp/project/file.txt"},
-        )
-        self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
-
-        # Read tool within working directory
-        decision = await engine.check_permission(
-            Read(),
-            {"file_path": "/tmp/project/file.txt"},
-        )
-        self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
-
-        # Edit tool within working directory
-        decision = await engine.check_permission(
-            Edit(),
-            {"file_path": "/tmp/project/file.txt"},
-        )
-        self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
-
-    @unittest.skipIf(
-        os.name == "nt",
-        "os.symlink typically requires admin privileges on Windows",
-    )
-    async def test_accept_edits_mode_resolves_symlinked_working_directory(
-        self,
-    ) -> None:
-        """ACCEPT_EDITS must recognize a working directory and a file path
-        as equivalent even when one side reaches it through a symlink
-        (e.g. macOS's /tmp -> /private/tmp). Regression for the
-        abspath -> realpath fix in `_path_in_allowed_working_path`.
-        """
-        parent = tempfile.mkdtemp()
-        try:
-            real_dir = os.path.join(parent, "real")
-            os.makedirs(real_dir)
-            link_dir = os.path.join(parent, "link")
-            os.symlink(real_dir, link_dir)
-
-            # Case 1: working_dir given as real path, file accessed via link
-            context = PermissionContext(
-                mode=PermissionMode.ACCEPT_EDITS,
-                working_directories={
-                    real_dir: AdditionalWorkingDirectory(
-                        path=real_dir,
-                        source="test",
-                    ),
-                },
-            )
-            engine = PermissionEngine(context)
-            decision = await engine.check_permission(
-                Write(),
-                {"file_path": os.path.join(link_dir, "file.txt")},
-            )
-            self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
-
-            # Case 2: working_dir given as link path, file accessed via real
-            context = PermissionContext(
-                mode=PermissionMode.ACCEPT_EDITS,
-                working_directories={
-                    link_dir: AdditionalWorkingDirectory(
-                        path=link_dir,
-                        source="test",
-                    ),
-                },
-            )
-            engine = PermissionEngine(context)
-            decision = await engine.check_permission(
-                Edit(),
-                {"file_path": os.path.join(real_dir, "file.txt")},
-            )
-            self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
-        finally:
-            import shutil
-
-            shutil.rmtree(parent, ignore_errors=True)
-
-    async def test_accept_edits_mode_outside_working_directory(self) -> None:
-        """Test ACCEPT_EDITS mode asks for edits outside working
-        directories."""
-        context = PermissionContext(
-            mode=PermissionMode.ACCEPT_EDITS,
-            working_directories={
-                "/tmp/project": AdditionalWorkingDirectory(
-                    path="/tmp/project",
-                    source="test",
-                ),
-            },
-        )
-        engine = PermissionEngine(context)
-
-        # Edit tool outside working directory
-        decision = await engine.check_permission(
-            Edit(),
-            {"file_path": "/home/user/file.txt"},
-        )
-
-        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
-
-    async def test_explore_mode_read_operations(self) -> None:
-        """Test EXPLORE mode allows read operations."""
-        context = PermissionContext(mode=PermissionMode.EXPLORE)
-        engine = PermissionEngine(context)
-
-        # Read operation
-        decision = await engine.check_permission(
-            Read(),
-            {"file_path": "/tmp/file.txt"},
-        )
-
-        self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
-
-    async def test_explore_mode_write_operations(self) -> None:
-        """Test EXPLORE mode denies write operations."""
-        context = PermissionContext(mode=PermissionMode.EXPLORE)
-        engine = PermissionEngine(context)
-
-        # Write operation
-        decision = await engine.check_permission(
-            Write(),
-            {"file_path": "/tmp/file.txt"},
-        )
-
-        self.assertEqual(decision.behavior, PermissionBehavior.DENY)
 
 
 @unittest.skipIf(
@@ -605,21 +399,6 @@ class PermissionEngineDangerousPathTest(IsolatedAsyncioTestCase):
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
         self.assertIn("safety", decision.decision_reason.lower())
 
-    async def test_dangerous_path_bypass_immune(self) -> None:
-        """Test that dangerous paths require confirmation even in
-        BYPASS mode."""
-        context = PermissionContext(mode=PermissionMode.BYPASS)
-        engine = PermissionEngine(context)
-
-        # Try to write a dangerous file in BYPASS mode
-        decision = await engine.check_permission(
-            Write(),
-            {"file_path": "/home/user/.bashrc"},
-        )
-
-        # Safety checks are bypass-immune
-        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
-
     async def test_dangerous_path_in_accept_edits_mode(self) -> None:
         """Test that dangerous paths require confirmation even in
         ACCEPT_EDITS mode."""
@@ -835,29 +614,26 @@ class PermissionEngineReadOnlyTest(IsolatedAsyncioTestCase):
     sys.platform == "win32",
     "Bash tool is not supported on Windows",
 )
-class PermissionEngineSafetyCheckBypassImmuneTest(IsolatedAsyncioTestCase):
-    """Test that all safety checks are bypass-immune (cannot be overridden
-    by BYPASS mode or allow rules)."""
+class PermissionEngineSafetyCheckAllowRuleImmuneTest(
+    IsolatedAsyncioTestCase,
+):
+    """Safety checks are immune to allow rules in DEFAULT mode.
 
-    async def test_injection_check_bypass_immune(self) -> None:
-        """Test that injection detection is bypass-immune."""
-        context = PermissionContext(mode=PermissionMode.BYPASS)
-        engine = PermissionEngine(context)
+    A user-configured allow rule cannot grant permission for an
+    operation that the tool has flagged as a safety concern
+    (``bypass_immune=True``). This guarantees that broad rules like
+    ``Bash:rm:*`` don't accidentally authorize ``rm -rf /``.
 
-        # Command substitution should be blocked even in BYPASS mode
-        decision = await engine.check_permission(
-            Bash(),
-            {"command": "ls $(rm -rf /)"},
-        )
-        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
-        self.assertIn("command_substitution", decision.message)
+    Note: in BYPASS mode the user has explicitly opted out of safety
+    enforcement, so these tools' safety ASKs are NOT honored — that
+    behavior is covered by
+    :class:`tests.permission_mode_test.PermissionEngineBypassModeTest`.
+    """
 
     async def test_injection_check_not_bypassed_by_allow_rule(self) -> None:
-        """Test that allow rules cannot bypass injection detection."""
+        """Allow rule for ``ls:*`` does not authorize ``ls $(rm -rf /)``."""
         context = PermissionContext(mode=PermissionMode.DEFAULT)
         engine = PermissionEngine(context)
-
-        # Add a broad allow rule
         engine.add_rule(
             PermissionRule(
                 tool_name="Bash",
@@ -867,7 +643,6 @@ class PermissionEngineSafetyCheckBypassImmuneTest(IsolatedAsyncioTestCase):
             ),
         )
 
-        # ls $(rm -rf /) should still be blocked despite allow rule for ls:*
         decision = await engine.check_permission(
             Bash(),
             {"command": "ls $(rm -rf /)"},
@@ -875,29 +650,10 @@ class PermissionEngineSafetyCheckBypassImmuneTest(IsolatedAsyncioTestCase):
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
         self.assertIn("command_substitution", decision.message)
 
-    async def test_dangerous_removal_bypass_immune(self) -> None:
-        """Test that dangerous removal path check is bypass-immune."""
-        context = PermissionContext(mode=PermissionMode.BYPASS)
-        engine = PermissionEngine(context)
-
-        decision = await engine.check_permission(
-            Bash(),
-            {"command": "rm -rf /"},
-        )
-        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
-        # Can be blocked by either dangerous command pattern or dangerous
-        # removal path check
-        self.assertTrue(
-            "Dangerous removal operation" in decision.message
-            or "dangerous pattern" in decision.message,
-        )
-
     async def test_dangerous_removal_not_bypassed_by_allow_rule(self) -> None:
-        """Test that allow rules cannot bypass dangerous removal check."""
+        """Allow rule for ``rm:*`` does not authorize ``rm -rf /``."""
         context = PermissionContext(mode=PermissionMode.DEFAULT)
         engine = PermissionEngine(context)
-
-        # Add a broad allow rule for rm
         engine.add_rule(
             PermissionRule(
                 tool_name="Bash",
@@ -907,39 +663,151 @@ class PermissionEngineSafetyCheckBypassImmuneTest(IsolatedAsyncioTestCase):
             ),
         )
 
-        # rm -rf / should still be blocked despite allow rule for rm:*
         decision = await engine.check_permission(
             Bash(),
             {"command": "rm -rf /"},
         )
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
-        # Can be blocked by either dangerous command pattern or dangerous
-        # removal path check
+        # Either dangerous removal path or dangerous command pattern fires
         self.assertTrue(
             "Dangerous removal operation" in decision.message
             or "dangerous pattern" in decision.message,
         )
 
-    async def test_sed_constraint_bypass_immune(self) -> None:
-        """Test that sed constraint check is bypass-immune."""
+
+# ---------------------------------------------------------------------------
+# bypass_immune field mechanism
+# ---------------------------------------------------------------------------
+
+
+class _FakeToolReturningAsk(ToolBase):
+    """Minimal tool used to test the ``bypass_immune`` field mechanism.
+
+    Returns a single configurable ASK decision from ``check_permissions``
+    so we can verify the engine routes bypass-immune vs regular ASKs
+    correctly regardless of the specific safety trigger.
+    """
+
+    name = "FakeAskTool"
+    description = "Test-only tool"
+    input_schema = {"type": "object", "properties": {}}
+    is_concurrency_safe = True
+    is_read_only = False
+    is_external_tool = False
+    is_state_injected = False
+    is_mcp = False
+
+    def __init__(self, bypass_immune: bool) -> None:
+        self._bypass_immune = bypass_immune
+
+    async def check_permissions(
+        self,
+        tool_input: dict,
+        context: PermissionContext,
+    ) -> PermissionDecision:
+        return PermissionDecision(
+            behavior=PermissionBehavior.ASK,
+            message="fake tool requires confirmation",
+            decision_reason="test-only reason without the s-word",
+            bypass_immune=self._bypass_immune,
+        )
+
+
+class PermissionEngineBypassImmuneFieldTest(IsolatedAsyncioTestCase):
+    """Tests for the :attr:`PermissionDecision.bypass_immune` field.
+
+    These tests use a minimal fake tool that returns ASK with a
+    configurable ``bypass_immune`` value — independent of any specific
+    safety trigger — to verify the engine's mechanism for honoring the
+    field. Together with
+    :class:`PermissionEngineSafetyCheckAllowRuleImmuneTest` (which tests
+    that Bash/Write/Edit's individual safety checks correctly set the
+    field), this fully covers the bypass-immune contract.
+    """
+
+    async def test_bypass_immune_ask_not_overridden_by_allow_rule(
+        self,
+    ) -> None:
+        """An ASK with ``bypass_immune=True`` survives a matching allow
+        rule that would otherwise grant the operation."""
+        context = PermissionContext(mode=PermissionMode.DEFAULT)
+        engine = PermissionEngine(context)
+        engine.add_rule(
+            PermissionRule(
+                tool_name="FakeAskTool",
+                rule_content=None,
+                behavior=PermissionBehavior.ALLOW,
+                source="test",
+            ),
+        )
+
+        decision = await engine.check_permission(
+            _FakeToolReturningAsk(bypass_immune=True),
+            {},
+        )
+        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+
+    async def test_non_bypass_immune_ask_overridden_by_allow_rule(
+        self,
+    ) -> None:
+        """A regular ASK (``bypass_immune=False``) yields to a matching
+        allow rule — proving the field, not the ``decision_reason``
+        text, governs immunity."""
+        context = PermissionContext(mode=PermissionMode.DEFAULT)
+        engine = PermissionEngine(context)
+        engine.add_rule(
+            PermissionRule(
+                tool_name="FakeAskTool",
+                rule_content=None,
+                behavior=PermissionBehavior.ALLOW,
+                source="test",
+            ),
+        )
+
+        decision = await engine.check_permission(
+            _FakeToolReturningAsk(bypass_immune=False),
+            {},
+        )
+        self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
+
+    async def test_bypass_mode_ignores_bypass_immune_field(self) -> None:
+        """BYPASS is intentionally permissive: even an ASK with
+        ``bypass_immune=True`` is allowed through. The user has opted
+        out of safety prompts; ``bypass_immune`` only governs allow
+        rules (in DEFAULT) and DONT_ASK conversion.
+        """
         context = PermissionContext(mode=PermissionMode.BYPASS)
         engine = PermissionEngine(context)
 
         decision = await engine.check_permission(
-            Bash(),
-            {"command": "sed 's/old/new/e' file.txt"},
+            _FakeToolReturningAsk(bypass_immune=True),
+            {},
         )
-        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
-        self.assertIn("safety", decision.decision_reason.lower())
+        self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
 
-    async def test_dangerous_config_path_bypass_immune(self) -> None:
-        """Test that dangerous config file path check is bypass-immune."""
+    async def test_bypass_mode_allows_non_bypass_immune_ask(self) -> None:
+        """For completeness: a non-bypass-immune ASK is also allowed
+        through in BYPASS — same outcome, different path."""
         context = PermissionContext(mode=PermissionMode.BYPASS)
         engine = PermissionEngine(context)
 
         decision = await engine.check_permission(
-            Bash(),
-            {"command": "rm ~/.bashrc"},
+            _FakeToolReturningAsk(bypass_immune=False),
+            {},
         )
-        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
-        self.assertIn("safety", decision.decision_reason.lower())
+        self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
+
+    async def test_bypass_immune_ask_converted_to_deny_in_dont_ask(
+        self,
+    ) -> None:
+        """Under DONT_ASK, even a bypass-immune ASK is converted to
+        DENY (issue #3 contract): no user is available to confirm,
+        so the only safe action is to refuse."""
+        context = PermissionContext(mode=PermissionMode.DONT_ASK)
+        engine = PermissionEngine(context)
+
+        decision = await engine.check_permission(
+            _FakeToolReturningAsk(bypass_immune=True),
+            {},
+        )
+        self.assertEqual(decision.behavior, PermissionBehavior.DENY)

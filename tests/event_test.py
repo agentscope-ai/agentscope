@@ -24,6 +24,7 @@ class EventTest(IsolatedAsyncioTestCase):
                 "type": "REPLY_START",
                 "id": AnyString(),
                 "created_at": AnyString(),
+                "metadata": {},
                 "session_id": "test_session",
                 "reply_id": "test_reply",
                 "name": "Friday",

@@ -74,7 +74,7 @@ Returns full task details:
 
         # Build the response
         lines = [
-            f"Task #{task.id}: {task.subject}",
+            f"Task (id={task.id}): {task.subject}",
             f"Status: {task.state}",
             f"Description: {task.description}",
         ]
