@@ -347,7 +347,7 @@ class GeminiChatModel(ChatModelBase):
                                 part.thought_signature,
                             ).decode("utf-8")
                         else:
-                            call_id = part.function_call.id
+                            call_id = part.function_call.id or uuid.uuid4().hex
                         input_str = json.dumps(
                             keyword_args,
                             ensure_ascii=False,
@@ -431,7 +431,7 @@ class GeminiChatModel(ChatModelBase):
                             part.thought_signature,
                         ).decode("utf-8")
                     else:
-                        call_id = part.function_call.id
+                        call_id = part.function_call.id or uuid.uuid4().hex
                     content_blocks.append(
                         ToolCallBlock(
                             id=call_id,

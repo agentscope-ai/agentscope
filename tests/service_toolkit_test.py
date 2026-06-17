@@ -8,7 +8,7 @@ Verifies the assembly rules:
 
 - workspace builtins are always included;
 - the four ``Task*`` planning tools are always included;
-- :class:`TaskStop` (from ``BackgroundTaskManager``) is always included;
+- :class:`ToolStop` (from ``BackgroundTaskManager``) is always included;
 - the four ``Schedule*`` tools only when ``session.config.chat_model_config``
   is set (they need a model to fire new runs with);
 - team tools are role-gated by ``agent_record.source``: ``"team"`` →
@@ -146,7 +146,7 @@ class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
 
     async def test_user_agent_gets_all_sources(self) -> None:
         """A user-owned agent receives workspace, planning, scheduling,
-        TaskStop, and the four leader-side team tools."""
+        ToolStop, and the four leader-side team tools."""
         agent = _make_agent(source="user")
         session = _make_session(
             user_id="u",
@@ -170,7 +170,9 @@ class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
                 storage=_NoOpStorage(),  # type: ignore[arg-type]
                 message_bus=_NullBus(),  # type: ignore[arg-type]
             ),
-            background_task_manager=BackgroundTaskManager(),
+            background_task_manager=BackgroundTaskManager(
+                message_bus=_NullBus(),  # type: ignore[arg-type]
+            ),
             message_bus=_NullBus(),  # type: ignore[arg-type]
             user_id="u",
             agent_record=agent,
@@ -186,7 +188,7 @@ class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
             {"TaskCreate", "TaskList", "TaskGet", "TaskUpdate"} <= names,
         )
         # Background task control present.
-        self.assertIn("TaskStop", names)
+        self.assertIn("ToolStop", names)
         # Schedule control present (model_config is set).
         self.assertTrue(
             {
@@ -222,7 +224,9 @@ class TestGetToolkitWorkerVariant(IsolatedAsyncioTestCase):
                 storage=_NoOpStorage(),  # type: ignore[arg-type]
                 message_bus=_NullBus(),  # type: ignore[arg-type]
             ),
-            background_task_manager=BackgroundTaskManager(),
+            background_task_manager=BackgroundTaskManager(
+                message_bus=_NullBus(),  # type: ignore[arg-type]
+            ),
             message_bus=_NullBus(),  # type: ignore[arg-type]
             user_id="u",
             agent_record=agent,
@@ -256,7 +260,9 @@ class TestGetToolkitSchedulingGuard(IsolatedAsyncioTestCase):
                 storage=_NoOpStorage(),  # type: ignore[arg-type]
                 message_bus=_NullBus(),  # type: ignore[arg-type]
             ),
-            background_task_manager=BackgroundTaskManager(),
+            background_task_manager=BackgroundTaskManager(
+                message_bus=_NullBus(),  # type: ignore[arg-type]
+            ),
             message_bus=_NullBus(),  # type: ignore[arg-type]
             user_id="u",
             agent_record=agent,
@@ -309,7 +315,9 @@ class TestGetToolkitExtraFactory(IsolatedAsyncioTestCase):
                 storage=_NoOpStorage(),  # type: ignore[arg-type]
                 message_bus=_NullBus(),  # type: ignore[arg-type]
             ),
-            background_task_manager=BackgroundTaskManager(),
+            background_task_manager=BackgroundTaskManager(
+                message_bus=_NullBus(),  # type: ignore[arg-type]
+            ),
             message_bus=_NullBus(),  # type: ignore[arg-type]
             user_id="u",
             agent_record=agent,

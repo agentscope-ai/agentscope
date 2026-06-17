@@ -364,6 +364,93 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 ``True`` if some process holds the lock right now.
         """
 
+    # ------------------------------------------------------------------
+    # Mode F — registry map (hash-keyed namespace)
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    async def registry_set(
+        self,
+        namespace: str,
+        field: str,
+        value: str,
+        *,
+        ttl_secs: int | None = None,
+    ) -> None:
+        """Set ``field`` to ``value`` in the registry at ``namespace``.
+
+        If the namespace does not exist it is created. When
+        ``ttl_secs`` is supplied, the namespace's TTL is refreshed
+        (sliding) — individual fields do not carry independent TTLs.
+
+        Args:
+            namespace (`str`):
+                Registry key (e.g. ``"agentscope:bg_tasks:sess123"``).
+            field (`str`):
+                Field name within the registry.
+            value (`str`):
+                Serialized value to store.
+            ttl_secs (`int | None`, optional):
+                Refresh the namespace expiry to this many seconds.
+        """
+
+    @abstractmethod
+    async def registry_del(self, namespace: str, field: str) -> None:
+        """Remove ``field`` from the registry at ``namespace``.
+
+        A no-op when the field or namespace does not exist.
+
+        Args:
+            namespace (`str`):
+                Registry key.
+            field (`str`):
+                Field to remove.
+        """
+
+    @abstractmethod
+    async def registry_exists(self, namespace: str, field: str) -> bool:
+        """Return whether ``field`` exists in the registry at
+        ``namespace``.
+
+        Args:
+            namespace (`str`):
+                Registry key.
+            field (`str`):
+                Field to check.
+
+        Returns:
+            `bool`:
+                ``True`` if the field is present.
+        """
+
+    @abstractmethod
+    async def registry_getall(
+        self,
+        namespace: str,
+    ) -> dict[str, str]:
+        """Return all field-value pairs in the registry at
+        ``namespace``.
+
+        Args:
+            namespace (`str`):
+                Registry key.
+
+        Returns:
+            `dict[str, str]`:
+                All entries. Empty dict when the namespace is absent.
+        """
+
+    @abstractmethod
+    async def registry_drop(self, namespace: str) -> None:
+        """Delete the entire registry at ``namespace``.
+
+        Idempotent: a no-op when the namespace does not exist.
+
+        Args:
+            namespace (`str`):
+                Registry key to delete.
+        """
+
     # ==================================================================
     # Domain helpers — concrete on the base class so all backends
     # share the same key conventions and serialisation rules.
@@ -586,12 +673,12 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
     async def session_purge(self, session_id: str) -> None:
         """Delete all per-session bus state.
 
-        Drops the events log and the inbox queue. The distributed
-        run-lock is intentionally not touched: callers must ensure no
-        run is in flight (e.g. by publishing cancel via
-        :meth:`session_publish_cancel` and polling
-        :meth:`is_locked` until it clears) before calling this.
-        Any residual lock key expires on its own after at most
+        Drops the events log, the inbox queue, and the BG task
+        registry. The distributed run-lock is intentionally not
+        touched: callers must ensure no run is in flight (e.g. by
+        publishing cancel via :meth:`session_publish_cancel` and
+        polling :meth:`is_locked` until it clears) before calling
+        this. Any residual lock key expires on its own after at most
         :attr:`_SESSION_RUN_TTL_SECS`.
 
         Idempotent: a no-op when the keys are already absent.
@@ -602,6 +689,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         """
         await self.log_trim(self._SESSION_EVENTS_KEY.format(sid=session_id))
         await self.queue_delete(self._INBOX_KEY.format(sid=session_id))
+        await self.bg_task_purge(session_id)
 
     # Inbox -----------------------------------------------------------
 
@@ -745,3 +833,157 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
             on_ready=on_ready,
         ):
             yield payload
+
+    # Background task registry -------------------------------------------
+
+    _BG_TASKS_KEY = "agentscope:bg_tasks:{sid}"
+    """Per-session registry of in-flight background tasks."""
+
+    _BG_TASKS_TTL_SECS = 86400
+    """Fallback TTL for the per-session BG task registry (24 h).
+
+    This TTL is *not* the primary cleanup path — finished tasks remove
+    themselves via :meth:`bg_task_unregister` and session deletion
+    triggers :meth:`bg_task_purge`. It is only a safety net for
+    abandoned entries left behind by a crashed worker whose session is
+    also never explicitly purged. Sized so that virtually every
+    realistic long-running tool finishes (and unregisters) before the
+    fallback kicks in, while still bounding orphan growth in Redis.
+    """
+
+    _TASK_CANCEL_KEY = "agentscope:task:cancel"
+    """Pub/Sub channel for single-task cancel broadcasts."""
+
+    async def bg_task_register(
+        self,
+        session_id: str,
+        task_id: str,
+        metadata: str,
+    ) -> None:
+        """Register a background task in the global registry.
+
+        Args:
+            session_id (`str`):
+                The session that owns this task.
+            task_id (`str`):
+                Unique task identifier.
+            metadata (`str`):
+                JSON-serialized task metadata (e.g. ``tool_name``,
+                ``agent_id``, ``started_at``).
+        """
+        await self.registry_set(
+            self._BG_TASKS_KEY.format(sid=session_id),
+            task_id,
+            metadata,
+            ttl_secs=self._BG_TASKS_TTL_SECS,
+        )
+
+    async def bg_task_unregister(
+        self,
+        session_id: str,
+        task_id: str,
+    ) -> None:
+        """Remove a background task from the global registry.
+
+        Args:
+            session_id (`str`):
+                The session that owns this task.
+            task_id (`str`):
+                Task identifier to remove.
+        """
+        await self.registry_del(
+            self._BG_TASKS_KEY.format(sid=session_id),
+            task_id,
+        )
+
+    async def bg_task_exists(
+        self,
+        session_id: str,
+        task_id: str,
+    ) -> bool:
+        """Check whether a background task is registered.
+
+        Args:
+            session_id (`str`):
+                The session that owns this task.
+            task_id (`str`):
+                Task identifier to check.
+
+        Returns:
+            `bool`:
+                ``True`` if the task is in the registry.
+        """
+        return await self.registry_exists(
+            self._BG_TASKS_KEY.format(sid=session_id),
+            task_id,
+        )
+
+    async def bg_task_list(
+        self,
+        session_id: str,
+    ) -> dict[str, str]:
+        """List all background tasks for a session.
+
+        Args:
+            session_id (`str`):
+                The session whose tasks to list.
+
+        Returns:
+            `dict[str, str]`:
+                ``{task_id: metadata_json}`` for all registered tasks.
+        """
+        return await self.registry_getall(
+            self._BG_TASKS_KEY.format(sid=session_id),
+        )
+
+    async def bg_task_purge(self, session_id: str) -> None:
+        """Delete all background task entries for a session.
+
+        Used during session deletion to clean up the registry in one
+        shot. Actual task cancellation is handled separately by
+        :class:`CancelDispatcher`.
+
+        Args:
+            session_id (`str`):
+                The session whose registry to delete.
+        """
+        await self.registry_drop(
+            self._BG_TASKS_KEY.format(sid=session_id),
+        )
+
+    async def task_publish_cancel(self, task_id: str) -> None:
+        """Broadcast a cancel request for a single background task.
+
+        Sent on a transient Pub/Sub channel; only processes that hold
+        the target task react. Others ignore the message.
+
+        Args:
+            task_id (`str`):
+                The task to cancel.
+        """
+        await self.publish(self._TASK_CANCEL_KEY, {"task_id": task_id})
+
+    async def task_subscribe_cancel(
+        self,
+        *,
+        on_ready: Callable[[], None] | None = None,
+    ) -> AsyncGenerator[str, None]:
+        """Subscribe to the task-level cancel channel.
+
+        Yields task ids as cancel requests arrive.
+
+        Args:
+            on_ready (`Callable[[], None] | None`, optional):
+                Forwarded to the underlying :meth:`subscribe`.
+
+        Yields:
+            `str`:
+                The task id from each incoming cancel payload.
+        """
+        async for payload in self.subscribe(
+            self._TASK_CANCEL_KEY,
+            on_ready=on_ready,
+        ):
+            tid = payload.get("task_id")
+            if isinstance(tid, str):
+                yield tid

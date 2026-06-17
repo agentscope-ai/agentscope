@@ -171,6 +171,46 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
         )
 
     @patch("google.genai.Client")
+    async def test_tool_call_response_without_id(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """A function call with no id gets a generated id, not a crash."""
+        parts = [
+            _make_part(
+                function_call={
+                    "name": "get_weather",
+                    "args": {"city": "Tokyo"},
+                    "id": None,
+                },
+            ),
+        ]
+        mock_client_cls.return_value.aio.models.generate_content = AsyncMock(
+            return_value=_mock_completion(parts),
+        )
+
+        result = await self.model([])
+
+        self.assertEqual(
+            (result.is_last, result.content),
+            (
+                True,
+                [
+                    ToolCallBlock.model_construct(
+                        id=A,
+                        name="get_weather",
+                        input=json.dumps(
+                            {"city": "Tokyo"},
+                            ensure_ascii=False,
+                        ),
+                    ),
+                ],
+            ),
+        )
+        self.assertIsInstance(result.content[0].id, str)
+        self.assertTrue(result.content[0].id)
+
+    @patch("google.genai.Client")
     async def test_thinking_response(
         self,
         mock_client_cls: MagicMock,
@@ -306,6 +346,53 @@ class TestGeminiStream(IsolatedAsyncioTestCase):
             [
                 (False, [tool_block]),
                 (True, [tool_block]),
+            ],
+        )
+
+    @patch("google.genai.Client")
+    async def test_stream_tool_calls_without_id(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Two id-less function calls in one chunk get distinct ids."""
+        chunks = [
+            _make_stream_chunk(
+                [
+                    _make_part(
+                        function_call={
+                            "name": "search",
+                            "args": {"q": "a"},
+                            "id": None,
+                        },
+                    ),
+                    _make_part(
+                        function_call={
+                            "name": "search",
+                            "args": {"q": "b"},
+                            "id": None,
+                        },
+                    ),
+                ],
+            ),
+        ]
+        mock_client_cls.return_value.aio.models.generate_content_stream = (
+            AsyncMock(return_value=_MockAsyncStream(chunks))
+        )
+
+        gen = await self.model([])
+        responses = [r async for r in gen]
+
+        final = responses[-1]
+        self.assertTrue(final.is_last)
+        self.assertEqual(len(final.content), 2)
+        ids = [block.id for block in final.content]
+        self.assertTrue(all(isinstance(i, str) and i for i in ids))
+        self.assertNotEqual(ids[0], ids[1])
+        self.assertEqual(
+            [block.input for block in final.content],
+            [
+                json.dumps({"q": "a"}, ensure_ascii=False),
+                json.dumps({"q": "b"}, ensure_ascii=False),
             ],
         )
 

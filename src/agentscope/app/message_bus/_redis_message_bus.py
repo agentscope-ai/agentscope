@@ -380,8 +380,94 @@ class RedisMessageBus(MessageBus):
         await self._client.xtrim(key, minid=before_id)
 
     # ------------------------------------------------------------------
+    # Mode F — registry map (hash-keyed namespace)
+    # ------------------------------------------------------------------
+
+    async def registry_set(
+        self,
+        namespace: str,
+        field: str,
+        value: str,
+        *,
+        ttl_secs: int | None = None,
+    ) -> None:
+        """Set ``field`` in the Redis Hash at ``namespace``.
+
+        Args:
+            namespace (`str`):
+                Hash key.
+            field (`str`):
+                Hash field.
+            value (`str`):
+                Value to store.
+            ttl_secs (`int | None`, optional):
+                Refresh the key's expiry (sliding TTL).
+        """
+        await self._client.hset(namespace, field, value)
+        if ttl_secs is not None:
+            await self._client.expire(namespace, ttl_secs)
+
+    async def registry_del(self, namespace: str, field: str) -> None:
+        """Remove ``field`` from the Redis Hash at ``namespace``.
+
+        Args:
+            namespace (`str`):
+                Hash key.
+            field (`str`):
+                Hash field to remove.
+        """
+        await self._client.hdel(namespace, field)
+
+    async def registry_exists(self, namespace: str, field: str) -> bool:
+        """Return whether ``field`` exists in the Hash at ``namespace``.
+
+        Args:
+            namespace (`str`):
+                Hash key.
+            field (`str`):
+                Hash field to check.
+
+        Returns:
+            `bool`:
+                ``True`` if the field exists.
+        """
+        return bool(await self._client.hexists(namespace, field))
+
+    async def registry_getall(
+        self,
+        namespace: str,
+    ) -> dict[str, str]:
+        """Return all field-value pairs from the Hash at ``namespace``.
+
+        Args:
+            namespace (`str`):
+                Hash key.
+
+        Returns:
+            `dict[str, str]`:
+                All entries. Empty dict when the key is absent.
+        """
+        return await self._client.hgetall(namespace) or {}
+
+    async def registry_drop(self, namespace: str) -> None:
+        """Delete the entire Hash at ``namespace``.
+
+        Args:
+            namespace (`str`):
+                Hash key to delete.
+        """
+        await self._client.delete(namespace)
+
+    # ------------------------------------------------------------------
     # Mode D — transient broadcast
     # ------------------------------------------------------------------
+
+    # Poll interval for the pub/sub read loop. Bounding each read keeps
+    # long-lived idle subscriptions resilient: an idle ``socket_timeout``
+    # read (raised when the connection defines one, or when the server
+    # drops idle connections) surfaces as a benign per-poll timeout that
+    # we ignore, instead of a fatal error that tears down the generator.
+    _SUBSCRIBE_POLL_TIMEOUT_SECS = 1.0
 
     async def publish(
         self,
@@ -422,12 +508,28 @@ class RedisMessageBus(MessageBus):
             `dict`:
                 Each payload originally passed to :meth:`publish`.
         """
+        from redis import exceptions as redis_exceptions
+
         pubsub = self._client.pubsub()
         try:
             await pubsub.subscribe(key)
             if on_ready is not None:
                 on_ready()
-            async for message in pubsub.listen():
+            while True:
+                try:
+                    message = await pubsub.get_message(
+                        ignore_subscribe_messages=True,
+                        timeout=self._SUBSCRIBE_POLL_TIMEOUT_SECS,
+                    )
+                except redis_exceptions.TimeoutError:
+                    # Idle read timeout (e.g. the connection defines a
+                    # ``socket_timeout`` or the server drops idle
+                    # connections). No message arrived in this window;
+                    # keep listening rather than crashing the loop.
+                    continue
+                if message is None:
+                    # No payload within the poll window — keep waiting.
+                    continue
                 if message.get("type") != "message":
                     # Skip ``subscribe`` ack and similar control frames.
                     continue

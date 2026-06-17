@@ -225,6 +225,8 @@ interface Session {
 	chunks: Bytes[];
 	totalBytes: number;
 	livePlayer: WavStreamPlayer | null;
+	/** True if a live player was created at start — survives dispose. */
+	hadLivePlayer: boolean;
 	state: StreamingAudioState;
 }
 
@@ -267,6 +269,7 @@ export class StreamingAudioManager {
 			chunks: [],
 			totalBytes: 0,
 			livePlayer,
+			hadLivePlayer: livePlayer !== null,
 			state: { status: 'streaming', mediaType, url: null, interruptCount: 0 },
 		});
 		this.emit(blockId);
@@ -300,7 +303,7 @@ export class StreamingAudioManager {
 		const session = this.sessions.get(blockId);
 		if (!session) return;
 
-		const hadLivePlayback = session.livePlayer !== null;
+		const hadLivePlayback = session.hadLivePlayer;
 		if (session.livePlayer) {
 			// Let queued PCM finish playing; AudioContext closes via a
 			// deferred timer. The livePlayer reference is kept so that
@@ -329,6 +332,22 @@ export class StreamingAudioManager {
 			// can still hit play on the <audio controls> element.
 			const el = new Audio(url);
 			void el.play().catch(() => undefined);
+		}
+	}
+
+	/**
+	 * Stop live streaming playback only (WavStreamPlayers). Does not
+	 * touch replay ``<audio>`` elements or bump ``interruptCount``.
+	 * Called by the replay controller so that clicking play on a past
+	 * audio block silences any in-progress streaming audio without
+	 * interfering with the element that's about to start playing.
+	 */
+	stopLivePlayback(): void {
+		for (const session of this.sessions.values()) {
+			if (session.livePlayer) {
+				session.livePlayer.dispose();
+				session.livePlayer = null;
+			}
 		}
 	}
 

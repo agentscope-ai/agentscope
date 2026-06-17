@@ -28,6 +28,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
 	const replay: ReplayController = useMemo(
 		() => ({
 			play(el: HTMLAudioElement) {
+				manager.stopLivePlayback();
 				if (currentRef.current && currentRef.current !== el) {
 					currentRef.current.pause();
 					currentRef.current.currentTime = 0;
@@ -38,7 +39,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
 				currentRef.current = null;
 			},
 		}),
-		[],
+		[manager],
 	);
 
 	return (

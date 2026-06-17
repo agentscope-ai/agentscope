@@ -24,13 +24,14 @@ Task series, …) in two ways:
 Selection of the right subset by ``agent.source`` happens inline in
 :func:`get_toolkit`; there is no separate "team tool factory" helper.
 """
-from ._agent_create import AgentCreate
+from ._agent_create import AgentCreate, DEFAULT_SUB_AGENT_TEMPLATE
 from ._team_create import TeamCreate
 from ._team_delete import TeamDelete
 from ._team_say import TeamSay
 
 __all__ = [
     "AgentCreate",
+    "DEFAULT_SUB_AGENT_TEMPLATE",
     "TeamCreate",
     "TeamDelete",
     "TeamSay",
