@@ -12,12 +12,15 @@ from ....event import (
     DataBlockStartEvent,
     ExceedMaxItersEvent,
     ExternalExecutionResultEvent,
+    IterationExtensionResultEvent,
     ModelCallEndEvent,
     ModelCallStartEvent,
     ReplyEndEvent,
     ReplyStartEvent,
     RequireExternalExecutionEvent,
+    RequireIterationExtensionEvent,
     RequireUserConfirmEvent,
+    StatusEvent,
     TextBlockDeltaEvent,
     TextBlockEndEvent,
     TextBlockStartEvent,
@@ -248,6 +251,24 @@ class AGUIProtocolMiddleware(ProtocolMiddlewareBase):
         if isinstance(event, ExternalExecutionResultEvent):
             return AGUICustomEvent(
                 name="external_execution_result",
+                value=event.model_dump(exclude_none=True),
+            )
+
+        if isinstance(event, RequireIterationExtensionEvent):
+            return AGUICustomEvent(
+                name="require_iteration_extension",
+                value=event.model_dump(exclude_none=True),
+            )
+
+        if isinstance(event, IterationExtensionResultEvent):
+            return AGUICustomEvent(
+                name="iteration_extension_result",
+                value=event.model_dump(exclude_none=True),
+            )
+
+        if isinstance(event, StatusEvent):
+            return AGUICustomEvent(
+                name="status",
                 value=event.model_dump(exclude_none=True),
             )
 

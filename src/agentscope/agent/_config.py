@@ -146,6 +146,18 @@ class ReActConfig(BaseModel):
     won't continue reasoning and wait for outside interaction from the user.
     """
 
+    allow_iteration_extension: bool = Field(
+        title="Allow Iteration Extension",
+        default=False,
+        description="Whether to ask the user to extend the reasoning-acting "
+        "loop when the max iteration limit is reached, instead of "
+        "terminating directly.",
+    )
+    """If `True`, when the reasoning-acting loop reaches ``max_iters`` the
+    agent emits a ``RequireIterationExtensionEvent`` and pauses, waiting for an
+    ``IterationExtensionResultEvent`` to decide whether to continue. If
+    `False` (default), the agent terminates the loop as before."""
+
 
 class ModelConfig(BaseModel):
     """The model related configuration."""

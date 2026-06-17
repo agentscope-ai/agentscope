@@ -57,6 +57,11 @@ class EventType(StrEnum):
     USER_CONFIRM_RESULT = "USER_CONFIRM_RESULT"
     EXTERNAL_EXECUTION_RESULT = "EXTERNAL_EXECUTION_RESULT"
 
+    REQUIRE_ITERATION_EXTENSION = "REQUIRE_ITERATION_EXTENSION"
+    ITERATION_EXTENSION_RESULT = "ITERATION_EXTENSION_RESULT"
+
+    STATUS = "STATUS"
+
     CUSTOM = "CUSTOM"
 
 
@@ -439,6 +444,87 @@ class ExternalExecutionResultEvent(EventBase):
     """Results returned by the external executor."""
 
 
+class RequireIterationExtensionEvent(EventBase):
+    """Require iteration extension event.
+
+    Emitted when the reasoning-acting loop reaches its iteration limit
+    (``ReActConfig.max_iters``) and the agent is configured to ask the
+    user whether to extend the loop (``ReActConfig.allow_iteration_extension``)
+    instead of terminating. The agent pauses until a corresponding
+    ``IterationExtensionResultEvent`` is fed back in.
+    """
+
+    type: Literal[
+        EventType.REQUIRE_ITERATION_EXTENSION
+    ] = EventType.REQUIRE_ITERATION_EXTENSION
+    """Event type."""
+    reply_id: str
+    """ID of the reply message associated with this run."""
+    name: str
+    """Name of the agent."""
+    current_max_iters: int
+    """The current maximum number of iterations that has been reached."""
+
+
+class IterationExtensionResultEvent(EventBase):
+    """Iteration extension result event.
+
+    Carries the user's decision in response to a
+    ``RequireIterationExtensionEvent``. Feed it back into ``reply`` /
+    ``reply_stream`` to resume the paused reasoning-acting loop.
+    """
+
+    type: Literal[
+        EventType.ITERATION_EXTENSION_RESULT
+    ] = EventType.ITERATION_EXTENSION_RESULT
+    """Event type."""
+    reply_id: str
+    """ID of the reply message associated with this run."""
+    approved: bool
+    """Whether the user approved extending the reasoning-acting loop."""
+    extra_iterations: int = 0
+    """The number of additional iterations to allow when ``approved`` is
+    True. If not a positive number, another full ``max_iters`` budget is
+    granted by default. Ignored when ``approved`` is False."""
+
+
+class StatusEvent(EventBase):
+    """Generic, user-customizable status event.
+
+    A general-purpose mechanism for the backend to notify front-end
+    subscribers about (often time-consuming) operations — such as
+    compacting the context — without introducing a dedicated event type
+    per operation.
+
+    Unlike ``CustomEvent`` (which is used by service-layer middleware and
+    published out of band), ``StatusEvent`` is emitted inside the agent's
+    reply stream and is therefore associated with a ``reply_id``. Users can
+    emit their own status events from custom operations via
+    ``Agent.emit_status``.
+
+    Attributes:
+        reply_id (`str`):
+            ID of the reply message associated with this run.
+        name (`str`):
+            Identifies the operation, e.g. ``"compressing_context"``.
+        status (`Literal["start", "in_progress", "end"]`):
+            The lifecycle stage of the operation.
+        data (`dict`):
+            Arbitrary JSON-serializable payload customizable by the user.
+    """
+
+    type: Literal[EventType.STATUS] = EventType.STATUS
+    """Event type discriminator."""
+    reply_id: str
+    """ID of the reply message associated with this run."""
+    name: str
+    """The operation identifier — see class docstring."""
+    status: Literal["start", "in_progress", "end"] = "in_progress"
+    """The lifecycle stage of the operation."""
+    data: dict = Field(default_factory=dict)
+    """Arbitrary user-customizable payload."""
+
+
 class CustomEvent(EventBase):
     """Generic extensible event for signals that don't fit a specific
     ``AgentEvent`` subtype.
@@ -500,5 +586,8 @@ AgentEvent: TypeAlias = (
     | ToolResultEndEvent
     | UserConfirmResultEvent
     | ExternalExecutionResultEvent
+    | RequireIterationExtensionEvent
+    | IterationExtensionResultEvent
+    | StatusEvent
     | CustomEvent
 )

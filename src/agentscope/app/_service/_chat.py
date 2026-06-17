@@ -38,6 +38,7 @@ from ...event import (
     ReplyStartEvent,
     UserConfirmResultEvent,
     ExternalExecutionResultEvent,
+    IterationExtensionResultEvent,
 )
 from ...message import AssistantMsg, Msg, ToolCallState
 from ...permission import AdditionalWorkingDirectory
@@ -127,6 +128,7 @@ class ChatService:
         | list[Msg]
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
+        | IterationExtensionResultEvent
         | None = None,
     ) -> None:
         """Drive a chat run to completion.
@@ -184,6 +186,7 @@ class ChatService:
         | list[Msg]
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
+        | IterationExtensionResultEvent
         | None,
     ) -> None:
         """The actual chat-run body; wrapped by :meth:`run` for error
@@ -343,6 +346,18 @@ class ChatService:
         # the resuming run's next reasoning step lets
         # :class:`InboxMiddleware` drain the queue naturally.
         # ----------------------------------------------------------------
+        if input_msg is None and agent.state.awaiting_iteration_extension:
+            # Parked waiting for an iteration extension decision; a ``None``
+            # run would be rejected by the agent. Leave inbox content queued
+            # until the user responds with an IterationExtensionResultEvent.
+            logger.info(
+                "Skipping wake-up for session %s: agent is parked waiting "
+                "for an iteration extension decision; inbox messages will "
+                "be drained when the agent resumes.",
+                session_id,
+            )
+            return
+
         if input_msg is None and agent.state.context:
             last_msg = agent.state.context[-1]
             if last_msg.role == "assistant" and last_msg.name == agent.name:

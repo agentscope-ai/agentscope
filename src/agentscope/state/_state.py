@@ -155,6 +155,15 @@ class AgentState(BaseModel):
     cur_iter: int = 0
     """The current iteration of the agent's reasoning-acting loop."""
 
+    awaiting_iteration_extension: bool = False
+    """Whether the agent is paused waiting for an
+    ``IterationExtensionResultEvent`` after reaching the max iteration
+    limit."""
+
+    iteration_extension: int = 0
+    """Extra reasoning-acting iterations granted for the current reply via
+    iteration extension. Reset to 0 when a new reply starts."""
+
     # =================================================================
     # The permission context
     # =================================================================
