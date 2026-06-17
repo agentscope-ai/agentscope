@@ -47,7 +47,7 @@ class BashCwdTest(IsolatedAsyncioTestCase):
             create_process,
         ):
             chunks = []
-            async for chunk in Bash(cwd="workspace")(command="pwd"):
+            async for chunk in await Bash(cwd="workspace")(command="pwd"):
                 chunks.append(chunk)
 
         self.assertEqual(create_process.call_args.kwargs["cwd"], "workspace")
