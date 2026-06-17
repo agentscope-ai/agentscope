@@ -1,24 +1,71 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=protected-access
-"""Test the general-purpose status event mechanism."""
+# pylint: disable=protected-access,redefined-builtin,unused-argument
+# pylint: disable=unreachable
+"""Test the general-purpose, context-var based status event mechanism."""
 import asyncio
+from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import MockModel
 
-from agentscope.model import StructuredResponse
+from agentscope.model import StructuredResponse, ChatResponse
 from agentscope.agent import Agent, ContextConfig
+from agentscope.agent._agent import _STATUS_EVENT_QUEUE
 from agentscope.state import AgentState
-from agentscope.message import UserMsg, AssistantMsg
-from agentscope.tool import Toolkit
-from agentscope.event import EventType, StatusEvent
+from agentscope.message import UserMsg, AssistantMsg, TextBlock, ToolCallBlock
+from agentscope.tool import Toolkit, ToolBase, ToolChunk
+from agentscope.permission import (
+    PermissionDecision,
+    PermissionBehavior,
+    PermissionContext,
+)
+from agentscope.event import StatusEvent
+
+
+def _final_text_response(text: str = "done") -> ChatResponse:
+    """A non-streaming response with only final text (no tool call)."""
+    return ChatResponse(content=[TextBlock(text=text)], is_last=True)
+
+
+class StatusEmittingTool(ToolBase):
+    """A tool that emits status events while it runs."""
+
+    name: str = "status_tool"
+    description: str = "A tool that emits status events"
+    input_schema: dict[str, Any] = {"type": "object", "properties": {}}
+    is_concurrency_safe: bool = False
+    is_read_only: bool = True
+    is_external_tool: bool = False
+    is_mcp: bool = False
+
+    def __init__(self) -> None:
+        """Initialize, the owning agent is injected after construction."""
+        self.agent: Agent | None = None
+
+    async def check_permissions(
+        self,
+        tool_input: dict[str, Any],
+        context: PermissionContext,
+    ) -> PermissionDecision:
+        """Always allow."""
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            decision_reason="allow",
+            message="allow",
+        )
+
+    async def __call__(self, **kwargs: Any) -> ToolChunk:
+        """Emit start/end status events and return a result."""
+        await self.agent.emit_status(name="tool_busy", status="start")
+        await self.agent.emit_status(name="tool_busy", status="end")
+        return ToolChunk(content=[TextBlock(text="tool done")])
 
 
 class StatusEventTest(IsolatedAsyncioTestCase):
     """Test the general-purpose status event mechanism."""
 
-    async def test_emit_status_is_noop_without_active_stream(self) -> None:
-        """``emit_status`` is a no-op when no reply stream is draining."""
+    async def test_emit_status_is_noop_outside_reply(self) -> None:
+        """``emit_status`` is a no-op when no reply stream is active."""
         agent = Agent(
             name="Friday",
             system_prompt="You are a helpful assistant.",
@@ -27,93 +74,11 @@ class StatusEventTest(IsolatedAsyncioTestCase):
         )
         # Should not raise even though nothing is consuming the events.
         await agent.emit_status(name="custom_op", status="start")
+        self.assertIsNone(_STATUS_EVENT_QUEUE.get())
 
-    async def test_drain_status_events_forwards_custom_events(self) -> None:
-        """``_drain_status_events`` surfaces events emitted via
-        ``emit_status`` while the awaitable runs."""
-        agent = Agent(
-            name="Friday",
-            system_prompt="You are a helpful assistant.",
-            model=MockModel(),
-            toolkit=Toolkit(),
-        )
-
-        async def _operation() -> None:
-            await agent.emit_status(
-                name="custom_op",
-                status="start",
-                data={"progress": 0},
-            )
-            await agent.emit_status(
-                name="custom_op",
-                status="end",
-                data={"progress": 100},
-            )
-
-        events = []
-        async for evt in agent._drain_status_events(_operation()):
-            events.append(evt)
-
-        self.assertEqual(len(events), 2)
-        self.assertTrue(all(isinstance(e, StatusEvent) for e in events))
-        self.assertEqual(events[0].name, "custom_op")
-        self.assertEqual(events[0].status, "start")
-        self.assertEqual(events[0].data, {"progress": 0})
-        self.assertEqual(events[1].status, "end")
-        self.assertEqual(events[1].data, {"progress": 100})
-        # The queue should be cleared after draining.
-        self.assertIsNone(agent._status_queue)
-
-    async def test_drain_status_events_cancels_on_early_close(self) -> None:
-        """Closing the generator early cancels the background operation and
-        restores the status queue (no orphaned task / queue contamination)."""
-        agent = Agent(
-            name="Friday",
-            system_prompt="You are a helpful assistant.",
-            model=MockModel(),
-            toolkit=Toolkit(),
-        )
-
-        end_emitted = False
-
-        async def _long_operation() -> None:
-            nonlocal end_emitted
-            await agent.emit_status(name="op", status="start")
-            await asyncio.sleep(10)  # Simulate a long-running operation.
-            end_emitted = True
-            await agent.emit_status(name="op", status="end")
-
-        gen = agent._drain_status_events(_long_operation())
-        first = await gen.__anext__()
-        self.assertEqual(first.status, "start")
-
-        # Abandon the stream before the operation finishes.
-        await gen.aclose()
-
-        self.assertIsNone(agent._status_queue)
-        self.assertFalse(end_emitted)
-
-    async def test_drain_status_events_propagates_exception(self) -> None:
-        """Exceptions from the wrapped awaitable propagate to the caller."""
-        agent = Agent(
-            name="Friday",
-            system_prompt="You are a helpful assistant.",
-            model=MockModel(),
-            toolkit=Toolkit(),
-        )
-
-        async def _failing() -> None:
-            await agent.emit_status(name="custom_op", status="start")
-            raise RuntimeError("boom")
-
-        with self.assertRaises(RuntimeError):
-            async for _ in agent._drain_status_events(_failing()):
-                pass
-        # The queue should still be restored after the failure.
-        self.assertIsNone(agent._status_queue)
-
-    async def test_compression_emits_status_events(self) -> None:
-        """Context compaction emits start/end status events when triggered."""
+    async def test_compression_emits_status_events_in_reply(self) -> None:
+        """Context compaction inside the reply loop interleaves start/end
+        status events into the reply stream."""
         model = MockModel(context_size=100)
         agent = Agent(
             name="Friday",
@@ -145,7 +110,6 @@ class StatusEventTest(IsolatedAsyncioTestCase):
             ),
             toolkit=Toolkit(),
         )
-
         model.set_structured_response(
             StructuredResponse(
                 content={
@@ -157,38 +121,105 @@ class StatusEventTest(IsolatedAsyncioTestCase):
                 },
             ),
         )
+        # The reasoning step after compaction returns a final text.
+        model.set_responses([_final_text_response("done")])
 
-        events = []
-        async for evt in agent._drain_status_events(agent.compress_context()):
-            events.append(evt)
+        status_events = []
+        async for event in agent.reply_stream(
+            inputs=UserMsg(name="user", content="hi"),
+        ):
+            if isinstance(event, StatusEvent):
+                status_events.append(event)
 
-        self.assertEqual(len(events), 2)
-        self.assertEqual(events[0].type, EventType.STATUS)
-        self.assertEqual(events[0].name, "compressing_context")
-        self.assertEqual(events[0].status, "start")
-        self.assertEqual(events[1].name, "compressing_context")
-        self.assertEqual(events[1].status, "end")
+        names = [(e.name, e.status) for e in status_events]
+        self.assertIn(("compressing_context", "start"), names)
+        self.assertIn(("compressing_context", "end"), names)
+        # The context var must be cleared after the stream completes.
+        self.assertIsNone(_STATUS_EVENT_QUEUE.get())
 
-    async def test_compression_skipped_emits_no_status(self) -> None:
-        """No status events are emitted when compression is not triggered."""
-        model = MockModel(context_size=100000)
+    async def test_tool_can_emit_status_events_in_reply(self) -> None:
+        """A tool emitting status events during the reply surfaces them in
+        the stream — proving the mechanism is not tied to compaction."""
+        model = MockModel()
+        tool = StatusEmittingTool()
         agent = Agent(
             name="Friday",
-            system_prompt="short prompt",
+            system_prompt="You are a helpful assistant.",
             model=model,
-            context_config=ContextConfig(
-                trigger_ratio=0.7,
-                reserve_ratio=0.4,
-            ),
-            state=AgentState(
-                session_id="123",
-                context=[UserMsg("User", "hello", id="1")],
-            ),
+            toolkit=Toolkit(tools=[tool]),
+        )
+        tool.agent = agent
+
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            type="tool_call",
+                            id="c0",
+                            name="status_tool",
+                            input="{}",
+                        ),
+                    ],
+                    is_last=True,
+                ),
+                _final_text_response("done"),
+            ],
+        )
+
+        status_events = []
+        async for event in agent.reply_stream(
+            inputs=UserMsg(name="user", content="hi"),
+        ):
+            if isinstance(event, StatusEvent):
+                status_events.append(event)
+
+        names = [(e.name, e.status) for e in status_events]
+        self.assertIn(("tool_busy", "start"), names)
+        self.assertIn(("tool_busy", "end"), names)
+
+    async def test_early_close_cancels_pipeline_and_resets(self) -> None:
+        """Closing the stream early stops the background pipeline and resets
+        the status context var (no hang / leak)."""
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are a helpful assistant.",
+            model=MockModel(),
             toolkit=Toolkit(),
         )
 
-        events = []
-        async for evt in agent._drain_status_events(agent.compress_context()):
-            events.append(evt)
+        async def _fake_reply(inputs: Any = None) -> Any:
+            yield StatusEvent(reply_id="r", name="op", status="start")
+            await asyncio.sleep(10)  # Simulate a long-running pipeline.
+            yield StatusEvent(reply_id="r", name="op", status="end")
 
-        self.assertEqual(events, [])
+        agent._reply = _fake_reply  # type: ignore[assignment]
+
+        gen = agent.reply_stream()
+        first = await gen.__anext__()
+        self.assertIsInstance(first, StatusEvent)
+
+        await gen.aclose()
+        self.assertIsNone(_STATUS_EVENT_QUEUE.get())
+
+    async def test_pipeline_propagates_exception(self) -> None:
+        """Exceptions raised inside the reply pipeline propagate to the
+        consumer and still reset the status context var."""
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are a helpful assistant.",
+            model=MockModel(),
+            toolkit=Toolkit(),
+        )
+
+        async def _boom_reply(inputs: Any = None) -> Any:
+            raise ValueError("boom")
+            yield  # pragma: no cover - makes this an async generator
+
+        agent._reply = _boom_reply  # type: ignore[assignment]
+
+        with self.assertRaises(ValueError):
+            async for _ in agent.reply_stream():
+                pass
+
+        self.assertIsNone(_STATUS_EVENT_QUEUE.get())

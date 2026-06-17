@@ -5,6 +5,7 @@ import inspect
 import uuid
 
 from asyncio import Queue
+from contextvars import ContextVar
 from copy import deepcopy
 from typing import (
     Any,
@@ -94,6 +95,26 @@ else:
     MiddlewareBase = Any
 
 
+# Ambient handle to the status-event queue of the reply stream that is
+# currently being consumed. Stored in a ``ContextVar`` (inspired by
+# LangGraph's ``get_stream_writer``) so that ``emit_status`` works from
+# anywhere in the call stack during a reply — reasoning, tool execution,
+# context compaction or user middleware — without threading a writer
+# argument through every call. ``None`` outside an active reply stream.
+_STATUS_EVENT_QUEUE: ContextVar["Queue[Any] | None"] = ContextVar(
+    "agentscope_status_event_queue",
+    default=None,
+)
+
+
+class _PipelineError:
+    """Internal wrapper used to forward an exception raised by the reply
+    pipeline through the status-event queue to the consumer."""
+
+    def __init__(self, exc: BaseException) -> None:
+        self.exc = exc
+
+
 class Agent:
     """The agent class."""
 
@@ -151,12 +172,6 @@ class Agent:
         self.model_config = model_config
         self.context_config = context_config
         self.react_config = react_config
-
-        # Queue used to surface ``StatusEvent``s emitted by (possibly
-        # time-consuming) operations into the active reply stream. It is only
-        # set while a reply stream is draining status events (see
-        # ``_drain_status_events``); ``emit_status`` is a no-op otherwise.
-        self._status_queue: "Queue[StatusEvent] | None" = None
 
         # The permission engine
         self._engine = PermissionEngine(self.state.permission_context)
@@ -217,7 +232,7 @@ class Agent:
          calls.
         """
         try:
-            async for chunk in self._reply(inputs=inputs):
+            async for chunk in self._run_reply_pipeline(inputs=inputs):
                 if not isinstance(chunk, Msg):
                     yield chunk
         finally:
@@ -257,7 +272,7 @@ class Agent:
         """
         try:
             final_msg: Msg | None = None
-            async for evt_or_msg in self._reply(inputs=inputs):
+            async for evt_or_msg in self._run_reply_pipeline(inputs=inputs):
                 if isinstance(evt_or_msg, Msg):
                     final_msg = evt_or_msg
             if final_msg is None:
@@ -280,15 +295,16 @@ class Agent:
         """Emit a general-purpose ``StatusEvent`` into the active reply stream.
 
         This is the user-facing entry point for the general status event
-        mechanism. It lets custom operations (e.g. middlewares or tools that
-        perform time-consuming work) notify front-end subscribers about their
-        progress. The emitted event is surfaced into the reply stream that is
-        currently being consumed.
+        mechanism. It lets any code running during a reply — reasoning, tool
+        execution, context compaction or custom middleware — notify front-end
+        subscribers about the progress of a (possibly time-consuming)
+        operation. The emitted event is interleaved into the reply stream that
+        is currently being consumed.
 
-        **Note**: status events are only delivered while a reply stream is
-        actively draining them (e.g. during ``compress_context`` inside the
-        reasoning-acting loop). Outside of such a window this method is a
-        no-op.
+        The active stream is discovered through a ``ContextVar`` (inspired by
+        LangGraph's ``get_stream_writer``), so there is no need to thread a
+        handle through call arguments. Outside of an active reply stream this
+        method is a no-op.
 
         Args:
             name (`str`):
@@ -307,9 +323,10 @@ class Agent:
         data: dict | None = None,
     ) -> None:
         """Push a ``StatusEvent`` onto the active status queue if any."""
-        if self._status_queue is None:
+        queue = _STATUS_EVENT_QUEUE.get()
+        if queue is None:
             return
-        await self._status_queue.put(
+        await queue.put(
             StatusEvent(
                 reply_id=self.state.reply_id,
                 name=name,
@@ -318,59 +335,72 @@ class Agent:
             ),
         )
 
-    async def _drain_status_events(
+    async def _run_reply_pipeline(
         self,
-        coro: Any,
-    ) -> AsyncGenerator[StatusEvent, None]:
-        """Run an awaitable while forwarding any ``StatusEvent``s it emits
-        (via ``emit_status`` / ``_emit_status``) into the caller's stream.
+        inputs: Msg
+        | list[Msg]
+        | UserConfirmResultEvent
+        | ExternalExecutionResultEvent
+        | IterationExtensionResultEvent
+        | None = None,
+    ) -> AsyncGenerator[AgentEvent | Msg, None]:
+        """Run the reply pipeline while interleaving ambient status events.
 
-        The awaitable is run as a background task while this generator drains
-        the status queue, so status events (e.g. a ``"start"`` notification)
-        are yielded promptly — before the awaitable finishes — rather than
-        only after it returns.
+        The reply pipeline (``_reply``) runs as a background task that pushes
+        every yielded item onto an output queue, while this generator drains
+        that queue and re-yields. The same queue is exposed via the
+        ``_STATUS_EVENT_QUEUE`` context variable, so ``StatusEvent``s emitted
+        anywhere during the run (e.g. a ``"start"`` notification before a
+        long-running operation) are surfaced promptly — interleaved in
+        emission order with the main events — rather than only after the
+        producing operation returns.
 
         Args:
-            coro:
-                The awaitable (coroutine) to run.
+            inputs:
+                The reply inputs, forwarded to ``_reply``.
 
         Yields:
-            `StatusEvent`:
-                The status events emitted while ``coro`` runs.
+            `AgentEvent | Msg`:
+                The events and messages produced by the reply pipeline,
+                interleaved with any emitted status events.
         """
-        queue: "Queue[StatusEvent | object]" = Queue()
+        out_queue: "Queue[Any]" = Queue()
         sentinel = object()
-        prev_queue = self._status_queue
-        # Status events emitted by ``coro`` (or nested calls) go to this queue.
-        self._status_queue = queue  # type: ignore[assignment]
 
-        async def _runner() -> None:
+        async def _producer() -> None:
+            # Bind the queue inside the task's own (copied) context, so it is
+            # visible to everything the pipeline awaits — reasoning, tools,
+            # compaction, nested tasks — and is discarded automatically when
+            # the task ends (no cross-context reset needed).
+            _STATUS_EVENT_QUEUE.set(out_queue)
             try:
-                await coro
+                async for item in self._reply(inputs=inputs):
+                    await out_queue.put(item)
+            except Exception as exc:  # pylint: disable=broad-except
+                await out_queue.put(_PipelineError(exc))
             finally:
-                await queue.put(sentinel)
+                await out_queue.put(sentinel)
 
-        task = asyncio.create_task(_runner())
+        task = asyncio.create_task(_producer())
         try:
             while True:
-                item = await queue.get()
+                item = await out_queue.get()
                 if item is sentinel:
                     break
-                yield item  # type: ignore[misc]
-            # Propagate any exception raised by the awaitable.
+                if isinstance(item, _PipelineError):
+                    raise item.exc
+                yield item
+            # Surface any non-``Exception`` failure (e.g. cancellation).
             await task
         finally:
-            # If the consumer abandoned the generator early (e.g. the outer
-            # stream was closed), cancel the still-running operation before
-            # restoring the queue. Otherwise the orphaned task could keep
-            # running and emit status events onto the wrong queue.
+            # If the consumer abandoned the stream early, stop the background
+            # pipeline.
             if not task.done():
                 task.cancel()
                 try:
                     await task
                 except asyncio.CancelledError:
                     pass
-            self._status_queue = prev_queue
 
     async def compress_context(
         self,
@@ -773,12 +803,10 @@ class Agent:
             # Step 3.2: Execute reasoning if no more tools to be executed
             # ===============================================================
             if action == "reasoning":
-                # Compressed the memory if needed before reasoning, forwarding
-                # any status events (e.g. compression start/end) it emits.
-                async for status_evt in self._drain_status_events(
-                    self.compress_context(),
-                ):
-                    yield status_evt
+                # Compress the memory if needed before reasoning. Any status
+                # events it emits (e.g. compression start/end) are surfaced
+                # into the stream by the ambient status-event pipeline.
+                await self.compress_context()
                 # Perform reasoning
                 async for evt in self._reasoning():
                     # Exit the loop when no tool calls generated and the reply
