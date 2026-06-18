@@ -2,6 +2,7 @@
 """The unified agent class in AgentScope library."""
 import asyncio
 import inspect
+import json
 import uuid
 
 from asyncio import Queue
@@ -78,6 +79,7 @@ from ..tool import (
     ToolChoice,
     ToolResponse,
 )
+from ..tool._utils import _repair_arguments_by_schema
 from ..permission import (
     PermissionBehavior,
     PermissionEngine,
@@ -1341,6 +1343,10 @@ class Agent:
                 tool_call.input,
                 tool.input_schema,
             )
+            parsed_input = _repair_arguments_by_schema(
+                parsed_input,
+                tool.input_schema,
+            )
 
             # Validate the parsed input with the tool schema
             # TODO: Maybe some logic to mix the validation error in runtime
@@ -1351,6 +1357,10 @@ class Agent:
                     f"Input validation failed for tool '{tool_call.name}': "
                     f"{e.message}",
                 ) from e
+            tool_call.input = json.dumps(
+                parsed_input,
+                ensure_ascii=False,
+            )
 
         # The exceptions that
         #  - cannot found tool
