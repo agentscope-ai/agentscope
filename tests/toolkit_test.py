@@ -19,6 +19,7 @@ from agentscope.message import (
 from agentscope.tool import (
     Toolkit,
     ToolBase,
+    ToolMiddlewareBase,
     ToolChunk,
     ToolResponse,
     ToolGroup,
@@ -1325,21 +1326,24 @@ class ToolMiddlewareTest(IsolatedAsyncioTestCase):
         """
         execution_order: list[str] = []
 
-        def make_middleware(label: str) -> Any:
-            def middleware(next_handler: Any) -> Any:
-                async def handler(**kwargs: Any) -> AsyncGenerator:
+        def make_middleware(label: str) -> ToolMiddlewareBase:
+            class _Middleware(ToolMiddlewareBase):
+                async def on_tool_call(
+                    self,
+                    tool: Any,
+                    input_kwargs: dict,
+                    next_handler: Any,
+                ) -> AsyncGenerator:
                     execution_order.append(f"{label}-pre")
-                    async for chunk in next_handler(**kwargs):
+                    async for chunk in next_handler(**input_kwargs):
                         yield chunk
                     execution_order.append(f"{label}-post")
 
-                return handler
+            return _Middleware()
 
-            return middleware
-
-        tool = ToolWithCallOverride()
-        tool.add_middleware(make_middleware("outer"))
-        tool.add_middleware(make_middleware("inner"))
+        tool = ToolWithCallOverride(
+            middlewares=[make_middleware("outer"), make_middleware("inner")],
+        )
 
         result = await tool()
         # Result is an AsyncGenerator when middlewares are present

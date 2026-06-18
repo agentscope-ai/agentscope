@@ -33,6 +33,64 @@ class ParamsBase(BaseModel):
         return _remove_title_field(super().model_json_schema(*args, **kwargs))
 
 
+class ToolMiddlewareBase(ABC):
+    """Base class for tool middlewares.
+
+    A tool middleware wraps the execution of a tool in an onion fashion: the
+    first registered middleware is the outermost layer and runs its pre-logic
+    before any inner layer, then its post-logic after all inner layers have
+    completed. Subclass this and implement :meth:`on_tool_call` — the signature
+    is already spelled out, so second-party developers only need to fill in the
+    body without reasoning about the wrapping protocol.
+
+    Streaming and non-streaming tools are unified: ``next_handler`` always
+    returns an async generator, so a middleware never needs to know whether the
+    underlying tool yields a stream of chunks or returns a single chunk.
+
+    Example:
+        ```python
+        class LoggingMiddleware(ToolMiddlewareBase):
+            async def on_tool_call(self, tool, input_kwargs, next_handler):
+                print(f"Calling {tool.name} with {input_kwargs}")
+                async for chunk in next_handler(**input_kwargs):
+                    yield chunk
+                print(f"Finished {tool.name}")
+
+        tool = MyTool(middlewares=[LoggingMiddleware()])
+        ```
+    """
+
+    @abstractmethod
+    async def on_tool_call(
+        self,
+        tool: "ToolBase",
+        input_kwargs: dict[str, Any],
+        next_handler: Callable[..., AsyncGenerator[ToolChunk, None]],
+    ) -> AsyncGenerator[ToolChunk, None]:
+        """Intercept a single tool invocation.
+
+        Add pre-/post-logic around ``next_handler``, rewrite the tool inputs by
+        passing modified keyword arguments to ``next_handler``, or transform
+        the yielded chunks.
+
+        Args:
+            tool (`ToolBase`):
+                The tool instance being invoked.
+            input_kwargs (`dict[str, Any]`):
+                The tool's input arguments for this invocation. Pass them on
+                via ``next_handler(**input_kwargs)``; mutate or replace them to
+                change what the inner layers and the tool itself receive.
+            next_handler (`Callable[..., AsyncGenerator[ToolChunk, None]]`):
+                Call it as ``next_handler(**input_kwargs)`` to run the next
+                layer. It always returns an async generator, regardless of
+                whether the underlying tool is streaming or not.
+
+        Yields:
+            `ToolChunk`:
+                The chunks produced by this tool invocation.
+        """
+
+
 class ToolBase(ABC):
     """The tool protocol."""
 
@@ -68,34 +126,20 @@ class ToolBase(ABC):
     """List of dangerous directories that should be protected from
     auto-editing."""
 
-    def __new__(cls, *args: Any, **kwargs: Any) -> "ToolBase":
-        instance = super().__new__(cls)
-        instance._tool_middlewares = []
-        return instance
-
-    def add_middleware(
+    def __init__(
         self,
-        middleware: Callable[
-            [Callable[..., AsyncGenerator[ToolChunk, None]]],
-            Callable[..., AsyncGenerator[ToolChunk, None]],
-        ],
+        middlewares: List["ToolMiddlewareBase"] | None = None,
     ) -> None:
-        """Register a tool-level onion middleware.
-
-        Each middleware is a callable that accepts a ``next_handler``
-        (the next layer in the chain) and returns an async generator
-        function with the same signature as :meth:`call`.  Middlewares
-        are applied in registration order — the first registered is the
-        outermost layer.
+        """Initialize the tool with optional middlewares.
 
         Args:
-            middleware (`Callable`):
-                A callable ``(next_handler) -> handler`` where both
-                ``next_handler`` and the returned ``handler`` are async
-                generator functions that accept ``**kwargs`` and yield
-                :class:`~agentscope.tool.ToolChunk` objects.
+            middlewares (`List[ToolMiddlewareBase] | None`, optional):
+                A list of :class:`ToolMiddlewareBase` instances wrapping the
+                tool execution in an onion fashion. Defaults to an empty list.
         """
-        self._tool_middlewares.append(middleware)
+        self._tool_middlewares: List["ToolMiddlewareBase"] = (
+            middlewares if middlewares is not None else []
+        )
 
     async def call(
         self,
@@ -148,14 +192,21 @@ class ToolBase(ABC):
 
         async def execute_chain(
             index: int = 0,
+            **chain_kwargs: Any,
         ) -> AsyncGenerator[ToolChunk, None]:
             """Execute the tool middleware chain."""
             if index >= len(self._tool_middlewares):
+                # Innermost layer: run the tool's own ``call``. ``call`` is
+                # always async but comes in two shapes — an async generator
+                # function (e.g. ``Bash``) or a coroutine returning a single
+                # ``ToolChunk`` / an async generator (e.g. ``FunctionTool``).
+                # Normalize both into a single stream so middlewares never have
+                # to distinguish them.
                 if inspect.isasyncgenfunction(self.call):
-                    async for chunk in self.call(**kwargs):
+                    async for chunk in self.call(**chain_kwargs):
                         yield chunk
                 else:
-                    result = await self.call(**kwargs)
+                    result = await self.call(**chain_kwargs)
                     if isinstance(result, AsyncGenerator):
                         async for chunk in result:
                             yield chunk
@@ -163,17 +214,22 @@ class ToolBase(ABC):
                         yield result
             else:
                 mw = self._tool_middlewares[index]
+                input_kwargs = dict(chain_kwargs)
 
                 async def next_handler(
                     **kw: Any,
                 ) -> AsyncGenerator[ToolChunk, None]:
-                    async for chunk in execute_chain(index + 1):
+                    async for chunk in execute_chain(index + 1, **kw):
                         yield chunk
 
-                async for chunk in mw(next_handler)(**kwargs):
+                async for chunk in mw.on_tool_call(
+                    tool=self,
+                    input_kwargs=input_kwargs,
+                    next_handler=next_handler,
+                ):
                     yield chunk
 
-        return execute_chain()
+        return execute_chain(**kwargs)
 
     @abstractmethod
     async def check_permissions(
