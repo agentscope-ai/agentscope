@@ -69,23 +69,18 @@ class SandboxBackend(Protocol):
         timeout: float | None = None,
     ) -> ExecResult:
         """Execute ``command`` in a shell and capture output."""
-        ...
 
     async def read_file(self, path: str) -> bytes:
         """Read the full contents of ``path`` as raw bytes."""
-        ...
 
     async def write_file(self, path: str, data: bytes) -> None:
         """Write ``data`` to ``path``, creating parent directories."""
-        ...
 
     async def file_exists(self, path: str) -> bool:
         """Return ``True`` if ``path`` exists (file or directory)."""
-        ...
 
     async def is_dir(self, path: str) -> bool:
         """Return ``True`` if ``path`` is an existing directory."""
-        ...
 
     async def list_dir(
         self,
@@ -99,11 +94,9 @@ class SandboxBackend(Protocol):
         ``path`` (like ``find path -type f``).  When ``False``, return
         immediate children (like ``ls -1``).
         """
-        ...
 
     async def stat_mtime(self, path: str) -> float | None:
         """Return the modification time of ``path``, or ``None``."""
-        ...
 
 
 # ── local backend ──────────────────────────────────────────────────────
@@ -140,7 +133,7 @@ class LocalBackend:
         cwd: str | None = None,
         timeout: float | None = None,
     ) -> ExecResult:
-        """Execute *command* locally via ``asyncio.create_subprocess_shell``."""
+        """Execute command locally via ``asyncio.create_subprocess_shell``."""
         kwargs = _subprocess_creation_kwargs()
         if cwd is not None:
             kwargs["cwd"] = cwd

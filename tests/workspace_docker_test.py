@@ -710,7 +710,7 @@ class TestDockerWorkspaceLifecycle(IsolatedAsyncioTestCase):
             await ws.close()
 
     async def test_list_tools_builtin(self) -> None:
-        """``list_tools`` returns the six builtin tools backed by DockerBackend."""
+        """returns the six builtin tools backed by DockerBackend."""
         from agentscope.tool._builtin import (
             Bash,
             Edit,

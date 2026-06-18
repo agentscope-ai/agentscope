@@ -261,11 +261,12 @@ class E2BWorkspace(WorkspaceBase):
             # The backend pins ``cwd=SANDBOX_WORKDIR`` so the very
             # first bootstrap command (which itself is ``mkdir -p``)
             # would fail before it ran when the dir does not yet
-            # exist. Use the backend with no cwd override to break
-            # the chicken-and-egg — ``mkdir -p`` itself never fails
-            # on an already-existing directory.
+            # exist. Use ``cwd="/"`` to break the chicken-and-egg —
+            # ``mkdir -p`` itself never fails on an already-existing
+            # directory.
             await self._backend.exec_shell(
                 f"mkdir -p {shlex.quote(SANDBOX_WORKDIR)}",
+                cwd="/",
             )
             await self._run_bootstrap()
 

@@ -34,7 +34,7 @@ def _default_glob_helper_path() -> str:
     import importlib.resources as _res
 
     ref = _res.files("agentscope.tool._builtin._scripts").joinpath(
-        "_glob_helper.py"
+        "_glob_helper.py",
     )
     # as_posix() on a MultiplexedPath / PosixPath gives a str path
     return str(ref)

@@ -82,8 +82,11 @@ UV_BIN = f"{SANDBOX_USER_HOME}/.local/bin/uv"
 METADATA_WORKSPACE_ID_KEY = "agentscope.workspace.id"
 
 #: Tarball drop point for dev-mode ``agentscope`` source uploads.
-DEV_SRC_TAR = "/tmp/agentscope_src.tar"
-DEV_SRC_DIR = "/tmp/agentscope_src"
+#: Lives under ``GATEWAY_HOME`` (user-owned) instead of ``/tmp``
+#: because the E2B ``files.write`` API runs as ``user`` and ``/tmp``
+#: can have restrictive permissions after a sandbox pause/resume cycle.
+DEV_SRC_TAR = f"{GATEWAY_HOME}/agentscope_src.tar"
+DEV_SRC_DIR = f"{GATEWAY_HOME}/agentscope_src"
 
 # ── source tarball (dev mode only) ─────────────────────────────────
 

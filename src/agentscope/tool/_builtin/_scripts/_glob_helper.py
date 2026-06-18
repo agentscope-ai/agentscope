@@ -27,7 +27,19 @@ import sys
 
 
 def _glob_part_to_regex(part: str) -> re.Pattern[str]:
-    """Convert a single glob pattern segment to a compiled regex."""
+    """Convert a single glob pattern segment to a compiled regex.
+
+    Translates glob wildcards (``*`` → ``.*``, ``?`` → ``.``) and
+    escapes regex meta-characters so that a segment like ``*.py``
+    becomes the anchored pattern ``^.*\\.py$``.
+
+    Args:
+        part: One path segment of a glob pattern (e.g. ``*.py``
+            or ``test_*``).
+
+    Returns:
+        A compiled :class:`re.Pattern` anchored with ``^…$``.
+    """
     regex_str = ""
     for c in part:
         if c == "*":
@@ -42,7 +54,17 @@ def _glob_part_to_regex(part: str) -> re.Pattern[str]:
 
 
 def _collect_all(current_dir: str, results: list[str]) -> None:
-    """Recursively collect all files under *current_dir*."""
+    """Recursively collect all file paths under *current_dir*.
+
+    Uses :func:`os.walk` to traverse the directory tree.
+    ``PermissionError`` and ``OSError`` are silently ignored so that
+    inaccessible subtrees do not abort the entire glob operation.
+
+    Args:
+        current_dir: Root directory to walk.
+        results: Accumulator list; matched file paths are appended
+            in-place.
+    """
     try:
         for root, _dirs, files in os.walk(current_dir):
             for fname in files:
@@ -57,7 +79,24 @@ def _match_parts(
     current_dir: str,
     results: list[str],
 ) -> None:
-    """Recursively match glob pattern *parts* against directory entries."""
+    """Recursively match glob pattern *parts* against directory entries.
+
+    Walks the filesystem starting from *current_dir*, consuming one
+    pattern segment per directory level.  The ``**`` segment is handled
+    specially: it matches zero or more intermediate directories by
+    recursing into every subdirectory while keeping the same
+    *part_index*, and also advancing to the next segment in the
+    current directory.
+
+    Args:
+        parts: The glob pattern split into path segments
+            (e.g. ``["src", "**", "*.py"]``).
+        part_index: Index into *parts* indicating which segment is
+            being matched at this recursion level.
+        current_dir: The directory currently being scanned.
+        results: Accumulator list; matched file paths are appended
+            in-place.
+    """
     if part_index >= len(parts):
         return
 
@@ -105,7 +144,20 @@ def _match_parts(
 def glob_match(pattern: str, base_dir: str) -> list[str]:
     """Match files against a glob pattern starting from *base_dir*.
 
-    Returns a list of absolute file paths.
+    Splits *pattern* on path separators (``/`` or ``\\``) and
+    delegates to :func:`_match_parts` for recursive directory
+    traversal.  Supports ``*`` (any characters within a segment),
+    ``?`` (single character), and ``**`` (zero or more directories).
+
+    Args:
+        pattern: Glob pattern such as ``"**/*.py"`` or
+            ``"src/utils/*.txt"``.
+        base_dir: Absolute path of the directory to search from.
+
+    Returns:
+        A list of absolute file paths that match *pattern*.  The
+        list is unsorted; callers should sort as needed (e.g. by
+        modification time).
     """
     results: list[str] = []
     parts = [p for p in re.split(r"[\\/]+", pattern) if p]
@@ -117,6 +169,13 @@ def glob_match(pattern: str, base_dir: str) -> list[str]:
 
 
 def main() -> None:
+    """CLI entry point: parse ``--pattern`` and ``--base-dir``, run
+    the glob, and print results as a JSON array to stdout.
+
+    The results are sorted by file modification time (newest first).
+    If *base_dir* does not exist, an empty JSON array ``[]`` is
+    printed and the process exits with code 0.
+    """
     parser = argparse.ArgumentParser(
         description="Glob file matching with mtime sorting.",
     )

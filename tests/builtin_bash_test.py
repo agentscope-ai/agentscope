@@ -24,7 +24,8 @@ class BashSubprocessKwargsTest(unittest.TestCase):
     def test_non_windows_subprocess_kwargs_are_empty(self) -> None:
         """On non-Windows the helper returns no extra subprocess kwargs."""
         with patch(
-            "agentscope.tool._builtin._sandbox_backend.os.name", "posix"
+            "agentscope.tool._builtin._sandbox_backend.os.name",
+            "posix",
         ):
             self.assertEqual(_subprocess_creation_kwargs(), {})
 
@@ -48,7 +49,8 @@ class BashCwdTest(IsolatedAsyncioTestCase):
 
         create_process = AsyncMock(return_value=process)
         with patch(
-            "agentscope.tool._builtin._sandbox_backend.asyncio.create_subprocess_shell",
+            "agentscope.tool._builtin._sandbox_backend."
+            "asyncio.create_subprocess_shell",
             create_process,
         ):
             chunks = []
