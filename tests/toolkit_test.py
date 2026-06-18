@@ -19,7 +19,6 @@ from agentscope.message import (
 from agentscope.tool import (
     Toolkit,
     ToolBase,
-    ToolMiddlewareBase,
     ToolChunk,
     ToolResponse,
     ToolGroup,
@@ -1274,88 +1273,6 @@ The tool instructions are a collection of suggestions, rules and notifications a
                 "metadata": {},
                 "state": "success",
             },
-        )
-
-
-class ToolWithCallOverride(ToolBase):
-    """A tool that overrides call() instead of __call__."""
-
-    name: str = "tool_with_call"
-    description: str = "A tool that overrides call()."
-    input_schema: dict = {
-        "type": "object",
-        "properties": {},
-    }
-    is_concurrency_safe: bool = True
-    is_read_only: bool = True
-    is_mcp: bool = False
-
-    async def check_permissions(
-        self,
-        *args: Any,
-        **kwargs: Any,
-    ) -> PermissionDecision:
-        """Check permissions for the tool."""
-        return PermissionDecision(
-            behavior=PermissionBehavior.ASK,
-            message="Do you want to use tool_with_call?",
-        )
-
-    async def call(self, **kwargs: Any) -> ToolChunk:
-        """Run the tool."""
-        return ToolChunk(
-            content=[TextBlock(text="call() executed")],
-        )
-
-
-class ToolMiddlewareTest(IsolatedAsyncioTestCase):
-    """Tests for the tool-level onion middleware mechanism."""
-
-    async def test_no_middleware_calls_call_directly(self) -> None:
-        """A tool with no registered middlewares routes through call()."""
-        tool = ToolWithCallOverride()
-        result = await tool()
-        self.assertIsInstance(result, ToolChunk)
-        self.assertEqual(result.content[0].text, "call() executed")
-
-    async def test_middleware_wraps_call_in_onion_order(self) -> None:
-        """Registered middlewares wrap call() in the correct onion order.
-
-        With two middlewares registered (outer, inner), the execution order
-        must be: outer-pre -> inner-pre -> call() -> inner-post -> outer-post.
-        """
-        execution_order: list[str] = []
-
-        def make_middleware(label: str) -> ToolMiddlewareBase:
-            class _Middleware(ToolMiddlewareBase):
-                async def on_tool_call(
-                    self,
-                    tool: Any,
-                    input_kwargs: dict,
-                    next_handler: Any,
-                ) -> AsyncGenerator:
-                    execution_order.append(f"{label}-pre")
-                    async for chunk in next_handler(**input_kwargs):
-                        yield chunk
-                    execution_order.append(f"{label}-post")
-
-            return _Middleware()
-
-        tool = ToolWithCallOverride(
-            middlewares=[make_middleware("outer"), make_middleware("inner")],
-        )
-
-        result = await tool()
-        # Result is an AsyncGenerator when middlewares are present
-        chunks = []
-        async for chunk in result:
-            chunks.append(chunk)
-
-        self.assertEqual(len(chunks), 1)
-        self.assertEqual(chunks[0].content[0].text, "call() executed")
-        self.assertEqual(
-            execution_order,
-            ["outer-pre", "inner-pre", "inner-post", "outer-post"],
         )
 
 

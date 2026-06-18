@@ -137,7 +137,7 @@ class ToolBase(ABC):
                 A list of :class:`ToolMiddlewareBase` instances wrapping the
                 tool execution in an onion fashion. Defaults to an empty list.
         """
-        self._tool_middlewares: List["ToolMiddlewareBase"] = (
+        self._middlewares: List["ToolMiddlewareBase"] = (
             middlewares if middlewares is not None else []
         )
 
@@ -180,12 +180,28 @@ class ToolBase(ABC):
         """Invoke the tool, layering any registered middlewares around
         :meth:`call`.
 
+        Tools are always invoked with keyword arguments only. ``*args`` is
+        accepted in the signature solely to stay Liskov-compatible with
+        subclasses that override ``__call__`` with their own positional
+        parameters; any positional argument actually passed here is rejected
+        (raising :exc:`TypeError`) so it fails loudly instead of being silently
+        dropped.
+
         Middlewares are applied in an onion fashion: the first registered
         middleware is the outermost layer and runs its pre-logic before
         any inner layers, then its post-logic after all inner layers
         have completed.
         """
-        if not self._tool_middlewares:
+        if args:
+            raise TypeError(
+                f"{type(self).__name__} must be called with keyword arguments "
+                f"only, but got {len(args)} positional argument(s).",
+            )
+        # ``getattr`` with a default so the no-middleware path keeps working
+        # even if a subclass overrides ``__init__`` without calling
+        # ``super().__init__()``.
+        middlewares = getattr(self, "_middlewares", [])
+        if not middlewares:
             if inspect.isasyncgenfunction(self.call):
                 return self.call(**kwargs)
             return await self.call(**kwargs)
@@ -195,7 +211,7 @@ class ToolBase(ABC):
             **chain_kwargs: Any,
         ) -> AsyncGenerator[ToolChunk, None]:
             """Execute the tool middleware chain."""
-            if index >= len(self._tool_middlewares):
+            if index >= len(middlewares):
                 # Innermost layer: run the tool's own ``call``. ``call`` is
                 # always async but comes in two shapes — an async generator
                 # function (e.g. ``Bash``) or a coroutine returning a single
@@ -213,7 +229,7 @@ class ToolBase(ABC):
                     else:
                         yield result
             else:
-                mw = self._tool_middlewares[index]
+                mw = middlewares[index]
                 input_kwargs = dict(chain_kwargs)
 
                 async def next_handler(
