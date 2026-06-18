@@ -2,7 +2,7 @@
 """Docker container :class:`SandboxBackend` implementation.
 
 Wraps the ``aiodocker`` container APIs (``exec``, ``get_archive``,
-``put_archive``) into the seven-method :class:`SandboxBackend`
+``put_archive``) into the eight-method :class:`SandboxBackend`
 protocol so that builtin tools (Bash, Read, Write, Edit, Grep, Glob)
 can operate inside a Docker container transparently.
 """
@@ -170,3 +170,10 @@ class DockerBackend:
             )
         except ValueError:
             return None
+
+    async def delete_path(self, path: str) -> None:
+        """Delete a file or directory tree inside the container.
+
+        No-op if *path* does not exist.
+        """
+        await self.exec_shell(f"rm -rf {shlex.quote(path)}")

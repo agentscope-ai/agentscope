@@ -331,14 +331,12 @@ class E2BWorkspace(WorkspaceBase):
             self._gateway_clients.clear()
             self._mcps = []
 
-            paths = [
+            for path in (
                 SANDBOX_SESSIONS_DIR,
                 SANDBOX_DATA_DIR,
                 SANDBOX_SKILLS_DIR,
-            ]
-            await self._backend.exec_shell(
-                "rm -rf " + " ".join(shlex.quote(p) for p in paths),
-            )
+            ):
+                await self._backend.delete_path(path)
 
             # Rewrite ``.mcp`` to an empty list so a future restart does
             # not fall back to ``default_mcps``.
@@ -554,14 +552,7 @@ class E2BWorkspace(WorkspaceBase):
             raise KeyError(
                 f"Skill {name!r} not found. Available: {available}",
             )
-        result = await self._backend.exec_shell(
-            f"rm -rf {shlex.quote(target_dir)}",
-        )
-        if not result.ok():
-            raise RuntimeError(
-                f"Failed to remove skill {name!r}: "
-                f"{result.stderr.decode(errors='replace')}",
-            )
+        await self._backend.delete_path(target_dir)
 
     # ── offload ─────────────────────────────────────────────────
 

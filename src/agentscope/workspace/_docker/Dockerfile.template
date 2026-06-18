@@ -12,7 +12,7 @@
 # ``INSTALLER_NO_MODIFY_PATH=1`` suppresses the installer's attempt to
 # patch shell rc files (we don't need it — PATH already covers it).
 RUN apt-get update \
- && apt-get install -y --no-install-recommends curl ca-certificates \
+ && apt-get install -y --no-install-recommends curl ca-certificates ripgrep \
  && rm -rf /var/lib/apt/lists/* \
  && curl -LsSf https://astral.sh/uv/install.sh \
         | env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 sh

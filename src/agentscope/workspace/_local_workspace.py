@@ -649,24 +649,15 @@ class LocalWorkspace(WorkspaceBase):
             self._mcps = []
 
             mcp_file = os.path.join(self.workdir, ".mcp")
-            if await self._backend.file_exists(mcp_file):
-                await self._backend.exec_shell(
-                    f"rm -f {shlex.quote(mcp_file)}",
-                )
+            await self._backend.delete_path(mcp_file)
 
         async with self._skill_lock:
             skills_path = os.path.join(self.workdir, "skills")
-            if await self._backend.is_dir(skills_path):
-                await self._backend.exec_shell(
-                    f"rm -rf {shlex.quote(skills_path)}",
-                )
+            await self._backend.delete_path(skills_path)
 
         for sub in ("sessions", "data"):
             path = os.path.join(self.workdir, sub)
-            if await self._backend.is_dir(path):
-                await self._backend.exec_shell(
-                    f"rm -rf {shlex.quote(path)}",
-                )
+            await self._backend.delete_path(path)
 
     async def list_tools(self) -> list[ToolBase]:
         """List all tools available in the workspace.
@@ -1066,9 +1057,7 @@ class LocalWorkspace(WorkspaceBase):
 
             skill_dir_path = os.path.join(skills_dir, target_dir)
             if await self._backend.is_dir(skill_dir_path):
-                await self._backend.exec_shell(
-                    f"rm -rf {shlex.quote(skill_dir_path)}",
-                )
+                await self._backend.delete_path(skill_dir_path)
                 logger.info(
                     "Removed skill '%s' from %s",
                     name,

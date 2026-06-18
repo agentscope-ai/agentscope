@@ -2,7 +2,7 @@
 """E2B sandbox :class:`SandboxBackend` implementation.
 
 Wraps the E2B SDK's ``commands.run`` and ``files.*`` APIs into the
-seven-method :class:`SandboxBackend` protocol so that builtin tools
+eight-method :class:`SandboxBackend` protocol so that builtin tools
 (Bash, Read, Write, Edit, Grep, Glob) can operate inside an E2B
 cloud sandbox transparently.
 """
@@ -141,3 +141,10 @@ class E2BBackend:
             )
         except ValueError:
             return None
+
+    async def delete_path(self, path: str) -> None:
+        """Delete a file or directory tree inside the sandbox.
+
+        No-op if *path* does not exist.
+        """
+        await self.exec_shell(f"rm -rf {shlex.quote(path)}")

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
@@ -56,9 +57,10 @@ class ExecResult:
 class SandboxBackend(Protocol):
     """Minimal filesystem + subprocess interface consumed by builtin tools.
 
-    Seven async methods covering shell execution, file I/O, and path
-    introspection.  Any object that duck-types these methods can be
-    injected into a builtin tool without explicit inheritance.
+    Eight async methods covering shell execution, file I/O, path
+    introspection, and deletion.  Any object that duck-types these
+    methods can be injected into a builtin tool without explicit
+    inheritance.
     """
 
     async def exec_shell(
@@ -97,6 +99,14 @@ class SandboxBackend(Protocol):
 
     async def stat_mtime(self, path: str) -> float | None:
         """Return the modification time of ``path``, or ``None``."""
+
+    async def delete_path(self, path: str) -> None:
+        """Delete ``path`` (file or directory tree).
+
+        If ``path`` does not exist the call is a silent no-op (like
+        ``rm -rf``).  Implementations must handle both files and
+        directories (recursively).
+        """
 
 
 # ── local backend ──────────────────────────────────────────────────────
@@ -203,3 +213,15 @@ class LocalBackend:
             return os.stat(path).st_mtime
         except (OSError, FileNotFoundError):
             return None
+
+    async def delete_path(self, path: str) -> None:
+        """Delete a local file or directory tree.
+
+        No-op if *path* does not exist.
+        """
+        if not os.path.exists(path):
+            return
+        if os.path.isdir(path):
+            shutil.rmtree(path)
+        else:
+            os.remove(path)
