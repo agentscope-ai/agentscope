@@ -1,21 +1,25 @@
 # -*- coding: utf-8 -*-
 """The read tool in agentscope."""
+
+from __future__ import annotations
+
 import fnmatch
 import os
-from typing import Any, List
+from typing import TYPE_CHECKING, Any, List
 
-import aiofiles
-
-from .._base import ToolBase
+from ...message import TextBlock, ToolResultState
 from ...permission import (
+    PermissionBehavior,
     PermissionContext,
     PermissionDecision,
-    PermissionBehavior,
     PermissionRule,
 )
-from .._response import ToolChunk
-from ...message import TextBlock, ToolResultState
 from ...state import AgentState
+from .._base import ToolBase
+from .._response import ToolChunk
+
+if TYPE_CHECKING:
+    from ._sandbox_backend import SandboxBackend
 
 
 class Read(ToolBase):
@@ -72,6 +76,7 @@ Usage:
     def __init__(
         self,
         max_line_characters: int = 2000,
+        backend: SandboxBackend | None = None,
     ) -> None:
         """Initialize the read tool.
 
@@ -82,9 +87,14 @@ Usage:
                 a "[truncated]" suffix. This prevents overwhelming the agent
                 with excessively long lines while still providing useful
                 content.
+            backend (`SandboxBackend | None`, optional):
+                The sandbox backend to use for file I/O. When ``None``,
+                a :class:`LocalBackend` is created.
         """
+        from ._sandbox_backend import LocalBackend
 
         self._max_line_characters = max_line_characters
+        self._backend = backend if backend is not None else LocalBackend()
 
     async def check_permissions(
         self,
@@ -190,7 +200,7 @@ Usage:
             )
 
         # Check file exists
-        if not os.path.exists(file_path):
+        if not await self._backend.file_exists(file_path):
             return ToolChunk(
                 content=[
                     TextBlock(text=f"Error: File does not exist: {file_path}"),
@@ -200,7 +210,7 @@ Usage:
             )
 
         # Check it's not a directory
-        if os.path.isdir(file_path):
+        if await self._backend.is_dir(file_path):
             return ToolChunk(
                 content=[
                     TextBlock(
@@ -213,7 +223,7 @@ Usage:
             )
 
         try:
-            # Read file content with aiofiles
+            # Read file content via backend
             lines = None
             if _agent_state is not None:
                 cache = await _agent_state.tool_context.get_cache(file_path)
@@ -221,13 +231,9 @@ Usage:
                     lines = cache.lines
 
             if lines is None:
-                async with aiofiles.open(
-                    file_path,
-                    mode="r",
-                    encoding="utf-8",
-                    errors="replace",
-                ) as f:
-                    lines = await f.readlines()
+                raw = await self._backend.read_file(file_path)
+                content_str = raw.decode("utf-8", errors="replace")
+                lines = content_str.splitlines(keepends=True)
 
                 # Cache file if state is provided
                 if _agent_state is not None:

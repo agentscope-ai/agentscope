@@ -1,19 +1,26 @@
 # -*- coding: utf-8 -*-
 """The glob tool in agentscope."""
+
+from __future__ import annotations
+
 import fnmatch
 import os
 import re
-from typing import Any, List
+import shlex
+from typing import TYPE_CHECKING, Any, List
 
-from .._base import ToolBase
+from ...message import TextBlock, ToolResultState
 from ...permission import (
+    PermissionBehavior,
     PermissionContext,
     PermissionDecision,
-    PermissionBehavior,
     PermissionRule,
 )
+from .._base import ToolBase
 from .._response import ToolChunk
-from ...message import TextBlock
+
+if TYPE_CHECKING:
+    from ._sandbox_backend import SandboxBackend
 
 
 class Glob(ToolBase):
@@ -55,8 +62,24 @@ codebase."""  # ignore: E501
     is_external_tool: bool = False
     is_state_injected: bool = False
 
-    def __init__(self) -> None:
-        """Initialize the glob tool."""
+    def __init__(
+        self,
+        backend: SandboxBackend | None = None,
+    ) -> None:
+        """Initialize the glob tool.
+
+        Args:
+            backend (`SandboxBackend | None`, optional):
+                The sandbox backend to use. When ``None``, a
+                :class:`LocalBackend` is created and the high-
+                performance local ``os.walk`` + ``os.scandir`` path
+                is used. With a remote backend, glob patterns are
+                evaluated via a Python script executed through
+                ``exec_shell``.
+        """
+        from ._sandbox_backend import LocalBackend
+
+        self._backend = backend if backend is not None else LocalBackend()
 
     async def check_permissions(
         self,
@@ -263,6 +286,39 @@ codebase."""  # ignore: E501
         self.match_parts(parts, 0, base_dir, results)
         return results
 
+    async def _remote_glob(
+        self,
+        pattern: str,
+        base_dir: str,
+    ) -> list[str]:
+        """Evaluate a glob pattern on a remote backend via a Python script.
+
+        Sends a small inline Python script through ``exec_shell`` that
+        uses ``pathlib.Path.glob`` and prints the results. This avoids
+        complex shell quoting while being portable across backends.
+        """
+        # Build a short Python script that globs and prints results
+        script = (
+            "import pathlib, json, os; "
+            f"base = pathlib.Path({base_dir!r}); "
+            f"matches = [str(p) for p in base.glob({pattern!r}) "
+            "if p.is_file()]; "
+            "print(json.dumps(matches))"
+        )
+        result = await self._backend.exec_shell(
+            f"python3 -c {shlex.quote(script)}",
+            timeout=30.0,
+        )
+        if not result.ok():
+            return []
+
+        import json
+
+        try:
+            return json.loads(result.stdout.decode("utf-8", errors="replace"))
+        except (json.JSONDecodeError, ValueError):
+            return []
+
     async def __call__(  # type: ignore[override]
         self,
         pattern: str,
@@ -280,23 +336,51 @@ codebase."""  # ignore: E501
                 newlines, or an error message if the directory is not found or
                 no files match the pattern.
         """
+        from ._sandbox_backend import LocalBackend
+
         base_dir = path if path else os.getcwd()
 
-        if not os.path.exists(base_dir):
-            return ToolChunk(
-                content=[TextBlock(text=f"Directory not found: {base_dir}")],
-                state="error",
-                is_last=True,
-            )
+        if isinstance(self._backend, LocalBackend):
+            # Local path: use high-performance os.walk + os.scandir
+            if not os.path.exists(base_dir):
+                return ToolChunk(
+                    content=[
+                        TextBlock(text=f"Directory not found: {base_dir}"),
+                    ],
+                    state=ToolResultState.ERROR,
+                    is_last=True,
+                )
 
-        matches = self.glob_match(pattern, base_dir)
+            matches = self.glob_match(pattern, base_dir)
 
-        # Sort by modification time (newest first)
-        try:
-            matches.sort(key=lambda p: os.stat(p).st_mtime, reverse=True)
-        except (OSError, FileNotFoundError):
-            # If we can't stat some files, just keep the unsorted order
-            pass
+            # Sort by modification time (newest first)
+            try:
+                matches.sort(
+                    key=lambda p: os.stat(p).st_mtime,
+                    reverse=True,
+                )
+            except (OSError, FileNotFoundError):
+                pass
+        else:
+            # Remote path: execute glob via backend
+            if not await self._backend.file_exists(base_dir):
+                return ToolChunk(
+                    content=[
+                        TextBlock(text=f"Directory not found: {base_dir}"),
+                    ],
+                    state=ToolResultState.ERROR,
+                    is_last=True,
+                )
+
+            matches = await self._remote_glob(pattern, base_dir)
+
+            # Sort by mtime via backend
+            mtimes: list[tuple[str, float]] = []
+            for m in matches:
+                mt = await self._backend.stat_mtime(m)
+                mtimes.append((m, mt if mt is not None else 0.0))
+            mtimes.sort(key=lambda t: t[1], reverse=True)
+            matches = [t[0] for t in mtimes]
 
         if len(matches) == 0:
             return ToolChunk(
@@ -305,12 +389,12 @@ codebase."""  # ignore: E501
                         text=f"No files found matching pattern: {pattern}",
                     ),
                 ],
-                state="running",
+                state=ToolResultState.RUNNING,
                 is_last=True,
             )
 
         return ToolChunk(
             content=[TextBlock(text="\n".join(matches))],
-            state="running",
+            state=ToolResultState.RUNNING,
             is_last=True,
         )

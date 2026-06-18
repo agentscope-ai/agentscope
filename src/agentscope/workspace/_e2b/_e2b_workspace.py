@@ -44,7 +44,6 @@ import posixpath
 import shlex
 import uuid
 from copy import deepcopy
-from dataclasses import dataclass
 from typing import Any
 
 from pydantic import AnyUrl
@@ -65,6 +64,11 @@ from .._base import WorkspaceBase
 from .._gateway_client import (
     GatewayClient,
     GatewayMCPClient,
+)
+from .._utils import (
+    _agentscope_version,
+    _is_released_install,
+    _read_gateway_script_bytes,
 )
 from ._bootstrap import (
     DEFAULT_GATEWAY_PORT,
@@ -88,12 +92,7 @@ from ._bootstrap import (
     render_install_agentscope_cmd_dev,
     render_install_agentscope_cmd_released,
 )
-from .._utils import (
-    _agentscope_version,
-    _is_released_install,
-    _read_gateway_script_bytes,
-)
-
+from ._e2b_backend import E2BBackend
 
 _DEFAULT_INSTRUCTIONS = """<workspace>
 You have an E2B-based cloud workspace. All tool calls execute **inside
@@ -111,30 +110,6 @@ Layout:
 Use the MCP-provided tools to interact with the sandbox's filesystem
 and processes.
 </workspace>"""
-
-
-# ── small helpers ──────────────────────────────────────────────────
-
-
-@dataclass(frozen=True, slots=True)
-class _ExecResult:
-    """Result of running a command inside the sandbox via ``commands.run``.
-
-    Attributes:
-        exit_code: Process exit code from the sandbox. ``-1`` indicates
-            the SDK raised before producing a result (e.g. timeout or
-            connection error captured in :attr:`stderr`).
-        stdout: Captured stdout as raw bytes.
-        stderr: Captured stderr as raw bytes.
-    """
-
-    exit_code: int
-    stdout: bytes
-    stderr: bytes
-
-    def ok(self) -> bool:
-        """Return ``True`` iff the command exited with code ``0``."""
-        return self.exit_code == 0
 
 
 # ── the workspace ──────────────────────────────────────────────────
@@ -228,6 +203,7 @@ class E2BWorkspace(WorkspaceBase):
 
         # ── runtime state ───────────────────────────────────────
         self._sandbox: Any = None  # e2b.AsyncSandbox
+        self._backend: E2BBackend | None = None
         self._gateway: GatewayClient | None = None
         self._gateway_token: str = ""
         self._mcps: list[MCPClient] = []
@@ -273,18 +249,20 @@ class E2BWorkspace(WorkspaceBase):
             return
 
         await self._attach_or_create_sandbox()
+        self._backend = E2BBackend(self._sandbox, workdir=SANDBOX_WORKDIR)
 
         # If the gateway script is missing, the sandbox is fresh (or
         # a prior bootstrap was interrupted). Re-running bootstrap is
         # safe because every step is idempotent (mkdir -p, uv venv,
         # uv pip install).
         if not await self._sandbox.files.exists(GATEWAY_SCRIPT):
-            # ``_exec`` pins ``cwd=SANDBOX_WORKDIR`` so the very first
-            # bootstrap command (which itself is ``mkdir -p``) would
-            # fail before it ran when the dir does not yet exist.
-            # Create it directly via the SDK with no cwd to break the
-            # chicken-and-egg.
-            await self._sandbox.commands.run(
+            # The backend pins ``cwd=SANDBOX_WORKDIR`` so the very
+            # first bootstrap command (which itself is ``mkdir -p``)
+            # would fail before it ran when the dir does not yet
+            # exist. Use the backend with no cwd override to break
+            # the chicken-and-egg — ``mkdir -p`` itself never fails
+            # on an already-existing directory.
+            await self._backend.exec_shell(
                 f"mkdir -p {shlex.quote(SANDBOX_WORKDIR)}",
             )
             await self._run_bootstrap()
@@ -297,7 +275,7 @@ class E2BWorkspace(WorkspaceBase):
         # init mints a new bearer token, so an old gateway listening
         # on the port would happily accept old-token requests but
         # reject new ones — kill it before starting the new one.
-        await self._exec(
+        await self._backend.exec_shell(
             "pkill -f _mcp_gateway_app.py || true",
         )
 
@@ -355,7 +333,7 @@ class E2BWorkspace(WorkspaceBase):
                 SANDBOX_DATA_DIR,
                 SANDBOX_SKILLS_DIR,
             ]
-            await self._exec(
+            await self._backend.exec_shell(
                 "rm -rf " + " ".join(shlex.quote(p) for p in paths),
             )
 
@@ -388,6 +366,7 @@ class E2BWorkspace(WorkspaceBase):
             except Exception as e:
                 logger.warning("E2BWorkspace: pause failed: %s", e)
             self._sandbox = None
+            self._backend = None
 
         self.is_alive = False
 
@@ -405,8 +384,22 @@ class E2BWorkspace(WorkspaceBase):
     # ── tool / MCP / skill discovery ────────────────────────────
 
     async def list_tools(self) -> list[ToolBase]:
-        """No built-in tools — every tool reaches the agent via MCP."""
-        return []
+        """Built-in tools backed by the E2B sandbox.
+
+        Returns the six builtin tools (Bash, Read, Write, Edit, Grep,
+        Glob), each backed by the workspace's :class:`E2BBackend`
+        that executes inside the sandbox.
+        """
+        from ...tool._builtin import Bash, Edit, Glob, Grep, Read, Write
+
+        return [
+            Bash(cwd=SANDBOX_WORKDIR, backend=self._backend),
+            Edit(backend=self._backend),
+            Glob(backend=self._backend),
+            Grep(backend=self._backend),
+            Read(backend=self._backend),
+            Write(backend=self._backend),
+        ]
 
     async def list_mcps(self) -> list[MCPClient]:
         """Return one :class:`GatewayMCPClient` per registered MCP.
@@ -426,9 +419,8 @@ class E2BWorkspace(WorkspaceBase):
         """
         import frontmatter as fm
 
-        result = await self._exec(
-            f"find {SANDBOX_SKILLS_DIR} -name SKILL.md "
-            f"2>/dev/null || true",
+        result = await self._backend.exec_shell(
+            f"find {SANDBOX_SKILLS_DIR} -name SKILL.md 2>/dev/null || true",
         )
         if not result.ok():
             return []
@@ -441,7 +433,7 @@ class E2BWorkspace(WorkspaceBase):
             if not md_path:
                 continue
             try:
-                raw = await self._read(md_path)
+                raw = await self._backend.read_file(md_path)
                 doc = fm.loads(raw.decode("utf-8"))
                 name = doc.get("name")
                 desc = doc.get("description")
@@ -516,10 +508,12 @@ class E2BWorkspace(WorkspaceBase):
             )
 
         async with self._skill_lock:
-            await self._exec(f"mkdir -p {SANDBOX_SKILLS_DIR}")
+            await self._backend.exec_shell(
+                f"mkdir -p {SANDBOX_SKILLS_DIR}",
+            )
             dir_name = os.path.basename(os.path.abspath(skill_path))
 
-            check = await self._exec(
+            check = await self._backend.exec_shell(
                 f"test -e {shlex.quote(SANDBOX_SKILLS_DIR + '/' + dir_name)}",
             )
             if check.ok():
@@ -535,7 +529,7 @@ class E2BWorkspace(WorkspaceBase):
                     remote = f"{SANDBOX_SKILLS_DIR}/{dir_name}/{rel}"
                     with open(local, "rb") as f:
                         data = f.read()
-                    await self._sandbox.files.write(remote, data)
+                    await self._backend.write_file(remote, data)
 
             logger.info(
                 "E2BWorkspace: added skill %r at %s/%s",
@@ -557,7 +551,9 @@ class E2BWorkspace(WorkspaceBase):
             raise KeyError(
                 f"Skill {name!r} not found. Available: {available}",
             )
-        result = await self._exec(f"rm -rf {shlex.quote(target_dir)}")
+        result = await self._backend.exec_shell(
+            f"rm -rf {shlex.quote(target_dir)}",
+        )
         if not result.ok():
             raise RuntimeError(
                 f"Failed to remove skill {name!r}: "
@@ -596,13 +592,13 @@ class E2BWorkspace(WorkspaceBase):
                 msg.content = content
             lines.append(msg.model_dump_json())
 
-        await self._exec(f"mkdir -p {shlex.quote(base)}")
+        await self._backend.exec_shell(f"mkdir -p {shlex.quote(base)}")
         existing = b""
         try:
-            existing = await self._read(path)
+            existing = await self._backend.read_file(path)
         except FileNotFoundError:
             pass
-        await self._sandbox.files.write(
+        await self._backend.write_file(
             path,
             existing + ("\n".join(lines) + "\n").encode("utf-8"),
         )
@@ -635,8 +631,8 @@ class E2BWorkspace(WorkspaceBase):
                         f"media_type='{block.source.media_type}'/>",
                     )
 
-        await self._exec(f"mkdir -p {shlex.quote(base)}")
-        await self._sandbox.files.write(
+        await self._backend.exec_shell(f"mkdir -p {shlex.quote(base)}")
+        await self._backend.write_file(
             path,
             "".join(parts).encode("utf-8"),
         )
@@ -805,7 +801,7 @@ class E2BWorkspace(WorkspaceBase):
         else:
             log_bootstrap_attempt(self.workspace_id, "dev")
             tar_bytes = build_source_tarball()
-            await self._sandbox.files.write(DEV_SRC_TAR, tar_bytes)
+            await self._backend.write_file(DEV_SRC_TAR, tar_bytes)
             install_cmd = render_install_agentscope_cmd_dev()
 
         commands = bootstrap_commands(
@@ -813,7 +809,7 @@ class E2BWorkspace(WorkspaceBase):
             install_agentscope_cmd=install_cmd,
         )
         for cmd in commands:
-            r = await self._exec(cmd, timeout=600.0)
+            r = await self._backend.exec_shell(cmd, timeout=600.0)
             if not r.ok():
                 raise RuntimeError(
                     f"E2BWorkspace bootstrap failed (exit {r.exit_code}) "
@@ -824,7 +820,7 @@ class E2BWorkspace(WorkspaceBase):
 
         # Upload the gateway script last so its presence is the
         # idempotency marker we probe in :meth:`initialize`.
-        await self._sandbox.files.write(
+        await self._backend.write_file(
             GATEWAY_SCRIPT,
             _read_gateway_script_bytes(),
         )
@@ -840,7 +836,7 @@ class E2BWorkspace(WorkspaceBase):
           ``default_mcps``.
         """
         try:
-            raw = await self._read(SANDBOX_MCP_FILE)
+            raw = await self._backend.read_file(SANDBOX_MCP_FILE)
         except FileNotFoundError:
             return list(self.default_mcps)
         try:
@@ -866,8 +862,10 @@ class E2BWorkspace(WorkspaceBase):
             ensure_ascii=False,
         )
         try:
-            await self._exec(f"mkdir -p {shlex.quote(SANDBOX_WORKDIR)}")
-            await self._sandbox.files.write(
+            await self._backend.exec_shell(
+                f"mkdir -p {shlex.quote(SANDBOX_WORKDIR)}",
+            )
+            await self._backend.write_file(
                 SANDBOX_MCP_FILE,
                 payload.encode("utf-8"),
             )
@@ -884,8 +882,10 @@ class E2BWorkspace(WorkspaceBase):
             "token": self._gateway_token,
             "servers": [m.model_dump(mode="json") for m in self._mcps],
         }
-        await self._exec(f"mkdir -p {shlex.quote(GATEWAY_HOME)}")
-        await self._sandbox.files.write(
+        await self._backend.exec_shell(
+            f"mkdir -p {shlex.quote(GATEWAY_HOME)}",
+        )
+        await self._backend.write_file(
             GATEWAY_CONFIG,
             json.dumps(cfg, indent=2, ensure_ascii=False).encode("utf-8"),
         )
@@ -899,7 +899,7 @@ class E2BWorkspace(WorkspaceBase):
             f"--port {self.gateway_port} "
             f"> {shlex.quote(GATEWAY_LOG)} 2>&1 &"
         )
-        await self._exec(cmd)
+        await self._backend.exec_shell(cmd)
 
     async def _wait_for_gateway(self, timeout: float = 30.0) -> None:
         """Block until the gateway answers ``/health`` with 200."""
@@ -912,7 +912,7 @@ class E2BWorkspace(WorkspaceBase):
             await asyncio.sleep(delay)
             delay = min(delay * 1.5, 1.0)
         try:
-            log = await self._read(GATEWAY_LOG)
+            log = await self._backend.read_file(GATEWAY_LOG)
             tail = log[-2000:].decode(errors="replace")
         except Exception:
             tail = "<no gateway log available>"
@@ -930,7 +930,7 @@ class E2BWorkspace(WorkspaceBase):
         """
         if not self.skill_paths:
             return
-        listing = await self._exec(
+        listing = await self._backend.exec_shell(
             f"ls -A {shlex.quote(SANDBOX_SKILLS_DIR)} 2>/dev/null || true",
         )
         if listing.ok() and listing.stdout.strip():
@@ -944,66 +944,6 @@ class E2BWorkspace(WorkspaceBase):
                     path,
                     e,
                 )
-
-    # ── internals: sandbox I/O ──────────────────────────────────
-
-    async def _exec(
-        self,
-        command: str,
-        *,
-        timeout: float | None = None,
-    ) -> _ExecResult:
-        """Run ``sh -c <command>`` inside the sandbox via the SDK.
-
-        ``commands.run`` raises :class:`CommandExitException` on
-        non-zero exit by default; we catch it and translate into the
-        same :class:`_ExecResult` shape Docker uses, so callers can do
-        ``if not r.ok(): ...`` consistently. Other SDK errors also
-        come back as a non-zero ``_ExecResult`` rather than bubbling up
-        — long-running ``mkdir -p`` and ``find`` calls should never
-        crash the workspace.
-        """
-        from e2b import CommandExitException
-
-        kwargs: dict[str, Any] = {"cwd": SANDBOX_WORKDIR}
-        if timeout is not None:
-            kwargs["timeout"] = timeout
-        try:
-            res = await self._sandbox.commands.run(command, **kwargs)
-            return _ExecResult(
-                exit_code=int(res.exit_code or 0),
-                stdout=(res.stdout or "").encode("utf-8"),
-                stderr=(res.stderr or "").encode("utf-8"),
-            )
-        except CommandExitException as e:
-            return _ExecResult(
-                exit_code=int(e.exit_code or 1),
-                stdout=(e.stdout or "").encode("utf-8"),
-                stderr=(e.stderr or "").encode("utf-8"),
-            )
-        except Exception as e:  # noqa: BLE001
-            return _ExecResult(
-                exit_code=-1,
-                stdout=b"",
-                stderr=str(e).encode("utf-8"),
-            )
-
-    async def _read(self, path: str) -> bytes:
-        """Read a file from the sandbox.
-
-        Translates the SDK's ``FileNotFoundException`` into the stdlib
-        ``FileNotFoundError`` so callers can use the standard
-        exception type (matching :meth:`DockerWorkspace._read`).
-        """
-        from e2b import FileNotFoundException
-
-        try:
-            data = await self._sandbox.files.read(path, format="bytes")
-        except FileNotFoundException as exc:
-            raise FileNotFoundError(
-                f"not found in sandbox: {path}",
-            ) from exc
-        return bytes(data)
 
     # ── internals: data offload ────────────────────────────────
 
@@ -1020,8 +960,10 @@ class E2BWorkspace(WorkspaceBase):
         h = hashlib.sha256(block.source.data.encode()).hexdigest()
         ext = mimetypes.guess_extension(block.source.media_type) or ".bin"
         path = f"{SANDBOX_DATA_DIR}/{h}{ext}"
-        await self._exec(f"mkdir -p {shlex.quote(SANDBOX_DATA_DIR)}")
-        await self._sandbox.files.write(
+        await self._backend.exec_shell(
+            f"mkdir -p {shlex.quote(SANDBOX_DATA_DIR)}",
+        )
+        await self._backend.write_file(
             path,
             base64.b64decode(block.source.data),
         )

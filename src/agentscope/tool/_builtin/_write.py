@@ -1,27 +1,30 @@
 # -*- coding: utf-8 -*-
 """The write tool in agentscope."""
+
+from __future__ import annotations
+
 import fnmatch
 import os
-from pathlib import Path
-from typing import Any, List
+from typing import TYPE_CHECKING, Any, List
 
-import aiofiles
-
-from .._base import ToolBase
-from .._constants import (
-    DEFAULT_DANGEROUS_FILES,
-    DEFAULT_DANGEROUS_DIRECTORIES,
-)
+from ...message import TextBlock, ToolResultState
 from ...permission import (
+    PermissionBehavior,
     PermissionContext,
     PermissionDecision,
-    PermissionBehavior,
     PermissionMode,
     PermissionRule,
 )
-from .._response import ToolChunk
-from ...message import TextBlock, ToolResultState
 from ...state import AgentState
+from .._base import ToolBase
+from .._constants import (
+    DEFAULT_DANGEROUS_DIRECTORIES,
+    DEFAULT_DANGEROUS_FILES,
+)
+from .._response import ToolChunk
+
+if TYPE_CHECKING:
+    from ._sandbox_backend import SandboxBackend
 
 
 class Write(ToolBase):
@@ -67,6 +70,7 @@ Usage:
         self,
         dangerous_files: list[str] = DEFAULT_DANGEROUS_FILES,
         dangerous_directories: list[str] = DEFAULT_DANGEROUS_DIRECTORIES,
+        backend: SandboxBackend | None = None,
     ) -> None:
         """Initialize the write tool.
 
@@ -84,9 +88,15 @@ Usage:
                 `DEFAULT_DANGEROUS_DIRECTORIES`. Pass a custom list to
                 fully replace the defaults, or `[]` to disable the
                 directory check.
+            backend (`SandboxBackend | None`, optional):
+                The sandbox backend to use for file I/O. When ``None``,
+                a :class:`LocalBackend` is created.
         """
+        from ._sandbox_backend import LocalBackend
+
         self.dangerous_files = list(dangerous_files)
         self.dangerous_directories = list(dangerous_directories)
+        self._backend = backend if backend is not None else LocalBackend()
 
     async def check_permissions(
         self,
@@ -231,7 +241,10 @@ Usage:
             )
 
         # Check if file exists, it must be read first if it exists
-        if os.path.exists(file_path) and _agent_state is not None:
+        if (
+            await self._backend.file_exists(file_path)
+            and _agent_state is not None
+        ):
             cache = await _agent_state.tool_context.get_cache(file_path)
             if cache is None:
                 return ToolChunk(
@@ -246,13 +259,11 @@ Usage:
                     is_last=True,
                 )
 
-        # Create parent directories if they don't exist
-        parent_dir = Path(file_path).parent
-        os.makedirs(parent_dir, exist_ok=True)
-
-        # Write content to file
-        async with aiofiles.open(file_path, mode="w", encoding="utf-8") as f:
-            await f.write(content)
+        # Write content to file (backend handles parent dir creation)
+        await self._backend.write_file(
+            file_path,
+            content.encode("utf-8"),
+        )
 
         # Count lines in content
         line_count = len(content.split("\n"))
