@@ -67,6 +67,8 @@ GATEWAY_HOME = f"{SANDBOX_USER_HOME}/.agentscope"
 GATEWAY_VENV = f"{GATEWAY_HOME}/.venv"
 GATEWAY_VENV_PY = f"{GATEWAY_VENV}/bin/python"
 GATEWAY_SCRIPT = f"{GATEWAY_HOME}/_mcp_gateway_app.py"
+# Standalone glob helper script used by the builtin Glob tool.
+GLOB_HELPER_SCRIPT = f"{GATEWAY_HOME}/_glob_helper.py"
 GATEWAY_CONFIG = f"{GATEWAY_HOME}/gateway.config.json"
 GATEWAY_LOG = f"{GATEWAY_HOME}/gateway.log"
 

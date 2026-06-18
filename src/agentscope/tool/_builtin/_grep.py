@@ -3,13 +3,11 @@
 
 from __future__ import annotations
 
-import asyncio
 import fnmatch
 import os
-import shutil
+import shlex
 from typing import TYPE_CHECKING, Any, List, Literal
 
-from ..._logging import logger
 from ...message import TextBlock, ToolResultState
 from ...permission import (
     PermissionBehavior,
@@ -172,20 +170,14 @@ class Grep(ToolBase):
         Args:
             backend (`SandboxBackend | None`, optional):
                 The sandbox backend to use for shell execution. When
-                ``None``, a :class:`LocalBackend` is created and
-                ripgrep is invoked directly via subprocess.
+                ``None``, a :class:`LocalBackend` is created.
+                Ripgrep is always invoked via ``exec_shell`` so that
+                the same code path works for local, Docker, and E2B
+                backends.
         """
         from ._sandbox_backend import LocalBackend
 
         self._backend = backend if backend is not None else LocalBackend()
-        self._rg_path = shutil.which("rg")
-        if self._rg_path is None and backend is None:
-            logger.warning(
-                "ripgrep (rg) binary not found. To use the Grep tool, "
-                "install ripgrep: pip install agentscope[tools] or "
-                "brew install ripgrep / apt install ripgrep / "
-                "choco install ripgrep",
-            )
 
     async def check_permissions(
         self,
@@ -289,75 +281,37 @@ class Grep(ToolBase):
     ) -> list[str]:
         """Run ripgrep and return output lines.
 
-        When a non-local backend is injected, the rg command is built
-        as a shell string and dispatched through ``backend.exec_shell``
-        so it executes inside the remote sandbox.
+        Always builds a shell command string and dispatches it through
+        ``backend.exec_shell``, which works identically for local,
+        Docker, and E2B backends.
         """
-        import shlex
+        cmd_parts = ["rg"] + [shlex.quote(a) for a in args]
+        cmd_parts.append(shlex.quote(search_path))
+        command = " ".join(cmd_parts)
 
-        from ._sandbox_backend import LocalBackend
+        result = await self._backend.exec_shell(
+            command,
+            timeout=float(timeout),
+        )
 
-        if isinstance(self._backend, LocalBackend) and self._rg_path:
-            # Local path: use direct subprocess for efficiency
-            full_args: list = [self._rg_path, *args, search_path]
-
-            proc = await asyncio.create_subprocess_exec(
-                *full_args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+        if result.exit_code == -1 and result.stderr == b"timed out":
+            raise RipgrepTimeoutError(
+                f"Ripgrep search timed out after {timeout} seconds. "
+                "Try searching a more specific path or pattern.",
+                [],
             )
 
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(),
-                    timeout=timeout,
-                )
-            except asyncio.TimeoutError as e:
-                proc.kill()
-                await proc.communicate()
-                raise RipgrepTimeoutError(
-                    f"Ripgrep search timed out after {timeout} seconds. "
-                    "Try searching a more specific path or pattern.",
-                    [],
-                ) from e
-
-            # returncode 0 = matches found, 1 = no matches
-            if proc.returncode not in (0, 1):
-                error_msg = stderr.decode("utf-8", errors="ignore").strip()
-                raise RuntimeError(
-                    f"ripgrep error (code {proc.returncode}): {error_msg}",
-                )
-
-            raw = stdout.decode("utf-8", errors="ignore")
-        else:
-            # Remote path: build shell command and dispatch via backend
-            cmd_parts = ["rg"] + [shlex.quote(a) for a in args]
-            cmd_parts.append(shlex.quote(search_path))
-            command = " ".join(cmd_parts)
-
-            result = await self._backend.exec_shell(
-                command,
-                timeout=float(timeout),
+        # returncode 0 = matches found, 1 = no matches
+        if result.exit_code not in (0, 1):
+            error_msg = result.stderr.decode(
+                "utf-8",
+                errors="ignore",
+            ).strip()
+            raise RuntimeError(
+                f"ripgrep error (code {result.exit_code}): {error_msg}",
             )
 
-            if result.exit_code == -1 and result.stderr == b"timed out":
-                raise RipgrepTimeoutError(
-                    f"Ripgrep search timed out after {timeout} seconds. "
-                    "Try searching a more specific path or pattern.",
-                    [],
-                )
-
-            # returncode 0 = matches found, 1 = no matches
-            if result.exit_code not in (0, 1):
-                error_msg = result.stderr.decode(
-                    "utf-8",
-                    errors="ignore",
-                ).strip()
-                raise RuntimeError(
-                    f"ripgrep error (code {result.exit_code}): {error_msg}",
-                )
-
-            raw = result.stdout.decode("utf-8", errors="ignore")
+        raw = result.stdout.decode("utf-8", errors="ignore")
 
         lines = [
             line.rstrip("\r") for line in raw.split("\n") if line.rstrip("\r")
@@ -402,22 +356,6 @@ class Grep(ToolBase):
             n: Show line numbers (content mode only, default True)
             **kwargs: Additional parameters (-A, -B, -C)
         """
-        from ._sandbox_backend import LocalBackend
-
-        if self._rg_path is None and isinstance(self._backend, LocalBackend):
-            return ToolChunk(
-                content=[
-                    TextBlock(
-                        text="ripgrep (rg) not found. Please install it: "
-                        "macOS: brew install ripgrep | "
-                        "Linux: apt/yum install ripgrep | "
-                        "Windows: choco install ripgrep",
-                    ),
-                ],
-                state=ToolResultState.ERROR,
-                is_last=True,
-            )
-
         search_path = path or os.getcwd()
 
         args: list[str] = ["--hidden"]

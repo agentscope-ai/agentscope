@@ -73,6 +73,7 @@ from ._make_dockerfile import (
     GATEWAY_LOG,
     GATEWAY_SCRIPT,
     GATEWAY_VENV,
+    GLOB_HELPER_SCRIPT,
     prepare_build_context,
 )
 
@@ -398,7 +399,7 @@ class DockerWorkspace(WorkspaceBase):
         return [
             Bash(cwd=CONTAINER_WORKDIR, backend=self._backend),
             Edit(backend=self._backend),
-            Glob(backend=self._backend),
+            Glob(backend=self._backend, glob_helper_path=GLOB_HELPER_SCRIPT),
             Grep(backend=self._backend),
             Read(backend=self._backend),
             Write(backend=self._backend),

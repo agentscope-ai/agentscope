@@ -69,6 +69,7 @@ from .._utils import (
     _agentscope_version,
     _is_released_install,
     _read_gateway_script_bytes,
+    _read_glob_helper_bytes,
 )
 from ._bootstrap import (
     DEFAULT_GATEWAY_PORT,
@@ -80,6 +81,7 @@ from ._bootstrap import (
     GATEWAY_LOG,
     GATEWAY_SCRIPT,
     GATEWAY_VENV_PY,
+    GLOB_HELPER_SCRIPT,
     METADATA_WORKSPACE_ID_KEY,
     SANDBOX_DATA_DIR,
     SANDBOX_MCP_FILE,
@@ -264,7 +266,6 @@ class E2BWorkspace(WorkspaceBase):
             # on an already-existing directory.
             await self._backend.exec_shell(
                 f"mkdir -p {shlex.quote(SANDBOX_WORKDIR)}",
-                cwd="/",
             )
             await self._run_bootstrap()
 
@@ -396,7 +397,7 @@ class E2BWorkspace(WorkspaceBase):
         return [
             Bash(cwd=SANDBOX_WORKDIR, backend=self._backend),
             Edit(backend=self._backend),
-            Glob(backend=self._backend),
+            Glob(backend=self._backend, glob_helper_path=GLOB_HELPER_SCRIPT),
             Grep(backend=self._backend),
             Read(backend=self._backend),
             Write(backend=self._backend),
@@ -819,6 +820,12 @@ class E2BWorkspace(WorkspaceBase):
                     f"stdout: {r.stdout.decode(errors='replace')}",
                 )
 
+        # Upload helper scripts used by builtin tools.
+        await self._backend.write_file(
+            GLOB_HELPER_SCRIPT,
+            _read_glob_helper_bytes(),
+        )
+
         # Upload the gateway script last so its presence is the
         # idempotency marker we probe in :meth:`initialize`.
         await self._backend.write_file(
@@ -865,7 +872,6 @@ class E2BWorkspace(WorkspaceBase):
         try:
             await self._backend.exec_shell(
                 f"mkdir -p {shlex.quote(SANDBOX_WORKDIR)}",
-                cwd="/",
             )
             await self._backend.write_file(
                 SANDBOX_MCP_FILE,

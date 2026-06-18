@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 import fnmatch
+import json
 import os
-import re
 import shlex
 from typing import TYPE_CHECKING, Any, List
 
@@ -21,6 +21,23 @@ from .._response import ToolChunk
 
 if TYPE_CHECKING:
     from ._sandbox_backend import SandboxBackend
+
+
+def _default_glob_helper_path() -> str:
+    """Resolve the on-disk path of the bundled ``_glob_helper.py`` script.
+
+    Used by :class:`Glob` when no explicit ``glob_helper_path`` is
+    provided (i.e. the local-workspace case). The path is obtained via
+    :mod:`importlib.resources` so it works for both editable and
+    installed packages.
+    """
+    import importlib.resources as _res
+
+    ref = _res.files("agentscope.tool._builtin._scripts").joinpath(
+        "_glob_helper.py"
+    )
+    # as_posix() on a MultiplexedPath / PosixPath gives a str path
+    return str(ref)
 
 
 class Glob(ToolBase):
@@ -65,21 +82,30 @@ codebase."""  # ignore: E501
     def __init__(
         self,
         backend: SandboxBackend | None = None,
+        glob_helper_path: str | None = None,
     ) -> None:
         """Initialize the glob tool.
 
         Args:
             backend (`SandboxBackend | None`, optional):
                 The sandbox backend to use. When ``None``, a
-                :class:`LocalBackend` is created and the high-
-                performance local ``os.walk`` + ``os.scandir`` path
-                is used. With a remote backend, glob patterns are
-                evaluated via a Python script executed through
-                ``exec_shell``.
+                :class:`LocalBackend` is created automatically.
+            glob_helper_path (`str | None`, optional):
+                Filesystem path (inside the backend's environment) to
+                the ``_glob_helper.py`` script. When ``None``, the
+                path is resolved from the installed package resources
+                (suitable for :class:`LocalBackend`). Remote backends
+                (Docker, E2B) should pass the path where the script
+                was deployed during workspace initialization.
         """
         from ._sandbox_backend import LocalBackend
 
         self._backend = backend if backend is not None else LocalBackend()
+        self._glob_helper_path = (
+            glob_helper_path
+            if glob_helper_path is not None
+            else _default_glob_helper_path()
+        )
 
     async def check_permissions(
         self,
@@ -169,162 +195,20 @@ codebase."""  # ignore: E501
             ),
         ]
 
-    def glob_part_to_regex(self, part: str) -> re.Pattern:
-        """Convert a glob pattern part to a regex pattern.
-
-        Args:
-            part: A single part of a glob pattern (e.g., '*.py', 'test_??.py')
-
-        Returns:
-            A compiled regex pattern
-        """
-        regex_str = ""
-        i = 0
-        while i < len(part):
-            c = part[i]
-            if c == "*":
-                regex_str += ".*"
-            elif c == "?":
-                regex_str += "."
-            elif c in ".^$+{}[]|()\\":
-                regex_str += "\\" + c
-            else:
-                regex_str += c
-            i += 1
-        return re.compile(f"^{regex_str}$")
-
-    def collect_all(self, current_dir: str, results: list[str]) -> None:
-        """Recursively collect all files in a directory.
-
-        Args:
-            current_dir: The directory to collect files from
-            results: The list to append matched file paths to
-        """
-        try:
-            for root, _dirs, files in os.walk(current_dir):
-                for file in files:
-                    results.append(os.path.join(root, file))
-        except (PermissionError, OSError):
-            # Skip unreadable directories silently
-            pass
-
-    def match_parts(
-        self,
-        parts: list[str],
-        part_index: int,
-        current_dir: str,
-        results: list[str],
-    ) -> None:
-        """Recursively match path parts against directory entries.
-
-        Args:
-            parts: The split glob pattern parts
-            part_index: The current index in the parts array
-            current_dir: The current directory being traversed
-            results: The list to append matched file paths to
-        """
-        if part_index >= len(parts):
-            return
-
-        part = parts[part_index]
-        is_last = part_index == len(parts) - 1
-
-        if part == "**":
-            if is_last:
-                self.collect_all(current_dir, results)
-            else:
-                # Match in current directory
-                self.match_parts(parts, part_index + 1, current_dir, results)
-                # Recursively match in subdirectories
-                try:
-                    with os.scandir(current_dir) as entries:
-                        for entry in entries:
-                            if entry.is_dir(follow_symlinks=False):
-                                self.match_parts(
-                                    parts,
-                                    part_index,
-                                    entry.path,
-                                    results,
-                                )
-                except (PermissionError, OSError):
-                    # Skip unreadable directories silently
-                    pass
-        else:
-            regex = self.glob_part_to_regex(part)
-            try:
-                with os.scandir(current_dir) as entries:
-                    for entry in entries:
-                        if regex.match(entry.name):
-                            full_path = entry.path
-                            if is_last:
-                                if entry.is_file(follow_symlinks=False):
-                                    results.append(full_path)
-                            elif entry.is_dir(follow_symlinks=False):
-                                self.match_parts(
-                                    parts,
-                                    part_index + 1,
-                                    full_path,
-                                    results,
-                                )
-            except (PermissionError, OSError):
-                # Skip unreadable directories silently
-                pass
-
-    def glob_match(self, pattern: str, base_dir: str) -> list[str]:
-        """Match files against a glob pattern starting from the given
-        base directory.
-
-        Args:
-            pattern: The glob pattern to match against
-            base_dir: The base directory to search from
-
-        Returns:
-            A list of matched file paths
-        """
-        results: list[str] = []
-        parts = [p for p in re.split(r"[\\/]+", pattern) if p]
-        self.match_parts(parts, 0, base_dir, results)
-        return results
-
-    async def _remote_glob(
-        self,
-        pattern: str,
-        base_dir: str,
-    ) -> list[str]:
-        """Evaluate a glob pattern on a remote backend via a Python script.
-
-        Sends a small inline Python script through ``exec_shell`` that
-        uses ``pathlib.Path.glob`` and prints the results. This avoids
-        complex shell quoting while being portable across backends.
-        """
-        # Build a short Python script that globs and prints results
-        script = (
-            "import pathlib, json, os; "
-            f"base = pathlib.Path({base_dir!r}); "
-            f"matches = [str(p) for p in base.glob({pattern!r}) "
-            "if p.is_file()]; "
-            "print(json.dumps(matches))"
-        )
-        result = await self._backend.exec_shell(
-            f"python3 -c {shlex.quote(script)}",
-            timeout=30.0,
-        )
-        if not result.ok():
-            return []
-
-        import json
-
-        try:
-            return json.loads(result.stdout.decode("utf-8", errors="replace"))
-        except (json.JSONDecodeError, ValueError):
-            return []
-
     async def __call__(  # type: ignore[override]
         self,
         pattern: str,
         path: str | None = None,
     ) -> ToolChunk:
         """Execute the glob pattern matching and return the results.
+
+        Invokes the standalone ``_glob_helper.py`` script via
+        ``exec_shell``. The script performs high-performance
+        ``os.walk`` + ``os.scandir`` matching and returns results
+        sorted by modification time (newest first) as JSON.
+
+        This unified path works identically across Local, Docker,
+        and E2B backends.
 
         Args:
             pattern: The glob pattern to match against
@@ -336,51 +220,43 @@ codebase."""  # ignore: E501
                 newlines, or an error message if the directory is not found or
                 no files match the pattern.
         """
-        from ._sandbox_backend import LocalBackend
-
         base_dir = path if path else os.getcwd()
 
-        if isinstance(self._backend, LocalBackend):
-            # Local path: use high-performance os.walk + os.scandir
-            if not os.path.exists(base_dir):
-                return ToolChunk(
-                    content=[
-                        TextBlock(text=f"Directory not found: {base_dir}"),
-                    ],
-                    state=ToolResultState.ERROR,
-                    is_last=True,
-                )
+        # Check directory existence via the backend
+        if not await self._backend.file_exists(base_dir):
+            return ToolChunk(
+                content=[
+                    TextBlock(text=f"Directory not found: {base_dir}"),
+                ],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
 
-            matches = self.glob_match(pattern, base_dir)
+        # Invoke the glob helper script via exec_shell
+        command = (
+            f"python3 {shlex.quote(self._glob_helper_path)}"
+            f" --pattern {shlex.quote(pattern)}"
+            f" --base-dir {shlex.quote(base_dir)}"
+        )
+        result = await self._backend.exec_shell(command, timeout=30.0)
 
-            # Sort by modification time (newest first)
-            try:
-                matches.sort(
-                    key=lambda p: os.stat(p).st_mtime,
-                    reverse=True,
-                )
-            except (OSError, FileNotFoundError):
-                pass
-        else:
-            # Remote path: execute glob via backend
-            if not await self._backend.file_exists(base_dir):
-                return ToolChunk(
-                    content=[
-                        TextBlock(text=f"Directory not found: {base_dir}"),
-                    ],
-                    state=ToolResultState.ERROR,
-                    is_last=True,
-                )
+        if not result.ok():
+            return ToolChunk(
+                content=[
+                    TextBlock(
+                        text=f"No files found matching pattern: {pattern}",
+                    ),
+                ],
+                state=ToolResultState.RUNNING,
+                is_last=True,
+            )
 
-            matches = await self._remote_glob(pattern, base_dir)
-
-            # Sort by mtime via backend
-            mtimes: list[tuple[str, float]] = []
-            for m in matches:
-                mt = await self._backend.stat_mtime(m)
-                mtimes.append((m, mt if mt is not None else 0.0))
-            mtimes.sort(key=lambda t: t[1], reverse=True)
-            matches = [t[0] for t in mtimes]
+        try:
+            matches = json.loads(
+                result.stdout.decode("utf-8", errors="replace"),
+            )
+        except (json.JSONDecodeError, ValueError):
+            matches = []
 
         if len(matches) == 0:
             return ToolChunk(
