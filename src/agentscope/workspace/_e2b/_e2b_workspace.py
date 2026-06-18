@@ -264,6 +264,7 @@ class E2BWorkspace(WorkspaceBase):
             # on an already-existing directory.
             await self._backend.exec_shell(
                 f"mkdir -p {shlex.quote(SANDBOX_WORKDIR)}",
+                cwd="/",
             )
             await self._run_bootstrap()
 
@@ -864,6 +865,7 @@ class E2BWorkspace(WorkspaceBase):
         try:
             await self._backend.exec_shell(
                 f"mkdir -p {shlex.quote(SANDBOX_WORKDIR)}",
+                cwd="/",
             )
             await self._backend.write_file(
                 SANDBOX_MCP_FILE,
