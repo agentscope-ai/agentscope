@@ -12,12 +12,15 @@ from agentscope.event import (
     DataBlockStartEvent,
     ExceedMaxItersEvent,
     ExternalExecutionResultEvent,
+    IterationExtensionResultEvent,
     ModelCallEndEvent,
     ModelCallStartEvent,
     ReplyEndEvent,
     ReplyStartEvent,
     RequireExternalExecutionEvent,
+    RequireIterationExtensionEvent,
     RequireUserConfirmEvent,
+    StatusEvent,
     TextBlockDeltaEvent,
     TextBlockEndEvent,
     TextBlockStartEvent,
@@ -489,6 +492,47 @@ class AGUIProtocolPermissionTest(IsolatedAsyncioTestCase):
         self.assertEqual(result["type"], "CUSTOM")
         self.assertEqual(result["name"], "external_execution_result")
 
+    async def test_require_iteration_extension(self) -> None:
+        """Test RequireIterationExtensionEvent -> CUSTOM."""
+        event = RequireIterationExtensionEvent(
+            reply_id="reply_1",
+            name="my_agent",
+            current_max_iters=20,
+        )
+        result = self.mw._convert_to_protocol(event)
+
+        self.assertEqual(result["type"], "CUSTOM")
+        self.assertEqual(result["name"], "require_iteration_extension")
+        self.assertEqual(result["value"]["current_max_iters"], 20)
+
+    async def test_iteration_extension_result(self) -> None:
+        """Test IterationExtensionResultEvent -> CUSTOM."""
+        event = IterationExtensionResultEvent(
+            reply_id="reply_1",
+            approved=True,
+            extra_iterations=5,
+        )
+        result = self.mw._convert_to_protocol(event)
+
+        self.assertEqual(result["type"], "CUSTOM")
+        self.assertEqual(result["name"], "iteration_extension_result")
+        self.assertEqual(result["value"]["extra_iterations"], 5)
+
+    async def test_status_event(self) -> None:
+        """Test StatusEvent -> CUSTOM."""
+        event = StatusEvent(
+            reply_id="reply_1",
+            name="compressing_context",
+            status="start",
+            data={"threshold": 100},
+        )
+        result = self.mw._convert_to_protocol(event)
+
+        self.assertEqual(result["type"], "CUSTOM")
+        self.assertEqual(result["name"], "status")
+        self.assertEqual(result["value"]["name"], "compressing_context")
+        self.assertEqual(result["value"]["status"], "start")
+
     async def asyncTearDown(self) -> None:
         """The async teardown method."""
 
@@ -544,6 +588,21 @@ class AGUIProtocolCamelCaseTest(IsolatedAsyncioTestCase):
             ),
             ToolCallEndEvent(reply_id="r", tool_call_id="t"),
             ExceedMaxItersEvent(reply_id="r", name="a"),
+            RequireIterationExtensionEvent(
+                reply_id="r",
+                name="a",
+                current_max_iters=20,
+            ),
+            IterationExtensionResultEvent(
+                reply_id="r",
+                approved=True,
+                extra_iterations=5,
+            ),
+            StatusEvent(
+                reply_id="r",
+                name="compressing_context",
+                status="start",
+            ),
         ]
 
         for event in events:

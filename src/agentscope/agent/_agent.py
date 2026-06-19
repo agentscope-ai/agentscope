@@ -5,6 +5,7 @@ import inspect
 import uuid
 
 from asyncio import Queue
+from contextvars import ContextVar
 from copy import deepcopy
 from typing import (
     Any,
@@ -49,6 +50,9 @@ from ..event import (
     DataBlockDeltaEvent,
     DataBlockEndEvent,
     ExceedMaxItersEvent,
+    RequireIterationExtensionEvent,
+    IterationExtensionResultEvent,
+    StatusEvent,
 )
 from ..exception import AgentOrientedException
 from ..model import (
@@ -89,6 +93,26 @@ if TYPE_CHECKING:
     from ..middleware import MiddlewareBase
 else:
     MiddlewareBase = Any
+
+
+# Ambient handle to the status-event queue of the reply stream that is
+# currently being consumed. Stored in a ``ContextVar`` (inspired by
+# LangGraph's ``get_stream_writer``) so that ``emit_status`` works from
+# anywhere in the call stack during a reply — reasoning, tool execution,
+# context compaction or user middleware — without threading a writer
+# argument through every call. ``None`` outside an active reply stream.
+_STATUS_EVENT_QUEUE: ContextVar["Queue[Any] | None"] = ContextVar(
+    "agentscope_status_event_queue",
+    default=None,
+)
+
+
+class _PipelineError:
+    """Internal wrapper used to forward an exception raised by the reply
+    pipeline through the status-event queue to the consumer."""
+
+    def __init__(self, exc: BaseException) -> None:
+        self.exc = exc
 
 
 class Agent:
@@ -194,6 +218,7 @@ class Agent:
         | list[Msg]
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
+        | IterationExtensionResultEvent
         | None = None,
     ) -> AsyncGenerator[AgentEvent, None]:
         """Reply to the given inputs and stream agent events.
@@ -207,7 +232,7 @@ class Agent:
          calls.
         """
         try:
-            async for chunk in self._reply(inputs=inputs):
+            async for chunk in self._run_reply_pipeline(inputs=inputs):
                 if not isinstance(chunk, Msg):
                     yield chunk
         finally:
@@ -219,13 +244,15 @@ class Agent:
         | list[Msg]
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
+        | IterationExtensionResultEvent
         | None = None,
     ) -> Msg:
         """Reply to the given inputs, consuming all streamed events.
 
         Args:
             inputs (`Msg | list[Msg] | UserConfirmResultEvent | \
-            ExternalExecutionResultEvent | None`, optional):
+            ExternalExecutionResultEvent | IterationExtensionResultEvent \
+            | None`, optional):
                 The inputs that trigger this reply. It can be:
 
                 - a single `Msg` or a list of `Msg` objects to start a new
@@ -233,6 +260,9 @@ class Agent:
                 - a `UserConfirmResultEvent` or
                   `ExternalExecutionResultEvent` to continue from the
                   outside interaction required by the previous reply,
+                - an `IterationExtensionResultEvent` to continue from a
+                  paused reasoning-acting loop that reached its iteration
+                  limit,
                 - `None` if there is nothing new to feed in (e.g. just
                   continue from the current state).
 
@@ -242,7 +272,7 @@ class Agent:
         """
         try:
             final_msg: Msg | None = None
-            async for evt_or_msg in self._reply(inputs=inputs):
+            async for evt_or_msg in self._run_reply_pipeline(inputs=inputs):
                 if isinstance(evt_or_msg, Msg):
                     final_msg = evt_or_msg
             if final_msg is None:
@@ -255,6 +285,122 @@ class Agent:
         """Receive external observation message(s) and save them into
         context."""
         await self._handle_incoming_messages(msgs)
+
+    async def emit_status(
+        self,
+        name: str,
+        status: Literal["start", "in_progress", "end"] = "in_progress",
+        data: dict | None = None,
+    ) -> None:
+        """Emit a general-purpose ``StatusEvent`` into the active reply stream.
+
+        This is the user-facing entry point for the general status event
+        mechanism. It lets any code running during a reply — reasoning, tool
+        execution, context compaction or custom middleware — notify front-end
+        subscribers about the progress of a (possibly time-consuming)
+        operation. The emitted event is interleaved into the reply stream that
+        is currently being consumed.
+
+        The active stream is discovered through a ``ContextVar`` (inspired by
+        LangGraph's ``get_stream_writer``), so there is no need to thread a
+        handle through call arguments. Outside of an active reply stream this
+        method is a no-op.
+
+        Args:
+            name (`str`):
+                Identifies the operation, e.g. ``"compressing_context"``.
+            status (`Literal["start", "in_progress", "end"]`, optional):
+                The lifecycle stage of the operation.
+            data (`dict | None`, optional):
+                Arbitrary JSON-serializable payload customizable by the user.
+        """
+        await self._emit_status(name=name, status=status, data=data or {})
+
+    async def _emit_status(
+        self,
+        name: str,
+        status: Literal["start", "in_progress", "end"] = "in_progress",
+        data: dict | None = None,
+    ) -> None:
+        """Push a ``StatusEvent`` onto the active status queue if any."""
+        queue = _STATUS_EVENT_QUEUE.get()
+        if queue is None:
+            return
+        await queue.put(
+            StatusEvent(
+                reply_id=self.state.reply_id,
+                name=name,
+                status=status,
+                data=data or {},
+            ),
+        )
+
+    async def _run_reply_pipeline(
+        self,
+        inputs: Msg
+        | list[Msg]
+        | UserConfirmResultEvent
+        | ExternalExecutionResultEvent
+        | IterationExtensionResultEvent
+        | None = None,
+    ) -> AsyncGenerator[AgentEvent | Msg, None]:
+        """Run the reply pipeline while interleaving ambient status events.
+
+        The reply pipeline (``_reply``) runs as a background task that pushes
+        every yielded item onto an output queue, while this generator drains
+        that queue and re-yields. The same queue is exposed via the
+        ``_STATUS_EVENT_QUEUE`` context variable, so ``StatusEvent``s emitted
+        anywhere during the run (e.g. a ``"start"`` notification before a
+        long-running operation) are surfaced promptly — interleaved in
+        emission order with the main events — rather than only after the
+        producing operation returns.
+
+        Args:
+            inputs:
+                The reply inputs, forwarded to ``_reply``.
+
+        Yields:
+            `AgentEvent | Msg`:
+                The events and messages produced by the reply pipeline,
+                interleaved with any emitted status events.
+        """
+        out_queue: "Queue[Any]" = Queue()
+        sentinel = object()
+
+        async def _producer() -> None:
+            # Bind the queue inside the task's own (copied) context, so it is
+            # visible to everything the pipeline awaits — reasoning, tools,
+            # compaction, nested tasks — and is discarded automatically when
+            # the task ends (no cross-context reset needed).
+            _STATUS_EVENT_QUEUE.set(out_queue)
+            try:
+                async for item in self._reply(inputs=inputs):
+                    await out_queue.put(item)
+            except Exception as exc:  # pylint: disable=broad-except
+                await out_queue.put(_PipelineError(exc))
+            finally:
+                await out_queue.put(sentinel)
+
+        task = asyncio.create_task(_producer())
+        try:
+            while True:
+                item = await out_queue.get()
+                if item is sentinel:
+                    break
+                if isinstance(item, _PipelineError):
+                    raise item.exc
+                yield item
+            # Surface any non-``Exception`` failure (e.g. cancellation).
+            await task
+        finally:
+            # If the consumer abandoned the stream early, stop the background
+            # pipeline.
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
     async def compress_context(
         self,
@@ -327,6 +473,16 @@ class Agent:
             self.name,
             int(estimated_tokens),
             int(threshold),
+        )
+
+        # Notify subscribers that a (time-consuming) compression has started.
+        await self._emit_status(
+            name="compressing_context",
+            status="start",
+            data={
+                "estimated_tokens": int(estimated_tokens),
+                "threshold": int(threshold),
+            },
         )
 
         if len(self.state.context) == 0:
@@ -490,6 +646,13 @@ class Agent:
             self.name,
         )
 
+        # Notify subscribers that the compression has finished.
+        await self._emit_status(
+            name="compressing_context",
+            status="end",
+            data={"reserved_messages": len(msgs_to_reserve)},
+        )
+
     # ======================================================================
     # Agent core methods, including _reply, _reasoning, _acting, etc.
     # ======================================================================
@@ -500,6 +663,7 @@ class Agent:
         | list[Msg]
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
+        | IterationExtensionResultEvent
         | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Reply entry point (maybe wrapped by middleware)."""
@@ -514,6 +678,7 @@ class Agent:
                 | list[Msg]
                 | UserConfirmResultEvent
                 | ExternalExecutionResultEvent
+                | IterationExtensionResultEvent
                 | None = inputs,
             ) -> AsyncGenerator[AgentEvent | Msg, None]:
                 if index >= len(self._reply_middlewares):
@@ -545,20 +710,28 @@ class Agent:
         | list[Msg]
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
+        | IterationExtensionResultEvent
         | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Core reply logic."""
         # Dispatch the unified inputs by type into the legacy local variables
         event: (UserConfirmResultEvent | ExternalExecutionResultEvent | None)
+        extension_event: IterationExtensionResultEvent | None
         msgs: Msg | list[Msg] | None
         if isinstance(
             inputs,
             (UserConfirmResultEvent, ExternalExecutionResultEvent),
         ):
             event = inputs
+            extension_event = None
+            msgs = None
+        elif isinstance(inputs, IterationExtensionResultEvent):
+            event = None
+            extension_event = inputs
             msgs = None
         else:
             event = None
+            extension_event = None
             msgs = inputs
 
         # ===================================================================
@@ -566,33 +739,58 @@ class Agent:
         #  - if incoming event and agent is waiting for an event
         #  - if event is None and agent is not waiting for an event
         # ===================================================================
-        is_awaiting = await self._check_incoming_event(event)
+        # Whether the user denied extending the reasoning-acting loop. When
+        # True, the loop is skipped and the max-iteration path is finalized.
+        extension_denied = False
 
-        # ===================================================================
-        # Step 2: Handling agent event if applicable
-        #  - yield tool result events for the denied tool calls, or
-        #  - update the reply state as a new reply process
-        # ===================================================================
-        if is_awaiting:
-            async for evt in self._handle_incoming_event(event):
-                yield evt
+        if self.state.awaiting_iteration_extension or extension_event:
+            # Resuming from a paused loop that reached the iteration limit.
+            self._check_iteration_extension_event(extension_event)
+            self.state.awaiting_iteration_extension = False
+            if extension_event.approved:
+                # Extend the per-reply budget so the loop below can continue.
+                granted = extension_event.extra_iterations
+                if granted <= 0:
+                    # Approving without a positive count grants another full
+                    # budget. This guarantees the loop makes progress and
+                    # avoids an immediate re-request (which would otherwise
+                    # loop forever).
+                    granted = self.react_config.max_iters
+                self.state.iteration_extension += granted
+            else:
+                extension_denied = True
         else:
-            await self._handle_incoming_messages(msgs)
-            # Update the context with the incoming message and state
-            self.state.reply_id = uuid.uuid4().hex
-            self.state.cur_iter = 0
+            is_awaiting = await self._check_incoming_event(event)
 
-            yield ReplyStartEvent(
-                session_id=self.state.session_id,
-                reply_id=self.state.reply_id,
-                name=self.name,
-            )
+            # ===============================================================
+            # Step 2: Handling agent event if applicable
+            #  - yield tool result events for the denied tool calls, or
+            #  - update the reply state as a new reply process
+            # ===============================================================
+            if is_awaiting:
+                async for evt in self._handle_incoming_event(event):
+                    yield evt
+            else:
+                await self._handle_incoming_messages(msgs)
+                # Update the context with the incoming message and state
+                self.state.reply_id = uuid.uuid4().hex
+                self.state.cur_iter = 0
+                self.state.iteration_extension = 0
+
+                yield ReplyStartEvent(
+                    session_id=self.state.session_id,
+                    reply_id=self.state.reply_id,
+                    name=self.name,
+                )
 
         # ===================================================================
         # Step 3: Enter the reasoning-acting loop until reaching max_iters or
         #  no more tool calls to execute
         # ===================================================================
-        while self.state.cur_iter < self.react_config.max_iters:
+        while (
+            self.state.cur_iter
+            < self.react_config.max_iters + self.state.iteration_extension
+        ):
             # ===============================================================
             # Step 3.1:
             # ===============================================================
@@ -605,7 +803,9 @@ class Agent:
             # Step 3.2: Execute reasoning if no more tools to be executed
             # ===============================================================
             if action == "reasoning":
-                # Compressed the memory if needed before reasoning
+                # Compress the memory if needed before reasoning. Any status
+                # events it emits (e.g. compression start/end) are surfaced
+                # into the stream by the ambient status-event pipeline.
                 await self.compress_context()
                 # Perform reasoning
                 async for evt in self._reasoning():
@@ -672,6 +872,37 @@ class Agent:
         # ===================================================================
         # Step 4: Handling the max iteration executed
         # ===================================================================
+        # If configured, ask the user whether to extend the loop instead of
+        # terminating — unless the user has just denied the extension.
+        if (
+            self.react_config.allow_iteration_extension
+            and not extension_denied
+        ):
+            current_limit = (
+                self.react_config.max_iters + self.state.iteration_extension
+            )
+            logger.info(
+                "Agent %s reached the max iteration numbers %d. Requesting "
+                "iteration extension.",
+                self.name,
+                current_limit,
+            )
+            self.state.awaiting_iteration_extension = True
+            yield RequireIterationExtensionEvent(
+                reply_id=self.state.reply_id,
+                name=self.name,
+                current_max_iters=current_limit,
+            )
+            # Pause and wait for an IterationExtensionResultEvent. Yield a Msg
+            # object for outside handling, mirroring the HITL pause path.
+            yield AssistantMsg(
+                id=self.state.reply_id,
+                name=self.name,
+                content="Waiting for the iteration extension to be confirmed "
+                "from outside ...",
+            )
+            return
+
         yield ExceedMaxItersEvent(
             reply_id=self.state.reply_id,
             name=self.name,
@@ -877,6 +1108,42 @@ class Agent:
                 name=self.name,
                 content=list(completed_response.content),
                 usage=final_usage,
+            )
+
+    def _check_iteration_extension_event(
+        self,
+        event: IterationExtensionResultEvent | None,
+    ) -> None:
+        """Validate an incoming ``IterationExtensionResultEvent`` against the
+        agent's awaiting state.
+
+        Args:
+            event (`IterationExtensionResultEvent | None`):
+                The incoming iteration extension result event.
+
+        Raises:
+            `ValueError`:
+                If the agent is not waiting for an iteration extension, if no
+                event is provided while waiting, or if the event's ``reply_id``
+                does not match the current reply.
+        """
+        if not self.state.awaiting_iteration_extension:
+            raise ValueError(
+                "Agent is not waiting for an iteration extension, but "
+                f"received: {event}",
+            )
+
+        if event is None:
+            raise ValueError(
+                "Agent is waiting for an iteration extension result, but "
+                "received no IterationExtensionResultEvent.",
+            )
+
+        if event.reply_id != self.state.reply_id:
+            raise ValueError(
+                f"Received IterationExtensionResultEvent with reply_id "
+                f"{event.reply_id!r} that does not match the current reply "
+                f"{self.state.reply_id!r}.",
             )
 
     async def _check_incoming_event(
