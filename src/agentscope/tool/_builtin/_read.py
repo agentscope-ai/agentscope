@@ -1,25 +1,20 @@
 # -*- coding: utf-8 -*-
 """The read tool in agentscope."""
-
-from __future__ import annotations
-
 import fnmatch
 import os
-from typing import TYPE_CHECKING, Any, List
+from typing import Any, List
 
-from ...message import TextBlock, ToolResultState
+from .._base import ToolBase, ToolMiddlewareBase
 from ...permission import (
-    PermissionBehavior,
     PermissionContext,
     PermissionDecision,
+    PermissionBehavior,
     PermissionRule,
 )
-from ...state import AgentState
-from .._base import ToolBase
 from .._response import ToolChunk
-
-if TYPE_CHECKING:
-    from ._backend import BackendBase
+from ...message import TextBlock, ToolResultState
+from ...state import AgentState
+from ._backend import BackendBase
 
 
 class Read(ToolBase):
@@ -76,6 +71,7 @@ Usage:
     def __init__(
         self,
         max_line_characters: int = 2000,
+        middlewares: List[ToolMiddlewareBase] | None = None,
         backend: BackendBase | None = None,
     ) -> None:
         """Initialize the read tool.
@@ -87,12 +83,15 @@ Usage:
                 a "[truncated]" suffix. This prevents overwhelming the agent
                 with excessively long lines while still providing useful
                 content.
+            middlewares (`List[ToolMiddlewareBase] | None`, optional):
+                Tool middlewares wrapping the tool execution.
             backend (`BackendBase | None`, optional):
                 The sandbox backend to use for file I/O. When ``None``,
                 a :class:`LocalBackend` is created.
         """
         from ._backend import LocalBackend
 
+        super().__init__(middlewares=middlewares)
         self._max_line_characters = max_line_characters
         self._backend = backend if backend is not None else LocalBackend()
 
@@ -177,7 +176,7 @@ Usage:
             ),
         ]
 
-    async def __call__(  # type: ignore[override]
+    async def call(  # type: ignore[override]
         self,
         file_path: str,
         offset: int = 1,

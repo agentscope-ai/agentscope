@@ -1,25 +1,20 @@
 # -*- coding: utf-8 -*-
 """The grep tool in agentscope."""
-
-from __future__ import annotations
-
 import fnmatch
 import os
 import shlex
-from typing import TYPE_CHECKING, Any, List, Literal
+from typing import Any, List, Literal
 
-from ...message import TextBlock, ToolResultState
+from .._base import ToolBase, ToolMiddlewareBase
 from ...permission import (
-    PermissionBehavior,
     PermissionContext,
     PermissionDecision,
+    PermissionBehavior,
     PermissionRule,
 )
-from .._base import ToolBase
 from .._response import ToolChunk
-
-if TYPE_CHECKING:
-    from ._backend import BackendBase
+from ...message import TextBlock, ToolResultState
+from ._backend import BackendBase
 
 # Version control system directories to exclude from searches
 VCS_DIRECTORIES_TO_EXCLUDE = [
@@ -163,11 +158,14 @@ class Grep(ToolBase):
 
     def __init__(
         self,
-        backend: BackendBase | None = None,
+        middlewares: List[ToolMiddlewareBase] | None = None,
+            backend: BackendBase | None = None,
     ) -> None:
         """Initialize the grep tool.
 
         Args:
+            middlewares (`List[ToolMiddlewareBase] | None`, optional):
+                Tool middlewares wrapping the tool execution.
             backend (`BackendBase | None`, optional):
                 The sandbox backend to use for shell execution. When
                 ``None``, a :class:`LocalBackend` is created.
@@ -177,6 +175,7 @@ class Grep(ToolBase):
         """
         from ._backend import LocalBackend
 
+        super().__init__(middlewares=middlewares)
         self._backend = backend if backend is not None else LocalBackend()
 
     async def check_permissions(
@@ -318,7 +317,7 @@ class Grep(ToolBase):
         ]
         return lines
 
-    async def __call__(  # type: ignore[override]
+    async def call(  # type: ignore[override]
         self,
         pattern: str,
         path: str | None = None,

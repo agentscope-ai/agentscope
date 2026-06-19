@@ -1,30 +1,28 @@
 # -*- coding: utf-8 -*-
 """The write tool in agentscope."""
-
-from __future__ import annotations
-
 import fnmatch
 import os
-from typing import TYPE_CHECKING, Any, List
+from pathlib import Path
+from typing import Any, List
 
-from ...message import TextBlock, ToolResultState
+import aiofiles
+
+from .._base import ToolBase, ToolMiddlewareBase
+from .._constants import (
+    DEFAULT_DANGEROUS_FILES,
+    DEFAULT_DANGEROUS_DIRECTORIES,
+)
 from ...permission import (
-    PermissionBehavior,
     PermissionContext,
     PermissionDecision,
+    PermissionBehavior,
     PermissionMode,
     PermissionRule,
 )
-from ...state import AgentState
-from .._base import ToolBase
-from .._constants import (
-    DEFAULT_DANGEROUS_DIRECTORIES,
-    DEFAULT_DANGEROUS_FILES,
-)
 from .._response import ToolChunk
-
-if TYPE_CHECKING:
-    from ._backend import BackendBase
+from ...message import TextBlock, ToolResultState
+from ...state import AgentState
+from ._backend import BackendBase
 
 
 class Write(ToolBase):
@@ -70,6 +68,7 @@ Usage:
         self,
         dangerous_files: list[str] = DEFAULT_DANGEROUS_FILES,
         dangerous_directories: list[str] = DEFAULT_DANGEROUS_DIRECTORIES,
+        middlewares: List[ToolMiddlewareBase] | None = None,
         backend: BackendBase | None = None,
     ) -> None:
         """Initialize the write tool.
@@ -88,15 +87,19 @@ Usage:
                 `DEFAULT_DANGEROUS_DIRECTORIES`. Pass a custom list to
                 fully replace the defaults, or `[]` to disable the
                 directory check.
+            middlewares (`List[ToolMiddlewareBase] | None`, optional):
+                Tool middlewares wrapping the tool execution.
             backend (`BackendBase | None`, optional):
                 The sandbox backend to use for file I/O. When ``None``,
                 a :class:`LocalBackend` is created.
         """
         from ._backend import LocalBackend
 
+        super().__init__(middlewares=middlewares)
         self.dangerous_files = list(dangerous_files)
         self.dangerous_directories = list(dangerous_directories)
-        self._backend = backend if backend is not None else LocalBackend()
+
+        self._backend = backend or LocalBackend()
 
     async def check_permissions(
         self,
@@ -220,7 +223,7 @@ Usage:
             ),
         ]
 
-    async def __call__(  # type: ignore[override]
+    async def call(  # type: ignore[override]
         self,
         file_path: str,
         content: str,

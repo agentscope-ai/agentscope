@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """The model response module."""
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal, Sequence
 
 from ._model_usage import ChatUsage
+from .._utils._common import _generate_id
 from .._utils._mixin import DictMixin
 from ..message import (
     TextBlock,
@@ -28,7 +28,7 @@ class ChatResponse(DictMixin):
     """Whether this response is the last response, if `Ture`, the content will
     be the complete response, otherwise the content is a partial response"""
 
-    id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    id: str = field(default_factory=_generate_id)
     """The unique identifier."""
 
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
@@ -55,7 +55,7 @@ class StructuredResponse:
     content: dict
     """The structured output of the model."""
 
-    id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    id: str = field(default_factory=_generate_id)
     """The unique identifier."""
 
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())

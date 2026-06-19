@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """The content blocks of messages."""
-import uuid
 from enum import StrEnum
 from typing import Literal, List, TypeAlias
 from pydantic import BaseModel, Field, AnyUrl, field_serializer, ConfigDict
 
+from .._utils._common import _generate_id
 from ..permission import PermissionRule
 
 
@@ -15,7 +15,7 @@ class TextBlock(BaseModel):
     """The type of the text block, which is always 'text'."""
     text: str
     """The text content of the block."""
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    id: str = Field(default_factory=_generate_id)
     """The unique identifier of the block."""
 
 
@@ -33,7 +33,7 @@ class ThinkingBlock(BaseModel):
     """The type of the thinking block, which is always 'thinking'."""
     thinking: str
     """The thinking content of the block."""
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    id: str = Field(default_factory=_generate_id)
     """The unique identifier of the block."""
 
 
@@ -69,7 +69,7 @@ class DataBlock(BaseModel):
 
     type: Literal["data"] = "data"
     """The type of the data block, which is always 'data'."""
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    id: str = Field(default_factory=_generate_id)
     """The unique identifier of the block."""
     source: Base64Source | URLSource
     """The source of the data, which can be either a base64-encoded string or
@@ -93,7 +93,7 @@ class HintBlock(BaseModel):
     hint: str | list[TextBlock | DataBlock]
     """The hint content — plain text or a list of content blocks for
     multimodal data."""
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    id: str = Field(default_factory=_generate_id)
     """The unique identifier of the block."""
     source: str | None = None
     """The sender or origin of this hint. For team messages this is the

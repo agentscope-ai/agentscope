@@ -1,27 +1,22 @@
 # -*- coding: utf-8 -*-
 """The glob tool in agentscope."""
-
-from __future__ import annotations
-
 import fnmatch
 import json
 import os
 import shlex
 import sys
-from typing import TYPE_CHECKING, Any, List
+from typing import Any, List
 
-from ...message import TextBlock, ToolResultState
+from .._base import ToolBase
 from ...permission import (
-    PermissionBehavior,
     PermissionContext,
     PermissionDecision,
+    PermissionBehavior,
     PermissionRule,
 )
-from .._base import ToolBase
 from .._response import ToolChunk
-
-if TYPE_CHECKING:
-    from ._backend import BackendBase
+from ...message import TextBlock, ToolResultState
+from ._backend import BackendBase
 
 
 def _default_glob_helper_path() -> str:
@@ -84,10 +79,13 @@ codebase."""  # ignore: E501
         self,
         backend: BackendBase | None = None,
         glob_helper_path: str | None = None,
+        middlewares: List[ToolMiddlewareBase] | None = None,
     ) -> None:
         """Initialize the glob tool.
 
         Args:
+            middlewares (`List[ToolMiddlewareBase] | None`, optional):
+                Tool middlewares wrapping the tool execution.
             backend (`BackendBase | None`, optional):
                 The sandbox backend to use. When ``None``, a
                 :class:`LocalBackend` is created automatically.
@@ -101,6 +99,7 @@ codebase."""  # ignore: E501
         """
         from ._backend import LocalBackend
 
+        super().__init__(middlewares=middlewares)
         self._backend = backend if backend is not None else LocalBackend()
         # When running against the host, invoke the helper with the
         # current interpreter (``sys.executable``) rather than assuming
@@ -200,7 +199,7 @@ codebase."""  # ignore: E501
             ),
         ]
 
-    async def __call__(  # type: ignore[override]
+    async def call(  # type: ignore[override]
         self,
         pattern: str,
         path: str | None = None,

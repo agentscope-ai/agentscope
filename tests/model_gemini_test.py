@@ -15,6 +15,10 @@ from utils import AnyString
 
 from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
 from agentscope.model import GeminiChatModel
+from agentscope.model._gemini._model import (
+    _flatten_json_schema,
+    _sanitize_schema_for_gemini,
+)
 from agentscope.credential import GeminiCredential
 from agentscope.tool import ToolChoice
 
@@ -531,3 +535,119 @@ class TestGeminiFormatTools(unittest.TestCase):
         fmt_tools, fmt_choice = self.model._format_tools(_FT_TOOLS, None)
         self.assertEqual(fmt_tools, _FT_TOOLS_GEMINI)
         self.assertIsNone(fmt_choice)
+
+
+# ---------------------------------------------------------------------------
+# Tests for _sanitize_schema_for_gemini and _flatten_json_schema
+# ---------------------------------------------------------------------------
+
+
+class TestGeminiSchemaUtils(unittest.TestCase):
+    """Tests for _sanitize_schema_for_gemini and _flatten_json_schema."""
+
+    def test_sanitize_removes_additional_properties_and_inlines_optional(
+        self,
+    ) -> None:
+        """additionalProperties removed; anyOf[X, null] inlined to X."""
+        self.assertEqual(
+            _sanitize_schema_for_gemini(
+                {
+                    "description": "x",
+                    "anyOf": [{"type": "string"}, {"type": "null"}],
+                },
+            ),
+            {"type": "string", "description": "x"},
+        )
+        self.assertEqual(
+            _sanitize_schema_for_gemini(
+                {"type": "object", "additionalProperties": False},
+            ),
+            {"type": "object"},
+        )
+
+    def test_sanitize_pydantic_optional_list_dict(self) -> None:
+        """End-to-end: Pydantic Optional[list[dict]] schema is cleaned."""
+        result = _sanitize_schema_for_gemini(
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "actions": {
+                        "description": "List of actions",
+                        "anyOf": [
+                            {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "additionalProperties": True,
+                                },
+                            },
+                            {"type": "null"},
+                        ],
+                    },
+                },
+            },
+        )
+        self.assertEqual(
+            result,
+            {
+                "type": "object",
+                "properties": {
+                    "actions": {
+                        "type": "array",
+                        "description": "List of actions",
+                        "items": {"type": "object"},
+                    },
+                },
+            },
+        )
+
+    def test_flatten_resolves_ref_and_removes_defs(self) -> None:
+        """$ref inlined with extra keys merged; $defs removed."""
+        self.assertEqual(
+            _flatten_json_schema(
+                {
+                    "$defs": {"Name": {"type": "string"}},
+                    "properties": {
+                        "name": {
+                            "$ref": "#/$defs/Name",
+                            "description": "The name",
+                        },
+                    },
+                },
+            ),
+            {
+                "properties": {
+                    "name": {"type": "string", "description": "The name"},
+                },
+            },
+        )
+
+    def test_flatten_circular_ref_returns_placeholder(self) -> None:
+        """Circular $ref produces a placeholder without infinite recursion."""
+        self.assertEqual(
+            _flatten_json_schema(
+                {
+                    "$defs": {
+                        "Node": {
+                            "type": "object",
+                            "properties": {"child": {"$ref": "#/$defs/Node"}},
+                        },
+                    },
+                    "properties": {"root": {"$ref": "#/$defs/Node"}},
+                },
+            ),
+            {
+                "properties": {
+                    "root": {
+                        "type": "object",
+                        "properties": {
+                            "child": {
+                                "type": "object",
+                                "description": "(circular: Node)",
+                            },
+                        },
+                    },
+                },
+            },
+        )
