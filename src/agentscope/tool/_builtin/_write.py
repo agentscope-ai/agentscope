@@ -2,10 +2,7 @@
 """The write tool in agentscope."""
 import fnmatch
 import os
-from pathlib import Path
 from typing import Any, List
-
-import aiofiles
 
 from .._base import ToolBase, ToolMiddlewareBase
 from .._constants import (

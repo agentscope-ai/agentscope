@@ -7,7 +7,7 @@ import shlex
 import sys
 from typing import Any, List
 
-from .._base import ToolBase
+from .._base import ToolBase, ToolMiddlewareBase
 from ...permission import (
     PermissionContext,
     PermissionDecision,

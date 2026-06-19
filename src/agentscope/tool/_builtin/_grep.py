@@ -159,7 +159,7 @@ class Grep(ToolBase):
     def __init__(
         self,
         middlewares: List[ToolMiddlewareBase] | None = None,
-            backend: BackendBase | None = None,
+        backend: BackendBase | None = None,
     ) -> None:
         """Initialize the grep tool.
 

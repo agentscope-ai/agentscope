@@ -5,7 +5,7 @@ from typing import AsyncGenerator, Any, List
 import re
 
 from ._bash_parser import BashCommandParser
-from .._base import ToolBase, ToolMiddlewareBase, ToolResultState
+from .._base import ToolBase, ToolMiddlewareBase
 from .._constants import (
     DEFAULT_DANGEROUS_FILES,
     DEFAULT_DANGEROUS_DIRECTORIES,
@@ -17,7 +17,7 @@ from ...permission import (
     PermissionMode,
     PermissionRule,
 )
-from ...message import TextBlock
+from ...message import TextBlock, ToolResultState
 from .._response import ToolChunk
 from ._backend import BackendBase
 
