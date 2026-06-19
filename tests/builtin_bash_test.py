@@ -13,7 +13,7 @@ from agentscope.permission import (
     PermissionRule,
 )
 from agentscope.tool import Bash, ToolChunk
-from agentscope.tool._builtin._sandbox_backend import (
+from agentscope.tool._builtin._backend import (
     _subprocess_creation_kwargs,
 )
 
@@ -24,14 +24,14 @@ class BashSubprocessKwargsTest(unittest.TestCase):
     def test_non_windows_subprocess_kwargs_are_empty(self) -> None:
         """On non-Windows the helper returns no extra subprocess kwargs."""
         with patch(
-            "agentscope.tool._builtin._sandbox_backend.os.name",
+            "agentscope.tool._builtin._backend.os.name",
             "posix",
         ):
             self.assertEqual(_subprocess_creation_kwargs(), {})
 
     def test_windows_subprocess_kwargs_hide_console(self) -> None:
         """On Windows the helper sets ``creationflags`` to hide the console."""
-        with patch("agentscope.tool._builtin._sandbox_backend.os.name", "nt"):
+        with patch("agentscope.tool._builtin._backend.os.name", "nt"):
             self.assertEqual(
                 _subprocess_creation_kwargs(),
                 {"creationflags": 0x08000000},
@@ -49,7 +49,7 @@ class BashCwdTest(IsolatedAsyncioTestCase):
 
         create_process = AsyncMock(return_value=process)
         with patch(
-            "agentscope.tool._builtin._sandbox_backend."
+            "agentscope.tool._builtin._backend."
             "asyncio.create_subprocess_shell",
             create_process,
         ):

@@ -24,7 +24,7 @@ from .._constants import (
 from .._response import ToolChunk
 
 if TYPE_CHECKING:
-    from ._sandbox_backend import SandboxBackend
+    from ._backend import BackendBase
 
 
 class Edit(ToolBase):
@@ -93,7 +93,7 @@ Usage:
         self,
         dangerous_files: list[str] = DEFAULT_DANGEROUS_FILES,
         dangerous_directories: list[str] = DEFAULT_DANGEROUS_DIRECTORIES,
-        backend: SandboxBackend | None = None,
+        backend: BackendBase | None = None,
     ) -> None:
         """Initialize the edit tool.
 
@@ -111,11 +111,11 @@ Usage:
                 `DEFAULT_DANGEROUS_DIRECTORIES`. Pass a custom list to
                 fully replace the defaults, or `[]` to disable the
                 directory check.
-            backend (`SandboxBackend | None`, optional):
+            backend (`BackendBase | None`, optional):
                 The sandbox backend to use for file I/O. When ``None``,
                 a :class:`LocalBackend` is created.
         """
-        from ._sandbox_backend import LocalBackend
+        from ._backend import LocalBackend
 
         self.dangerous_files = list(dangerous_files)
         self.dangerous_directories = list(dangerous_directories)

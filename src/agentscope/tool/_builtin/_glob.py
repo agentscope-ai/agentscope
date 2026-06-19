@@ -7,6 +7,7 @@ import fnmatch
 import json
 import os
 import shlex
+import sys
 from typing import TYPE_CHECKING, Any, List
 
 from ...message import TextBlock, ToolResultState
@@ -20,7 +21,7 @@ from .._base import ToolBase
 from .._response import ToolChunk
 
 if TYPE_CHECKING:
-    from ._sandbox_backend import SandboxBackend
+    from ._backend import BackendBase
 
 
 def _default_glob_helper_path() -> str:
@@ -81,13 +82,13 @@ codebase."""  # ignore: E501
 
     def __init__(
         self,
-        backend: SandboxBackend | None = None,
+        backend: BackendBase | None = None,
         glob_helper_path: str | None = None,
     ) -> None:
         """Initialize the glob tool.
 
         Args:
-            backend (`SandboxBackend | None`, optional):
+            backend (`BackendBase | None`, optional):
                 The sandbox backend to use. When ``None``, a
                 :class:`LocalBackend` is created automatically.
             glob_helper_path (`str | None`, optional):
@@ -98,9 +99,13 @@ codebase."""  # ignore: E501
                 (Docker, E2B) should pass the path where the script
                 was deployed during workspace initialization.
         """
-        from ._sandbox_backend import LocalBackend
+        from ._backend import LocalBackend
 
         self._backend = backend if backend is not None else LocalBackend()
+        # When running against the host, invoke the helper with the
+        # current interpreter (``sys.executable``) rather than assuming
+        # ``python3`` is on PATH.
+        self._is_local = isinstance(self._backend, LocalBackend)
         self._glob_helper_path = (
             glob_helper_path
             if glob_helper_path is not None
@@ -211,19 +216,25 @@ codebase."""  # ignore: E501
         and E2B backends.
 
         Args:
-            pattern: The glob pattern to match against
-            path: Optional base directory to search from (defaults to cwd)
+            pattern (`str`):
+                The glob pattern to match against (e.g. ``**/*.py``).
+            path (`str | None`, optional):
+                Base directory to search from. Defaults to the current
+                working directory when ``None``.
 
         Returns:
             `ToolChunk`:
-                The content contains the matched file paths joined by
-                newlines, or an error message if the directory is not found or
-                no files match the pattern.
+                On success, the matched file paths joined by newlines
+                (or a "no files found" message). If the base directory
+                is missing or the helper fails, an error chunk with
+                ``ToolResultState.ERROR``.
         """
         base_dir = path if path else os.getcwd()
 
-        # Check directory existence via the backend
-        if not await self._backend.file_exists(base_dir):
+        # The base must be an existing directory; a regular file would
+        # otherwise be accepted here and fail later with a confusing
+        # error from the helper.
+        if not await self._backend.is_dir(base_dir):
             return ToolChunk(
                 content=[
                     TextBlock(text=f"Directory not found: {base_dir}"),
@@ -232,22 +243,32 @@ codebase."""  # ignore: E501
                 is_last=True,
             )
 
-        # Invoke the glob helper script via exec_shell
+        # Invoke the glob helper script via exec_shell. Use the current
+        # interpreter locally (``python3`` may be absent, e.g. on
+        # Windows or venvs exposing only ``python``); remote backends
+        # run inside Linux images where ``python3`` is the safe choice.
+        python = sys.executable if self._is_local else "python3"
         command = (
-            f"python3 {shlex.quote(self._glob_helper_path)}"
+            f"{shlex.quote(python)} {shlex.quote(self._glob_helper_path)}"
             f" --pattern {shlex.quote(pattern)}"
             f" --base-dir {shlex.quote(base_dir)}"
         )
         result = await self._backend.exec_shell(command, timeout=30.0)
 
+        # A non-zero exit means the helper itself failed (missing
+        # interpreter/script, permission error, …) — surface it rather
+        # than masking it as an empty match.
         if not result.ok():
+            stderr = result.stderr.decode("utf-8", errors="replace").strip()
             return ToolChunk(
                 content=[
                     TextBlock(
-                        text=f"No files found matching pattern: {pattern}",
+                        text=f"Glob helper failed: {stderr}"
+                        if stderr
+                        else "Glob helper failed with no error output.",
                     ),
                 ],
-                state=ToolResultState.RUNNING,
+                state=ToolResultState.ERROR,
                 is_last=True,
             )
 

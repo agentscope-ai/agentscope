@@ -19,7 +19,7 @@ from .._base import ToolBase
 from .._response import ToolChunk
 
 if TYPE_CHECKING:
-    from ._sandbox_backend import SandboxBackend
+    from ._backend import BackendBase
 
 
 class Read(ToolBase):
@@ -76,7 +76,7 @@ Usage:
     def __init__(
         self,
         max_line_characters: int = 2000,
-        backend: SandboxBackend | None = None,
+        backend: BackendBase | None = None,
     ) -> None:
         """Initialize the read tool.
 
@@ -87,11 +87,11 @@ Usage:
                 a "[truncated]" suffix. This prevents overwhelming the agent
                 with excessively long lines while still providing useful
                 content.
-            backend (`SandboxBackend | None`, optional):
+            backend (`BackendBase | None`, optional):
                 The sandbox backend to use for file I/O. When ``None``,
                 a :class:`LocalBackend` is created.
         """
-        from ._sandbox_backend import LocalBackend
+        from ._backend import LocalBackend
 
         self._max_line_characters = max_line_characters
         self._backend = backend if backend is not None else LocalBackend()

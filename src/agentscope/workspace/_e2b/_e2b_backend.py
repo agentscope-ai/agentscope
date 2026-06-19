@@ -1,31 +1,50 @@
 # -*- coding: utf-8 -*-
-"""E2B sandbox :class:`SandboxBackend` implementation.
+"""E2B sandbox :class:`BackendBase` implementation.
 
 Wraps the E2B SDK's ``commands.run`` and ``files.*`` APIs into the
-eight-method :class:`SandboxBackend` protocol so that builtin tools
-(Bash, Read, Write, Edit, Grep, Glob) can operate inside an E2B
-cloud sandbox transparently.
+three backend primitives (``exec_shell``, ``read_file``,
+``write_file``) so that builtin tools (Bash, Read, Write, Edit, Grep,
+Glob) can operate inside an E2B cloud sandbox transparently.  All
+derived filesystem helpers (``file_exists``, ``is_dir``, ``list_dir``,
+``stat_mtime``, ``delete_path``) are inherited from
+:class:`BackendBase`, which implements them via ``exec_shell``.
 """
 
 from __future__ import annotations
 
+import posixpath
 import shlex
 from typing import Any
 
-from ...tool._builtin._sandbox_backend import ExecResult
+from ...tool import BackendBase, ExecResult
 
 
-class E2BBackend:
+class E2BBackend(BackendBase):
     """Backend that delegates to a running E2B sandbox.
 
+    Only the three abstract primitives (``exec_shell``, ``read_file``,
+    ``write_file``) are implemented here; the derived filesystem helpers
+    are inherited from :class:`BackendBase`.
+
     Args:
-        sandbox: An ``e2b.AsyncSandbox`` object (must already be
-            started / connected).
-        workdir: Default working directory for ``exec_shell`` calls
-            inside the sandbox.
+        sandbox (`Any`):
+            An ``e2b.AsyncSandbox`` object (must already be started /
+            connected).
+        workdir (`str`):
+            Default working directory for ``exec_shell`` calls inside
+            the sandbox.
     """
 
     def __init__(self, sandbox: Any, workdir: str) -> None:
+        """Initialize the E2B backend.
+
+        Args:
+            sandbox (`Any`):
+                A started / connected ``e2b.AsyncSandbox`` object.
+            workdir (`str`):
+                Default working directory for ``exec_shell`` calls
+                inside the sandbox.
+        """
         self._sandbox = sandbox
         self._workdir = workdir
 
@@ -38,7 +57,24 @@ class E2BBackend:
         cwd: str | None = None,
         timeout: float | None = None,
     ) -> ExecResult:
-        """Run *command* inside the sandbox via ``commands.run``."""
+        """Run *command* inside the sandbox via ``commands.run``.
+
+        Args:
+            command (`str`):
+                The shell command line to run.
+            cwd (`str | None`, optional):
+                Working directory inside the sandbox. When ``None`` the
+                backend's default ``workdir`` is used.
+            timeout (`float | None`, optional):
+                Maximum number of seconds to wait. When ``None`` the
+                SDK default applies.
+
+        Returns:
+            `ExecResult`:
+                The captured exit code, stdout, and stderr. A non-zero
+                command exit is reported as a normal result; transport
+                errors yield an ``exit_code`` of ``-1``.
+        """
         from e2b import CommandExitException
 
         kwargs: dict[str, Any] = {"cwd": cwd or self._workdir}
@@ -67,7 +103,20 @@ class E2BBackend:
     # ── file I/O ───────────────────────────────────────────────────
 
     async def read_file(self, path: str) -> bytes:
-        """Read a file from the sandbox via ``files.read``."""
+        """Read a file from the sandbox via ``files.read``.
+
+        Args:
+            path (`str`):
+                Path to the file inside the sandbox.
+
+        Returns:
+            `bytes`:
+                The raw file contents.
+
+        Raises:
+            `FileNotFoundError`:
+                If the path does not exist inside the sandbox.
+        """
         from e2b import FileNotFoundException
 
         try:
@@ -82,69 +131,14 @@ class E2BBackend:
         """Write *data* to a file inside the sandbox.
 
         Creates parent directories via ``exec_shell`` first.
-        """
-        import posixpath
 
+        Args:
+            path (`str`):
+                Destination path inside the sandbox.
+            data (`bytes`):
+                The raw bytes to write.
+        """
         parent = posixpath.dirname(path)
         if parent:
             await self.exec_shell(f"mkdir -p {shlex.quote(parent)}")
         await self._sandbox.files.write(path, data)
-
-    # ── path introspection ─────────────────────────────────────────
-
-    async def file_exists(self, path: str) -> bool:
-        """Check if *path* exists inside the sandbox."""
-        result = await self.exec_shell(
-            f"test -e {shlex.quote(path)}",
-        )
-        return result.ok()
-
-    async def is_dir(self, path: str) -> bool:
-        """Check if *path* is a directory inside the sandbox."""
-        result = await self.exec_shell(
-            f"test -d {shlex.quote(path)}",
-        )
-        return result.ok()
-
-    async def list_dir(
-        self,
-        path: str,
-        *,
-        recursive: bool = False,
-    ) -> list[str]:
-        """List directory entries inside the sandbox."""
-        if recursive:
-            result = await self.exec_shell(
-                f"find {shlex.quote(path)} -type f",
-            )
-        else:
-            result = await self.exec_shell(
-                f"ls -1 {shlex.quote(path)}",
-            )
-        if not result.ok():
-            return []
-        raw = result.stdout.decode("utf-8", errors="replace").strip()
-        if not raw:
-            return []
-        return raw.split("\n")
-
-    async def stat_mtime(self, path: str) -> float | None:
-        """Return the modification time of *path* inside the sandbox."""
-        result = await self.exec_shell(
-            f"stat -c %Y {shlex.quote(path)} 2>/dev/null",
-        )
-        if not result.ok():
-            return None
-        try:
-            return float(
-                result.stdout.decode("utf-8", errors="replace").strip(),
-            )
-        except ValueError:
-            return None
-
-    async def delete_path(self, path: str) -> None:
-        """Delete a file or directory tree inside the sandbox.
-
-        No-op if *path* does not exist.
-        """
-        await self.exec_shell(f"rm -rf {shlex.quote(path)}")

@@ -8,7 +8,6 @@ import json
 import mimetypes
 import os
 import re
-import shlex
 import shutil
 from copy import deepcopy
 from pathlib import Path
@@ -37,7 +36,7 @@ from ..tool import (
     ToolBase,
     Write,
 )
-from ..tool._builtin._sandbox_backend import LocalBackend
+from ..tool._builtin._backend import LocalBackend
 from ._base import WorkspaceBase
 
 
@@ -535,8 +534,8 @@ class LocalWorkspace(WorkspaceBase):
 
         payload = "\n".join(lines) + "\n"
 
-        # Read existing content if any, then append
-        await self._backend.exec_shell(f"mkdir -p {shlex.quote(base)}")
+        # Read existing content if any, then append. ``write_file``
+        # creates parent directories, so no explicit mkdir is needed.
         existing = b""
         try:
             existing = await self._backend.read_file(path)
@@ -596,7 +595,6 @@ class LocalWorkspace(WorkspaceBase):
                         f"media_type='{block.source.media_type}'/>",
                     )
 
-        await self._backend.exec_shell(f"mkdir -p {shlex.quote(base)}")
         await self._backend.write_file(
             path,
             "".join(parts).encode("utf-8"),

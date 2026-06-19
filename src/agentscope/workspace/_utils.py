@@ -172,6 +172,10 @@ def _read_glob_helper_bytes() -> bytes:
     ``agentscope/tool/_builtin/_scripts/_glob_helper.py``. Both Docker
     and E2B backends copy it into the workspace so the :class:`Glob`
     tool can invoke it uniformly via ``exec_shell``.
+
+    Returns:
+        `bytes`:
+            The raw contents of the ``_glob_helper.py`` script.
     """
     return (
         _res.files("agentscope.tool._builtin._scripts")

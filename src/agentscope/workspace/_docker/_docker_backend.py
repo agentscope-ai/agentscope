@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Docker container :class:`SandboxBackend` implementation.
+"""Docker container :class:`BackendBase` implementation.
 
 Wraps the ``aiodocker`` container APIs (``exec``, ``get_archive``,
-``put_archive``) into the eight-method :class:`SandboxBackend`
-protocol so that builtin tools (Bash, Read, Write, Edit, Grep, Glob)
-can operate inside a Docker container transparently.
+``put_archive``) into the three backend primitives (``exec_shell``,
+``read_file``, ``write_file``) so that builtin tools (Bash, Read,
+Write, Edit, Grep, Glob) can operate inside a Docker container
+transparently.  All derived filesystem helpers (``file_exists``,
+``is_dir``, ``list_dir``, ``stat_mtime``, ``delete_path``) are
+inherited from :class:`BackendBase`, which implements them via
+``exec_shell``.
 """
 
 from __future__ import annotations
@@ -16,20 +20,34 @@ import shlex
 import tarfile
 from typing import Any
 
-from ...tool._builtin._sandbox_backend import ExecResult
+from ...tool import BackendBase, ExecResult
 
 
-class DockerBackend:
+class DockerBackend(BackendBase):
     """Backend that delegates to a running Docker container.
 
+    Only the three abstract primitives (``exec_shell``, ``read_file``,
+    ``write_file``) are implemented here; the derived filesystem helpers
+    are inherited from :class:`BackendBase`.
+
     Args:
-        container: An ``aiodocker`` container object (must already
-            be started).
-        workdir: Default working directory for ``exec_shell`` calls
-            inside the container.
+        container (`Any`):
+            An ``aiodocker`` container object (must already be started).
+        workdir (`str`):
+            Default working directory for ``exec_shell`` calls inside
+            the container.
     """
 
     def __init__(self, container: Any, workdir: str) -> None:
+        """Initialize the Docker backend.
+
+        Args:
+            container (`Any`):
+                A started ``aiodocker`` container object.
+            workdir (`str`):
+                Default working directory for ``exec_shell`` calls
+                inside the container.
+        """
         self._container = container
         self._workdir = workdir
 
@@ -42,7 +60,23 @@ class DockerBackend:
         cwd: str | None = None,
         timeout: float | None = None,
     ) -> ExecResult:
-        """Run ``sh -c <command>`` inside the container."""
+        """Run ``sh -c <command>`` inside the container.
+
+        Args:
+            command (`str`):
+                The shell command line to run.
+            cwd (`str | None`, optional):
+                Working directory inside the container. When ``None``
+                the backend's default ``workdir`` is used.
+            timeout (`float | None`, optional):
+                Maximum number of seconds to wait before returning an
+                ``exit_code`` of ``-1``. When ``None`` the call waits
+                indefinitely.
+
+        Returns:
+            `ExecResult`:
+                The captured exit code, stdout, and stderr.
+        """
 
         async def _run() -> ExecResult:
             exec_obj = await self._container.exec(
@@ -84,7 +118,20 @@ class DockerBackend:
     # ── file I/O ───────────────────────────────────────────────────
 
     async def read_file(self, path: str) -> bytes:
-        """Fetch a file from the container via ``get_archive``."""
+        """Fetch a file from the container via ``get_archive``.
+
+        Args:
+            path (`str`):
+                Path to the file inside the container.
+
+        Returns:
+            `bytes`:
+                The raw file contents.
+
+        Raises:
+            `FileNotFoundError`:
+                If the path does not exist inside the container.
+        """
         from aiodocker import exceptions as aiodocker_exceptions
 
         try:
@@ -107,7 +154,17 @@ class DockerBackend:
         raise FileNotFoundError(f"not found in container: {path}")
 
     async def write_file(self, path: str, data: bytes) -> None:
-        """Write raw bytes to a file inside the container."""
+        """Write raw bytes to a file inside the container.
+
+        Creates the parent directory first since ``put_archive``
+        requires it to exist.
+
+        Args:
+            path (`str`):
+                Destination path inside the container.
+            data (`bytes`):
+                The raw bytes to write.
+        """
         parent = posixpath.dirname(path) or "/"
         name = posixpath.basename(path)
 
@@ -118,62 +175,3 @@ class DockerBackend:
             info.size = len(data)
             tf.addfile(info, io.BytesIO(data))
         await self._container.put_archive(parent, buf.getvalue())
-
-    # ── path introspection ─────────────────────────────────────────
-
-    async def file_exists(self, path: str) -> bool:
-        """Check if *path* exists inside the container."""
-        result = await self.exec_shell(
-            f"test -e {shlex.quote(path)}",
-        )
-        return result.ok()
-
-    async def is_dir(self, path: str) -> bool:
-        """Check if *path* is a directory inside the container."""
-        result = await self.exec_shell(
-            f"test -d {shlex.quote(path)}",
-        )
-        return result.ok()
-
-    async def list_dir(
-        self,
-        path: str,
-        *,
-        recursive: bool = False,
-    ) -> list[str]:
-        """List directory entries inside the container."""
-        if recursive:
-            result = await self.exec_shell(
-                f"find {shlex.quote(path)} -type f",
-            )
-        else:
-            result = await self.exec_shell(
-                f"ls -1 {shlex.quote(path)}",
-            )
-        if not result.ok():
-            return []
-        raw = result.stdout.decode("utf-8", errors="replace").strip()
-        if not raw:
-            return []
-        return raw.split("\n")
-
-    async def stat_mtime(self, path: str) -> float | None:
-        """Return the modification time of *path* inside the container."""
-        result = await self.exec_shell(
-            f"stat -c %Y {shlex.quote(path)} 2>/dev/null",
-        )
-        if not result.ok():
-            return None
-        try:
-            return float(
-                result.stdout.decode("utf-8", errors="replace").strip(),
-            )
-        except ValueError:
-            return None
-
-    async def delete_path(self, path: str) -> None:
-        """Delete a file or directory tree inside the container.
-
-        No-op if *path* does not exist.
-        """
-        await self.exec_shell(f"rm -rf {shlex.quote(path)}")

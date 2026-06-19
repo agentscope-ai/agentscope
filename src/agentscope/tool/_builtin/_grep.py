@@ -19,7 +19,7 @@ from .._base import ToolBase
 from .._response import ToolChunk
 
 if TYPE_CHECKING:
-    from ._sandbox_backend import SandboxBackend
+    from ._backend import BackendBase
 
 # Version control system directories to exclude from searches
 VCS_DIRECTORIES_TO_EXCLUDE = [
@@ -163,19 +163,19 @@ class Grep(ToolBase):
 
     def __init__(
         self,
-        backend: SandboxBackend | None = None,
+        backend: BackendBase | None = None,
     ) -> None:
         """Initialize the grep tool.
 
         Args:
-            backend (`SandboxBackend | None`, optional):
+            backend (`BackendBase | None`, optional):
                 The sandbox backend to use for shell execution. When
                 ``None``, a :class:`LocalBackend` is created.
                 Ripgrep is always invoked via ``exec_shell`` so that
                 the same code path works for local, Docker, and E2B
                 backends.
         """
-        from ._sandbox_backend import LocalBackend
+        from ._backend import LocalBackend
 
         self._backend = backend if backend is not None else LocalBackend()
 
