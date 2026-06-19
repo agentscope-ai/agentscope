@@ -6,7 +6,7 @@ from typing import Any, List
 
 import aiofiles
 
-from .._base import ToolBase
+from .._base import ToolBase, ToolMiddlewareBase
 from ...permission import (
     PermissionContext,
     PermissionDecision,
@@ -72,6 +72,7 @@ Usage:
     def __init__(
         self,
         max_line_characters: int = 2000,
+        middlewares: List[ToolMiddlewareBase] | None = None,
     ) -> None:
         """Initialize the read tool.
 
@@ -82,8 +83,10 @@ Usage:
                 a "[truncated]" suffix. This prevents overwhelming the agent
                 with excessively long lines while still providing useful
                 content.
+            middlewares (`List[ToolMiddlewareBase] | None`, optional):
+                Tool middlewares wrapping the tool execution.
         """
-
+        super().__init__(middlewares=middlewares)
         self._max_line_characters = max_line_characters
 
     async def check_permissions(
@@ -167,7 +170,7 @@ Usage:
             ),
         ]
 
-    async def __call__(  # type: ignore[override]
+    async def call(  # type: ignore[override]
         self,
         file_path: str,
         offset: int = 1,

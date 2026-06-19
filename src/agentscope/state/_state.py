@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """The agent state class."""
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 import aiofiles.os
@@ -173,3 +175,10 @@ class AgentState(BaseModel):
     # =================================================================
     tasks_context: TaskContext = Field(default_factory=TaskContext)
     """The task context that records the agent tasks."""
+
+    # =================================================================
+    # The middleware context
+    # =================================================================
+    middle_context: dict[str, Any] = Field(default_factory=dict)
+    """The context that allow the middlewares to store/get data across
+    different replies."""

@@ -22,12 +22,14 @@ from ..middleware import (
     StateChangeMiddleware,
     ToolOffloadMiddleware,
 )
+from ...middleware import TTSMiddleware
 from .._types import (
     AgentMiddlewareFactory,
     AgentToolFactory,
     SubAgentTemplate,
 )
 from ._model import get_model
+from ._tts_model import get_tts_model
 from ._toolkit import get_toolkit
 
 from ..._logging import logger
@@ -38,6 +40,7 @@ from ...event import (
     ExternalExecutionResultEvent,
 )
 from ...message import AssistantMsg, Msg, ToolCallState
+from ...permission import AdditionalWorkingDirectory
 
 
 class ChatService:
@@ -81,7 +84,7 @@ class ChatService:
                 ``Schedule*`` tools.
             background_task_manager (`BackgroundTaskManager`):
                 Tracks offloaded long-running tool tasks. Also provides
-                the :class:`TaskStop` tool through
+                the :class:`ToolStop` tool through
                 :func:`get_toolkit`.
             message_bus (`MessageBus`):
                 Application-wide message bus. Provides session-level
@@ -218,8 +221,20 @@ class ChatService:
             session_record.config.workspace_id,
         )
 
+        # Add workspace working directory to the permission context
+        if (
+            workspace.workdir
+            not in session_record.state.permission_context.working_directories
+        ):
+            session_record.state.permission_context.working_directories[
+                workspace.workdir
+            ] = AdditionalWorkingDirectory(
+                path=workspace.workdir,
+                source="session",
+            )
+
         # ----------------------------------------------------------------
-        # 2. Toolkit (workspace tools + planning + TaskStop + schedule +
+        # 2. Toolkit (workspace tools + planning + ToolStop + schedule +
         # team + extras + skills + mcps).
         # ----------------------------------------------------------------
         toolkit = await get_toolkit(
@@ -263,6 +278,18 @@ class ChatService:
                     session_id,
                 ),
             )
+
+        # ----------------------------------------------------------------
+        # 3b. TTS middleware — inject when the session has a TTS config.
+        # ----------------------------------------------------------------
+        tts_cfg = session_record.config.tts_model_config
+        if tts_cfg is not None:
+            tts_model = await get_tts_model(
+                user_id,
+                tts_cfg,
+                self._storage,
+            )
+            middlewares.append(TTSMiddleware(tts_model))
 
         # ----------------------------------------------------------------
         # 4. Model + fallback (resolved from session's config).

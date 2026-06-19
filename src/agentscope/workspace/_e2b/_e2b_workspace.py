@@ -211,6 +211,7 @@ class E2BWorkspace(WorkspaceBase):
         super().__init__(workspace_id=workspace_id)
 
         # ── serializable config ─────────────────────────────────
+        self.workdir = SANDBOX_WORKDIR
         self.template = template
         self.api_key = api_key
         self.domain = domain

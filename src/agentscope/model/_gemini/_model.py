@@ -76,6 +76,78 @@ def _flatten_json_schema(schema: dict) -> dict:
     return _resolve_ref(schema)
 
 
+def _sanitize_schema_for_gemini(schema: Any) -> Any:
+    """Sanitize a JSON schema to be compatible with the Gemini API.
+
+    Gemini API does not support certain JSON Schema constructs. This
+    function removes or rewrites the following:
+
+    - ``additionalProperties``: removed entirely.
+    - ``anyOf`` containing a ``{"type": "null"}`` entry: simplified to
+      the single non-null type. If there is exactly one non-null
+      alternative it is inlined directly; otherwise the ``anyOf`` is
+      kept but the null entry is dropped.
+    - All nested sub-schemas (``properties``, ``items``, ``$defs``,
+      etc.) are processed recursively.
+
+    Args:
+        schema (`Any`):
+            The JSON schema to sanitize. Non-dict values are returned
+            unchanged; lists are recursively sanitized element-wise.
+
+    Returns:
+        `Any`:
+            A sanitized copy of the schema, or the original value if it
+            is not a dict or list.
+    """
+    if not isinstance(schema, dict):
+        if isinstance(schema, list):
+            return [_sanitize_schema_for_gemini(v) for v in schema]
+        return schema
+
+    schema = dict(schema)
+
+    # Remove additionalProperties — not supported by Gemini
+    schema.pop("additionalProperties", None)
+
+    # Simplify anyOf that only differs by a null type, e.g. Optional[X]
+    if "anyOf" in schema and isinstance(schema["anyOf"], list):
+        any_of = schema["anyOf"]
+        non_null = [v for v in any_of if v != {"type": "null"}]
+        if len(non_null) < len(any_of):  # at least one null entry removed
+            if len(non_null) == 1:
+                # Inline the single non-null type, preserving outer keys
+                merged = dict(_sanitize_schema_for_gemini(non_null[0]))
+                for k, v in schema.items():
+                    if k != "anyOf":
+                        merged.setdefault(k, v)
+                return merged
+            elif non_null:
+                schema["anyOf"] = [
+                    _sanitize_schema_for_gemini(v) for v in non_null
+                ]
+            else:
+                del schema["anyOf"]
+
+    # Recursively process nested object schemas
+    for key in ["properties", "patternProperties", "$defs"]:
+        if key in schema and isinstance(schema[key], dict):
+            schema[key] = {
+                k: _sanitize_schema_for_gemini(v)
+                for k, v in schema[key].items()
+            }
+
+    for key in ["items", "not", "if", "then", "else"]:
+        if key in schema:
+            schema[key] = _sanitize_schema_for_gemini(schema[key])
+
+    for key in ["allOf", "oneOf", "anyOf"]:
+        if key in schema and isinstance(schema[key], list):
+            schema[key] = [_sanitize_schema_for_gemini(v) for v in schema[key]]
+
+    return schema
+
+
 class GeminiChatModel(ChatModelBase):
     """The Google Gemini chat model."""
 
@@ -347,7 +419,7 @@ class GeminiChatModel(ChatModelBase):
                                 part.thought_signature,
                             ).decode("utf-8")
                         else:
-                            call_id = part.function_call.id
+                            call_id = part.function_call.id or uuid.uuid4().hex
                         input_str = json.dumps(
                             keyword_args,
                             ensure_ascii=False,
@@ -431,7 +503,7 @@ class GeminiChatModel(ChatModelBase):
                             part.thought_signature,
                         ).decode("utf-8")
                     else:
-                        call_id = part.function_call.id
+                        call_id = part.function_call.id or uuid.uuid4().hex
                     content_blocks.append(
                         ToolCallBlock(
                             id=call_id,
@@ -524,8 +596,8 @@ class GeminiChatModel(ChatModelBase):
                     continue
                 func = schema["function"].copy()
                 if "parameters" in func:
-                    func["parameters"] = _flatten_json_schema(
-                        func["parameters"],
+                    func["parameters"] = _sanitize_schema_for_gemini(
+                        _flatten_json_schema(func["parameters"]),
                     )
                 function_declarations.append(func)
             fmt_tools = [{"function_declarations": function_declarations}]

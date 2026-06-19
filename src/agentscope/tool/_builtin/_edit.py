@@ -6,7 +6,7 @@ from typing import Any, List
 
 import aiofiles
 
-from .._base import ToolBase
+from .._base import ToolBase, ToolMiddlewareBase
 from .._constants import (
     DEFAULT_DANGEROUS_FILES,
     DEFAULT_DANGEROUS_DIRECTORIES,
@@ -89,6 +89,7 @@ Usage:
         self,
         dangerous_files: list[str] = DEFAULT_DANGEROUS_FILES,
         dangerous_directories: list[str] = DEFAULT_DANGEROUS_DIRECTORIES,
+        middlewares: List[ToolMiddlewareBase] | None = None,
     ) -> None:
         """Initialize the edit tool.
 
@@ -106,7 +107,10 @@ Usage:
                 `DEFAULT_DANGEROUS_DIRECTORIES`. Pass a custom list to
                 fully replace the defaults, or `[]` to disable the
                 directory check.
+            middlewares (`List[ToolMiddlewareBase] | None`, optional):
+                Tool middlewares wrapping the tool execution.
         """
+        super().__init__(middlewares=middlewares)
         self.dangerous_files = list(dangerous_files)
         self.dangerous_directories = list(dangerous_directories)
 
@@ -232,7 +236,7 @@ Usage:
             ),
         ]
 
-    async def __call__(  # type: ignore[override]
+    async def call(  # type: ignore[override]
         self,
         file_path: str,
         old_string: str,

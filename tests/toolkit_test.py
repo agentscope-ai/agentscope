@@ -54,7 +54,7 @@ class Tool1(ToolBase):
             message="Do you want to use my_tool?",
         )
 
-    async def __call__(self, **kwargs: Any) -> ToolChunk:
+    async def call(self, **kwargs: Any) -> ToolChunk:
         """Run the tool."""
         return ToolChunk(
             content=[TextBlock(text="Hello, world!")],
@@ -85,7 +85,7 @@ class Tool2(ToolBase):
             message="Do you want to use my_tool?",
         )
 
-    async def __call__(self, **kwargs: Any) -> AsyncGenerator[ToolChunk, None]:
+    async def call(self, **kwargs: Any) -> AsyncGenerator[ToolChunk, None]:
         """Run the tool."""
         yield ToolChunk(
             content=[TextBlock(text="123", id="a")],
