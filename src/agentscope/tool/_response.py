@@ -1,11 +1,28 @@
 # -*- coding: utf-8 -*-
 """The tool response class."""
+import base64
+import binascii
 from typing import List, Literal, Self
 
 from pydantic import BaseModel, Field
 
 from .._utils._common import _generate_id
 from ..message import DataBlock, TextBlock, Base64Source, ToolResultState
+
+
+def _merge_base64_chunks(existing: str, incoming: str) -> str:
+    """Merge independently encoded base64 chunks without corrupting padding."""
+    try:
+        merged = base64.b64decode(
+            existing,
+            validate=True,
+        ) + base64.b64decode(incoming, validate=True)
+    except (binascii.Error, ValueError):
+        # Keep compatibility with callers/tests that used placeholder strings
+        # instead of valid base64 payloads.
+        return existing + incoming
+
+    return base64.b64encode(merged).decode("ascii")
 
 
 class ToolChunk(BaseModel):
@@ -80,8 +97,11 @@ class ToolResponse(BaseModel):
                         target_block.source,
                         Base64Source,
                     ) and isinstance(chunk_block.source, Base64Source):
-                        # Accumulate the base64 data
-                        target_block.source.data += chunk_block.source.data
+                        # Accumulate independently encoded base64 chunks.
+                        target_block.source.data = _merge_base64_chunks(
+                            target_block.source.data,
+                            chunk_block.source.data,
+                        )
                         # Update the newest media type and name if provided
                         target_block.name = (
                             chunk_block.name or target_block.name
