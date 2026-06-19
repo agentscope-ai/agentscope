@@ -141,6 +141,32 @@ class ReActConfig(BaseModel):
     won't continue reasoning and wait for outside interaction from the user.
     """
 
+    max_tool_retries: int = Field(
+        title="Max Tool Retries",
+        default=3,
+        ge=1,
+        description=(
+            "Maximum number of consecutive error results from the same "
+            "tool before a fallback hint is injected."
+        ),
+    )
+    """The maximum consecutive failures allowed for the same tool."""
+
+    tool_error_hint: str = Field(
+        title="Tool Error Hint",
+        default=(
+            "The last {count} calls to {tool_name} all failed. "
+            "Stop retrying the same tool call as-is; inspect the error "
+            "and try a different approach."
+        ),
+        description=(
+            "Hint injected after max_tool_retries consecutive errors from "
+            "the same tool. Supports {tool_name}, {count}, and "
+            "{max_tool_retries} placeholders."
+        ),
+    )
+    """Hint injected after repeated failures from the same tool."""
+
 
 class ModelConfig(BaseModel):
     """The model related configuration."""
