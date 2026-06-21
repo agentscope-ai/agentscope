@@ -624,46 +624,63 @@ class Agent:
             #  - If not, finish the loop by yielding RunFinishedEvent and exit
             #  - Otherwise, execute by batch and continue the loop
             # ===============================================================
-            for batch in await self._batch_tool_calls():
-                if batch.type == "sequential":
-                    evt_generator = self._execute_sequential_tool_calls(
-                        batch.tool_calls,
-                    )
+            try:
+                for batch in await self._batch_tool_calls():
+                    if batch.type == "sequential":
+                        evt_generator = (
+                            self._execute_sequential_tool_calls(
+                                batch.tool_calls,
+                            )
+                        )
 
-                elif batch.type == "concurrent":
-                    evt_generator = self._execute_concurrent_tool_calls(
-                        batch.tool_calls,
-                    )
+                    elif batch.type == "concurrent":
+                        evt_generator = (
+                            self._execute_concurrent_tool_calls(
+                                batch.tool_calls,
+                            )
+                        )
 
-                else:
-                    raise ValueError(
-                        f"Invalid batch type: {batch.type}",
-                    )
+                    else:
+                        raise ValueError(
+                            f"Invalid batch type: {batch.type}",
+                        )
 
-                break_execution = False
-                async for evt in evt_generator:
-                    yield evt
-                    if isinstance(
-                        evt,
-                        (
-                            RequireUserConfirmEvent,
-                            RequireExternalExecutionEvent,
-                        ),
-                    ):
-                        break_execution = True
+                    break_execution = False
+                    async for evt in evt_generator:
+                        yield evt
+                        if isinstance(
+                            evt,
+                            (
+                                RequireUserConfirmEvent,
+                                RequireExternalExecutionEvent,
+                            ),
+                        ):
+                            break_execution = True
 
-                # If it requires outside interaction stop executing the next
-                # batch and wait for outside trigger events
-                if break_execution:
-                    # Yield a Msg object for outside handling
-                    yield AssistantMsg(
-                        id=self.state.reply_id,
-                        name=self.name,
-                        content="Waiting for tool calls to be confirmed or "
-                        "executed from outside ...",
-                    )
+                    # If it requires outside interaction stop executing the
+                    # next batch and wait for outside trigger events
+                    if break_execution:
+                        # Yield a Msg object for outside handling
+                        yield AssistantMsg(
+                            id=self.state.reply_id,
+                            name=self.name,
+                            content="Waiting for tool calls to be "
+                            "confirmed or executed from outside ...",
+                        )
 
-                    return
+                        return
+            except Exception:
+                # Repair orphan tool calls: if the stream failed after
+                # an assistant message with tool_calls was saved to
+                # context but before all matching tool results were
+                # recorded, synthesise interrupted/error results so
+                # the next turn does not send invalid history to the
+                # model provider.
+                self._recover_orphan_tool_calls(
+                    "Tool execution was interrupted by an unexpected "
+                    "error. The tool call could not be completed.",
+                )
+                raise
 
             # Update the iteration count after each round of reasoning-acting
             self.state.cur_iter += 1
@@ -1691,6 +1708,56 @@ class Agent:
             tool_call.id,
             ToolCallState.FINISHED,
         )
+
+    def _recover_orphan_tool_calls(self, message: str) -> None:
+        """Synthesise error tool results for tool calls that have no
+        matching result in the last context message.
+
+        Called when a mid-stream failure leaves an assistant message with
+        ``tool_calls`` but the corresponding ``ToolResultBlock`` entries
+        were never persisted.  Without recovery the next turn would send
+        invalid conversation history to the model provider (an assistant
+        message with ``tool_calls`` not followed by tool-result messages),
+        causing ``ValidationException`` or equivalent errors.
+
+        The method scans the last context message for tool-call blocks
+        whose id does not appear in any tool-result block of the same
+        message, and appends a ``ToolResultBlock`` with
+        ``state=ToolResultState.INTERRUPTED`` for each orphan.
+
+        Args:
+            message (`str`):
+                The error/interruption message to use as the tool result
+                output for orphaned tool calls.
+        """
+        if not self.state.context:
+            return
+
+        last_msg = self.state.context[-1]
+        if last_msg.role != "assistant" or last_msg.name != self.name:
+            return
+
+        result_ids = {
+            block.id
+            for block in last_msg.get_content_blocks("tool_result")
+        }
+
+        for block in last_msg.get_content_blocks("tool_call"):
+            if block.id not in result_ids:
+                self._save_to_context(
+                    [
+                        ToolResultBlock(
+                            id=block.id,
+                            name=block.name,
+                            output=message,
+                            state=ToolResultState.INTERRUPTED,
+                        ),
+                    ],
+                )
+                self._update_tool_call_state(
+                    block.id,
+                    ToolCallState.FINISHED,
+                )
 
     # =======================================================================
     # Context management related methods
