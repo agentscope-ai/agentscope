@@ -1,21 +1,38 @@
 # -*- coding: utf-8 -*-
-"""Single per-process dispatcher for cross-session wake-ups.
+"""Single per-process dispatcher for all cross-session run triggers.
 
-One asyncio task per process. Subscribes to the shared wake-up signal
-channel and drains the durable wake-up queue on each signal. For each
-queued entry whose session is idle, spawns a background
-:meth:`ChatService.run` call through the shared
-:class:`ChatRunRegistry`, so the spawned task can be looked up and
-cancelled by :class:`CancelDispatcher`.
+One asyncio task per process. Subscribes to the shared trigger signal
+channel and drains the durable trigger queue on each signal. It is the
+**sole** site that spawns :meth:`ChatService.run` into the shared
+:class:`ChatRunRegistry`, which is what makes concurrent-spawn races
+(two writers contending for one session's run slot → a spurious "already
+has an active chat run" 409) structurally impossible: every run trigger
+funnels through this one serial consumer.
+
+Each queue entry carries a ``kind`` that selects how a busy session is
+handled:
+
+- ``wake`` (idle-session wake-up, ``input_msg=None``): skipped while the
+  session is already running — the live run will drain the inbox.
+- ``resume`` (a parked HITL run being fed its result): must *not* be
+  skipped while running, because the session is typically still running
+  the parked tail at trigger time. It is re-queued after a short backoff
+  until the parked run releases its session lock, then spawned with the
+  carried input event.
 
 All bus keys live on the :class:`MessageBus` base class (see
-``enqueue_wakeup``, ``dequeue_wakeups``, ``subscribe_wakeup_signal``,
-``session_is_running``), so this file has no hard-coded key strings.
+``enqueue_wakeup`` / ``enqueue_input``, ``dequeue_wakeups``,
+``subscribe_wakeup_signal``, ``session_is_running``), so this file has
+no hard-coded key strings.
 """
 import asyncio
 from typing import TYPE_CHECKING, Self
 
+from pydantic import TypeAdapter
+
 from ..._logging import logger
+from ...event import UserConfirmResultEvent, ExternalExecutionResultEvent
+from ..message_bus import MessageBusKeys
 
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
@@ -23,20 +40,33 @@ if TYPE_CHECKING:
     from .._service import ChatService
     from ._chat_run_registry import ChatRunRegistry
 
+# Parses a queued ``resume`` input dict back into its concrete event,
+# discriminated by the ``type`` field shared by both result events.
+_RESUME_INPUT_ADAPTER: TypeAdapter = TypeAdapter(
+    UserConfirmResultEvent | ExternalExecutionResultEvent,
+)
+
+# Delay before re-queuing a ``resume`` trigger whose target session is
+# still running (the parked run is finishing and about to free its
+# lock). Short enough to feel instant to the user, long enough to avoid
+# a hot re-enqueue loop while the lock is held.
+_RESUME_RETRY_BACKOFF_SECS = 0.1
+
 
 class WakeupDispatcher:
-    """One asyncio task per process, draining the shared wake-up queue.
+    """One asyncio task per process, draining the shared trigger queue.
 
     Args:
         message_bus (`MessageBus`):
             Application message bus. Used for signal subscription,
-            queue drain, and ``session_is_running`` checks.
+            queue drain, ``session_is_running`` checks, and re-queuing
+            deferred ``resume`` triggers.
         storage (`StorageBase`):
             Persistent storage backend. Consulted before spawning a
-            run so wake-ups whose target session has been deleted are
+            run so triggers whose target session has been deleted are
             dropped instead of crashing :class:`ChatService.run`.
         chat_service (`ChatService`):
-            Drives the actual chat run when waking an idle session.
+            Drives the actual chat run when a trigger fires.
         chat_run_registry (`ChatRunRegistry`):
             Per-process registry that holds the spawned task handle so
             it can be located by :class:`CancelDispatcher`.
@@ -57,7 +87,7 @@ class WakeupDispatcher:
             storage (`StorageBase`):
                 Persistent storage backend.
             chat_service (`ChatService`):
-                Drives idle-session wake-ups via :meth:`ChatService.run`.
+                Drives session runs via :meth:`ChatService.run`.
             chat_run_registry (`ChatRunRegistry`):
                 Shared chat-run registry to spawn into.
         """
@@ -66,13 +96,17 @@ class WakeupDispatcher:
         self._chat_service = chat_service
         self._registry = chat_run_registry
         self._task: asyncio.Task | None = None
+        # Detached backoff timers for deferred ``resume`` re-enqueues.
+        # Held so they are not garbage-collected mid-sleep and can be
+        # cancelled on shutdown.
+        self._retry_tasks: set[asyncio.Task] = set()
 
     async def __aenter__(self) -> Self:
         """Start the dispatcher loop and wait until its bus
         subscription is live.
 
         Also performs an initial drain right after subscription so
-        wake-ups produced while this process was down (durable in
+        triggers produced while this process was down (durable in
         the queue) are picked up immediately on startup.
 
         Returns:
@@ -88,7 +122,10 @@ class WakeupDispatcher:
         return self
 
     async def __aexit__(self, *exc: object) -> None:
-        """Cancel the dispatcher loop on context exit."""
+        """Cancel the dispatcher loop and any pending retries."""
+        for retry in list(self._retry_tasks):
+            retry.cancel()
+        self._retry_tasks.clear()
         if self._task is None:
             return
         self._task.cancel()
@@ -110,7 +147,7 @@ class WakeupDispatcher:
             ready (`asyncio.Event`):
                 Signalled after the underlying SUBSCRIBE completes.
                 :meth:`start` blocks on this so callers can publish a
-                wake-up immediately after start without racing.
+                trigger immediately after start without racing.
         """
         try:
             async for _signal in self._bus.subscribe_wakeup_signal(
@@ -123,7 +160,7 @@ class WakeupDispatcher:
             )
 
     async def _drain_and_dispatch(self) -> None:
-        """Read up to a batch of wake-up entries and dispatch them."""
+        """Read up to a batch of trigger entries and dispatch each."""
         try:
             entries = await self._bus.dequeue_wakeups(max_count=64)
         except Exception:  # pylint: disable=broad-except
@@ -137,55 +174,178 @@ class WakeupDispatcher:
                 agent_id = payload["agent_id"]
             except (KeyError, TypeError):
                 logger.warning(
-                    "WakeupDispatcher: skipping malformed wake-up entry %r",
+                    "WakeupDispatcher: skipping malformed trigger entry %r",
                     payload,
                 )
                 continue
+            # Entries from older producers omit ``kind`` — treat as wake.
+            kind = payload.get("kind", MessageBusKeys.WAKEUP_KIND_WAKE)
+            await self._dispatch_one(
+                user_id=user_id,
+                session_id=session_id,
+                agent_id=agent_id,
+                kind=kind,
+                raw_input=payload.get("input"),
+            )
 
-            if await self._bus.session_is_running(session_id):
-                continue
+    async def _dispatch_one(
+        self,
+        user_id: str,
+        session_id: str,
+        agent_id: str,
+        kind: str,
+        raw_input: dict | None,
+    ) -> None:
+        """Dispatch a single trigger entry by its ``kind``.
 
-            # Orphan guard: the wake-up queue is unaware of session
-            # lifecycle. A wake-up enqueued before the session was
-            # deleted (e.g. by a BG task completion callback or a
-            # schedule trigger) will still arrive here. Drop it
-            # rather than letting ChatService.run crash on a missing
-            # storage record.
-            if (
-                await self._storage.get_session(
+        Args:
+            user_id (`str`):
+                The owning user id.
+            session_id (`str`):
+                The session to trigger.
+            agent_id (`str`):
+                The agent that owns the session.
+            kind (`str`):
+                Trigger kind (``wake`` / ``resume``); see module docstring.
+            raw_input (`dict | None`):
+                Serialised input event for ``resume`` triggers, else
+                ``None``.
+        """
+        is_resume = kind == MessageBusKeys.WAKEUP_KIND_RESUME
+
+        if await self._bus.session_is_running(session_id):
+            if is_resume:
+                # The session is busy finishing its parked tail. Do NOT
+                # drop the resume — re-queue it after a short backoff so
+                # it lands once the parked run releases its lock.
+                self._schedule_resume_retry(
                     user_id,
-                    agent_id,
                     session_id,
+                    agent_id,
+                    raw_input,
                 )
-                is None
-            ):
+            # ``wake`` triggers are safe to drop while running — the
+            # live run drains the inbox itself.
+            return
+
+        # Orphan guard: the queue is unaware of session lifecycle. A
+        # trigger enqueued before the session was deleted (e.g. by a
+        # BG-task completion callback or a schedule trigger) will still
+        # arrive here. Drop it rather than letting ChatService.run crash
+        # on a missing storage record.
+        if (
+            await self._storage.get_session(user_id, agent_id, session_id)
+            is None
+        ):
+            logger.warning(
+                "WakeupDispatcher: dropping %s trigger for session %s "
+                "(agent %s, user %s) — session no longer exists in "
+                "storage; it was likely enqueued before the session was "
+                "deleted.",
+                kind,
+                session_id,
+                agent_id,
+                user_id,
+            )
+            return
+
+        input_msg: UserConfirmResultEvent | ExternalExecutionResultEvent | None
+        input_msg = None
+        if is_resume:
+            if raw_input is None:
                 logger.warning(
-                    "WakeupDispatcher: dropping wake-up for session %s "
-                    "(agent %s, user %s) — session no longer exists in "
-                    "storage; the wake-up was likely enqueued before "
-                    "the session was deleted.",
+                    "WakeupDispatcher: dropping resume trigger for session "
+                    "%s — no input event carried.",
+                    session_id,
+                )
+                return
+            try:
+                input_msg = _RESUME_INPUT_ADAPTER.validate_python(raw_input)
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "WakeupDispatcher: dropping resume trigger for session "
+                    "%s — input event failed to parse: %r",
+                    session_id,
+                    raw_input,
+                )
+                return
+
+        try:
+            self._registry.spawn(
+                self._chat_service.run(
+                    user_id=user_id,
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    input_msg=input_msg,
+                ),
+                session_id=session_id,
+                name=f"{kind}-run:{session_id}",
+            )
+        except RuntimeError:
+            # A local run was registered between the running-check and
+            # the spawn. For ``wake`` that run will drain the inbox; for
+            # ``resume`` re-queue so the result is not lost.
+            if is_resume:
+                self._schedule_resume_retry(
+                    user_id,
                     session_id,
                     agent_id,
-                    user_id,
+                    raw_input,
                 )
-                continue
-
-            try:
-                self._registry.spawn(
-                    self._chat_service.run(
-                        user_id=user_id,
-                        session_id=session_id,
-                        agent_id=agent_id,
-                        input_msg=None,
-                    ),
-                    session_id=session_id,
-                    name=f"wakeup-run:{session_id}",
-                )
-            except RuntimeError:
-                # Another spawn won the race for this session in this
-                # process; the existing run will drain the inbox.
+            else:
                 logger.debug(
-                    "WakeupDispatcher: skipping wake-up for session %s; "
-                    "a local run is already registered.",
+                    "WakeupDispatcher: skipping wake trigger for session "
+                    "%s; a local run is already registered.",
                     session_id,
                 )
+
+    def _schedule_resume_retry(
+        self,
+        user_id: str,
+        session_id: str,
+        agent_id: str,
+        raw_input: dict | None,
+    ) -> None:
+        """Re-enqueue a ``resume`` trigger after a short backoff.
+
+        Spawns a detached timer that sleeps, then re-enqueues the resume
+        (which re-fires the signal, re-driving the drain). This keeps the
+        resume alive across the window where the parked run still holds
+        the session lock, without a hot re-enqueue loop.
+
+        Args:
+            user_id (`str`):
+                The owning user id.
+            session_id (`str`):
+                The session to resume.
+            agent_id (`str`):
+                The agent that owns the session.
+            raw_input (`dict | None`):
+                The serialised input event to redeliver.
+        """
+
+        async def _retry() -> None:
+            try:
+                await asyncio.sleep(_RESUME_RETRY_BACKOFF_SECS)
+                await self._bus.enqueue_input(
+                    user_id=user_id,
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    kind=MessageBusKeys.WAKEUP_KIND_RESUME,
+                    inputs=raw_input,
+                )
+            except asyncio.CancelledError:
+                pass
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "WakeupDispatcher: failed to re-enqueue resume trigger "
+                    "for session %s.",
+                    session_id,
+                )
+
+        task = asyncio.create_task(
+            _retry(),
+            name=f"resume-retry:{session_id}",
+        )
+        self._retry_tasks.add(task)
+        task.add_done_callback(self._retry_tasks.discard)

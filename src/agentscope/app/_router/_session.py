@@ -25,7 +25,7 @@ from ._schema import (
     UpdateSessionRequest,
 )
 from ..message_bus import MessageBus
-from .._service import SessionService, SubagentHitlInbox
+from .._service import SessionService, SessionProjection, SubagentHitlProjector
 from ..storage import (
     AgentRecord,
     ChatModelConfig,
@@ -543,8 +543,11 @@ async def stream_session_events(
         #     Reconcile-on-read: the worker session's own context is the
         #     SSOT. Inject only when the worker is still ASKING; drop and
         #     delete ghosts (worker resolved/cancelled without clearing).
-        inbox = SubagentHitlInbox(message_bus)
-        for payload in await inbox.list(session_id):
+        projection = SessionProjection(message_bus)
+        for payload in await projection.list(
+            session_id,
+            SubagentHitlProjector.KIND,
+        ):
             if not await _worker_still_asking(
                 storage,
                 user_id,
@@ -552,14 +555,17 @@ async def stream_session_events(
                 payload["worker_session_id"],
                 payload["reply_id"],
             ):
-                await inbox.delete(
+                await projection.delete(
                     session_id,
-                    payload["worker_session_id"],
-                    payload["reply_id"],
+                    SubagentHitlProjector.KIND,
+                    SubagentHitlProjector.entry_id(
+                        payload["worker_session_id"],
+                        payload["reply_id"],
+                    ),
                 )
                 continue
             custom = CustomEvent(
-                name=SubagentHitlInbox.EVT_REQUIRE,
+                name=SubagentHitlProjector.EVT_REQUIRE,
                 value=payload,
             )
             yield f"data: {json.dumps(custom.model_dump(mode='json'))}\n\n"

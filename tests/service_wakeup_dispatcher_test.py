@@ -20,7 +20,7 @@ from typing import Any, AsyncGenerator, Callable
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.app._manager import ChatRunRegistry, WakeupDispatcher
-from agentscope.app.message_bus import MessageBus
+from agentscope.app.message_bus import MessageBus, MessageBusKeys
 
 
 class _FakeStorage:
@@ -364,6 +364,92 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
                     "input_msg": None,
                 },
             ],
+        )
+
+    async def test_resume_idle_spawns_with_parsed_event(self) -> None:
+        """A ``resume`` trigger for an idle session spawns a run whose
+        ``input_msg`` is the carried HITL event, rebuilt from its dump."""
+        from agentscope.event import UserConfirmResultEvent
+
+        bus = _FakeBus()
+        chat = _FakeChatService()
+        event = UserConfirmResultEvent.model_construct(
+            reply_id="r1",
+            confirm_results=[],
+        )
+
+        async with WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        ):
+            await bus.queue_push(
+                MessageBus._WAKEUP_QUEUE_KEY,
+                {
+                    "user_id": "u",
+                    "session_id": "w1",
+                    "agent_id": "wa1",
+                    "kind": MessageBusKeys.WAKEUP_KIND_RESUME,
+                    "input": event.model_dump(mode="json"),
+                },
+            )
+            await bus.publish(MessageBus._WAKEUP_SIGNAL_KEY, {})
+            await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
+
+        self.assertEqual(len(chat.calls), 1)
+        call = chat.calls[0]
+        self.assertEqual(call["session_id"], "w1")
+        self.assertIsInstance(call["input_msg"], UserConfirmResultEvent)
+        self.assertEqual(call["input_msg"].reply_id, "r1")
+
+    async def test_resume_running_session_requeues_until_free(self) -> None:
+        """A ``resume`` whose target is still running is NOT dropped: it
+        is re-queued (with backoff) and dispatched once the session lock
+        releases. This is the structural fix for the parked-run 409 race.
+        """
+        from agentscope.event import UserConfirmResultEvent
+
+        bus = _FakeBus()
+        chat = _FakeChatService()
+        lock_key = MessageBus._SESSION_LOCK_KEY.format(sid="w1")
+        bus._locks.add(lock_key)  # session is busy finishing its park tail
+        event = UserConfirmResultEvent.model_construct(
+            reply_id="r1",
+            confirm_results=[],
+        )
+
+        async with WakeupDispatcher(
+            message_bus=bus,
+            storage=_FakeStorage(),
+            chat_service=chat,
+            chat_run_registry=ChatRunRegistry(),
+        ):
+            await bus.queue_push(
+                MessageBus._WAKEUP_QUEUE_KEY,
+                {
+                    "user_id": "u",
+                    "session_id": "w1",
+                    "agent_id": "wa1",
+                    "kind": MessageBusKeys.WAKEUP_KIND_RESUME,
+                    "input": event.model_dump(mode="json"),
+                },
+            )
+            await bus.publish(MessageBus._WAKEUP_SIGNAL_KEY, {})
+
+            # While locked, the resume must keep deferring — no run yet.
+            await asyncio.sleep(0.25)
+            self.assertEqual(chat.calls, [])
+
+            # Release the lock; the re-queued resume now lands.
+            bus._locks.discard(lock_key)
+            await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
+
+        self.assertEqual(len(chat.calls), 1)
+        self.assertEqual(chat.calls[0]["session_id"], "w1")
+        self.assertIsInstance(
+            chat.calls[0]["input_msg"],
+            UserConfirmResultEvent,
         )
 
 

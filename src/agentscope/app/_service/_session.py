@@ -49,7 +49,8 @@ import asyncio
 
 from ..message_bus import MessageBus
 from ..storage import StorageBase
-from ._subagent_hitl import SubagentHitlInbox
+from ._session_projection import SessionProjection
+from ._projectors import SubagentHitlProjector
 from ..._logging import logger
 
 
@@ -89,7 +90,7 @@ class SessionService:
         """
         self._storage = storage
         self._bus = message_bus
-        self._subagent_hitl = SubagentHitlInbox(message_bus)
+        self._projection = SessionProjection(message_bus)
 
     # ------------------------------------------------------------------
     # Cancel
@@ -427,21 +428,22 @@ class SessionService:
             if session is None or not session.team_id:
                 # Not in a team — also clear any hash that may have been
                 # created with this session as a (future) leader key.
-                await self._subagent_hitl.purge(session_id)
+                await SubagentHitlProjector.purge(self._projection, session_id)
                 return
 
             team = await self._storage.get_team(user_id, session.team_id)
             if team is None:
-                await self._subagent_hitl.purge(session_id)
+                await SubagentHitlProjector.purge(self._projection, session_id)
                 return
 
             if team.session_id == session_id:
                 # Leader session — drop the whole projection store.
-                await self._subagent_hitl.purge(session_id)
+                await SubagentHitlProjector.purge(self._projection, session_id)
             else:
                 # Worker session — drop only its entries from the
                 # leader's store.
-                await self._subagent_hitl.drop_worker(
+                await SubagentHitlProjector.drop_worker(
+                    self._projection,
                     team.session_id,
                     session_id,
                 )

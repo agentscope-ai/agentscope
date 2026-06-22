@@ -18,42 +18,87 @@ class MessageBusKeys:
     """Application-layer key conventions for the message bus."""
 
     # ------------------------------------------------------------------
-    # Subagent HITL inbox — pending confirm-requests originating from
-    # team-member sessions, projected onto their leader session so the
-    # leader's UI can render and resolve them.
+    # Run-trigger queue — the discriminator carried by each entry on the
+    # shared trigger queue, telling the dispatcher how to spawn the run.
+    # Centralised here (rather than on ``MessageBus``) so the bus stays
+    # free of business vocabulary.
     # ------------------------------------------------------------------
 
-    _SUBAGENT_HITL_NS = "agentscope:session:subagent_hitl:{sid}"
-    """Redis-hash namespace key template (per *leader* session id)."""
+    WAKEUP_KIND_WAKE = "wake"
+    """Trigger kind: wake an *idle* session to drain pending inbox
+    content. The dispatcher spawns the run with ``input_msg=None`` and
+    skips the session entirely while it is already running."""
+
+    WAKEUP_KIND_RESUME = "resume"
+    """Trigger kind: resume a session parked on an awaiting tool call by
+    feeding it a human-in-the-loop result. The dispatcher spawns the run
+    with the carried ``input`` event and — unlike ``wake`` — must *not*
+    drop the entry while the session is running; it re-queues until the
+    parked run releases its lock."""
+
+    # ------------------------------------------------------------------
+    # Cross-session UI projection — a generic per-session Redis-hash
+    # store onto which one session can project UI cards owned by another
+    # (e.g. a team member's pending HITL request projected onto its
+    # leader). The ``kind`` prefix on each field lets a single target
+    # session carry several independent projection feeds without key
+    # collisions, so new projection features reuse this store rather
+    # than minting their own.
+    # ------------------------------------------------------------------
+
+    _PROJECTION_NS = "agentscope:session:projection:{sid}"
+    """Redis-hash namespace key template (per *target* session id)."""
 
     @classmethod
-    def subagent_hitl_namespace(cls, leader_session_id: str) -> str:
-        """Return the registry namespace for a leader session's pending
-        subagent HITL requests.
+    def projection_namespace(cls, target_session_id: str) -> str:
+        """Return the registry namespace for a session's projections.
 
         Args:
-            leader_session_id (`str`):
-                The leader session the pending requests are projected
-                onto.
+            target_session_id (`str`):
+                The session the entries are projected onto (the session
+                whose UI renders them).
 
         Returns:
             `str`:
                 The Redis-hash namespace key.
         """
-        return cls._SUBAGENT_HITL_NS.format(sid=leader_session_id)
+        return cls._PROJECTION_NS.format(sid=target_session_id)
 
     @staticmethod
-    def subagent_hitl_field(worker_session_id: str, reply_id: str) -> str:
-        """Return the hash field key for a single pending HITL request.
+    def projection_field(kind: str, entry_id: str) -> str:
+        """Return the hash field key for a single projected entry.
+
+        The ``kind`` prefix namespaces the field so different projection
+        feeds sharing one target session never collide, and so a feed
+        can be listed/purged by scanning for its prefix.
 
         Args:
-            worker_session_id (`str`):
-                The worker session that emitted the HITL request.
-            reply_id (`str`):
-                The worker-side reply id the request belongs to.
+            kind (`str`):
+                The projection feed this entry belongs to (e.g.
+                ``"subagent_hitl"``).
+            entry_id (`str`):
+                The entry's identity within the feed, unique per
+                ``kind`` (e.g. ``"{worker_session_id}:{reply_id}"``).
 
         Returns:
             `str`:
-                The hash field key, ``"{worker_session_id}:{reply_id}"``.
+                The hash field key, ``"{kind}:{entry_id}"``.
         """
-        return f"{worker_session_id}:{reply_id}"
+        return f"{kind}:{entry_id}"
+
+    @staticmethod
+    def projection_field_prefix(kind: str) -> str:
+        """Return the field-key prefix that identifies one feed.
+
+        Used to filter :meth:`MessageBus.registry_getall` down to a
+        single ``kind`` when listing or purging.
+
+        Args:
+            kind (`str`):
+                The projection feed.
+
+        Returns:
+            `str`:
+                The field-key prefix, ``"{kind}:"``.
+        """
+        return f"{kind}:"

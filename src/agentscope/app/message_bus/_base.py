@@ -45,6 +45,8 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any, Callable, Self
 
+from ._keys import MessageBusKeys
+
 
 class MessageBus(ABC):  # pylint: disable=too-many-public-methods
     """Abstract base class for live message transport.
@@ -750,11 +752,16 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
     # Wakeup ----------------------------------------------------------
 
     _WAKEUP_QUEUE_KEY = "agentscope:wakeups"
-    """Shared wake-up queue (durable Redis Stream)."""
+    """Shared run-trigger queue (durable Redis Stream).
+
+    Despite the historical name, this carries *all* dispatcher-driven
+    run triggers, not just idle wake-ups — each entry's ``kind`` tells
+    the dispatcher how to spawn the run (see :meth:`enqueue_wakeup` /
+    :meth:`enqueue_input`)."""
 
     _WAKEUP_SIGNAL_KEY = "agentscope:wakeup_signal"
     """Shared Pub/Sub channel that nudges dispatchers to drain the
-    wake-up queue."""
+    run-trigger queue."""
 
     async def enqueue_wakeup(
         self,
@@ -762,7 +769,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         session_id: str,
         agent_id: str,
     ) -> None:
-        """Enqueue a wake-up request and signal dispatchers.
+        """Enqueue an idle-session wake-up and signal dispatchers.
 
         Producers (e.g. ``TeamSay``, ``AgentCreate``, the scheduler
         trigger, or the BG-tool completion watcher) call this after
@@ -770,6 +777,11 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         :class:`WakeupDispatcher` (one per process) drains the queue
         on each signal and starts a chat run for any session that
         is not currently active.
+
+        Equivalent to :meth:`enqueue_input` with
+        ``kind=MessageBusKeys.WAKEUP_KIND_WAKE`` and no input; kept as the
+        explicit, narrowly-typed entry point for the common idle-wake
+        case.
 
         Args:
             user_id (`str`):
@@ -779,12 +791,59 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
             agent_id (`str`):
                 The agent id that owns the session.
         """
+        await self.enqueue_input(
+            user_id=user_id,
+            session_id=session_id,
+            agent_id=agent_id,
+            kind=MessageBusKeys.WAKEUP_KIND_WAKE,
+            inputs=None,
+        )
+
+    async def enqueue_input(
+        self,
+        user_id: str,
+        session_id: str,
+        agent_id: str,
+        *,
+        kind: str,
+        inputs: dict | None = None,
+    ) -> None:
+        """Enqueue a typed run trigger and signal dispatchers.
+
+        The generalised producer behind every dispatcher-driven run.
+        It makes the durable queue a per-session input mailbox: ``wake``
+        triggers drain inbox content (no input), ``resume`` triggers
+        carry a serialised human-in-the-loop result so the parked run
+        can continue. Routing all triggers through this single queue
+        keeps the :class:`WakeupDispatcher` the sole spawn site, which
+        is what makes concurrent-spawn races (two writers contending for
+        one session's run slot) structurally impossible.
+
+        Args:
+            user_id (`str`):
+                The owning user id.
+            session_id (`str`):
+                The session to trigger a run for.
+            agent_id (`str`):
+                The agent id that owns the session.
+            kind (`str`):
+                The trigger kind — :attr:`MessageBusKeys.WAKEUP_KIND_WAKE`
+                or :attr:`MessageBusKeys.WAKEUP_KIND_RESUME`. Governs how
+                the dispatcher handles a busy session and what it passes
+                as ``input_msg``.
+            inputs (`dict | None`, optional):
+                The JSON-serialised input event to feed the run (e.g. a
+                ``UserConfirmResultEvent`` dump) for ``resume`` triggers.
+                ``None`` for ``wake`` triggers.
+        """
         await self.queue_push(
             self._WAKEUP_QUEUE_KEY,
             {
                 "user_id": user_id,
                 "session_id": session_id,
                 "agent_id": agent_id,
+                "kind": kind,
+                "input": inputs,
             },
         )
         await self.publish(self._WAKEUP_SIGNAL_KEY, {})
@@ -793,7 +852,7 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         self,
         max_count: int = 64,
     ) -> list[dict]:
-        """Drain pending wake-up entries.
+        """Drain pending run-trigger entries.
 
         Args:
             max_count (`int`, defaults to ``64``):
@@ -801,8 +860,11 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
 
         Returns:
             `list[dict]`:
-                Entries shaped ``{"user_id", "session_id",
-                "agent_id"}`` in enqueue order.
+                Entries shaped ``{"user_id", "session_id", "agent_id",
+                "kind", "input"}`` in enqueue order. Entries produced by
+                older code paths may omit ``kind``/``input``; consumers
+                should treat a missing ``kind`` as
+                :attr:`MessageBusKeys.WAKEUP_KIND_WAKE`.
         """
         entries = await self.queue_drain(
             self._WAKEUP_QUEUE_KEY,
