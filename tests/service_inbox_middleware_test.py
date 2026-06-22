@@ -127,6 +127,29 @@ class _FakeBus(MessageBus):
     async def is_locked(self, key: str) -> bool:
         raise NotImplementedError
 
+    # Mode F — registry (unused)
+    async def registry_set(
+        self,
+        namespace: str,
+        field: str,
+        value: str,
+        *,
+        ttl_secs: int | None = None,
+    ) -> None:
+        raise NotImplementedError
+
+    async def registry_del(self, namespace: str, field: str) -> None:
+        raise NotImplementedError
+
+    async def registry_exists(self, namespace: str, field: str) -> bool:
+        raise NotImplementedError
+
+    async def registry_getall(self, namespace: str) -> dict[str, str]:
+        raise NotImplementedError
+
+    async def registry_drop(self, namespace: str) -> None:
+        raise NotImplementedError
+
 
 def _make_agent(
     *,

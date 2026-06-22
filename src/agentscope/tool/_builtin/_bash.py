@@ -6,7 +6,7 @@ import re
 import asyncio
 
 from ._bash_parser import BashCommandParser
-from .._base import ToolBase
+from .._base import ToolBase, ToolMiddlewareBase
 from .._constants import (
     DEFAULT_DANGEROUS_FILES,
     DEFAULT_DANGEROUS_DIRECTORIES,
@@ -155,6 +155,7 @@ easier to review tool calls and give permission.
         dangerous_files: list[str] = DEFAULT_DANGEROUS_FILES,
         dangerous_directories: list[str] = DEFAULT_DANGEROUS_DIRECTORIES,
         cwd: str | os.PathLike[str] | None = None,
+        middlewares: List[ToolMiddlewareBase] | None = None,
     ) -> None:
         """Initialize the bash tool.
 
@@ -174,8 +175,11 @@ easier to review tool calls and give permission.
                 directory check.
             cwd (`str | os.PathLike[str] | None`, optional):
                 The working directory used when executing bash commands.
+            middlewares (`List[ToolMiddlewareBase] | None`, optional):
+                Tool middlewares wrapping the tool execution.
         """
 
+        super().__init__(middlewares=middlewares)
         self._bash_parser = BashCommandParser()
 
         self.dangerous_files = list(dangerous_files)
@@ -663,7 +667,7 @@ easier to review tool calls and give permission.
 
         return False
 
-    async def __call__(  # type: ignore[override]
+    async def call(  # type: ignore[override] # pylint: disable=unused-argument
         self,
         command: str,
         description: str = "",

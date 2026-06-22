@@ -3,7 +3,13 @@
 from pydantic import BaseModel, Field
 
 from ....permission import PermissionMode
-from ...storage import AgentRecord, ChatModelConfig, SessionRecord, TeamRecord
+from ...storage import (
+    AgentRecord,
+    ChatModelConfig,
+    TTSModelConfig,
+    SessionRecord,
+    TeamRecord,
+)
 
 
 class TeamMemberView(BaseModel):
@@ -68,6 +74,10 @@ class CreateSessionRequest(BaseModel):
         description="Fallback model used when the primary model fails. "
         "Can be set later via PATCH.",
     )
+    tts_model_config: TTSModelConfig | None = Field(
+        default=None,
+        description="TTS model configuration. Can be set later via PATCH.",
+    )
 
 
 class CreateSessionResponse(BaseModel):
@@ -95,6 +105,11 @@ class UpdateSessionRequest(BaseModel):
     fallback_chat_model_config: ChatModelConfig | None = Field(
         default=None,
         description="New fallback model configuration. "
+        "Pass null to clear; omit to leave unchanged.",
+    )
+    tts_model_config: TTSModelConfig | None = Field(
+        default=None,
+        description="New TTS model configuration. "
         "Pass null to clear; omit to leave unchanged.",
     )
     permission_mode: PermissionMode | None = Field(

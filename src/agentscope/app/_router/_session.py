@@ -2,12 +2,12 @@
 """Session router — create, list, update, delete, stream, and get messages."""
 import asyncio
 import json
-import uuid
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
+from ..._utils._common import _generate_id
 from ..deps import (
     get_current_user_id,
     get_message_bus,
@@ -29,6 +29,7 @@ from .._service import SessionService
 from ..storage import (
     AgentRecord,
     ChatModelConfig,
+    TTSModelConfig,
     SessionConfig,
     SessionRecord,
     StorageBase,
@@ -92,7 +93,7 @@ session_router = APIRouter(
 async def _ensure_credential_exists(
     storage: StorageBase,
     user_id: str,
-    config: ChatModelConfig | None,
+    config: ChatModelConfig | TTSModelConfig | None,
 ) -> None:
     """Validate that the credential referenced by ``config`` belongs to the
     given user. No-op when ``config`` is ``None``.
@@ -100,8 +101,8 @@ async def _ensure_credential_exists(
     Args:
         storage (`StorageBase`): Injected storage backend.
         user_id (`str`): The authenticated user ID.
-        config (`ChatModelConfig | None`): Model config to validate. Pass
-            ``None`` to skip the check.
+        config (`ChatModelConfig | TTSModelConfig | None`): Model config to
+            validate. Pass ``None`` to skip the check.
 
     Raises:
         `HTTPException`: 404 if the credential does not exist or does not
@@ -230,14 +231,16 @@ async def create_session(
         user_id,
         body.fallback_chat_model_config,
     )
+    await _ensure_credential_exists(storage, user_id, body.tts_model_config)
 
     session_record = await storage.upsert_session(
         user_id=user_id,
         agent_id=body.agent_id,
         config=SessionConfig(
-            workspace_id=body.workspace_id or uuid.uuid4().hex,
+            workspace_id=body.workspace_id or _generate_id(),
             chat_model_config=body.chat_model_config,
             fallback_chat_model_config=body.fallback_chat_model_config,
+            tts_model_config=body.tts_model_config,
             **({"name": body.name} if body.name is not None else {}),
         ),
     )
@@ -325,6 +328,7 @@ async def update_session(
         user_id,
         body.fallback_chat_model_config,
     )
+    await _ensure_credential_exists(storage, user_id, body.tts_model_config)
 
     updated_state = existing.state
     if body.permission_mode is not None:

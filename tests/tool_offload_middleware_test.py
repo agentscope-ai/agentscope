@@ -152,7 +152,9 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         """Set up test fixtures."""
         self.mock_model = MockModel()
-        self.bg_manager = BackgroundTaskManager()
+        self.bg_manager = BackgroundTaskManager(
+            message_bus=MagicMock(spec=MessageBus),
+        )
 
     # ------------------------------------------------------------------
     # Helper
@@ -345,8 +347,8 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
             agent_id="a",
         )
 
-    async def test_task_stop_cancels_background_task(self) -> None:
-        """TaskStop tool cancels the running background asyncio task."""
+    async def test_tool_stop_cancels_background_task(self) -> None:
+        """ToolStop tool cancels the running background asyncio task."""
 
         toolkit = Toolkit(tools=[SlowTool()])
         agent, _ = self._make_agent(toolkit, timeout_secs=0.05)
@@ -364,12 +366,16 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(len(self.bg_manager.tasks), 1)
         task_id = next(iter(self.bg_manager.tasks))
-        asyncio_task = self.bg_manager.tasks[task_id].asyncio_task
+        bg_task = self.bg_manager.tasks[task_id]
+        asyncio_task = bg_task.asyncio_task
 
-        # Call TaskStop
-        task_stop_tools = await self.bg_manager.list_tools()
-        task_stop = task_stop_tools[0]
-        result = await task_stop(task_id=task_id)
+        # Call ToolStop bound to the same session as the registered
+        # background task, so the local cancel path matches.
+        tool_stop_tools = await self.bg_manager.list_tools(
+            session_id=bg_task.session_id,
+        )
+        tool_stop = tool_stop_tools[0]
+        result = await tool_stop(task_id=task_id)
         text = result.content[0].text  # type: ignore[union-attr]
         self.assertIn("stopped successfully", text)
 

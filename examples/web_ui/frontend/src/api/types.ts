@@ -13,6 +13,13 @@ export interface ChatModelConfig {
 	parameters: Record<string, unknown>;
 }
 
+export interface TTSModelConfig {
+	type: string;
+	credential_id: string;
+	model: string;
+	parameters: Record<string, unknown>;
+}
+
 export interface ContextConfig {
 	trigger_ratio?: number;
 	reserve_ratio?: number;
@@ -84,6 +91,8 @@ export interface SessionConfig {
 	chat_model_config: ChatModelConfig;
 	/** Fallback model used when the primary model fails. */
 	fallback_chat_model_config: ChatModelConfig | null;
+	/** TTS model configuration. null means TTS is not enabled. */
+	tts_model_config: TTSModelConfig | null;
 	workspace_id: string;
 }
 
@@ -112,6 +121,8 @@ export interface CreateSessionRequest {
 	chat_model_config?: ChatModelConfig | null;
 	/** Optional fallback model. Omit (or pass null) for no fallback. */
 	fallback_chat_model_config?: ChatModelConfig | null;
+	/** Optional TTS model. Omit (or pass null) for no TTS. */
+	tts_model_config?: TTSModelConfig | null;
 }
 
 export interface CreateSessionResponse {
@@ -128,6 +139,13 @@ export interface UpdateSessionRequest {
 	 *   - set to a value → replace the existing fallback
 	 */
 	fallback_chat_model_config?: ChatModelConfig | null;
+	/**
+	 * New TTS model. PATCH semantics:
+	 *   - omit the field → leave unchanged
+	 *   - set to `null`  → disable TTS
+	 *   - set to a value → replace the existing TTS config
+	 */
+	tts_model_config?: TTSModelConfig | null;
 	permission_mode?: PermissionMode;
 }
 
@@ -420,5 +438,23 @@ export interface ListModelRequest {
 
 export interface ListModelResponse {
 	models: ModelCard[];
+	total: number;
+}
+
+export interface TTSModelCard {
+	type: 'tts_model';
+	name: string;
+	label: string;
+	status: 'active' | 'deprecated' | 'sunset';
+	deprecated_at: string | null;
+	input_types: string[];
+	output_types: string[];
+	realtime: boolean;
+	parameter_schema: Record<string, unknown>;
+	parameters_overrides: Record<string, Record<string, unknown>>;
+}
+
+export interface ListTTSModelResponse {
+	models: TTSModelCard[];
 	total: number;
 }

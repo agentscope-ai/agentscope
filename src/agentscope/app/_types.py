@@ -88,6 +88,44 @@ class SubAgentTemplate(BaseModel):
         ),
     )
 
+    override_leader_mode: bool = Field(
+        default=False,
+        description=(
+            "Whether the template's :attr:`permission_context.mode` "
+            "should override the leader session's mode for the worker. "
+            "``True`` — the worker runs in the template's mode "
+            "(typical for templates that pin a specific posture, e.g. "
+            "a read-only research worker). ``False`` (default) — the "
+            "worker inherits the leader's current mode."
+        ),
+    )
+
+    extend_leader_permission_rules: bool = Field(
+        default=True,
+        description=(
+            "Whether the leader session's allow/deny/ask permission "
+            "rules should be merged on top of the template's. "
+            "``True`` (default) — leader rules are appended after "
+            "the template's rules for each tool, so the worker "
+            "doesn't re-prompt for permissions the user has already "
+            "confirmed; the template's rules take precedence on "
+            "evaluation order. ``False`` — the template's rules are "
+            "the worker's complete rule set."
+        ),
+    )
+
+    extend_leader_working_directories: bool = Field(
+        default=True,
+        description=(
+            "Whether the leader session's working directories should "
+            "be merged into the template's. ``True`` (default) — "
+            "leader directories are added for keys not already in the "
+            "template (template wins on key collisions). ``False`` — "
+            "the template's working directories are the worker's "
+            "complete set."
+        ),
+    )
+
     tasks_context: TaskContext = Field(
         default_factory=TaskContext,
         description=(

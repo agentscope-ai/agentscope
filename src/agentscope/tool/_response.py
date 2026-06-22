@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """The tool response class."""
-import uuid
 from typing import List, Literal, Self
 
 from pydantic import BaseModel, Field
 
+from .._utils._common import _generate_id
 from ..message import DataBlock, TextBlock, Base64Source, ToolResultState
 
 
@@ -26,7 +26,7 @@ class ToolChunk(BaseModel):
     """The metadata to be accessed within the agent, so that we don't need to
     parse the tool result block."""
 
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    id: str = Field(default_factory=_generate_id)
     """The identity of the tool response."""
 
 
@@ -49,7 +49,7 @@ class ToolResponse(BaseModel):
     """The metadata to be accessed within the agent, so that we don't need to
     parse the tool result block."""
 
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    id: str = Field(default_factory=_generate_id)
     """The identity of the tool response."""
 
     def append_chunk(self, chunk: ToolChunk) -> Self:
@@ -100,7 +100,7 @@ class ToolResponse(BaseModel):
                     # For different block types with the same ID, we just
                     # append the new block with a new ID to avoid the conflict
                     new_chunk_block = chunk_block.model_copy(deep=True)
-                    new_chunk_block.id = uuid.uuid4().hex
+                    new_chunk_block.id = _generate_id()
                     self.content.append(new_chunk_block)
 
             else:
