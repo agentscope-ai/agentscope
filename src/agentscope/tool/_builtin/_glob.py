@@ -16,7 +16,7 @@ from ...permission import (
     PermissionDecision,
     PermissionRule,
 )
-from .._base import ToolBase
+from .._base import ToolBase, ToolMiddlewareBase
 from .._response import ToolChunk
 
 if TYPE_CHECKING:
