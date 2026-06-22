@@ -109,9 +109,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 					)}
 				</div>
 			</div>
-			{footerSlot ? (
-				<div className="w-full max-w-full shrink-0">{footerSlot}</div>
-			) : null}
+			{footerSlot ? <div className="w-full max-w-full shrink-0">{footerSlot}</div> : null}
 			<TextInput
 				className="min-w-full max-w-full w-full"
 				onSend={onSend}

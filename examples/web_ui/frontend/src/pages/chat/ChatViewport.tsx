@@ -350,7 +350,12 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 												key={`${entry.worker_session_id}:${entry.reply_id}`}
 												entry={entry}
 												onConfirm={(toolCall, confirm, rules) =>
-													onSubagentConfirm(entry, toolCall, confirm, rules)
+													onSubagentConfirm(
+														entry,
+														toolCall,
+														confirm,
+														rules,
+													)
 												}
 											/>
 										))}

@@ -38,7 +38,6 @@ export type SubagentHitlEntry = {
 const hitlKey = (e: { worker_session_id: string; reply_id: string }) =>
 	`${e.worker_session_id}:${e.reply_id}`;
 
-
 /**
  * Manages messages for a single ``(agentId, sessionId)`` pair.
  *
