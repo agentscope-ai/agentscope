@@ -17,9 +17,9 @@ from agentscope.event import AgentEvent
 class ProtocolMiddlewareBase(BaseHTTPMiddleware, ABC):
     """Base middleware for converting AgentEvent stream to protocol format.
 
-    This middleware intercepts streaming responses that yield AgentEvent
-    objects, deserializes them, and converts them to a specific protocol
-    format.
+    This middleware intercepts ``text/event-stream`` responses, deserializes
+    AgentEvent objects from SSE ``data:`` frames, and converts them to a
+    specific protocol format.
 
     Subclasses should implement the `_convert_to_protocol` method to define
     the conversion logic for their specific protocol (e.g., AGUI, A2A).
@@ -106,6 +106,8 @@ class ProtocolMiddlewareBase(BaseHTTPMiddleware, ABC):
                 yield converted
                 continue
 
+            # Fallback for subclasses that may override dispatch() to handle
+            # non-SSE streams while still reusing this converter.
             converted = self._convert_event_json(chunk_str)
             if converted is not None:
                 yield converted
@@ -118,6 +120,13 @@ class ProtocolMiddlewareBase(BaseHTTPMiddleware, ABC):
 
     def _convert_sse_frame(self, frame: str) -> bytes | None:
         """Convert AgentEvent payloads inside an SSE frame.
+
+        Note:
+            This method targets the AgentScope service's SSE stream shape:
+            each ``data:`` line contains a complete JSON payload, and each
+            input ``frame`` contains one or more complete SSE frames. SSE
+            multi-line ``data:`` concatenation and cross-chunk frame
+            reassembly are intentionally out of scope here.
 
         Args:
             frame: A server-sent event frame.
@@ -161,6 +170,8 @@ class ProtocolMiddlewareBase(BaseHTTPMiddleware, ABC):
             return line[:-2], "\r\n"
         if line.endswith("\n"):
             return line[:-1], "\n"
+        if line.endswith("\r"):
+            return line[:-1], "\r"
         return line, ""
 
     def _convert_event_json(self, chunk_str: str) -> bytes | None:

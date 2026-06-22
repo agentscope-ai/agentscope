@@ -110,13 +110,33 @@ class AGUIProtocolStreamTest(IsolatedAsyncioTestCase):
             ":\n\n",
         )
 
+    async def test_sse_data_frame_with_crlf_is_converted(self) -> None:
+        """Test AgentEvent JSON inside a CRLF SSE frame is converted."""
+        event = ReplyStartEvent(
+            session_id="sess_1",
+            reply_id="reply_1",
+            name="agent",
+        )
+
+        body = await _collect_stream(
+            self.mw,
+            [f"data: {event.model_dump_json()}\r\n\r\n"],
+        )
+        self.assertTrue(body.startswith("data: "))
+        self.assertTrue(body.endswith("\r\n\r\n"))
+
+        data = json.loads(body.removeprefix("data: ").strip())
+        self.assertEqual(data["type"], "RUN_STARTED")
+        self.assertEqual(data["threadId"], "sess_1")
+        self.assertEqual(data["runId"], "reply_1")
+
     async def test_fastapi_sse_response_is_converted(self) -> None:
         """Test middleware converts a real FastAPI SSE response."""
         app = FastAPI()
         app.add_middleware(AGUIProtocolMiddleware)
 
         @app.get("/sessions/sess_1/stream")
-        def stream() -> StreamingResponse:
+        async def stream() -> StreamingResponse:
             event = ReplyStartEvent(
                 session_id="sess_1",
                 reply_id="reply_1",
