@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """AgentScope app factory."""
+
 from typing import Type, TYPE_CHECKING, Any
 
 from ._lifespan import lifespan
@@ -20,7 +21,6 @@ from .storage import StorageBase
 from ..agent import Agent
 from ..credential import CredentialFactory, CredentialBase
 from .._version import __version__
-
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -131,6 +131,8 @@ def create_app(
         `FastAPI`: A fully configured application ready to serve requests.
     """
     from fastapi import FastAPI
+
+    workspace_manager.bind_storage(storage)
 
     # Register any user-supplied credential types before the app starts
     for cls in extra_credentials or []:

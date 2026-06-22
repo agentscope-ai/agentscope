@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The TeamDelete tool — dissolves the team led by the current session."""
+
 from ._team_tool_base import _TeamToolBase
 from ...message import TextBlock, ToolResultState
 from ...tool import ToolChunk, ParamsBase
@@ -112,6 +113,18 @@ This is irreversible.
                 message_bus=self._message_bus,
             )
             await session_service.delete_team(self._user_id, team.id)
+            binding = await self._storage.get_workspace_binding(
+                self._user_id,
+                self._agent_id,
+                self._session_id,
+            )
+            if binding is not None:
+                await self._storage.upsert_workspace_binding(
+                    self._user_id,
+                    binding.model_copy(
+                        update={"team_id": None, "role": "owner"},
+                    ),
+                )
             return ToolChunk(
                 content=[
                     TextBlock(

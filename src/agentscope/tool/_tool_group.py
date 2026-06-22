@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """The tool group class."""
+
 from typing import Literal, Sequence
 
-from ..mcp import MCPClient
+from ..mcp import MCPClient, MCPProvider
 from ._base import ToolBase
 from ..skill import SkillLoaderBase, Skill, LocalSkillLoader
 
@@ -38,15 +39,20 @@ class ToolGroup:
     mcps: list[MCPClient]
     """The mcps in this group."""
 
+    mcp_providers: list[MCPProvider]
+    """Actor-scoped providers whose tools are materialized lazily."""
+
     def __init__(
         self,
         name: Literal["basic"] | str,
         description: str | None = None,
         instructions: str | None = None,
         tools: list[ToolBase] | None = None,
-        skills_or_loaders: Sequence[str | Skill | SkillLoaderBase]
-        | None = None,
+        skills_or_loaders: (
+            Sequence[str | Skill | SkillLoaderBase] | None
+        ) = None,
         mcps: list[MCPClient] | None = None,
+        mcp_providers: list[MCPProvider] | None = None,
     ) -> None:
         """Initialize the tool group.
 
@@ -80,6 +86,7 @@ class ToolGroup:
         self.instructions = instructions
         self.tools = tools or []
         self.mcps = mcps or []
+        self.mcp_providers = mcp_providers or []
 
         # Skill
         self.skills_or_loaders = []

@@ -49,7 +49,7 @@ from typing import Any
 from pydantic import AnyUrl
 
 from ..._logging import logger
-from ...mcp import MCPClient
+from ...mcp import LegacyMCPClientProvider, MCPClient, MCPProvider
 from ...message import (
     Base64Source,
     DataBlock,
@@ -424,14 +424,39 @@ class E2BWorkspace(WorkspaceBase):
             Write(backend=self._backend),
         ]
 
-    async def list_mcps(self) -> list[MCPClient]:
+    async def list_mcps(
+        self,
+        *,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> list[MCPClient]:
         """Return one :class:`GatewayMCPClient` per registered MCP.
 
         Each entry's ``name`` matches the upstream MCP server name and
         all of its protocol calls are routed over HTTPS to the
         in-sandbox gateway.
         """
+        del agent_id, session_id
         return list(self._gateway_clients.values())
+
+    async def list_mcp_providers(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+    ) -> list[MCPProvider]:
+        if self._gateway is None:
+            raise RuntimeError("E2BWorkspace gateway is not initialized.")
+        clients = [
+            self._gateway.make_client(
+                client.model_dump(mode="json"),
+                connected=True,
+                agent_id=agent_id,
+                session_id=session_id,
+            )
+            for client in self._gateway_clients.values()
+        ]
+        return [LegacyMCPClientProvider(client) for client in clients]
 
     async def list_skills(self) -> list[Skill]:
         """Enumerate skills by scanning ``skills/`` inside the sandbox.
@@ -689,8 +714,8 @@ class E2BWorkspace(WorkspaceBase):
             )
         else:
             merged_metadata = {
-                METADATA_WORKSPACE_ID_KEY: self.workspace_id,
                 **self.sandbox_metadata,
+                METADATA_WORKSPACE_ID_KEY: self.workspace_id,
             }
             create_kwargs: dict[str, Any] = {
                 "template": self.template,
@@ -752,7 +777,18 @@ class E2BWorkspace(WorkspaceBase):
         from e2b.sandbox.sandbox_api import SandboxQuery
 
         query = SandboxQuery(
-            metadata={METADATA_WORKSPACE_ID_KEY: self.workspace_id},
+            metadata={
+                METADATA_WORKSPACE_ID_KEY: self.workspace_id,
+                **(
+                    {
+                        "agentscope.user.id": self.sandbox_metadata[
+                            "agentscope.user.id"
+                        ],
+                    }
+                    if "agentscope.user.id" in self.sandbox_metadata
+                    else {}
+                ),
+            },
             state=[SandboxState.PAUSED, SandboxState.RUNNING],
         )
 
@@ -910,6 +946,7 @@ class E2BWorkspace(WorkspaceBase):
         """Drop the gateway's ``--config`` JSON into the sandbox."""
         cfg = {
             "token": self._gateway_token,
+            "workspace_id": self.workspace_id,
             "servers": [m.model_dump(mode="json") for m in self._mcps],
         }
         await self._backend.exec_shell(

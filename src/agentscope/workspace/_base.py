@@ -27,10 +27,11 @@ from abc import abstractmethod
 from typing import Self
 
 from .._utils._common import _generate_id
-from ..mcp import MCPClient
+from ..mcp import LegacyMCPClientProvider, MCPClient, MCPProvider
 from ..message import Msg, ToolResultBlock
 from ..skill import Skill
 from ..tool import ToolBase
+from ._context_types import WorkspaceActorProtocol
 
 
 class WorkspaceBase:
@@ -114,8 +115,51 @@ class WorkspaceBase:
         """Built-in tools scoped to this workspace."""
 
     @abstractmethod
-    async def list_mcps(self) -> list[MCPClient]:
+    async def list_mcps(
+        self,
+        *,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> list[MCPClient]:
         """Active MCP clients (each provides its own tools)."""
+
+    async def list_mcp_providers(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+    ) -> list[MCPProvider]:
+        """Return lazy providers bound to one actor/session scope."""
+        clients = await self.list_mcps(
+            agent_id=agent_id,
+            session_id=session_id,
+        )
+        return [LegacyMCPClientProvider(client) for client in clients]
+
+    async def list_tools_for_actor(
+        self,
+        actor: WorkspaceActorProtocol,
+    ) -> list[ToolBase]:
+        """Return builtins constrained to an actor; legacy default."""
+        del actor
+        return await self.list_tools()
+
+    def actor_workdir(self, actor: WorkspaceActorProtocol) -> str:
+        """Return the working directory exposed to one actor."""
+        del actor
+        return self.workdir
+
+    async def publish_file(
+        self,
+        actor: WorkspaceActorProtocol,
+        source: str,
+        destination: str,
+    ) -> str:
+        """Publish an actor-private file into shared workspace storage."""
+        del actor, source, destination
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support publishing.",
+        )
 
     @abstractmethod
     async def list_skills(self) -> list[Skill]:

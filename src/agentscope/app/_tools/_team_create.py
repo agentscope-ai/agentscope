@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """The TeamCreate tool — establishes a new team led by the current session."""
+
 from pydantic import Field
 
 from ._team_tool_base import _TeamToolBase
-from ..storage import TeamData, TeamRecord
+from ..storage import TeamData, TeamRecord, WorkspaceBinding
 from ...message import TextBlock, ToolResultState
 from ...tool import ToolChunk, ParamsBase
 
@@ -125,6 +126,18 @@ one team at a time.
                 self._user_id,
                 self._session_id,
                 team.id,
+            )
+            await self._storage.upsert_workspace_binding(
+                self._user_id,
+                WorkspaceBinding(
+                    workspace_id=session.config.workspace_id,
+                    user_id=self._user_id,
+                    agent_id=self._agent_id,
+                    session_id=self._session_id,
+                    team_id=team.id,
+                    role="leader",
+                    capabilities={"workspace.shell", "workspace.publish"},
+                ),
             )
 
             return ToolChunk(

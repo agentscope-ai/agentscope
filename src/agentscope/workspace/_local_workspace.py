@@ -17,7 +17,12 @@ import frontmatter
 from pydantic import AnyUrl
 
 from .._logging import logger
-from ..mcp import MCPClient
+from ..mcp import (
+    MCPClient,
+    MCPConnectionPool,
+    MCPDefinition,
+    MCPProvider,
+)
 from ..message import (
     Base64Source,
     DataBlock,
@@ -38,6 +43,8 @@ from ..tool import (
 )
 from ..tool._builtin._backend import LocalBackend
 from ._base import WorkspaceBase
+from ._context_types import WorkspaceActorProtocol
+from ._scoped_backend import ScopedBackend
 
 
 class _SkillEntry(TypedDict):
@@ -172,9 +179,12 @@ class LocalWorkspace(WorkspaceBase):
         # ── runtime state ───────────────────────────────────────
         self._backend = LocalBackend()
         self._mcps: list[MCPClient] = []
+        self._mcp_pool = MCPConnectionPool()
+        self._mcp_revisions: dict[str, int] = {}
 
         self._skill_lock = asyncio.Lock()
         self._mcp_lock = asyncio.Lock()
+        self._publish_lock = asyncio.Lock()
 
     async def initialize(self) -> None:
         """Initialise the workspace.
@@ -222,6 +232,12 @@ class LocalWorkspace(WorkspaceBase):
                     failed.append(mcp)
         for mcp in failed:
             self._mcps.remove(mcp)
+        for mcp in self._mcps:
+            self._mcp_revisions.setdefault(mcp.name, 1)
+            # Initialization validates stateful definitions, but actor-scoped
+            # connections are opened lazily by MCPConnectionPool.
+            if mcp.is_stateful and mcp.is_connected:
+                await mcp.close()
 
         # Seed skills
         skills_dir = os.path.join(self.workdir, "skills")
@@ -624,6 +640,7 @@ class LocalWorkspace(WorkspaceBase):
                             mcp.name,
                             e,
                         )
+            await self._mcp_pool.close()
         self.is_alive = False
 
     async def reset(self) -> None:
@@ -645,6 +662,8 @@ class LocalWorkspace(WorkspaceBase):
                             e,
                         )
             self._mcps = []
+            await self._mcp_pool.close()
+            self._mcp_revisions.clear()
 
             mcp_file = os.path.join(self.workdir, ".mcp")
             await self._backend.delete_path(mcp_file)
@@ -671,6 +690,83 @@ class LocalWorkspace(WorkspaceBase):
             Read(backend=self._backend),
             Write(backend=self._backend),
         ]
+
+    async def list_tools_for_actor(
+        self,
+        actor: WorkspaceActorProtocol,
+    ) -> list[ToolBase]:
+        """Build file tools over an actor-scoped backend."""
+        private_root = os.path.join(
+            self.workdir,
+            "agents",
+            actor.agent_id,
+            "sessions",
+            actor.session_id,
+        )
+        shared_root = os.path.join(self.workdir, "shared")
+        os.makedirs(private_root, exist_ok=True)
+        os.makedirs(shared_root, exist_ok=True)
+        backend = ScopedBackend(
+            self._backend,
+            private_root=private_root,
+            shared_root=shared_root,
+        )
+        tools: list[ToolBase] = [
+            Edit(backend=backend),
+            Glob(backend=backend),
+            Grep(backend=backend),
+            Read(backend=backend),
+            Write(backend=backend),
+        ]
+        if (
+            actor.role in {"owner", "leader"}
+            or "workspace.shell" in actor.capabilities
+        ):
+            tools.insert(0, Bash(cwd=private_root, backend=backend))
+        return tools
+
+    def actor_workdir(self, actor: WorkspaceActorProtocol) -> str:
+        return os.path.join(
+            self.workdir,
+            "agents",
+            actor.agent_id,
+            "sessions",
+            actor.session_id,
+        )
+
+    async def publish_file(
+        self,
+        actor: WorkspaceActorProtocol,
+        source: str,
+        destination: str,
+    ) -> str:
+        """Atomically copy a private file to shared storage."""
+        private_root = os.path.realpath(self.actor_workdir(actor))
+        source_path = os.path.realpath(
+            (
+                source
+                if os.path.isabs(source)
+                else os.path.join(private_root, source)
+            ),
+        )
+        if not source_path.startswith(private_root + os.sep):
+            raise PermissionError("Publish source must be actor-private.")
+
+        shared_root = os.path.realpath(os.path.join(self.workdir, "shared"))
+        destination_path = os.path.realpath(
+            os.path.join(shared_root, destination),
+        )
+        if not destination_path.startswith(shared_root + os.sep):
+            raise PermissionError("Publish destination escapes shared root.")
+
+        async with self._publish_lock:
+            if await self._backend.file_exists(destination_path):
+                raise FileExistsError(destination_path)
+            data = await self._backend.read_file(source_path)
+            temporary = f"{destination_path}.tmp-{actor.session_id}"
+            await self._backend.write_file(temporary, data)
+            await asyncio.to_thread(os.replace, temporary, destination_path)
+        return destination_path
 
     async def list_skills(self) -> list[Skill]:
         """List all skills available in the workspace.
@@ -876,9 +972,39 @@ class LocalWorkspace(WorkspaceBase):
             )
             return None
 
-    async def list_mcps(self) -> list[MCPClient]:
-        """Return all MCP clients attached to this workspace."""
+    async def list_mcps(
+        self,
+        *,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> list[MCPClient]:
+        """Return legacy clients, connecting stateful clients on demand."""
+        if agent_id is None and session_id is None:
+            for client in self._mcps:
+                if client.is_stateful and not client.is_connected:
+                    await client.connect()
         return self._mcps
+
+    async def list_mcp_providers(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+    ) -> list[MCPProvider]:
+        """Return MCP providers isolated to this agent/session pair."""
+        return [
+            self._mcp_pool.provider(
+                MCPDefinition.from_client(
+                    workspace_id=self.workspace_id,
+                    client=client,
+                    revision=self._mcp_revisions.get(client.name, 1),
+                    definition_id=client.name,
+                ),
+                agent_id=agent_id,
+                session_id=session_id,
+            )
+            for client in self._mcps
+        ]
 
     async def _save_mcp_file(self) -> None:
         """Persist the current MCP client list to ``.mcp`` in workdir."""
@@ -903,8 +1029,17 @@ class LocalWorkspace(WorkspaceBase):
             mcp_client: The MCP client to add.
         """
         async with self._mcp_lock:
+            if any(client.name == mcp_client.name for client in self._mcps):
+                raise ValueError(
+                    f"MCP client {mcp_client.name!r} already exists.",
+                )
             if mcp_client.is_stateful and not mcp_client.is_connected:
                 await mcp_client.connect()
+            if mcp_client.is_stateful:
+                await mcp_client.close()
+            self._mcp_revisions[mcp_client.name] = (
+                self._mcp_revisions.get(mcp_client.name, 0) + 1
+            )
             self._mcps.append(mcp_client)
             await self._save_mcp_file()
 
@@ -920,6 +1055,13 @@ class LocalWorkspace(WorkspaceBase):
                     if mcp.is_stateful and mcp.is_connected:
                         await mcp.close()
                     self._mcps.pop(i)
+                    await self._mcp_pool.close_definition(
+                        workspace_id=self.workspace_id,
+                        definition_id=name,
+                    )
+                    self._mcp_revisions[name] = (
+                        self._mcp_revisions.get(name, 1) + 1
+                    )
                     await self._save_mcp_file()
                     return
         logger.warning("MCP client %r not found in workspace", name)

@@ -6,6 +6,7 @@ import os
 import time
 
 from ..._logging import logger
+from ..._utils._common import _generate_id
 from ...workspace import LocalWorkspace
 from ._base import WorkspaceManagerBase
 
@@ -43,8 +44,8 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
         self._default_mcps = default_mcps or []
         self._skill_paths = skill_paths or []
         self._ttl = ttl
-        # workspace_id → (workspace, last_access_monotonic)
-        self._cache: dict[str, tuple[LocalWorkspace, float]] = {}
+        # (user_id, workspace_id) → (workspace, last_access_monotonic)
+        self._cache: dict[tuple[str, str], tuple[LocalWorkspace, float]] = {}
         self._lock = asyncio.Lock()
 
     def _pop_expired(self, now: float) -> list[LocalWorkspace]:
@@ -55,9 +56,16 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
         unrelated ``get_workspace`` callers.
         """
         expired_ids = [
-            wid for wid, (_, ts) in self._cache.items() if now - ts > self._ttl
+            key
+            for key, (_, ts) in self._cache.items()
+            if now - ts > self._ttl
+            and self._active_run_counts().get(key, 0) == 0
         ]
-        return [self._cache.pop(wid)[0] for wid in expired_ids]
+        return [self._cache.pop(key)[0] for key in expired_ids]
+
+    def _workdir_for(self, user_id: str, workspace_id: str) -> str:
+        """Return the stable physical path for an owned workspace."""
+        return os.path.join(self._basedir, user_id, workspace_id)
 
     async def get_workspace(
         self,
@@ -77,16 +85,16 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
         cache misses for the same ``workspace_id`` cannot create two
         workspaces.
         """
-        del user_id  # accepted for interface parity; not used here
+        cache_key = (user_id, workspace_id)
 
         # Phase 1: cache hit + collect expired.
         async with self._lock:
             now = time.monotonic()
             expired = self._pop_expired(now)
-            cached = self._cache.get(workspace_id)
+            cached = self._cache.get(cache_key)
             if cached is not None:
                 ws, _ = cached
-                self._cache[workspace_id] = (ws, now)
+                self._cache[cache_key] = (ws, now)
                 hit: LocalWorkspace | None = ws
             else:
                 hit = None
@@ -106,14 +114,14 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
         # get_workspace(workspace_id=X) calls from creating two
         # workspaces for the same id.
         async with self._lock:
-            cached = self._cache.get(workspace_id)
+            cached = self._cache.get(cache_key)
             if cached is not None:
                 ws, _ = cached
-                self._cache[workspace_id] = (ws, time.monotonic())
+                self._cache[cache_key] = (ws, time.monotonic())
                 return ws
 
             # Workdir is deterministic for local workspaces — no storage needed
-            workdir = os.path.join(self._basedir, agent_id)
+            workdir = self._workdir_for(user_id, workspace_id)
             ws = LocalWorkspace(
                 workspace_id=workspace_id,
                 workdir=workdir,
@@ -121,7 +129,7 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
                 skill_paths=self._skill_paths,
             )
             await ws.initialize()
-            self._cache[workspace_id] = (ws, time.monotonic())
+            self._cache[cache_key] = (ws, time.monotonic())
             return ws
 
     async def create_workspace(
@@ -131,28 +139,40 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
         session_id: str,
     ) -> LocalWorkspace:
         """Create a new workspace for the given agent and return it."""
-        del user_id, session_id  # accepted for interface parity
+        del agent_id, session_id  # accepted for interface parity
 
-        workdir = os.path.join(self._basedir, agent_id)
+        workspace_id = _generate_id()
+        workdir = self._workdir_for(user_id, workspace_id)
         os.makedirs(workdir, exist_ok=True)
         ws = LocalWorkspace(
+            workspace_id=workspace_id,
             workdir=workdir,
             default_mcps=self._default_mcps,
             skill_paths=self._skill_paths,
         )
         await ws.initialize()
         async with self._lock:
-            self._cache[ws.workspace_id] = (ws, time.monotonic())
+            self._cache[(user_id, ws.workspace_id)] = (ws, time.monotonic())
         return ws
 
-    async def close(self, workspace_id: str) -> None:
+    async def close(
+        self,
+        workspace_id: str,
+        user_id: str | None = None,
+    ) -> None:
         """Close and evict a single workspace from the cache."""
         async with self._lock:
-            entry = self._cache.pop(workspace_id, None)
-        if entry is None:
-            return
-        ws, _ = entry
-        await self._safe_close(ws)
+            keys = [
+                key
+                for key in self._cache
+                if key[1] == workspace_id
+                and (user_id is None or key[0] == user_id)
+            ]
+            entries = [self._cache.pop(key) for key in keys]
+        await asyncio.gather(
+            *(self._safe_close(ws) for ws, _ in entries),
+            return_exceptions=True,
+        )
 
     async def close_all(self) -> None:
         """Close every cached workspace in parallel.

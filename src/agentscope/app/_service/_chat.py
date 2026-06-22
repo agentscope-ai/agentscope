@@ -14,7 +14,12 @@ that wants them subscribes through the
 from fastapi import HTTPException
 
 from ..message_bus import MessageBus
-from ..storage import StorageBase, AgentRecord, SessionRecord
+from ..storage import (
+    AgentRecord,
+    SessionRecord,
+    StorageBase,
+    WorkspaceBinding,
+)
 from .._manager import BackgroundTaskManager, SchedulerManager
 from ..workspace_manager import WorkspaceManagerBase
 from ..middleware import (
@@ -45,6 +50,7 @@ from ...event import (
 )
 from ...message import AssistantMsg, Msg, ToolCallState
 from ...permission import AdditionalWorkingDirectory
+from ...workspace import WorkspaceBase
 
 
 class ChatService:
@@ -73,7 +79,6 @@ class ChatService:
         extra_agent_tools: AgentToolFactory | None = None,
         custom_subagent_templates: dict[str, SubAgentTemplate] | None = None,
         custom_agent_cls: type[Agent] | None = None,
-        extra_projectors: list[EventProjector] | None = None,
     ) -> None:
         """Initialize chat service.
 
@@ -139,11 +144,13 @@ class ChatService:
         user_id: str,
         session_id: str,
         agent_id: str,
-        input_msg: Msg
-        | list[Msg]
-        | UserConfirmResultEvent
-        | ExternalExecutionResultEvent
-        | None = None,
+        input_msg: (
+            Msg
+            | list[Msg]
+            | UserConfirmResultEvent
+            | ExternalExecutionResultEvent
+            | None
+        ) = None,
     ) -> None:
         """Drive a chat run to completion.
 
@@ -196,21 +203,16 @@ class ChatService:
         user_id: str,
         session_id: str,
         agent_id: str,
-        input_msg: Msg
-        | list[Msg]
-        | UserConfirmResultEvent
-        | ExternalExecutionResultEvent
-        | None,
+        input_msg: (
+            Msg
+            | list[Msg]
+            | UserConfirmResultEvent
+            | ExternalExecutionResultEvent
+            | None
+        ),
     ) -> None:
-        """The actual chat-run body; wrapped by :meth:`run` for error
-        swallowing. Separated so the try/except doesn't bury the
-        per-step logic at one extra indentation level."""
+        """Resolve records and execute one run inside a workspace handle."""
 
-        # ----------------------------------------------------------------
-        # 1. Load records + resolve workspace ONCE here, reused below.
-        # Reject missing records up front with a clear error so the
-        # downstream assembly code can rely on non-None values.
-        # ----------------------------------------------------------------
         agent_record = await self._storage.get_agent(user_id, agent_id)
         if agent_record is None:
             raise HTTPException(
@@ -230,12 +232,53 @@ class ChatService:
                     f"agent {agent_id!r}."
                 ),
             )
-        workspace = await self._workspace_manager.get_workspace(
+
+        binding = await self._storage.get_workspace_binding(
             user_id,
             agent_id,
             session_id,
-            session_record.config.workspace_id,
         )
+        if binding is None:
+            # Compatibility for sessions created before workspace bindings
+            # were introduced. New session/team creation persists bindings.
+            binding = WorkspaceBinding(
+                workspace_id=session_record.config.workspace_id,
+                user_id=user_id,
+                agent_id=agent_id,
+                session_id=session_id,
+                team_id=session_record.team_id,
+                role="worker" if agent_record.source == "team" else "owner",
+            )
+
+        async with self._workspace_manager.open_workspace(binding) as handle:
+            await self._run_with_workspace(
+                user_id=user_id,
+                session_id=session_id,
+                agent_id=agent_id,
+                input_msg=input_msg,
+                agent_record=agent_record,
+                session_record=session_record,
+                workspace=handle.view,
+            )
+
+    async def _run_with_workspace(
+        self,
+        *,
+        user_id: str,
+        session_id: str,
+        agent_id: str,
+        input_msg: (
+            Msg
+            | list[Msg]
+            | UserConfirmResultEvent
+            | ExternalExecutionResultEvent
+            | None
+        ),
+        agent_record: AgentRecord,
+        session_record: SessionRecord,
+        workspace: WorkspaceBase,
+    ) -> None:
+        """Assemble and run an agent against an already-acquired runtime."""
 
         # Add workspace working directory to the permission context
         if (
@@ -404,12 +447,6 @@ class ChatService:
                     await self._message_bus.session_publish_event(
                         session_id,
                         event.model_dump(mode="json"),
-                    )
-                    await self._project_event(
-                        user_id,
-                        session_record,
-                        agent_record,
-                        event,
                     )
                     if isinstance(event, ReplyStartEvent):
                         reply_msg = AssistantMsg(

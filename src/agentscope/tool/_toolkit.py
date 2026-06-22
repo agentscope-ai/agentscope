@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The toolkit class for tool calls in AgentScope."""
+
 import asyncio
 import inspect
 from collections import OrderedDict
@@ -29,7 +30,7 @@ from ..exception import (
     ToolNotFoundError,
     ToolGroupInactiveError,
 )
-from ..mcp import MCPClient
+from ..mcp import MCPClient, MCPProvider
 from ..message import (
     ToolCallBlock,
     TextBlock,
@@ -38,7 +39,6 @@ from ..message import (
 from ._tool_group import ToolGroup
 from .._logging import logger
 from ..state import AgentState
-
 
 # pylint: disable=line-too-long
 DEFAULT_META_TOOL_RESPONSE_TEMPLATE = """{% if groups | length == 0 %}All tool groups are currently deactivated.{% else %}The currently activated tool group(s): {{ groups | map(attribute='name') | join(', ') }}.{% if groups | selectattr('instructions', 'ne', None) | list | length > 0 %}
@@ -88,9 +88,11 @@ class Toolkit:
     def __init__(
         self,
         tools: list[ToolBase] | None = None,
-        skills_or_loaders: Sequence[str | Skill | SkillLoaderBase]
-        | None = None,
+        skills_or_loaders: (
+            Sequence[str | Skill | SkillLoaderBase] | None
+        ) = None,
         mcps: list[MCPClient] | None = None,
+        mcp_providers: list[MCPProvider] | None = None,
         tool_groups: list[ToolGroup] | None = None,
         meta_tool_response_template: str = DEFAULT_META_TOOL_RESPONSE_TEMPLATE,
         skill_instruction_template: str = DEFAULT_SKILL_INSTRUCTION,
@@ -130,6 +132,7 @@ class Toolkit:
                 tools=tools or [],
                 skills_or_loaders=skills_or_loaders or [],
                 mcps=mcps or [],
+                mcp_providers=mcp_providers or [],
             ),
         ] + (tool_groups or [])
 
@@ -152,6 +155,10 @@ class Toolkit:
 
         self.meta_tool_response_template = meta_tool_response_template
         self.skill_instruction_template = skill_instruction_template
+        self._mcp_tools: dict[str, list[ToolBase]] = {}
+        self._mcp_tool_locks: dict[str, asyncio.Lock] = {
+            group.name: asyncio.Lock() for group in self.tool_groups
+        }
 
         self.builtin_meta_tool = RegisteredTool(
             tool=ResetTools(
@@ -489,9 +496,9 @@ class Toolkit:
         # Built-in skill viewers
         skills = await self._get_available_skills(groups)
         if len(skills):
-            available_tools[
-                self.builtin_skill_viewer.tool.name
-            ] = self.builtin_skill_viewer
+            available_tools[self.builtin_skill_viewer.tool.name] = (
+                self.builtin_skill_viewer
+            )
 
         # Builtin meta tool is only included when there is at least one tool
         # group
@@ -500,9 +507,9 @@ class Toolkit:
             and self.tool_groups[0].name != "basic"
             or len(self.tool_groups) > 1
         ):
-            available_tools[
-                self.builtin_meta_tool.tool.name
-            ] = self.builtin_meta_tool
+            available_tools[self.builtin_meta_tool.tool.name] = (
+                self.builtin_meta_tool
+            )
 
         # The tools in the activated groups and the "basic" group are included
         groups_filter = ["basic"] + (groups or [])
@@ -515,10 +522,7 @@ class Toolkit:
             for tool in group.tools:
                 cache_tools.append(tool)
 
-            # MCP tools
-            for client in group.mcps:
-                tools = await client.list_tools()
-                cache_tools.extend(tools)
+            cache_tools.extend(await self._materialize_mcp_tools(group))
 
             # Append cached tools into the available tools and solve the name
             # conflict
@@ -536,6 +540,28 @@ class Toolkit:
                 )
 
         return available_tools
+
+    async def _materialize_mcp_tools(
+        self,
+        group: ToolGroup,
+    ) -> list[ToolBase]:
+        """Resolve each MCP source once for this Toolkit lifecycle."""
+        cached = self._mcp_tools.get(group.name)
+        if cached is not None:
+            return cached
+
+        async with self._mcp_tool_locks[group.name]:
+            cached = self._mcp_tools.get(group.name)
+            if cached is not None:
+                return cached
+
+            tools: list[ToolBase] = []
+            for client in group.mcps:
+                tools.extend(await client.list_tools())
+            for provider in group.mcp_providers:
+                tools.extend(await provider.get_tools())
+            self._mcp_tools[group.name] = tools
+            return tools
 
     async def check_tool_available(
         self,
