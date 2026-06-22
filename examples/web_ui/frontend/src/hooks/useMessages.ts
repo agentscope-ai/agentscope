@@ -21,7 +21,7 @@ import { useAudioManager } from '@/context/AudioContext';
  * One pending subagent HITL request, projected from a team *member*
  * session onto its *leader* session so the leader UI can render and
  * resolve it. Mirrors the Python payload written by
- * ``SubagentHitlInbox`` and pushed/replayed as a ``CustomEvent``
+ * ``SubagentHitlProjector`` and pushed/replayed as a ``CustomEvent``
  * (``name="subagent_require_user_confirm"``).
  */
 export type SubagentHitlEntry = {

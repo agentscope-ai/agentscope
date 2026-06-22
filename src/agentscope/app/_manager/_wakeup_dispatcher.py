@@ -123,8 +123,14 @@ class WakeupDispatcher:
 
     async def __aexit__(self, *exc: object) -> None:
         """Cancel the dispatcher loop and any pending retries."""
-        for retry in list(self._retry_tasks):
+        retries = list(self._retry_tasks)
+        for retry in retries:
             retry.cancel()
+        for retry in retries:
+            try:
+                await retry
+            except asyncio.CancelledError:
+                pass
         self._retry_tasks.clear()
         if self._task is None:
             return
