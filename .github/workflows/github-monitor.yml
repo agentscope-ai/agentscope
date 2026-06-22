@@ -1,0 +1,63 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Template: copy this file to the MONITORED repo at
+#   .github/workflows/github-monitor.yml
+#
+# Required secrets in the monitored repo:
+#   - STORAGE_REPO_TOKEN   Fine-grained PAT with Contents: Read & Write on
+#                          the storage repo (e.g. DavdGao/agentscope-monitor).
+#   - DINGTALK_WEBHOOK     Dingtalk bot webhook URL.
+#   - DINGTALK_SECRET      (optional) Dingtalk bot signing secret.
+# ─────────────────────────────────────────────────────────────────────────────
+name: GitHub Monitor
+
+on:
+  issues:
+    types: [opened, closed, reopened]
+  issue_comment:
+    types: [created]
+  pull_request:
+    # synchronize is silent (stored only) — see SILENT_REALTIME_EVENTS in scripts/config.py.
+    # It's needed for the daily "PRs with new commits to re-review" section.
+    types: [opened, closed, reopened, synchronize, review_requested]
+  pull_request_review:
+    types: [submitted]
+  pull_request_review_comment:
+    types: [created]
+  discussion:
+    types: [created, answered]
+  discussion_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout storage repo (notification scripts)
+        uses: actions/checkout@v4
+        with:
+          repository: DavdGao/agentscope-monitor
+          token: ${{ secrets.STORAGE_REPO_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Send notification
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_PAYLOAD: ${{ toJson(github.event) }}
+          REPO_NAME: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          STORAGE_REPO: DavdGao/agentscope-monitor
+          STORAGE_REPO_TOKEN: ${{ secrets.STORAGE_REPO_TOKEN }}
+          DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
+          DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
+        run: python -m scripts.notify
