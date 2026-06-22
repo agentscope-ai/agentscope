@@ -25,7 +25,7 @@ from ._schema import (
     UpdateSessionRequest,
 )
 from ..message_bus import MessageBus
-from .._service import SessionService
+from .._service import SessionService, SubagentHitlInbox
 from ..storage import (
     AgentRecord,
     ChatModelConfig,
@@ -35,6 +35,8 @@ from ..storage import (
     StorageBase,
     TeamRecord,
 )
+from ...message import ToolCallState
+from ...event import CustomEvent
 
 
 async def _build_team_detail(
@@ -422,6 +424,61 @@ _HEARTBEAT_INTERVAL_SECS = 30
 # Interval between SSE heartbeat comment frames (``:\\n\\n``).
 
 
+async def _worker_still_asking(
+    storage: StorageBase,
+    user_id: str,
+    worker_agent_id: str,
+    worker_session_id: str,
+    reply_id: str,
+) -> bool:
+    """Return whether a worker session is still parked on the ASKING
+    tool call identified by ``reply_id``.
+
+    This is the reconcile-on-read check (design §3.5): the worker
+    session's own ``state.context`` is the single source of truth for
+    "does this confirmation still need answering". A leader-side
+    pending projection whose worker has already resolved / cancelled
+    the call is a ghost and must not be replayed.
+
+    Mirrors the wakeup guard in
+    :meth:`ChatService._run_impl` — a request is "still asking" when
+    the tail ``AssistantMsg`` of the worker carries a tool call in
+    ``ASKING`` or ``SUBMITTED`` state for the matching ``reply_id``.
+
+    Args:
+        storage (`StorageBase`):
+            Application storage.
+        user_id (`str`):
+            The owner user id.
+        worker_agent_id (`str`):
+            The worker agent that owns the session.
+        worker_session_id (`str`):
+            The worker session to inspect.
+        reply_id (`str`):
+            The reply id the pending request belongs to.
+
+    Returns:
+        `bool`:
+            ``True`` if the worker is still awaiting confirmation for
+            ``reply_id``; ``False`` otherwise (resolved, cancelled, or
+            the session/record is gone).
+    """
+    session = await storage.get_session(
+        user_id,
+        worker_agent_id,
+        worker_session_id,
+    )
+    if session is None or not session.state.context:
+        return False
+    last_msg = session.state.context[-1]
+    if last_msg.role != "assistant" or last_msg.id != reply_id:
+        return False
+    return any(
+        tc.state in (ToolCallState.ASKING, ToolCallState.SUBMITTED)
+        for tc in last_msg.get_content_blocks("tool_call")
+    )
+
+
 @session_router.get(
     "/{session_id}/stream",
     summary="Subscribe to a session's event stream (SSE)",
@@ -476,6 +533,36 @@ async def stream_session_events(
             session_id,
         ):
             yield f"data: {json.dumps(event)}\n\n"
+
+        # 1b. Inject pending subagent HITL cards projected onto this
+        #     session as a team leader (design §3.5). These live in a
+        #     durable Redis hash — NOT in the replay log (trimmed per
+        #     run) nor in the leader's own Msg history — so a fresh
+        #     reconnect after the worker parked still surfaces them.
+        #
+        #     Reconcile-on-read: the worker session's own context is the
+        #     SSOT. Inject only when the worker is still ASKING; drop and
+        #     delete ghosts (worker resolved/cancelled without clearing).
+        inbox = SubagentHitlInbox(message_bus)
+        for payload in await inbox.list(session_id):
+            if not await _worker_still_asking(
+                storage,
+                user_id,
+                payload["worker_agent_id"],
+                payload["worker_session_id"],
+                payload["reply_id"],
+            ):
+                await inbox.delete(
+                    session_id,
+                    payload["worker_session_id"],
+                    payload["reply_id"],
+                )
+                continue
+            custom = CustomEvent(
+                name=SubagentHitlInbox.EVT_REQUIRE,
+                value=payload,
+            )
+            yield f"data: {json.dumps(custom.model_dump(mode='json'))}\n\n"
 
         # 2. Live subscribe via a background feeder task that pushes
         #    events into a queue. The main loop reads from the queue

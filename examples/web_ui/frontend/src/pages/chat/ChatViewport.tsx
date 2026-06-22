@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ChatModelConfig, TTSModelConfig } from '@/api';
 import { sessionApi } from '@/api';
 import { ChatContent } from '@/components/chat/ChatContent.tsx';
+import { SubagentHitlCard } from '@/components/chat/SubagentHitlCard';
 import { TaskPanel } from '@/components/chat/TaskPanel';
 import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDialog';
 import { WorkspaceDrawer } from '@/components/drawer/WorkspaceDrawer.tsx';
@@ -90,10 +91,14 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		// TODO: handle permission_context updates when permission UI is built
 	}, []);
 
-	const { msgs, streaming, send, onUserConfirm } = useMessages(agentId, sessionId, {
-		onTeamUpdated: handleTeamUpdated,
-		onStateUpdated: handleStateUpdated,
-	});
+	const { msgs, streaming, send, onUserConfirm, onSubagentConfirm, subagentHitl } = useMessages(
+		agentId,
+		sessionId,
+		{
+			onTeamUpdated: handleTeamUpdated,
+			onStateUpdated: handleStateUpdated,
+		},
+	);
 	const {
 		mcps,
 		loading: mcpsLoading,
@@ -337,6 +342,21 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 							disabled={selectedModel === null}
 							onSend={send}
 							onUserConfirm={onUserConfirm}
+							footerSlot={
+								subagentHitl.length > 0 ? (
+									<div className="space-y-2 pb-2">
+										{subagentHitl.map((entry) => (
+											<SubagentHitlCard
+												key={`${entry.worker_session_id}:${entry.reply_id}`}
+												entry={entry}
+												onConfirm={(toolCall, confirm, rules) =>
+													onSubagentConfirm(entry, toolCall, confirm, rules)
+												}
+											/>
+										))}
+									</div>
+								) : null
+							}
 							allowedInputTypes={(selectedModelCard?.input_types ?? []).filter(
 								(t) =>
 									/^(image|video|audio|text)\/.+/.test(t) ||

@@ -96,6 +96,7 @@
 		"placeholder": "Type a message...",
 		"send": "Send",
 		"confirmToolCall": "Allow this action?",
+		"subagentConfirmTitle": "{{name}} requests confirmation",
 		"newSession": "New Session",
 		"noSessions": "No sessions yet",
 		"noMessages": "No Messages Yet",

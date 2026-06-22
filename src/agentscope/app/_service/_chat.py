@@ -11,10 +11,12 @@ Events produced by the agent are not exposed back through this method
 that wants them subscribes through the
 ``GET /sessions/{sid}/stream`` SSE endpoint.
 """
+from datetime import datetime
+
 from fastapi import HTTPException
 
 from ..message_bus import MessageBus
-from ..storage import StorageBase
+from ..storage import StorageBase, AgentRecord, SessionRecord
 from .._manager import BackgroundTaskManager, SchedulerManager
 from ..workspace_manager import WorkspaceManagerBase
 from ..middleware import (
@@ -31,11 +33,17 @@ from .._types import (
 from ._model import get_model
 from ._tts_model import get_tts_model
 from ._toolkit import get_toolkit
+from ._subagent_hitl import SubagentHitlInbox
 
 from ..._logging import logger
 from ...agent import Agent, ModelConfig
 from ...event import (
+    AgentEvent,
+    CustomEvent,
     ReplyStartEvent,
+    ReplyEndEvent,
+    RequireUserConfirmEvent,
+    RequireExternalExecutionEvent,
     UserConfirmResultEvent,
     ExternalExecutionResultEvent,
 )
@@ -117,6 +125,7 @@ class ChatService:
         self._extra_agent_tools = extra_agent_tools
         self._sub_agent_templates = custom_subagent_templates
         self._agent_cls = custom_agent_cls or Agent
+        self._subagent_hitl = SubagentHitlInbox(message_bus)
 
     async def run(
         self,
@@ -389,6 +398,12 @@ class ChatService:
                         session_id,
                         event.model_dump(mode="json"),
                     )
+                    await self._maybe_forward_subagent_event(
+                        user_id,
+                        session_record,
+                        agent_record,
+                        event,
+                    )
                     if isinstance(event, ReplyStartEvent):
                         reply_msg = AssistantMsg(
                             id=event.reply_id,
@@ -422,6 +437,12 @@ class ChatService:
                         session_id,
                         event.model_dump(mode="json"),
                     )
+                    await self._maybe_forward_subagent_event(
+                        user_id,
+                        session_record,
+                        agent_record,
+                        event,
+                    )
                     if reply_msg is not None:
                         reply_msg.append_event(event)
 
@@ -447,3 +468,138 @@ class ChatService:
 
         # ``session_run.__aexit__`` trims the replay log before
         # releasing the lock — see :meth:`MessageBus.session_run`.
+
+    async def _maybe_forward_subagent_event(
+        self,
+        user_id: str,
+        session_record: SessionRecord,
+        agent_record: AgentRecord,
+        event: AgentEvent,
+    ) -> None:
+        """Project a team-member HITL event onto its leader session.
+
+        When a *worker* session emits an HITL request (or resolves one,
+        or its reply ends), mirror that onto the team's leader session
+        so the leader UI can render / clear the corresponding card. Both
+        a durable hash entry (the SSOT projection) and a live
+        ``CustomEvent`` notification are written via the
+        :class:`SubagentHitlInbox`.
+
+        No-op for non-team sessions and for the leader session itself
+        (a leader's own HITL is handled by the worker-side front-end
+        path already). Errors are swallowed: a projection failure must
+        not tear down the worker's own run.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            session_record (`SessionRecord`):
+                The currently-running session's record.
+            agent_record (`AgentRecord`):
+                The currently-running agent's record. Only
+                ``source == "team"`` agents forward.
+            event (`AgentEvent`):
+                The event just published to this session's channel.
+        """
+        # Fast path: only team-member sessions forward anything, and
+        # only for the three event kinds we care about.
+        if agent_record.source != "team" or not session_record.team_id:
+            return
+        if not isinstance(
+            event,
+            (
+                RequireUserConfirmEvent,
+                RequireExternalExecutionEvent,
+                UserConfirmResultEvent,
+                ExternalExecutionResultEvent,
+                ReplyEndEvent,
+            ),
+        ):
+            return
+
+        try:
+            team = await self._storage.get_team(
+                user_id,
+                session_record.team_id,
+            )
+            if team is None or team.session_id == session_record.id:
+                # No team, or this IS the leader session — nothing to
+                # forward.
+                return
+            leader_sid = team.session_id
+
+            if isinstance(
+                event,
+                (RequireUserConfirmEvent, RequireExternalExecutionEvent),
+            ):
+                # Write the pending card: durable hash + live push.
+                payload = {
+                    "worker_session_id": session_record.id,
+                    "worker_agent_id": agent_record.id,
+                    "worker_agent_name": agent_record.data.name,
+                    "reply_id": event.reply_id,
+                    "event_type": (
+                        "require_user_confirm"
+                        if isinstance(event, RequireUserConfirmEvent)
+                        else "require_external_execution"
+                    ),
+                    "event": event.model_dump(mode="json"),
+                    "created_at": datetime.now().isoformat(),
+                }
+                await self._subagent_hitl.upsert(leader_sid, payload)
+                await self._publish_subagent_custom(
+                    leader_sid,
+                    SubagentHitlInbox.EVT_REQUIRE,
+                    payload,
+                )
+            else:
+                # Clear the pending card. ``ReplyEndEvent`` is the
+                # primary clear signal (the resume's continuation event
+                # is NOT republished through the stream); the explicit
+                # result events clear early when they do flow through.
+                # All are idempotent — deleting an already-gone entry is
+                # a no-op.
+                await self._subagent_hitl.delete(
+                    leader_sid,
+                    session_record.id,
+                    event.reply_id,
+                )
+                await self._publish_subagent_custom(
+                    leader_sid,
+                    SubagentHitlInbox.EVT_RESULT,
+                    {
+                        "worker_session_id": session_record.id,
+                        "reply_id": event.reply_id,
+                    },
+                )
+        except Exception as e:  # pylint: disable=broad-except
+            logger.warning(
+                "Failed to project subagent HITL event (%s) from worker "
+                "session %s onto its leader: %s",
+                type(event).__name__,
+                session_record.id,
+                str(e),
+            )
+
+    async def _publish_subagent_custom(
+        self,
+        leader_sid: str,
+        name: str,
+        value: dict,
+    ) -> None:
+        """Publish a subagent-HITL ``CustomEvent`` to a leader session's
+        live event channel.
+
+        Args:
+            leader_sid (`str`):
+                The leader session to notify.
+            name (`str`):
+                The ``CustomEvent.name`` (``EVT_REQUIRE`` / ``EVT_RESULT``).
+            value (`dict`):
+                The event payload.
+        """
+        custom = CustomEvent(name=name, value=value)
+        await self._message_bus.session_publish_event(
+            leader_sid,
+            custom.model_dump(mode="json"),
+        )

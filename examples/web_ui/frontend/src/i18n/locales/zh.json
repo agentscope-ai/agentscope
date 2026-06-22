@@ -96,6 +96,7 @@
 		"placeholder": "输入消息...",
 		"send": "发送",
 		"confirmToolCall": "允许此操作？",
+		"subagentConfirmTitle": "{{name}} 请求确认",
 		"newSession": "新会话",
 		"noSessions": "暂无会话",
 		"noMessages": "暂无消息",
