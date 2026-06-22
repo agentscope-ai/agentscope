@@ -144,15 +144,9 @@ class Agent:
         self.model = model
         self.state = state or AgentState()
 
-        self.model_config = (
-            model_config if model_config is not None else ModelConfig()
-        )
-        self.context_config = (
-            context_config if context_config is not None else ContextConfig()
-        )
-        self.react_config = (
-            react_config if react_config is not None else ReActConfig()
-        )
+        self.model_config = model_config or ModelConfig()
+        self.context_config = context_config or ContextConfig()
+        self.react_config = react_config or ReActConfig()
 
         # The permission engine
         self._engine = PermissionEngine(self.state.permission_context)
