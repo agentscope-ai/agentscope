@@ -79,7 +79,7 @@ class ChatService:
         extra_agent_tools: AgentToolFactory | None = None,
         custom_subagent_templates: dict[str, SubAgentTemplate] | None = None,
         custom_agent_cls: type[Agent] | None = None,
-    ) -> None:
+        extra_projectors=None) -> None:
         """Initialize chat service.
 
         Args:
