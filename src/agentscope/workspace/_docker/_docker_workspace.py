@@ -395,7 +395,23 @@ class DockerWorkspace(WorkspaceBase):
         Returns the six builtin tools (Bash, Read, Write, Edit, Grep,
         Glob), each backed by the workspace's :class:`DockerBackend`
         that executes inside the container.
+
+        Raises:
+            `RuntimeError`:
+                If the workspace has not been initialized yet (the
+                container-backed backend is unavailable). Without this
+                guard the builtin tools would silently fall back to a
+                :class:`LocalBackend` and run on the host instead of
+                inside the container.
         """
+        if self._backend is None:
+            raise RuntimeError(
+                "DockerWorkspace is not initialized: its container "
+                "backend is unavailable. Use 'async with workspace:' "
+                "or call 'await workspace.initialize()' before "
+                "'list_tools()'.",
+            )
+
         from ...tool._builtin import Bash, Edit, Glob, Grep, Read, Write
 
         return [

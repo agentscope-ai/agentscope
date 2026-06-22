@@ -390,7 +390,22 @@ class E2BWorkspace(WorkspaceBase):
         Returns the six builtin tools (Bash, Read, Write, Edit, Grep,
         Glob), each backed by the workspace's :class:`E2BBackend`
         that executes inside the sandbox.
+
+        Raises:
+            `RuntimeError`:
+                If the workspace has not been initialized yet (the
+                sandbox-backed backend is unavailable). Without this
+                guard the builtin tools would silently fall back to a
+                :class:`LocalBackend` and run on the host instead of
+                inside the sandbox.
         """
+        if self._backend is None:
+            raise RuntimeError(
+                "E2BWorkspace is not initialized: its sandbox backend "
+                "is unavailable. Use 'async with workspace:' or call "
+                "'await workspace.initialize()' before 'list_tools()'.",
+            )
+
         from ...tool._builtin import Bash, Edit, Glob, Grep, Read, Write
 
         return [

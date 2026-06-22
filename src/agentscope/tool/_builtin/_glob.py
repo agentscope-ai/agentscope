@@ -104,7 +104,7 @@ codebase."""  # ignore: E501
         from ._backend import LocalBackend
 
         super().__init__(middlewares=middlewares)
-        self._backend = backend if backend is not None else LocalBackend()
+        self._backend = backend or LocalBackend()
         # When running against the host, invoke the helper with the
         # current interpreter (``sys.executable``) rather than assuming
         # ``python3`` is on PATH.

@@ -175,7 +175,7 @@ class Grep(ToolBase):
         from ._backend import LocalBackend
 
         super().__init__(middlewares=middlewares)
-        self._backend = backend if backend is not None else LocalBackend()
+        self._backend = backend or LocalBackend()
 
     async def check_permissions(
         self,

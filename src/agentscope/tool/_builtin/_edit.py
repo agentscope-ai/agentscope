@@ -19,7 +19,7 @@ from ...permission import (
 from .._response import ToolChunk
 from ...message import TextBlock, ToolResultState
 from ...state import AgentState
-from ._backend import BackendBase, normalize_newlines
+from ._backend import BackendBase, _normalize_newlines
 
 
 class Edit(ToolBase):
@@ -313,7 +313,7 @@ Usage:
                 raw = await self._backend.read_file(file_path)
                 # Normalize CRLF/CR to match the cached-content path and
                 # the LF-based old_string the caller supplies.
-                content = normalize_newlines(
+                content = _normalize_newlines(
                     raw.decode("utf-8", errors="replace"),
                 )
             except Exception as e:

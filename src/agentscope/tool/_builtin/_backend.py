@@ -75,7 +75,7 @@ class ExecResult:
 # ── helpers ────────────────────────────────────────────────────────────
 
 
-def normalize_newlines(text: str) -> str:
+def _normalize_newlines(text: str) -> str:
     """Normalize Windows/old-Mac line endings to ``\\n``.
 
     Converts ``\\r\\n`` (Windows) and lone ``\\r`` (classic Mac) to a

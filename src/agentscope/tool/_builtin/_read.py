@@ -14,7 +14,7 @@ from ...permission import (
 from .._response import ToolChunk
 from ...message import TextBlock, ToolResultState
 from ...state import AgentState
-from ._backend import BackendBase, normalize_newlines
+from ._backend import BackendBase, _normalize_newlines
 
 
 class Read(ToolBase):
@@ -93,7 +93,7 @@ Usage:
 
         super().__init__(middlewares=middlewares)
         self._max_line_characters = max_line_characters
-        self._backend = backend if backend is not None else LocalBackend()
+        self._backend = backend or LocalBackend()
 
     async def check_permissions(
         self,
@@ -235,7 +235,7 @@ Usage:
                 # Normalize CRLF/CR so cached lines end in "\n" regardless
                 # of the platform the file was written on (Windows text
                 # files use "\r\n").
-                content_str = normalize_newlines(content_str)
+                content_str = _normalize_newlines(content_str)
                 lines = content_str.splitlines(keepends=True)
 
                 # Cache file if state is provided
