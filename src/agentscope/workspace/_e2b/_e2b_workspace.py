@@ -318,6 +318,13 @@ class E2BWorkspace(WorkspaceBase):
         sandbox. The gateway process keeps running with no upstream
         MCPs. ``default_mcps`` / ``skill_paths`` are not re-seeded.
         """
+        if self._backend is None:
+            raise RuntimeError(
+                "E2BWorkspace is not initialized: its sandbox backend "
+                "is unavailable. Use 'async with workspace:' or call "
+                "'await workspace.initialize()' before 'reset()'.",
+            )
+
         async with self._mcp_lock, self._skill_lock:
             for gw_client in list(self._gateway_clients.values()):
                 try:
