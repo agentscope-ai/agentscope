@@ -680,11 +680,17 @@ easier to review tool calls and give permission.
 
         try:
             # ``command`` is a full shell command line (it may contain
-            # pipes, redirects, ``&&``, …), so wrap it in ``sh -c`` —
-            # the backend primitive runs the argv directly without a
-            # shell. The Bash tool targets POSIX hosts only.
+            # pipes, redirects, ``&&``, …), so wrap it in a shell — the
+            # backend primitive runs the argv directly without one. Pick
+            # the platform's native shell so the Windows experience that
+            # ``main`` had (commands interpreted by ``cmd.exe``) is
+            # preserved; POSIX hosts use ``/bin/sh``.
+            if os.name == "nt":
+                shell_command = ["cmd", "/c", command]
+            else:
+                shell_command = ["/bin/sh", "-c", command]
             result = await self._backend.exec_shell(
-                ["/bin/sh", "-c", command],
+                shell_command,
                 cwd=self._cwd,
                 timeout=timeout_sec,
             )

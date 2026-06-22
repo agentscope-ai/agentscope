@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Bash tool test case."""
 
+import os
 import sys
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
@@ -57,12 +58,18 @@ class BashCwdTest(IsolatedAsyncioTestCase):
             async for chunk in await Bash(cwd="workspace")(command="pwd"):
                 chunks.append(chunk)
 
-        # cwd is forwarded, and the command line is wrapped in ``sh -c``
-        # (the backend primitive runs an argv without a shell).
+        # cwd is forwarded, and the command line is wrapped in the
+        # platform's native shell (the backend primitive runs an argv
+        # without a shell): ``cmd /c`` on Windows, ``/bin/sh -c`` else.
         self.assertEqual(create_process.call_args.kwargs["cwd"], "workspace")
+        expected_argv = (
+            ("cmd", "/c", "pwd")
+            if os.name == "nt"
+            else ("/bin/sh", "-c", "pwd")
+        )
         self.assertEqual(
             create_process.call_args.args,
-            ("/bin/sh", "-c", "pwd"),
+            expected_argv,
         )
         self.assertEqual(chunks[0].state, "running")
 
