@@ -15,7 +15,7 @@ on:
     types: [opened, closed, reopened]
   issue_comment:
     types: [created]
-  pull_request:
+  pull_request_target:
     # synchronize is silent (stored only) — see SILENT_REALTIME_EVENTS in scripts/config.py.
     # It's needed for the daily "PRs with new commits to re-review" section.
     types: [opened, closed, reopened, synchronize, review_requested]
