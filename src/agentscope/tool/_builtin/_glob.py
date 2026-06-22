@@ -1,22 +1,26 @@
 # -*- coding: utf-8 -*-
 """The glob tool in agentscope."""
+
+from __future__ import annotations
+
 import fnmatch
 import json
 import os
-import shlex
 import sys
-from typing import Any, List
+from typing import TYPE_CHECKING, Any, List
 
-from .._base import ToolBase, ToolMiddlewareBase
+from ...message import TextBlock, ToolResultState
 from ...permission import (
+    PermissionBehavior,
     PermissionContext,
     PermissionDecision,
-    PermissionBehavior,
     PermissionRule,
 )
+from .._base import ToolBase
 from .._response import ToolChunk
-from ...message import TextBlock, ToolResultState
-from ._backend import BackendBase
+
+if TYPE_CHECKING:
+    from ._backend import BackendBase
 
 
 def _default_glob_helper_path() -> str:
@@ -242,16 +246,21 @@ codebase."""  # ignore: E501
                 is_last=True,
             )
 
-        # Invoke the glob helper script via exec_shell. Use the current
-        # interpreter locally (``python3`` may be absent, e.g. on
-        # Windows or venvs exposing only ``python``); remote backends
-        # run inside Linux images where ``python3`` is the safe choice.
+        # Invoke the glob helper script via exec_shell as an argv list
+        # (run directly, without a shell, so no platform-specific
+        # quoting is needed). Use the current interpreter locally
+        # (``python3`` may be absent, e.g. on Windows or venvs exposing
+        # only ``python``); remote backends run inside Linux images
+        # where ``python3`` is the safe choice.
         python = sys.executable if self._is_local else "python3"
-        command = (
-            f"{shlex.quote(python)} {shlex.quote(self._glob_helper_path)}"
-            f" --pattern {shlex.quote(pattern)}"
-            f" --base-dir {shlex.quote(base_dir)}"
-        )
+        command = [
+            python,
+            self._glob_helper_path,
+            "--pattern",
+            pattern,
+            "--base-dir",
+            base_dir,
+        ]
         result = await self._backend.exec_shell(command, timeout=30.0)
 
         # A non-zero exit means the helper itself failed (missing

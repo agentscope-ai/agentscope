@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import io
 import posixpath
-import shlex
 import tarfile
 from typing import Any
 
@@ -55,16 +54,20 @@ class DockerBackend(BackendBase):
 
     async def exec_shell(
         self,
-        command: str,
+        command: list[str],
         *,
         cwd: str | None = None,
         timeout: float | None = None,
     ) -> ExecResult:
-        """Run ``sh -c <command>`` inside the container.
+        """Run a program directly inside the container.
+
+        *command* is an argv list executed via the container ``exec``
+        API without an intervening shell. Callers needing shell features
+        wrap their command line as ``["sh", "-c", line]``.
 
         Args:
-            command (`str`):
-                The shell command line to run.
+            command (`list[str]`):
+                Executable path/name followed by its arguments.
             cwd (`str | None`, optional):
                 Working directory inside the container. When ``None``
                 the backend's default ``workdir`` is used.
@@ -80,7 +83,7 @@ class DockerBackend(BackendBase):
 
         async def _run() -> ExecResult:
             exec_obj = await self._container.exec(
-                cmd=["sh", "-c", command],
+                cmd=command,
                 workdir=cwd or self._workdir,
             )
             stdout_parts: list[bytes] = []
@@ -168,7 +171,7 @@ class DockerBackend(BackendBase):
         parent = posixpath.dirname(path) or "/"
         name = posixpath.basename(path)
 
-        await self.exec_shell(f"mkdir -p {shlex.quote(parent)}")
+        await self.exec_shell(["mkdir", "-p", parent])
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w") as tf:
             info = tarfile.TarInfo(name=name)

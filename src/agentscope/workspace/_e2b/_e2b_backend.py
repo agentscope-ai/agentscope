@@ -52,16 +52,21 @@ class E2BBackend(BackendBase):
 
     async def exec_shell(
         self,
-        command: str,
+        command: list[str],
         *,
         cwd: str | None = None,
         timeout: float | None = None,
     ) -> ExecResult:
-        """Run *command* inside the sandbox via ``commands.run``.
+        """Run a program inside the sandbox via ``commands.run``.
+
+        *command* is an argv list. The E2B ``commands.run`` API takes a
+        single shell command line, so the argv is POSIX-quoted back into
+        a string before dispatch (the sandbox is always Linux). Callers
+        needing shell features pass ``["sh", "-c", line]``.
 
         Args:
-            command (`str`):
-                The shell command line to run.
+            command (`list[str]`):
+                Executable path/name followed by its arguments.
             cwd (`str | None`, optional):
                 Working directory inside the sandbox. When ``None`` the
                 backend's default ``workdir`` is used.
@@ -77,11 +82,12 @@ class E2BBackend(BackendBase):
         """
         from e2b import CommandExitException
 
+        command_line = " ".join(shlex.quote(arg) for arg in command)
         kwargs: dict[str, Any] = {"cwd": cwd or self._workdir}
         if timeout is not None:
             kwargs["timeout"] = timeout
         try:
-            res = await self._sandbox.commands.run(command, **kwargs)
+            res = await self._sandbox.commands.run(command_line, **kwargs)
             return ExecResult(
                 exit_code=int(res.exit_code or 0),
                 stdout=(res.stdout or "").encode("utf-8"),
@@ -140,5 +146,5 @@ class E2BBackend(BackendBase):
         """
         parent = posixpath.dirname(path)
         if parent:
-            await self.exec_shell(f"mkdir -p {shlex.quote(parent)}")
+            await self.exec_shell(["mkdir", "-p", parent])
         await self._sandbox.files.write(path, data)

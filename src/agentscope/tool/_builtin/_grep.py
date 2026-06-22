@@ -2,7 +2,6 @@
 """The grep tool in agentscope."""
 import fnmatch
 import os
-import shlex
 from typing import Any, List, Literal
 
 from .._base import ToolBase, ToolMiddlewareBase
@@ -280,13 +279,12 @@ class Grep(ToolBase):
     ) -> list[str]:
         """Run ripgrep and return output lines.
 
-        Always builds a shell command string and dispatches it through
-        ``backend.exec_shell``, which works identically for local,
-        Docker, and E2B backends.
+        Builds an argument vector and dispatches it through
+        ``backend.exec_shell`` (which runs the program directly, without
+        a shell), so the same code path works for local, Docker, and E2B
+        backends and needs no platform-specific argument quoting.
         """
-        cmd_parts = ["rg"] + [shlex.quote(a) for a in args]
-        cmd_parts.append(shlex.quote(search_path))
-        command = " ".join(cmd_parts)
+        command = ["rg", *args, search_path]
 
         result = await self._backend.exec_shell(
             command,

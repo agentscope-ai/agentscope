@@ -19,7 +19,7 @@ from ...permission import (
 from .._response import ToolChunk
 from ...message import TextBlock, ToolResultState
 from ...state import AgentState
-from ._backend import BackendBase
+from ._backend import BackendBase, normalize_newlines
 
 
 class Edit(ToolBase):
@@ -311,7 +311,11 @@ Usage:
             # No state provided, read from backend
             try:
                 raw = await self._backend.read_file(file_path)
-                content = raw.decode("utf-8", errors="replace")
+                # Normalize CRLF/CR to match the cached-content path and
+                # the LF-based old_string the caller supplies.
+                content = normalize_newlines(
+                    raw.decode("utf-8", errors="replace"),
+                )
             except Exception as e:
                 return ToolChunk(
                     content=[TextBlock(text=f"Error reading file: {str(e)}")],

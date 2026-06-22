@@ -346,8 +346,12 @@ class DockerWorkspace(WorkspaceBase):
             ):
                 try:
                     await self._backend.exec_shell(
-                        f"chown -R {os.getuid()}:{os.getgid()} "
-                        f"{shlex.quote(CONTAINER_WORKDIR)}",
+                        [
+                            "chown",
+                            "-R",
+                            f"{os.getuid()}:{os.getgid()}",
+                            CONTAINER_WORKDIR,
+                        ],
                         timeout=10.0,
                     )
                 except Exception:
@@ -427,7 +431,12 @@ class DockerWorkspace(WorkspaceBase):
         import frontmatter as fm
 
         result = await self._backend.exec_shell(
-            f"find {CONTAINER_SKILLS_DIR} -name SKILL.md 2>/dev/null || true",
+            [
+                "sh",
+                "-c",
+                f"find {CONTAINER_SKILLS_DIR} -name SKILL.md "
+                f"2>/dev/null || true",
+            ],
         )
         if not result.ok():
             return []
@@ -550,15 +559,16 @@ class DockerWorkspace(WorkspaceBase):
             )
 
         async with self._skill_lock:
-            await self._backend.exec_shell(f"mkdir -p {CONTAINER_SKILLS_DIR}")
+            await self._backend.exec_shell(
+                ["mkdir", "-p", CONTAINER_SKILLS_DIR],
+            )
             dir_name = os.path.basename(os.path.abspath(skill_path))
 
             # Refuse to overwrite an existing directory of the same name —
             # mirrors the conflict-rejection behaviour of ``mkdir`` here
             # rather than LocalWorkspace's full hash-dedup index.
             check = await self._backend.exec_shell(
-                f"test -e "
-                f"{shlex.quote(CONTAINER_SKILLS_DIR + '/' + dir_name)}",
+                ["test", "-e", CONTAINER_SKILLS_DIR + "/" + dir_name],
             )
             if check.ok():
                 raise ValueError(
@@ -656,7 +666,7 @@ class DockerWorkspace(WorkspaceBase):
                 msg.content = content
             lines.append(msg.model_dump_json())
 
-        await self._backend.exec_shell(f"mkdir -p {shlex.quote(base)}")
+        await self._backend.exec_shell(["mkdir", "-p", base])
         existing = b""
         try:
             existing = await self._backend.read_file(path)
@@ -712,7 +722,7 @@ class DockerWorkspace(WorkspaceBase):
                         f"media_type='{block.source.media_type}'/>",
                     )
 
-        await self._backend.exec_shell(f"mkdir -p {shlex.quote(base)}")
+        await self._backend.exec_shell(["mkdir", "-p", base])
         await self._backend.write_file(
             path,
             "".join(parts).encode("utf-8"),
@@ -872,10 +882,13 @@ class DockerWorkspace(WorkspaceBase):
         # Ensure the in-container persistence dirs exist (also makes a
         # newly-bind-mounted host workdir agentscope-shaped on first use).
         await self._backend.exec_shell(
-            "mkdir -p "
-            f"{shlex.quote(CONTAINER_DATA_DIR)} "
-            f"{shlex.quote(CONTAINER_SKILLS_DIR)} "
-            f"{shlex.quote(CONTAINER_SESSIONS_DIR)}",
+            [
+                "mkdir",
+                "-p",
+                CONTAINER_DATA_DIR,
+                CONTAINER_SKILLS_DIR,
+                CONTAINER_SESSIONS_DIR,
+            ],
         )
 
     async def _restore_or_seed_mcps(self) -> list[MCPClient]:
@@ -950,7 +963,7 @@ class DockerWorkspace(WorkspaceBase):
             "servers": [m.model_dump(mode="json") for m in self._mcps],
         }
         await self._backend.exec_shell(
-            f"mkdir -p {shlex.quote(GATEWAY_HOME)}",
+            ["mkdir", "-p", GATEWAY_HOME],
         )
         await self._backend.write_file(
             GATEWAY_CONFIG,
@@ -979,7 +992,7 @@ class DockerWorkspace(WorkspaceBase):
             f"> {shlex.quote(GATEWAY_LOG)} 2>&1 &"
         )
         # Detach: we don't await stream completion, just kick it off.
-        await self._backend.exec_shell(cmd)
+        await self._backend.exec_shell(["sh", "-c", cmd])
 
     async def _wait_for_gateway(self, timeout: float = 30.0) -> None:
         """Block until the gateway answers ``/health`` with 200.
@@ -1073,7 +1086,7 @@ class DockerWorkspace(WorkspaceBase):
         ext = mimetypes.guess_extension(block.source.media_type) or ".bin"
         path = f"{CONTAINER_DATA_DIR}/{h}{ext}"
         await self._backend.exec_shell(
-            f"mkdir -p {shlex.quote(CONTAINER_DATA_DIR)}",
+            ["mkdir", "-p", CONTAINER_DATA_DIR],
         )
         await self._backend.write_file(
             path,

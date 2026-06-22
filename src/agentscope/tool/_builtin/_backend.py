@@ -8,7 +8,8 @@ Write, Edit, Grep, Glob).
 Every backend implements exactly **three** abstract primitives whose
 mechanism genuinely differs per environment:
 
-* :meth:`BackendBase.exec_shell` — run a shell command.
+* :meth:`BackendBase.exec_shell` — run a program from an argv list
+  (no shell; callers needing shell features wrap with ``sh -c``).
 * :meth:`BackendBase.read_file` — read raw bytes.
 * :meth:`BackendBase.write_file` — write raw bytes.
 
@@ -71,6 +72,30 @@ class ExecResult:
         return self.exit_code == 0
 
 
+# ── helpers ────────────────────────────────────────────────────────────
+
+
+def normalize_newlines(text: str) -> str:
+    """Normalize Windows/old-Mac line endings to ``\\n``.
+
+    Converts ``\\r\\n`` (Windows) and lone ``\\r`` (classic Mac) to a
+    single ``\\n``.  Builtin tools read files as raw bytes (so binary
+    payloads survive intact); when the bytes are decoded as text for
+    line-based caching, editing, or matching, the line endings must be
+    normalized so that content written on Windows behaves identically to
+    content written on POSIX.
+
+    Args:
+        text (`str`):
+            Decoded file contents.
+
+    Returns:
+        `str`:
+            The text with all line endings collapsed to ``\\n``.
+    """
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 # ── base class ─────────────────────────────────────────────────────────
 
 
@@ -90,16 +115,27 @@ class BackendBase(ABC):
     @abstractmethod
     async def exec_shell(
         self,
-        command: str,
+        command: list[str],
         *,
         cwd: str | None = None,
         timeout: float | None = None,
     ) -> ExecResult:
-        """Execute ``command`` in a shell and capture its output.
+        """Run a program directly from an argument vector.
+
+        *command* is an executable followed by its arguments — it is
+        **not** passed through a shell, so callers never have to quote
+        or escape arguments and there is no platform-specific quoting
+        bug. This makes the primitive portable to Windows, where POSIX
+        single-quote escaping (``shlex.quote``) is not understood by
+        ``cmd.exe``.
+
+        Callers that genuinely need shell features (pipes, redirects,
+        ``&&``) must wrap their command line explicitly, e.g.
+        ``["/bin/sh", "-c", command_line]``.
 
         Args:
-            command (`str`):
-                The shell command line to run.
+            command (`list[str]`):
+                Executable path/name followed by its arguments.
             cwd (`str | None`, optional):
                 Working directory to run the command in. When ``None``
                 the backend's default working directory is used.
@@ -150,7 +186,7 @@ class BackendBase(ABC):
             `bool`:
                 ``True`` if the path exists, ``False`` otherwise.
         """
-        result = await self.exec_shell(f"test -e {shlex.quote(path)}")
+        result = await self.exec_shell(["test", "-e", path])
         return result.ok()
 
     async def is_dir(self, path: str) -> bool:
@@ -164,7 +200,7 @@ class BackendBase(ABC):
             `bool`:
                 ``True`` if the path is an existing directory.
         """
-        result = await self.exec_shell(f"test -d {shlex.quote(path)}")
+        result = await self.exec_shell(["test", "-d", path])
         return result.ok()
 
     async def list_dir(
@@ -196,12 +232,18 @@ class BackendBase(ABC):
                 not exist or cannot be listed.
         """
         if recursive:
-            command = f"find {shlex.quote(path)} -type f -print0"
+            command = ["find", path, "-type", "f", "-print0"]
         else:
-            command = (
-                f"find {shlex.quote(path)} -mindepth 1 -maxdepth 1 "
-                f"-printf '%f\\0'"
-            )
+            command = [
+                "find",
+                path,
+                "-mindepth",
+                "1",
+                "-maxdepth",
+                "1",
+                "-printf",
+                "%f\\0",
+            ]
         result = await self.exec_shell(command)
         if not result.ok():
             return []
@@ -216,7 +258,9 @@ class BackendBase(ABC):
 
         Tries GNU ``stat -c %Y`` first and falls back to BSD
         ``stat -f %m`` so the same call works across coreutils and
-        BSD/macOS userlands.
+        BSD/macOS userlands.  The two attempts are combined with ``||``,
+        so this default wraps a ``sh -c`` script; backends without a
+        POSIX shell (e.g. :class:`LocalBackend`) override it.
 
         Args:
             path (`str`):
@@ -228,11 +272,11 @@ class BackendBase(ABC):
                 if the path does not exist or cannot be stat'd.
         """
         quoted = shlex.quote(path)
-        command = (
+        script = (
             f"stat -c %Y {quoted} 2>/dev/null || "
             f"stat -f %m {quoted} 2>/dev/null"
         )
-        result = await self.exec_shell(command)
+        result = await self.exec_shell(["sh", "-c", script])
         if not result.ok():
             return None
         try:
@@ -252,7 +296,7 @@ class BackendBase(ABC):
             path (`str`):
                 Path to delete inside the backend's environment.
         """
-        await self.exec_shell(f"rm -rf {shlex.quote(path)}")
+        await self.exec_shell(["rm", "-rf", path])
 
 
 # ── local backend ──────────────────────────────────────────────────────
@@ -284,26 +328,33 @@ def _subprocess_creation_kwargs() -> dict[str, Any]:
 class LocalBackend(BackendBase):
     """Host-local :class:`BackendBase` implementation.
 
-    Uses ``asyncio.create_subprocess_shell``, ``aiofiles``, and the
+    Uses ``asyncio.create_subprocess_exec``, ``aiofiles``, and the
     ``os`` module.  This is the default backend injected when no
-    explicit one is given to a builtin tool.  The derived filesystem
-    helpers are overridden with native ``os.*`` calls — faster and more
-    robust than shelling out, and portable to Windows where ``test`` /
-    ``find`` / ``stat`` are unavailable.
+    explicit one is given to a builtin tool.  Commands are spawned
+    directly from their argument vector (no shell), which avoids the
+    POSIX-vs-``cmd.exe`` quoting mismatch and makes the backend work on
+    Windows.  The derived filesystem helpers are overridden with native
+    ``os.*`` calls — faster and more robust than shelling out, and
+    portable to Windows where ``test`` / ``find`` / ``stat`` are
+    unavailable.
     """
 
     async def exec_shell(
         self,
-        command: str,
+        command: list[str],
         *,
         cwd: str | None = None,
         timeout: float | None = None,
     ) -> ExecResult:
-        """Execute a command via ``asyncio.create_subprocess_shell``.
+        """Run a program via ``asyncio.create_subprocess_exec``.
+
+        The program is spawned directly from *command* without an
+        intervening shell, so no argument quoting is required and the
+        same code path works on POSIX and Windows.
 
         Args:
-            command (`str`):
-                The shell command line to run.
+            command (`list[str]`):
+                Executable path/name followed by its arguments.
             cwd (`str | None`, optional):
                 Working directory for the subprocess. When ``None`` the
                 current process working directory is used.
@@ -313,18 +364,32 @@ class LocalBackend(BackendBase):
 
         Returns:
             `ExecResult`:
-                The captured exit code, stdout, and stderr.
+                The captured exit code, stdout, and stderr. If the
+                executable cannot be found or spawned, ``exit_code`` is
+                ``127`` (matching a shell's "command not found"), with
+                the OS error message on stderr.
         """
         kwargs = _subprocess_creation_kwargs()
         if cwd is not None:
             kwargs["cwd"] = cwd
 
-        process = await asyncio.create_subprocess_shell(
-            command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            **kwargs,
-        )
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                **kwargs,
+            )
+        except (FileNotFoundError, NotADirectoryError, OSError) as exc:
+            # The executable could not be found or spawned. A shell would
+            # have returned 127 ("command not found"); mirror that so
+            # callers see a normal non-zero ExecResult instead of an
+            # exception.
+            return ExecResult(
+                exit_code=127,
+                stdout=b"",
+                stderr=str(exc).encode("utf-8"),
+            )
 
         try:
             stdout, stderr = await asyncio.wait_for(

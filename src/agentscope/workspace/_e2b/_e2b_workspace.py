@@ -265,7 +265,7 @@ class E2BWorkspace(WorkspaceBase):
             # ``mkdir -p`` itself never fails on an already-existing
             # directory.
             await self._backend.exec_shell(
-                f"mkdir -p {shlex.quote(SANDBOX_WORKDIR)}",
+                ["mkdir", "-p", SANDBOX_WORKDIR],
                 cwd="/",
             )
             await self._run_bootstrap()
@@ -279,7 +279,7 @@ class E2BWorkspace(WorkspaceBase):
         # on the port would happily accept old-token requests but
         # reject new ones — kill it before starting the new one.
         await self._backend.exec_shell(
-            "pkill -f _mcp_gateway_app.py || true",
+            ["sh", "-c", "pkill -f _mcp_gateway_app.py || true"],
         )
 
         await self._write_gateway_config()
@@ -421,7 +421,12 @@ class E2BWorkspace(WorkspaceBase):
         import frontmatter as fm
 
         result = await self._backend.exec_shell(
-            f"find {SANDBOX_SKILLS_DIR} -name SKILL.md 2>/dev/null || true",
+            [
+                "sh",
+                "-c",
+                f"find {SANDBOX_SKILLS_DIR} -name SKILL.md "
+                f"2>/dev/null || true",
+            ],
         )
         if not result.ok():
             return []
@@ -510,12 +515,12 @@ class E2BWorkspace(WorkspaceBase):
 
         async with self._skill_lock:
             await self._backend.exec_shell(
-                f"mkdir -p {SANDBOX_SKILLS_DIR}",
+                ["mkdir", "-p", SANDBOX_SKILLS_DIR],
             )
             dir_name = os.path.basename(os.path.abspath(skill_path))
 
             check = await self._backend.exec_shell(
-                f"test -e {shlex.quote(SANDBOX_SKILLS_DIR + '/' + dir_name)}",
+                ["test", "-e", SANDBOX_SKILLS_DIR + "/" + dir_name],
             )
             if check.ok():
                 raise ValueError(
@@ -586,7 +591,7 @@ class E2BWorkspace(WorkspaceBase):
                 msg.content = content
             lines.append(msg.model_dump_json())
 
-        await self._backend.exec_shell(f"mkdir -p {shlex.quote(base)}")
+        await self._backend.exec_shell(["mkdir", "-p", base])
         existing = b""
         try:
             existing = await self._backend.read_file(path)
@@ -625,7 +630,7 @@ class E2BWorkspace(WorkspaceBase):
                         f"media_type='{block.source.media_type}'/>",
                     )
 
-        await self._backend.exec_shell(f"mkdir -p {shlex.quote(base)}")
+        await self._backend.exec_shell(["mkdir", "-p", base])
         await self._backend.write_file(
             path,
             "".join(parts).encode("utf-8"),
@@ -803,7 +808,10 @@ class E2BWorkspace(WorkspaceBase):
             install_agentscope_cmd=install_cmd,
         )
         for cmd in commands:
-            r = await self._backend.exec_shell(cmd, timeout=600.0)
+            r = await self._backend.exec_shell(
+                ["sh", "-c", cmd],
+                timeout=600.0,
+            )
             if not r.ok():
                 raise RuntimeError(
                     f"E2BWorkspace bootstrap failed (exit {r.exit_code}) "
@@ -863,7 +871,7 @@ class E2BWorkspace(WorkspaceBase):
         )
         try:
             await self._backend.exec_shell(
-                f"mkdir -p {shlex.quote(SANDBOX_WORKDIR)}",
+                ["mkdir", "-p", SANDBOX_WORKDIR],
             )
             await self._backend.write_file(
                 SANDBOX_MCP_FILE,
@@ -883,7 +891,7 @@ class E2BWorkspace(WorkspaceBase):
             "servers": [m.model_dump(mode="json") for m in self._mcps],
         }
         await self._backend.exec_shell(
-            f"mkdir -p {shlex.quote(GATEWAY_HOME)}",
+            ["mkdir", "-p", GATEWAY_HOME],
         )
         await self._backend.write_file(
             GATEWAY_CONFIG,
@@ -899,7 +907,7 @@ class E2BWorkspace(WorkspaceBase):
             f"--port {self.gateway_port} "
             f"> {shlex.quote(GATEWAY_LOG)} 2>&1 &"
         )
-        await self._backend.exec_shell(cmd)
+        await self._backend.exec_shell(["sh", "-c", cmd])
 
     async def _wait_for_gateway(self, timeout: float = 30.0) -> None:
         """Block until the gateway answers ``/health`` with 200."""
@@ -931,7 +939,12 @@ class E2BWorkspace(WorkspaceBase):
         if not self.skill_paths:
             return
         listing = await self._backend.exec_shell(
-            f"ls -A {shlex.quote(SANDBOX_SKILLS_DIR)} 2>/dev/null || true",
+            [
+                "sh",
+                "-c",
+                f"ls -A {shlex.quote(SANDBOX_SKILLS_DIR)} "
+                f"2>/dev/null || true",
+            ],
         )
         if listing.ok() and listing.stdout.strip():
             return
@@ -961,7 +974,7 @@ class E2BWorkspace(WorkspaceBase):
         ext = mimetypes.guess_extension(block.source.media_type) or ".bin"
         path = f"{SANDBOX_DATA_DIR}/{h}{ext}"
         await self._backend.exec_shell(
-            f"mkdir -p {shlex.quote(SANDBOX_DATA_DIR)}",
+            ["mkdir", "-p", SANDBOX_DATA_DIR],
         )
         await self._backend.write_file(
             path,

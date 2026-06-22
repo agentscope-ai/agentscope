@@ -50,14 +50,20 @@ class BashCwdTest(IsolatedAsyncioTestCase):
         create_process = AsyncMock(return_value=process)
         with patch(
             "agentscope.tool._builtin._backend."
-            "asyncio.create_subprocess_shell",
+            "asyncio.create_subprocess_exec",
             create_process,
         ):
             chunks = []
             async for chunk in await Bash(cwd="workspace")(command="pwd"):
                 chunks.append(chunk)
 
+        # cwd is forwarded, and the command line is wrapped in ``sh -c``
+        # (the backend primitive runs an argv without a shell).
         self.assertEqual(create_process.call_args.kwargs["cwd"], "workspace")
+        self.assertEqual(
+            create_process.call_args.args,
+            ("/bin/sh", "-c", "pwd"),
+        )
         self.assertEqual(chunks[0].state, "running")
 
 

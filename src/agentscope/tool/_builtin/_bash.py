@@ -679,8 +679,12 @@ easier to review tool calls and give permission.
         timeout_sec = timeout_ms / 1000.0
 
         try:
+            # ``command`` is a full shell command line (it may contain
+            # pipes, redirects, ``&&``, …), so wrap it in ``sh -c`` —
+            # the backend primitive runs the argv directly without a
+            # shell. The Bash tool targets POSIX hosts only.
             result = await self._backend.exec_shell(
-                command,
+                ["/bin/sh", "-c", command],
                 cwd=self._cwd,
                 timeout=timeout_sec,
             )
