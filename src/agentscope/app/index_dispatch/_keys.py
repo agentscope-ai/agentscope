@@ -7,9 +7,10 @@ and the worker-side consumer both reach for these constants when
 calling the bus's transport-level primitives — there is no
 ``enqueue_index_task`` method on the bus, and there should not be one.
 
-The split mirrors the wake-up channel (see :mod:`agentscope.app.
-_manager._wakeup_keys`): transport-level primitives live on the bus,
-domain-shaped operations live next to the domain.
+The split mirrors the wake-up channel (see
+:class:`~agentscope.app.message_bus.MessageBusKeys` plus the helpers in
+:mod:`agentscope.app._bus_ops`): transport-level primitives live on
+the bus, domain-shaped operations live next to the domain.
 """
 from typing import TypedDict
 
