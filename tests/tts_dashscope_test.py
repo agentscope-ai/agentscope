@@ -15,7 +15,6 @@ Covers:
   * ``DashScopeCosyVoiceRealtimeTTSModel`` connect / close / push /
     synthesize lifecycle over a mocked SpeechSynthesizer.
 """
-import asyncio
 import base64
 import io
 import threading
@@ -385,6 +384,26 @@ class TestDashScopeCosyVoiceTTSModel(IsolatedAsyncioTestCase):
                 callback.on_close()
 
             synth.call = Mock(side_effect=_call)
+            remaining_chunks = self.next_chunks[1:]
+
+            def _streaming_call(text: str) -> None:
+                del text
+                if self.next_chunks:
+                    callback.on_data(self.next_chunks[0])
+
+            def _complete_when_waiting(timeout: int | None = None) -> bool:
+                del timeout
+                for chunk in remaining_chunks:
+                    callback.on_data(chunk)
+                callback.on_complete()
+                callback.on_close()
+                return True
+
+            callback.chunk_event.wait = Mock(
+                side_effect=_complete_when_waiting,
+            )
+            synth.streaming_call = Mock(side_effect=_streaming_call)
+            synth.streaming_complete = Mock()
 
         self.synthesizer_instances.append(synth)
         return synth
@@ -471,54 +490,27 @@ class TestDashScopeCosyVoiceTTSModel(IsolatedAsyncioTestCase):
 
         synth = self.synthesizer_instances[-1]
         self.assertIsNotNone(synth.init_kwargs["callback"])
-        synth.call.assert_called_once_with("Hello", timeout_millis=600000)
+        synth.streaming_call.assert_called_once_with("Hello")
+        synth.streaming_complete.assert_called_once_with()
+        synth.call.assert_not_called()
 
-    async def test_streaming_yields_before_sdk_call_completes(self) -> None:
-        """stream=True consumes chunks while the SDK call is running."""
-        release_call = threading.Event()
-        callback_ready = threading.Event()
-
-        def _make_blocking_synthesizer(**init_kwargs: Any) -> Mock:
-            synth = Mock()
-            synth.init_kwargs = init_kwargs
-            synth.get_last_request_id = Mock(return_value="task-id")
-            synth.get_response = Mock(return_value=self.next_response)
-            callback = init_kwargs["callback"]
-
-            def _call(text: str, timeout_millis: int | None = None) -> None:
-                del text, timeout_millis
-                callback.on_data(b"AAAA")
-                self._wait_for_callback_consumed(callback, 4)
-                callback.on_data(b"BBBB")
-                callback_ready.set()
-                release_call.wait(timeout=5)
-                callback.on_complete()
-
-            synth.call = Mock(side_effect=_call)
-            self.synthesizer_instances.append(synth)
-            return synth
-
-        self.mock_synthesizer_class.side_effect = _make_blocking_synthesizer
+    async def test_streaming_uses_streaming_call_and_complete(self) -> None:
+        """stream=True uses the streaming SDK API with the shared callback."""
+        self.next_chunks = [b"AAAA", b"BBBB"]
         model = self._make_model(stream=True)
 
         gen = await model.synthesize("Hello")
-        first_chunk = await asyncio.wait_for(anext(gen), timeout=2)
+        chunks = [c async for c in gen]
 
-        self.assertTrue(callback_ready.is_set())
-        self.assertFalse(first_chunk.is_last)
         self.assertEqual(
-            base64.b64decode(first_chunk.content.source.data),
-            b"AAAA",
+            [base64.b64decode(c.content.source.data) for c in chunks],
+            [b"AAAA", b"BBBB"],
         )
 
-        release_call.set()
-        remaining = [c async for c in gen]
-        self.assertEqual(len(remaining), 1)
-        self.assertTrue(remaining[0].is_last)
-        self.assertEqual(
-            base64.b64decode(remaining[0].content.source.data),
-            b"BBBB",
-        )
+        synth = self.synthesizer_instances[-1]
+        synth.streaming_call.assert_called_once_with("Hello")
+        synth.streaming_complete.assert_called_once_with()
+        synth.call.assert_not_called()
 
     async def test_media_type_mapping(self) -> None:
         """CosyVoice output format is reflected in DataBlock.media_type."""

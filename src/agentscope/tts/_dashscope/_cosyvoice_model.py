@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """DashScope CosyVoice TTS model implementation."""
-import asyncio
 from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Literal, TYPE_CHECKING
@@ -148,15 +147,16 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
                 callback=callback,
                 **kwargs,
             )
+            start_datetime = datetime.now()
+            synthesizer.streaming_call(text)
+            synthesizer.streaming_complete()
             return self._stream_audio_chunks(
                 synthesizer=synthesizer,
                 callback=callback,
-                text=text,
-                timeout_millis=timeout_millis,
+                start_datetime=start_datetime,
             )
 
-        return await asyncio.to_thread(
-            self._synthesize_sync,
+        return self._synthesize_sync(
             text=text,
             model=self.model,
             voice=voice,
@@ -213,25 +213,9 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
         *,
         synthesizer: Any,
         callback: Any,
-        text: str,
-        timeout_millis: int | None,
+        start_datetime: datetime,
     ) -> AsyncGenerator[TTSResponse, None]:
         """Stream callback audio chunks and attach final response metadata."""
-        start_datetime = datetime.now()
-
-        def _call_synthesizer() -> None:
-            try:
-                synthesizer.call(text, timeout_millis=timeout_millis)
-            except Exception as exc:
-                callback.on_error(exc)
-                raise
-
-        call_task = asyncio.create_task(
-            asyncio.to_thread(
-                _call_synthesizer,
-            ),
-        )
-
         pending: TTSResponse | None = None
         async for chunk in callback.get_audio_chunks():
             if chunk.content is None and chunk.is_last and pending is not None:
@@ -239,11 +223,6 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
             if pending is not None:
                 yield pending
             pending = chunk
-
-        try:
-            await call_task
-        except Exception as exc:
-            raise RuntimeError(f"CosyVoice synthesis failed: {exc}") from exc
 
         elapsed = (datetime.now() - start_datetime).total_seconds()
         metadata = _response_metadata(
