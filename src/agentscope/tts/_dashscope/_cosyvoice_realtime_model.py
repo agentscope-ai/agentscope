@@ -12,18 +12,9 @@ from pydantic import BaseModel, Field
 
 from .._tts_base import TTSModelBase
 from .._tts_response import TTSResponse
-from ._cosyvoice_utils import (
-    _make_cosyvoice_callback_class,
-    _media_type,
-)
+from ._cosyvoice_utils import _make_cosyvoice_callback_class
 from ..._logging import logger
 from ...credential import DashScopeCredential
-
-
-_SAMPLE_RATE = 24000
-_CHANNELS = 1
-_BITS_PER_SAMPLE = 16
-_MEDIA_TYPE = _media_type("wav", _SAMPLE_RATE)
 
 
 class DashScopeCosyVoiceRealtimeTTSModel(TTSModelBase):
@@ -138,13 +129,7 @@ class DashScopeCosyVoiceRealtimeTTSModel(TTSModelBase):
 
         dashscope.api_key = self.credential.api_key.get_secret_value()
 
-        callback_cls = _make_cosyvoice_callback_class(
-            sample_rate=_SAMPLE_RATE,
-            channels=_CHANNELS,
-            bits_per_sample=_BITS_PER_SAMPLE,
-            media_type=_MEDIA_TYPE,
-            prepend_header=True,
-        )
+        callback_cls = _make_cosyvoice_callback_class()
         self._callback = callback_cls()
         self._synthesizer = SpeechSynthesizer(
             model=self.model,

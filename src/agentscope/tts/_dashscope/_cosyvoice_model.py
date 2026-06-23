@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """DashScope CosyVoice TTS model implementation."""
-import asyncio
-from datetime import datetime
+import base64
+import io
 from pathlib import Path
 from typing import Any, AsyncGenerator, Literal, TYPE_CHECKING
+import wave
 
 from pydantic import BaseModel, Field
 
@@ -11,22 +12,20 @@ from .._tts_base import TTSModelBase
 from .._tts_model_card import TTSModelCard
 from .._tts_response import TTSResponse
 from ._cosyvoice_utils import (
-    _audio_format_enum,
-    _build_audio_response,
     _make_cosyvoice_callback_class,
-    _media_type,
-    _parse_usage,
-    _response_metadata,
 )
 from ...credential import DashScopeCredential
+from ...message import DataBlock, Base64Source
+from ...types import JSONSerializableObject
 
 if TYPE_CHECKING:
-    from dashscope.audio.tts_v2 import AudioFormat
+    from dashscope.audio.tts_v2 import SpeechSynthesizer, ResultCallback
 
 
-_DEFAULT_AUDIO_FORMAT = "wav"
-_DEFAULT_SAMPLE_RATE = 24000
-_DEFAULT_TIMEOUT_MILLIS = 600000
+_SAMPLE_RATE = 24000
+_CHANNELS = 1
+_BITS_PER_SAMPLE = 16
+_MEDIA_TYPE = "audio/wav"
 
 
 class DashScopeCosyVoiceTTSModel(TTSModelBase):
@@ -98,8 +97,6 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
                 The text to be synthesized.
             **kwargs (`Any`):
                 Additional keyword arguments to pass to the CosyVoice API.
-                ``voice``, ``audio_format``/``format`` and ``sample_rate`` can
-                be overridden per call.
 
         Returns:
             `TTSResponse | AsyncGenerator[TTSResponse, None]`:
@@ -110,161 +107,82 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
         if not text:
             return TTSResponse(content=None)
 
-        import dashscope
-
-        audio_format = kwargs.pop("audio_format", None)
-        format_alias = kwargs.pop("format", None)
-        if audio_format is None:
-            audio_format = format_alias or _DEFAULT_AUDIO_FORMAT
-
-        sample_rate = kwargs.pop("sample_rate", _DEFAULT_SAMPLE_RATE)
-        voice = kwargs.pop("voice", self.parameters.voice)
-        api_key = kwargs.pop(
-            "api_key",
-            self.credential.api_key.get_secret_value(),
+        synthesizer, callback = self._create_synthesizer(
+            callback=self.stream,
         )
-        timeout_millis = kwargs.pop(
-            "timeout_millis",
-            _DEFAULT_TIMEOUT_MILLIS,
-        )
-        bit_rate = kwargs.pop("bit_rate", None)
-        media_type = _media_type(audio_format, sample_rate)
-        format_enum = _audio_format_enum(audio_format, sample_rate, bit_rate)
-
-        dashscope.api_key = api_key
 
         if self.stream:
-            from dashscope.audio.tts_v2 import SpeechSynthesizer
+            assert callback is not None
+            synthesizer.call(text=text, **kwargs)
+            return callback.get_audio_chunks()
 
-            callback_cls = _make_cosyvoice_callback_class(
-                media_type=media_type,
-                prepend_header=False,
-            )
-            callback = callback_cls()
-            synthesizer = SpeechSynthesizer(
-                model=self.model,
-                voice=voice,
-                format=format_enum,
-                callback=callback,
-                **kwargs,
-            )
-            return self._stream_audio_chunks(
-                synthesizer=synthesizer,
-                callback=callback,
-                text=text,
-                timeout_millis=timeout_millis,
-            )
-
-        return self._synthesize_sync(
-            text=text,
-            model=self.model,
-            voice=voice,
-            format_enum=format_enum,
-            media_type=media_type,
-            timeout_millis=timeout_millis,
-            kwargs=kwargs,
-        )
-
-    @staticmethod
-    def _synthesize_sync(
-        *,
-        text: str,
-        model: str,
-        voice: str,
-        format_enum: "AudioFormat",
-        media_type: str,
-        timeout_millis: int | None,
-        kwargs: dict[str, Any],
-    ) -> TTSResponse:
-        """Synchronously synthesize and return the full audio payload."""
-        from dashscope.audio.tts_v2 import SpeechSynthesizer
-
-        start_datetime = datetime.now()
-        synthesizer = SpeechSynthesizer(
-            model=model,
-            voice=voice,
-            format=format_enum,
-            **kwargs,
-        )
-        audio_data = synthesizer.call(text, timeout_millis=timeout_millis)
-        elapsed = (datetime.now() - start_datetime).total_seconds()
-        usage = _parse_usage(elapsed)
-        metadata = _response_metadata(
-            synthesizer.get_last_request_id(),
-            synthesizer.get_response(),
-        )
+        audio_data = synthesizer.call(text=text, **kwargs)
+        metadata = self._response_metadata(synthesizer)
         if not audio_data:
-            return TTSResponse(
-                content=None,
-                metadata=metadata,
-                usage=usage,
-            )
-
-        return _build_audio_response(
+            return TTSResponse(content=None, metadata=metadata)
+        return self._build_wav_response(
             audio_data,
-            media_type,
             metadata=metadata,
-            usage=usage,
         )
+
+    def _create_synthesizer(
+        self,
+        *,
+        callback: bool,
+    ) -> tuple["SpeechSynthesizer", "ResultCallback | None"]:
+        """Create a fresh SpeechSynthesizer and optional callback."""
+        import dashscope
+        from dashscope.audio.tts_v2 import AudioFormat, SpeechSynthesizer
+
+        dashscope.api_key = self.credential.api_key.get_secret_value()
+
+        callback_instance = None
+        if callback:
+            callback_cls = _make_cosyvoice_callback_class()
+            callback_instance = callback_cls()
+
+        synthesizer = SpeechSynthesizer(
+            model=self.model,
+            voice=self.parameters.voice,
+            format=AudioFormat.PCM_24000HZ_MONO_16BIT,
+            callback=callback_instance,
+        )
+        return synthesizer, callback_instance
 
     @staticmethod
-    async def _stream_audio_chunks(
+    def _response_metadata(
+        synthesizer: "SpeechSynthesizer",
+    ) -> dict[str, JSONSerializableObject] | None:
+        """Build metadata from the WebSocket SDK response."""
+        metadata: dict[str, JSONSerializableObject] = {}
+        request_id = synthesizer.get_last_request_id()
+        response = synthesizer.get_response()
+        if request_id is not None:
+            metadata["request_id"] = request_id
+        if response is not None:
+            metadata["response"] = response
+        return metadata or None
+
+    @staticmethod
+    def _build_wav_response(
+        audio_data: bytes,
         *,
-        synthesizer: Any,
-        callback: Any,
-        text: str,
-        timeout_millis: int | None,
-    ) -> AsyncGenerator[TTSResponse, None]:
-        """Stream callback audio chunks and attach final response metadata."""
-        start_datetime = datetime.now()
+        metadata: dict[str, JSONSerializableObject] | None = None,
+    ) -> TTSResponse:
+        """Build a self-contained WAV response from PCM audio bytes."""
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wav:
+            wav.setnchannels(_CHANNELS)
+            wav.setsampwidth(_BITS_PER_SAMPLE // 8)
+            wav.setframerate(_SAMPLE_RATE)
+            wav.writeframes(audio_data)
 
-        def _complete_synthesizer() -> None:
-            try:
-                synthesizer.streaming_complete(
-                    complete_timeout_millis=timeout_millis,
-                )
-            except Exception as exc:
-                callback.on_error(exc)
-                raise
-
-        synthesizer.streaming_call(text)
-        complete_task = asyncio.create_task(
-            asyncio.to_thread(
-                _complete_synthesizer,
+        return TTSResponse(
+            content=DataBlock(
+                source=Base64Source(
+                    data=base64.b64encode(buf.getvalue()).decode("ascii"),
+                    media_type=_MEDIA_TYPE,
+                ),
             ),
+            metadata=metadata,
         )
-
-        pending: TTSResponse | None = None
-        try:
-            async for chunk in callback.get_audio_chunks():
-                if (
-                    chunk.content is None
-                    and chunk.is_last
-                    and pending is not None
-                ):
-                    break
-                if pending is not None:
-                    yield pending
-                pending = chunk
-
-            await complete_task
-        except Exception as exc:
-            raise RuntimeError(f"CosyVoice synthesis failed: {exc}") from exc
-
-        elapsed = (datetime.now() - start_datetime).total_seconds()
-        metadata = _response_metadata(
-            synthesizer.get_last_request_id(),
-            synthesizer.get_response(),
-        )
-        if pending is not None:
-            pending.is_last = True
-            pending.metadata = metadata
-            pending.usage = _parse_usage(elapsed)
-            yield pending
-        else:
-            yield TTSResponse(
-                content=None,
-                metadata=metadata,
-                usage=_parse_usage(elapsed),
-                is_last=True,
-            )
