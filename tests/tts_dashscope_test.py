@@ -460,18 +460,6 @@ class TestDashScopeCosyVoiceTTSModel(IsolatedAsyncioTestCase):
         self.assertIsNotNone(synth.init_kwargs["callback"])
         synth.call.assert_called_once_with(text="Hello")
 
-    async def test_streaming_passes_sdk_kwargs_to_call(self) -> None:
-        """Additional synthesize kwargs pass through to the SDK call."""
-        model = self._make_model(stream=True)
-
-        gen = await model.synthesize("Hello", enable_ssml=True)
-        chunks = [c async for c in gen]
-
-        self.assertEqual(len(chunks), 1)
-
-        synth = self.synthesizer_instances[-1]
-        synth.call.assert_called_once_with(text="Hello", enable_ssml=True)
-
     async def test_model_cards_and_credential_wiring(self) -> None:
         """CosyVoice model cards are discovered only by the CosyVoice class,
         and DashScope credentials expose the class."""

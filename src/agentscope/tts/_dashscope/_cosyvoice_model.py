@@ -96,7 +96,8 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
             text (`str | None`, optional):
                 The text to be synthesized.
             **kwargs (`Any`):
-                Additional keyword arguments to pass to the CosyVoice API.
+                Reserved for API compatibility. Runtime synthesis options
+                are configured when the model is initialized.
 
         Returns:
             `TTSResponse | AsyncGenerator[TTSResponse, None]`:
@@ -113,10 +114,10 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
 
         if self.stream:
             assert callback is not None
-            synthesizer.call(text=text, **kwargs)
+            synthesizer.call(text=text)
             return callback.get_audio_chunks()
 
-        audio_data = synthesizer.call(text=text, **kwargs)
+        audio_data = synthesizer.call(text=text)
         metadata = self._response_metadata(synthesizer)
         if not audio_data:
             return TTSResponse(content=None, metadata=metadata)
