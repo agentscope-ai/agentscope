@@ -27,4 +27,8 @@ voices:
   - shimmer
   - verse
 
-parameter_overrides: {}
+parameter_overrides:
+  # The instructions parameter is not supported by tts-1-hd, hide it from
+  # the frontend to avoid confusing users.
+  instructions:
+    hidden: true
