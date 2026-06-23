@@ -23,6 +23,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import { ConfirmCard } from './ConfirmCard';
+import { FileAttachment } from './FileAttachment';
 import { renderToolGroup } from './tool-renderers';
 import type { TFunction, ToolCallWithResult } from './tool-renderers/types';
 import { Badge } from '@/components/ui/badge';
@@ -393,19 +394,39 @@ function renderBlock(
 			// Audio data blocks render in the footer (see AudioFooterControl),
 			// not inline alongside text.
 			if (dataType === 'audio') return null;
-			let data: string;
-			if (block.source.type === 'url') {
-				data = block.source.url;
-			} else {
-				data = `data:${block.source.media_type};base64,${block.source.data}`;
-			}
+			const data =
+				block.source.type === 'url'
+					? block.source.url
+					: `data:${block.source.media_type};base64,${block.source.data}`;
 			switch (dataType) {
 				case 'image':
-					return <img key={index} src={data} alt="Uploaded image" />;
+					return (
+						<img
+							key={index}
+							src={data}
+							alt={block.name || 'Uploaded image'}
+							className="max-h-80 max-w-full rounded-lg object-contain"
+						/>
+					);
 				case 'video':
-					return <video key={index} controls src={data} />;
+					return (
+						<video
+							key={index}
+							controls
+							src={data}
+							className="max-h-80 max-w-full rounded-lg"
+						/>
+					);
+				default:
+					return (
+						<FileAttachment
+							key={index}
+							name={block.name}
+							href={data}
+							mediaType={block.source.media_type}
+						/>
+					);
 			}
-			return null;
 		}
 
 		case 'hint': {

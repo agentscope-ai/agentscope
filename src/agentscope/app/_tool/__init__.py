@@ -8,7 +8,8 @@ Task series, …) in two ways:
    :class:`StorageBase` + :class:`MessageBus` reference plus the
    request-scoped ``user_id`` / ``session_id`` / ``agent_id`` at agent
    assembly time, and call storage / bus directly in their
-   ``__call__`` (no intermediate service layer).
+   ``__call__`` — except ``TeamDelete``, which delegates to
+   :class:`SessionService` for cascade deletion.
 2. **Visibility depends only on the agent's source field** —
    ``source='user'`` agents always see the full leader-side toolset
    (``TeamCreate / AgentCreate / TeamSay / TeamDelete``) regardless of

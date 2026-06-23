@@ -23,10 +23,10 @@ Consumers:
 - **Developer** — manages lifecycle via ``initialize`` / ``close``.
 """
 
-import uuid
 from abc import abstractmethod
 from typing import Self
 
+from .._utils._common import _generate_id
 from ..mcp import MCPClient
 from ..message import Msg, ToolResultBlock
 from ..skill import Skill
@@ -60,7 +60,7 @@ class WorkspaceBase:
 
     def __init__(self, workspace_id: str | None) -> None:
         """Initialize the workspace base instance."""
-        self.workspace_id = workspace_id or uuid.uuid4().hex
+        self.workspace_id = workspace_id or _generate_id()
         self.is_alive = False
 
     # ── lifecycle (developer) ──────────────────────────────────────

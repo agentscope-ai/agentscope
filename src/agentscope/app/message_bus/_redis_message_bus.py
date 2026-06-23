@@ -380,6 +380,85 @@ class RedisMessageBus(MessageBus):
         await self._client.xtrim(key, minid=before_id)
 
     # ------------------------------------------------------------------
+    # Mode F — registry map (hash-keyed namespace)
+    # ------------------------------------------------------------------
+
+    async def registry_set(
+        self,
+        namespace: str,
+        field: str,
+        value: str,
+        *,
+        ttl_secs: int | None = None,
+    ) -> None:
+        """Set ``field`` in the Redis Hash at ``namespace``.
+
+        Args:
+            namespace (`str`):
+                Hash key.
+            field (`str`):
+                Hash field.
+            value (`str`):
+                Value to store.
+            ttl_secs (`int | None`, optional):
+                Refresh the key's expiry (sliding TTL).
+        """
+        await self._client.hset(namespace, field, value)
+        if ttl_secs is not None:
+            await self._client.expire(namespace, ttl_secs)
+
+    async def registry_del(self, namespace: str, field: str) -> None:
+        """Remove ``field`` from the Redis Hash at ``namespace``.
+
+        Args:
+            namespace (`str`):
+                Hash key.
+            field (`str`):
+                Hash field to remove.
+        """
+        await self._client.hdel(namespace, field)
+
+    async def registry_exists(self, namespace: str, field: str) -> bool:
+        """Return whether ``field`` exists in the Hash at ``namespace``.
+
+        Args:
+            namespace (`str`):
+                Hash key.
+            field (`str`):
+                Hash field to check.
+
+        Returns:
+            `bool`:
+                ``True`` if the field exists.
+        """
+        return bool(await self._client.hexists(namespace, field))
+
+    async def registry_getall(
+        self,
+        namespace: str,
+    ) -> dict[str, str]:
+        """Return all field-value pairs from the Hash at ``namespace``.
+
+        Args:
+            namespace (`str`):
+                Hash key.
+
+        Returns:
+            `dict[str, str]`:
+                All entries. Empty dict when the key is absent.
+        """
+        return await self._client.hgetall(namespace) or {}
+
+    async def registry_drop(self, namespace: str) -> None:
+        """Delete the entire Hash at ``namespace``.
+
+        Args:
+            namespace (`str`):
+                Hash key to delete.
+        """
+        await self._client.delete(namespace)
+
+    # ------------------------------------------------------------------
     # Mode D — transient broadcast
     # ------------------------------------------------------------------
 

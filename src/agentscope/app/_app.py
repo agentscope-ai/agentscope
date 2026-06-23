@@ -12,6 +12,7 @@ from ._router import (
     credential_router,
     knowledge_base_router,
     model_router,
+    tts_model_router,
     schedule_router,
     session_router,
     workspace_router,
@@ -247,6 +248,7 @@ def create_app(
         session_router,
         workspace_router,
         model_router,
+        tts_model_router,
     ):
         app.include_router(router)
 

@@ -32,6 +32,22 @@ class ChatModelConfig(BaseModel):
     """The model parameters."""
 
 
+class TTSModelConfig(BaseModel):
+    """The TTS model configuration class."""
+
+    type: str
+    """The provider type."""
+
+    credential_id: str
+    """The credential id."""
+
+    model: str
+    """The TTS model name."""
+
+    parameters: dict
+    """TTS parameters (voice, language, etc.)."""
+
+
 class EmbeddingModelConfig(BaseModel):
     """Configuration for constructing an embedding model from a credential.
 
@@ -85,6 +101,9 @@ class SessionConfig(BaseModel):
     fallback_chat_model_config: ChatModelConfig | None = None
     """The fallback chat model config. Used as a backup when the primary
     model fails. None means no fallback configured."""
+
+    tts_model_config: TTSModelConfig | None = None
+    """The TTS model config. None means TTS is not enabled."""
 
 
 class SessionRecord(_RecordBase):

@@ -31,6 +31,7 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str]):
         model: str,
         dimensions: int,
         parameters: "OpenAIEmbeddingModel.Parameters | None" = None,
+        pass_dimensions: bool = True,
         embedding_cache: EmbeddingCacheBase | None = None,
         context_size: int = 8191,
         max_retries: int = 3,
@@ -53,6 +54,9 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str]):
             defaults to ``None``):
                 Provider-specific non-dimensional parameters.  Currently
                 empty for OpenAI.
+            pass_dimensions (`bool`, defaults to `True`):
+                Whether to pass the ``dimensions`` parameter to the API.
+                Some OpenAI-compatible providers do not support it.
             embedding_cache (`EmbeddingCacheBase | None`, defaults to \
             ``None``):
                 Optional embedding cache.
@@ -86,6 +90,7 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str]):
             api_key=credential.api_key.get_secret_value(),
             **client_kwargs,
         )
+        self.pass_dimensions = pass_dimensions
         self.embedding_cache: EmbeddingCacheBase | None = embedding_cache
 
     @classmethod
@@ -119,10 +124,11 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str]):
         api_kwargs: dict[str, Any] = {
             "input": inputs,
             "model": self.model,
-            "dimensions": self.dimensions,
             "encoding_format": "float",
             **kwargs,
         }
+        if self.pass_dimensions:
+            api_kwargs["dimensions"] = self.dimensions
 
         if self.embedding_cache:
             cached = await self.embedding_cache.retrieve(
@@ -139,7 +145,17 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str]):
         response = await self.client.embeddings.create(**api_kwargs)
         time = (datetime.now() - start_time).total_seconds()
 
-        embeddings = [item.embedding for item in response.data]
+        embeddings: list[Any] = [None] * len(inputs)
+        for pos, item in enumerate(response.data):
+            index = getattr(item, "index", pos)
+            if not isinstance(index, int):
+                index = pos
+            if 0 <= index < len(inputs):
+                embeddings[index] = item.embedding or getattr(
+                    item,
+                    "dense_embedding",
+                    None,
+                )
 
         if self.embedding_cache:
             await self.embedding_cache.store(

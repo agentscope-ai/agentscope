@@ -42,6 +42,11 @@
 		"deleteTitle": "删除{{entity}} \"{{name}}\"？",
 		"deleteDescription": "此操作无法撤销。"
 	},
+	"error": {
+		"description": "页面遇到意外错误。你可以重试或返回首页。",
+		"retry": "重试",
+		"home": "返回首页"
+	},
 	"tool": {
 		"moreLines": "... 还有 {{count}} 行",
 		"read": {
@@ -92,6 +97,7 @@
 		"placeholder": "输入消息...",
 		"send": "发送",
 		"confirmToolCall": "允许此操作？",
+		"subagentConfirmTitle": "{{name}} 请求确认",
 		"newSession": "新会话",
 		"noSessions": "暂无会话",
 		"noMessages": "暂无消息",
@@ -221,7 +227,6 @@
 		"description": "此操作将永久删除知识库 \"{{name}}\" 及其所有已索引文档，且无法撤销。"
 	},
 	"credential": {
-		"addConfig": "添加配置",
 		"noProviders": "暂无可用提供商",
 		"noConfigs": "暂无配置",
 		"selectHint": "未选择凭证",
@@ -231,11 +236,14 @@
 		"noModelsDescription": "该提供商未返回任何模型。",
 		"deleteEntity": "凭证",
 		"subtitle": "模型 API 授权配置",
+		"configured": "已配置",
+		"addProvider": "添加凭证",
 		"reasoning": "推理模型",
 		"maxContext": "最大上下文",
 		"maxOutput": "最大输出",
 		"inputTypes": "输入模态",
-		"outputTypes": "输出模态"
+		"outputTypes": "输出模态",
+		"availableTTSModels": "语音合成模型"
 	},
 	"knowledge": {
 		"subtitle": "管理 Agent 使用的知识库",
@@ -415,7 +423,12 @@
 		"empty": "暂无可配置参数。",
 		"fallbackLabel": "兜底模型",
 		"fallbackLabelWithModel": "兜底模型（{{model}}）",
-		"parametersLabel": "参数"
+		"parametersLabel": "参数",
+		"ttsLabel": "语音合成",
+		"ttsEmpty": "暂无可用的语音合成模型。",
+		"ttsParameters": "参数",
+		"ttsParametersDescription": "调整所选语音合成模型的参数。",
+		"noTts": "不使用语音合成"
 	},
 	"setup": {
 		"title": "连接到服务器",

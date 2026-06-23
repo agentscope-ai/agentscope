@@ -59,7 +59,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if blob_store is not None:
             await stack.enter_async_context(blob_store)
 
-        bg_manager = await stack.enter_async_context(BackgroundTaskManager())
+        bg_manager = await stack.enter_async_context(
+            BackgroundTaskManager(message_bus=message_bus),
+        )
         app.state.background_task_manager = bg_manager
 
         # Per-process registry of in-flight chat-run asyncio tasks.

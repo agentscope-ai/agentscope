@@ -18,6 +18,27 @@ import { chatApi } from '@/api';
 import { useAudioManager } from '@/context/AudioContext';
 
 /**
+ * One pending subagent HITL request, projected from a team *member*
+ * session onto its *leader* session so the leader UI can render and
+ * resolve it. Mirrors the Python payload written by
+ * ``SubagentHitlProjector`` and pushed/replayed as a ``CustomEvent``
+ * (``name="subagent_require_user_confirm"``).
+ */
+export type SubagentHitlEntry = {
+	worker_session_id: string;
+	worker_agent_id: string;
+	worker_agent_name: string;
+	reply_id: string;
+	event_type: 'require_user_confirm' | 'require_external_execution';
+	/** The original ``RequireUserConfirmEvent`` payload (serialized). */
+	event: { tool_calls?: ToolCallBlock[] } & Record<string, unknown>;
+	created_at: string;
+};
+
+const hitlKey = (e: { worker_session_id: string; reply_id: string }) =>
+	`${e.worker_session_id}:${e.reply_id}`;
+
+/**
  * Manages messages for a single ``(agentId, sessionId)`` pair.
  *
  * Event delivery has two independent channels:
@@ -68,6 +89,8 @@ export function useMessages(
 	const [loading, setLoading] = useState(false);
 	const [streaming, setStreaming] = useState(false);
 	const [error, setError] = useState<Error | null>(null);
+	// Pending subagent HITL cards projected onto this (leader) session.
+	const [subagentHitl, setSubagentHitl] = useState<SubagentHitlEntry[]>([]);
 
 	const msgsRef = useRef<Msg[]>([]);
 	const currentReplyRef = useRef<Msg | null>(null);
@@ -99,6 +122,19 @@ export function useMessages(
 					optionsRef.current?.onTeamUpdated?.();
 				} else if (custom.name === 'state_updated' && custom.value) {
 					optionsRef.current?.onStateUpdated?.(custom.value as Record<string, unknown>);
+				} else if (custom.name === 'subagent_require_user_confirm') {
+					// A team member is asking for confirmation; show (or
+					// refresh) its card on this leader view. Dedup by
+					// (worker_session_id, reply_id).
+					const e = custom.value as unknown as SubagentHitlEntry;
+					setSubagentHitl((prev) => [
+						...prev.filter((x) => hitlKey(x) !== hitlKey(e)),
+						e,
+					]);
+				} else if (custom.name === 'subagent_user_confirm_result') {
+					// The member resolved (or its run ended); clear the card.
+					const v = custom.value as { worker_session_id: string; reply_id: string };
+					setSubagentHitl((prev) => prev.filter((x) => hitlKey(x) !== hitlKey(v)));
 				}
 				return;
 			}
@@ -154,6 +190,7 @@ export function useMessages(
 		setMsgs([]);
 		setError(null);
 		setStreaming(false);
+		setSubagentHitl([]);
 		audioManager?.disposeAll();
 
 		if (!agentId || !sessionId) return;
@@ -280,5 +317,68 @@ export function useMessages(
 		abortRef.current?.abort();
 	}, []);
 
-	return { msgs, loading, streaming, error, send, onUserConfirm, abort };
+	/**
+	 * Confirm or deny a tool call that a *team member* is awaiting,
+	 * from this leader view (design §3.6 — backend routing).
+	 *
+	 * The result is POSTed to the **leader** session (the
+	 * ``(agentId, sessionId)`` this hook is bound to), NOT the worker.
+	 * The backend resolves ``reply_id`` → worker session via the
+	 * leader's pending hash and forwards the event to the worker's
+	 * continuation. The client never addresses the worker directly —
+	 * ``entry.worker_*`` ids are used only for local dedup / clearing.
+	 *
+	 * @param entry - The pending subagent HITL entry being resolved.
+	 * @param toolCall - The tool call block to confirm/deny.
+	 * @param confirm - Whether the user confirmed.
+	 * @param rules - Optional permission rules to attach.
+	 */
+	const onSubagentConfirm = useCallback(
+		async (
+			entry: SubagentHitlEntry,
+			toolCall: ToolCallBlock,
+			confirm: boolean,
+			rules?: ToolCallBlock['suggested_rules'],
+		) => {
+			if (!agentId || !sessionId) return;
+
+			const event: UserConfirmResultEvent = {
+				type: EventType.USER_CONFIRM_RESULT,
+				id: crypto.randomUUID(),
+				created_at: new Date().toISOString(),
+				reply_id: entry.reply_id, // worker's reply_id; backend maps it
+				confirm_results: [
+					{ confirmed: confirm, tool_call: toolCall, rules: rules ?? null },
+				],
+			};
+
+			// Optimistically clear; the backend's clear event re-confirms.
+			setSubagentHitl((prev) => prev.filter((x) => hitlKey(x) !== hitlKey(entry)));
+
+			try {
+				// Post to the leader front door — backend routes to the
+				// worker session (§3.6). Do NOT address the worker here.
+				await chatApi.trigger({
+					agent_id: agentId,
+					session_id: sessionId,
+					input: event,
+				});
+			} catch (e) {
+				setError(e as Error);
+			}
+		},
+		[agentId, sessionId],
+	);
+
+	return {
+		msgs,
+		loading,
+		streaming,
+		error,
+		send,
+		onUserConfirm,
+		onSubagentConfirm,
+		subagentHitl,
+		abort,
+	};
 }

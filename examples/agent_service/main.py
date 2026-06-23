@@ -51,6 +51,10 @@ app = create_app(
         host="localhost",
         port=6379,
     ),
+    # -- For a single-process / no-Redis setup, swap the lines above for:
+    #
+    # from agentscope.app.message_bus import InMemoryMessageBus
+    # message_bus=InMemoryMessageBus(),
     workspace_manager=LocalWorkspaceManager(
         basedir=os.path.join(
             os.path.dirname(os.path.abspath(__file__)),

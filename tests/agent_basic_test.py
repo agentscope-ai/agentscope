@@ -128,6 +128,42 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             "usage": None,
         }
 
+    async def test_default_configs_are_not_shared_between_agents(
+        self,
+    ) -> None:
+        """Agents created with defaults own independent config objects."""
+        agent_1 = Agent(
+            name="agent-1",
+            system_prompt="You are agent 1.",
+            model=MockModel(),
+        )
+        agent_2 = Agent(
+            name="agent-2",
+            system_prompt="You are agent 2.",
+            model=MockModel(),
+        )
+
+        self.assertIsNot(agent_1.model_config, agent_2.model_config)
+        self.assertIsNot(agent_1.context_config, agent_2.context_config)
+        self.assertIsNot(agent_1.react_config, agent_2.react_config)
+
+        agent_1.model_config.max_retries = 3
+        agent_1.context_config.tool_result_limit = 123
+        agent_1.react_config.max_iters = 2
+
+        self.assertNotEqual(
+            agent_1.model_config.max_retries,
+            agent_2.model_config.max_retries,
+        )
+        self.assertNotEqual(
+            agent_1.context_config.tool_result_limit,
+            agent_2.context_config.tool_result_limit,
+        )
+        self.assertNotEqual(
+            agent_1.react_config.max_iters,
+            agent_2.react_config.max_iters,
+        )
+
     async def test_streaming_reasoning(self) -> None:
         """Test the streaming model inference without tool calls generated,
         only text in model response.

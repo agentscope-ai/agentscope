@@ -3,7 +3,6 @@
 import warnings
 import base64
 import io
-import uuid
 import wave
 from collections import OrderedDict
 from datetime import datetime
@@ -11,10 +10,11 @@ from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 
 from pydantic import BaseModel, Field
 
+from ..._utils._audio import _build_streaming_wav_header
+from ..._utils._common import _generate_id
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse, StructuredResponse
 from .._model_usage import ChatUsage
-from ..._utils._audio import _build_streaming_wav_header
 from ...credential import OpenAICredential
 from ...formatter import FormatterBase, OpenAIChatFormatter
 from ...message import (
@@ -122,6 +122,7 @@ class OpenAIChatModel(ChatModelBase):
         context_size: int = 128000,
         formatter: FormatterBase | None = None,
         client_kwargs: dict[str, Any] | None = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> None:
         """Initialize the OpenAI chat model.
 
@@ -149,6 +150,9 @@ class OpenAIChatModel(ChatModelBase):
             client_kwargs (`dict[str, Any] | None`, defaults to `None`):
                 Extra keyword arguments forwarded to ``openai.AsyncClient``
                 (e.g. ``timeout``, ``default_headers``, ``http_client``).
+            extra_body (`dict[str, Any] | None`, defaults to `None`):
+                Additional request body fields forwarded to
+                OpenAI-compatible APIs.
         """
         super().__init__(
             credential=credential,
@@ -161,6 +165,7 @@ class OpenAIChatModel(ChatModelBase):
         )
         self.formatter = formatter or OpenAIChatFormatter()
         self.client_kwargs = client_kwargs or {}
+        self.extra_body = dict(extra_body) if extra_body is not None else None
 
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
@@ -246,6 +251,9 @@ class OpenAIChatModel(ChatModelBase):
                 "format": "pcm16",
             }
             kwargs["modalities"] = ["text", "audio"]
+
+        if self.extra_body is not None:
+            kwargs["extra_body"] = dict(self.extra_body)
 
         kwargs.update(generate_kwargs)
 
@@ -377,7 +385,7 @@ class OpenAIChatModel(ChatModelBase):
                         )
                     if audio_chunk:
                         if audio_block_id is None:
-                            audio_block_id = uuid.uuid4().hex
+                            audio_block_id = _generate_id()
                         pcm_bytes = base64.b64decode(audio_chunk)
                         acc_audio_data += pcm_bytes
                         if not audio_header_sent:

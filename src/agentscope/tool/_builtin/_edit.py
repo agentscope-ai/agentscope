@@ -4,9 +4,7 @@ import fnmatch
 import os
 from typing import Any, List
 
-import aiofiles
-
-from .._base import ToolBase
+from .._base import ToolBase, ToolMiddlewareBase
 from .._constants import (
     DEFAULT_DANGEROUS_FILES,
     DEFAULT_DANGEROUS_DIRECTORIES,
@@ -21,6 +19,7 @@ from ...permission import (
 from .._response import ToolChunk
 from ...message import TextBlock, ToolResultState
 from ...state import AgentState
+from ._backend import BackendBase, _normalize_newlines
 
 
 class Edit(ToolBase):
@@ -89,6 +88,8 @@ Usage:
         self,
         dangerous_files: list[str] = DEFAULT_DANGEROUS_FILES,
         dangerous_directories: list[str] = DEFAULT_DANGEROUS_DIRECTORIES,
+        middlewares: List[ToolMiddlewareBase] | None = None,
+        backend: BackendBase | None = None,
     ) -> None:
         """Initialize the edit tool.
 
@@ -106,9 +107,18 @@ Usage:
                 `DEFAULT_DANGEROUS_DIRECTORIES`. Pass a custom list to
                 fully replace the defaults, or `[]` to disable the
                 directory check.
+            middlewares (`List[ToolMiddlewareBase] | None`, optional):
+                Tool middlewares wrapping the tool execution.
+            backend (`BackendBase | None`, optional):
+                The sandbox backend to use for file I/O. When ``None``,
+                a :class:`LocalBackend` is created.
         """
+        from ._backend import LocalBackend
+
+        super().__init__(middlewares=middlewares)
         self.dangerous_files = list(dangerous_files)
         self.dangerous_directories = list(dangerous_directories)
+        self._backend = backend or LocalBackend()
 
     async def check_permissions(
         self,
@@ -232,7 +242,7 @@ Usage:
             ),
         ]
 
-    async def __call__(  # type: ignore[override]
+    async def call(  # type: ignore[override]
         self,
         file_path: str,
         old_string: str,
@@ -257,7 +267,7 @@ Usage:
             )
 
         # Check file exists
-        if not os.path.exists(file_path):
+        if not await self._backend.file_exists(file_path):
             return ToolChunk(
                 content=[
                     TextBlock(text=f"Error: File not found: {file_path}"),
@@ -298,14 +308,14 @@ Usage:
                 )
             content = "".join(cache.lines)
         else:
-            # No state provided, read from disk
+            # No state provided, read from backend
             try:
-                async with aiofiles.open(
-                    file_path,
-                    "r",
-                    encoding="utf-8",
-                ) as f:
-                    content = await f.read()
+                raw = await self._backend.read_file(file_path)
+                # Normalize CRLF/CR to match the cached-content path and
+                # the LF-based old_string the caller supplies.
+                content = _normalize_newlines(
+                    raw.decode("utf-8", errors="replace"),
+                )
             except Exception as e:
                 return ToolChunk(
                     content=[TextBlock(text=f"Error reading file: {str(e)}")],
@@ -355,14 +365,12 @@ Usage:
                 1,
             )
 
-        # Write updated content back to file
+        # Write updated content back to file via backend
         try:
-            async with aiofiles.open(
+            await self._backend.write_file(
                 file_path,
-                "w",
-                encoding="utf-8",
-            ) as f:
-                await f.write(updated_content)
+                updated_content.encode("utf-8"),
+            )
         except Exception as e:
             return ToolChunk(
                 content=[TextBlock(text=f"Error writing file: {str(e)}")],
