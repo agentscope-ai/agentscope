@@ -6,6 +6,7 @@ from typing import (
     Any,
     AsyncGenerator,
     Literal,
+    TYPE_CHECKING,
 )
 
 from pydantic import BaseModel, Field
@@ -14,6 +15,9 @@ from .._tts_base import TTSModelBase
 from .._tts_response import TTSResponse, TTSUsage
 from ...credential import OpenAICredential
 from ...message import DataBlock, Base64Source
+
+if TYPE_CHECKING:
+    from openai import AsyncOpenAI
 
 
 # Map the OpenAI ``response_format`` values to their MIME media types.
@@ -168,7 +172,7 @@ class OpenAITTSModel(TTSModelBase):
 
     @staticmethod
     async def _aggregate(
-        client: "Any",
+        client: "AsyncOpenAI",
         media_type: str,
         **request_kwargs: Any,
     ) -> TTSResponse:
@@ -191,7 +195,7 @@ class OpenAITTSModel(TTSModelBase):
 
     @staticmethod
     async def _stream(
-        client: "Any",
+        client: "AsyncOpenAI",
         media_type: str,
         **request_kwargs: Any,
     ) -> AsyncGenerator[TTSResponse, None]:
@@ -199,7 +203,7 @@ class OpenAITTSModel(TTSModelBase):
         ``TTSResponse`` objects.
 
         Args:
-            client (`Any`):
+            client (`AsyncOpenAI`):
                 The async OpenAI client.
             media_type (`str`):
                 The media type of the synthesized audio.
