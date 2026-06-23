@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """Shared FastAPI dependencies for the agentscope app."""
+from typing import TYPE_CHECKING
+
 from fastapi import Header, HTTPException, Request, status
 
 from .workspace_manager import WorkspaceManagerBase
@@ -12,6 +14,12 @@ from ._service import ChatService, SessionService
 from ._types import AgentMiddlewareFactory, AgentToolFactory
 from .message_bus import MessageBus
 from .storage import StorageBase
+
+if TYPE_CHECKING:
+    from .blob_store import BlobStoreBase
+    from .index_dispatch import IndexDispatcherBase
+    from .knowledge_base_manager import KnowledgeBaseManagerBase
+    from ._service import KnowledgeBaseService
 
 
 async def get_current_user_id(
@@ -167,3 +175,121 @@ async def get_extra_agent_tools(
         :func:`~agentscope.app.create_app`, or ``None`` if not configured.
     """
     return request.app.state.extra_agent_tools
+
+
+async def get_knowledge_base_service(
+    request: Request,
+) -> "KnowledgeBaseService":
+    """Return the application-wide knowledge base service.
+
+    Args:
+        request (`Request`):
+            The incoming FastAPI request.
+
+    Returns:
+        `KnowledgeBaseService`:
+            The service stored in ``app.state``.
+
+    Raises:
+        `HTTPException`:
+            ``503`` when the app was created without a
+            ``knowledge_base_manager`` and therefore exposes no
+            knowledge base endpoints.
+    """
+    service = getattr(request.app.state, "knowledge_base_service", None)
+    if service is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Knowledge base feature is disabled — pass a "
+                "knowledge_base_manager to create_app() to enable it."
+            ),
+        )
+    return service
+
+
+async def get_knowledge_base_manager(
+    request: Request,
+) -> "KnowledgeBaseManagerBase":
+    """Return the application-wide knowledge base manager.
+
+    Args:
+        request (`Request`):
+            The incoming FastAPI request.
+
+    Returns:
+        `KnowledgeBaseManagerBase`:
+            The manager stored in ``app.state``.
+
+    Raises:
+        `HTTPException`:
+            ``503`` when the app was created without a
+            ``knowledge_base_manager``.
+    """
+    manager = getattr(request.app.state, "knowledge_base_manager", None)
+    if manager is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Knowledge base feature is disabled — pass a "
+                "knowledge_base_manager to create_app() to enable it."
+            ),
+        )
+    return manager
+
+
+async def get_blob_store(request: Request) -> "BlobStoreBase":
+    """Return the application-wide blob store.
+
+    Args:
+        request (`Request`):
+            The incoming FastAPI request.
+
+    Returns:
+        `BlobStoreBase`:
+            The blob store instance stored in ``app.state``.
+
+    Raises:
+        `HTTPException`:
+            ``503`` when no blob store is configured (e.g. the KB
+            feature was disabled at app-creation time).
+    """
+    blob_store = getattr(request.app.state, "blob_store", None)
+    if blob_store is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Blob store is not configured — pass a "
+                "knowledge_base_manager (and optionally a blob_store) "
+                "to create_app() to enable knowledge base features."
+            ),
+        )
+    return blob_store
+
+
+async def get_index_dispatcher(request: Request) -> "IndexDispatcherBase":
+    """Return the application-wide index dispatcher.
+
+    Args:
+        request (`Request`):
+            The incoming FastAPI request.
+
+    Returns:
+        `IndexDispatcherBase`:
+            The dispatcher stored in ``app.state``.
+
+    Raises:
+        `HTTPException`:
+            ``503`` when no dispatcher is configured (KB feature
+            disabled).
+    """
+    dispatcher = getattr(request.app.state, "index_dispatcher", None)
+    if dispatcher is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Index dispatcher is not configured — knowledge base "
+                "uploads are disabled."
+            ),
+        )
+    return dispatcher

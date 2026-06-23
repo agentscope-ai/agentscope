@@ -29,6 +29,7 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str]):
         self,
         credential: CredentialBase,
         model: str,
+        dimensions: int,
         parameters: "OpenAIEmbeddingModel.Parameters | None" = None,
         embedding_cache: EmbeddingCacheBase | None = None,
         context_size: int = 8191,
@@ -45,10 +46,13 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str]):
             model (`str`):
                 The embedding model name (e.g.
                 ``"text-embedding-3-small"``).
+            dimensions (`int`):
+                The output embedding vector dimensions.  Required —
+                see :class:`EmbeddingModelBase` for the rationale.
             parameters (`OpenAIEmbeddingModel.Parameters | None`, \
             defaults to ``None``):
-                User-configurable parameters (currently only
-                ``dimensions``).
+                Provider-specific non-dimensional parameters.  Currently
+                empty for OpenAI.
             embedding_cache (`EmbeddingCacheBase | None`, defaults to \
             ``None``):
                 Optional embedding cache.
@@ -64,6 +68,7 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str]):
         super().__init__(
             credential=credential,
             model=model,
+            dimensions=dimensions,
             parameters=parameters,
             context_size=context_size,
             batch_size=self._TEXT_BATCH_SIZE,

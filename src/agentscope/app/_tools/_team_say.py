@@ -5,6 +5,7 @@ from typing import Any
 from pydantic import Field
 
 from ._team_tool_base import _TeamToolBase
+from .._manager import WakeupBroker
 from ...message import HintBlock, TextBlock, ToolResultState
 from ...tool import ToolChunk, ParamsBase
 
@@ -302,9 +303,10 @@ class TeamSay(_TeamToolBase):
             )
             payload = hint.model_dump(mode="json")
 
+            broker = WakeupBroker(self._message_bus)
             for sid, aid in recipients:
                 await self._message_bus.inbox_push(sid, payload)
-                await self._message_bus.enqueue_wakeup(
+                await broker.enqueue(
                     user_id=self._user_id,
                     session_id=sid,
                     agent_id=aid,

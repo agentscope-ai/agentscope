@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from pydantic import Field
 
 from ._team_tool_base import _TeamToolBase
+from .._manager import WakeupBroker
 from .._types import SubAgentTemplate
 from ..storage import AgentData, AgentRecord, SessionConfig
 from ...message import HintBlock, TextBlock, ToolResultState
@@ -428,7 +429,7 @@ optional):
                 worker_session.id,
                 hint.model_dump(mode="json"),
             )
-            await self._message_bus.enqueue_wakeup(
+            await WakeupBroker(self._message_bus).enqueue(
                 user_id=self._user_id,
                 session_id=worker_session.id,
                 agent_id=worker_agent.id,

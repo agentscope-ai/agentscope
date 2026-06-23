@@ -422,3 +422,194 @@ export interface ListModelResponse {
 	models: ModelCard[];
 	total: number;
 }
+
+// ─── Embedding ────────────────────────────────────────────────────────────────
+
+export interface EmbeddingModelConfig {
+	type: string;
+	credential_id: string;
+	model: string;
+	/**
+	 * Output vector dimensions, pinned at config time. Required because
+	 * the backend uses it to size the vector store collection and to
+	 * validate against the manager's `DimensionPolicy`.
+	 */
+	dimensions: number;
+	parameters: Record<string, unknown>;
+}
+
+export interface EmbeddingModelCard {
+	type: 'embedding_model';
+	name: string;
+	label: string;
+	status: 'active' | 'deprecated' | 'sunset';
+	input_types: string[];
+	output_types: string[];
+	context_size: number | null;
+	/** Default output dimensions for this model. */
+	dimensions: number;
+	/**
+	 * If set, the only dimensions this model can produce (Matryoshka).
+	 * `null` means the model is fixed-dim at `dimensions`.
+	 */
+	supported_dimensions: number[] | null;
+	parameter_schema: Record<string, unknown>;
+	parameter_overrides: Record<string, Record<string, unknown>>;
+}
+
+// ─── Knowledge Base ───────────────────────────────────────────────────────────
+
+/**
+ * Knowledge base view as exposed by the API. Mirrors
+ * :class:`agentscope.app._router._schema.KnowledgeBaseView`.
+ *
+ * Internal `user_id` / `collection_name` are stripped — the front-end
+ * has no business introspecting either.
+ */
+export interface KnowledgeBaseView {
+	id: string;
+	name: string;
+	description: string;
+	embedding_model_config: EmbeddingModelConfig;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface ListKnowledgeBasesResponse {
+	knowledge_bases: KnowledgeBaseView[];
+	total: number;
+}
+
+export interface CreateKnowledgeBaseRequest {
+	name: string;
+	description?: string;
+	embedding_model_config: EmbeddingModelConfig;
+}
+
+export interface CreateKnowledgeBaseResponse {
+	knowledge_base_id: string;
+}
+
+/**
+ * Body for `PATCH /knowledge_bases/{id}`. Only mutable fields can be
+ * sent; the embedding model is pinned at creation time and cannot
+ * change because the underlying collection is sized to its dimension.
+ */
+export interface UpdateKnowledgeBaseRequest {
+	name?: string;
+	description?: string;
+}
+
+/**
+ * Lifecycle states a document can be in. Mirrors
+ * :class:`agentscope.app.storage.KnowledgeDocumentStatus`.
+ *
+ * - `pending` — accepted, blob stored, indexing not yet started.
+ * - `parsing` / `chunking` / `indexing` — worker phases.
+ * - `ready` — chunks committed to the vector store.
+ * - `error` — terminal failure; `error` field carries the reason.
+ */
+export type KnowledgeDocumentStatus =
+	| 'pending'
+	| 'parsing'
+	| 'chunking'
+	| 'indexing'
+	| 'ready'
+	| 'error';
+
+/**
+ * Document view returned by `/knowledge_bases/{id}/documents` and
+ * `/knowledge_bases/{id}/documents/status`. Mirrors
+ * :class:`agentscope.app._router._schema.KnowledgeDocumentView`.
+ */
+export interface KnowledgeDocumentView {
+	id: string;
+	filename: string;
+	size: number;
+	content_type: string | null;
+	status: KnowledgeDocumentStatus;
+	error: string | null;
+	chunk_count: number;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface ListKnowledgeDocumentsResponse {
+	documents: KnowledgeDocumentView[];
+	total: number;
+}
+
+export interface ListKnowledgeDocumentStatusResponse {
+	items: KnowledgeDocumentView[];
+}
+
+export interface UploadKnowledgeDocumentResponse {
+	document_id: string;
+	filename: string;
+	status: KnowledgeDocumentStatus;
+}
+
+export interface SearchKnowledgeBaseRequest {
+	query: string;
+	top_k?: number;
+}
+
+/**
+ * Lightweight chunk shape returned inside `VectorSearchResult`. Mirrors
+ * :class:`agentscope.rag.Chunk` — content is the raw `TextBlock` /
+ * `DataBlock` discriminated union the backend ships.
+ */
+export interface KnowledgeChunk {
+	content: { type: 'text'; text: string; id?: string } | { type: string; [key: string]: unknown };
+	source: string;
+	chunk_index: number;
+	total_chunks: number;
+	metadata: Record<string, unknown>;
+}
+
+/**
+ * One vector search hit returned by the knowledge base search endpoint.
+ * Mirrors :class:`agentscope.rag.VectorSearchResult` on the backend.
+ */
+export interface VectorSearchResult {
+	score: number;
+	document_id: string;
+	chunk: KnowledgeChunk;
+}
+
+export interface SearchKnowledgeBaseResponse {
+	results: VectorSearchResult[];
+	total: number;
+}
+
+/**
+ * Mirrors :class:`agentscope.app.knowledge_base_manager.DimensionPolicyKind`.
+ */
+export type DimensionPolicyKind = 'any' | 'fixed' | 'locked_by_existing';
+
+/**
+ * Mirrors :class:`agentscope.app.knowledge_base_manager.DimensionPolicy`.
+ */
+export interface DimensionPolicy {
+	kind: DimensionPolicyKind;
+	dimension: number | null;
+}
+
+/** One credential and the embedding models it can serve, post-policy. */
+export interface KbEmbeddingProvider {
+	credential: CredentialRecord;
+	models: EmbeddingModelCard[];
+}
+
+/**
+ * Response of `GET /knowledge_bases/embedding_models`.
+ *
+ * Server-side already filtered models by the manager's
+ * :class:`DimensionPolicy` and narrowed matryoshka cards to the
+ * locked dimension when applicable. The policy is included so the
+ * UI can render an explanatory banner.
+ */
+export interface ListKbEmbeddingModelsResponse {
+	providers: KbEmbeddingProvider[];
+	policy: DimensionPolicy;
+}

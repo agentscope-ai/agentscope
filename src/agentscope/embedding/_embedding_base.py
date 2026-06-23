@@ -8,7 +8,7 @@ from abc import abstractmethod
 from pathlib import Path
 from typing import Any, Generic, TypeVar, Type, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from ._embedding_model_card import EmbeddingModelCard
 from ._embedding_response import EmbeddingResponse
@@ -49,19 +49,15 @@ class EmbeddingModelBase(Generic[InputT]):
     """
 
     class Parameters(BaseModel):
-        """Base parameters for embedding models.
+        """Provider-specific tunables for embedding models.
 
-        Contains ``dimensions`` — the single parameter that every
-        embedding model needs.  Subclasses may extend this class to
-        add provider-specific parameters.
+        Intentionally empty in the base — ``dimensions`` is a contract
+        property of an embedding model (its output vector size), not a
+        tunable knob, so it lives directly on the instance via the
+        required :paramref:`__init__.dimensions` argument.  Subclasses
+        extend this class to expose **non-dimensional** knobs (e.g.
+        Gemini's ``task_type``, Dashscope's ``text_type``).
         """
-
-        dimensions: int = Field(
-            default=512,
-            title="Dimensions",
-            description="The output embedding vector dimensions.",
-            gt=0,
-        )
 
     credential: CredentialBase
     """The API credential."""
@@ -70,9 +66,11 @@ class EmbeddingModelBase(Generic[InputT]):
     """The embedding model name."""
 
     dimensions: int
-    """The dimensions of the embedding vector.
+    """The output embedding vector dimensions.
 
-    Shortcut for ``self.parameters.dimensions``, set during ``__init__``.
+    Set directly from the :paramref:`__init__.dimensions` argument —
+    a required, first-class field rather than something derived from
+    :attr:`parameters`.
     """
 
     context_size: int
@@ -87,10 +85,17 @@ class EmbeddingModelBase(Generic[InputT]):
     retry_delay: float
     """Seconds to sleep between retry attempts."""
 
+    supports_multimodal: bool = False
+    """Whether this model instance accepts :class:`DataBlock` inputs in
+    addition to text.  Text-only models keep the default ``False``;
+    multimodal subclasses must set it to ``True`` (per instance when
+    routing depends on the model name)."""
+
     def __init__(
         self,
         credential: CredentialBase,
         model: str,
+        dimensions: int,
         parameters: BaseModel | None,
         context_size: int,
         batch_size: int,
@@ -104,9 +109,14 @@ class EmbeddingModelBase(Generic[InputT]):
                 The API credential used for authentication.
             model (`str`):
                 The name of the embedding model.
+            dimensions (`int`):
+                The output embedding vector dimensions for this
+                instance.  Required and first-class — see the class
+                docstring for the rationale of keeping ``dimensions``
+                outside :class:`Parameters`.
             parameters (`BaseModel | None`):
-                Provider-specific parameters (including ``dimensions``).
-                When ``None``, the default ``Parameters()`` is used.
+                Provider-specific non-dimensional parameters.  When
+                ``None``, the default ``Parameters()`` is used.
             context_size (`int`):
                 Maximum input length (in tokens) per single input item.
             batch_size (`int`):
@@ -121,10 +131,15 @@ class EmbeddingModelBase(Generic[InputT]):
             retry_delay (`float`):
                 Seconds to sleep between retry attempts.
         """
+        if dimensions <= 0:
+            raise ValueError(
+                f"dimensions must be a positive integer, got {dimensions}.",
+            )
+
         self.credential = credential
         self.model = model
+        self.dimensions = dimensions
         self.parameters = parameters or self.Parameters()
-        self.dimensions = self.parameters.dimensions
         self.context_size = context_size
         self.batch_size = batch_size
         self.max_retries = max_retries

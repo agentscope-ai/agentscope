@@ -8,13 +8,14 @@ queued entry whose session is idle, spawns a background
 :class:`ChatRunRegistry`, so the spawned task can be looked up and
 cancelled by :class:`CancelDispatcher`.
 
-All bus keys live on the :class:`MessageBus` base class (see
-``enqueue_wakeup``, ``dequeue_wakeups``, ``subscribe_wakeup_signal``,
-``session_is_running``), so this file has no hard-coded key strings.
+All wake-up bus keys and the queue / signal composition live in
+:mod:`._wakeup_broker` — the bus itself exposes only the transport
+primitives (``queue_drain``, ``subscribe``).
 """
 import asyncio
 from typing import TYPE_CHECKING, Self
 
+from ._wakeup_broker import WakeupBroker
 from ..._logging import logger
 
 if TYPE_CHECKING:
@@ -29,8 +30,9 @@ class WakeupDispatcher:
 
     Args:
         message_bus (`MessageBus`):
-            Application message bus. Used for signal subscription,
-            queue drain, and ``session_is_running`` checks.
+            Application message bus. Composed through
+            :class:`WakeupBroker` for signal subscription / queue
+            drain, and called directly for ``session_is_running``.
         storage (`StorageBase`):
             Persistent storage backend. Consulted before spawning a
             run so wake-ups whose target session has been deleted are
@@ -62,6 +64,7 @@ class WakeupDispatcher:
                 Shared chat-run registry to spawn into.
         """
         self._bus = message_bus
+        self._broker = WakeupBroker(message_bus)
         self._storage = storage
         self._chat_service = chat_service
         self._registry = chat_run_registry
@@ -113,7 +116,7 @@ class WakeupDispatcher:
                 wake-up immediately after start without racing.
         """
         try:
-            async for _signal in self._bus.subscribe_wakeup_signal(
+            async for _signal in self._broker.subscribe_signal(
                 on_ready=ready.set,
             ):
                 await self._drain_and_dispatch()
@@ -125,9 +128,9 @@ class WakeupDispatcher:
     async def _drain_and_dispatch(self) -> None:
         """Read up to a batch of wake-up entries and dispatch them."""
         try:
-            entries = await self._bus.dequeue_wakeups(max_count=64)
+            entries = await self._broker.drain(max_count=64)
         except Exception:  # pylint: disable=broad-except
-            logger.exception("WakeupDispatcher: dequeue_wakeups failed.")
+            logger.exception("WakeupDispatcher: drain failed.")
             return
 
         for payload in entries:

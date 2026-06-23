@@ -76,6 +76,15 @@ workspace = [
 tools = [
     "ripgrep",
 ]
+# ------------ RAG ------------
+rag = [
+    "qdrant-client",
+]
+
+# ------------ S3-compatible blob store ------------
+s3 = [
+    "aioboto3",
+]
 
 # ------------ Full ------------
 full = [
@@ -84,6 +93,8 @@ full = [
     "agentscope[storage]",
     "agentscope[workspace]",
     "agentscope[tools]",
+    "agentscope[rag]",
+    "agentscope[s3]",
 ]
 
 # ------------ Development ------------
@@ -97,6 +108,8 @@ dev = [
     "myst_parser",
     "matplotlib",
     "fakeredis",
+    # S3-backend testing
+    "moto[server,s3]",
 ]
 
 [project.urls]

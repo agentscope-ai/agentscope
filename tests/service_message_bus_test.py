@@ -329,14 +329,23 @@ class TestInboxAndWakeupHelpers(IsolatedAsyncioTestCase):
         )
 
     async def test_enqueue_wakeup_signals_and_queues(self) -> None:
-        """``enqueue_wakeup`` puts the payload on the durable queue and
-        fires the signal channel; a subscriber and a ``dequeue_wakeups``
-        call both see it."""
+        """``WakeupBroker.enqueue`` puts the payload on the durable
+        queue and fires the signal channel; a subscriber and a
+        ``WakeupBroker.drain`` call both see it.
+
+        Lives in this module rather than ``service_wakeup_broker_test``
+        because the broker is a one-line composition of the bus
+        primitives — the test is essentially "the bus primitives still
+        work for this composition", not a broker unit test.
+        """
+        from agentscope.app._manager import WakeupBroker
+
+        broker = WakeupBroker(self.bus)
         ready = asyncio.Event()
         received: list[dict] = []
 
         async def _signal_consumer() -> None:
-            async for payload in self.bus.subscribe_wakeup_signal(
+            async for payload in broker.subscribe_signal(
                 on_ready=ready.set,
             ):
                 received.append(payload)
@@ -345,7 +354,7 @@ class TestInboxAndWakeupHelpers(IsolatedAsyncioTestCase):
         task = asyncio.create_task(_signal_consumer())
         await asyncio.wait_for(ready.wait(), timeout=2.0)
 
-        await self.bus.enqueue_wakeup(
+        await broker.enqueue(
             user_id="u",
             session_id="s",
             agent_id="a",
@@ -356,7 +365,7 @@ class TestInboxAndWakeupHelpers(IsolatedAsyncioTestCase):
         self.assertEqual(len(received), 1)
 
         # Queue holds the structured entry.
-        entries = await self.bus.dequeue_wakeups(max_count=10)
+        entries = await broker.drain(max_count=10)
         self.assertEqual(len(entries), 1)
         self.assertEqual(
             entries[0],

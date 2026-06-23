@@ -29,6 +29,7 @@ from agentscope.app._tools import (
     TeamDelete,
     TeamSay,
 )
+from agentscope.app._manager import WakeupBroker
 from agentscope.app._types import SubAgentTemplate
 from agentscope.app.message_bus import RedisMessageBus
 from agentscope.app.storage import (
@@ -291,7 +292,7 @@ class TestAgentCreate(_TeamToolsTestBase):
         self.assertIn("<team-message", hint_payload["hint"])
 
         # A wakeup was enqueued for the worker.
-        wakeups = await self.bus.dequeue_wakeups(max_count=10)
+        wakeups = await WakeupBroker(self.bus).drain(max_count=10)
         self.assertEqual(len(wakeups), 1)
         self.assertEqual(
             wakeups[0],
@@ -619,7 +620,7 @@ class TestTeamSay(_TeamToolsTestBase):
         )
         # Drain the pre-existing wakeups so subsequent assertions only
         # see what TeamSay enqueues.
-        await self.bus.dequeue_wakeups(max_count=100)
+        await WakeupBroker(self.bus).drain(max_count=100)
         # Resolve worker IDs.
         sess = await self.storage.get_session(
             self.user_id,
@@ -685,7 +686,7 @@ class TestTeamSay(_TeamToolsTestBase):
         self.assertIn("hi w1", target_inbox[0][1]["hint"])
 
         # Wakeup for the target only.
-        wakeups = await self.bus.dequeue_wakeups(max_count=10)
+        wakeups = await WakeupBroker(self.bus).drain(max_count=10)
         self.assertEqual(
             wakeups,
             [
@@ -736,7 +737,7 @@ class TestTeamSay(_TeamToolsTestBase):
         )
         self.assertEqual(leader_inbox, [])
 
-        wakeups = await self.bus.dequeue_wakeups(max_count=10)
+        wakeups = await WakeupBroker(self.bus).drain(max_count=10)
         self.assertEqual(len(wakeups), 2)
 
     async def test_rejects_when_session_not_in_team(self) -> None:
@@ -849,7 +850,7 @@ class TestTeamSay(_TeamToolsTestBase):
         self.assertIn("task done", leader_inbox[0][1]["hint"])
 
         # Wakeup was enqueued for the leader.
-        wakeups = await self.bus.dequeue_wakeups(max_count=10)
+        wakeups = await WakeupBroker(self.bus).drain(max_count=10)
         self.assertEqual(
             wakeups,
             [

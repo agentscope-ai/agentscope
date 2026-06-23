@@ -24,6 +24,21 @@ from ._credential import (
     ListCredentialsResponse,
     ListCredentialSchemasResponse,
 )
+from ._knowledge_base import (
+    CreateKnowledgeBaseRequest,
+    CreateKnowledgeBaseResponse,
+    KbEmbeddingProvider,
+    KnowledgeBaseView,
+    KnowledgeDocumentView,
+    ListKbEmbeddingModelsResponse,
+    ListKnowledgeBasesResponse,
+    ListKnowledgeDocumentsResponse,
+    ListKnowledgeDocumentStatusResponse,
+    SearchKnowledgeBaseRequest,
+    SearchKnowledgeBaseResponse,
+    UpdateKnowledgeBaseRequest,
+    UploadKnowledgeDocumentResponse,
+)
 from ._session import (
     CreateSessionRequest,
     CreateSessionResponse,
@@ -52,6 +67,20 @@ __all__ = [
     "UpdateCredentialRequest",
     "ListCredentialsResponse",
     "ListCredentialSchemasResponse",
+    # Knowledge base
+    "CreateKnowledgeBaseRequest",
+    "CreateKnowledgeBaseResponse",
+    "KbEmbeddingProvider",
+    "KnowledgeBaseView",
+    "KnowledgeDocumentView",
+    "ListKbEmbeddingModelsResponse",
+    "ListKnowledgeBasesResponse",
+    "ListKnowledgeDocumentsResponse",
+    "ListKnowledgeDocumentStatusResponse",
+    "SearchKnowledgeBaseRequest",
+    "SearchKnowledgeBaseResponse",
+    "UpdateKnowledgeBaseRequest",
+    "UploadKnowledgeDocumentResponse",
     # Model
     "ListModelsRequest",
     "ListModelsResponse",

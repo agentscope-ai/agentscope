@@ -105,6 +105,7 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
         self,
         credential: CredentialBase,
         model: str,
+        dimensions: int,
         parameters: "DashScopeEmbeddingModel.Parameters | None" = None,
         embedding_cache: EmbeddingCacheBase | None = None,
         context_size: int = 8192,
@@ -121,10 +122,13 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
                 The embedding model name (e.g.
                 ``"text-embedding-v4"`` or
                 ``"qwen3-vl-embedding"``).
+            dimensions (`int`):
+                The output embedding vector dimensions.  Required —
+                see :class:`EmbeddingModelBase` for the rationale.
             parameters (`DashScopeEmbeddingModel.Parameters | None`, \
             defaults to ``None``):
-                User-configurable parameters (currently only
-                ``dimensions``).
+                Provider-specific non-dimensional parameters.  Currently
+                empty for DashScope.
             embedding_cache (`EmbeddingCacheBase | None`, defaults to \
             ``None``):
                 Optional embedding cache.
@@ -140,6 +144,7 @@ class DashScopeEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
         super().__init__(
             credential=credential,
             model=model,
+            dimensions=dimensions,
             parameters=parameters,
             context_size=context_size,
             batch_size=self._TEXT_BATCH_SIZE,

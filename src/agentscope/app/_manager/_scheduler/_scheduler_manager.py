@@ -11,6 +11,7 @@ from ....state import AgentState
 from ....tool import ToolBase
 from ...._logging import logger
 from ._tools import ScheduleCreate, ScheduleDelete, ScheduleList, ScheduleView
+from .._wakeup_broker import WakeupBroker
 from ...message_bus import MessageBus
 from ...storage import (
     StorageBase,
@@ -236,7 +237,7 @@ class SchedulerManager:
                     session.id,
                     hint.model_dump(mode="json"),
                 )
-                await message_bus.enqueue_wakeup(
+                await WakeupBroker(message_bus).enqueue(
                     user_id=record.user_id,
                     session_id=session.id,
                     agent_id=record.agent_id,

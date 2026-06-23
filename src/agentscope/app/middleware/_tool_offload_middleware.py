@@ -24,7 +24,7 @@ import json
 from copy import deepcopy
 from typing import AsyncGenerator, Callable
 
-from .._manager import BackgroundTaskManager
+from .._manager import BackgroundTaskManager, WakeupBroker
 from ...middleware import MiddlewareBase
 from ...tool import ToolChunk, ToolResponse
 from ...message import (
@@ -348,7 +348,7 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 session_id,
                 hint.model_dump(mode="json"),
             )
-            await self._message_bus.enqueue_wakeup(
+            await WakeupBroker(self._message_bus).enqueue(
                 user_id=self._user_id,
                 session_id=session_id,
                 agent_id=self._agent_id,

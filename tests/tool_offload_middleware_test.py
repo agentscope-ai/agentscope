@@ -336,13 +336,28 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         # Wait long enough for the background tool (0.2s) to finish
         await asyncio.sleep(0.4)
 
-        # enqueue_wakeup must be called exactly once with the correct ids so
-        # WakeupDispatcher can re-invoke ChatService.run for this session.
+        # The middleware composes the wake-up via WakeupBroker, which
+        # translates to a queue_push + publish on the underlying bus.
+        # Assert the two primitive calls land exactly once with the
+        # wake-up key/channel, so the per-process WakeupDispatcher can
+        # re-invoke ChatService.run for this session.
+        from agentscope.app._manager._wakeup_keys import (
+            WAKEUP_QUEUE_KEY,
+            WAKEUP_SIGNAL_CHANNEL,
+        )
+
         mock_bus = middleware._message_bus
-        mock_bus.enqueue_wakeup.assert_called_once_with(
-            user_id="u",
-            session_id=agent.state.session_id,
-            agent_id="a",
+        mock_bus.queue_push.assert_called_once_with(
+            WAKEUP_QUEUE_KEY,
+            {
+                "user_id": "u",
+                "session_id": agent.state.session_id,
+                "agent_id": "a",
+            },
+        )
+        mock_bus.publish.assert_called_once_with(
+            WAKEUP_SIGNAL_CHANNEL,
+            {},
         )
 
     async def test_task_stop_cancels_background_task(self) -> None:

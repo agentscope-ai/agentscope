@@ -89,6 +89,7 @@ class GeminiEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
         self,
         credential: CredentialBase,
         model: str,
+        dimensions: int,
         parameters: "GeminiEmbeddingModel.Parameters | None" = None,
         embedding_cache: EmbeddingCacheBase | None = None,
         context_size: int = 8192,
@@ -105,10 +106,13 @@ class GeminiEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
                 The embedding model name (e.g.
                 ``"gemini-embedding-001"`` or
                 ``"gemini-embedding-2"``).
+            dimensions (`int`):
+                The output embedding vector dimensions.  Required —
+                see :class:`EmbeddingModelBase` for the rationale.
             parameters (`GeminiEmbeddingModel.Parameters | None`, \
             defaults to ``None``):
-                User-configurable parameters (currently only
-                ``dimensions``).
+                Provider-specific non-dimensional parameters.  Currently
+                empty for Gemini.
             embedding_cache (`EmbeddingCacheBase | None`, defaults to \
             ``None``):
                 Optional embedding cache.
@@ -127,12 +131,14 @@ class GeminiEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
         super().__init__(
             credential=credential,
             model=model,
+            dimensions=dimensions,
             parameters=parameters,
             context_size=context_size,
             batch_size=self._TEXT_BATCH_SIZE,
             max_retries=max_retries,
             retry_delay=retry_delay,
         )
+        self.supports_multimodal = self._is_multimodal
 
         self.client: genai.Client = genai.Client(
             api_key=credential.api_key.get_secret_value(),

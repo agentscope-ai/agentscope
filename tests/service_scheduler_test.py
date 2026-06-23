@@ -23,7 +23,7 @@ import fakeredis.aioredis
 
 from utils import AnyString
 
-from agentscope.app._manager import SchedulerManager
+from agentscope.app._manager import SchedulerManager, WakeupBroker
 from agentscope.app.message_bus import RedisMessageBus
 from agentscope.app.storage import (
     ChatModelConfig,
@@ -169,7 +169,7 @@ class TestSchedulerFireDelivery(_SchedulerFireTestBase):
         self.assertIn("please summarise the news", hint["hint"])
 
         # A wakeup is enqueued for that session.
-        wakeups = await self.bus.dequeue_wakeups(max_count=10)
+        wakeups = await WakeupBroker(self.bus).drain(max_count=10)
         self.assertEqual(len(wakeups), 1)
         self.assertEqual(
             wakeups[0],
@@ -196,7 +196,7 @@ class TestSchedulerFireDisabled(_SchedulerFireTestBase):
             record.agent_id,
         )
         self.assertEqual(sessions, [])
-        wakeups = await self.bus.dequeue_wakeups(max_count=10)
+        wakeups = await WakeupBroker(self.bus).drain(max_count=10)
         self.assertEqual(wakeups, [])
 
 
@@ -223,7 +223,7 @@ class TestSchedulerFireStatefulMode(_SchedulerFireTestBase):
         self.assertEqual(len(inbox), 2)
 
         # Two wakeups, both pointing at the same session.
-        wakeups = await self.bus.dequeue_wakeups(max_count=10)
+        wakeups = await WakeupBroker(self.bus).drain(max_count=10)
         self.assertEqual(
             wakeups,
             [

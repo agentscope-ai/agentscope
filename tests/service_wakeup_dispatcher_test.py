@@ -20,6 +20,10 @@ from typing import Any, AsyncGenerator, Callable
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.app._manager import ChatRunRegistry, WakeupDispatcher
+from agentscope.app._manager._wakeup_keys import (
+    WAKEUP_QUEUE_KEY,
+    WAKEUP_SIGNAL_CHANNEL,
+)
 from agentscope.app.message_bus import MessageBus
 
 
@@ -49,10 +53,11 @@ class _FakeStorage:
 class _FakeBus(MessageBus):
     """In-memory bus with just enough behaviour for the dispatcher.
 
-    Implements the four primitives the dispatcher uses
-    (``queue_push`` / ``dequeue_wakeups`` indirectly via the parent's
-    domain helper / ``subscribe_wakeup_signal`` / ``is_locked`` /
-    ``publish``) and stubs the others.
+    Implements the primitives the dispatcher actually uses
+    (``queue_push`` / ``queue_drain`` / ``subscribe`` / ``is_locked`` /
+    ``publish``) and stubs the others. The dispatcher composes wake-up
+    behaviour through :class:`WakeupBroker`, which calls the primitives
+    above — no wake-up-specific methods exist on the bus.
     """
 
     def __init__(self) -> None:
@@ -196,10 +201,10 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
             chat_run_registry=ChatRunRegistry(),
         ):
             await bus.queue_push(
-                MessageBus._WAKEUP_QUEUE_KEY,
+                WAKEUP_QUEUE_KEY,
                 {"user_id": "u", "session_id": "s1", "agent_id": "a1"},
             )
-            await bus.publish(MessageBus._WAKEUP_SIGNAL_KEY, {})
+            await bus.publish(WAKEUP_SIGNAL_CHANNEL, {})
 
             await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
 
@@ -221,7 +226,7 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
         bus = _FakeBus()
         chat = _FakeChatService()
         await bus.queue_push(
-            MessageBus._WAKEUP_QUEUE_KEY,
+            WAKEUP_QUEUE_KEY,
             {"user_id": "u", "session_id": "pre", "agent_id": "a"},
         )
 
@@ -259,10 +264,10 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
             chat_run_registry=ChatRunRegistry(),
         ):
             await bus.queue_push(
-                MessageBus._WAKEUP_QUEUE_KEY,
+                WAKEUP_QUEUE_KEY,
                 {"user_id": "u", "session_id": "busy", "agent_id": "a"},
             )
-            await bus.publish(MessageBus._WAKEUP_SIGNAL_KEY, {})
+            await bus.publish(WAKEUP_SIGNAL_CHANNEL, {})
             await asyncio.sleep(0.05)
 
         self.assertEqual(chat.calls, [])
@@ -280,14 +285,14 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
             chat_run_registry=ChatRunRegistry(),
         ):
             await bus.queue_push(
-                MessageBus._WAKEUP_QUEUE_KEY,
+                WAKEUP_QUEUE_KEY,
                 {"oops": True},
             )
             await bus.queue_push(
-                MessageBus._WAKEUP_QUEUE_KEY,
+                WAKEUP_QUEUE_KEY,
                 {"user_id": "u", "session_id": "s2", "agent_id": "a"},
             )
-            await bus.publish(MessageBus._WAKEUP_SIGNAL_KEY, {})
+            await bus.publish(WAKEUP_SIGNAL_CHANNEL, {})
             await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
 
         # Only the valid entry made it through.
@@ -319,14 +324,14 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
             chat_run_registry=ChatRunRegistry(),
         ):
             await bus.queue_push(
-                MessageBus._WAKEUP_QUEUE_KEY,
+                WAKEUP_QUEUE_KEY,
                 {"user_id": "u", "session_id": "ghost", "agent_id": "a"},
             )
             await bus.queue_push(
-                MessageBus._WAKEUP_QUEUE_KEY,
+                WAKEUP_QUEUE_KEY,
                 {"user_id": "u", "session_id": "live", "agent_id": "a"},
             )
-            await bus.publish(MessageBus._WAKEUP_SIGNAL_KEY, {})
+            await bus.publish(WAKEUP_SIGNAL_CHANNEL, {})
             await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
 
         self.assertEqual(

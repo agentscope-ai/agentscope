@@ -50,8 +50,21 @@ class EmbeddingModelConfig(BaseModel):
     model: str
     """The embedding model name (e.g. ``"text-embedding-3-small"``)."""
 
-    parameters: dict
-    """The embedding model parameters (e.g. ``{"dimensions": 1024}``)."""
+    dimensions: int = Field(..., gt=0)
+    """The output embedding vector dimensions.
+
+    Required and first-class — chosen at config-creation time and
+    pinned to the resulting :class:`KnowledgeBaseRecord` so subsequent
+    indexing / retrieval calls are dim-deterministic without any
+    fallback lookup.
+    """
+
+    parameters: dict = Field(default_factory=dict)
+    """The provider-specific non-dimensional parameters.
+
+    Does **not** carry ``dimensions`` — that field is promoted to a
+    top-level attribute above.
+    """
 
 
 class SessionConfig(BaseModel):
