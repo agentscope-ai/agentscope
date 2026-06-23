@@ -16,6 +16,10 @@ Create model credentials and a session through the normal AgentScope service
 API or Web UI after the server starts. The example focuses on extension-point
 wiring: AgentScope still owns agent assembly, authentication, persistence,
 message delivery, and workspace lifecycle.
+
+File LTM does not configure a separate chat model. Each service Agent already
+has a model selected through its normal credentials/configuration, and static
+memory extraction reuses that Agent model.
 """
 import os
 from pathlib import Path
@@ -45,6 +49,9 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 # stores, locks, and snapshots by workspace_id. Both factories below must bind
 # this same object so state-injected tools can resolve the store registered by
 # the middleware hooks.
+#
+# No chat model is passed here. Static extraction reuses the model belonging
+# to whichever service Agent is currently running the middleware hook.
 file_ltm = FileLongTermMemoryMiddleware(
     mode="both",
     extraction_interval=8,

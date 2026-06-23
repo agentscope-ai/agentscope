@@ -175,8 +175,8 @@ class FileLTMStore:
         """Apply one constrained mutation and return its workspace path.
 
         ``add`` deduplicates normalized content and can place a bullet inside
-        an existing section. Creating a new section requires the explicit
-        ``create_section`` flag and is limited to USER/MEMORY documents.
+        an existing section. Creating a new section in any target requires the
+        explicit ``create_section`` flag.
         ``replace`` and ``remove`` require ``old_text`` to match exactly once.
 
         The caller serializes writes with a workspace lock; this method still
@@ -200,12 +200,6 @@ class FileLTMStore:
                 raise ValueError(
                     "`section` is required when create_section is true.",
                 )
-            if target == "daily":
-                raise ValueError(
-                    "Creating custom sections is only supported for "
-                    "USER.md and MEMORY.md.",
-                )
-
         if action == "add":
             if not content or not content.strip():
                 raise ValueError("`content` is required for add.")
@@ -240,77 +234,21 @@ class FileLTMStore:
         await self._accessor.write_text(path, updated)
         return path
 
-    async def append_daily_entry(
-        self,
-        *,
-        facts: list[str],
-        decisions: list[str],
-        todos: list[str],
-        lessons: list[str],
-        session_id: str,
-        turn_range: str,
-        now: datetime | None = None,
-    ) -> str | None:
-        """Append one structured extraction entry to today's daily file.
-
-        Empty categories and facts already present in the current document are
-        omitted. Entries retain session and turn-range provenance without
-        copying raw conversation text.
-        """
-        if not any((facts, decisions, todos, lessons)):
-            return None
-        current_time = now or datetime.now().astimezone()
-        daily_date = current_time.date().isoformat()
-        path = self._target_path("daily", daily_date)
-        current = await self.read_target("daily", daily_date=daily_date)
-        if not current:
-            current = self._daily_header(daily_date)
-
-        sections = []
-        for title, items in (
-            ("Facts And Progress", facts),
-            ("Decisions", decisions),
-            ("Todos", todos),
-            ("Lessons And Corrections", lessons),
-        ):
-            unique = [item.strip() for item in items if item.strip()]
-            unique = [
-                item
-                for item in unique
-                if not self._contains_normalized(current, item)
-            ]
-            if unique:
-                sections.append(
-                    f"### {title}\n"
-                    + "\n".join(f"- {item}" for item in unique),
-                )
-        if not sections:
-            return path
-
-        entry = (
-            f"\n## {current_time.strftime('%H:%M')} | "
-            f"session: {session_id} | turns: {turn_range}\n\n"
-            + "\n\n".join(sections)
-            + "\n"
-        )
-        updated = current.rstrip() + "\n" + entry
-        self._check_limit("daily", updated)
-        await self._accessor.write_text(path, updated)
-        return path
-
     async def apply_edits(
         self,
-        target: Literal["user", "memory"],
+        target: Literal["user", "memory", "daily"],
         *,
-        add: list[tuple[str, str]],
+        add: list[tuple[str, str, bool]],
         replace: list[tuple[str, str]],
         remove: list[str],
+        daily_date: str | None = None,
     ) -> None:
-        """Apply structured extractor edits to USER or MEMORY.
+        """Apply structured extractor edits to one memory document.
 
         A model may produce a replacement based on a snapshot that became
         stale before the lock was acquired. Invalid replacements/removals are
         therefore ignored instead of aborting all other extracted edits.
+        ``daily_date=None`` targets today's notebook.
         """
         for old_text in remove:
             try:
@@ -318,6 +256,7 @@ class FileLTMStore:
                     action="remove",
                     target=target,
                     old_text=old_text,
+                    daily_date=daily_date,
                 )
             except ValueError:
                 continue
@@ -328,15 +267,18 @@ class FileLTMStore:
                     target=target,
                     old_text=old_text,
                     content=content,
+                    daily_date=daily_date,
                 )
             except ValueError:
                 continue
-        for section, content in add:
+        for section, content, create_section in add:
             await self.update_target(
                 action="add",
                 target=target,
                 content=content,
                 section=section,
+                create_section=create_section,
+                daily_date=daily_date,
             )
 
     async def increment_turn(self) -> tuple[int, int]:
@@ -381,7 +323,17 @@ class FileLTMStore:
         await self.ensure_layout()
         query = query.strip()
         if not query or limit <= 0:
-            return []
+            if not query:
+                content = "no query provided."
+            else:
+                content = "limit is less than 1."
+            res = MemorySearchResult(
+                source="Error: Invalid input.",
+                section="Invalid input.",
+                content="Search failed, " + content,
+                relevance=0.0,
+            )
+            return [res]
 
         current_date = today or datetime.now().astimezone().date()
         earliest = current_date - timedelta(days=max(days - 1, 0))
@@ -460,7 +412,10 @@ class FileLTMStore:
         }[target]
         if len(content) > limit:
             raise ValueError(
-                f"{target} memory would exceed its {limit}-character limit.",
+                f"{target} memory would exceed its {limit}-character limit "
+                f"(current: {len(content)}-character). "
+                f"Please consolidate or merge existing entries before retrying, "
+                f"and discard less important memories if necessary."
             )
 
     async def _read_meta(self) -> dict:

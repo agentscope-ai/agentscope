@@ -6,6 +6,10 @@ The demo creates two independent :class:`Agent` instances backed by the same
 memory; Session 2 starts with fresh conversation state and demonstrates that
 the workspace files bridge the two sessions.
 
+File LTM does not need a dedicated chat model. This example chooses DashScope
+only as the model provider for the demo Agents; static extraction reuses that
+same ``Agent.model`` automatically.
+
 During each turn the script prints:
 
 - every agent-initiated ``memory_read`` / ``memory_search`` /
@@ -49,7 +53,7 @@ MODE = "auto"
 
 # True gives every run a deterministic empty workspace. Set this to False to
 # demonstrate persistence across process restarts.
-RESET_DEMO_WORKSPACE = True
+RESET_DEMO_WORKSPACE = False
 
 # Memory is stored next to this script so it is easy to inspect while running
 # the example. A production application normally chooses its own workspace
@@ -160,6 +164,9 @@ async def main() -> None:
     else:
         print(f"=== reusing demo workspace: {DEMO_WORKSPACE} ===")
 
+    # DashScope is used only to give the demo Agent a concrete chat model. The
+    # LTM middleware does not receive or construct a second model: static
+    # extraction calls the model already attached to the active Agent.
     model = DashScopeChatModel(
         credential=DashScopeCredential(api_key=api_key),
         model="qwen3.7-max",
@@ -173,6 +180,12 @@ async def main() -> None:
     # extraction_interval=1 makes static extraction visible after every
     # completed turn. A production value such as 8 reduces model calls.
     # In auto mode this interval is unused because only memory_manage writes.
+    # There is intentionally no model argument here: the middleware accesses
+    # the active Agent's model only when static extraction is due.
+    #
+    # If the workspace parameter is not provided, the workspace will be
+    # loaded from agent.offloader. If it is still empty, a LocalWorkspace
+    # will be created locally.
     memory = FileLongTermMemoryMiddleware(
         workspace=workspace,
         mode=MODE,
@@ -201,7 +214,7 @@ async def main() -> None:
         print("\n=== SESSION 2 (fresh Agent, same workspace) ===")
         message = (
             "What do you remember about me, our LTM decision, and today's "
-            "unfinished work? Search daily memory if needed."
+            "unfinished work? Search memory if needed."
         )
         print(f"[user] {message}\n")
         agent = await _build_agent(model, workspace, memory)

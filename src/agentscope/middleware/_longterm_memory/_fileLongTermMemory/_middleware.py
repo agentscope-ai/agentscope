@@ -51,8 +51,9 @@ preferences belong in `user`; reusable project knowledge belongs in
 `memory`; current progress, decisions and todos belong in `daily`. Replace
 stale facts instead of keeping contradictory versions. Before managing a
 target, call `memory_read` for that target and inspect its current content and
-sections. When adding to USER or MEMORY, choose the most specific existing
-section. Create a new section only when none is suitable. Never store secrets.
+sections. When adding, choose the most specific existing section in the target.
+Daily memory is today's working notebook and may use any useful section. Create
+a new section only when none is suitable. Never store secrets.
 """
 
 EXTRACTION_PROMPT = """Extract only durable or useful memory from the recent
@@ -61,10 +62,11 @@ API keys, tokens, private credentials, or unsupported sensitive inferences.
 
 Write stable user identity, preferences and long-term requirements to USER.
 Write reusable project facts, decisions, environment details and lessons to
-MEMORY. Write current progress, decisions, todos and temporary context to the
-daily entry. For replace/remove operations, old_text must be copied exactly
-from the current file. When adding to USER or MEMORY, choose the most specific
-existing section. Create a new section only when none is suitable. Return empty
+MEMORY. Treat today's daily memory as the agent's working notebook: store any
+useful current progress, observations, decisions, todos, plans, or temporary
+context there. For all three documents, update an existing section when it is
+suitable, or explicitly create a new section when needed. For replace/remove
+operations, old_text must be copied exactly from the current file. Return empty
 lists when nothing is worth remembering.
 """
 
@@ -77,10 +79,11 @@ class _Replacement(BaseModel):
 
 
 class _Addition(BaseModel):
-    """One extracted fact and the existing section that should contain it."""
+    """One extracted fact and the section that should contain it."""
 
     section: str
     content: str
+    create_section: bool = False
 
 
 class _DocumentEdits(BaseModel):
@@ -91,19 +94,10 @@ class _DocumentEdits(BaseModel):
     remove: list[str] = Field(default_factory=list)
 
 
-class _DailyUpdate(BaseModel):
-    """Categorized episodic information appended to today's daily file."""
-
-    facts: list[str] = Field(default_factory=list)
-    decisions: list[str] = Field(default_factory=list)
-    todos: list[str] = Field(default_factory=list)
-    lessons: list[str] = Field(default_factory=list)
-
-
 class _MemoryExtraction(BaseModel):
     """Complete structured result expected from the agent's chat model."""
 
-    daily: _DailyUpdate = Field(default_factory=_DailyUpdate)
+    daily: _DocumentEdits = Field(default_factory=_DocumentEdits)
     user: _DocumentEdits = Field(default_factory=_DocumentEdits)
     memory: _DocumentEdits = Field(default_factory=_DocumentEdits)
 
@@ -111,9 +105,10 @@ class _MemoryExtraction(BaseModel):
 class FileLongTermMemoryMiddleware(MiddlewareBase):
     """Maintain human-readable long-term memory inside Agent workspaces.
 
-    ``USER.md`` and ``MEMORY.md`` are appended to the system prompt. Daily
-    episodic memories live under ``Memory/memory/YYYY-MM-DD.md`` and are
-    retrieved on demand with lightweight lexical search.
+    ``USER.md`` and ``MEMORY.md`` are appended to the normal Agent system
+    prompt. Daily notes live under ``Memory/memory/YYYY-MM-DD.md`` and are
+    retrieved on demand. Static extraction separately reads today's daily file
+    as an update baseline without exposing it to the normal reply context.
 
     ``mode="static"`` periodically extracts memory from recent completed
     turns. ``mode="auto"`` exposes ``memory_manage`` for agent-controlled
@@ -167,7 +162,8 @@ class FileLongTermMemoryMiddleware(MiddlewareBase):
             user_max_chars, memory_max_chars, daily_max_chars:
                 Per-document character caps enforced after every mutation.
             max_prompt_chars:
-                Maximum number of characters appended to the system prompt.
+                Character cap applied to the memory snapshot block before
+                optional manage instructions are appended.
             fallback_workspace_root:
                 Host root under which middleware-owned LocalWorkspaces are
                 created when neither an explicit workspace nor offloader is
@@ -475,15 +471,16 @@ class FileLongTermMemoryMiddleware(MiddlewareBase):
     ) -> None:
         """Extract structured memory from recent context and persist it.
 
-        The model receives current USER/MEMORY text so replacements can quote
-        exact old content. Daily information is written first, followed by
-        constrained document edits. The turn watermark advances only after the
-        full extraction succeeds.
+        The internal extraction call receives current USER, MEMORY, and today's
+        daily text so replacements can quote exact old content. The daily text
+        is not injected into the Agent's normal system prompt. The turn
+        watermark advances only after all three documents are updated.
         """
         transcript = self._render_recent_dialogue(agent.state.context)
         if not transcript:
             return
         snapshot = await store.read_snapshot()
+        current_daily = await store.read_target("daily")
         # Structured output keeps model prose away from the mutation layer and
         # gives every addition an explicit target section.
         messages = [
@@ -493,7 +490,10 @@ class FileLongTermMemoryMiddleware(MiddlewareBase):
                 content=(
                     "Current USER.md:\n"
                     f"{snapshot.user}\n\nCurrent MEMORY.md:\n"
-                    f"{snapshot.memory}\n\nRecent conversation:\n{transcript}"
+                    f"{snapshot.memory}\n\nToday's daily memory:\n"
+                    f"{current_daily or '(empty)'}\n\n"
+                    f"Covered turns: {last_update + 1}-{turn_count}\n\n"
+                    f"Recent conversation:\n{transcript}"
                 ),
             ),
         ]
@@ -503,18 +503,30 @@ class FileLongTermMemoryMiddleware(MiddlewareBase):
                 structured_model=_MemoryExtraction,
             )
             extraction = _MemoryExtraction.model_validate(response.content)
-            await store.append_daily_entry(
-                facts=extraction.daily.facts,
-                decisions=extraction.daily.decisions,
-                todos=extraction.daily.todos,
-                lessons=extraction.daily.lessons,
-                session_id=agent.state.session_id,
-                turn_range=f"{last_update + 1}-{turn_count}",
+            await store.apply_edits(
+                "daily",
+                add=[
+                    (
+                        item.section,
+                        item.content,
+                        item.create_section,
+                    )
+                    for item in extraction.daily.add
+                ],
+                replace=[
+                    (item.old_text, item.new_text)
+                    for item in extraction.daily.replace
+                ],
+                remove=extraction.daily.remove,
             )
             await store.apply_edits(
                 "user",
                 add=[
-                    (item.section, item.content)
+                    (
+                        item.section,
+                        item.content,
+                        item.create_section,
+                    )
                     for item in extraction.user.add
                 ],
                 replace=[
@@ -526,7 +538,11 @@ class FileLongTermMemoryMiddleware(MiddlewareBase):
             await store.apply_edits(
                 "memory",
                 add=[
-                    (item.section, item.content)
+                    (
+                        item.section,
+                        item.content,
+                        item.create_section,
+                    )
                     for item in extraction.memory.add
                 ],
                 replace=[

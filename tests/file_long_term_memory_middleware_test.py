@@ -22,7 +22,7 @@ from datetime import datetime
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from agentscope.agent import Agent
-from agentscope.message import TextBlock, UserMsg
+from agentscope.message import Msg, TextBlock, UserMsg
 from agentscope.middleware import FileLongTermMemoryMiddleware
 from agentscope.middleware._longterm_memory._fileLongTermMemory import (
     _accessor,
@@ -51,17 +51,34 @@ class _ExtractionModel(MockModel):
         """Initialize the model and its extraction-call counter."""
         super().__init__(*args, **kwargs)
         self.extraction_calls = 0
+        self.extraction_messages: list[Msg] = []
 
     async def generate_structured_output(self, *args, **kwargs):
         """Return edits spanning daily, USER, and MEMORY layers."""
         self.extraction_calls += 1
+        self.extraction_messages = list(kwargs.get("messages", []))
         return StructuredResponse(
             content={
                 "daily": {
-                    "facts": ["Implemented the file LTM."],
-                    "decisions": ["Use Markdown files."],
-                    "todos": ["Add integration documentation."],
-                    "lessons": [],
+                    "add": [
+                        {
+                            "section": "Work Log",
+                            "content": "Implemented the file LTM.",
+                            "create_section": True,
+                        },
+                        {
+                            "section": "Next Steps",
+                            "content": "Add integration documentation.",
+                            "create_section": True,
+                        },
+                    ],
+                    "replace": [
+                        {
+                            "old_text": "Initial notebook context.",
+                            "new_text": "Refined notebook context.",
+                        },
+                    ],
+                    "remove": [],
                 },
                 "user": {
                     "add": [
@@ -189,14 +206,21 @@ class TestFileLongTermMemoryStore(IsolatedAsyncioTestCase):
     async def test_daily_memory_and_lightweight_search(self) -> None:
         """Daily entries should be retrievable by lexical phrase matching."""
         now = datetime.fromisoformat("2026-06-21T10:30:00+08:00")
-        await self.store.append_daily_entry(
-            facts=["Finished the authentication data model."],
-            decisions=["JWT access tokens expire in 15 minutes."],
-            todos=["Test refresh-token concurrency."],
-            lessons=[],
-            session_id="session-1",
-            turn_range="1-8",
-            now=now,
+        await self.store.update_target(
+            action="add",
+            target="daily",
+            content="Finished the authentication data model.",
+            section="Progress",
+            create_section=True,
+            daily_date=now.date().isoformat(),
+        )
+        await self.store.update_target(
+            action="add",
+            target="daily",
+            content="JWT access tokens expire in 15 minutes.",
+            section="Decisions",
+            create_section=True,
+            daily_date=now.date().isoformat(),
         )
 
         results = await self.store.search(
@@ -336,6 +360,45 @@ class TestFileLongTermMemoryMiddleware(IsolatedAsyncioTestCase):
         ].read_target("user")
         self.assertIn("## Accessibility Needs", user_memory)
 
+        daily_before = await read(
+            target="daily",
+            _agent_state=state,
+        )
+        self.assertIn(
+            "Available ## sections: (none)",
+            daily_before.content[0].text,
+        )
+        daily_created = await manage(
+            action="add",
+            target="daily",
+            thinking="Today's notebook needs a section for active ideas.",
+            content="Explore section-aware daily memory.",
+            section="Ideas",
+            create_section=True,
+            _agent_state=state,
+        )
+        self.assertIn("Memory updated", daily_created.content[0].text)
+
+        await read(target="daily", _agent_state=state)
+        daily_rewritten = await manage(
+            action="replace",
+            target="daily",
+            thinking="The idea is now a concrete implementation task.",
+            old_text="Explore section-aware daily memory.",
+            content="Implement section-aware daily memory.",
+            _agent_state=state,
+        )
+        self.assertIn("Memory updated", daily_rewritten.content[0].text)
+        daily = await middleware._stores[
+            self.workspace.workspace_id
+        ].read_target("daily")
+        self.assertIn("## Ideas", daily)
+        self.assertIn("Implement section-aware daily memory.", daily)
+
+        state.reply_id = "daily-not-in-system-prompt"
+        prompt = await middleware.on_system_prompt(agent, "base")
+        self.assertNotIn("Implement section-aware daily memory.", prompt)
+
     async def test_shared_middleware_isolates_workspaces(self) -> None:
         """One middleware instance must not mix two workspace memories."""
         second_temp = tempfile.TemporaryDirectory()
@@ -402,6 +465,14 @@ class TestFileLongTermMemoryMiddleware(IsolatedAsyncioTestCase):
 
     async def test_static_extraction_writes_all_memory_layers(self) -> None:
         """Static extraction should update daily, USER, and MEMORY files."""
+        seed_store = FileLTMStore(WorkspaceFileAccessor(self.workspace))
+        await seed_store.update_target(
+            action="add",
+            target="daily",
+            content="Initial notebook context.",
+            section="Scratchpad",
+            create_section=True,
+        )
         model = _ExtractionModel(context_size=100_000)
         model.set_responses(
             [
@@ -427,6 +498,9 @@ class TestFileLongTermMemoryMiddleware(IsolatedAsyncioTestCase):
 
         reply = await agent.reply(UserMsg("user", "Please implement LTM."))
         self.assertEqual(reply.get_text_content(), "Done.")
+        extraction_input = model.extraction_messages[-1].get_text_content()
+        self.assertIn("Today's daily memory", extraction_input)
+        self.assertIn("Initial notebook context.", extraction_input)
 
         store = middleware._stores[self.workspace.workspace_id]
         self.assertIn(
@@ -442,6 +516,8 @@ class TestFileLongTermMemoryMiddleware(IsolatedAsyncioTestCase):
             daily_date=datetime.now().astimezone().date().isoformat(),
         )
         self.assertIn("Implemented the file LTM", daily)
+        self.assertIn("## Work Log", daily)
+        self.assertIn("Refined notebook context.", daily)
 
     async def test_compaction_hook_does_not_extract_below_threshold(
         self,

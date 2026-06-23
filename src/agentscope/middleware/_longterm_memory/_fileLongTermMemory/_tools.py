@@ -12,7 +12,7 @@ edit becomes model-visible feedback instead of terminating the reply loop.
 """
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 from ....message import TextBlock, ToolResultState
 from ....permission import PermissionBehavior, PermissionDecision
@@ -23,18 +23,23 @@ if TYPE_CHECKING:
     from ._middleware import FileLongTermMemoryMiddleware
 
 
+MemoryTarget: TypeAlias = Literal["user", "memory", "daily"]
+MemoryScope: TypeAlias = Literal["daily", "all"]
+MemoryAction: TypeAlias = Literal["add", "replace", "remove"]
+
+
 class _FileLTMToolBase(ToolBase):
     """Base class for state-injected, auto-allowed LTM tools.
 
     Memory operations are ordinary internal agent capabilities. Prompting for
     external-execution permission on every read or write would make autonomous
-    memory impractical, so all three tools allow themselves explicitly.
+    memory impractical, so every file-LTM tool allows itself explicitly.
     """
 
-    is_external_tool = False
-    is_state_injected = True
-    is_mcp = False
-    mcp_name = None
+    is_external_tool: bool = False
+    is_state_injected: bool = True
+    is_mcp: bool = False
+    mcp_name: str | None = None
 
     def __init__(self, middleware: "FileLongTermMemoryMiddleware") -> None:
         """Bind a tool instance to the middleware's store registry."""
@@ -55,12 +60,12 @@ class _FileLTMToolBase(ToolBase):
 class _MemoryReadTool(_FileLTMToolBase):
     """Read one complete memory document and expose its section names."""
 
-    name = "memory_read"
-    description = (
+    name: str = "memory_read"
+    description: str = (
         "Read the workspace's persistent user profile, long-term memory, "
-        "or one dated daily-memory file. "
+        "or one dated daily-memory file."
     )
-    input_schema = {
+    input_schema: dict[str, Any] = {
         "type": "object",
         "properties": {
             "target": {
@@ -69,17 +74,21 @@ class _MemoryReadTool(_FileLTMToolBase):
             },
             "date": {
                 "type": "string",
-                "description": "YYYY-MM-DD; only used for target=daily.",
+                "format": "date",
+                "description": (
+                    "Daily-memory date in YYYY-MM-DD format. Omit to read "
+                    "today; ignored for user and memory targets."
+                ),
             },
         },
         "required": ["target"],
     }
-    is_concurrency_safe = True
-    is_read_only = True
+    is_concurrency_safe: bool = True
+    is_read_only: bool = True
 
     async def __call__(
         self,
-        target: str,
+        target: MemoryTarget,
         date: str | None = None,
         *,
         _agent_state: AgentState,
@@ -90,11 +99,11 @@ class _MemoryReadTool(_FileLTMToolBase):
         expected to inspect it before choosing a section for ``memory_manage``.
 
         Args:
-            target:
+            target (MemoryTarget):
                 ``"user"``, ``"memory"``, or ``"daily"``.
-            date:
+            date (str | None):
                 ISO date for a daily target; ignored by other targets.
-            _agent_state:
+            _agent_state (AgentState):
                 Live state injected by the AgentScope toolkit.
         """
         try:
@@ -115,32 +124,46 @@ class _MemoryReadTool(_FileLTMToolBase):
 class _MemorySearchTool(_FileLTMToolBase):
     """Search Markdown memory sections with lightweight lexical matching."""
 
-    name = "memory_search"
-    description = (
-        "Search recent daily memories using lightweight lexical matching. "
-        "Use scope=all to include MEMORY.md and USER.md."
+    name: str = "memory_search"
+    description: str = (
+        "Search Markdown memory sections with lightweight lexical matching. "
+        "The default searches recent daily notebooks; use scope=all to also "
+        "include MEMORY.md and USER.md."
     )
-    input_schema = {
+    input_schema: dict[str, Any] = {
         "type": "object",
         "properties": {
-            "query": {"type": "string"},
+            "query": {
+                "type": "string",
+                "description": "Phrase or keywords to find in memory.",
+            },
             "scope": {
                 "type": "string",
                 "enum": ["daily", "all"],
                 "default": "daily",
             },
-            "days": {"type": "integer", "minimum": 1, "default": 30},
-            "limit": {"type": "integer", "minimum": 1, "default": 5},
+            "days": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 30,
+                "description": "Inclusive daily-memory lookback window.",
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 5,
+                "description": "Maximum number of sections to return.",
+            },
         },
         "required": ["query"],
     }
-    is_concurrency_safe = True
-    is_read_only = True
+    is_concurrency_safe: bool = True
+    is_read_only: bool = True
 
     async def __call__(
         self,
         query: str,
-        scope: str = "daily",
+        scope: MemoryScope = "daily",
         days: int = 30,
         limit: int = 5,
         *,
@@ -149,16 +172,16 @@ class _MemorySearchTool(_FileLTMToolBase):
         """Return the highest-ranked matching Markdown sections.
 
         Args:
-            query:
+            query (str):
                 Phrase or keywords to find.
-            scope:
+            scope (MemoryScope):
                 ``"daily"`` for dated files only or ``"all"`` to include
                 USER and MEMORY.
-            days:
+            days (int):
                 Inclusive daily-memory lookback window.
-            limit:
+            limit (int):
                 Maximum number of matching sections returned.
-            _agent_state:
+            _agent_state (AgentState):
                 Live state injected by the AgentScope toolkit.
         """
         try:
@@ -186,14 +209,14 @@ class _MemorySearchTool(_FileLTMToolBase):
 class _MemoryManageTool(_FileLTMToolBase):
     """Apply one constrained add, replace, or remove operation."""
 
-    name = "memory_manage"
-    description = (
+    name: str = "memory_manage"
+    description: str = (
         "Update persistent workspace memory. Always call memory_read for the "
         "same target first, then use its current content and sections. Add "
         "to an existing section when possible; set create_section=true only "
         "when no current section is suitable."
     )
-    input_schema = {
+    input_schema: dict[str, Any] = {
         "type": "object",
         "properties": {
             "action": {
@@ -206,14 +229,18 @@ class _MemoryManageTool(_FileLTMToolBase):
             },
             "content": {
                 "type": "string",
-                "description": "New content for add or replace.",
+                "description": (
+                    "New text required for add and replace. Add writes it as "
+                    "a bullet; replace substitutes the exact old_text."
+                ),
             },
             "section": {
                 "type": "string",
                 "description": (
                     "Exact existing level-two Markdown heading for add. "
-                    "Custom existing headings are also valid when no "
-                    "existing sections are suitable. "
+                    "Valid for user, memory, and today's daily notebook. If "
+                    "none fits, provide a new plain heading together with "
+                    "create_section=true."
                 ),
             },
             "create_section": {
@@ -221,14 +248,16 @@ class _MemoryManageTool(_FileLTMToolBase):
                 "default": False,
                 "description": (
                     "Create section as a new ## heading when it does not "
-                    "exist. Only valid for action=add with target=user or "
-                    "target=memory, and only after memory_read confirms no "
-                    "existing section is suitable."
+                    "exist. Only valid for action=add, and only after "
+                    "memory_read confirms no existing section is suitable."
                 ),
             },
             "old_text": {
                 "type": "string",
-                "description": "Exact unique text for replace or remove.",
+                "description": (
+                    "Current text required for replace/remove. It must match "
+                    "exactly once in the target document."
+                ),
             },
             "thinking": {
                 "type": "string",
@@ -237,13 +266,13 @@ class _MemoryManageTool(_FileLTMToolBase):
         },
         "required": ["action", "target", "thinking"],
     }
-    is_concurrency_safe = False
-    is_read_only = False
+    is_concurrency_safe: bool = False
+    is_read_only: bool = False
 
     async def __call__(
         self,
-        action: str,
-        target: str,
+        action: MemoryAction,
+        target: MemoryTarget,
         thinking: str,
         content: str | None = None,
         old_text: str | None = None,
@@ -258,21 +287,21 @@ class _MemoryManageTool(_FileLTMToolBase):
         the result for auditability but is not forwarded to the store.
 
         Args:
-            action:
+            action (MemoryAction):
                 ``"add"``, ``"replace"``, or ``"remove"``.
-            target:
+            target (MemoryTarget):
                 ``"user"``, ``"memory"``, or ``"daily"``.
-            thinking:
+            thinking (str):
                 Rationale retained only in the tool result.
-            content:
+            content (str | None):
                 New text required by add/replace.
-            old_text:
+            old_text (str | None):
                 Exact unique text required by replace/remove.
-            section:
+            section (str | None):
                 Existing level-two heading used by add.
-            create_section:
-                Whether add may create a missing USER/MEMORY heading.
-            _agent_state:
+            create_section (bool):
+                Whether add may create a missing heading in the target.
+            _agent_state (AgentState):
                 Live state injected by the AgentScope toolkit.
         """
         try:
