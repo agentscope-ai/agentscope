@@ -15,6 +15,7 @@ Covers:
   * ``DashScopeCosyVoiceRealtimeTTSModel`` connect / close / push /
     synthesize lifecycle over a mocked SpeechSynthesizer.
 """
+import asyncio
 import base64
 import io
 import threading
@@ -385,25 +386,31 @@ class TestDashScopeCosyVoiceTTSModel(IsolatedAsyncioTestCase):
 
             synth.call = Mock(side_effect=_call)
             remaining_chunks = self.next_chunks[1:]
+            first_chunk_length = (
+                len(self.next_chunks[0]) if self.next_chunks else 0
+            )
 
             def _streaming_call(text: str) -> None:
                 del text
                 if self.next_chunks:
                     callback.on_data(self.next_chunks[0])
 
-            def _complete_when_waiting(timeout: int | None = None) -> bool:
-                del timeout
+            def _streaming_complete(
+                complete_timeout_millis: int | None = None,
+            ) -> None:
+                del complete_timeout_millis
+                if first_chunk_length:
+                    self._wait_for_callback_consumed(
+                        callback,
+                        first_chunk_length,
+                    )
                 for chunk in remaining_chunks:
                     callback.on_data(chunk)
                 callback.on_complete()
                 callback.on_close()
-                return True
 
-            callback.chunk_event.wait = Mock(
-                side_effect=_complete_when_waiting,
-            )
             synth.streaming_call = Mock(side_effect=_streaming_call)
-            synth.streaming_complete = Mock()
+            synth.streaming_complete = Mock(side_effect=_streaming_complete)
 
         self.synthesizer_instances.append(synth)
         return synth
@@ -491,7 +498,9 @@ class TestDashScopeCosyVoiceTTSModel(IsolatedAsyncioTestCase):
         synth = self.synthesizer_instances[-1]
         self.assertIsNotNone(synth.init_kwargs["callback"])
         synth.streaming_call.assert_called_once_with("Hello")
-        synth.streaming_complete.assert_called_once_with()
+        synth.streaming_complete.assert_called_once_with(
+            complete_timeout_millis=600000,
+        )
         synth.call.assert_not_called()
 
     async def test_streaming_uses_streaming_call_and_complete(self) -> None:
@@ -509,8 +518,67 @@ class TestDashScopeCosyVoiceTTSModel(IsolatedAsyncioTestCase):
 
         synth = self.synthesizer_instances[-1]
         synth.streaming_call.assert_called_once_with("Hello")
-        synth.streaming_complete.assert_called_once_with()
+        synth.streaming_complete.assert_called_once_with(
+            complete_timeout_millis=600000,
+        )
         synth.call.assert_not_called()
+
+    async def test_streaming_yields_before_streaming_complete_returns(
+        self,
+    ) -> None:
+        """stream=True yields chunks while streaming_complete is running."""
+        release_complete = threading.Event()
+        complete_started = threading.Event()
+
+        def _make_blocking_synthesizer(**init_kwargs: Any) -> Mock:
+            synth = Mock()
+            synth.init_kwargs = init_kwargs
+            synth.get_last_request_id = Mock(return_value="task-id")
+            synth.get_response = Mock(return_value=self.next_response)
+            callback = init_kwargs["callback"]
+
+            def _streaming_call(text: str) -> None:
+                del text
+                callback.on_data(b"AAAA")
+
+            def _streaming_complete(
+                complete_timeout_millis: int | None = None,
+            ) -> None:
+                del complete_timeout_millis
+                complete_started.set()
+                callback.on_data(b"BBBB")
+                release_complete.wait(timeout=5)
+                callback.on_complete()
+                callback.on_close()
+
+            synth.call = Mock()
+            synth.close = Mock()
+            synth.streaming_call = Mock(side_effect=_streaming_call)
+            synth.streaming_complete = Mock(side_effect=_streaming_complete)
+            self.synthesizer_instances.append(synth)
+            return synth
+
+        self.mock_synthesizer_class.side_effect = _make_blocking_synthesizer
+        model = self._make_model(stream=True)
+
+        gen = await model.synthesize("Hello")
+        first_chunk = await anext(gen)
+
+        self.assertTrue(await asyncio.to_thread(complete_started.wait, 1))
+        self.assertFalse(first_chunk.is_last)
+        self.assertEqual(
+            base64.b64decode(first_chunk.content.source.data),
+            b"AAAA",
+        )
+
+        release_complete.set()
+        remaining = [c async for c in gen]
+        self.assertEqual(len(remaining), 1)
+        self.assertTrue(remaining[0].is_last)
+        self.assertEqual(
+            base64.b64decode(remaining[0].content.source.data),
+            b"BBBB",
+        )
 
     async def test_media_type_mapping(self) -> None:
         """CosyVoice output format is reflected in DataBlock.media_type."""
