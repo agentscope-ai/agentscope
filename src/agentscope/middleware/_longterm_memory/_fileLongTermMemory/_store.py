@@ -414,8 +414,8 @@ class FileLTMStore:
             raise ValueError(
                 f"{target} memory would exceed its {limit}-character limit "
                 f"(current: {len(content)}-character). "
-                f"Please consolidate or merge existing entries before retrying, "
-                f"and discard less important memories if necessary."
+                f"Please consolidate or merge existing entries before "
+                f"retrying, and discard less important memories if necessary.",
             )
 
     async def _read_meta(self) -> dict:
@@ -474,9 +474,7 @@ class FileLTMStore:
         if not matching_indices:
             if create_section:
                 return f"{text.rstrip()}\n\n## {section}\n\n- {addition}\n"
-            available = ", ".join(
-                match.group(1).strip() for match in headings
-            )
+            available = ", ".join(match.group(1).strip() for match in headings)
             available_text = available or "(none)"
             raise ValueError(
                 f"Unknown section {section!r}. Available sections: "

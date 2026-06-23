@@ -343,6 +343,7 @@ class FileLongTermMemoryMiddleware(MiddlewareBase):
     async def _will_compress(agent: "Agent", input_kwargs: dict) -> bool:
         """Check the same token threshold used by Agent compression."""
         config = input_kwargs.get("context_config") or agent.context_config
+        # pylint: disable-next=protected-access
         model_input = await agent._prepare_model_input()
         estimated = await agent.model.count_tokens(**model_input)
         return estimated >= config.trigger_ratio * agent.model.context_size
@@ -569,7 +570,7 @@ class FileLongTermMemoryMiddleware(MiddlewareBase):
             text = message.get_text_content()
             if text:
                 rendered.append(
-                    f"{message.role.upper()} ({message.name}): {text}"
+                    f"{message.role.upper()} ({message.name}): {text}",
                 )
         return "\n\n".join(rendered)
 

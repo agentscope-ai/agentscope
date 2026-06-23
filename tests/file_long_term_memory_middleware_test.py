@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=protected-access,unused-argument
+# pylint: disable=protected-access,unused-argument,consider-using-with
 """Unit tests for ``FileLongTermMemoryMiddleware`` and its Markdown store.
 
 The tests use real temporary ``LocalWorkspace`` directories so they exercise
@@ -18,8 +18,11 @@ boundaries that are not exposed as public application APIs.
 """
 import os
 import tempfile
+from typing import Any
 from datetime import datetime
 from unittest.async_case import IsolatedAsyncioTestCase
+
+from utils import MockModel
 
 from agentscope.agent import Agent
 from agentscope.message import Msg, TextBlock, UserMsg
@@ -32,7 +35,6 @@ from agentscope.model import ChatResponse, StructuredResponse
 from agentscope.state import AgentState
 from agentscope.tool import Toolkit
 from agentscope.workspace import LocalWorkspace
-from utils import MockModel
 
 
 WorkspaceFileAccessor = _accessor.WorkspaceFileAccessor
@@ -47,13 +49,17 @@ FileLTMStore = _store.FileLTMStore
 class _ExtractionModel(MockModel):
     """Mock chat model returning one deterministic structured extraction."""
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         """Initialize the model and its extraction-call counter."""
         super().__init__(*args, **kwargs)
         self.extraction_calls = 0
         self.extraction_messages: list[Msg] = []
 
-    async def generate_structured_output(self, *args, **kwargs):
+    async def generate_structured_output(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ) -> StructuredResponse:
         """Return edits spanning daily, USER, and MEMORY layers."""
         self.extraction_calls += 1
         self.extraction_messages = list(kwargs.get("messages", []))

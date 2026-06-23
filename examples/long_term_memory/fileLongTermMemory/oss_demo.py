@@ -136,9 +136,7 @@ async def _build_agent(
     """
     return Agent(
         name="workspace_assistant",
-        system_prompt=(
-            "You are a concise project assistant. "
-        ),
+        system_prompt=("You are a concise project assistant. "),
         model=model,
         # Middleware tools are not registered automatically. Explicit toolkit
         # composition makes it clear which capabilities the model can call.

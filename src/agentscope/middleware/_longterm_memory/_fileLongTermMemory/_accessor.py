@@ -118,7 +118,5 @@ class WorkspaceFileAccessor:
         return sorted(
             name
             for name in await self.backend.list_dir(directory)
-            if "/" not in name
-            and "\\" not in name
-            and name.endswith(suffix)
+            if "/" not in name and "\\" not in name and name.endswith(suffix)
         )
