@@ -12,9 +12,7 @@ import asyncio
 from contextlib import AsyncExitStack
 from unittest import IsolatedAsyncioTestCase
 
-from agentscope.app.message_bus._in_memory_message_bus import (
-    InMemoryMessageBus,
-)
+from agentscope.app.message_bus import InMemoryMessageBus
 
 
 class TestQueuePrimitive(IsolatedAsyncioTestCase):

@@ -46,8 +46,10 @@ class InMemoryMessageBus(MessageBus):
     - **Mode F (registry map)** — ``dict[str, dict[str, str]]``, one
       nested dict per namespace.
 
-    Entry ids are monotonic ``"<seq>-0"`` strings that sort the same way
-    as Redis Stream ids.
+    Entry ids are monotonic ``"<seq>-0"`` strings (e.g. ``"1-0"``,
+    ``"2-0"``, …).  They are **not** lexicographically sortable once
+    the sequence exceeds single digits; comparison must parse the
+    numeric prefix (as :meth:`log_read` does internally).
     """
 
     def __init__(self) -> None:
