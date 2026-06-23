@@ -17,7 +17,7 @@ from agentscope.permission import (
     PermissionBehavior,
     PermissionContext,
 )
-from agentscope.message import TextBlock, ToolCallBlock, UserMsg
+from agentscope.message import TextBlock, ThinkingBlock, ToolCallBlock, UserMsg
 
 
 class MockSequentialTool(ToolBase):
@@ -127,6 +127,21 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             "role": "assistant",
             "usage": None,
         }
+
+    async def _collect_block_event_types(
+        self,
+        chunks: list[ChatResponse],
+    ) -> list[str]:
+        """Collect streamed block event types from the mock model."""
+        self.model.set_responses([chunks])
+        event_types: list[str] = []
+        async for event in self.agent.reply_stream(
+            UserMsg(name="user", content="Hi"),
+        ):
+            event_type = event.model_dump().get("type")
+            if isinstance(event_type, str) and "BLOCK" in event_type:
+                event_types.append(event_type)
+        return event_types
 
     async def test_default_configs_are_not_shared_between_agents(
         self,
@@ -365,6 +380,77 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         ]
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
         self.assertListEqual(context_dicts, expected_context_after_reply)
+
+    async def test_streaming_thinking_closes_before_text_boundary(
+        self,
+    ) -> None:
+        """Thinking closes before answer text starts across chunks."""
+        event_types = await self._collect_block_event_types(
+            [
+                ChatResponse(
+                    content=[ThinkingBlock(thinking="reason")],
+                    is_last=False,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="Hello")],
+                    is_last=False,
+                ),
+                ChatResponse(
+                    content=[
+                        ThinkingBlock(thinking="reason"),
+                        TextBlock(text="Hello"),
+                    ],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        self.assertListEqual(
+            event_types,
+            [
+                "THINKING_BLOCK_START",
+                "THINKING_BLOCK_DELTA",
+                "THINKING_BLOCK_END",
+                "TEXT_BLOCK_START",
+                "TEXT_BLOCK_DELTA",
+                "TEXT_BLOCK_END",
+            ],
+        )
+
+    async def test_streaming_thinking_precedes_text_in_same_chunk(
+        self,
+    ) -> None:
+        """Thinking is emitted before text when both arrive together."""
+        event_types = await self._collect_block_event_types(
+            [
+                ChatResponse(
+                    content=[
+                        ThinkingBlock(thinking="reason"),
+                        TextBlock(text="Hello"),
+                    ],
+                    is_last=False,
+                ),
+                ChatResponse(
+                    content=[
+                        ThinkingBlock(thinking="reason"),
+                        TextBlock(text="Hello"),
+                    ],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        self.assertListEqual(
+            event_types,
+            [
+                "THINKING_BLOCK_START",
+                "THINKING_BLOCK_DELTA",
+                "THINKING_BLOCK_END",
+                "TEXT_BLOCK_START",
+                "TEXT_BLOCK_DELTA",
+                "TEXT_BLOCK_END",
+            ],
+        )
 
     async def test_non_streaming_reasoning(self) -> None:
         """Test the non-streaming model inference without tool calls generated,
