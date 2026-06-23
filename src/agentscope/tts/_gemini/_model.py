@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import (
     Any,
     AsyncGenerator,
+    AsyncIterator,
     Literal,
     TYPE_CHECKING,
 )
@@ -15,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from .._tts_base import TTSModelBase
 from .._tts_response import TTSResponse, TTSUsage
+from ..._utils._audio import _build_streaming_wav_header
 from ...credential import GeminiCredential
 from ...message import DataBlock, Base64Source
 
@@ -30,7 +32,7 @@ _TTS_BITS_PER_SAMPLE = 16
 _DEFAULT_MEDIA_TYPE = "audio/wav"
 
 
-def _extract_usage(
+def _parse_usage(
     usage_metadata: Any,
     elapsed: float,
 ) -> TTSUsage | None:
@@ -94,10 +96,13 @@ class GeminiTTSModel(TTSModelBase):
                 The TTS parameters (voice, etc.). When ``None``, the default
                 parameters will be used.
             stream (`bool`, defaults to `False`):
-                Whether to use streaming output. The Gemini TTS API does not
-                support streaming output, so this is always treated as
-                ``False`` and :meth:`synthesize` always returns a single
-                aggregated ``TTSResponse``.
+                Whether to use streaming output. When `True`,
+                :meth:`synthesize` returns an async generator yielding
+                incremental ``TTSResponse`` chunks (see the `streaming
+                document
+                <https://ai.google.dev/gemini-api/docs/speech-generation#streaming>`_);
+                when `False`, it returns a single aggregated
+                ``TTSResponse``.
             client_kwargs (`dict[str, Any] | None`, defaults to `None`):
                 Extra keyword arguments forwarded to ``google.genai.Client``
                 (e.g. ``vertexai``, ``project``, ``location``,
@@ -127,8 +132,9 @@ class GeminiTTSModel(TTSModelBase):
 
         Returns:
             `TTSResponse | AsyncGenerator[TTSResponse, None]`:
-                A single ``TTSResponse`` containing the synthesized audio as
-                a self-contained WAV file.
+                A single ``TTSResponse`` when ``stream=False``, or an async
+                generator yielding incremental ``TTSResponse`` chunks when
+                ``stream=True``.
         """
         if not text:
             return TTSResponse(content=None)
@@ -153,6 +159,14 @@ class GeminiTTSModel(TTSModelBase):
             },
             **kwargs,
         }
+
+        if self.stream:
+            stream = await client.aio.models.generate_content_stream(
+                model=self.model,
+                contents=text,
+                config=config,
+            )
+            return self._parse_stream_into_async_generator(stream)
 
         start_datetime = datetime.now()
         response = await client.aio.models.generate_content(
@@ -183,7 +197,7 @@ class GeminiTTSModel(TTSModelBase):
                 A ``TTSResponse`` containing the synthesized audio, or an
                 empty response if no audio was returned.
         """
-        usage = _extract_usage(
+        usage = _parse_usage(
             getattr(response, "usage_metadata", None),
             elapsed,
         )
@@ -197,6 +211,9 @@ class GeminiTTSModel(TTSModelBase):
                 inline_data = getattr(part, "inline_data", None)
                 if inline_data and inline_data.data:
                     data = inline_data.data
+                    # `inline_data.data` may be a base64-encoded `str` or
+                    # raw `bytes` depending on the installed google-genai
+                    # SDK version, hence the defensive isinstance check.
                     if isinstance(data, str):
                         data = base64.b64decode(data)
                     audio_bytes += data
@@ -220,3 +237,93 @@ class GeminiTTSModel(TTSModelBase):
             ),
             usage=usage,
         )
+
+    @staticmethod
+    async def _parse_stream_into_async_generator(
+        stream: AsyncIterator["GenerateContentResponse"],
+    ) -> AsyncGenerator[TTSResponse, None]:
+        """Parse the streaming ``generateContent`` response into an async
+        generator.
+
+        Each yielded ``TTSResponse`` carries an **incremental** WAV chunk:
+        the first chunk is prefixed with a streaming WAV/RIFF header so the
+        frontend can start playback immediately (without waiting for
+        end-of-stream); subsequent chunks are raw PCM bytes appended to that
+        open stream. The final response has ``is_last=True``.
+
+        Args:
+            stream (`AsyncIterator[GenerateContentResponse]`):
+                The streaming response from the Gemini ``generateContent``
+                API.
+
+        Yields:
+            `TTSResponse`:
+                A ``TTSResponse`` for each incremental audio chunk; the
+                final response has ``is_last=True``.
+        """
+        pending: TTSResponse | None = None
+        header_sent = False
+        usage_metadata = None
+        start_datetime = datetime.now()
+
+        async for chunk in stream:
+            chunk_usage = getattr(chunk, "usage_metadata", None)
+            if chunk_usage is not None:
+                usage_metadata = chunk_usage
+
+            candidates = getattr(chunk, "candidates", None) or []
+            for candidate in candidates:
+                content = getattr(candidate, "content", None)
+                parts = getattr(content, "parts", None) or []
+                for part in parts:
+                    inline_data = getattr(part, "inline_data", None)
+                    if not inline_data or not inline_data.data:
+                        continue
+                    data = inline_data.data
+                    # `inline_data.data` may be a base64-encoded `str` or
+                    # raw `bytes` depending on the installed google-genai
+                    # SDK version, hence the defensive isinstance check.
+                    if isinstance(data, str):
+                        data = base64.b64decode(data)
+                    if not data:
+                        continue
+
+                    if not header_sent:
+                        payload = (
+                            _build_streaming_wav_header(
+                                sample_rate=_TTS_SAMPLE_RATE,
+                                channels=_TTS_CHANNELS,
+                                bits_per_sample=_TTS_BITS_PER_SAMPLE,
+                            )
+                            + data
+                        )
+                        header_sent = True
+                    else:
+                        payload = data
+
+                    if pending is not None:
+                        yield pending
+                    pending = TTSResponse(
+                        content=DataBlock(
+                            source=Base64Source(
+                                data=base64.b64encode(payload).decode(
+                                    "ascii",
+                                ),
+                                media_type=_DEFAULT_MEDIA_TYPE,
+                            ),
+                        ),
+                        is_last=False,
+                    )
+
+        elapsed = (datetime.now() - start_datetime).total_seconds()
+
+        if pending is not None:
+            pending.is_last = True
+            pending.usage = _parse_usage(usage_metadata, elapsed)
+            yield pending
+        else:
+            yield TTSResponse(
+                content=None,
+                is_last=True,
+                usage=_parse_usage(usage_metadata, elapsed),
+            )
