@@ -35,6 +35,7 @@ import json
 from typing import TYPE_CHECKING
 
 from ..message_bus import MessageBusKeys
+from .._bus_ops import publish_session_event
 from ...event import CustomEvent
 
 if TYPE_CHECKING:
@@ -178,7 +179,8 @@ class SessionProjection:
                 The event payload.
         """
         custom = CustomEvent(name=event_name, value=value)
-        await self._bus.session_publish_event(
+        await publish_session_event(
+            self._bus,
             target_sid,
             custom.model_dump(mode="json"),
         )

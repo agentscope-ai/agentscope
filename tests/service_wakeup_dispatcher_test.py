@@ -221,10 +221,10 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
             chat_run_registry=ChatRunRegistry(),
         ):
             await bus.queue_push(
-                MessageBus._WAKEUP_QUEUE_KEY,
+                MessageBusKeys.wakeup_queue(),
                 {"user_id": "u", "session_id": "s1", "agent_id": "a1"},
             )
-            await bus.publish(MessageBus._WAKEUP_SIGNAL_KEY, {})
+            await bus.publish(MessageBusKeys.wakeup_signal(), {})
 
             await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
 
@@ -246,7 +246,7 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
         bus = _FakeBus()
         chat = _FakeChatService()
         await bus.queue_push(
-            MessageBus._WAKEUP_QUEUE_KEY,
+            MessageBusKeys.wakeup_queue(),
             {"user_id": "u", "session_id": "pre", "agent_id": "a"},
         )
 
@@ -284,10 +284,10 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
             chat_run_registry=ChatRunRegistry(),
         ):
             await bus.queue_push(
-                MessageBus._WAKEUP_QUEUE_KEY,
+                MessageBusKeys.wakeup_queue(),
                 {"user_id": "u", "session_id": "busy", "agent_id": "a"},
             )
-            await bus.publish(MessageBus._WAKEUP_SIGNAL_KEY, {})
+            await bus.publish(MessageBusKeys.wakeup_signal(), {})
             await asyncio.sleep(0.05)
 
         self.assertEqual(chat.calls, [])
@@ -305,14 +305,14 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
             chat_run_registry=ChatRunRegistry(),
         ):
             await bus.queue_push(
-                MessageBus._WAKEUP_QUEUE_KEY,
+                MessageBusKeys.wakeup_queue(),
                 {"oops": True},
             )
             await bus.queue_push(
-                MessageBus._WAKEUP_QUEUE_KEY,
+                MessageBusKeys.wakeup_queue(),
                 {"user_id": "u", "session_id": "s2", "agent_id": "a"},
             )
-            await bus.publish(MessageBus._WAKEUP_SIGNAL_KEY, {})
+            await bus.publish(MessageBusKeys.wakeup_signal(), {})
             await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
 
         # Only the valid entry made it through.
@@ -344,14 +344,14 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
             chat_run_registry=ChatRunRegistry(),
         ):
             await bus.queue_push(
-                MessageBus._WAKEUP_QUEUE_KEY,
+                MessageBusKeys.wakeup_queue(),
                 {"user_id": "u", "session_id": "ghost", "agent_id": "a"},
             )
             await bus.queue_push(
-                MessageBus._WAKEUP_QUEUE_KEY,
+                MessageBusKeys.wakeup_queue(),
                 {"user_id": "u", "session_id": "live", "agent_id": "a"},
             )
-            await bus.publish(MessageBus._WAKEUP_SIGNAL_KEY, {})
+            await bus.publish(MessageBusKeys.wakeup_signal(), {})
             await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
 
         self.assertEqual(
@@ -385,7 +385,7 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
             chat_run_registry=ChatRunRegistry(),
         ):
             await bus.queue_push(
-                MessageBus._WAKEUP_QUEUE_KEY,
+                MessageBusKeys.wakeup_queue(),
                 {
                     "user_id": "u",
                     "session_id": "w1",
@@ -394,7 +394,7 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
                     "input": event.model_dump(mode="json"),
                 },
             )
-            await bus.publish(MessageBus._WAKEUP_SIGNAL_KEY, {})
+            await bus.publish(MessageBusKeys.wakeup_signal(), {})
             await asyncio.wait_for(chat.notify.wait(), timeout=2.0)
 
         self.assertEqual(len(chat.calls), 1)
@@ -426,7 +426,7 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
             chat_run_registry=ChatRunRegistry(),
         ):
             await bus.queue_push(
-                MessageBus._WAKEUP_QUEUE_KEY,
+                MessageBusKeys.wakeup_queue(),
                 {
                     "user_id": "u",
                     "session_id": "w1",
@@ -435,7 +435,7 @@ class TestWakeupDispatcherDispatch(IsolatedAsyncioTestCase):
                     "input": event.model_dump(mode="json"),
                 },
             )
-            await bus.publish(MessageBus._WAKEUP_SIGNAL_KEY, {})
+            await bus.publish(MessageBusKeys.wakeup_signal(), {})
 
             # While locked, the resume must keep deferring — no run yet.
             await asyncio.sleep(0.25)

@@ -30,8 +30,13 @@ from ..deps import (
 )
 from ._schema import ChatRequest, ChatTriggerResponse
 from .._manager import ChatRunRegistry
-from .._service import ChatService, SessionProjection, SubagentHitlProjector
+from .._service import (
+    ChatService,
+    SessionProjection,
+    SubagentHitlProjector,
+)
 from ..message_bus import MessageBus, MessageBusKeys
+from .._bus_ops import enqueue_run_trigger
 from ...event import UserConfirmResultEvent, ExternalExecutionResultEvent
 
 chat_router = APIRouter(
@@ -120,12 +125,13 @@ async def chat(
             run_session_id = target["worker_session_id"]
             run_agent_id = target["worker_agent_id"]
 
-        await message_bus.enqueue_input(
+        await enqueue_run_trigger(
+            message_bus,
             user_id=user_id,
             session_id=run_session_id,
             agent_id=run_agent_id,
             kind=MessageBusKeys.WAKEUP_KIND_RESUME,
-            inputs=request.input.model_dump(mode="json"),
+            inputs=request.input,
         )
         return ChatTriggerResponse(status="started", session_id=run_session_id)
 

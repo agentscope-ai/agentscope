@@ -24,6 +24,7 @@ import hashlib
 from typing import Any, AsyncGenerator, Callable
 
 from ..message_bus import MessageBus
+from .._bus_ops import publish_session_event
 from ...event import CustomEvent
 from ...middleware import MiddlewareBase
 
@@ -124,7 +125,8 @@ class StateChangeMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                     ),
                 },
             )
-            await self._bus.session_publish_event(
+            await publish_session_event(
+                self._bus,
                 self._session_id,
                 event.model_dump(mode="json"),
             )
@@ -135,7 +137,8 @@ class StateChangeMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 name="team_updated",
                 value={},
             )
-            await self._bus.session_publish_event(
+            await publish_session_event(
+                self._bus,
                 self._session_id,
                 event.model_dump(mode="json"),
             )

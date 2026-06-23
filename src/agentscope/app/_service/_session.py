@@ -47,7 +47,7 @@ imports the bus; bus code never imports storage.
 """
 import asyncio
 
-from ..message_bus import MessageBus
+from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import StorageBase
 from ._session_projection import SessionProjection
 from ._projectors import SubagentHitlProjector
@@ -139,11 +139,16 @@ class SessionService:
                 ``False`` if the lock was still held when the timeout
                 expired.
         """
-        await self._bus.session_publish_cancel(session_id)
+        await self._bus.publish(
+            MessageBusKeys.session_cancel_channel(),
+            {"session_id": session_id},
+        )
 
         deadline = asyncio.get_event_loop().time() + timeout
         while True:
-            if not await self._bus.session_is_running(session_id):
+            if not await self._bus.is_locked(
+                MessageBusKeys.session_lock(session_id),
+            ):
                 return True
             if asyncio.get_event_loop().time() >= deadline:
                 logger.warning(
@@ -386,7 +391,19 @@ class SessionService:
         if not session_ids:
             return
         await asyncio.gather(
-            *(self._bus.session_purge(sid) for sid in session_ids),
+            *(self._purge_session_bus(sid) for sid in session_ids),
+        )
+
+    async def _purge_session_bus(self, session_id: str) -> None:
+        """Drop all per-session bus state for one session."""
+        await self._bus.log_trim(
+            MessageBusKeys.session_events(session_id),
+        )
+        await self._bus.queue_delete(
+            MessageBusKeys.inbox(session_id),
+        )
+        await self._bus.registry_drop(
+            MessageBusKeys.bg_tasks(session_id),
         )
 
     async def _purge_subagent_hitl(

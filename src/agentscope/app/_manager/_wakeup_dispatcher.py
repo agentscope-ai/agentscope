@@ -33,6 +33,7 @@ from pydantic import TypeAdapter
 from ..._logging import logger
 from ...event import UserConfirmResultEvent, ExternalExecutionResultEvent
 from ..message_bus import MessageBusKeys
+from .._bus_ops import enqueue_run_trigger
 
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
@@ -156,7 +157,8 @@ class WakeupDispatcher:
                 trigger immediately after start without racing.
         """
         try:
-            async for _signal in self._bus.subscribe_wakeup_signal(
+            async for _signal in self._bus.subscribe(
+                MessageBusKeys.wakeup_signal(),
                 on_ready=ready.set,
             ):
                 await self._drain_and_dispatch()
@@ -168,7 +170,11 @@ class WakeupDispatcher:
     async def _drain_and_dispatch(self) -> None:
         """Read up to a batch of trigger entries and dispatch each."""
         try:
-            entries = await self._bus.dequeue_wakeups(max_count=64)
+            raw_entries = await self._bus.queue_drain(
+                MessageBusKeys.wakeup_queue(),
+                max_count=64,
+            )
+            entries = [payload for _entry_id, payload in raw_entries]
         except Exception:  # pylint: disable=broad-except
             logger.exception("WakeupDispatcher: dequeue_wakeups failed.")
             return
@@ -219,7 +225,33 @@ class WakeupDispatcher:
         """
         is_resume = kind == MessageBusKeys.WAKEUP_KIND_RESUME
 
-        if await self._bus.session_is_running(session_id):
+        # Parse the resume input early so every downstream path
+        # (lock-retry, spawn-retry) receives a typed event object
+        # rather than a raw dict.
+        input_msg: UserConfirmResultEvent | ExternalExecutionResultEvent | None
+        input_msg = None
+        if is_resume:
+            if raw_input is None:
+                logger.warning(
+                    "WakeupDispatcher: dropping resume trigger for session "
+                    "%s — no input event carried.",
+                    session_id,
+                )
+                return
+            try:
+                input_msg = _RESUME_INPUT_ADAPTER.validate_python(raw_input)
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "WakeupDispatcher: dropping resume trigger for session "
+                    "%s — input event failed to parse: %r",
+                    session_id,
+                    raw_input,
+                )
+                return
+
+        if await self._bus.is_locked(
+            MessageBusKeys.session_lock(session_id),
+        ):
             if is_resume:
                 # The session is busy finishing its parked tail. Do NOT
                 # drop the resume — re-queue it after a short backoff so
@@ -228,7 +260,7 @@ class WakeupDispatcher:
                     user_id,
                     session_id,
                     agent_id,
-                    raw_input,
+                    input_msg,
                 )
             # ``wake`` triggers are safe to drop while running — the
             # live run drains the inbox itself.
@@ -255,27 +287,6 @@ class WakeupDispatcher:
             )
             return
 
-        input_msg: UserConfirmResultEvent | ExternalExecutionResultEvent | None
-        input_msg = None
-        if is_resume:
-            if raw_input is None:
-                logger.warning(
-                    "WakeupDispatcher: dropping resume trigger for session "
-                    "%s — no input event carried.",
-                    session_id,
-                )
-                return
-            try:
-                input_msg = _RESUME_INPUT_ADAPTER.validate_python(raw_input)
-            except Exception:  # pylint: disable=broad-except
-                logger.exception(
-                    "WakeupDispatcher: dropping resume trigger for session "
-                    "%s — input event failed to parse: %r",
-                    session_id,
-                    raw_input,
-                )
-                return
-
         try:
             self._registry.spawn(
                 self._chat_service.run(
@@ -296,7 +307,7 @@ class WakeupDispatcher:
                     user_id,
                     session_id,
                     agent_id,
-                    raw_input,
+                    input_msg,
                 )
             else:
                 logger.debug(
@@ -310,7 +321,9 @@ class WakeupDispatcher:
         user_id: str,
         session_id: str,
         agent_id: str,
-        raw_input: dict | None,
+        input_msg: UserConfirmResultEvent
+        | ExternalExecutionResultEvent
+        | None,
     ) -> None:
         """Re-enqueue a ``resume`` trigger after a short backoff.
 
@@ -326,19 +339,20 @@ class WakeupDispatcher:
                 The session to resume.
             agent_id (`str`):
                 The agent that owns the session.
-            raw_input (`dict | None`):
-                The serialised input event to redeliver.
+            input_msg:
+                The parsed input event to redeliver.
         """
 
         async def _retry() -> None:
             try:
                 await asyncio.sleep(_RESUME_RETRY_BACKOFF_SECS)
-                await self._bus.enqueue_input(
+                await enqueue_run_trigger(
+                    self._bus,
                     user_id=user_id,
                     session_id=session_id,
                     agent_id=agent_id,
                     kind=MessageBusKeys.WAKEUP_KIND_RESUME,
-                    inputs=raw_input,
+                    inputs=input_msg,
                 )
             except asyncio.CancelledError:
                 pass

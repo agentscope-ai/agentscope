@@ -22,7 +22,7 @@ import fakeredis.aioredis
 from utils import AnyString
 
 from agentscope.agent import ContextConfig, ReActConfig
-from agentscope.app._tools import (
+from agentscope.app._tool import (
     AgentCreate,
     DEFAULT_SUB_AGENT_TEMPLATE,
     TeamCreate,

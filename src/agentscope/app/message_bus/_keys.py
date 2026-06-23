@@ -13,6 +13,8 @@ Add new business keys here as needed. As legacy keys are migrated off
 ``MessageBus``, they should move into this class as well.
 """
 
+from typing import Final
+
 
 class MessageBusKeys:
     """Application-layer key conventions for the message bus."""
@@ -24,12 +26,12 @@ class MessageBusKeys:
     # free of business vocabulary.
     # ------------------------------------------------------------------
 
-    WAKEUP_KIND_WAKE = "wake"
+    WAKEUP_KIND_WAKE: Final = "wake"
     """Trigger kind: wake an *idle* session to drain pending inbox
     content. The dispatcher spawns the run with ``input_msg=None`` and
     skips the session entirely while it is already running."""
 
-    WAKEUP_KIND_RESUME = "resume"
+    WAKEUP_KIND_RESUME: Final = "resume"
     """Trigger kind: resume a session parked on an awaiting tool call by
     feeding it a human-in-the-loop result. The dispatcher spawns the run
     with the carried ``input`` event and — unlike ``wake`` — must *not*
@@ -102,3 +104,90 @@ class MessageBusKeys:
                 The field-key prefix, ``"{kind}:"``.
         """
         return f"{kind}:"
+
+    # ------------------------------------------------------------------
+    # Session event stream (replay log + live pub/sub)
+    # ------------------------------------------------------------------
+
+    _SESSION_EVENTS = "agentscope:session:events:{sid}"
+
+    SESSION_REPLAY_MAX_LEN = 1000
+    """Replay log length cap; older events are trimmed on append."""
+
+    @classmethod
+    def session_events(cls, session_id: str) -> str:
+        """Replay log + live pub/sub channel key for a session."""
+        return cls._SESSION_EVENTS.format(sid=session_id)
+
+    # ------------------------------------------------------------------
+    # Session run lock
+    # ------------------------------------------------------------------
+
+    _SESSION_LOCK = "agentscope:session:lock:{sid}"
+
+    SESSION_RUN_TTL_SECS = 600
+    """Default lock lease for a chat run (10 minutes)."""
+
+    @classmethod
+    def session_lock(cls, session_id: str) -> str:
+        """Per-session distributed-lock key."""
+        return cls._SESSION_LOCK.format(sid=session_id)
+
+    # ------------------------------------------------------------------
+    # Session inbox
+    # ------------------------------------------------------------------
+
+    _INBOX = "agentscope:inbox:{sid}"
+
+    @classmethod
+    def inbox(cls, session_id: str) -> str:
+        """Per-session inbox drain-queue key."""
+        return cls._INBOX.format(sid=session_id)
+
+    # ------------------------------------------------------------------
+    # Run trigger queue (wakeup / resume)
+    # ------------------------------------------------------------------
+
+    _WAKEUP_QUEUE = "agentscope:wakeups"
+    _WAKEUP_SIGNAL = "agentscope:wakeup_signal"
+
+    @classmethod
+    def wakeup_queue(cls) -> str:
+        """Shared run-trigger queue key."""
+        return cls._WAKEUP_QUEUE
+
+    @classmethod
+    def wakeup_signal(cls) -> str:
+        """Shared signal channel that nudges dispatchers to drain."""
+        return cls._WAKEUP_SIGNAL
+
+    # ------------------------------------------------------------------
+    # Cross-process cancel
+    # ------------------------------------------------------------------
+
+    _SESSION_CANCEL = "agentscope:session:cancel"
+    _TASK_CANCEL = "agentscope:task:cancel"
+
+    @classmethod
+    def session_cancel_channel(cls) -> str:
+        """Global session-cancel broadcast channel."""
+        return cls._SESSION_CANCEL
+
+    @classmethod
+    def task_cancel_channel(cls) -> str:
+        """Single-task cancel broadcast channel."""
+        return cls._TASK_CANCEL
+
+    # ------------------------------------------------------------------
+    # Background task registry
+    # ------------------------------------------------------------------
+
+    _BG_TASKS = "agentscope:bg_tasks:{sid}"
+
+    BG_TASKS_TTL_SECS = 86400
+    """Fallback TTL for the per-session BG task registry (24 h)."""
+
+    @classmethod
+    def bg_tasks(cls, session_id: str) -> str:
+        """Per-session background task registry key."""
+        return cls._BG_TASKS.format(sid=session_id)
