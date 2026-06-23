@@ -132,8 +132,12 @@ class TeamSay(_TeamToolBase):
             content (`str`):
                 Message body.
             to (`str | None`, defaults to ``None``):
-                Specific member agent id to target, or ``None`` for
-                broadcast.
+                Display name of a specific team member to target, or
+                ``None`` for broadcast.  Routing is by name (not
+                agent id) so workers can address the leader by the
+                name they see in ``<team-message from="...">``.
+                Name uniqueness within a team is enforced at
+                ``AgentCreate`` time.
 
         Returns:
             `ToolChunk`:

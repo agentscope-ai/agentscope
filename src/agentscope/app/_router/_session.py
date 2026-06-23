@@ -535,6 +535,7 @@ async def stream_session_events(
         # 1. Replay buffered events from the current run (if any).
         for _entry_id, event in await message_bus.log_read(
             MessageBusKeys.session_events(session_id),
+            max_count=MessageBusKeys.SESSION_REPLAY_MAX_LEN,
         ):
             yield f"data: {json.dumps(event)}\n\n"
 
