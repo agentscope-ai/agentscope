@@ -16,6 +16,8 @@ from ._model import (
     SessionConfig,
     SessionSource,
     TeamRecord,
+    WorkspaceBinding,
+    WorkspaceRecord,
 )
 from ._utils import _dump_with_secrets
 from ...credential import CredentialBase
@@ -73,6 +75,18 @@ class RedisStorage(StorageBase):
 
         team: str = "agentscope:user:{user_id}:team:{team_id}"
         team_index: str = "agentscope:user:{user_id}:teams"
+        workspace: str = "agentscope:user:{user_id}:workspace:{workspace_id}"
+        workspace_index: str = "agentscope:user:{user_id}:workspaces"
+        workspace_binding: str = (
+            "agentscope:user:{user_id}:workspace-binding:{session_id}"
+        )
+        workspace_run_lease: str = (
+            "agentscope:user:{user_id}:workspace:{workspace_id}:"
+            "run-lease:{lease_id}"
+        )
+        workspace_run_lease_index: str = (
+            "agentscope:user:{user_id}:workspace:{workspace_id}:run-leases"
+        )
 
     def __init__(
         self,
@@ -128,6 +142,120 @@ class RedisStorage(StorageBase):
     def _key(self, template: str, **kwargs: str) -> str:
         """Format a key template with the given keyword arguments."""
         return template.format(**kwargs)
+
+    # ------------------------------------------------------------------
+    # Workspace persistence
+    # ------------------------------------------------------------------
+
+    async def upsert_workspace(
+        self,
+        user_id: str,
+        record: WorkspaceRecord,
+    ) -> WorkspaceRecord:
+        if record.owner_user_id != user_id:
+            raise ValueError("workspace owner does not match user_id")
+        record.updated_at = datetime.now()
+        key = self._key(
+            self.key_config.workspace,
+            user_id=user_id,
+            workspace_id=record.id,
+        )
+        index_key = self._key(
+            self.key_config.workspace_index,
+            user_id=user_id,
+        )
+        await self._set_with_ttl(key, record.model_dump_json())
+        await self._client.sadd(index_key, record.id)
+        return record
+
+    async def get_workspace(
+        self,
+        user_id: str,
+        workspace_id: str,
+    ) -> WorkspaceRecord | None:
+        key = self._key(
+            self.key_config.workspace,
+            user_id=user_id,
+            workspace_id=workspace_id,
+        )
+        raw = await self._client.get(key)
+        if not raw:
+            return None
+        record = WorkspaceRecord.model_validate_json(raw)
+        if record.owner_user_id != user_id:
+            return None
+        return record
+
+    async def upsert_workspace_binding(
+        self,
+        user_id: str,
+        binding: WorkspaceBinding,
+    ) -> WorkspaceBinding:
+        if binding.user_id != user_id:
+            raise ValueError("workspace binding user does not match user_id")
+        workspace = await self.get_workspace(user_id, binding.workspace_id)
+        if workspace is None:
+            # Migration path for sessions created before WorkspaceRecord was
+            # introduced. The owned session is sufficient proof, while an
+            # arbitrary workspace id without such a session is still denied.
+            session = await self.get_session(
+                user_id,
+                binding.agent_id,
+                binding.session_id,
+            )
+            if (
+                session is None
+                or session.config.workspace_id != binding.workspace_id
+            ):
+                raise ValueError(
+                    "workspace does not exist or is not owned by user",
+                )
+        binding.updated_at = datetime.now()
+        key = self._key(
+            self.key_config.workspace_binding,
+            user_id=user_id,
+            session_id=binding.session_id,
+        )
+        await self._set_with_ttl(key, binding.model_dump_json())
+        return binding
+
+    async def get_workspace_binding(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+    ) -> WorkspaceBinding | None:
+        key = self._key(
+            self.key_config.workspace_binding,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        raw = await self._client.get(key)
+        if not raw:
+            return None
+        binding = WorkspaceBinding.model_validate_json(raw)
+        if binding.user_id != user_id or binding.agent_id != agent_id:
+            return None
+        if await self.get_workspace(user_id, binding.workspace_id) is None:
+            session = await self.get_session(user_id, agent_id, session_id)
+            if (
+                session is None
+                or session.config.workspace_id != binding.workspace_id
+            ):
+                return None
+        return binding
+
+    async def delete_workspace_binding(
+        self,
+        user_id: str,
+        session_id: str,
+    ) -> bool:
+        key = self._key(
+            self.key_config.workspace_binding,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        return bool(await self._client.delete(key))
 
     async def _set_with_ttl(self, key: str, value: str) -> None:
         """SET a key and optionally apply the sliding TTL."""
@@ -1145,3 +1273,132 @@ class RedisStorage(StorageBase):
         index_key = self._key(self.key_config.team_index, user_id=user_id)
         await self._client.srem(index_key, team_id)
         return bool(existed)
+
+    async def acquire_workspace_run_lease(
+        self,
+        user_id: str,
+        workspace_id: str,
+        ttl: int = 3600,
+    ) -> str:
+        from ..._utils._common import _generate_id
+
+        lease_id = _generate_id()
+        key = self._key(
+            self.key_config.workspace_run_lease,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            lease_id=lease_id,
+        )
+        index = self._key(
+            self.key_config.workspace_run_lease_index,
+            user_id=user_id,
+            workspace_id=workspace_id,
+        )
+        async with self._client.pipeline(transaction=True) as pipe:
+            pipe.set(key, lease_id, ex=ttl)
+            pipe.sadd(index, lease_id)
+            await pipe.execute()
+        return lease_id
+
+    async def release_workspace_run_lease(
+        self,
+        user_id: str,
+        workspace_id: str,
+        lease_id: str,
+    ) -> None:
+        key = self._key(
+            self.key_config.workspace_run_lease,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            lease_id=lease_id,
+        )
+        index = self._key(
+            self.key_config.workspace_run_lease_index,
+            user_id=user_id,
+            workspace_id=workspace_id,
+        )
+        from redis.exceptions import WatchError
+
+        async with self._client.pipeline() as pipe:
+            while True:
+                try:
+                    await pipe.watch(key)
+                    current = await pipe.get(key)
+                    current_id = (
+                        current.decode("utf-8")
+                        if isinstance(current, bytes)
+                        else current
+                    )
+                    if current_id != lease_id:
+                        await pipe.reset()
+                        return
+                    pipe.multi()
+                    pipe.delete(key)
+                    pipe.srem(index, lease_id)
+                    await pipe.execute()
+                    return
+                except WatchError:
+                    continue
+
+    async def renew_workspace_run_lease(
+        self,
+        user_id: str,
+        workspace_id: str,
+        lease_id: str,
+        ttl: int = 3600,
+    ) -> bool:
+        key = self._key(
+            self.key_config.workspace_run_lease,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            lease_id=lease_id,
+        )
+        from redis.exceptions import WatchError
+
+        async with self._client.pipeline() as pipe:
+            while True:
+                try:
+                    await pipe.watch(key)
+                    current = await pipe.get(key)
+                    current_id = (
+                        current.decode("utf-8")
+                        if isinstance(current, bytes)
+                        else current
+                    )
+                    if current_id != lease_id:
+                        await pipe.reset()
+                        return False
+                    pipe.multi()
+                    pipe.expire(key, ttl)
+                    result = await pipe.execute()
+                    return bool(result[0])
+                except WatchError:
+                    continue
+
+    async def has_workspace_run_leases(
+        self,
+        user_id: str,
+        workspace_id: str,
+    ) -> bool:
+        index = self._key(
+            self.key_config.workspace_run_lease_index,
+            user_id=user_id,
+            workspace_id=workspace_id,
+        )
+        lease_ids = await self._client.smembers(index)
+        for raw_id in lease_ids:
+            lease_id = (
+                raw_id.decode("utf-8")
+                if isinstance(raw_id, bytes)
+                else str(raw_id)
+            )
+            key = self._key(
+                self.key_config.workspace_run_lease,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                lease_id=lease_id,
+            )
+            if await self._client.exists(key):
+                return True
+            await self._client.srem(index, lease_id)
+        return False

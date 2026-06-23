@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=too-many-public-methods
 """The storage base class."""
+
 from abc import ABC, abstractmethod
 from typing import Any, Self
 
@@ -13,10 +14,13 @@ from ._model import (
     SessionConfig,
     SessionSource,
     TeamRecord,
+    WorkspaceBinding,
+    WorkspaceRecord,
 )
 from ...credential import CredentialBase
 from ...message import Msg
 from ...state import AgentState
+from ..._utils._common import _generate_id
 
 
 class StorageBase(ABC):
@@ -37,6 +41,51 @@ class StorageBase(ABC):
 
     async def aclose(self) -> None:
         """Release underlying connection resources. Default is a no-op."""
+
+    # ------------------------------------------------------------------
+    # Workspace persistence
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    async def upsert_workspace(
+        self,
+        user_id: str,
+        record: WorkspaceRecord,
+    ) -> WorkspaceRecord:
+        """Create or update a workspace owned by ``user_id``."""
+
+    @abstractmethod
+    async def get_workspace(
+        self,
+        user_id: str,
+        workspace_id: str,
+    ) -> WorkspaceRecord | None:
+        """Return an owned workspace, never a record from another user."""
+
+    @abstractmethod
+    async def upsert_workspace_binding(
+        self,
+        user_id: str,
+        binding: WorkspaceBinding,
+    ) -> WorkspaceBinding:
+        """Persist the workspace binding for one session."""
+
+    @abstractmethod
+    async def get_workspace_binding(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+    ) -> WorkspaceBinding | None:
+        """Resolve and validate a session's workspace binding."""
+
+    @abstractmethod
+    async def delete_workspace_binding(
+        self,
+        user_id: str,
+        session_id: str,
+    ) -> bool:
+        """Delete a session workspace binding."""
 
     @abstractmethod
     async def upsert_credential(
@@ -525,3 +574,42 @@ class StorageBase(ABC):
                 ``True`` if the team record existed and was deleted,
                 ``False`` if not found.
         """
+
+    async def acquire_workspace_run_lease(
+        self,
+        user_id: str,
+        workspace_id: str,
+        ttl: int = 3600,
+    ) -> str:
+        """Acquire a run lease; non-distributed stores use an opaque id."""
+        del user_id, workspace_id, ttl
+        return _generate_id()
+
+    async def release_workspace_run_lease(
+        self,
+        user_id: str,
+        workspace_id: str,
+        lease_id: str,
+    ) -> None:
+        """Release a run lease."""
+        del user_id, workspace_id, lease_id
+
+    async def renew_workspace_run_lease(
+        self,
+        user_id: str,
+        workspace_id: str,
+        lease_id: str,
+        ttl: int = 3600,
+    ) -> bool:
+        """Extend a run lease when still owned by the caller."""
+        del user_id, workspace_id, lease_id, ttl
+        return True
+
+    async def has_workspace_run_leases(
+        self,
+        user_id: str,
+        workspace_id: str,
+    ) -> bool:
+        """Whether another process reports an active workspace run."""
+        del user_id, workspace_id
+        return False

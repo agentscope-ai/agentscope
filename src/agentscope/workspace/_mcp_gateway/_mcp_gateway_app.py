@@ -39,11 +39,10 @@ import asyncio
 import json
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 
-from agentscope.mcp import MCPClient
-
+from agentscope.mcp import MCPClient, MCPConnectionPool, MCPDefinition
 
 # ── gateway state ──────────────────────────────────────────────────
 
@@ -52,7 +51,9 @@ class _State:
     """Mutable runtime state shared by FastAPI routes."""
 
     def __init__(self) -> None:
-        self.clients: dict[str, MCPClient] = {}
+        self.definitions: dict[str, MCPDefinition] = {}
+        self.pool = MCPConnectionPool()
+        self.workspace_id = "gateway"
         self.token: str = ""
         self.lock = asyncio.Lock()
 
@@ -76,17 +77,39 @@ def _make_auth_dep(state: _State) -> Any:
 # ── client construction ───────────────────────────────────────────
 
 
-async def _build_client(spec: dict[str, Any]) -> MCPClient:
-    """Validate a config / request body into an :class:`MCPClient`,
-    then connect if stateful so subsequent ``list_raw_tools`` /
-    ``get_tool`` work without re-spawning the upstream session.
-    """
+def _build_definition(
+    state: _State,
+    spec: dict[str, Any],
+    revision: int = 1,
+) -> MCPDefinition:
+    """Validate configuration without opening an actor connection."""
     client = MCPClient.model_validate(spec)
-    if client.is_stateful:
-        await client.connect()
-    # Prime the tool cache so /mcps/{name}/tools is cheap and stable.
-    await client.list_raw_tools()
-    return client
+    return MCPDefinition.from_client(
+        workspace_id=state.workspace_id,
+        client=client,
+        definition_id=client.name,
+        revision=revision,
+    )
+
+
+async def _validate_definition(
+    state: _State,
+    definition: MCPDefinition,
+) -> None:
+    """Probe tool discovery, then release the temporary validation scope."""
+    provider = state.pool.provider(
+        definition,
+        agent_id="__gateway__",
+        session_id="__validation__",
+    )
+    try:
+        await provider.get_tools()
+    finally:
+        await state.pool.close_scope(
+            workspace_id=state.workspace_id,
+            agent_id="__gateway__",
+            session_id="__validation__",
+        )
 
 
 # ── FastAPI app ────────────────────────────────────────────────────
@@ -105,7 +128,7 @@ def _build_app(state: _State) -> FastAPI:
     async def _list_mcps() -> list[dict[str, Any]]:
         # Dump the full MCPClient field set so the host can rebuild
         # `GatewayMCPClient.model_validate(spec)` losslessly.
-        return [c.model_dump(mode="json") for c in state.clients.values()]
+        return [d.client_spec for d in state.definitions.values()]
 
     @app.post("/mcps", dependencies=[auth])
     async def _add_mcp(request: Request) -> dict[str, Any]:
@@ -114,10 +137,11 @@ def _build_app(state: _State) -> FastAPI:
         if not name:
             raise HTTPException(400, "name required")
         async with state.lock:
-            if name in state.clients:
+            if name in state.definitions:
                 raise HTTPException(409, f"{name!r} already exists")
             try:
-                client = await _build_client(body)
+                definition = _build_definition(state, body)
+                await _validate_definition(state, definition)
             except HTTPException:
                 raise
             except Exception as e:  # noqa: BLE001
@@ -125,43 +149,68 @@ def _build_app(state: _State) -> FastAPI:
                     500,
                     f"connect failed: {e}",
                 ) from e
-            state.clients[name] = client
+            state.definitions[name] = definition
         return {"ok": True}
 
     @app.delete("/mcps/{name}", dependencies=[auth])
     async def _remove_mcp(name: str) -> dict[str, Any]:
         async with state.lock:
-            client = state.clients.pop(name, None)
-            if client is None:
+            definition = state.definitions.pop(name, None)
+            if definition is None:
                 raise HTTPException(404, f"{name!r} not found")
-            if client.is_stateful and client.is_connected:
-                await client.close()
+            await state.pool.close_definition(
+                workspace_id=state.workspace_id,
+                definition_id=definition.id,
+            )
         return {"ok": True}
 
     @app.get("/mcps/{name}/tools", dependencies=[auth])
-    async def _list_tools(name: str) -> list[dict[str, Any]]:
-        client = state.clients.get(name)
-        if client is None:
+    async def _list_tools(
+        name: str,
+        agent_id: str = Query(default="legacy"),
+        session_id: str = Query(default="legacy"),
+    ) -> list[dict[str, Any]]:
+        definition = state.definitions.get(name)
+        if definition is None:
             raise HTTPException(404, f"{name!r} not found")
-        # Send raw mcp.types.Tool over the wire so the host-side
-        # GatewayMCPClient can re-wrap them via the standard MCPClient
-        # path (preserves inputSchema, annotations.readOnlyHint, ...).
-        raw = await client.list_raw_tools()
-        return [t.model_dump(mode="json") for t in raw]
+        key = state.pool.provider(
+            definition,
+            agent_id=agent_id,
+            session_id=session_id,
+        ).key
+        async with state.pool.operation(definition, key) as client:
+            raw = await client.list_raw_tools()
+            return [t.model_dump(mode="json") for t in raw]
 
     @app.post("/mcps/{name}/tools/{tool}", dependencies=[auth])
     async def _call_tool(
         name: str,
         tool: str,
         request: Request,
+        agent_id: str = Query(default="legacy"),
+        session_id: str = Query(default="legacy"),
     ) -> dict[str, Any]:
-        client = state.clients.get(name)
-        if client is None:
+        definition = state.definitions.get(name)
+        if definition is None:
             raise HTTPException(404, f"{name!r} not found")
         body = await request.json()
         arguments = body.get("arguments") or {}
         try:
-            tool_obj = await client.get_tool(tool)
+            provider = state.pool.provider(
+                definition,
+                agent_id=agent_id,
+                session_id=session_id,
+            )
+            tool_obj = next(
+                (
+                    item
+                    for item in await provider.get_tools()
+                    if item.raw_name == tool
+                ),
+                None,
+            )
+            if tool_obj is None:
+                raise ValueError(f"Tool {tool!r} not found")
             chunk = await tool_obj(**arguments)
         except ValueError as e:
             raise HTTPException(404, str(e)) from e
@@ -182,15 +231,14 @@ async def _connect_initial(
 ) -> None:
     """Connect every server listed in the static config file."""
     for cfg in server_cfgs:
-        client = await _build_client(cfg)
-        if client.name in state.clients:
-            if client.is_stateful and client.is_connected:
-                await client.close()
+        definition = _build_definition(state, cfg)
+        if definition.name in state.definitions:
             raise ValueError(
-                f"Duplicated server name in config: {client.name!r}",
+                f"Duplicated server name in config: {definition.name!r}",
             )
-        state.clients[client.name] = client
-        print(f"[gateway] connected {client.name!r}", flush=True)
+        state.definitions[definition.name] = definition
+        await _validate_definition(state, definition)
+        print(f"[gateway] registered {definition.name!r}", flush=True)
 
 
 async def _run(config_path: str, port: int) -> None:
@@ -200,11 +248,12 @@ async def _run(config_path: str, port: int) -> None:
 
     state = _State()
     state.token = config.get("token", "") or ""
+    state.workspace_id = config.get("workspace_id", "gateway")
     await _connect_initial(state, config.get("servers", []) or [])
 
     app = _build_app(state)
     print(
-        f"[gateway] serving {len(state.clients)} MCPs on :{port}",
+        f"[gateway] serving {len(state.definitions)} MCPs on :{port}",
         flush=True,
     )
 
@@ -220,9 +269,7 @@ async def _run(config_path: str, port: int) -> None:
     try:
         await server.serve()
     finally:
-        for client in list(state.clients.values()):
-            if client.is_stateful and client.is_connected:
-                await client.close()
+        await state.pool.close()
 
 
 def main() -> None:

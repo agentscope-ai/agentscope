@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=protected-access
+# pylint: disable=protected-access,missing-function-docstring
 """Unit tests for RedisStorage using fakeredis."""
 
 from unittest.async_case import IsolatedAsyncioTestCase
@@ -17,6 +17,8 @@ from agentscope.app.storage import (
     SessionSource,
     TeamData,
     TeamRecord,
+    WorkspaceBinding,
+    WorkspaceRecord,
 )
 from agentscope.credential import OllamaCredential
 from agentscope.app.storage import AgentData
@@ -60,6 +62,130 @@ def make_session_config(workspace_id: str = "ws-1") -> SessionConfig:
             parameters={},
         ),
     )
+
+
+class TestWorkspaceStorage(IsolatedAsyncioTestCase):
+    """Workspace records and bindings preserve their ownership boundary."""
+
+    async def asyncSetUp(self) -> None:
+        self.storage = make_storage()
+        self.workspace = WorkspaceRecord(
+            id="workspace-1",
+            owner_user_id="user-1",
+            scope="team",
+            scope_id="team-1",
+            backend="local",
+            status="ready",
+        )
+        await self.storage.upsert_workspace("user-1", self.workspace)
+
+    async def test_workspace_is_user_scoped(self) -> None:
+        self.assertEqual(
+            (await self.storage.get_workspace("user-1", "workspace-1")).id,
+            "workspace-1",
+        )
+        self.assertIsNone(
+            await self.storage.get_workspace("user-2", "workspace-1"),
+        )
+
+    async def test_workspace_owner_mismatch_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "owner"):
+            await self.storage.upsert_workspace("user-2", self.workspace)
+
+    async def test_binding_validates_user_agent_and_workspace(self) -> None:
+        binding = WorkspaceBinding(
+            workspace_id=self.workspace.id,
+            user_id="user-1",
+            agent_id="agent-1",
+            session_id="session-1",
+            team_id="team-1",
+            role="worker",
+        )
+        await self.storage.upsert_workspace_binding("user-1", binding)
+
+        resolved = await self.storage.get_workspace_binding(
+            "user-1",
+            "agent-1",
+            "session-1",
+        )
+        self.assertEqual(resolved.workspace_id, self.workspace.id)
+        self.assertIsNone(
+            await self.storage.get_workspace_binding(
+                "user-1",
+                "another-agent",
+                "session-1",
+            ),
+        )
+        self.assertIsNone(
+            await self.storage.get_workspace_binding(
+                "user-2",
+                "agent-1",
+                "session-1",
+            ),
+        )
+
+    async def test_binding_requires_owned_workspace(self) -> None:
+        binding = WorkspaceBinding(
+            workspace_id="missing",
+            user_id="user-1",
+            agent_id="agent-1",
+            session_id="session-1",
+        )
+        with self.assertRaisesRegex(ValueError, "workspace"):
+            await self.storage.upsert_workspace_binding("user-1", binding)
+
+    async def test_delete_binding_is_idempotent(self) -> None:
+        binding = WorkspaceBinding(
+            workspace_id=self.workspace.id,
+            user_id="user-1",
+            agent_id="agent-1",
+            session_id="session-1",
+        )
+        await self.storage.upsert_workspace_binding("user-1", binding)
+        self.assertTrue(
+            await self.storage.delete_workspace_binding(
+                "user-1",
+                "session-1",
+            ),
+        )
+        self.assertFalse(
+            await self.storage.delete_workspace_binding(
+                "user-1",
+                "session-1",
+            ),
+        )
+
+    async def test_workspace_run_lease_is_owned_and_released(self) -> None:
+        lease_id = await self.storage.acquire_workspace_run_lease(
+            "user-1",
+            "workspace-1",
+            ttl=60,
+        )
+        self.assertTrue(
+            await self.storage.has_workspace_run_leases(
+                "user-1",
+                "workspace-1",
+            ),
+        )
+        self.assertTrue(
+            await self.storage.renew_workspace_run_lease(
+                "user-1",
+                "workspace-1",
+                lease_id,
+                ttl=60,
+            ),
+        )
+        await self.storage.release_workspace_run_lease(
+            "user-1",
+            "workspace-1",
+            lease_id,
+        )
+        self.assertFalse(
+            await self.storage.has_workspace_run_leases(
+                "user-1",
+                "workspace-1",
+            ),
+        )
 
 
 class TestCredential(IsolatedAsyncioTestCase):

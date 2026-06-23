@@ -6,6 +6,7 @@ workspace builtins, MCPs, skills, planning tools (Task*), background-task
 control (ToolStop), schedule control (Schedule*), team participation
 tools, and caller-supplied extras — into one :class:`Toolkit`.
 """
+
 from typing import Any
 
 from .._manager import BackgroundTaskManager, SchedulerManager
@@ -175,9 +176,21 @@ time or interval"
             session_record.id,
         )
 
+    provider_factory = getattr(workspace, "list_mcp_providers", None)
+    if provider_factory is None:
+        mcps = await workspace.list_mcps()
+        mcp_providers = None
+    else:
+        mcps = None
+        mcp_providers = await provider_factory(
+            agent_id=agent_record.id,
+            session_id=session_record.id,
+        )
+
     return Toolkit(
         tools=tools,
         skills_or_loaders=await workspace.list_skills(),
-        mcps=await workspace.list_mcps(),
+        mcps=mcps,
+        mcp_providers=mcp_providers,
         tool_groups=tool_groups,
     )

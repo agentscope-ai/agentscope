@@ -19,6 +19,8 @@ from ._model import (
     TeamData,
     TeamRecord,
     UserRecord,
+    WorkspaceBinding,
+    WorkspaceRecord,
 )
 
 __all__ = [
@@ -40,4 +42,6 @@ __all__ = [
     "ScheduleData",
     "ScheduleRecord",
     "ScheduleSource",
+    "WorkspaceBinding",
+    "WorkspaceRecord",
 ]

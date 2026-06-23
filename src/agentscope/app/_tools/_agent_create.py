@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The AgentCreate tool — spawns a worker into the current team."""
+
 from __future__ import annotations
 
 import copy
@@ -10,7 +11,7 @@ from pydantic import Field
 
 from ._team_tool_base import _TeamToolBase
 from .._types import SubAgentTemplate
-from ..storage import AgentData, AgentRecord, SessionConfig
+from ..storage import AgentData, AgentRecord, SessionConfig, WorkspaceBinding
 from ...message import HintBlock, TextBlock, ToolResultState
 from ...permission import PermissionContext
 from ...state import AgentState
@@ -476,6 +477,18 @@ optional):
                 self._user_id,
                 worker_session.id,
                 team.id,
+            )
+            await self._storage.upsert_workspace_binding(
+                self._user_id,
+                WorkspaceBinding(
+                    workspace_id=leader_session.config.workspace_id,
+                    user_id=self._user_id,
+                    agent_id=worker_agent.id,
+                    session_id=worker_session.id,
+                    team_id=team.id,
+                    role="worker",
+                    capabilities={"workspace.publish"},
+                ),
             )
 
             # 3. Append worker to team.member_ids.

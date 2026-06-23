@@ -36,7 +36,6 @@ from ..permission import (
 )
 from ..tool import ToolBase, ToolChunk
 
-
 # ── tool ───────────────────────────────────────────────────────────
 
 
@@ -59,6 +58,8 @@ class GatewayMCPTool(ToolBase):
         token: str,
         http: httpx.AsyncClient | None = None,
         timeout: float | None = None,
+        agent_id: str = "legacy",
+        session_id: str = "legacy",
     ) -> None:
         """Build a gateway-backed MCP tool.
 
@@ -112,6 +113,8 @@ class GatewayMCPTool(ToolBase):
         self._token = token
         self._http = http
         self._timeout = timeout
+        self._agent_id = agent_id
+        self._session_id = session_id
 
     async def check_permissions(
         self,
@@ -163,6 +166,10 @@ class GatewayMCPTool(ToolBase):
                 url,
                 json={"arguments": kwargs},
                 headers=headers,
+                params={
+                    "agent_id": self._agent_id,
+                    "session_id": self._session_id,
+                },
             )
             if resp.status_code >= 400:
                 # Surface gateway-side error as a failed ToolChunk so
@@ -203,6 +210,8 @@ class GatewayMCPClient(MCPClient):
     _gateway_token: str = PrivateAttr(default="")
     _http_timeout: float | None = PrivateAttr(default=None)
     _http: httpx.AsyncClient | None = PrivateAttr(default=None)
+    _agent_id: str = PrivateAttr(default="legacy")
+    _session_id: str = PrivateAttr(default="legacy")
 
     def model_post_init(self, __context: Any) -> None:
         """Skip the parent's stdio/HTTP client preparation.
@@ -226,6 +235,8 @@ class GatewayMCPClient(MCPClient):
         http: httpx.AsyncClient | None,
         timeout: float | None,
         connected: bool = False,
+        agent_id: str = "legacy",
+        session_id: str = "legacy",
     ) -> None:
         """Wire this client to a gateway transport.
 
@@ -263,6 +274,8 @@ class GatewayMCPClient(MCPClient):
         self._gateway_token = token
         self._http = http
         self._http_timeout = timeout
+        self._agent_id = agent_id
+        self._session_id = session_id
         if connected:
             self._is_connected = True
 
@@ -278,8 +291,6 @@ class GatewayMCPClient(MCPClient):
             RuntimeError: If the client is already connected, or if
                 the gateway returns a 4xx/5xx response.
         """
-        if not self.is_stateful:
-            return
         if self._is_connected:
             raise RuntimeError(
                 f"MCP {self.name!r} is already connected. "
@@ -314,8 +325,6 @@ class GatewayMCPClient(MCPClient):
                 :meth:`MCPClient.close` so callers can use the same
                 shutdown idiom regardless of transport.
         """
-        if not self.is_stateful:
-            return
         if not self._is_connected:
             if ignore_errors:
                 return
@@ -364,6 +373,10 @@ class GatewayMCPClient(MCPClient):
             resp = await http.get(
                 f"{self._gateway_url}/mcps/{self.name}/tools",
                 headers=_bearer_headers(self._gateway_token),
+                params={
+                    "agent_id": self._agent_id,
+                    "session_id": self._session_id,
+                },
             )
             resp.raise_for_status()
             data = resp.json()
@@ -441,6 +454,8 @@ class GatewayMCPClient(MCPClient):
             token=self._gateway_token,
             http=self._http,
             timeout=self._http_timeout,
+            agent_id=self._agent_id,
+            session_id=self._session_id,
         )
 
 
@@ -520,7 +535,12 @@ class GatewayClient:
             return False
         return resp.status_code == 200
 
-    async def list_mcps(self) -> list[GatewayMCPClient]:
+    async def list_mcps(
+        self,
+        *,
+        agent_id: str = "legacy",
+        session_id: str = "legacy",
+    ) -> list[GatewayMCPClient]:
         """Fetch every MCP currently registered on the gateway.
 
         The returned clients are marked as already connected (via
@@ -544,13 +564,23 @@ class GatewayClient:
             headers=self._headers(),
         )
         resp.raise_for_status()
-        return [self.make_client(spec, connected=True) for spec in resp.json()]
+        return [
+            self.make_client(
+                spec,
+                connected=True,
+                agent_id=agent_id,
+                session_id=session_id,
+            )
+            for spec in resp.json()
+        ]
 
     def make_client(
         self,
         spec: dict[str, Any],
         *,
         connected: bool = False,
+        agent_id: str = "legacy",
+        session_id: str = "legacy",
     ) -> GatewayMCPClient:
         """Build a :class:`GatewayMCPClient` wired to this gateway.
 
@@ -586,6 +616,8 @@ class GatewayClient:
             http=self._client(),
             timeout=self.timeout,
             connected=connected,
+            agent_id=agent_id,
+            session_id=session_id,
         )
         return client
 

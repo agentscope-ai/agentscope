@@ -45,6 +45,7 @@ live in different databases in the future. The service is the **only**
 component that touches both in the same call. Storage code never
 imports the bus; bus code never imports storage.
 """
+
 import asyncio
 
 from ..message_bus import MessageBus
@@ -219,6 +220,9 @@ class SessionService:
             agent_id,
             session_id,
         )
+        await self._storage.delete_workspace_binding(user_id, session_id)
+        for worker_sid in worker_sids:
+            await self._storage.delete_workspace_binding(user_id, worker_sid)
         await self._purge_bus(all_sids)
         return deleted
 

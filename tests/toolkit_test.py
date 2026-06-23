@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=unused-argument
+# pylint: disable=unused-argument,missing-function-docstring
 """Toolkit test case."""
+
 import base64
 import json
 from typing import Any, AsyncGenerator, Generator
@@ -88,15 +89,9 @@ class Tool2(ToolBase):
 
     async def call(self, **kwargs: Any) -> AsyncGenerator[ToolChunk, None]:
         """Run the tool."""
-        yield ToolChunk(
-            content=[TextBlock(text="123", id="a")],
-        )
-        yield ToolChunk(
-            content=[TextBlock(text="456", id="b")],
-        )
-        yield ToolChunk(
-            content=[TextBlock(text="789", id="b")],
-        )
+        yield ToolChunk(content=[TextBlock(text="123", id="a")])
+        yield ToolChunk(content=[TextBlock(text="456", id="b")])
+        yield ToolChunk(content=[TextBlock(text="789", id="b")])
         yield ToolChunk(
             content=[
                 DataBlock(
@@ -130,6 +125,19 @@ class Tool2(ToolBase):
                 ),
             ],
         )
+
+
+class _CountingMCPProvider:
+    """Provider used to verify one-time MCP tool materialization."""
+
+    name = "counting"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def get_tools(self) -> list[ToolBase]:
+        self.calls += 1
+        return [Tool1()]
 
 
 class ToolkitTest(IsolatedAsyncioTestCase):
@@ -178,6 +186,16 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+    async def test_mcp_provider_is_materialized_once(self) -> None:
+        provider = _CountingMCPProvider()
+        toolkit = Toolkit(mcp_providers=[provider])
+
+        first = await toolkit.get_tool_schemas()
+        second = await toolkit.get_tool_schemas()
+
+        self.assertEqual(first, second)
+        self.assertEqual(provider.calls, 1)
 
     async def test_tool(self) -> None:
         """Test executing a tool."""

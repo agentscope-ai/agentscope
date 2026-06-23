@@ -14,6 +14,7 @@ from ._session import (
 )
 from ._team import TeamRecord, TeamData
 from ._user import UserRecord
+from ._workspace import WorkspaceBinding, WorkspaceRecord
 
 __all__ = [
     "AgentData",
@@ -31,4 +32,6 @@ __all__ = [
     "TeamData",
     "TeamRecord",
     "UserRecord",
+    "WorkspaceBinding",
+    "WorkspaceRecord",
 ]

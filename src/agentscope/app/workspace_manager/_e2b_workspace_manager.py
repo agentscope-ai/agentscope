@@ -127,7 +127,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         self._sweep_interval = sweep_interval
 
         # workspace_id → (workspace, last_access_monotonic)
-        self._cache: dict[str, tuple[E2BWorkspace, float]] = {}
+        self._cache: dict[tuple[str, str], tuple[E2BWorkspace, float]] = {}
         self._lock = asyncio.Lock()
         self._sweep_task: asyncio.Task | None = None
 
@@ -145,9 +145,9 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         in the E2B dashboard's metadata filter UI.
         """
         return {
+            **self._sandbox_metadata,
             "agentscope.user.id": user_id,
             "agentscope.agent.id": agent_id,
-            **self._sandbox_metadata,
         }
 
     # ── workspace construction ────────────────────────────────────
@@ -223,22 +223,23 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
                 A live, initialised workspace.
         """
         del session_id  # accepted for interface parity; not used here
+        cache_key = (user_id, workspace_id)
 
         async with self._lock:
-            cached = self._cache.get(workspace_id)
+            cached = self._cache.get(cache_key)
             if cached is not None:
                 ws, _ = cached
-                self._cache[workspace_id] = (ws, time.monotonic())
+                self._cache[cache_key] = (ws, time.monotonic())
                 return ws
 
         # Cache miss: build under the lock to prevent two concurrent
         # get_workspace(workspace_id=X) calls from creating two
         # workspaces (and thus two sandboxes) for the same id.
         async with self._lock:
-            cached = self._cache.get(workspace_id)
+            cached = self._cache.get(cache_key)
             if cached is not None:
                 ws, _ = cached
-                self._cache[workspace_id] = (ws, time.monotonic())
+                self._cache[cache_key] = (ws, time.monotonic())
                 return ws
 
             ws = await self._build_and_start(
@@ -246,7 +247,7 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
                 user_id=user_id,
                 agent_id=agent_id,
             )
-            self._cache[workspace_id] = (ws, time.monotonic())
+            self._cache[cache_key] = (ws, time.monotonic())
             return ws
 
     async def create_workspace(
@@ -283,10 +284,14 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
             agent_id=agent_id,
         )
         async with self._lock:
-            self._cache[ws.workspace_id] = (ws, time.monotonic())
+            self._cache[(user_id, ws.workspace_id)] = (ws, time.monotonic())
         return ws
 
-    async def close(self, workspace_id: str) -> None:
+    async def close(
+        self,
+        workspace_id: str,
+        user_id: str | None = None,
+    ) -> None:
         """Close (= pause the sandbox) and evict a single workspace.
 
         No-op when the workspace_id is not tracked.
@@ -296,11 +301,17 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
                 The workspace to close.
         """
         async with self._lock:
-            entry = self._cache.pop(workspace_id, None)
-        if entry is None:
-            return
-        ws, _ = entry
-        await self._safe_close(ws)
+            keys = [
+                key
+                for key in self._cache
+                if key[1] == workspace_id
+                and (user_id is None or key[0] == user_id)
+            ]
+            entries = [self._cache.pop(key) for key in keys]
+        await asyncio.gather(
+            *(self._safe_close(ws) for ws, _ in entries),
+            return_exceptions=True,
+        )
 
     async def close_all(self) -> None:
         """Close every cached workspace in parallel.
@@ -362,12 +373,20 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         """One sweeper tick: evict expired entries and close them."""
         now = time.monotonic()
         async with self._lock:
-            expired_ids = [
-                wid
-                for wid, (_, ts) in self._cache.items()
+            candidates = [
+                key
+                for key, (_, ts) in self._cache.items()
                 if now - ts > self._ttl
             ]
-            evicted = [self._cache.pop(wid)[0] for wid in expired_ids]
+        expired_ids = [
+            key for key in candidates if await self.can_evict(key[0], key[1])
+        ]
+        async with self._lock:
+            evicted = [
+                self._cache.pop(key)[0]
+                for key in expired_ids
+                if key in self._cache and now - self._cache[key][1] > self._ttl
+            ]
         if not evicted:
             return
         await asyncio.gather(
@@ -385,3 +404,5 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
                 "Failed to close E2BWorkspace %s",
                 ws.workspace_id,
             )
+
+    backend_name = "e2b"
