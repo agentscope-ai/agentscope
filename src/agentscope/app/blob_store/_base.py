@@ -28,7 +28,8 @@ class AsyncReadable(Protocol):
     even though no single concrete type implements both shapes.
     """
 
-    async def read(self, n: int = -1) -> bytes: ...
+    async def read(self, n: int = -1) -> bytes:
+        ...
 
 
 class BlobStoreBase(ABC):
@@ -96,7 +97,7 @@ class BlobStoreBase(ABC):
         """
 
     @abstractmethod
-    def open(self, uri: str) -> AsyncContextManager[AsyncReadable]:
+    async def open(self, uri: str) -> AsyncContextManager[AsyncReadable]:
         """Stream-read a blob by URI.
 
         Returns an async context manager whose ``__aenter__`` yields a

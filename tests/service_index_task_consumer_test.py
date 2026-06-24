@@ -22,15 +22,11 @@ flows are identical at the primitive level.
 """
 import asyncio
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, Callable
+from typing import AsyncGenerator, Callable
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.app._service import IndexTaskConsumer
-from agentscope.app.index_dispatch import (
-    INDEX_TASKS_QUEUE,
-    INDEX_TASKS_SIGNAL,
-)
-from agentscope.app.message_bus import MessageBus
+from agentscope.app.message_bus import MessageBus, MessageBusKeys
 
 
 class _FakeBus(MessageBus):
@@ -136,6 +132,31 @@ class _FakeBus(MessageBus):
     async def is_locked(self, key: str) -> bool:
         return key in self._locks
 
+    # Mode F — registry (unused by IndexTaskConsumer; raise so any
+    # accidental dependency surfaces immediately rather than silently
+    # passing through a stub).
+    async def registry_set(
+        self,
+        namespace: str,
+        field: str,
+        value: str,
+        *,
+        ttl_secs: int | None = None,
+    ) -> None:
+        raise NotImplementedError
+
+    async def registry_del(self, namespace: str, field: str) -> None:
+        raise NotImplementedError
+
+    async def registry_exists(self, namespace: str, field: str) -> bool:
+        raise NotImplementedError
+
+    async def registry_getall(self, namespace: str) -> dict[str, str]:
+        raise NotImplementedError
+
+    async def registry_drop(self, namespace: str) -> None:
+        raise NotImplementedError
+
 
 class _RecordingWorker:
     """Records calls to :meth:`process` so tests can assert dispatch.
@@ -187,14 +208,14 @@ class TestIndexTaskConsumerDispatch(IsolatedAsyncioTestCase):
         worker = _RecordingWorker()
         async with IndexTaskConsumer(message_bus=bus, worker=worker):
             await bus.queue_push(
-                INDEX_TASKS_QUEUE,
+                MessageBusKeys.index_tasks_queue(),
                 {
                     "user_id": "u",
                     "knowledge_base_id": "kb",
                     "document_id": "d1",
                 },
             )
-            await bus.publish(INDEX_TASKS_SIGNAL, {})
+            await bus.publish(MessageBusKeys.index_tasks_signal(), {})
 
             await asyncio.wait_for(worker.notify.wait(), timeout=2.0)
 
@@ -215,7 +236,7 @@ class TestIndexTaskConsumerDispatch(IsolatedAsyncioTestCase):
         bus = _FakeBus()
         worker = _RecordingWorker()
         await bus.queue_push(
-            INDEX_TASKS_QUEUE,
+            MessageBusKeys.index_tasks_queue(),
             {
                 "user_id": "u",
                 "knowledge_base_id": "kb",
@@ -244,16 +265,19 @@ class TestIndexTaskConsumerDispatch(IsolatedAsyncioTestCase):
         worker = _RecordingWorker()
 
         async with IndexTaskConsumer(message_bus=bus, worker=worker):
-            await bus.queue_push(INDEX_TASKS_QUEUE, {"oops": True})
             await bus.queue_push(
-                INDEX_TASKS_QUEUE,
+                MessageBusKeys.index_tasks_queue(),
+                {"oops": True},
+            )
+            await bus.queue_push(
+                MessageBusKeys.index_tasks_queue(),
                 {
                     "user_id": "u",
                     "knowledge_base_id": "kb",
                     "document_id": "d2",
                 },
             )
-            await bus.publish(INDEX_TASKS_SIGNAL, {})
+            await bus.publish(MessageBusKeys.index_tasks_signal(), {})
             await asyncio.wait_for(worker.notify.wait(), timeout=2.0)
 
         self.assertEqual(
@@ -276,27 +300,27 @@ class TestIndexTaskConsumerDispatch(IsolatedAsyncioTestCase):
 
         async with IndexTaskConsumer(message_bus=bus, worker=worker):
             await bus.queue_push(
-                INDEX_TASKS_QUEUE,
+                MessageBusKeys.index_tasks_queue(),
                 {
                     "user_id": "u",
                     "knowledge_base_id": "kb",
                     "document_id": "boom",
                 },
             )
-            await bus.publish(INDEX_TASKS_SIGNAL, {})
+            await bus.publish(MessageBusKeys.index_tasks_signal(), {})
             # Reset notify so we can wait for the *second* dispatch.
             await _yield_a_few_times()
             worker.notify.clear()
 
             await bus.queue_push(
-                INDEX_TASKS_QUEUE,
+                MessageBusKeys.index_tasks_queue(),
                 {
                     "user_id": "u",
                     "knowledge_base_id": "kb",
                     "document_id": "ok",
                 },
             )
-            await bus.publish(INDEX_TASKS_SIGNAL, {})
+            await bus.publish(MessageBusKeys.index_tasks_signal(), {})
             await asyncio.wait_for(worker.notify.wait(), timeout=2.0)
 
         doc_ids = [c["document_id"] for c in worker.calls]
@@ -339,14 +363,14 @@ class TestIndexTaskConsumerLifecycle(IsolatedAsyncioTestCase):
         await consumer.__aenter__()
 
         await bus.queue_push(
-            INDEX_TASKS_QUEUE,
+            MessageBusKeys.index_tasks_queue(),
             {
                 "user_id": "u",
                 "knowledge_base_id": "kb",
                 "document_id": "slow",
             },
         )
-        await bus.publish(INDEX_TASKS_SIGNAL, {})
+        await bus.publish(MessageBusKeys.index_tasks_signal(), {})
         # Give the loop a tick to start the worker task.
         await asyncio.sleep(0)
         self.assertGreaterEqual(len(consumer._inflight), 1)

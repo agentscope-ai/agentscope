@@ -76,7 +76,7 @@ class LocalBlobStore(BlobStoreBase):
         """Extract the backend-relative key from a ``local://`` URI."""
         if not uri.startswith(_SCHEME):
             raise ValueError(f"Not a local blob URI: {uri!r}")
-        return uri[len(_SCHEME):]
+        return uri[len(_SCHEME) :]
 
     async def write_stream(self, key: str, stream: IO[bytes]) -> str:
         """Copy ``stream`` into the blob at ``key`` in 1 MiB chunks.

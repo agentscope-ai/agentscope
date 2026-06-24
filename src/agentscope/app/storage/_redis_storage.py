@@ -1578,7 +1578,7 @@ class RedisStorage(StorageBase):
                         pipe.expire(key, self.key_ttl)
                     await pipe.execute()
                     return True
-                except _watch_error() as _:
+                except _watch_error():
                     # Another writer touched the key between WATCH and
                     # EXEC; loop and re-read.
                     continue
@@ -1622,7 +1622,7 @@ class RedisStorage(StorageBase):
                         pipe.expire(key, self.key_ttl)
                     await pipe.execute()
                     return True
-                except _watch_error() as _:
+                except _watch_error():
                     continue
             return False
 
@@ -1660,7 +1660,7 @@ class RedisStorage(StorageBase):
                         pipe.expire(key, self.key_ttl)
                     await pipe.execute()
                     return
-                except _watch_error() as _:
+                except _watch_error():
                     continue
 
     async def list_knowledge_documents_with_expired_lease(

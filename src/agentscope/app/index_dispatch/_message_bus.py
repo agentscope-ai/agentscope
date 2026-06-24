@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
 """Message-bus implementation of :class:`IndexDispatcherBase`.
 
-Hands the document off via the shared message bus instead of
-``asyncio.create_task``: dispatch pushes a structured payload onto
-the durable :data:`INDEX_TASKS_QUEUE` and publishes a signal on
-:data:`INDEX_TASKS_SIGNAL`, exactly mirroring the wake-up flow.
+Thin adapter over :func:`~agentscope.app._bus_ops.enqueue_index_task`:
+the real work — pushing a structured payload onto the durable
+:meth:`~agentscope.app.message_bus.MessageBusKeys.index_tasks_queue`
+and publishing the
+:meth:`~agentscope.app.message_bus.MessageBusKeys.index_tasks_signal`
+wake-up — lives in the shared bus-ops module so the same composition
+is reusable outside the dispatcher abstraction (the sweeper, for
+example, could call it directly if we ever drop the abstraction).
 
 What makes this safe for production:
 
@@ -23,17 +27,17 @@ What makes this safe for production:
   pending grace period elapses.
 
 The dispatcher itself is stateless: there is nothing to start, stop,
-or clean up. The async-context-manager hooks inherit the no-op
-defaults from :class:`IndexDispatcherBase`.
+or clean up.  The async-context-manager hooks inherit the no-op
+defaults from :class:`IndexDispatcherBase`.  It exists only because
+the embedded vs dedicated split is modelled as two
+:class:`IndexDispatcherBase` implementations injected into
+:class:`~agentscope.app._service.KnowledgeBaseService`; without that
+abstraction this class would not exist at all.
 """
 from typing import TYPE_CHECKING
 
 from ._base import IndexDispatcherBase
-from ._keys import (
-    INDEX_TASKS_QUEUE,
-    INDEX_TASKS_SIGNAL,
-    IndexTaskPayload,
-)
+from .._bus_ops import enqueue_index_task
 
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
@@ -52,7 +56,8 @@ class MessageBusDispatcher(IndexDispatcherBase):
         message_bus (`MessageBus`):
             Application message bus. The dispatcher only uses the two
             transport-level primitives — ``queue_push`` and
-            ``publish`` — so any bus backend works.
+            ``publish`` — through :func:`enqueue_index_task`, so any
+            bus backend works.
     """
 
     def __init__(self, message_bus: "MessageBus") -> None:
@@ -64,22 +69,10 @@ class MessageBusDispatcher(IndexDispatcherBase):
         knowledge_base_id: str,
         document_id: str,
     ) -> None:
-        """Push the task onto the shared queue and fire the wake signal.
-
-        The two-step order matters: the queue push happens *first*,
-        so a worker woken by the signal is guaranteed to see the
-        entry when it drains.
-
-        Idempotency: re-dispatching the same document is safe because
-        the worker's lease CAS rejects duplicates. The queue may
-        legitimately hold multiple entries for the same document
-        (one from upload, one from sweeper) and the second one will
-        be a no-op at the worker.
-        """
-        payload: IndexTaskPayload = {
-            "user_id": user_id,
-            "knowledge_base_id": knowledge_base_id,
-            "document_id": document_id,
-        }
-        await self._bus.queue_push(INDEX_TASKS_QUEUE, dict(payload))
-        await self._bus.publish(INDEX_TASKS_SIGNAL, {})
+        """Hand the task off via the shared bus-ops helper."""
+        await enqueue_index_task(
+            self._bus,
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
+            document_id=document_id,
+        )

@@ -129,7 +129,9 @@ class S3BlobStore(BlobStoreBase):
         # clients hold an aiohttp connection pool tied to a loop, and
         # the per-call cost is negligible compared to the network
         # round-trip.
-        self._session: aioboto3.Session | None = None  # type: ignore[name-defined]
+        self._session: (
+            aioboto3.Session | None
+        ) = None  # type: ignore[name-defined]
 
     async def __aenter__(self) -> "S3BlobStore":
         self._session = aioboto3.Session()
@@ -166,7 +168,7 @@ class S3BlobStore(BlobStoreBase):
         """Extract the object key from an ``s3://{bucket}/{key}`` URI."""
         if not uri.startswith(_SCHEME):
             raise ValueError(f"Not an S3 blob URI: {uri!r}")
-        rest = uri[len(_SCHEME):]
+        rest = uri[len(_SCHEME) :]
         bucket, _, key = rest.partition("/")
         if not bucket or not key:
             raise ValueError(f"Malformed S3 blob URI: {uri!r}")

@@ -216,8 +216,11 @@ def create_app(
     app.state.blob_store = (
         blob_store
         if blob_store is not None
-        else (LocalBlobStore(root_dir="./blobs")
-              if knowledge_base_manager is not None else None)
+        else (
+            LocalBlobStore(root_dir="./blobs")
+            if knowledge_base_manager is not None
+            else None
+        )
     )
     app.state.enable_index_worker = (
         enable_index_worker and knowledge_base_manager is not None

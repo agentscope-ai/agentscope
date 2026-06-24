@@ -22,19 +22,17 @@ from unittest import IsolatedAsyncioTestCase
 
 import fakeredis.aioredis
 
-from agentscope.app.index_dispatch import (
-    INDEX_TASKS_QUEUE,
-    INDEX_TASKS_SIGNAL,
-    MessageBusDispatcher,
-)
-from agentscope.app.message_bus import RedisMessageBus
+from agentscope.app.index_dispatch import MessageBusDispatcher
+from agentscope.app.message_bus import MessageBusKeys, RedisMessageBus
 
 
 def _make_bus(fr: fakeredis.aioredis.FakeRedis) -> RedisMessageBus:
     """Construct a :class:`RedisMessageBus` bound to *fr*."""
 
     class _B(RedisMessageBus):
-        async def __aenter__(self) -> "RedisMessageBus":  # type: ignore[override]
+        async def __aenter__(
+            self,
+        ) -> "RedisMessageBus":  # type: ignore[override]
             self._client = fr
             return self
 
@@ -71,7 +69,7 @@ class TestMessageBusDispatcher(IsolatedAsyncioTestCase):
 
         async def _signal_consumer() -> None:
             async for payload in self.bus.subscribe(
-                INDEX_TASKS_SIGNAL,
+                MessageBusKeys.index_tasks_signal(),
                 on_ready=ready.set,
             ):
                 received.append(payload)
@@ -93,7 +91,7 @@ class TestMessageBusDispatcher(IsolatedAsyncioTestCase):
 
         # Queue holds the structured entry under the well-known key.
         entries = await self.bus.queue_drain(
-            INDEX_TASKS_QUEUE,
+            MessageBusKeys.index_tasks_queue(),
             max_count=10,
         )
         self.assertEqual(len(entries), 1)
@@ -123,7 +121,7 @@ class TestMessageBusDispatcher(IsolatedAsyncioTestCase):
             document_id="doc",
         )
         entries = await self.bus.queue_drain(
-            INDEX_TASKS_QUEUE,
+            MessageBusKeys.index_tasks_queue(),
             max_count=10,
         )
         self.assertEqual(len(entries), 2)

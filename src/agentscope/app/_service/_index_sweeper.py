@@ -122,8 +122,10 @@ class IndexSweeper:
         pending_threshold = now - self._pending_grace
 
         seen: set[str] = set()
-        stuck = await self._storage.list_knowledge_documents_with_expired_lease(
-            now=now,
+        stuck = (
+            await self._storage.list_knowledge_documents_with_expired_lease(
+                now=now,
+            )
         )
         orphans = await self._storage.list_knowledge_documents_pending_since(
             threshold=pending_threshold,

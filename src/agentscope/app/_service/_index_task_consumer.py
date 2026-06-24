@@ -2,9 +2,10 @@
 """Single per-worker-process consumer of the shared index-task channel.
 
 One asyncio task per worker process. Subscribes to the shared
-:data:`~agentscope.app.index_dispatch.INDEX_TASKS_SIGNAL` channel and
-drains the durable :data:`~agentscope.app.index_dispatch.
-INDEX_TASKS_QUEUE` on each signal. For each queued entry it invokes
+:meth:`~agentscope.app.message_bus.MessageBusKeys.index_tasks_signal`
+channel and drains the durable
+:meth:`~agentscope.app.message_bus.MessageBusKeys.index_tasks_queue`
+on each signal. For each queued entry it invokes
 :meth:`IndexWorker.process` directly — the worker holds its own
 semaphore so we can fire-and-forget multiple ``process`` calls without
 overrunning resources.
@@ -17,19 +18,17 @@ reason about either one once you've read the other.
 
 The bus exposes only transport-level primitives — there is no
 ``enqueue_index_task`` or ``dequeue_index_task`` method on it. The
-key constants live in :mod:`agentscope.app.index_dispatch._keys` and
-the composition is inline here because the consumer is the only
-sink for the channel; introducing a separate ``IndexTaskBroker``
-would be ceremony without gain.
+key constants live on :class:`~agentscope.app.message_bus.
+MessageBusKeys` (next to every other application-layer key) and the
+composition is inline here because the consumer is the only sink for
+the channel; introducing a separate ``IndexTaskBroker`` would be
+ceremony without gain.
 """
 import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Self
 
-from ..index_dispatch import (
-    INDEX_TASKS_QUEUE,
-    INDEX_TASKS_SIGNAL,
-)
+from ..message_bus import MessageBusKeys
 
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
@@ -137,7 +136,7 @@ class IndexTaskConsumer:
         """
         try:
             async for _signal in self._bus.subscribe(
-                INDEX_TASKS_SIGNAL,
+                MessageBusKeys.index_tasks_signal(),
                 on_ready=ready.set,
             ):
                 await self._drain_and_dispatch()
@@ -152,7 +151,7 @@ class IndexTaskConsumer:
         """Read up to a batch of task entries and dispatch each one."""
         try:
             entries = await self._bus.queue_drain(
-                INDEX_TASKS_QUEUE,
+                MessageBusKeys.index_tasks_queue(),
                 max_count=self._max_batch,
             )
         except Exception:  # pylint: disable=broad-except

@@ -117,7 +117,9 @@ class KnowledgeDocumentView(BaseModel):
         description="Number of chunks indexed so far.",
     )
     created_at: datetime = Field(description="Upload timestamp.")
-    updated_at: datetime = Field(description="Last status transition timestamp.")
+    updated_at: datetime = Field(
+        description="Last status transition timestamp.",
+    )
 
     @classmethod
     def from_record(

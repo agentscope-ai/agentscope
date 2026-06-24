@@ -136,7 +136,9 @@ async def run_worker(
             Process pool for CPU-bound parses. ``None`` runs parses
             inline (fine for text-only deployments).
     """
-    resolved_node_id = node_id or f"{socket.gethostname()}:{uuid.uuid4().hex[:8]}"
+    resolved_node_id = (
+        node_id or f"{socket.gethostname()}:{uuid.uuid4().hex[:8]}"
+    )
 
     async with AsyncExitStack() as stack:
         await stack.enter_async_context(storage)

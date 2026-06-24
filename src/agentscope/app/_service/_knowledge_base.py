@@ -17,7 +17,6 @@ with service-mode listing would leave records out of sync, and the
 project's stance is that a knowledge base is managed end-to-end in one
 mode.
 """
-import mimetypes
 import uuid
 from typing import IO, TYPE_CHECKING
 

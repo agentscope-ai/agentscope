@@ -36,7 +36,8 @@ class _IndexWorkerProtocol(Protocol):
         user_id: str,
         knowledge_base_id: str,
         document_id: str,
-    ) -> None: ...
+    ) -> None:
+        ...
 
 
 class InProcessDispatcher(IndexDispatcherBase):

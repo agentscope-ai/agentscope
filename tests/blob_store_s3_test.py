@@ -67,9 +67,7 @@ class S3BlobStoreTest(IsolatedAsyncioTestCase):
             "AWS_SESSION_TOKEN": "testing",
             "AWS_DEFAULT_REGION": _REGION,
         }
-        self._saved_env = {
-            k: os.environ.get(k) for k in self._env_overrides
-        }
+        self._saved_env = {k: os.environ.get(k) for k in self._env_overrides}
         for k, v in self._env_overrides.items():
             os.environ[k] = v
 

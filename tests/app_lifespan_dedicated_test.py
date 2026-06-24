@@ -89,7 +89,8 @@ class _FakeVectorStore(VectorStoreBase):
 
     async def delete(self, collection: str, document_id: str) -> None:
         self._collections[collection] = [
-            r for r in self._collections.get(collection, [])
+            r
+            for r in self._collections.get(collection, [])
             if r.document_id != document_id
         ]
 

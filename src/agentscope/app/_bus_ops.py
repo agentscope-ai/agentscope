@@ -14,6 +14,8 @@ other's internals.
      - Append an event to the session replay log and fan it out live.
    * - :func:`enqueue_run_trigger`
      - Enqueue a typed run trigger and signal dispatchers.
+   * - :func:`enqueue_index_task`
+     - Enqueue a knowledge-document indexing task and signal consumers.
 """
 from __future__ import annotations
 
@@ -120,3 +122,46 @@ async def enqueue_run_trigger(
         },
     )
     await bus.publish(MessageBusKeys.wakeup_signal(), {})
+
+
+# ── enqueue_index_task ─────────────────────────────────────────────────
+
+
+async def enqueue_index_task(
+    bus: "MessageBus",
+    user_id: str,
+    knowledge_base_id: str,
+    document_id: str,
+) -> None:
+    """Enqueue a knowledge-document indexing task and signal consumers.
+
+    Pushes a structured payload onto the durable index-task queue and
+    publishes a signal so any subscribed
+    :class:`~agentscope.app._service.IndexTaskConsumer` drains it within
+    one ``subscribe`` round-trip.
+
+    The push happens *before* the publish so a worker woken by the
+    signal is guaranteed to find the entry on its drain.  Re-enqueuing
+    the same document is safe — the worker's lease CAS rejects
+    duplicates — so the queue may legitimately hold multiple entries
+    for the same document (one from upload, one from sweeper).
+
+    Args:
+        bus (`MessageBus`):
+            The application message bus.
+        user_id (`str`):
+            The owning user id.
+        knowledge_base_id (`str`):
+            The parent knowledge base id.
+        document_id (`str`):
+            The document id to index.
+    """
+    await bus.queue_push(
+        MessageBusKeys.index_tasks_queue(),
+        {
+            "user_id": user_id,
+            "knowledge_base_id": knowledge_base_id,
+            "document_id": document_id,
+        },
+    )
+    await bus.publish(MessageBusKeys.index_tasks_signal(), {})

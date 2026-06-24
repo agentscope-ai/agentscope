@@ -24,7 +24,7 @@ import asyncio
 import logging
 import mimetypes
 from concurrent.futures import ProcessPoolExecutor
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -219,7 +219,9 @@ class IndexWorker:
             return
 
         data = record.data
-        media_type = data.content_type or mimetypes.guess_type(data.filename)[0]
+        media_type = (
+            data.content_type or mimetypes.guess_type(data.filename)[0]
+        )
         if not media_type:
             raise ValueError(
                 f"Cannot determine media type for {data.filename!r}.",

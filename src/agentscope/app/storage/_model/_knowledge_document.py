@@ -29,12 +29,11 @@ KnowledgeDocumentStatus = Literal[
     "ready",
     "error",
 ]
-"""The six lifecycle states of a knowledge document.
-
-``pending`` — bytes are in the blob store, waiting for a worker to
-pick the document up. ``parsing`` / ``chunking`` / ``indexing`` are
-worker-owned transitions; ``ready`` and ``error`` are terminal.
-"""
+# The six lifecycle states of a knowledge document.
+#
+# ``pending`` — bytes are in the blob store, waiting for a worker to
+# pick the document up. ``parsing`` / ``chunking`` / ``indexing`` are
+# worker-owned transitions; ``ready`` and ``error`` are terminal.
 
 
 class KnowledgeDocumentData(BaseModel):
