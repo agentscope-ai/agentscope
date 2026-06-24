@@ -3,6 +3,7 @@
 import difflib
 import fnmatch
 import os
+from pathlib import Path
 from typing import Any, List
 
 from .._base import ToolBase, ToolMiddlewareBase
@@ -275,7 +276,7 @@ Usage:
         # Create parent directories if they don't exist
         parent_dir = Path(file_path).parent
         await self._backend.exec_shell(
-            ["mkdir", "-p", parent_dir]
+            ["mkdir", "-p", str(parent_dir)],
         )
 
         # Write content to file (backend handles parent dir creation)
