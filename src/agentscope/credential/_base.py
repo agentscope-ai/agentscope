@@ -9,6 +9,7 @@ from .._utils._common import _generate_id
 if TYPE_CHECKING:
     from ..embedding import EmbeddingModelBase
     from ..model import ChatModelBase, ModelCard
+    from ..realtime import RealtimeModelBase, RealtimeModelCard
     from ..tts import TTSModelBase
     from ..tts._tts_model_card import TTSModelCard
 
@@ -41,6 +42,17 @@ class CredentialBase(BaseModel):
         )
 
     @classmethod
+    def get_realtime_model_class(cls) -> Type["RealtimeModelBase"] | None:
+        """Return the :class:`RealtimeModelBase` subclass that consumes this
+        credential, or ``None`` if this provider does not support realtime.
+
+        Returns:
+            `Type[RealtimeModelBase] | None`:
+                The realtime model class, or ``None``.
+        """
+        return None
+
+    @classmethod
     def get_tts_model_classes(cls) -> list[Type["TTSModelBase"]]:
         """Return the TTS model classes supported by this credential.
 
@@ -53,6 +65,20 @@ class CredentialBase(BaseModel):
                 The TTS model classes, or an empty list.
         """
         return []
+
+    @classmethod
+    def list_realtime_models(cls) -> list["RealtimeModelCard"]:
+        """List the candidate realtime models available under this credential.
+
+        Returns:
+            `list[RealtimeModelCard]`:
+                A list of realtime model cards, or empty if realtime is not
+                supported.
+        """
+        rt_cls = cls.get_realtime_model_class()
+        if rt_cls is None:
+            return []
+        return rt_cls.list_models()
 
     @classmethod
     def list_tts_models(cls) -> list["TTSModelCard"]:

@@ -9,6 +9,8 @@ from ._router import (
     chat_router,
     credential_router,
     model_router,
+    realtime_model_router,
+    realtime_router,
     tts_model_router,
     schedule_router,
     session_router,
@@ -166,11 +168,13 @@ def create_app(
         agent_router,
         chat_router,
         credential_router,
+        realtime_router,
         schedule_router,
         session_router,
         workspace_router,
         model_router,
         tts_model_router,
+        realtime_model_router,
     ):
         app.include_router(router)
 

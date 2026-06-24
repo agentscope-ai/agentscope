@@ -92,6 +92,9 @@ class SessionConfig(BaseModel):
     tts_model_config: TTSModelConfig | None = None
     """The TTS model config. None means TTS is not enabled."""
 
+    realtime_model_config: ChatModelConfig | None = None
+    """The realtime model config. None means realtime is not enabled."""
+
 
 class SessionRecord(_RecordBase):
     """The session record."""

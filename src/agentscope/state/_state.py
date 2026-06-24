@@ -157,6 +157,13 @@ class AgentState(BaseModel):
     """The current iteration of the agent's reasoning-acting loop."""
 
     # =================================================================
+    # Session resumption (realtime only)
+    # =================================================================
+    session_handle: str | None = None
+    """Opaque handle for resuming a realtime session across reconnections.
+    Currently only the Gemini Live API provides this."""
+
+    # =================================================================
     # The permission context
     # =================================================================
     permission_context: PermissionContext = Field(

@@ -119,6 +119,12 @@
 		"trigger": "创建 Agent"
 	},
 	"agent-form": {
+		"type": {
+			"legend": "Agent 类型",
+			"description": "选择要创建的 Agent 类型。",
+			"chat": "文本对话 Agent",
+			"realtime": "实时语音 Agent"
+		},
 		"identity": {
 			"legend": "Agent 身份",
 			"description": "定义此 Agent 行为的名称和指令。",
@@ -190,7 +196,8 @@
 		"maxOutput": "最大输出",
 		"inputTypes": "输入模态",
 		"outputTypes": "输出模态",
-		"availableTTSModels": "语音合成模型"
+		"availableTTSModels": "语音合成模型",
+		"availableRealtimeModels": "实时语音模型"
 	},
 	"llm-select": {
 		"placeholder": "选择模型",
@@ -298,7 +305,11 @@
 		"ttsEmpty": "暂无可用的语音合成模型。",
 		"ttsParameters": "参数",
 		"ttsParametersDescription": "调整所选语音合成模型的参数。",
-		"noTts": "不使用语音合成"
+		"noTts": "不使用语音合成",
+		"realtimeLabel": "实时语音",
+		"realtimeEmpty": "暂无可用的实时语音模型。",
+		"realtimeParametersDescription": "调整所选实时语音模型的参数。",
+		"noRealtime": "不使用实时语音模型"
 	},
 	"setup": {
 		"title": "连接到服务器",
@@ -352,5 +363,11 @@
 		"running": "运行中",
 		"idle": "空闲",
 		"missingSession": "（无会话）"
+	},
+	"voiceMode": {
+		"toggle": "语音模式",
+		"connecting": "连接中…",
+		"listening": "正在聆听…",
+		"muted": "点击开始说话"
 	}
 }

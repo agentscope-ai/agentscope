@@ -59,6 +59,10 @@ class EventType(StrEnum):
 
     CUSTOM = "CUSTOM"
 
+    USER_INPUT_AUDIO_START = "USER_INPUT_AUDIO_START"
+    USER_INPUT_AUDIO_END = "USER_INPUT_AUDIO_END"
+    USER_INPUT_TRANSCRIPTION = "USER_INPUT_TRANSCRIPTION"
+
 
 class EventBase(BaseModel):
     """Base event class."""
@@ -475,6 +479,53 @@ class CustomEvent(EventBase):
     """Arbitrary payload."""
 
 
+class UserInputAudioStartEvent(EventBase):
+    """Server VAD detected the start of a user speech turn (realtime)."""
+
+    type: Literal[
+        EventType.USER_INPUT_AUDIO_START
+    ] = EventType.USER_INPUT_AUDIO_START
+    """Event type."""
+    session_id: str
+    """ID of the session this turn belongs to."""
+    item_id: str
+    """Vendor-assigned identifier of the user turn (a.k.a. conversation item).
+    Pair it with the corresponding ``UserInputAudioEndEvent`` /
+    ``UserInputTranscriptionEvent``."""
+    audio_start_ms: int = 0
+    """Offset (ms) within the input audio buffer where speech began."""
+
+
+class UserInputAudioEndEvent(EventBase):
+    """Server VAD detected the end of a user speech turn (realtime)."""
+
+    type: Literal[
+        EventType.USER_INPUT_AUDIO_END
+    ] = EventType.USER_INPUT_AUDIO_END
+    """Event type."""
+    session_id: str
+    """ID of the session this turn belongs to."""
+    item_id: str
+    """Vendor-assigned identifier of the user turn."""
+    audio_end_ms: int = 0
+    """Offset (ms) within the input audio buffer where speech ended."""
+
+
+class UserInputTranscriptionEvent(EventBase):
+    """The user's spoken input has been transcribed (realtime)."""
+
+    type: Literal[
+        EventType.USER_INPUT_TRANSCRIPTION
+    ] = EventType.USER_INPUT_TRANSCRIPTION
+    """Event type."""
+    session_id: str
+    """ID of the session this turn belongs to."""
+    item_id: str
+    """Vendor-assigned identifier of the user turn."""
+    transcript: str
+    """The full transcribed text of the user's speech."""
+
+
 AgentEvent: TypeAlias = (
     ReplyStartEvent
     | ReplyEndEvent
@@ -503,4 +554,7 @@ AgentEvent: TypeAlias = (
     | UserConfirmResultEvent
     | ExternalExecutionResultEvent
     | CustomEvent
+    | UserInputAudioStartEvent
+    | UserInputAudioEndEvent
+    | UserInputTranscriptionEvent
 )

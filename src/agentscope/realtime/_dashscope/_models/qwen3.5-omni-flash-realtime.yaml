@@ -1,0 +1,26 @@
+type: realtime_model
+name: qwen3.5-omni-flash-realtime
+label: Qwen3.5-Omni-Flash Realtime
+status: active
+
+input_types:
+  - audio/pcm
+  - image/*
+  - video/*
+  - text/plain
+
+output_types:
+  - audio/pcm
+  - text/plain
+
+context_size: 262144
+output_size: 65536
+
+parameter_overrides:
+  voice:
+    default: "Tina"
+    enum: ["Cherry", "Serena", "Ethan", "Chelsie", "Tina"]
+  enable_input_audio_transcription:
+    hidden: true
+  input_transcription_model:
+    hidden: true

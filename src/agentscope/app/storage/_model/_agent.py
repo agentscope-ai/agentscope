@@ -8,6 +8,8 @@ from ...._utils._common import _generate_id
 from ._base import _RecordBase
 from ....agent import ContextConfig, ReActConfig
 
+AgentType = Literal["chat", "realtime"]
+
 
 class AgentData(BaseModel):
     """The agent data model."""
@@ -17,6 +19,15 @@ class AgentData(BaseModel):
         default_factory=_generate_id,
     )
     """The agent id."""
+
+    agent_type: AgentType = Field(
+        default="chat",
+        description=(
+            "The type of the agent. 'chat' for text-based chat agents, "
+            "'realtime' for realtime voice agents."
+        ),
+        title="Agent Type",
+    )
 
     name: str = Field(
         description="The name of the agent.",

@@ -20,6 +20,13 @@ export function useSessions(agentId: string | null) {
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<Error | null>(null);
 
+	// Clear stale sessions immediately when the agent changes so that
+	// downstream effects (e.g. the redirect effect in ChatPage) don't
+	// see sessions belonging to the previous agent.
+	useEffect(() => {
+		setSessions([]);
+	}, [agentId]);
+
 	const refetch = useCallback(async () => {
 		if (!agentId) {
 			setSessions([]);

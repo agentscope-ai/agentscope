@@ -35,8 +35,11 @@ export interface ReActConfig {
 
 // ─── Agent ────────────────────────────────────────────────────────────────────
 
+export type AgentType = 'chat' | 'realtime';
+
 export interface AgentData {
 	id: string;
+	agent_type: AgentType;
 	name: string;
 	system_prompt: string;
 	context_config: ContextConfig;
@@ -49,6 +52,7 @@ export interface AgentRecord extends RecordBase {
 }
 
 export interface CreateAgentRequest {
+	agent_type?: AgentType;
 	name: string;
 	system_prompt?: string;
 	context_config?: ContextConfig;
@@ -60,6 +64,7 @@ export interface CreateAgentResponse {
 }
 
 export interface UpdateAgentRequest {
+	agent_type?: AgentType;
 	name?: string;
 	system_prompt?: string;
 	context_config?: ContextConfig;
@@ -93,6 +98,8 @@ export interface SessionConfig {
 	fallback_chat_model_config: ChatModelConfig | null;
 	/** TTS model configuration. null means TTS is not enabled. */
 	tts_model_config: TTSModelConfig | null;
+	/** Realtime model configuration. null means realtime is not enabled. */
+	realtime_model_config: ChatModelConfig | null;
 	workspace_id: string;
 }
 
@@ -123,6 +130,8 @@ export interface CreateSessionRequest {
 	fallback_chat_model_config?: ChatModelConfig | null;
 	/** Optional TTS model. Omit (or pass null) for no TTS. */
 	tts_model_config?: TTSModelConfig | null;
+	/** Optional realtime model. Omit (or pass null) for no realtime. */
+	realtime_model_config?: ChatModelConfig | null;
 }
 
 export interface CreateSessionResponse {
@@ -146,6 +155,13 @@ export interface UpdateSessionRequest {
 	 *   - set to a value → replace the existing TTS config
 	 */
 	tts_model_config?: TTSModelConfig | null;
+	/**
+	 * New realtime model. PATCH semantics:
+	 *   - omit the field → leave unchanged
+	 *   - set to `null`  → disable realtime
+	 *   - set to a value → replace the existing realtime config
+	 */
+	realtime_model_config?: ChatModelConfig | null;
 	permission_mode?: PermissionMode;
 }
 
@@ -456,5 +472,24 @@ export interface TTSModelCard {
 
 export interface ListTTSModelResponse {
 	models: TTSModelCard[];
+	total: number;
+}
+
+export interface RealtimeModelCard {
+	type: 'realtime_model';
+	name: string;
+	label: string;
+	status: 'active' | 'deprecated' | 'sunset';
+	deprecated_at: string | null;
+	input_types: string[];
+	output_types: string[];
+	context_size: number;
+	output_size: number;
+	parameter_schema: Record<string, unknown>;
+	parameters_overrides: Record<string, Record<string, unknown>>;
+}
+
+export interface ListRealtimeModelResponse {
+	models: RealtimeModelCard[];
 	total: number;
 }

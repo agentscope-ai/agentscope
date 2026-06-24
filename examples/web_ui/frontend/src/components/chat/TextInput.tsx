@@ -55,6 +55,8 @@ interface TextInputProps {
 	 * Runs concurrently for all selected files; the UI shows a loading state per file while processing.
 	 */
 	fileProcessor: (file: File) => Promise<ContentBlock | null>;
+	/** When true, allow sending attached files without text (for realtime agents). */
+	allowFilesOnly?: boolean;
 }
 
 export interface TextInputRef {
@@ -82,6 +84,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			className,
 			allowedInputTypes,
 			fileProcessor,
+			allowFilesOnly = false,
 		},
 		ref,
 	) => {
@@ -139,12 +142,14 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			}
 		};
 
+		const readyFiles = files.filter((f) => f.status === 'done' && f.block);
+		const hasContent = !!value.trim() || (allowFilesOnly && readyFiles.length > 0);
+
 		const handleSend = () => {
-			if (!value.trim() || disabled || hasProcessing) return;
+			if (!hasContent || disabled || hasProcessing) return;
 
 			const blocks: ContentBlock[] = [];
 
-			// Add text block
 			if (value.trim()) {
 				const textBlock: TextBlock = {
 					id: crypto.randomUUID(),
@@ -154,7 +159,6 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 				blocks.push(textBlock);
 			}
 
-			// Add processed file blocks (skip errored ones)
 			files.forEach((f) => {
 				if (f.status === 'done' && f.block) {
 					blocks.push(f.block);
@@ -336,7 +340,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 									<Button
 										type="button"
 										onClick={handleSend}
-										disabled={disabled || !value.trim() || hasProcessing}
+										disabled={disabled || !hasContent || hasProcessing}
 										size="icon"
 										className="shrink-0 rounded-full"
 									>

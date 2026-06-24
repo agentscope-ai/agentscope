@@ -1,8 +1,14 @@
 import { Eye, EyeOff, Plus, Pencil, Trash2 } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 
-import { credentialApi, modelApi, ttsModelApi } from '@/api';
-import type { CredentialRecord, CredentialSchema, ModelCard, TTSModelCard } from '@/api';
+import { credentialApi, modelApi, ttsModelApi, realtimeModelApi } from '@/api';
+import type {
+	CredentialRecord,
+	CredentialSchema,
+	ModelCard,
+	TTSModelCard,
+	RealtimeModelCard,
+} from '@/api';
 import { InputTypeBadges } from '@/components/badge/InputTypeBadges';
 import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDialog';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog';
@@ -149,6 +155,65 @@ function TTSModelCardItem({ model }: { model: TTSModelCard }) {
 	);
 }
 
+// ─── Realtime Model Card ──────────────────────────────────────────────────────
+
+function RealtimeModelCardItem({ model }: { model: RealtimeModelCard }) {
+	const { t } = useTranslation();
+
+	const ctx = model.context_size ? formatNumber(model.context_size) : null;
+	const output = model.output_size ? formatNumber(model.output_size) : null;
+
+	const statusVariant =
+		model.status === 'active'
+			? 'default'
+			: model.status === 'deprecated'
+				? 'secondary'
+				: 'outline';
+
+	return (
+		<Card className="shadow">
+			<CardHeader>
+				<CardTitle
+					className="text-sm font-semibold leading-tight truncate"
+					title={model.name}
+				>
+					{model.label || model.name}
+				</CardTitle>
+				<CardAction>
+					<Badge variant="outline">Realtime</Badge>
+				</CardAction>
+			</CardHeader>
+			<CardContent className="flex flex-col">
+				{model.status !== 'active' && (
+					<Badge variant={statusVariant} className="text-xs">
+						{model.status}
+					</Badge>
+				)}
+				{ctx && (
+					<div className="flex justify-between items-center text-[14px]">
+						<span className="text-muted-foreground">{t('credential.maxContext')}</span>
+						<span>{ctx}</span>
+					</div>
+				)}
+				{output && (
+					<div className="flex justify-between items-center text-[14px]">
+						<span className="text-muted-foreground">{t('credential.maxOutput')}</span>
+						<span>{output}</span>
+					</div>
+				)}
+				<div className="flex justify-between items-center text-[14px]">
+					<span className="text-muted-foreground">{t('credential.inputTypes')}</span>
+					<InputTypeBadges inputTypes={model.input_types} />
+				</div>
+				<div className="flex justify-between items-center text-[14px]">
+					<span className="text-muted-foreground">{t('credential.outputTypes')}</span>
+					<InputTypeBadges inputTypes={model.output_types} />
+				</div>
+			</CardContent>
+		</Card>
+	);
+}
+
 // ─── Detail panel ─────────────────────────────────────────────────────────────
 
 interface DetailPanelProps {
@@ -162,6 +227,7 @@ function DetailPanel({ credential, schema, onEdit, onDelete }: DetailPanelProps)
 	const { t } = useTranslation();
 	const [models, setModels] = useState<ModelCard[]>([]);
 	const [ttsModels, setTtsModels] = useState<TTSModelCard[]>([]);
+	const [realtimeModels, setRealtimeModels] = useState<RealtimeModelCard[]>([]);
 	const [modelsLoading, setModelsLoading] = useState(false);
 
 	const type = credential.data.type as string | undefined;
@@ -178,10 +244,15 @@ function DetailPanel({ credential, schema, onEdit, onDelete }: DetailPanelProps)
 				.list(type)
 				.then((res) => res.models)
 				.catch(() => [] as TTSModelCard[]),
+			realtimeModelApi
+				.list(type)
+				.then((res) => res.models)
+				.catch(() => [] as RealtimeModelCard[]),
 		])
-			.then(([chatModels, tts]) => {
+			.then(([chatModels, tts, realtime]) => {
 				setModels(chatModels);
 				setTtsModels(tts);
+				setRealtimeModels(realtime);
 			})
 			.finally(() => setModelsLoading(false));
 	}, [credential.id, type]);
@@ -291,6 +362,23 @@ function DetailPanel({ credential, schema, onEdit, onDelete }: DetailPanelProps)
 						<div className="grid grid-cols-2 xl:grid-cols-3 gap-3">
 							{ttsModels.map((m) => (
 								<TTSModelCardItem key={m.name} model={m} />
+							))}
+						</div>
+					</div>
+				</>
+			)}
+
+			{/* Available Realtime Models */}
+			{realtimeModels.length > 0 && (
+				<>
+					<Separator />
+					<div className="flex flex-col gap-y-4">
+						<h3 className="text-sm font-semibold">
+							{t('credential.availableRealtimeModels')}({realtimeModels.length})
+						</h3>
+						<div className="grid grid-cols-2 xl:grid-cols-3 gap-3">
+							{realtimeModels.map((m) => (
+								<RealtimeModelCardItem key={m.name} model={m} />
 							))}
 						</div>
 					</div>

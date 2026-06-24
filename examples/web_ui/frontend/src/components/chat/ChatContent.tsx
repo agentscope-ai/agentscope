@@ -32,6 +32,8 @@ interface ChatContentProps {
 	allowedInputTypes: string[];
 	/** @see TextInputProps.fileProcessor */
 	fileProcessor: (file: File) => Promise<ContentBlock | null>;
+	/** @see TextInputProps.allowFilesOnly */
+	allowFilesOnly?: boolean;
 }
 
 const ChatContentComponent: React.FC<ChatContentProps> = ({
@@ -45,6 +47,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	footerSlot,
 	allowedInputTypes,
 	fileProcessor,
+	allowFilesOnly,
 }) => {
 	const scrollAreaRef = useRef<HTMLDivElement>(null);
 	const prevMsgCountRef = useRef<number>(0);
@@ -117,6 +120,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 				autoComplete={autoComplete}
 				allowedInputTypes={allowedInputTypes}
 				fileProcessor={fileProcessor}
+				allowFilesOnly={allowFilesOnly}
 			/>
 		</div>
 	);

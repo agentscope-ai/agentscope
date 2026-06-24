@@ -18,7 +18,7 @@ import {
 	MessageSquareQuote,
 	Wrench,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -204,23 +204,82 @@ function AudioWave({ isPlaying = true, className }: { isPlaying?: boolean; class
  * icon visually merges into the same chip rather than floating as its own
  * pill.
  */
+/** Convert raw PCM base64 to a WAV Blob URL so ``<audio>`` can play it. */
+function pcmToWavUrl(base64Pcm: string, mediaType: string): string | null {
+	const match = mediaType.match(/rate=(\d+)/);
+	if (!match) return null;
+	const sampleRate = parseInt(match[1], 10);
+	const channels = 1;
+	const bitsPerSample = 16;
+
+	const binary = atob(base64Pcm);
+	const pcmBytes = new Uint8Array(binary.length);
+	for (let i = 0; i < binary.length; i++) pcmBytes[i] = binary.charCodeAt(i);
+
+	const headerSize = 44;
+	const dataSize = pcmBytes.length;
+	const buffer = new ArrayBuffer(headerSize);
+	const view = new DataView(buffer);
+	const byteRate = sampleRate * channels * (bitsPerSample / 8);
+	const blockAlign = channels * (bitsPerSample / 8);
+
+	view.setUint32(0, 0x52494646, false); // "RIFF"
+	view.setUint32(4, headerSize - 8 + dataSize, true);
+	view.setUint32(8, 0x57415645, false); // "WAVE"
+	view.setUint32(12, 0x666d7420, false); // "fmt "
+	view.setUint32(16, 16, true);
+	view.setUint16(20, 1, true); // PCM format
+	view.setUint16(22, channels, true);
+	view.setUint32(24, sampleRate, true);
+	view.setUint32(28, byteRate, true);
+	view.setUint16(32, blockAlign, true);
+	view.setUint16(34, bitsPerSample, true);
+	view.setUint32(36, 0x64617461, false); // "data"
+	view.setUint32(40, dataSize, true);
+
+	const blob = new Blob([new Uint8Array(buffer), pcmBytes], { type: 'audio/wav' });
+	return URL.createObjectURL(blob);
+}
+
 function AudioInlineControl({ block }: { block: DataBlock }) {
 	const { t } = useTranslation();
 	const audioState = useAudioBlock(block.id);
 	const replayController = useReplayController();
 	const audioRef = useRef<HTMLAudioElement | null>(null);
 	const [isPlaying, setIsPlaying] = useState(false);
+	const prevWavUrlRef = useRef<string | null>(null);
 
 	const isStreaming = audioState?.status === 'streaming';
 
-	// Don't build the giant base64 data URL while bytes are still streaming —
-	// it would re-allocate on every DATA_BLOCK_DELTA. Live playback during
-	// that window is handled by the manager's WavStreamPlayer; we only need
-	// `src` for replay after the stream ends (or for historical messages).
+	// For historical PCM blocks loaded from storage, browsers cannot play
+	// raw PCM data URLs. Convert to WAV Blob URLs via useMemo so the
+	// (potentially large) conversion only runs once.
+	const historicalWavUrl = useMemo(() => {
+		if (isStreaming || audioState?.url) return null;
+		if (block.source.type !== 'base64' || !block.source.data) return null;
+		if (!block.source.media_type.startsWith('audio/pcm')) return null;
+		return pcmToWavUrl(block.source.data, block.source.media_type);
+	}, [isStreaming, audioState?.url, block.source]);
+
+	// Revoke old Blob URL when it changes (avoids leaks). Uses a ref to
+	// survive React StrictMode's double-effect invocation without revoking
+	// the current URL prematurely. We intentionally don't revoke on
+	// unmount: the browser releases the Blob once the URL is unregistered
+	// during page navigation, and avoiding unmount-revoke prevents
+	// StrictMode from invalidating the URL on its simulated remount.
+	useEffect(() => {
+		if (prevWavUrlRef.current && prevWavUrlRef.current !== historicalWavUrl) {
+			URL.revokeObjectURL(prevWavUrlRef.current);
+		}
+		prevWavUrlRef.current = historicalWavUrl;
+	}, [historicalWavUrl]);
+
 	let src: string | null = null;
 	if (!isStreaming) {
 		if (audioState?.url) {
 			src = audioState.url;
+		} else if (historicalWavUrl) {
+			src = historicalWavUrl;
 		} else if (block.source.type === 'url') {
 			src = block.source.url;
 		} else if (block.source.type === 'base64' && block.source.data) {
@@ -248,8 +307,12 @@ function AudioInlineControl({ block }: { block: DataBlock }) {
 		}
 	}, [interruptCount]);
 
-	if (isStreaming) {
+	if (isStreaming && interruptCount === 0) {
 		return <AudioWave isPlaying className="ml-1" />;
+	}
+
+	if (isStreaming) {
+		return <AudioWave isPlaying={false} className="ml-1" />;
 	}
 
 	if (!src) return null;

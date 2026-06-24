@@ -119,6 +119,12 @@
 		"trigger": "Create agent"
 	},
 	"agent-form": {
+		"type": {
+			"legend": "Agent Type",
+			"description": "Choose the type of agent to create.",
+			"chat": "Chat Agent",
+			"realtime": "Realtime Voice Agent"
+		},
 		"identity": {
 			"legend": "Agent Identity",
 			"description": "Name and instructions that define this agent's behaviour.",
@@ -190,7 +196,8 @@
 		"maxOutput": "Max. Output",
 		"inputTypes": "Input",
 		"outputTypes": "Output",
-		"availableTTSModels": "TTS Models"
+		"availableTTSModels": "TTS Models",
+		"availableRealtimeModels": "Realtime Models"
 	},
 	"llm-select": {
 		"placeholder": "Select a model",
@@ -298,7 +305,11 @@
 		"ttsEmpty": "No TTS models available.",
 		"ttsParameters": "Parameters",
 		"ttsParametersDescription": "Adjust parameters for the selected TTS model.",
-		"noTts": "No TTS"
+		"noTts": "No TTS",
+		"realtimeLabel": "Realtime",
+		"realtimeEmpty": "No realtime models available.",
+		"realtimeParametersDescription": "Adjust parameters for the selected realtime model.",
+		"noRealtime": "No realtime model"
 	},
 	"setup": {
 		"title": "Connect to Service",
@@ -352,5 +363,11 @@
 		"running": "Running",
 		"idle": "Idle",
 		"missingSession": "(no session)"
+	},
+	"voiceMode": {
+		"toggle": "Voice mode",
+		"connecting": "Connecting…",
+		"listening": "Listening…",
+		"muted": "Tap to unmute"
 	}
 }

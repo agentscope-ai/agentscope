@@ -1,0 +1,22 @@
+type: realtime_model
+name: gemini-3.1-flash-live-preview
+label: Gemini 3.1 Flash Live
+status: active
+
+input_types:
+  - audio/pcm
+  - image/*
+  - text/plain
+
+output_types:
+  - audio/pcm
+  - text/plain
+
+context_size: 1048576
+output_size: 8192
+
+parameter_overrides:
+  voice:
+    enum: ["Puck", "Charon", "Kore", "Fenrir", "Aoede", "Leda", "Orus", "Zephyr"]
+  enable_input_audio_transcription:
+    hidden: true

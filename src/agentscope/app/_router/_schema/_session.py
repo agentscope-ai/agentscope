@@ -78,6 +78,11 @@ class CreateSessionRequest(BaseModel):
         default=None,
         description="TTS model configuration. Can be set later via PATCH.",
     )
+    realtime_model_config: ChatModelConfig | None = Field(
+        default=None,
+        description="Realtime model configuration. "
+        "Can be set later via PATCH.",
+    )
 
 
 class CreateSessionResponse(BaseModel):
@@ -110,6 +115,11 @@ class UpdateSessionRequest(BaseModel):
     tts_model_config: TTSModelConfig | None = Field(
         default=None,
         description="New TTS model configuration. "
+        "Pass null to clear; omit to leave unchanged.",
+    )
+    realtime_model_config: ChatModelConfig | None = Field(
+        default=None,
+        description="New realtime model configuration. "
         "Pass null to clear; omit to leave unchanged.",
     )
     permission_mode: PermissionMode | None = Field(
