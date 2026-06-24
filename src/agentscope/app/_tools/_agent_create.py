@@ -12,6 +12,7 @@ from ._team_tool_base import _TeamToolBase
 from .._types import SubAgentTemplate
 from ..storage import AgentData, AgentRecord, SessionConfig
 from ...message import HintBlock, TextBlock, ToolResultState
+from ...permission import PermissionContext
 from ...state import AgentState
 from ...tool import ToolChunk, ParamsBase
 
@@ -35,6 +36,9 @@ DEFAULT_SUB_AGENT_TEMPLATE = SubAgentTemplate(
     type="default",
     description="Default worker agent with standard configuration.",
     system_prompt_template=_DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+    override_leader_mode=False,
+    extend_leader_permission_rules=True,
+    extend_leader_working_directories=True,
 )
 # The built-in default sub-agent template.
 #
@@ -43,6 +47,59 @@ DEFAULT_SUB_AGENT_TEMPLATE = SubAgentTemplate(
 # explicitly specifies ``subagent_type="default"``).  Developers can
 # override this by registering their own template with
 # ``type="default"`` via :func:`~agentscope.app.create_app`.
+#
+# The default template fully follows the leader: the worker inherits
+# the leader's permission mode, working directories, and rules —
+# matching the intuition that a generic worker should behave like the
+# leader unless the developer registers a more opinionated template.
+
+
+def _merge_leader_permissions(
+    template: SubAgentTemplate,
+    leader_context: PermissionContext,
+) -> PermissionContext:
+    """Build the worker's permission context from the template, layered
+    with the leader's runtime state according to the template's three
+    inherit-from-leader flags.
+
+    - ``override_leader_mode``: if True, the template's
+      :attr:`PermissionContext.mode` wins; otherwise the worker
+      inherits the leader's mode.
+    - ``extend_leader_permission_rules``: if True, the leader's
+      allow/deny/ask rules are appended after the template's rules for
+      each tool, so the worker doesn't re-prompt for permissions the
+      user has already granted in the leader session. The template's
+      rules appear first in each list, so the engine — which returns
+      on the first matching rule per stage — evaluates the template's
+      intent before the leader's.
+    - ``extend_leader_working_directories``: if True, the leader's
+      working directories are merged in; on key (path) collisions the
+      template's entry wins.
+
+    The template fields are deep-copied so the returned context is
+    independent of both the template and the leader state.
+    """
+    merged = template.permission_context.model_copy(deep=True)
+
+    if not template.override_leader_mode:
+        merged.mode = leader_context.mode
+
+    if template.extend_leader_working_directories:
+        for path, wd in leader_context.working_directories.items():
+            merged.working_directories.setdefault(
+                path,
+                wd.model_copy(deep=True),
+            )
+
+    if template.extend_leader_permission_rules:
+        for attr in ("allow_rules", "deny_rules", "ask_rules"):
+            merged_rules: dict = getattr(merged, attr)
+            for tool_name, rules in getattr(leader_context, attr).items():
+                merged_rules.setdefault(tool_name, []).extend(
+                    r.model_copy(deep=True) for r in rules
+                )
+
+    return merged
 
 
 class _AgentCreateParams(ParamsBase):
@@ -80,6 +137,7 @@ class AgentCreate(_TeamToolBase):
     """Spawn a new worker member into the team you lead."""
 
     name: str = "AgentCreate"
+    is_state_injected: bool = True
 
     description: str = """Add a new member to the team you lead.
 
@@ -190,6 +248,7 @@ optional):
         description: str,
         prompt: str,
         subagent_type: str = "default",
+        _agent_state: AgentState | None = None,
     ) -> ToolChunk:
         """Spawn the worker agent + session directly via storage.
 
@@ -199,7 +258,11 @@ optional):
 
         The worker's configuration (system prompt, context/react
         config, permission context, task context) is determined by
-        the :class:`SubAgentTemplate` matching ``subagent_type``.
+        the :class:`SubAgentTemplate` matching ``subagent_type``. The
+        leader's user-confirmed permission rules and working
+        directories are merged into the template's permission context
+        so the worker does not re-prompt for permissions the user has
+        already granted.
 
         Args:
             name (`str`):
@@ -212,6 +275,8 @@ optional):
             subagent_type (`str`, defaults to ``"default"``):
                 Template type to use. Must match a registered
                 :class:`SubAgentTemplate.type`.
+            _agent_state (`AgentState | None`, optional):
+                Live leader state injected by the toolkit.
 
         Returns:
             `ToolChunk`:
@@ -372,11 +437,22 @@ optional):
             await self._storage.upsert_agent(self._user_id, worker_agent)
 
             # 2. Build worker SessionRecord, inheriting leader's model
-            #    config.
+            #    config. The template's permission context is the base;
+            #    on top of it we merge the leader's mode and/or rules
+            #    and/or working directories according to the template's
+            #    inherit-from-leader flags. See
+            #    :func:`_merge_leader_permissions` for the policy.
+            leader_permission_context = (
+                _agent_state.permission_context
+                if _agent_state is not None
+                else leader_session.state.permission_context
+            )
+            worker_permission_context = _merge_leader_permissions(
+                template,
+                leader_permission_context,
+            )
             worker_state = AgentState(
-                permission_context=template.permission_context.model_copy(
-                    deep=True,
-                ),
+                permission_context=worker_permission_context,
                 tasks_context=template.tasks_context.model_copy(
                     deep=True,
                 ),

@@ -20,6 +20,14 @@ interface ChatContentProps {
 	) => void;
 	autoComplete?: (input: string) => string | null;
 	className?: string;
+	/**
+	 * Optional content pinned at the bottom of the chat — between the
+	 * message scroll area and the text input (e.g. pending subagent HITL
+	 * cards on a team leader's view). Rendered below the conversation so
+	 * a pending confirmation sits next to the input, where the user is
+	 * looking, rather than scrolled off the top.
+	 */
+	footerSlot?: React.ReactNode;
 	/** @see TextInputProps.allowedInputTypes */
 	allowedInputTypes: string[];
 	/** @see TextInputProps.fileProcessor */
@@ -34,6 +42,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	onUserConfirm,
 	autoComplete,
 	className,
+	footerSlot,
 	allowedInputTypes,
 	fileProcessor,
 }) => {
@@ -100,6 +109,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 					)}
 				</div>
 			</div>
+			{footerSlot ? <div className="w-full max-w-full shrink-0">{footerSlot}</div> : null}
 			<TextInput
 				className="min-w-full max-w-full w-full"
 				onSend={onSend}

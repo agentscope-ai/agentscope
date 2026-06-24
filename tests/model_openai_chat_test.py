@@ -186,6 +186,71 @@ class TestOpenAIChatNonStream(IsolatedAsyncioTestCase):
         self.assertEqual(result.id, "resp-1")
 
     @patch("openai.AsyncClient")
+    async def test_default_thinking_enable_not_forwarded(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Default parameters do not add provider-specific extra_body."""
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello world!"),
+        )
+        mock_client_cls.return_value.chat.completions.create = mock_create
+
+        await self.model([])
+
+        self.assertNotIn("extra_body", mock_create.call_args.kwargs)
+
+    @patch("openai.AsyncClient")
+    async def test_constructor_extra_body_forwarded(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Custom request fields are forwarded to OpenAI-compatible APIs."""
+        model = OpenAIChatModel(
+            credential=OpenAICredential(api_key="test"),
+            model="custom-model",
+            stream=False,
+            context_size=128_000,
+            extra_body={"enable_thinking": False},
+        )
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello world!"),
+        )
+        mock_client_cls.return_value.chat.completions.create = mock_create
+
+        await model([])
+
+        self.assertEqual(
+            mock_create.call_args.kwargs["extra_body"],
+            {"enable_thinking": False},
+        )
+
+    @patch("openai.AsyncClient")
+    async def test_generate_kwargs_extra_body_overrides_constructor(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Per-call extra_body overrides the constructor default."""
+        model = OpenAIChatModel(
+            credential=OpenAICredential(api_key="test"),
+            model="custom-model",
+            stream=False,
+            context_size=128_000,
+            extra_body={"enable_thinking": False},
+        )
+        mock_create = AsyncMock(
+            return_value=_mock_completion(text="Hello world!"),
+        )
+        mock_client_cls.return_value.chat.completions.create = mock_create
+
+        await model([], extra_body={"custom_option": "value"})
+
+        self.assertEqual(
+            mock_create.call_args.kwargs["extra_body"],
+            {"custom_option": "value"},
+        )
+
+    @patch("openai.AsyncClient")
     async def test_tool_call_response(
         self,
         mock_client_cls: MagicMock,

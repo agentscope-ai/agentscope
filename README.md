@@ -73,6 +73,7 @@ rather than constraining them with strict prompts and opinionated orchestrations
 
 ## News
 <!-- BEGIN NEWS -->
+- **[2026-06] `INTE`:** Mem0 supported. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/long_term_memory) | [Docs](https://docs.agentscope.io/v2)
 - **[2026-06] `FEAT`:** Agent Team supported. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [Docs](https://docs.agentscope.io/v2/deploy/agent-team)
 - **[2026-05] `RELS`:** AgentScope 2.0 released! [Docs](https://docs.agentscope.io/)
 <!-- END NEWS -->

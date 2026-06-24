@@ -3,12 +3,9 @@
 import difflib
 import fnmatch
 import os
-from pathlib import Path
 from typing import Any, List
 
-import aiofiles
-
-from .._base import ToolBase
+from .._base import ToolBase, ToolMiddlewareBase
 from .._constants import (
     DEFAULT_DANGEROUS_FILES,
     DEFAULT_DANGEROUS_DIRECTORIES,
@@ -23,6 +20,7 @@ from ...permission import (
 from .._response import ToolChunk
 from ...message import TextBlock, ToolResultState
 from ...state import AgentState
+from ._backend import BackendBase
 
 
 class Write(ToolBase):
@@ -68,6 +66,8 @@ Usage:
         self,
         dangerous_files: list[str] = DEFAULT_DANGEROUS_FILES,
         dangerous_directories: list[str] = DEFAULT_DANGEROUS_DIRECTORIES,
+        middlewares: List[ToolMiddlewareBase] | None = None,
+        backend: BackendBase | None = None,
     ) -> None:
         """Initialize the write tool.
 
@@ -85,9 +85,19 @@ Usage:
                 `DEFAULT_DANGEROUS_DIRECTORIES`. Pass a custom list to
                 fully replace the defaults, or `[]` to disable the
                 directory check.
+            middlewares (`List[ToolMiddlewareBase] | None`, optional):
+                Tool middlewares wrapping the tool execution.
+            backend (`BackendBase | None`, optional):
+                The sandbox backend to use for file I/O. When ``None``,
+                a :class:`LocalBackend` is created.
         """
+        from ._backend import LocalBackend
+
+        super().__init__(middlewares=middlewares)
         self.dangerous_files = list(dangerous_files)
         self.dangerous_directories = list(dangerous_directories)
+
+        self._backend = backend or LocalBackend()
 
     async def check_permissions(
         self,
@@ -211,7 +221,7 @@ Usage:
             ),
         ]
 
-    async def __call__(  # type: ignore[override]
+    async def call(  # type: ignore[override]
         self,
         file_path: str,
         content: str,
@@ -232,7 +242,10 @@ Usage:
             )
 
         # Check if file exists, it must be read first if it exists
-        if os.path.exists(file_path) and _agent_state is not None:
+        if (
+            await self._backend.file_exists(file_path)
+            and _agent_state is not None
+        ):
             cache = await _agent_state.tool_context.get_cache(file_path)
             if cache is None:
                 return ToolChunk(
@@ -251,14 +264,9 @@ Usage:
         # diff for the web UI. For brand-new files this stays as an empty
         # string, which produces a clean "new file" diff (``--- /dev/null``).
         previous_content = ""
-        if os.path.exists(file_path):
+        if await self._backend.file_exists(file_path):
             try:
-                async with aiofiles.open(
-                    file_path,
-                    mode="r",
-                    encoding="utf-8",
-                ) as f:
-                    previous_content = await f.read()
+                previous_content = await self._backend.read_file(file_path)
             except Exception:  # pylint: disable=broad-except
                 # Binary or unreadable file — fall back to empty so we still
                 # render a best-effort "add" diff in the UI.
@@ -266,11 +274,15 @@ Usage:
 
         # Create parent directories if they don't exist
         parent_dir = Path(file_path).parent
-        os.makedirs(parent_dir, exist_ok=True)
+        await self._backend.exec_shell(
+            ["mkdir", "-p", parent_dir]
+        )
 
-        # Write content to file
-        async with aiofiles.open(file_path, mode="w", encoding="utf-8") as f:
-            await f.write(content)
+        # Write content to file (backend handles parent dir creation)
+        await self._backend.write_file(
+            file_path,
+            content.encode("utf-8"),
+        )
 
         # Count lines in content
         line_count = len(content.split("\n"))

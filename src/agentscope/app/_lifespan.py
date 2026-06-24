@@ -40,7 +40,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await stack.enter_async_context(message_bus)
         await stack.enter_async_context(workspace_manager)
 
-        bg_manager = await stack.enter_async_context(BackgroundTaskManager())
+        bg_manager = await stack.enter_async_context(
+            BackgroundTaskManager(message_bus=message_bus),
+        )
         app.state.background_task_manager = bg_manager
 
         # Per-process registry of in-flight chat-run asyncio tasks.

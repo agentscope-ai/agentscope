@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """The Ollama chat model implementation."""
 import json
-import uuid
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 
 from pydantic import BaseModel, Field
 
+from ..._utils._common import _generate_id
 from .._base import ChatModelBase
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
@@ -250,7 +250,7 @@ class OllamaChatModel(ChatModelBase):
         # All delta should have the same block identifier.
         # Ollama does not return a request id, so we generate one upfront
         # to keep it stable.
-        response_id = getattr(response, "id", None) or uuid.uuid4().hex
+        response_id = getattr(response, "id", None) or _generate_id()
         acc_text = TextBlock(text="")
         acc_thinking = ThinkingBlock(thinking="")
         acc_tool_calls: dict = {}
@@ -367,7 +367,7 @@ class OllamaChatModel(ChatModelBase):
             )
 
         return ChatResponse(
-            id=getattr(response, "id", None) or uuid.uuid4().hex,
+            id=getattr(response, "id", None) or _generate_id(),
             content=content_blocks,
             is_last=True,
             usage=usage,
