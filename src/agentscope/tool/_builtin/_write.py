@@ -267,7 +267,9 @@ Usage:
         previous_content = ""
         if await self._backend.file_exists(file_path):
             try:
-                previous_content = await self._backend.read_file(file_path)
+                previous_content = (
+                    await self._backend.read_file(file_path)
+                ).decode("utf-8")
             except Exception:  # pylint: disable=broad-except
                 # Binary or unreadable file — fall back to empty so we still
                 # render a best-effort "add" diff in the UI.
