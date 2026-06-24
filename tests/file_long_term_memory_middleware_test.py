@@ -21,11 +21,19 @@ import tempfile
 from typing import Any
 from datetime import datetime
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 from utils import MockModel
 
 from agentscope.agent import Agent
-from agentscope.message import Msg, TextBlock, UserMsg
+from agentscope.message import (
+    Base64Source,
+    DataBlock,
+    HintBlock,
+    Msg,
+    TextBlock,
+    UserMsg,
+)
 from agentscope.middleware import FileLongTermMemoryMiddleware
 from agentscope.middleware._longterm_memory._fileLongTermMemory import (
     _accessor,
@@ -37,7 +45,7 @@ from agentscope.tool import Toolkit
 from agentscope.workspace import LocalWorkspace
 
 
-WorkspaceFileAccessor = _accessor.WorkspaceFileAccessor
+BackendFileAccessor = _accessor.BackendFileAccessor
 FileLTMStore = _store.FileLTMStore
 
 
@@ -128,7 +136,10 @@ class TestFileLongTermMemoryStore(IsolatedAsyncioTestCase):
         self.workspace = LocalWorkspace(workdir=self.temp.name)
         await self.workspace.initialize()
         self.store = FileLTMStore(
-            WorkspaceFileAccessor(self.workspace),
+            BackendFileAccessor(
+                self.workspace.get_backend(),
+                self.workspace.workdir,
+            ),
         )
         await self.store.ensure_layout()
 
@@ -239,9 +250,12 @@ class TestFileLongTermMemoryStore(IsolatedAsyncioTestCase):
         self.assertEqual(results[0].source, "memory/2026-06-21.md")
         self.assertIn("JWT", results[0].content)
 
-    async def test_accessor_uses_workspace_backend(self) -> None:
-        """Accessor operations should round-trip through Workspace backend."""
-        accessor = WorkspaceFileAccessor(self.workspace)
+    async def test_accessor_uses_backend_and_workdir(self) -> None:
+        """Accessor operations should use only its backend and workdir."""
+        accessor = BackendFileAccessor(
+            self.workspace.get_backend(),
+            self.workspace.workdir,
+        )
         await accessor.write_text(
             "Memory/memory/2026-06-21.md",
             "# daily\n",
@@ -260,7 +274,10 @@ class TestFileLongTermMemoryStore(IsolatedAsyncioTestCase):
 
     async def test_accessor_rejects_absolute_and_parent_paths(self) -> None:
         """Absolute and parent paths must stay outside the backend."""
-        accessor = WorkspaceFileAccessor(self.workspace)
+        accessor = BackendFileAccessor(
+            self.workspace.get_backend(),
+            self.workspace.workdir,
+        )
         with self.assertRaises(ValueError):
             await accessor.read_text("../MEMORY.md")
         with self.assertRaises(ValueError):
@@ -288,14 +305,8 @@ class TestFileLongTermMemoryMiddleware(IsolatedAsyncioTestCase):
 
     async def test_modes_expose_expected_tools(self) -> None:
         """Only auto-capable modes should expose the write tool."""
-        static = FileLongTermMemoryMiddleware(
-            workspace=self.workspace,
-            mode="static",
-        )
-        auto = FileLongTermMemoryMiddleware(
-            workspace=self.workspace,
-            mode="auto",
-        )
+        static = FileLongTermMemoryMiddleware(mode="static")
+        auto = FileLongTermMemoryMiddleware(mode="auto")
         static_names = [tool.name for tool in await static.list_tools()]
         auto_names = [tool.name for tool in await auto.list_tools()]
         self.assertEqual(static_names, ["memory_read", "memory_search"])
@@ -303,10 +314,7 @@ class TestFileLongTermMemoryMiddleware(IsolatedAsyncioTestCase):
 
     async def test_prompt_and_manage_tool_use_workspace_files(self) -> None:
         """Prompt snapshots and managed writes should share one store."""
-        middleware = FileLongTermMemoryMiddleware(
-            workspace=self.workspace,
-            mode="auto",
-        )
+        middleware = FileLongTermMemoryMiddleware(mode="auto")
         state = AgentState(session_id="session-tools")
         model = MockModel(context_size=100_000)
         agent = Agent(
@@ -469,9 +477,56 @@ class TestFileLongTermMemoryMiddleware(IsolatedAsyncioTestCase):
             await second_workspace.close()
             second_temp.cleanup()
 
+    async def test_prompt_snapshot_cache_follows_file_mtimes(self) -> None:
+        """Prompt files should be reread only after their mtimes change."""
+        middleware = FileLongTermMemoryMiddleware(mode="auto")
+        state = AgentState(session_id="session-snapshot-cache")
+        agent = Agent(
+            name="assistant",
+            system_prompt="base",
+            model=MockModel(context_size=100_000),
+            state=state,
+            middlewares=[middleware],
+            offloader=self.workspace,
+        )
+
+        await middleware.on_system_prompt(agent, "base")
+        store = middleware._stores[self.workspace.workspace_id]
+        with patch.object(
+            store,
+            "read_snapshot",
+            wraps=store.read_snapshot,
+        ) as read_snapshot:
+            state.reply_id = "a-different-reply"
+            await middleware.on_system_prompt(agent, "base")
+            self.assertEqual(read_snapshot.await_count, 0)
+
+            await store.update_target(
+                action="add",
+                target="user",
+                content="Externally updated profile fact.",
+                section="Preferences",
+            )
+            user_path = os.path.join(
+                self.workspace.workdir,
+                "Memory",
+                "USER.md",
+            )
+            future = datetime.now().timestamp() + 5
+            os.utime(user_path, (future, future))
+
+            prompt = await middleware.on_system_prompt(agent, "base")
+            self.assertEqual(read_snapshot.await_count, 1)
+            self.assertIn("Externally updated profile fact.", prompt)
+
     async def test_static_extraction_writes_all_memory_layers(self) -> None:
         """Static extraction should update daily, USER, and MEMORY files."""
-        seed_store = FileLTMStore(WorkspaceFileAccessor(self.workspace))
+        seed_store = FileLTMStore(
+            BackendFileAccessor(
+                self.workspace.get_backend(),
+                self.workspace.workdir,
+            ),
+        )
         await seed_store.update_target(
             action="add",
             target="daily",
@@ -501,12 +556,43 @@ class TestFileLongTermMemoryMiddleware(IsolatedAsyncioTestCase):
             middlewares=[middleware],
             offloader=self.workspace,
         )
+        agent.state.summary = "Earlier multimodal project discussion."
 
-        reply = await agent.reply(UserMsg("user", "Please implement LTM."))
+        user_message = UserMsg(
+            "user",
+            [
+                TextBlock(text="Please implement LTM."),
+                DataBlock(
+                    name="architecture.png",
+                    source=Base64Source(
+                        data="aW1hZ2U=",
+                        media_type="image/png",
+                    ),
+                ),
+            ],
+        )
+        reply = await agent.reply(user_message)
         self.assertEqual(reply.get_text_content(), "Done.")
-        extraction_input = model.extraction_messages[-1].get_text_content()
-        self.assertIn("Today's daily memory", extraction_input)
-        self.assertIn("Initial notebook context.", extraction_input)
+        extraction_messages = model.extraction_messages
+        self.assertTrue(
+            any(
+                message.name == "conversation_summary"
+                and "Earlier multimodal" in message.get_text_content()
+                for message in extraction_messages
+            ),
+        )
+        extracted_user = next(
+            message
+            for message in extraction_messages
+            if message.id == user_message.id
+        )
+        self.assertTrue(extracted_user.has_content_blocks("data"))
+        hint_blocks = extraction_messages[-1].get_content_blocks("hint")
+        self.assertEqual(len(hint_blocks), 1)
+        self.assertIsInstance(hint_blocks[0], HintBlock)
+        self.assertIsInstance(hint_blocks[0].hint, str)
+        self.assertIn("Today's daily memory", hint_blocks[0].hint)
+        self.assertIn("Initial notebook context.", hint_blocks[0].hint)
 
         store = middleware._stores[self.workspace.workspace_id]
         self.assertIn(
@@ -559,7 +645,7 @@ class TestFileLongTermMemoryMiddleware(IsolatedAsyncioTestCase):
         self.assertEqual(model.extraction_calls, 0)
 
     async def test_creates_local_workspace_when_none_is_supplied(self) -> None:
-        """Missing workspace/offloader should create a local fallback."""
+        """Missing offloader should create a LocalWorkspace on demand."""
         model = MockModel(context_size=100_000)
         model.set_responses(
             [
@@ -569,10 +655,10 @@ class TestFileLongTermMemoryMiddleware(IsolatedAsyncioTestCase):
                 ),
             ],
         )
-        fallback_root = os.path.join(self.temp.name, "fallback")
+        local_workspace_dir = os.path.join(self.temp.name, "fallback")
         middleware = FileLongTermMemoryMiddleware(
             mode="auto",
-            fallback_workspace_root=fallback_root,
+            local_workspace_dir=local_workspace_dir,
         )
         agent = Agent(
             name="coding assistant",
@@ -586,12 +672,11 @@ class TestFileLongTermMemoryMiddleware(IsolatedAsyncioTestCase):
         self.assertTrue(
             os.path.isfile(
                 os.path.join(
-                    fallback_root,
-                    "coding-assistant",
+                    local_workspace_dir,
                     "Memory",
                     "MEMORY.md",
                 ),
             ),
         )
-        self.assertEqual(len(middleware._owned_workspaces), 1)
+        self.assertIsNotNone(middleware._owned_local_workspace)
         await middleware.close()

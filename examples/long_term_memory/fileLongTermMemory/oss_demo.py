@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """Standalone file-based long-term memory middleware demo.
 
-The demo creates two independent :class:`Agent` instances backed by the same
-:class:`LocalWorkspace`. Session 1 contributes user, project, and daily
-memory; Session 2 starts with fresh conversation state and demonstrates that
-the workspace files bridge the two sessions.
+The demo covers the main non-app sharing and isolation topologies: Agents can
+share one middleware and workspace, share a middleware across isolated
+workspaces, omit offloaders and share the middleware-owned LocalWorkspace, or
+use separate middleware instances over the same files sequentially.
 
 File LTM does not need a dedicated chat model. This example chooses DashScope
 only as the model provider for the demo Agents; static extraction reuses that
@@ -49,16 +49,28 @@ from agentscope.workspace import LocalWorkspace
 # ``static`` performs periodic model-driven extraction; ``auto`` lets the
 # agent write through memory_manage; ``both`` enables both paths. Read and
 # search tools remain available in every mode.
-MODE = "auto"
+MODE = "both"
 
-# True gives every run a deterministic empty workspace. Set this to False to
+# Run all important non-app ownership combinations. Remove entries when you
+# only want to inspect one case and reduce model calls.
+SCENARIOS = (
+    "shared_workspace",
+    "isolated_workspaces",
+    "implicit_workspace",
+    "separate_middlewares_shared_workspace",
+)
+
+# True gives every run deterministic empty workspaces. Set this to False to
 # demonstrate persistence across process restarts.
 RESET_DEMO_WORKSPACE = False
 
-# Memory is stored next to this script so it is easy to inspect while running
-# the example. A production application normally chooses its own workspace
-# root or obtains one from a WorkspaceManager.
-DEMO_WORKSPACE = Path(__file__).with_name("demo_workspace")
+# Every scenario stores files below this root so their isolation is visible.
+DEMO_ROOT = Path(__file__).with_name("demo_workspace")
+SHARED_WORKSPACE = DEMO_ROOT / "shared"
+ISOLATED_WORKSPACE_A = DEMO_ROOT / "isolated_a"
+ISOLATED_WORKSPACE_B = DEMO_ROOT / "isolated_b"
+IMPLICIT_WORKSPACE = DEMO_ROOT / "implicit"
+SEPARATE_MIDDLEWARE_WORKSPACE = DEMO_ROOT / "separate_middlewares"
 
 
 async def _run_turn(agent: Agent, text: str) -> str:
@@ -105,34 +117,34 @@ async def _run_turn(agent: Agent, text: str) -> str:
     return "".join(reply_parts)
 
 
-def _print_memory_files() -> None:
-    """Print all human-readable Markdown memory files.
+def _print_memory_files(workspace_root: Path, label: str) -> None:
+    """Print one workspace's human-readable Markdown memory files.
 
     ``.ltm.meta.json`` is intentionally omitted: it is middleware bookkeeping,
     while this function focuses on the memory that developers may inspect or
     edit directly.
     """
-    memory_root = DEMO_WORKSPACE / "Memory"
-    print("\n[file LTM] persisted files:")
+    memory_root = workspace_root / "Memory"
+    print(f"\n[file LTM] {label}: {workspace_root}")
     if not memory_root.exists():
         print("  (the Memory directory has not been created yet)")
         return
     for path in sorted(memory_root.rglob("*.md")):
-        relative = path.relative_to(DEMO_WORKSPACE)
+        relative = path.relative_to(workspace_root)
         print(f"\n--- {relative} ---")
         print(path.read_text(encoding="utf-8").strip())
 
 
 async def _build_agent(
     model: DashScopeChatModel,
-    workspace: LocalWorkspace,
+    workspace: LocalWorkspace | None,
     memory: FileLongTermMemoryMiddleware,
 ) -> Agent:
-    """Build a fresh Agent whose LTM is scoped to ``workspace``.
+    """Build a fresh Agent for an explicit or middleware-owned workspace.
 
     Each call creates a new ``AgentState`` and therefore a new conversation
-    session. The middleware instance and workspace are deliberately reused,
-    which makes the Markdown files the only bridge between sessions.
+    session. Passing ``None`` leaves ``Agent.offloader`` empty, causing the
+    middleware to create and reuse its configured LocalWorkspace.
     """
     return Agent(
         name="workspace_assistant",
@@ -142,25 +154,169 @@ async def _build_agent(
         # composition makes it clear which capabilities the model can call.
         toolkit=Toolkit(tools=await memory.list_tools()),
         middlewares=[memory],
-        # The explicit middleware workspace already determines LTM storage.
-        # Supplying the same object as offloader also enables the workspace's
-        # normal context/tool-result offloading behavior.
+        # With an explicit workspace, LTM resolves it from Agent.offloader.
+        # None exercises the middleware-owned LocalWorkspace fallback.
         offloader=workspace,
     )
 
 
+async def _run_session(
+    *,
+    label: str,
+    model: DashScopeChatModel,
+    memory: FileLongTermMemoryMiddleware,
+    workspace: LocalWorkspace | None,
+    message: str,
+    workspace_root: Path,
+) -> None:
+    """Run one fresh Agent session and print its resulting memory files."""
+    print(f"\n--- {label} ---")
+    print(f"[user] {message}\n")
+    agent = await _build_agent(model, workspace, memory)
+    reply = await _run_turn(agent, message)
+    print(f"\n[assistant] {reply}")
+    _print_memory_files(workspace_root, label)
+
+
+async def _demo_shared_workspace(model: DashScopeChatModel) -> None:
+    """Two Agents share both middleware and explicit workspace."""
+    print("\n=== SAME MIDDLEWARE + SAME WORKSPACE ===")
+    workspace = LocalWorkspace(workdir=str(SHARED_WORKSPACE))
+    await workspace.initialize()
+    memory = FileLongTermMemoryMiddleware(mode=MODE, extraction_interval=1)
+    try:
+        await _run_session(
+            label="shared / session A",
+            model=model,
+            memory=memory,
+            workspace=workspace,
+            workspace_root=SHARED_WORKSPACE,
+            message=(
+                "I live in Hangzhou and prefer concise Chinese answers. "
+                "Our project focuses on Agent Memory. Today's todo is to "
+                "finish the OSS sharing demo. Remember this."
+            ),
+        )
+        await _run_session(
+            label="shared / session B",
+            model=model,
+            memory=memory,
+            workspace=workspace,
+            workspace_root=SHARED_WORKSPACE,
+            message=(
+                "What do you remember about me, this project, and today's "
+                "todo? Search daily memory if needed."
+            ),
+        )
+    finally:
+        await workspace.close()
+
+
+async def _demo_isolated_workspaces(model: DashScopeChatModel) -> None:
+    """One middleware routes two Agents to independent workspace stores."""
+    print("\n=== SAME MIDDLEWARE + DIFFERENT WORKSPACES ===")
+    workspace_a = LocalWorkspace(workdir=str(ISOLATED_WORKSPACE_A))
+    workspace_b = LocalWorkspace(workdir=str(ISOLATED_WORKSPACE_B))
+    await workspace_a.initialize()
+    await workspace_b.initialize()
+    memory = FileLongTermMemoryMiddleware(mode=MODE, extraction_interval=1)
+    try:
+        await _run_session(
+            label="isolated workspace A",
+            model=model,
+            memory=memory,
+            workspace=workspace_a,
+            workspace_root=ISOLATED_WORKSPACE_A,
+            message="Workspace A uses codename Alpha. Remember it here.",
+        )
+        await _run_session(
+            label="isolated workspace B",
+            model=model,
+            memory=memory,
+            workspace=workspace_b,
+            workspace_root=ISOLATED_WORKSPACE_B,
+            message="Workspace B uses codename Beta. Remember it here.",
+        )
+    finally:
+        await workspace_a.close()
+        await workspace_b.close()
+
+
+async def _demo_implicit_workspace(model: DashScopeChatModel) -> None:
+    """Agents without offloaders share one middleware-owned workspace."""
+    print("\n=== SAME MIDDLEWARE + NO OFFLOADER ===")
+    memory = FileLongTermMemoryMiddleware(
+        mode=MODE,
+        extraction_interval=1,
+        local_workspace_dir=str(IMPLICIT_WORKSPACE),
+    )
+    try:
+        await _run_session(
+            label="implicit / session A",
+            model=model,
+            memory=memory,
+            workspace=None,
+            workspace_root=IMPLICIT_WORKSPACE,
+            message=(
+                "Our fallback workspace decision is File LTM. Remember it."
+            ),
+        )
+        await _run_session(
+            label="implicit / session B",
+            model=model,
+            memory=memory,
+            workspace=None,
+            workspace_root=IMPLICIT_WORKSPACE,
+            message="What decision was stored in our fallback workspace?",
+        )
+    finally:
+        # This middleware owns the fallback LocalWorkspace and its lifecycle.
+        await memory.close()
+
+
+async def _demo_separate_middlewares_shared_workspace(
+    model: DashScopeChatModel,
+) -> None:
+    """Show shared files but separate caches/locks; calls stay sequential."""
+    print("\n=== DIFFERENT MIDDLEWARES + SAME WORKSPACE (SEQUENTIAL) ===")
+    workspace = LocalWorkspace(workdir=str(SEPARATE_MIDDLEWARE_WORKSPACE))
+    await workspace.initialize()
+    memory_a = FileLongTermMemoryMiddleware(mode=MODE, extraction_interval=1)
+    memory_b = FileLongTermMemoryMiddleware(mode=MODE, extraction_interval=1)
+    try:
+        await _run_session(
+            label="separate middleware A",
+            model=model,
+            memory=memory_a,
+            workspace=workspace,
+            workspace_root=SEPARATE_MIDDLEWARE_WORKSPACE,
+            message="Record that this shared filesystem uses codename Gamma.",
+        )
+        await _run_session(
+            label="separate middleware B",
+            model=model,
+            memory=memory_b,
+            workspace=workspace,
+            workspace_root=SEPARATE_MIDDLEWARE_WORKSPACE,
+            message="Read the shared files and tell me their codename.",
+        )
+        print(
+            "\n[note] These middleware instances share files but not their "
+            "async locks or caches; concurrent writes are not recommended.",
+        )
+    finally:
+        await workspace.close()
+
+
 async def main() -> None:
-    """Run two fresh sessions and show workspace-scoped persistence."""
+    """Run the selected non-app workspace sharing scenarios."""
     api_key = os.environ["DASHSCOPE_API_KEY"]
 
     if RESET_DEMO_WORKSPACE:
-        # Delete before LocalWorkspace.initialize() opens or creates anything.
-        # This is demo-only behavior; production code should retain its
-        # workspace directory to preserve long-term memory.
-        print(f"=== resetting demo workspace: {DEMO_WORKSPACE} ===")
-        shutil.rmtree(DEMO_WORKSPACE, ignore_errors=True)
+        print(f"=== resetting demo workspaces: {DEMO_ROOT} ===")
+        shutil.rmtree(DEMO_ROOT, ignore_errors=True)
     else:
-        print(f"=== reusing demo workspace: {DEMO_WORKSPACE} ===")
+        print(f"=== reusing demo workspaces: {DEMO_ROOT} ===")
 
     # DashScope is used only to give the demo Agent a concrete chat model. The
     # LTM middleware does not receive or construct a second model: static
@@ -170,59 +326,18 @@ async def main() -> None:
         model="qwen3.7-max",
         stream=False,
     )
-    # LocalWorkspace resolves the path, creates its standard workspace
-    # layout, and exposes a LocalBackend through the common BackendBase API.
-    workspace = LocalWorkspace(workdir=str(DEMO_WORKSPACE))
-    await workspace.initialize()
-
-    # extraction_interval=1 makes static extraction visible after every
-    # completed turn. A production value such as 8 reduces model calls.
-    # In auto mode this interval is unused because only memory_manage writes.
-    # There is intentionally no model argument here: the middleware accesses
-    # the active Agent's model only when static extraction is due.
-    #
-    # If the workspace parameter is not provided, the workspace will be
-    # loaded from agent.offloader. If it is still empty, a LocalWorkspace
-    # will be created locally.
-    memory = FileLongTermMemoryMiddleware(
-        workspace=workspace,
-        mode=MODE,
-        extraction_interval=1,
-    )
-
-    try:
-        # SESSION 1 writes durable facts and today's episodic progress. In
-        # static mode the middleware extracts after the assistant reply; in
-        # auto/both mode the agent may also invoke memory_manage immediately.
-        print(f"\n=== SESSION 1 (mode={MODE!r}) ===")
-        message = (
-            "I live in Hangzhou and prefer concise Chinese answers. For "
-            "this project, we decided to keep focus on Agent Memory. "
-            "Today's todo is to add an app-service demo."
-        )
-        print(f"[user] {message}\n")
-        agent = await _build_agent(model, workspace, memory)
-        reply = await _run_turn(agent, message)
-        print(f"\n[assistant] {reply}")
-        _print_memory_files()
-
-        # SESSION 2 has no conversation history from Session 1. USER.md and
-        # MEMORY.md are injected into its system prompt, while daily memory is
-        # available through memory_search/memory_read.
-        print("\n=== SESSION 2 (fresh Agent, same workspace) ===")
-        message = (
-            "What do you remember about me, our LTM decision, and today's "
-            "unfinished work? Search memory if needed."
-        )
-        print(f"[user] {message}\n")
-        agent = await _build_agent(model, workspace, memory)
-        reply = await _run_turn(agent, message)
-        print(f"\n[assistant] {reply}")
-        _print_memory_files()
-    finally:
-        # The caller owns this explicit workspace, so it also owns lifecycle
-        # cleanup. close() releases resources but does not delete local files.
-        await workspace.close()
+    runners = {
+        "shared_workspace": _demo_shared_workspace,
+        "isolated_workspaces": _demo_isolated_workspaces,
+        "implicit_workspace": _demo_implicit_workspace,
+        "separate_middlewares_shared_workspace": (
+            _demo_separate_middlewares_shared_workspace
+        ),
+    }
+    for scenario in SCENARIOS:
+        if scenario not in runners:
+            raise ValueError(f"Unknown demo scenario: {scenario}")
+        await runners[scenario](model)
 
 
 if __name__ == "__main__":

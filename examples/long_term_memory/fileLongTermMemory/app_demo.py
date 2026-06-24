@@ -5,11 +5,11 @@ Start Redis first, then run:
 
     python app_demo.py
 
-The standard AgentScope service endpoints are exposed on port 8000. Each
-agent's LocalWorkspace stores its LTM under ``app_workspaces/<agent_id>/``.
+The standard AgentScope service endpoints are exposed on port 8000. This
+version uses local workspaces, with one workspace directory per service Agent.
 
 Requires:
-    pip install "agentscope[service,storage]"
+    pip install "agentscope[service,storage,workspace]"
     docker run --rm -p 6379:6379 redis:7
 
 Create model credentials and a session through the normal AgentScope service
@@ -45,10 +45,10 @@ REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 
 # One shared instance is intentional. ChatService resolves a workspace for the
-# active agent and passes it as Agent.offloader. The middleware then keys its
-# stores, locks, and snapshots by workspace_id. Both factories below must bind
-# this same object so state-injected tools can resolve the store registered by
-# the middleware hooks.
+# active agent and passes it as Agent.offloader. The middleware keys stores,
+# locks, and snapshots by workspace ID. Both factories below must bind this
+# same object so state-injected tools can resolve the store registered by the
+# middleware hooks.
 #
 # No chat model is passed here. Static extraction reuses the model belonging
 # to whichever service Agent is currently running the middleware hook.
@@ -89,8 +89,8 @@ async def extra_agent_tools(
 
 
 # create_app assembles the FastAPI application and calls the two factories
-# above whenever it builds an Agent. LocalWorkspaceManager is responsible for
-# initializing and closing the workspaces supplied through Agent.offloader.
+# above whenever it builds an Agent. The selected WorkspaceManager initializes
+# and closes workspaces supplied through Agent.offloader.
 app = create_app(
     storage=RedisStorage(host=REDIS_HOST, port=REDIS_PORT),
     message_bus=RedisMessageBus(host=REDIS_HOST, port=REDIS_PORT),

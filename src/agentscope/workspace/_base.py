@@ -21,6 +21,7 @@ Consumers:
 - **User** — dynamically adds/removes MCPs and skills via
   ``add_mcp``, ``remove_mcp``, ``add_skill``, ``remove_skill``.
 - **Developer** — manages lifecycle via ``initialize`` / ``close``.
+- **Backend consumers** access the active backend via ``get_backend``.
 """
 
 from abc import abstractmethod
@@ -30,7 +31,7 @@ from .._utils._common import _generate_id
 from ..mcp import MCPClient
 from ..message import Msg, ToolResultBlock
 from ..skill import Skill
-from ..tool import ToolBase
+from ..tool import BackendBase, ToolBase
 
 
 class WorkspaceBase:
@@ -57,6 +58,9 @@ class WorkspaceBase:
 
     is_alive: bool
     """If the workspace is still operational."""
+
+    _backend: BackendBase | None
+    """Current execution backend, available through :meth:`get_backend`."""
 
     def __init__(self, workspace_id: str | None) -> None:
         """Initialize the workspace base instance."""
@@ -85,6 +89,26 @@ class WorkspaceBase:
         The default implementation is a no-op. Subclasses with user
         state must override this.
         """
+
+    def get_backend(self) -> BackendBase:
+        """Return the workspace's active filesystem/execution backend.
+
+        Docker and E2B workspaces may replace their backend when reconnecting,
+        so callers should resolve it from the workspace when beginning an
+        operation rather than retaining a stale private ``_backend`` value.
+
+        Raises:
+            RuntimeError:
+                If the workspace has not been initialized or has no active
+                backend.
+        """
+        backend = getattr(self, "_backend", None)
+        if not isinstance(backend, BackendBase):
+            raise RuntimeError(
+                f"{type(self).__name__} has no active backend. "
+                "Initialize the workspace before requesting its backend.",
+            )
+        return backend
 
     async def __aenter__(self) -> Self:
         """Context manager support for ``async with``. Calls ``initialize()``

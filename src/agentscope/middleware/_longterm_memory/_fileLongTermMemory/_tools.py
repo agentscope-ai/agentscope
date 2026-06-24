@@ -315,6 +315,8 @@ class _MemoryManageTool(_FileLTMToolBase):
                     section=section,
                     create_section=create_section,
                 )
+                if target in ("user", "memory"):
+                    self._middleware._invalidate_snapshot(_agent_state)
             rationale = f" Rationale: {thinking}" if thinking else ""
             return _text_chunk(f"Memory updated at {path}.{rationale}")
         except Exception as error:  # noqa: BLE001

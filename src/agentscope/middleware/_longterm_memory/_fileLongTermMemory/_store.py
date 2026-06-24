@@ -4,7 +4,7 @@
 ``FileLTMStore`` owns the on-disk layout, document-size limits, constrained
 mutation semantics, static-extraction metadata, and lightweight retrieval.
 It has no Agent or workspace lifecycle dependency; all I/O is delegated to a
-``WorkspaceFileAccessor`` supplied by the middleware.
+``BackendFileAccessor`` supplied by the middleware.
 
 The store favors predictable human-editable files over database-like
 features. Updates reread the current document, exact replacements must be
@@ -17,9 +17,9 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Literal
+from typing import Literal, TypeAlias
 
-from ._accessor import WorkspaceFileAccessor
+from ._accessor import BackendFileAccessor
 
 
 DEFAULT_MEMORY = """# Long-term Memory
@@ -55,6 +55,10 @@ class LTMSnapshot:
     user: str
 
 
+# Modification timestamps of ``MEMORY.md`` and ``USER.md``.
+SnapshotVersion: TypeAlias = tuple[float, float]
+
+
 @dataclass(slots=True)
 class MemorySearchResult:
     """One matching Markdown section returned by lexical retrieval."""
@@ -70,7 +74,7 @@ class FileLTMStore:
 
     def __init__(
         self,
-        accessor: WorkspaceFileAccessor,
+        accessor: BackendFileAccessor,
         *,
         memory_dir: str = "Memory",
         user_max_chars: int = 2_000,
@@ -81,7 +85,7 @@ class FileLTMStore:
 
         Args:
             accessor:
-                UTF-8 file access rooted in the owning workspace.
+                UTF-8 file access rooted at the selected workdir.
             memory_dir:
                 Workspace-relative root for all LTM files.
             user_max_chars:
@@ -129,6 +133,20 @@ class FileLTMStore:
             memory=await self._accessor.read_text(self.memory_path),
             user=await self._accessor.read_text(self.user_path),
         )
+
+    async def get_snapshot_version(self) -> SnapshotVersion | None:
+        """Return the prompt files' mtimes, or ``None`` if unavailable.
+
+        A missing timestamp disables caching rather than risking a stale
+        prompt snapshot on a backend that cannot reliably stat the files.
+        This method intentionally performs no layout initialization, keeping
+        the unchanged-snapshot path to two lightweight stat operations.
+        """
+        memory_mtime = await self._accessor.stat_mtime(self.memory_path)
+        user_mtime = await self._accessor.stat_mtime(self.user_path)
+        if memory_mtime is None or user_mtime is None:
+            return None
+        return memory_mtime, user_mtime
 
     async def read_target(
         self,
@@ -384,7 +402,7 @@ class FileLTMStore:
         return [item[1] for item in ranked[:limit]]
 
     def _target_path(self, target: str, daily_date: str | None) -> str:
-        """Map a logical target to a workspace-relative file path."""
+        """Map a logical target to a backend-relative file path."""
         if target == "user":
             return self.user_path
         if target == "memory":
