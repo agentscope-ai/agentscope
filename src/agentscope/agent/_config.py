@@ -7,20 +7,22 @@ from ..model import ChatModelBase
 
 
 DEFAULT_SELF_COMPACT_RUBRIC_PROMPT = (
-    # Inspired by SELFCOMPACT in https://arxiv.org/pdf/2606.23525:
+    # Inspired by SELFCOMPACT in
+    # https://arxiv.org/pdf/2606.23525:
     # ask the model whether the current trajectory is safe to summarize before
     # replacing old context with a continuation summary.
     "<system-hint>You are deciding whether the current agent trajectory "
     "should be compacted before the next reasoning step. Compress when the "
     "older conversation contains enough completed work, tool results, or "
-    "intermediate reasoning that a concise continuation summary would preserve "
-    "progress while reducing distraction or context cost. Continue when the "
+    "intermediate reasoning that a concise continuation summary would "
+    "preserve progress while reducing distraction or context cost. Continue "
+    "when the "
     "recent details are still directly needed verbatim, when there is too "
     "little history to summarize, or when compaction would likely remove "
     "information needed for the next action. Return COMPRESS or CONTINUE."
     "</system-hint>"
 )
-"""Default rubric prompt for model-driven context compaction."""
+# Default rubric prompt for model-driven context compaction.
 
 
 SELF_COMPACT_DECISION_SCHEMA = {
@@ -39,7 +41,7 @@ SELF_COMPACT_DECISION_SCHEMA = {
     "required": ["decision", "reason"],
     "additionalProperties": False,
 }
-"""Structured output schema for self-compaction decisions."""
+# Structured output schema for self-compaction decisions.
 
 
 class SummarySchema(BaseModel):
