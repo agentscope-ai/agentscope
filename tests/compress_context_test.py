@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """A template test case."""
-# pylint: disable=protected-access
+# pylint: disable=protected-access,unused-argument
 import json
 import os
 import tempfile
@@ -699,8 +699,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         structured_calls = 0
 
         async def mock_structured_output(
-            _messages: list[Msg],
-            _structured_model: Type[BaseModel] | dict,
+            messages: list[Msg],
+            structured_model: Type[BaseModel] | dict,
             **_kwargs: Any,
         ) -> StructuredResponse:
             nonlocal structured_calls
@@ -771,7 +771,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         structured_schemas = []
 
         async def mock_structured_output(
-            _messages: list[Msg],
+            messages: list[Msg],
             structured_model: Type[BaseModel] | dict,
             **_kwargs: Any,
         ) -> StructuredResponse:
@@ -836,8 +836,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         structured_calls = 0
 
         async def mock_structured_output(
-            _messages: list[Msg],
-            _structured_model: Type[BaseModel] | dict,
+            messages: list[Msg],
+            structured_model: Type[BaseModel] | dict,
             **_kwargs: Any,
         ) -> StructuredResponse:
             nonlocal structured_calls
@@ -887,8 +887,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         structured_calls = 0
 
         async def mock_structured_output(
-            _messages: list[Msg],
-            _structured_model: Type[BaseModel] | dict,
+            messages: list[Msg],
+            structured_model: Type[BaseModel] | dict,
             **_kwargs: Any,
         ) -> StructuredResponse:
             nonlocal structured_calls
@@ -936,8 +936,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         )
 
         async def mock_structured_output(
-            _messages: list[Msg],
-            _structured_model: Type[BaseModel] | dict,
+            messages: list[Msg],
+            structured_model: Type[BaseModel] | dict,
             **_kwargs: Any,
         ) -> StructuredResponse:
             raise RuntimeError("rubric unavailable")
@@ -983,8 +983,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         structured_calls = 0
 
         async def mock_structured_output(
-            _messages: list[Msg],
-            _structured_model: Type[BaseModel] | dict,
+            messages: list[Msg],
+            structured_model: Type[BaseModel] | dict,
             **_kwargs: Any,
         ) -> StructuredResponse:
             nonlocal structured_calls
