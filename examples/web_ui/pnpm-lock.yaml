@@ -58,8 +58,8 @@ importers:
   frontend:
     dependencies:
       '@agentscope-ai/agentscope':
-        specifier: ^0.0.9
-        version: 0.0.9
+        specifier: ^0.0.11
+        version: 0.0.11
       '@fontsource-variable/geist':
         specifier: ^5.2.8
         version: 5.2.8
@@ -205,8 +205,8 @@ importers:
 
 packages:
 
-  '@agentscope-ai/agentscope@0.0.9':
-    resolution: {integrity: sha512-FuELfct2hovIINATNPWEpYktyqe1SYoVb9TCJvQoXqQcj5upik0VJM+8+OBA2y79xWe+rTBO1lr0bhuSGcHrPA==}
+  '@agentscope-ai/agentscope@0.0.11':
+    resolution: {integrity: sha512-ysPhVS/V+56Jggj+BnOCQpGQiTtvbhWQ/oCaECGT4HbYaSp/txHA4ytYxRttRowf789ummAOGplEBonfQqRkvw==}
 
   '@babel/code-frame@7.29.0':
     resolution: {integrity: sha512-9NhCeYjq9+3uxgdtp20LSiJXJvN0FeCtNGpJxuMFZ1Kv3cWUNb6DOhJwUvcVCzKGR66cw4njwM6hrJLqgOwbcw==}
@@ -3656,8 +3656,8 @@ packages:
     resolution: {integrity: sha512-smsWv2LzFjP03xmvFoJ331ss6h+jixfA4UUV/Bsiyuu4YJPfN+FIQGOIiv4w9/+MoHkfkJ22UIaQWRVFRfH6Vw==}
     engines: {node: '>=20'}
 
-  openai@6.41.0:
-    resolution: {integrity: sha512-IGWPopZq6Rjoynjfb3NSLf/z2MTw7UiOsm9TAjPGAjUESH7Uq41Trg4QWehBEn58p74i+m7uoRPV2vXcpPXhyA==}
+  openai@6.44.0:
+    resolution: {integrity: sha512-09/gH+8jH0RgUwsgWHAaxsKGRT5zVZ95IaJUnqAWj6XejIBmnFRwq2WUIF37VtDEsmGrtPmvCs5+yBSeZGWvkA==}
     peerDependencies:
       ws: ^8.18.0
       zod: ^3.25 || ^4.0
@@ -4635,7 +4635,7 @@ packages:
 
 snapshots:
 
-  '@agentscope-ai/agentscope@0.0.9':
+  '@agentscope-ai/agentscope@0.0.11':
     dependencies:
       '@cfworker/json-schema': 4.1.1
       '@modelcontextprotocol/sdk': 1.29.0(@cfworker/json-schema@4.1.1)(zod@4.4.3)
@@ -4643,7 +4643,7 @@ snapshots:
       jsonrepair: 3.14.0
       mime-types: 3.0.2
       ollama: 0.6.3
-      openai: 6.41.0(zod@4.4.3)
+      openai: 6.44.0(zod@4.4.3)
       string-format: 2.0.0
       uuid: 13.0.2
       zod: 4.4.3
@@ -8220,7 +8220,7 @@ snapshots:
       powershell-utils: 0.1.0
       wsl-utils: 0.3.1
 
-  openai@6.41.0(zod@4.4.3):
+  openai@6.44.0(zod@4.4.3):
     optionalDependencies:
       zod: 4.4.3
 

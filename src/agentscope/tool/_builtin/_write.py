@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The write tool in agentscope."""
+import difflib
 import fnmatch
 import os
 from pathlib import Path
@@ -246,6 +247,23 @@ Usage:
                     is_last=True,
                 )
 
+        # Capture the pre-write content (if any) so we can compute a unified
+        # diff for the web UI. For brand-new files this stays as an empty
+        # string, which produces a clean "new file" diff (``--- /dev/null``).
+        previous_content = ""
+        if os.path.exists(file_path):
+            try:
+                async with aiofiles.open(
+                    file_path,
+                    mode="r",
+                    encoding="utf-8",
+                ) as f:
+                    previous_content = await f.read()
+            except Exception:  # pylint: disable=broad-except
+                # Binary or unreadable file — fall back to empty so we still
+                # render a best-effort "add" diff in the UI.
+                previous_content = ""
+
         # Create parent directories if they don't exist
         parent_dir = Path(file_path).parent
         os.makedirs(parent_dir, exist_ok=True)
@@ -257,6 +275,21 @@ Usage:
         # Count lines in content
         line_count = len(content.split("\n"))
 
+        # Build the unified diff between previous and new content. When the
+        # file is brand new, ``unified_diff`` over an empty old side naturally
+        # produces a single "all add" hunk starting at line 1.
+        diff_text = "".join(
+            difflib.unified_diff(
+                previous_content.splitlines(keepends=True),
+                content.splitlines(keepends=True),
+                fromfile=(
+                    "/dev/null" if previous_content == "" else f"a/{file_path}"
+                ),
+                tofile=f"b/{file_path}",
+                n=3,
+            ),
+        )
+
         # Return success message
         return ToolChunk(
             content=[
@@ -267,4 +300,9 @@ Usage:
             ],
             state=ToolResultState.RUNNING,
             is_last=True,
+            metadata={
+                "diff": diff_text,
+                "file_path": file_path,
+                "occurrences": 1,
+            },
         )

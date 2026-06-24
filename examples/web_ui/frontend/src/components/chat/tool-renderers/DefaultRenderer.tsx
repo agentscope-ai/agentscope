@@ -1,9 +1,16 @@
 import type { ToolCallBlock, ToolResultBlock } from '@agentscope-ai/agentscope/message';
+import { ChevronRight } from 'lucide-react';
 import * as mime from 'mime-types';
 import type { ReactNode } from 'react';
 
 import { CornerLine, ToolStateIcon } from './_shared';
 import type { TFunction, ToolCallWithResult } from './types';
+import { Button } from '@/components/ui/button.tsx';
+import {
+	Collapsible,
+	CollapsibleContent,
+	CollapsibleTrigger,
+} from '@/components/ui/collapsible.tsx';
 
 function processToolInput(input: string): string {
 	try {
@@ -101,21 +108,27 @@ export function defaultRenderGroup(
 				const args = resolvers.renderCallArgs(call);
 				const resultContent = result ? resolvers.renderResult(call, result) : null;
 				return (
-					<div key={call.id} className="flex flex-col w-full max-w-full text-sm">
-						<div className="flex flex-row gap-x-2 w-full max-w-full items-center">
-							<ToolStateIcon states={[result?.state]} />
-							<span className="truncate">
-								<strong className="truncate text-primary">{displayName}</strong>
-								{args && <>({args})</>}
-							</span>
-						</div>
+					<Collapsible key={call.id} className="flex flex-col w-full max-w-full text-sm">
+						<CollapsibleTrigger asChild>
+							<Button
+								variant={'ghost'}
+								className="group hover:bg-transparent data-[state=open]:bg-transparent justify-start px-0 gap-2 active:!translate-y-0"
+							>
+								<ToolStateIcon states={[result?.state]} />
+								<strong className="shrink-0 text-primary">{displayName}</strong>
+								{args && <span className="truncate min-w-0 text-left">{args}</span>}
+								{resultContent && (
+									<ChevronRight className="size-3 shrink-0 group-data-[state=open]:rotate-90" />
+								)}
+							</Button>
+						</CollapsibleTrigger>
 						{resultContent && (
-							<div className="flex flex-row gap-x-2 pl-6 max-w-full">
+							<CollapsibleContent className="flex flex-row gap-x-2 pl-6 max-w-full">
 								<CornerLine />
 								{resultContent}
-							</div>
+							</CollapsibleContent>
 						)}
-					</div>
+					</Collapsible>
 				);
 			})}
 		</>

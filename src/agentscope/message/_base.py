@@ -416,6 +416,7 @@ class Msg(BaseModel):
                 else:
                     assert isinstance(block, ToolResultBlock)
                     block.state = event.state
+                    block.metadata = event.metadata
                 # The paired ToolCallBlock's lifecycle ends with its
                 # result — flip it to FINISHED here so the SSE-rebuilt
                 # reply_msg matches ``agent.state.context``, which
