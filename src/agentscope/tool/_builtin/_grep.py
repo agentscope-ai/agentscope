@@ -138,12 +138,14 @@ class Grep(ToolBase):
                 "description": "Limit output to first N lines/entries. "
                 "Defaults to 250 when unspecified. "
                 "Pass 0 for unlimited.",
+                "minimum": 0,
             },
             "offset": {
                 "type": "integer",
                 "description": "Skip first N lines/entries before applying "
                 "head_limit. Defaults to 0.",
                 "default": 0,
+                "minimum": 0,
             },
         },
         "required": ["pattern"],
@@ -354,6 +356,24 @@ class Grep(ToolBase):
             **kwargs: Additional parameters (-A, -B, -C)
         """
         search_path = path or os.getcwd()
+
+        if head_limit is not None and head_limit < 0:
+            return ToolChunk(
+                content=[
+                    TextBlock(text="Error: head_limit must be non-negative."),
+                ],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
+
+        if offset < 0:
+            return ToolChunk(
+                content=[
+                    TextBlock(text="Error: offset must be non-negative."),
+                ],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
 
         args: list[str] = ["--hidden"]
 
