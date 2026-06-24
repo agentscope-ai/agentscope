@@ -20,7 +20,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
     """The template test case."""
 
     async def asyncSetUp(self) -> None:
-        """The async setup method."""
+        """The async setup methods."""
 
     async def test_split_function(self) -> None:
         """The template test."""
