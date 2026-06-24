@@ -690,7 +690,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         structured_calls = 0
 
         async def mock_structured_output(
-            *args, **kwargs
+            *_args,
+            **_kwargs,
         ) -> StructuredResponse:
             nonlocal structured_calls
             structured_calls += 1
@@ -760,7 +761,7 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         structured_schemas = []
 
         async def mock_structured_output(
-            *args,
+            *_args,
             **kwargs,
         ) -> StructuredResponse:
             structured_schemas.append(kwargs["structured_model"])
@@ -824,7 +825,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         structured_calls = 0
 
         async def mock_structured_output(
-            *args, **kwargs
+            *_args,
+            **_kwargs,
         ) -> StructuredResponse:
             nonlocal structured_calls
             structured_calls += 1
@@ -873,7 +875,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         structured_calls = 0
 
         async def mock_structured_output(
-            *args, **kwargs
+            *_args,
+            **_kwargs,
         ) -> StructuredResponse:
             nonlocal structured_calls
             structured_calls += 1
@@ -920,7 +923,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         )
 
         async def mock_structured_output(
-            *args, **kwargs
+            *_args,
+            **_kwargs,
         ) -> StructuredResponse:
             raise RuntimeError("rubric unavailable")
 
@@ -965,8 +969,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         structured_calls = 0
 
         async def mock_structured_output(
-            *args,
-            **kwargs,
+            *_args,
+            **_kwargs,
         ) -> StructuredResponse:
             nonlocal structured_calls
             structured_calls += 1
