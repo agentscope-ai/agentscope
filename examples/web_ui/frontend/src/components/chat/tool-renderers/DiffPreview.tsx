@@ -29,22 +29,55 @@ function getVisibleHunks(hunks: HunkData[], expanded: boolean): HunkData[] {
 	const visibleHunks: HunkData[] = [];
 
 	for (const hunk of hunks) {
-		const nextLineCount = visibleLineCount + hunkLineCount(hunk);
-		if (visibleHunks.length > 0 && nextLineCount > MAX_VISIBLE_DIFF_LINES) {
-			break;
+		const remaining = MAX_VISIBLE_DIFF_LINES - visibleLineCount;
+		if (remaining <= 0) break;
+		const hunkLines = hunkLineCount(hunk);
+		if (hunkLines <= remaining) {
+			visibleHunks.push(hunk);
+			visibleLineCount += hunkLines;
+			continue;
 		}
-		visibleHunks.push(hunk);
-		visibleLineCount = nextLineCount;
+		// Hunk doesn't fit in the remaining budget. If we haven't shown
+		// anything yet (typical for new-file / full-rewrite diffs that
+		// produce a single very large hunk), include a truncated slice so
+		// the user still sees the start of the change. Otherwise stop so
+		// we never overshoot ``MAX_VISIBLE_DIFF_LINES``.
+		if (visibleHunks.length === 0) {
+			visibleHunks.push(truncateHunkChanges(hunk, remaining));
+		}
+		break;
 	}
 
 	return visibleHunks;
 }
 
-function countHiddenLines(hunks: HunkData[], visibleHunks: HunkData[]): number {
-	const visible = new Set(visibleHunks);
-	return hunks.reduce((count, hunk) => {
-		return visible.has(hunk) ? count : count + hunkLineCount(hunk);
-	}, 0);
+/**
+ * Build a new ``HunkData`` containing only the first ``maxLines`` changes of
+ * ``hunk``. ``oldLines`` / ``newLines`` are recomputed from the slice so
+ * react-diff-view's line-number accounting stays internally consistent.
+ */
+function truncateHunkChanges(hunk: HunkData, maxLines: number): HunkData {
+	if (hunk.changes.length <= maxLines) return hunk;
+	const changes = hunk.changes.slice(0, maxLines);
+	let oldLines = 0;
+	let newLines = 0;
+	for (const change of changes) {
+		if (change.type === 'normal') {
+			oldLines += 1;
+			newLines += 1;
+		} else if (change.type === 'delete') {
+			oldLines += 1;
+		} else if (change.type === 'insert') {
+			newLines += 1;
+		}
+	}
+	return { ...hunk, changes, oldLines, newLines };
+}
+
+function countHiddenLines(allHunks: HunkData[], visibleHunks: HunkData[]): number {
+	const total = allHunks.reduce((sum, hunk) => sum + hunkLineCount(hunk), 0);
+	const visible = visibleHunks.reduce((sum, hunk) => sum + hunkLineCount(hunk), 0);
+	return Math.max(0, total - visible);
 }
 
 function getLineClassName({ changes }: { changes: Array<{ type: string }> }): string {

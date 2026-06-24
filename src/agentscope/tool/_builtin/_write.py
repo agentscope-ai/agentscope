@@ -264,8 +264,12 @@ Usage:
         # Capture the pre-write content (if any) so we can compute a unified
         # diff for the web UI. For brand-new files this stays as an empty
         # string, which produces a clean "new file" diff (``--- /dev/null``).
+        # Track ``file_existed`` separately from ``previous_content`` because
+        # an *existing* empty file overwrite is not the same as creating a
+        # new file — the diff header must reflect that.
+        file_existed = await self._backend.file_exists(file_path)
         previous_content = ""
-        if await self._backend.file_exists(file_path):
+        if file_existed:
             try:
                 previous_content = (
                     await self._backend.read_file(file_path)
@@ -298,7 +302,7 @@ Usage:
                 previous_content.splitlines(keepends=True),
                 content.splitlines(keepends=True),
                 fromfile=(
-                    "/dev/null" if previous_content == "" else f"a/{file_path}"
+                    "/dev/null" if not file_existed else f"a/{file_path}"
                 ),
                 tofile=f"b/{file_path}",
                 n=3,
