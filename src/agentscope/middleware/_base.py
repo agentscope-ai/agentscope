@@ -199,6 +199,7 @@ class MiddlewareBase:  # pylint: disable=unused-argument
             input_kwargs (`dict`):
                 Dictionary containing:
                 - context_config: ContextConfig | None
+                - instructions: HintBlock | None
             next_handler (`Callable[..., Awaitable[None]]`):
                 Callable that executes the next middleware or
                 original method
