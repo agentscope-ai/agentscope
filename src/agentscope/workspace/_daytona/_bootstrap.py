@@ -29,6 +29,7 @@ snapshots.
 """
 
 import io
+import shlex
 import tarfile
 
 from ..._logging import logger
@@ -156,13 +157,15 @@ def bootstrap_commands(
         Each must exit 0; a non-zero exit aborts the bootstrap.
     """
     pip_pkgs = list(_GATEWAY_BASE_REQUIREMENTS) + list(extra_pip or [])
-    pip_args = " ".join(pip_pkgs)
+    pip_args = " ".join(shlex.quote(pkg) for pkg in pip_pkgs)
+    uv_install_dir = f"{user_home}/.local/bin"
 
     return [
         # 1. Persistent layout. mkdir -p is cheap on resume too —
         #    keeps the command idempotent in case bootstrap is re-run.
-        f"mkdir -p {workdir} {data_dir} {skills_dir} "
-        f"{sessions_dir} {gateway_home}",
+        f"mkdir -p {shlex.quote(workdir)} {shlex.quote(data_dir)} "
+        f"{shlex.quote(skills_dir)} {shlex.quote(sessions_dir)} "
+        f"{shlex.quote(gateway_home)}",
         # 2. Install ripgrep for the Grep builtin tool. Daytona
         #    snapshots may run as non-root users, so use sudo here and
         #    avoid assuming the SDK-selected OS user is root.
@@ -173,11 +176,12 @@ def bootstrap_commands(
         #    reported user home is used as the install root so we do
         #    not assume /home/daytona or any fixed OS user.
         f"curl -LsSf https://astral.sh/uv/install.sh "
-        f"| env UV_INSTALL_DIR={user_home}/.local/bin "
+        f"| env UV_INSTALL_DIR={shlex.quote(uv_install_dir)} "
         f"INSTALLER_NO_MODIFY_PATH=1 sh",
         # 4. Gateway venv + base requirements.
-        f"{uv_bin} venv {gateway_venv}",
-        f"{uv_bin} pip install --python {gateway_venv_py} {pip_args}",
+        f"{shlex.quote(uv_bin)} venv {shlex.quote(gateway_venv)}",
+        f"{shlex.quote(uv_bin)} pip install --python "
+        f"{shlex.quote(gateway_venv_py)} {pip_args}",
         # 5. agentscope itself (mode-dependent).
         install_agentscope_cmd,
     ]
@@ -191,8 +195,9 @@ def render_install_agentscope_cmd_released(
 ) -> str:
     """Released-mode install: pin the same version as the host."""
     return (
-        f"{uv_bin} pip install --python {gateway_venv_py} "
-        f"--no-deps 'agentscope=={version}'"
+        f"{shlex.quote(uv_bin)} pip install --python "
+        f"{shlex.quote(gateway_venv_py)} "
+        f"--no-deps {shlex.quote(f'agentscope=={version}')}"
     )
 
 
@@ -209,11 +214,13 @@ def render_install_agentscope_cmd_dev(
     ``dev_src_tar`` before running this command.
     """
     return (
-        f"mkdir -p {dev_src_dir} && "
-        f"tar -xf {dev_src_tar} -C {dev_src_dir} && "
-        f"{uv_bin} pip install --python {gateway_venv_py} "
-        f"--no-deps {dev_src_dir} && "
-        f"rm -rf {dev_src_tar} {dev_src_dir}"
+        f"mkdir -p {shlex.quote(dev_src_dir)} && "
+        f"tar -xf {shlex.quote(dev_src_tar)} "
+        f"-C {shlex.quote(dev_src_dir)} && "
+        f"{shlex.quote(uv_bin)} pip install --python "
+        f"{shlex.quote(gateway_venv_py)} "
+        f"--no-deps {shlex.quote(dev_src_dir)} && "
+        f"rm -rf {shlex.quote(dev_src_tar)} {shlex.quote(dev_src_dir)}"
     )
 
 

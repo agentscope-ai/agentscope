@@ -3,7 +3,6 @@
 
 import os
 import uuid
-from urllib.parse import unquote
 
 from agentscope.workspace._daytona._bootstrap import METADATA_WORKSPACE_ID_KEY
 
@@ -18,28 +17,12 @@ def live_daytona_workspace_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex}"
 
 
-def _clean_live_daytona_value(value: str) -> str:
-    """Treat local placeholder text as an absent optional Daytona setting."""
-    value = value.strip()
-    decoded = unquote(value).strip()
-    return "" if decoded.startswith("可选") else value
-
-
-def _clean_live_daytona_env(name: str) -> str:
-    """Return a cleaned optional Daytona env var and unset placeholders."""
-    value = os.getenv(name, "")
-    cleaned = _clean_live_daytona_value(value)
-    if value and not cleaned:
-        os.environ.pop(name, None)
-    return cleaned
-
-
 def live_daytona_kwargs() -> dict[str, str]:
     """Connection kwargs shared by live Daytona tests."""
     return {
         "api_key": os.getenv("DAYTONA_API_KEY", ""),
-        "api_url": _clean_live_daytona_env("DAYTONA_API_URL"),
-        "target": _clean_live_daytona_env("DAYTONA_TARGET"),
+        "api_url": os.getenv("DAYTONA_API_URL", ""),
+        "target": os.getenv("DAYTONA_TARGET", ""),
     }
 
 
@@ -64,6 +47,4 @@ async def delete_live_daytona_workspace(workspace_id: str) -> None:
                 pass
             await sandbox.delete(timeout=60)
     finally:
-        close = getattr(client, "close", None)
-        if close is not None:
-            await close()
+        await client.close()

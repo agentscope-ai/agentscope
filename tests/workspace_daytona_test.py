@@ -507,7 +507,7 @@ class TestDaytonaBootstrapHelpers(IsolatedAsyncioTestCase):
         self.assertEqual(
             released,
             "/u/uv pip install --python /venv/bin/python "
-            "--no-deps 'agentscope==1.2.3'",
+            "--no-deps agentscope==1.2.3",
         )
 
         dev = render_install_agentscope_cmd_dev(
@@ -521,6 +521,66 @@ class TestDaytonaBootstrapHelpers(IsolatedAsyncioTestCase):
             "mkdir -p /tmp/src && tar -xf /tmp/src.tar -C /tmp/src && "
             "/u/uv pip install --python /venv/bin/python --no-deps /tmp/src "
             "&& rm -rf /tmp/src.tar /tmp/src",
+        )
+
+    async def test_bootstrap_commands_quote_shell_arguments(self) -> None:
+        """SDK-derived paths and extra packages are shell-quoted."""
+        commands = bootstrap_commands(
+            workdir="/work dir",
+            data_dir="/work dir/data",
+            skills_dir="/work dir/skills",
+            sessions_dir="/work dir/sessions",
+            user_home="/home/day tona",
+            gateway_home="/home/day tona/.agentscope",
+            gateway_venv="/home/day tona/.agentscope/.venv",
+            gateway_venv_py="/home/day tona/.agentscope/.venv/bin/python",
+            uv_bin="/home/day tona/.local/bin/uv",
+            extra_pip=["safe-pkg", "bad; echo injected"],
+            install_agentscope_cmd="install-agentscope",
+        )
+
+        self.assertEqual(
+            commands[0],
+            "mkdir -p '/work dir' '/work dir/data' '/work dir/skills' "
+            "'/work dir/sessions' '/home/day tona/.agentscope'",
+        )
+        self.assertIn(
+            "UV_INSTALL_DIR='/home/day tona/.local/bin'",
+            commands[2],
+        )
+        self.assertEqual(
+            commands[3],
+            "'/home/day tona/.local/bin/uv' venv "
+            "'/home/day tona/.agentscope/.venv'",
+        )
+        self.assertIn("'bad; echo injected'", commands[4])
+
+        released = render_install_agentscope_cmd_released(
+            uv_bin="/home/day tona/.local/bin/uv",
+            gateway_venv_py="/home/day tona/.agentscope/.venv/bin/python",
+            version="1.2.3",
+        )
+        self.assertEqual(
+            released,
+            "'/home/day tona/.local/bin/uv' pip install --python "
+            "'/home/day tona/.agentscope/.venv/bin/python' "
+            "--no-deps agentscope==1.2.3",
+        )
+
+        dev = render_install_agentscope_cmd_dev(
+            uv_bin="/home/day tona/.local/bin/uv",
+            gateway_venv_py="/home/day tona/.agentscope/.venv/bin/python",
+            dev_src_tar="/tmp/src tar",
+            dev_src_dir="/tmp/src dir",
+        )
+        self.assertEqual(
+            dev,
+            "mkdir -p '/tmp/src dir' && tar -xf '/tmp/src tar' "
+            "-C '/tmp/src dir' && '/home/day tona/.local/bin/uv' "
+            "pip install --python "
+            "'/home/day tona/.agentscope/.venv/bin/python' "
+            "--no-deps '/tmp/src dir' && "
+            "rm -rf '/tmp/src tar' '/tmp/src dir'",
         )
 
 
