@@ -13,7 +13,8 @@ import sys
 import tempfile
 import types
 import unittest
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from enum import Enum
 from types import SimpleNamespace
 from typing import Any
@@ -82,7 +83,12 @@ class _FakeProcess:
     async def exec(self, command: str, **_kwargs: object) -> object:
         """Record command and return success."""
         self.commands.append(command)
-        return SimpleNamespace(exit_code=0, result="", stdout="", stderr="")
+        return SimpleNamespace(
+            exit_code=0,
+            result="",
+            artifacts=SimpleNamespace(stdout=""),
+            additional_properties={},
+        )
 
 
 class _FakeFS:
@@ -182,8 +188,7 @@ class _FakeSandbox:
 
     async def get_preview_link(self, port: int) -> object:
         """Return preview URL/token."""
-        if hasattr(self.preview, "__dict__"):
-            self.preview.port = port
+        self.preview.port = port
         return self.preview
 
 
@@ -234,16 +239,17 @@ class _MappedProcess:
             return SimpleNamespace(
                 exit_code=-1,
                 result="",
-                stdout="",
-                stderr="timed out",
+                artifacts=SimpleNamespace(stdout=""),
+                additional_properties={},
             )
         stdout_text = self._to_sandbox(stdout.decode("utf-8", "replace"))
         stderr_text = self._to_sandbox(stderr.decode("utf-8", "replace"))
+        result = stdout_text + stderr_text
         return SimpleNamespace(
             exit_code=proc.returncode,
-            result=stdout_text,
-            stdout=stdout_text,
-            stderr=stderr_text,
+            result=result,
+            artifacts=SimpleNamespace(stdout=result),
+            additional_properties={},
         )
 
 
@@ -325,16 +331,22 @@ class _FakeDaytona:
                 return sandbox
         return _FakeSandbox(sandbox_id)
 
-    async def list(self, query: object | None = None) -> list[_FakeSandbox]:
+    async def list(
+        self,
+        query: object | None = None,
+    ) -> AsyncIterator[_FakeSandbox]:
         """Return fake candidates, filtered by labels when possible."""
         labels = getattr(query, "labels", None)
         if labels:
-            return [
+            candidates = (
                 sandbox
                 for sandbox in _FakeDaytona.list_result
                 if all(sandbox.labels.get(k) == v for k, v in labels.items())
-            ]
-        return list(_FakeDaytona.list_result)
+            )
+        else:
+            candidates = iter(_FakeDaytona.list_result)
+        for sandbox in candidates:
+            yield sandbox
 
     async def close(self) -> None:
         """Mark SDK client closed."""
@@ -353,6 +365,10 @@ class _FakeDaytonaConfig:
 
     def __init__(self, **kwargs: object) -> None:
         self.kwargs = kwargs
+
+
+class _FakeDaytonaNotFoundError(Exception):
+    """Fake Daytona structured not-found exception."""
 
 
 class _FakeListSandboxesQuery:
@@ -437,6 +453,7 @@ def _install_fake_daytona_module() -> types.ModuleType:
     mod.ListSandboxesQuery = _FakeListSandboxesQuery
     mod.SandboxState = _FakeSandboxState
     mod.DaytonaError = RuntimeError
+    mod.DaytonaNotFoundError = _FakeDaytonaNotFoundError
     sys.modules["daytona"] = mod
     return mod
 
@@ -728,10 +745,10 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
             {"x-daytona-preview-token": "ptok"},
         )
 
-    async def test_gateway_preview_without_token_has_no_extra_headers(
+    async def test_gateway_preview_without_token_fails(
         self,
     ) -> None:
-        """Preview auth header is omitted when Daytona returns no token."""
+        """Private Daytona preview responses must include a token."""
         candidate = _FakeSandbox("sandbox-no-preview-token")
         candidate.preview = SimpleNamespace(
             url="https://preview.example",
@@ -741,43 +758,11 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
         _FakeDaytona.list_result[:] = [candidate]
 
         workspace = DaytonaWorkspace(workspace_id="wid-no-preview-token")
-        await workspace.initialize()
-
-        gateway = _FakeGateway.instances[0]
-        self.assertEqual(gateway.base_url, "https://preview.example")
-        self.assertEqual(gateway.extra_headers, {})
-
-    async def test_gateway_accepts_preview_url_attribute(self) -> None:
-        """Preview URL extraction accepts SDK ``preview_url`` variants."""
-        candidate = _FakeSandbox("sandbox-preview-url")
-        candidate.preview = SimpleNamespace(
-            preview_url="https://preview-url.example/path/",
-            token="tok",
-        )
-        candidate.labels = {METADATA_WORKSPACE_ID_KEY: "wid-preview-url"}
-        _FakeDaytona.list_result[:] = [candidate]
-
-        workspace = DaytonaWorkspace(workspace_id="wid-preview-url")
-        await workspace.initialize()
-
-        self.assertEqual(
-            _FakeGateway.instances[0].base_url,
-            "https://preview-url.example/path",
-        )
-
-    async def test_gateway_accepts_string_preview_response(self) -> None:
-        """Preview URL extraction accepts a raw string response."""
-        candidate = _FakeSandbox("sandbox-preview-string")
-        candidate.preview = "https://preview-string.example/"
-        candidate.labels = {METADATA_WORKSPACE_ID_KEY: "wid-preview-string"}
-        _FakeDaytona.list_result[:] = [candidate]
-
-        workspace = DaytonaWorkspace(workspace_id="wid-preview-string")
-        await workspace.initialize()
-
-        gateway = _FakeGateway.instances[0]
-        self.assertEqual(gateway.base_url, "https://preview-string.example")
-        self.assertEqual(gateway.extra_headers, {})
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "preview response did not contain an access token",
+        ):
+            await workspace.initialize()
 
     async def test_list_tools_requires_initialized_backend(self) -> None:
         """Builtin tools cannot silently fall back to local backend."""
@@ -1278,6 +1263,207 @@ def _response_text(response: ToolResponse) -> str:
 @unittest.skipUnless(DAYTONA_API_KEY, SKIP_REASON)
 class TestDaytonaWorkspaceLive(IsolatedAsyncioTestCase):
     """Live Daytona workspace coverage, skipped without credentials."""
+
+    @asynccontextmanager
+    async def _live_workspace(
+        self,
+        suffix: str,
+        **kwargs: object,
+    ) -> AsyncIterator[DaytonaWorkspace]:
+        """Create one live workspace and guarantee best-effort cleanup."""
+        workspace_id = live_daytona_workspace_id(suffix)
+        daytona_kwargs = live_daytona_kwargs()
+        daytona_kwargs.update(kwargs)
+        workspace = DaytonaWorkspace(
+            workspace_id=workspace_id,
+            **daytona_kwargs,
+        )
+        try:
+            await workspace.initialize()
+            yield workspace
+        finally:
+            await workspace.close()
+            await delete_live_daytona_workspace(workspace_id)
+
+    def _create_live_skill(
+        self,
+        root: str,
+        name: str,
+        description: str,
+        additional_files: dict[str, str] | None = None,
+    ) -> str:
+        """Create a local skill directory for live upload tests."""
+        skill_dir = os.path.join(root, name)
+        os.makedirs(skill_dir, exist_ok=True)
+        with open(
+            os.path.join(skill_dir, "SKILL.md"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            f.write(
+                f"---\nname: {name}\ndescription: {description}\n---\n\n"
+                f"# {name}\n\n{description}\n",
+            )
+        for filename, content in (additional_files or {}).items():
+            with open(
+                os.path.join(skill_dir, filename),
+                "w",
+                encoding="utf-8",
+            ) as f:
+                f.write(content)
+        return skill_dir
+
+    async def test_initialize_idempotent(self) -> None:
+        """Calling ``initialize`` on a live workspace is a no-op."""
+        async with self._live_workspace("daytona-live-init-idempotent") as ws:
+            sandbox = ws._sandbox
+            sandbox_id = ws.sandbox_id
+
+            await ws.initialize()
+
+            self.assertTrue(ws.is_alive)
+            self.assertIs(ws._sandbox, sandbox)
+            self.assertEqual(ws.sandbox_id, sandbox_id)
+
+    async def test_close_marks_inactive(self) -> None:
+        """``close`` flips ``is_alive`` and clears runtime handles."""
+        workspace_id = live_daytona_workspace_id("daytona-live-close")
+        workspace = DaytonaWorkspace(
+            workspace_id=workspace_id,
+            **live_daytona_kwargs(),
+        )
+        try:
+            await workspace.initialize()
+            self.assertTrue(workspace.is_alive)
+
+            await workspace.close()
+
+            self.assertFalse(workspace.is_alive)
+            self.assertIsNone(workspace._sandbox)
+            self.assertIsNone(workspace._backend)
+        finally:
+            await workspace.close()
+            await delete_live_daytona_workspace(workspace_id)
+
+    async def test_list_tools_builtin(self) -> None:
+        """``list_tools`` returns the six builtin tools backed by Daytona."""
+        from agentscope.tool._builtin import (
+            Bash,
+            Edit,
+            Glob,
+            Grep,
+            Read,
+            Write,
+        )
+
+        async with self._live_workspace("daytona-live-tools") as workspace:
+            tools = await workspace.list_tools()
+
+        self.assertEqual(len(tools), 6)
+        self.assertSetEqual(
+            {type(tool) for tool in tools},
+            {Bash, Edit, Glob, Grep, Read, Write},
+        )
+        for tool in tools:
+            self.assertIsInstance(tool._backend, DaytonaBackend)
+
+    async def test_skill_paths_add_list_remove(self) -> None:
+        """Skill paths and runtime skill changes work in a live sandbox."""
+        with tempfile.TemporaryDirectory() as skill_root:
+            seed_one = self._create_live_skill(
+                skill_root,
+                "live_seed_one",
+                "First live skill",
+                {"tool.py": "def run():\n    return 'one'\n"},
+            )
+            seed_two = self._create_live_skill(
+                skill_root,
+                "live_seed_two",
+                "Second live skill",
+            )
+
+            async with self._live_workspace(
+                "daytona-live-skills",
+                skill_paths=[seed_one, seed_two],
+            ) as workspace:
+                seeded = sorted(
+                    await workspace.list_skills(),
+                    key=lambda skill: skill.name,
+                )
+                self.assertEqual(
+                    [skill.name for skill in seeded],
+                    ["live_seed_one", "live_seed_two"],
+                )
+                self.assertEqual(
+                    [skill.description for skill in seeded],
+                    ["First live skill", "Second live skill"],
+                )
+                self.assertEqual(
+                    [skill.dir for skill in seeded],
+                    [
+                        f"{workspace.workdir}/skills/live_seed_one",
+                        f"{workspace.workdir}/skills/live_seed_two",
+                    ],
+                )
+
+                added = self._create_live_skill(
+                    skill_root,
+                    "live_added_skill",
+                    "Added live skill",
+                )
+                await workspace.add_skill(added)
+                skills = await workspace.list_skills()
+                self.assertIn(
+                    "live_added_skill",
+                    [skill.name for skill in skills],
+                )
+
+                await workspace.remove_skill("live_added_skill")
+                self.assertNotIn(
+                    "live_added_skill",
+                    [skill.name for skill in await workspace.list_skills()],
+                )
+
+    async def test_offload_context_tool_result_and_reset(self) -> None:
+        """Live offload writes sessions/data and reset clears them."""
+        async with self._live_workspace("daytona-live-offload-reset") as ws:
+            data_block = DataBlock(
+                name="payload.txt",
+                source=Base64Source(data="aGVsbG8=", media_type="text/plain"),
+            )
+            context_path = await ws.offload_context(
+                "session-live-reset",
+                [
+                    UserMsg(
+                        name="user",
+                        content=[TextBlock(text="live context"), data_block],
+                    ),
+                ],
+            )
+            context_raw = await ws._backend.read_file(context_path)
+            self.assertIn("live context", context_raw.decode("utf-8"))
+            self.assertIn("file://", context_raw.decode("utf-8"))
+
+            tool_path = await ws.offload_tool_result(
+                "session-live-reset",
+                ToolResultBlock(
+                    id="tool-live-reset",
+                    name="tool",
+                    output=[TextBlock(text="live tool result"), data_block],
+                    state=ToolResultState.SUCCESS,
+                ),
+            )
+            tool_raw = await ws._backend.read_file(tool_path)
+            self.assertIn("live tool result", tool_raw.decode("utf-8"))
+            self.assertTrue(await ws._backend.file_exists(ws._sessions_dir))
+            self.assertTrue(await ws._backend.file_exists(ws._data_dir))
+
+            await ws.reset()
+
+            self.assertFalse(await ws._backend.file_exists(ws._sessions_dir))
+            self.assertFalse(await ws._backend.file_exists(ws._data_dir))
+            raw = await ws._backend.read_file(ws._mcp_file)
+            self.assertEqual(json.loads(raw.decode("utf-8")), [])
 
     async def test_persistent_state_survives_close_and_reattach(self) -> None:
         """Live Daytona reattach preserves MCP, sessions, and data files."""

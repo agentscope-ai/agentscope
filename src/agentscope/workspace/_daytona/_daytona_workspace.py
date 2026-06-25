@@ -197,21 +197,21 @@ class DaytonaWorkspace(WorkspaceBase):
 
         # ── SDK-derived paths ───────────────────────────────────
         self.workdir = ""
-        self._user_home = ""
-        self._data_dir = ""
-        self._skills_dir = ""
-        self._sessions_dir = ""
-        self._mcp_file = ""
-        self._gateway_home = ""
-        self._gateway_venv = ""
-        self._gateway_venv_py = ""
-        self._gateway_script = ""
-        self._glob_helper_script = ""
-        self._gateway_config = ""
-        self._gateway_log = ""
-        self._uv_bin = ""
-        self._dev_src_tar = ""
-        self._dev_src_dir = ""
+        self._user_home: str
+        self._data_dir: str
+        self._skills_dir: str
+        self._sessions_dir: str
+        self._mcp_file: str
+        self._gateway_home: str
+        self._gateway_venv: str
+        self._gateway_venv_py: str
+        self._gateway_script: str
+        self._glob_helper_script: str
+        self._gateway_config: str
+        self._gateway_log: str
+        self._uv_bin: str
+        self._dev_src_tar: str
+        self._dev_src_dir: str
 
         # ── serializable config ─────────────────────────────────
         self.api_key = api_key
@@ -245,9 +245,7 @@ class DaytonaWorkspace(WorkspaceBase):
     @property
     def sandbox_id(self) -> str | None:
         """Daytona sandbox id, or ``None`` if not started."""
-        return (
-            _sandbox_id(self._sandbox) if self._sandbox is not None else None
-        )
+        return self._sandbox.id if self._sandbox is not None else None
 
     async def initialize(self) -> None:
         """Reattach or create the sandbox, then start the gateway.
@@ -756,7 +754,8 @@ class DaytonaWorkspace(WorkspaceBase):
 
         candidates: list[Any] = []
         try:
-            candidates = await _collect_sandboxes(client.list(query))
+            async for sandbox in client.list(query):
+                candidates.append(sandbox)
         except Exception as e:  # noqa: BLE001
             logger.warning("DaytonaWorkspace: list sandboxes failed: %s", e)
             return None
@@ -784,9 +783,9 @@ class DaytonaWorkspace(WorkspaceBase):
         Recoverable error sandboxes can be recovered; unrecoverable
         error sandboxes are ignored so a fresh sandbox can be created.
         """
-        state = _state_value(getattr(sandbox, "state", None))
+        state = _state_value(sandbox.state)
         if state == "error":
-            return bool(getattr(sandbox, "recoverable", False))
+            return bool(sandbox.recoverable)
         return state in {
             "started",
             "stopped",
@@ -804,26 +803,22 @@ class DaytonaWorkspace(WorkspaceBase):
         sandboxes. This method normalizes those states into a running
         sandbox before bootstrap / gateway setup continues.
         """
-        state = _state_value(getattr(self._sandbox, "state", None))
+        state = _state_value(self._sandbox.state)
         if state == "error":
             await self._sandbox.recover(timeout=self.timeout_seconds)
         elif state in {"stopped", "paused"}:
             await self._sandbox.start(timeout=self.timeout_seconds)
         elif state == "stopping":
-            wait = getattr(self._sandbox, "wait_for_sandbox_stop", None)
-            if wait is not None:
-                await wait(timeout=self.timeout_seconds)
+            await self._sandbox.wait_for_sandbox_stop(
+                timeout=self.timeout_seconds,
+            )
             await self._sandbox.start(timeout=self.timeout_seconds)
         elif state in {"starting", "resuming"}:
-            wait = getattr(self._sandbox, "wait_for_sandbox_start", None)
-            if wait is not None:
-                await wait(timeout=self.timeout_seconds)
-            else:
-                await self._sandbox.start(timeout=self.timeout_seconds)
+            await self._sandbox.wait_for_sandbox_start(
+                timeout=self.timeout_seconds,
+            )
 
-        refresh = getattr(self._sandbox, "refresh_data", None)
-        if refresh is not None:
-            await refresh()
+        await self._sandbox.refresh_data()
 
     def _create_params(self) -> Any:
         """Build Daytona create params from initialized workspace config.
@@ -1131,45 +1126,20 @@ class DaytonaWorkspace(WorkspaceBase):
         This is provider authentication only. It is deliberately kept
         separate from the AgentScope gateway bearer token.
         """
-        token = getattr(preview, "token", None)
+        token = preview.token
         if not token:
-            return {}
+            raise RuntimeError(
+                "Daytona preview response did not contain an access token",
+            )
         return {DAYTONA_PREVIEW_TOKEN_HEADER: str(token)}
 
 
 # ── SDK response helpers ──────────────────────────────────────────
 
 
-async def _collect_sandboxes(result: Any) -> list[Any]:
-    """Collect Daytona list results from async iterators or test fakes."""
-    if hasattr(result, "__aiter__"):
-        return [item async for item in result]
-    if hasattr(result, "__await__"):
-        result = await result
-    if hasattr(result, "__aiter__"):
-        return [item async for item in result]
-    return list(result or [])
-
-
 def _preview_url(preview: Any) -> str:
-    """Extract preview URL from SDK response variants."""
-    for attr in ("url", "preview_url", "public_url"):
-        value = getattr(preview, attr, None)
-        if value:
-            return str(value).rstrip("/")
-    if isinstance(preview, str):
-        return preview.rstrip("/")
-    raise RuntimeError("Daytona preview response did not contain a URL")
-
-
-def _sandbox_id(sandbox: Any) -> str | None:
-    """Return sandbox id from SDK object variants."""
-    value = getattr(sandbox, "id", None) or getattr(
-        sandbox,
-        "sandbox_id",
-        None,
-    )
-    return None if value is None else str(value)
+    """Extract the preview URL from Daytona's ``PortPreviewUrl``."""
+    return str(preview.url).rstrip("/")
 
 
 def _state_value(state: Any) -> str:
@@ -1184,4 +1154,4 @@ def _candidate_sort_key(sandbox: Any) -> str:
         value = getattr(sandbox, attr, None)
         if value is not None:
             return str(value)
-    return _sandbox_id(sandbox) or ""
+    return str(sandbox.id)
