@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=unused-argument
 """Toolkit test case."""
+import base64
 import json
 from typing import Any, AsyncGenerator, Generator
 from unittest import TestCase
@@ -54,7 +55,7 @@ class Tool1(ToolBase):
             message="Do you want to use my_tool?",
         )
 
-    async def __call__(self, **kwargs: Any) -> ToolChunk:
+    async def call(self, **kwargs: Any) -> ToolChunk:
         """Run the tool."""
         return ToolChunk(
             content=[TextBlock(text="Hello, world!")],
@@ -85,7 +86,7 @@ class Tool2(ToolBase):
             message="Do you want to use my_tool?",
         )
 
-    async def __call__(self, **kwargs: Any) -> AsyncGenerator[ToolChunk, None]:
+    async def call(self, **kwargs: Any) -> AsyncGenerator[ToolChunk, None]:
         """Run the tool."""
         yield ToolChunk(
             content=[TextBlock(text="123", id="a")],
@@ -417,6 +418,47 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "id": "test_2",
             },
+        )
+
+    async def test_tool_response_merges_base64_chunks_by_bytes(self) -> None:
+        """Base64 chunks with padding should merge as bytes, not strings."""
+        response = ToolResponse()
+        first = base64.b64encode(b"hello").decode("ascii")
+        second = base64.b64encode(b"world").decode("ascii")
+
+        response.append_chunk(
+            ToolChunk(
+                content=[
+                    DataBlock(
+                        id="image",
+                        source=Base64Source(
+                            data=first,
+                            media_type="image/png",
+                        ),
+                    ),
+                ],
+            ),
+        )
+        response.append_chunk(
+            ToolChunk(
+                content=[
+                    DataBlock(
+                        id="image",
+                        source=Base64Source(
+                            data=second,
+                            media_type="image/png",
+                        ),
+                    ),
+                ],
+            ),
+        )
+
+        self.assertEqual(len(response.content), 1)
+        merged = response.content[0]
+        self.assertIsInstance(merged, DataBlock)
+        self.assertEqual(
+            base64.b64decode(merged.source.data),
+            b"helloworld",
         )
 
 

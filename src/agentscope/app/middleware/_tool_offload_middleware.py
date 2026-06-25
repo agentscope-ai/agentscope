@@ -34,7 +34,8 @@ from ...message import (
     ToolResultState,
 )
 from ...agent import Agent
-from ..message_bus import MessageBus
+from ..message_bus import MessageBus, MessageBusKeys
+from .._bus_ops import enqueue_run_trigger
 from ..._logging import logger
 
 
@@ -344,11 +345,12 @@ class ToolOffloadMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 tool_name,
                 session_id,
             )
-            await self._message_bus.inbox_push(
-                session_id,
+            await self._message_bus.queue_push(
+                MessageBusKeys.inbox(session_id),
                 hint.model_dump(mode="json"),
             )
-            await self._message_bus.enqueue_wakeup(
+            await enqueue_run_trigger(
+                self._message_bus,
                 user_id=self._user_id,
                 session_id=session_id,
                 agent_id=self._agent_id,

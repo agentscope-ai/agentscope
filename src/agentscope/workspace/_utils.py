@@ -16,7 +16,6 @@ that consume these helpers live next to it under
 import importlib.resources as _res
 from pathlib import Path
 
-
 # ── shared constants ───────────────────────────────────────────────
 
 #: Minimum Python packages the gateway script needs at runtime.
@@ -159,5 +158,27 @@ def _read_gateway_script_bytes() -> bytes:
     return (
         _res.files("agentscope.workspace._mcp_gateway")
         .joinpath("_mcp_gateway_app.py")
+        .read_bytes()
+    )
+
+
+# ── builtin tool helper scripts ───────────────────────────────────
+
+
+def _read_glob_helper_bytes() -> bytes:
+    """Read the standalone glob helper script as bytes.
+
+    The script ships at
+    ``agentscope/tool/_builtin/_scripts/_glob_helper.py``. Both Docker
+    and E2B backends copy it into the workspace so the :class:`Glob`
+    tool can invoke it uniformly via ``exec_shell``.
+
+    Returns:
+        `bytes`:
+            The raw contents of the ``_glob_helper.py`` script.
+    """
+    return (
+        _res.files("agentscope.tool._builtin._scripts")
+        .joinpath("_glob_helper.py")
         .read_bytes()
     )

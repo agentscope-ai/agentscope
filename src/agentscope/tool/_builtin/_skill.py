@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """The builtin skill viewer tool."""
-from typing import Any, Callable, Awaitable
+from typing import Any, Callable, Awaitable, List
 
 from ...exception import DeveloperOrientedException
 from ...permission import (
@@ -9,7 +9,7 @@ from ...permission import (
     PermissionBehavior,
 )
 from .._response import ToolChunk
-from .._base import ToolBase
+from .._base import ToolBase, ToolMiddlewareBase
 from ...skill import Skill
 from ...message import TextBlock, ToolResultState
 from ...state import AgentState
@@ -63,13 +63,17 @@ class SkillViewer(ToolBase):
     def __init__(
         self,
         get_skills_method: Callable[..., Awaitable[dict[str, Skill]]],
+        middlewares: List[ToolMiddlewareBase] | None = None,
     ) -> None:
         """Initialize the skill viewer with the list of skills.
 
         Args:
             get_skills_method (`Callable[..., dict[str, Skill]]`):
                 An async method that returns the current skills of the agent.
+            middlewares (`List[ToolMiddlewareBase] | None`, optional):
+                Tool middlewares wrapping the tool execution.
         """
+        super().__init__(middlewares=middlewares)
         self._get_skills_method = get_skills_method
 
     async def check_permissions(
@@ -83,7 +87,7 @@ class SkillViewer(ToolBase):
             message="The skill viewer is always allowed to be called.",
         )
 
-    async def __call__(
+    async def call(
         self,
         skill: str,
         _agent_state: AgentState,

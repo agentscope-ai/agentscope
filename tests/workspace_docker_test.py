@@ -24,6 +24,7 @@ Two practical differences vs. the local tests:
 
 The whole module is skipped when no Docker daemon is reachable.
 """
+
 import base64
 import hashlib
 import os
@@ -40,6 +41,7 @@ from urllib.parse import urlparse
 import aiofiles
 
 from agentscope.message import (
+    AssistantMsg,
     Base64Source,
     DataBlock,
     Msg,
@@ -48,7 +50,6 @@ from agentscope.message import (
     ToolResultState,
     URLSource,
     UserMsg,
-    AssistantMsg,
 )
 from agentscope.permission import PermissionBehavior, PermissionDecision
 from agentscope.tool import ToolBase, ToolChunk
@@ -57,7 +58,6 @@ from agentscope.workspace._docker._make_dockerfile import (
     CONTAINER_SESSIONS_DIR,
     CONTAINER_SKILLS_DIR,
 )
-
 
 # ── docker daemon detection ────────────────────────────────────────
 
@@ -150,7 +150,7 @@ class TestDockerWorkspaceOffload(IsolatedAsyncioTestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.workspace = DockerWorkspace(
             workspace_id=f"test-{uuid.uuid4().hex[:8]}",
-            workdir=self.temp_dir.name,
+            host_workdir=self.temp_dir.name,
         )
         await self.workspace.initialize()
 
@@ -534,7 +534,7 @@ class TestDockerWorkspaceSkills(IsolatedAsyncioTestCase):
 
         self.workspace = DockerWorkspace(
             workspace_id=f"test-{uuid.uuid4().hex[:8]}",
-            workdir=self.temp_dir.name,
+            host_workdir=self.temp_dir.name,
             skill_paths=[skill1, skill2],
         )
         await self.workspace.initialize()
@@ -570,7 +570,7 @@ class TestDockerWorkspaceSkills(IsolatedAsyncioTestCase):
 
         self.workspace = DockerWorkspace(
             workspace_id=f"test-{uuid.uuid4().hex[:8]}",
-            workdir=self.temp_dir.name,
+            host_workdir=self.temp_dir.name,
             skill_paths=[skill1, skill2],
         )
         await self.workspace.initialize()
@@ -603,7 +603,7 @@ class TestDockerWorkspaceSkills(IsolatedAsyncioTestCase):
         """Empty workspace → empty skill list (no errors)."""
         self.workspace = DockerWorkspace(
             workspace_id=f"test-{uuid.uuid4().hex[:8]}",
-            workdir=self.temp_dir.name,
+            host_workdir=self.temp_dir.name,
         )
         await self.workspace.initialize()
         skills = await self.workspace.list_skills()
@@ -613,7 +613,7 @@ class TestDockerWorkspaceSkills(IsolatedAsyncioTestCase):
         """``add_skill`` after init shows up in subsequent ``list_skills``."""
         self.workspace = DockerWorkspace(
             workspace_id=f"test-{uuid.uuid4().hex[:8]}",
-            workdir=self.temp_dir.name,
+            host_workdir=self.temp_dir.name,
         )
         await self.workspace.initialize()
         self.assertListEqual(await self.workspace.list_skills(), [])
@@ -633,7 +633,7 @@ class TestDockerWorkspaceSkills(IsolatedAsyncioTestCase):
         """``add_skill`` rejects directories without SKILL.md."""
         self.workspace = DockerWorkspace(
             workspace_id=f"test-{uuid.uuid4().hex[:8]}",
-            workdir=self.temp_dir.name,
+            host_workdir=self.temp_dir.name,
         )
         await self.workspace.initialize()
 
@@ -671,7 +671,7 @@ class TestDockerWorkspaceLifecycle(IsolatedAsyncioTestCase):
         """Calling ``initialize`` on a live workspace is a no-op."""
         ws = DockerWorkspace(
             workspace_id=self.workspace_id,
-            workdir=self.temp_dir.name,
+            host_workdir=self.temp_dir.name,
         )
         try:
             await ws.initialize()
@@ -688,7 +688,7 @@ class TestDockerWorkspaceLifecycle(IsolatedAsyncioTestCase):
         """``close`` flips ``is_alive`` and tears the container down."""
         ws = DockerWorkspace(
             workspace_id=self.workspace_id,
-            workdir=self.temp_dir.name,
+            host_workdir=self.temp_dir.name,
         )
         await ws.initialize()
         self.assertTrue(ws.is_alive)
@@ -701,7 +701,7 @@ class TestDockerWorkspaceLifecycle(IsolatedAsyncioTestCase):
         """No MCPs registered → ``list_mcps`` returns an empty list."""
         ws = DockerWorkspace(
             workspace_id=self.workspace_id,
-            workdir=self.temp_dir.name,
+            host_workdir=self.temp_dir.name,
         )
         try:
             await ws.initialize()
@@ -709,15 +709,33 @@ class TestDockerWorkspaceLifecycle(IsolatedAsyncioTestCase):
         finally:
             await ws.close()
 
-    async def test_list_tools_empty(self) -> None:
-        """``list_tools`` is always empty — every tool is an MCP tool."""
+    async def test_list_tools_builtin(self) -> None:
+        """returns the six builtin tools backed by DockerBackend."""
+        from agentscope.tool._builtin import (
+            Bash,
+            Edit,
+            Glob,
+            Grep,
+            Read,
+            Write,
+        )
+        from agentscope.workspace._docker._docker_backend import DockerBackend
+
         ws = DockerWorkspace(
             workspace_id=self.workspace_id,
-            workdir=self.temp_dir.name,
+            host_workdir=self.temp_dir.name,
         )
         try:
             await ws.initialize()
-            self.assertListEqual(await ws.list_tools(), [])
+            tools = await ws.list_tools()
+            self.assertEqual(len(tools), 6)
+
+            expected_types = {Bash, Edit, Glob, Grep, Read, Write}
+            actual_types = {type(t) for t in tools}
+            self.assertSetEqual(actual_types, expected_types)
+
+            for tool in tools:
+                self.assertIsInstance(tool._backend, DockerBackend)
         finally:
             await ws.close()
 
@@ -734,7 +752,7 @@ class TestDockerWorkspaceLifecycle(IsolatedAsyncioTestCase):
 
         ws1 = DockerWorkspace(
             workspace_id=self.workspace_id,
-            workdir=self.temp_dir.name,
+            host_workdir=self.temp_dir.name,
         )
         await ws1.initialize()
         await ws1.offload_context(session_id, [msg])
@@ -750,7 +768,7 @@ class TestDockerWorkspaceLifecycle(IsolatedAsyncioTestCase):
 
         ws2 = DockerWorkspace(
             workspace_id=self.workspace_id,
-            workdir=self.temp_dir.name,
+            host_workdir=self.temp_dir.name,
         )
         try:
             await ws2.initialize()
@@ -767,7 +785,7 @@ class TestDockerWorkspaceLifecycle(IsolatedAsyncioTestCase):
         """``reset`` removes ``sessions/`` and ``data/`` (host-visible)."""
         ws = DockerWorkspace(
             workspace_id=self.workspace_id,
-            workdir=self.temp_dir.name,
+            host_workdir=self.temp_dir.name,
         )
         try:
             await ws.initialize()
