@@ -113,6 +113,7 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
         self._ttl = ttl
         self._sweep_interval = sweep_interval
 
+        # workspace_id → (workspace, last_access_monotonic)
         self._cache: dict[str, tuple[DaytonaWorkspace, float]] = {}
         self._lock = asyncio.Lock()
         self._sweep_task: asyncio.Task | None = None
@@ -228,8 +229,23 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
     ) -> DaytonaWorkspace:
         """Build a brand-new workspace and track it.
 
-        The workspace allocates a fresh ``workspace_id`` and creates a
-        new Daytona sandbox labelled with that id.
+        A fresh ``workspace_id`` is allocated by
+        :class:`WorkspaceBase`; the caller should persist
+        ``workspace.workspace_id`` for later :meth:`get_workspace`
+        calls.
+
+        Args:
+            user_id (`str`):
+                Owning user identifier (forwarded as sandbox labels).
+            agent_id (`str`):
+                Agent identifier (forwarded as sandbox labels).
+            session_id (`str`):
+                Session identifier (accepted for parity; not used
+                here).
+
+        Returns:
+            `DaytonaWorkspace`:
+                The newly built workspace, already initialized.
         """
         del session_id
 
@@ -243,7 +259,14 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
         return ws
 
     async def close(self, workspace_id: str) -> None:
-        """Close and evict a single cached workspace."""
+        """Close (= gracefully stop the sandbox) and evict a workspace.
+
+        No-op when the workspace_id is not tracked.
+
+        Args:
+            workspace_id (`str`):
+                The workspace to close.
+        """
         async with self._lock:
             entry = self._cache.pop(workspace_id, None)
         if entry is None:
@@ -254,8 +277,9 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
     async def close_all(self) -> None:
         """Close every cached workspace in parallel.
 
-        Each close is a provider round-trip, so fan-out keeps app
-        shutdown bounded by the slowest sandbox instead of the sum.
+        ``sandbox.stop()`` is a remote round-trip per sandbox; doing it
+        sequentially on app shutdown produces a noticeable stall, so we
+        fan the calls out with :func:`asyncio.gather`.
         """
         async with self._lock:
             entries = list(self._cache.values())
@@ -291,8 +315,10 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
     async def _sweep_loop(self) -> None:
         """Periodically close idle workspaces.
 
-        Exceptions are logged and swallowed so one bad provider call
-        does not kill the long-lived manager task.
+        Runs forever until cancelled. Each tick pops every cache entry
+        whose last-access is older than ``ttl`` and closes it outside
+        the lock; exceptions during close are logged and swallowed so
+        one bad sandbox does not poison the sweeper.
         """
         while True:
             try:

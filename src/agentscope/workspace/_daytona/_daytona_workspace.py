@@ -271,6 +271,9 @@ class DaytonaWorkspace(WorkspaceBase):
         self._mcps = await self._restore_or_seed_mcps()
         self._gateway_token = uuid.uuid4().hex
 
+        # Stop any stale gateway from a previous start / reattach
+        # cycle. Each init mints a fresh bearer token, so an old
+        # process on the port would reject new-token requests.
         await self._backend.exec_shell(
             ["sh", "-c", "pkill -f _mcp_gateway_app.py || true"],
         )
@@ -289,6 +292,11 @@ class DaytonaWorkspace(WorkspaceBase):
         self._gateway_clients = {
             c.name: c for c in await self._gateway.list_mcps()
         }
+
+        # Persist the MCP set unconditionally so freshly seeded
+        # ``default_mcps`` become the canonical ``.mcp`` for the next
+        # reattach. ``_seed_skills`` is also idempotent and short
+        # circuits when sandbox-side ``skills/`` already has entries.
         await self._save_mcp_file()
         await self._seed_skills()
 
@@ -297,9 +305,11 @@ class DaytonaWorkspace(WorkspaceBase):
     async def reset(self) -> None:
         """Return the workspace to an empty persistent state.
 
-        Clears MCP registrations, ``sessions/``, ``data/`` and
-        ``skills/`` inside the sandbox. The sandbox itself remains
-        attached and the gateway process remains available.
+        Mirrors :meth:`DockerWorkspace.reset`: deregisters every MCP
+        from the gateway, clears the local handles, and wipes
+        ``.mcp``, ``skills/``, ``sessions/`` and ``data/`` inside the
+        sandbox. The gateway process keeps running with no upstream
+        MCPs. ``default_mcps`` / ``skill_paths`` are not re-seeded.
         """
         if self._backend is None:
             raise RuntimeError(
@@ -333,8 +343,13 @@ class DaytonaWorkspace(WorkspaceBase):
         """Gracefully stop the sandbox and release host-side resources.
 
         ``force=False`` preserves Daytona's non-force stop semantics.
-        Filesystem persistence is left to the provider; host-side
-        gateway clients and SDK clients are always discarded.
+        Filesystem persistence is left to the provider so the next
+        :meth:`initialize` can reattach by label. The host-side gateway
+        client is closed first so its connection pool is released
+        cleanly.
+
+        Errors during teardown are swallowed so ``close`` is always
+        safe to call (for example from ``__aexit__``).
         """
         if self._gateway is not None:
             try:
@@ -364,7 +379,12 @@ class DaytonaWorkspace(WorkspaceBase):
     # ── instructions ────────────────────────────────────────────
 
     async def get_instructions(self) -> str:
-        """Return the system-prompt fragment for this workspace."""
+        """Return the system-prompt fragment for this workspace.
+
+        Substitutes ``{workdir}`` in the configured template with the
+        sandbox-side workdir discovered from the Daytona SDK. The agent
+        always sees sandbox-internal paths.
+        """
         workdir = self.workdir or "<sandbox workdir>"
         return self.instructions.format(workdir=workdir)
 
@@ -373,9 +393,17 @@ class DaytonaWorkspace(WorkspaceBase):
     async def list_tools(self) -> list[ToolBase]:
         """Built-in tools backed by the Daytona sandbox.
 
-        The tool names and behavior intentionally mirror local,
-        Docker, and E2B workspaces; only the backend implementation is
-        Daytona-specific.
+        Returns the six builtin tools (Bash, Read, Write, Edit, Grep,
+        Glob), each backed by the workspace's :class:`DaytonaBackend`
+        that executes inside the sandbox.
+
+        Raises:
+            `RuntimeError`:
+                If the workspace has not been initialized yet (the
+                sandbox-backed backend is unavailable). Without this
+                guard the builtin tools would silently fall back to a
+                :class:`LocalBackend` and run on the host instead of
+                inside the sandbox.
         """
         if self._backend is None:
             raise RuntimeError(
@@ -396,11 +424,21 @@ class DaytonaWorkspace(WorkspaceBase):
         ]
 
     async def list_mcps(self) -> list[MCPClient]:
-        """Return one :class:`GatewayMCPClient` per registered MCP."""
+        """Return one :class:`GatewayMCPClient` per registered MCP.
+
+        Each entry's ``name`` matches the upstream MCP server name and
+        all of its protocol calls are routed over the Daytona preview
+        URL to the in-sandbox gateway.
+        """
         return list(self._gateway_clients.values())
 
     async def list_skills(self) -> list[Skill]:
-        """Enumerate skills by scanning ``skills/`` inside the sandbox."""
+        """Enumerate skills by scanning ``skills/`` inside the sandbox.
+
+        Reads each ``SKILL.md`` via :class:`DaytonaBackend` and parses
+        the YAML front-matter. Files missing ``name`` or
+        ``description`` are skipped.
+        """
         import frontmatter as fm
 
         result = await self._backend.exec_shell(
@@ -446,9 +484,9 @@ class DaytonaWorkspace(WorkspaceBase):
     async def add_mcp(self, mcp_client: MCPClient) -> None:
         """Register a new MCP server on the in-sandbox gateway.
 
-        The gateway process owns the actual MCP subprocess. The host
-        stores a :class:`GatewayMCPClient` proxy and persists the
-        original MCP config to ``$workdir/.mcp`` for the next attach.
+        Mirrors :meth:`DockerWorkspace.add_mcp` but persists ``.mcp``
+        unconditionally — the sandbox filesystem is always persistent
+        for Daytona.
         """
         async with self._mcp_lock:
             if mcp_client.name in self._gateway_clients:
@@ -464,7 +502,10 @@ class DaytonaWorkspace(WorkspaceBase):
             await self._save_mcp_file()
 
     async def remove_mcp(self, name: str) -> None:
-        """Unregister an MCP server by name."""
+        """Unregister an MCP server by name.
+
+        Mirrors :meth:`DockerWorkspace.remove_mcp`.
+        """
         async with self._mcp_lock:
             gw_client = self._gateway_clients.pop(name, None)
             if gw_client is None:
@@ -482,9 +523,10 @@ class DaytonaWorkspace(WorkspaceBase):
     async def add_skill(self, skill_path: str) -> None:
         """Upload a local skill directory into sandbox ``skills/``.
 
-        The upload keeps the directory basename so repeated adds of
-        the same local skill are rejected before overwriting sandbox
-        state.
+        The directory must contain a ``SKILL.md`` with ``name`` and
+        ``description`` in its YAML front matter. A directory of the
+        same basename already in the sandbox is rejected rather than
+        overwritten.
         """
         skill_md = os.path.join(skill_path, "SKILL.md")
         if not os.path.isfile(skill_md):
@@ -538,9 +580,10 @@ class DaytonaWorkspace(WorkspaceBase):
     ) -> str:
         """Persist a batch of messages as JSONL inside the sandbox.
 
-        Base64 data blocks are first copied into ``data/`` and then
-        rewritten as ``file://`` URLs so subsequent tool calls can use
-        sandbox-local paths.
+        Same shape as :meth:`DockerWorkspace.offload_context`: each
+        :class:`Msg` becomes a line; inline base64 :class:`DataBlock`
+        payloads are extracted into ``data/`` and replaced with
+        ``file://`` URL blocks.
         """
         base = f"{self._sessions_dir}/{session_id}"
         path = f"{base}/context.jsonl"
@@ -635,10 +678,16 @@ class DaytonaWorkspace(WorkspaceBase):
     async def _attach_or_create_sandbox(self) -> None:
         """Reattach to an existing sandbox by label, or create one.
 
-        Reattachment is label-based: ``_find_existing_sandbox`` looks
-        for ``agentscope.workspace.id == self.workspace_id``. If no
-        usable candidate exists, create params are built from the
-        constructor config captured during ``__init__``.
+        Resolution rule: a single sandbox is expected per
+        ``workspace_id``. If multiple usable candidates are returned
+        (for example after an unclean shutdown), attach to the newest
+        one by provider timestamps and log a warning — manual cleanup
+        is left to the operator.
+
+        Existing candidates are normalized to a ready state before the
+        caller derives paths or starts the gateway. New sandboxes are
+        created from the constructor config captured during
+        ``__init__``.
         """
         existing = await self._find_existing_sandbox()
         client = await self._get_daytona_client()
@@ -658,6 +707,10 @@ class DaytonaWorkspace(WorkspaceBase):
         error-state sandboxes. Candidate filtering is intentionally
         conservative: unrecoverable errors are ignored, while stopped
         and paused sandboxes can be started again.
+
+        Returns:
+            The most recent usable Daytona sandbox object, or ``None``
+            if no matching sandbox exists.
         """
         from daytona import ListSandboxesQuery, SandboxState
 
@@ -700,7 +753,11 @@ class DaytonaWorkspace(WorkspaceBase):
         return usable[0]
 
     def _is_candidate_usable(self, sandbox: Any) -> bool:
-        """Return whether a listed sandbox can be attached."""
+        """Return whether a listed sandbox can be attached.
+
+        Recoverable error sandboxes can be recovered; unrecoverable
+        error sandboxes are ignored so a fresh sandbox can be created.
+        """
         state = _state_value(getattr(sandbox, "state", None))
         if state == "error":
             return bool(getattr(sandbox, "recoverable", False))
@@ -828,9 +885,12 @@ class DaytonaWorkspace(WorkspaceBase):
 
         Released installs pin the host AgentScope version. Dev installs
         upload a tarball of the current source tree and install it into
-        the gateway venv with ``--no-deps``. Each shell command is
-        executed through :class:`DaytonaBackend` so failures include
-        command, exit code, stdout and stderr.
+        the gateway venv with ``--no-deps``.
+
+        Each command runs through :class:`DaytonaBackend`; a non-zero
+        exit raises :class:`RuntimeError` with the command, exit code,
+        stderr and stdout so provider-side startup failures are visible
+        in host logs.
         """
         if _is_released_install():
             log_bootstrap_attempt(self.workspace_id, "released")
@@ -875,10 +935,14 @@ class DaytonaWorkspace(WorkspaceBase):
                     f"stdout: {result.stdout.decode(errors='replace')}",
                 )
 
+        # Upload helper scripts used by builtin tools.
         await self._backend.write_file(
             self._glob_helper_script,
             _read_glob_helper_bytes(),
         )
+
+        # Upload the gateway script last so its presence is the
+        # idempotency marker we probe in :meth:`initialize`.
         await self._backend.write_file(
             self._gateway_script,
             _read_gateway_script_bytes(),
@@ -889,9 +953,10 @@ class DaytonaWorkspace(WorkspaceBase):
     async def _restore_or_seed_mcps(self) -> list[MCPClient]:
         """Decide the MCP set to ship to the gateway on startup.
 
-        The sandbox's persisted ``.mcp`` file wins on reattach. If the
-        file is missing or invalid, seed-time ``default_mcps`` are used
-        instead so a brand-new workspace still has its configured MCPs.
+        * ``$workdir/.mcp`` missing → return ``default_mcps``.
+        * ``.mcp`` present → :meth:`MCPClient.model_validate` each
+          entry. Read / parse error → log and fall back to
+          ``default_mcps``.
         """
         try:
             raw = await self._backend.read_file(self._mcp_file)
@@ -910,7 +975,10 @@ class DaytonaWorkspace(WorkspaceBase):
             return list(self.default_mcps)
 
     async def _save_mcp_file(self) -> None:
-        """Persist ``self._mcps`` to ``$workdir/.mcp`` inside sandbox."""
+        """Persist ``self._mcps`` to ``$workdir/.mcp`` inside sandbox.
+
+        Failures are logged but not raised.
+        """
         payload = json.dumps(
             [m.model_dump(mode="json") for m in self._mcps],
             indent=2,
@@ -978,11 +1046,11 @@ class DaytonaWorkspace(WorkspaceBase):
         )
 
     async def _seed_skills(self) -> None:
-        """Copy ``self.skill_paths`` into ``skills/`` once.
+        """Copy ``self.skill_paths`` into ``skills/`` once, on first init.
 
-        Existing files in ``skills/`` mean a previous initialization or
-        user action already populated the sandbox, so seed paths are not
-        reapplied on reattach.
+        Skips seeding when ``skill_paths`` is empty or the sandbox-side
+        ``skills/`` already contains entries — meaning the user (or a
+        prior init) is the source of truth.
         """
         if not self.skill_paths:
             return
@@ -1007,8 +1075,10 @@ class DaytonaWorkspace(WorkspaceBase):
     async def _offload_data_block(self, block: DataBlock) -> DataBlock:
         """Persist a base64 :class:`DataBlock` under ``data/``.
 
-        The returned block points at a sandbox-local ``file://`` URL,
-        which keeps later tool execution independent from host paths.
+        Mirrors :meth:`DockerWorkspace._offload_data_block` exactly,
+        only the I/O primitive differs. Hashing the *base64* text
+        rather than decoded bytes keeps the key short-circuit: a
+        repeat offload of the same block writes the same file.
         """
         if not isinstance(block.source, Base64Source):
             return block
