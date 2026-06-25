@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The content blocks of messages."""
 from enum import StrEnum
-from typing import Literal, List, TypeAlias
+from typing import Literal, List, TypeAlias, Any
 from pydantic import BaseModel, Field, AnyUrl, field_serializer, ConfigDict
 
 from .._utils._common import _generate_id
@@ -184,6 +184,8 @@ class ToolResultBlock(BaseModel):
     text and multimodal blocks."""
     state: ToolResultState = ToolResultState.RUNNING
     """The execution state of the tool."""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    """The metadata of the tool result block."""
 
 
 ContentBlock: TypeAlias = (
