@@ -59,10 +59,7 @@ function uploadDocumentXhr(
 		}
 
 		const xhr = new XMLHttpRequest();
-		const url = new URL(
-			`/knowledge_bases/${knowledgeBaseId}/documents`,
-			getBaseUrl(),
-		);
+		const url = new URL(`/knowledge_bases/${knowledgeBaseId}/documents`, getBaseUrl());
 		xhr.open('POST', url.toString(), true);
 		xhr.setRequestHeader('X-User-ID', getUserId());
 
@@ -84,11 +81,7 @@ function uploadDocumentXhr(
 			cleanup();
 			if (xhr.status >= 200 && xhr.status < 300) {
 				try {
-					resolve(
-						JSON.parse(
-							xhr.responseText,
-						) as UploadKnowledgeDocumentResponse,
-					);
+					resolve(JSON.parse(xhr.responseText) as UploadKnowledgeDocumentResponse);
 				} catch (e) {
 					reject(e);
 				}
@@ -100,8 +93,7 @@ function uploadDocumentXhr(
 					detail?: unknown;
 				};
 				if (typeof json.detail === 'string') detail = json.detail;
-				else if (json.detail !== undefined)
-					detail = JSON.stringify(json.detail);
+				else if (json.detail !== undefined) detail = JSON.stringify(json.detail);
 			} catch {
 				// keep raw text
 			}
@@ -127,9 +119,7 @@ export const knowledgeBaseApi = {
 	list: () => client.get<ListKnowledgeBasesResponse>('/knowledge_bases/'),
 
 	listEmbeddingModels: () =>
-		client.get<ListKbEmbeddingModelsResponse>(
-			'/knowledge_bases/embedding_models',
-		),
+		client.get<ListKbEmbeddingModelsResponse>('/knowledge_bases/embedding_models'),
 
 	/** Fetch the JSON Schema describing the KB middleware's tunable params. */
 	middlewareParametersSchema: () =>
@@ -141,19 +131,13 @@ export const knowledgeBaseApi = {
 		client.post<CreateKnowledgeBaseResponse>('/knowledge_bases/', body),
 
 	update: (knowledgeBaseId: string, body: UpdateKnowledgeBaseRequest) =>
-		client.patch<KnowledgeBaseView>(
-			`/knowledge_bases/${knowledgeBaseId}`,
-			body,
-		),
+		client.patch<KnowledgeBaseView>(`/knowledge_bases/${knowledgeBaseId}`, body),
 
-	delete: (knowledgeBaseId: string) =>
-		client.delete(`/knowledge_bases/${knowledgeBaseId}`),
+	delete: (knowledgeBaseId: string) => client.delete(`/knowledge_bases/${knowledgeBaseId}`),
 
 	/** List every document registered against a knowledge base. */
 	listDocuments: (knowledgeBaseId: string) =>
-		client.get<ListKnowledgeDocumentsResponse>(
-			`/knowledge_bases/${knowledgeBaseId}/documents`,
-		),
+		client.get<ListKnowledgeDocumentsResponse>(`/knowledge_bases/${knowledgeBaseId}/documents`),
 
 	/**
 	 * Batch-query lifecycle status for a list of documents.
@@ -176,16 +160,11 @@ export const knowledgeBaseApi = {
 		);
 	},
 
-	uploadDocument: (
-		knowledgeBaseId: string,
-		file: File,
-		options?: UploadDocumentOptions,
-	) => uploadDocumentXhr(knowledgeBaseId, file, options),
+	uploadDocument: (knowledgeBaseId: string, file: File, options?: UploadDocumentOptions) =>
+		uploadDocumentXhr(knowledgeBaseId, file, options),
 
 	deleteDocument: (knowledgeBaseId: string, documentId: string) =>
-		client.delete(
-			`/knowledge_bases/${knowledgeBaseId}/documents/${documentId}`,
-		),
+		client.delete(`/knowledge_bases/${knowledgeBaseId}/documents/${documentId}`),
 
 	search: (knowledgeBaseId: string, body: SearchKnowledgeBaseRequest) =>
 		client.post<SearchKnowledgeBaseResponse>(

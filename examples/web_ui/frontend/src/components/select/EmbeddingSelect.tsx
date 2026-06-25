@@ -59,11 +59,7 @@ export function EmbeddingSelect({
 	}
 	const hasOptions = Object.keys(groups).length > 0;
 
-	const handleSelect = (
-		type: string,
-		credentialId: string,
-		card: EmbeddingModelCard,
-	) => {
+	const handleSelect = (type: string, credentialId: string, card: EmbeddingModelCard) => {
 		onChange?.({ type, credentialId, model: card.name, card });
 	};
 
@@ -101,11 +97,7 @@ export function EmbeddingSelect({
 											<DropdownMenuItem
 												key={m.name}
 												onSelect={() =>
-													handleSelect(
-														type,
-														items[0].credential.id,
-														m,
-													)
+													handleSelect(type, items[0].credential.id, m)
 												}
 											>
 												{m.label}

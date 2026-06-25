@@ -1,12 +1,4 @@
-import {
-	AlertCircle,
-	CheckCircle2,
-	FileText,
-	Loader2,
-	Plus,
-	Trash2,
-	X,
-} from 'lucide-react';
+import { AlertCircle, CheckCircle2, FileText, Loader2, Plus, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
@@ -108,8 +100,7 @@ interface RowViewProps {
 function RowView({ row, onCancel, onDismiss, onDelete }: RowViewProps) {
 	const { t } = useTranslation();
 
-	const filename =
-		row.kind === 'server' ? row.doc.filename : row.task.filename;
+	const filename = row.kind === 'server' ? row.doc.filename : row.task.filename;
 	const size = row.kind === 'server' ? row.doc.size : row.task.size;
 
 	// Phase resolution — the local task wins while the server hasn't
@@ -120,9 +111,7 @@ function RowView({ row, onCancel, onDismiss, onDelete }: RowViewProps) {
 		const localPhase = row.localTask?.phase;
 		if (
 			localPhase &&
-			!TERMINAL_SERVER_STATUSES.includes(
-				row.doc.status as KnowledgeDocumentStatus,
-			)
+			!TERMINAL_SERVER_STATUSES.includes(row.doc.status as KnowledgeDocumentStatus)
 		) {
 			return localPhase;
 		}
@@ -135,10 +124,7 @@ function RowView({ row, onCancel, onDismiss, onDelete }: RowViewProps) {
 		if (phase === 'uploading' && row.kind === 'local') {
 			if (!row.task.size) return { progressValue: 0, indeterminate: true };
 			return {
-				progressValue: Math.min(
-					100,
-					Math.round((row.task.loaded / row.task.size) * 100),
-				),
+				progressValue: Math.min(100, Math.round((row.task.loaded / row.task.size) * 100)),
 				indeterminate: false,
 			};
 		}
@@ -161,17 +147,10 @@ function RowView({ row, onCancel, onDismiss, onDelete }: RowViewProps) {
 	})();
 
 	const error = row.kind === 'local' ? row.task.error : row.doc.error;
-	const chunkCount =
-		row.kind === 'server'
-			? row.doc.chunk_count
-			: row.task.documentId
-				? 0
-				: 0;
+	const chunkCount = row.kind === 'server' ? row.doc.chunk_count : row.task.documentId ? 0 : 0;
 
 	const taskIdForCancel =
-		row.kind === 'local'
-			? row.task.taskId
-			: row.localTask?.taskId ?? null;
+		row.kind === 'local' ? row.task.taskId : (row.localTask?.taskId ?? null);
 
 	const showProgress = phase !== 'ready' && phase !== 'cancelled';
 
@@ -181,9 +160,7 @@ function RowView({ row, onCancel, onDismiss, onDelete }: RowViewProps) {
 				<FileText className="text-muted-foreground mt-0.5 size-4 shrink-0" />
 				<div className="flex min-w-0 flex-1 flex-col gap-y-0.5">
 					<div className="flex items-center gap-x-2">
-						<span className="truncate text-sm font-medium">
-							{filename}
-						</span>
+						<span className="truncate text-sm font-medium">{filename}</span>
 						<StatusBadge phase={phase} />
 					</div>
 					<div className="text-muted-foreground flex items-center gap-x-2 text-xs">
@@ -205,9 +182,7 @@ function RowView({ row, onCancel, onDismiss, onDelete }: RowViewProps) {
 						<Button
 							variant="ghost"
 							size="icon-xs"
-							onClick={() =>
-								taskIdForCancel && onCancel(taskIdForCancel)
-							}
+							onClick={() => taskIdForCancel && onCancel(taskIdForCancel)}
 							aria-label={t('knowledge.document.actions.cancel')}
 						>
 							<X className="size-3.5" />
@@ -249,33 +224,25 @@ function RowView({ row, onCancel, onDismiss, onDelete }: RowViewProps) {
 					<div
 						className={cn(
 							'h-full rounded-full transition-all',
-							phase === 'error'
-								? 'bg-destructive'
-								: 'bg-primary',
+							phase === 'error' ? 'bg-destructive' : 'bg-primary',
 							indeterminate && 'animate-pulse',
 						)}
 						style={{ width: `${progressValue}%` }}
 					/>
 				</div>
 			)}
-			{phase === 'error' && error && (
-				<p className="text-destructive text-xs">{error}</p>
-			)}
+			{phase === 'error' && error && <p className="text-destructive text-xs">{error}</p>}
 		</div>
 	);
 }
 
-export function KnowledgeDocumentsPanel({
-	knowledgeBaseId,
-}: KnowledgeDocumentsPanelProps) {
+export function KnowledgeDocumentsPanel({ knowledgeBaseId }: KnowledgeDocumentsPanelProps) {
 	const { t } = useTranslation();
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const [dragOver, setDragOver] = useState(false);
-	const [deleteTarget, setDeleteTarget] =
-		useState<KnowledgeDocumentView | null>(null);
+	const [deleteTarget, setDeleteTarget] = useState<KnowledgeDocumentView | null>(null);
 
-	const { enqueue, cancel, dismiss, tasksForKb, clearFinishedForKb } =
-		useUploadContext();
+	const { enqueue, cancel, dismiss, tasksForKb, clearFinishedForKb } = useUploadContext();
 	const { documents, refetch } = useKnowledgeDocuments(knowledgeBaseId);
 	const tasks = tasksForKb(knowledgeBaseId);
 	const { statuses } = useDocumentStatusPolling({
@@ -365,10 +332,7 @@ export function KnowledgeDocumentsPanel({
 	const handleDelete = useCallback(async () => {
 		if (!deleteTarget) return;
 		try {
-			await knowledgeBaseApi.deleteDocument(
-				knowledgeBaseId,
-				deleteTarget.id,
-			);
+			await knowledgeBaseApi.deleteDocument(knowledgeBaseId, deleteTarget.id);
 			await refetch();
 		} catch {
 			toast.error(t('knowledge.document.deleteError'));
@@ -416,9 +380,7 @@ export function KnowledgeDocumentsPanel({
 				onDragLeave={onDragLeave}
 				className={cn(
 					'rounded-lg border border-dashed transition-colors',
-					dragOver
-						? 'border-primary bg-primary/5'
-						: 'border-border bg-transparent',
+					dragOver ? 'border-primary bg-primary/5' : 'border-border bg-transparent',
 				)}
 			>
 				{rows.length === 0 ? (
@@ -427,19 +389,13 @@ export function KnowledgeDocumentsPanel({
 							<EmptyMedia variant="icon">
 								<FileText />
 							</EmptyMedia>
-							<EmptyTitle>
-								{t('knowledge.document.emptyTitle')}
-							</EmptyTitle>
+							<EmptyTitle>{t('knowledge.document.emptyTitle')}</EmptyTitle>
 							<EmptyDescription>
 								{t('knowledge.document.emptyDescription')}
 							</EmptyDescription>
 						</EmptyHeader>
 						<EmptyContent>
-							<Button
-								variant="outline"
-								size="sm"
-								onClick={onUploadClick}
-							>
+							<Button variant="outline" size="sm" onClick={onUploadClick}>
 								<Plus className="size-3.5" />
 								{t('knowledge.document.uploadButton')}
 							</Button>

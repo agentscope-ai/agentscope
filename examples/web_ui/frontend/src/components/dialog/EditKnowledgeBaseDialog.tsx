@@ -30,12 +30,7 @@ interface Props {
  * is shown as a read-only badge because it's pinned at creation time
  * (the underlying collection is sized to its dimension).
  */
-export function EditKnowledgeBaseDialog({
-	open,
-	onOpenChange,
-	knowledgeBase,
-	onUpdated,
-}: Props) {
+export function EditKnowledgeBaseDialog({ open, onOpenChange, knowledgeBase, onUpdated }: Props) {
 	const { t } = useTranslation();
 	const { update } = useKnowledgeBases();
 	const [name, setName] = useState('');
@@ -88,9 +83,7 @@ export function EditKnowledgeBaseDialog({
 				</DialogHeader>
 				<FieldGroup>
 					<Field>
-						<FieldLabel>
-							{t('dialog-knowledge-base-edit.name.label')}
-						</FieldLabel>
+						<FieldLabel>{t('dialog-knowledge-base-edit.name.label')}</FieldLabel>
 						<Input
 							value={name}
 							onChange={(e) => setName(e.target.value)}

@@ -28,8 +28,7 @@ export function useKnowledgeDocuments(knowledgeBaseId: string | null) {
 		setLoading(true);
 		setError(null);
 		try {
-			const { documents: list } =
-				await knowledgeBaseApi.listDocuments(knowledgeBaseId);
+			const { documents: list } = await knowledgeBaseApi.listDocuments(knowledgeBaseId);
 			if (seq !== requestSeq.current) return;
 			setDocuments(list);
 		} catch (e) {

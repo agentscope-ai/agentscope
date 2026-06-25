@@ -16,9 +16,7 @@ import type {
  * the server-side state.
  */
 export function useKnowledgeBases() {
-	const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseView[]>(
-		[],
-	);
+	const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseView[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [creating, setCreating] = useState(false);
 	const [error, setError] = useState<Error | null>(null);

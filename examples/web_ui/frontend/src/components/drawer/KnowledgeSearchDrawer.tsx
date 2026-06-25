@@ -4,7 +4,13 @@ import { useState } from 'react';
 import type { VectorSearchResult } from '@/api';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty.tsx';
+import {
+	Empty,
+	EmptyDescription,
+	EmptyHeader,
+	EmptyMedia,
+	EmptyTitle,
+} from '@/components/ui/empty.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { Label } from '@/components/ui/label.tsx';
 import {
@@ -102,9 +108,7 @@ export function KnowledgeSearchDrawer({
 								max={50}
 								value={topK}
 								onChange={(e) =>
-									setTopK(
-										Math.max(1, Math.min(50, Number(e.target.value) || 1)),
-									)
+									setTopK(Math.max(1, Math.min(50, Number(e.target.value) || 1)))
 								}
 								className="w-20"
 								disabled={loading}
@@ -143,7 +147,11 @@ export function KnowledgeSearchDrawer({
 					) : (
 						<div className="flex flex-col gap-y-3">
 							{results.map((hit, idx) => (
-								<ResultCard key={`${hit.document_id}-${idx}`} hit={hit} index={idx} />
+								<ResultCard
+									key={`${hit.document_id}-${idx}`}
+									hit={hit}
+									index={idx}
+								/>
 							))}
 						</div>
 					)}

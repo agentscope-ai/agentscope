@@ -76,9 +76,7 @@ export function useDocumentStatusPolling({
 		return Array.from(set).sort().join(',');
 	}, [docIds, knowledgeBaseId, pollableDocumentIds]);
 
-	const [statuses, setStatuses] = useState<
-		Record<string, KnowledgeDocumentView>
-	>({});
+	const [statuses, setStatuses] = useState<Record<string, KnowledgeDocumentView>>({});
 
 	// Mutable refs keep the running interval alive across re-renders
 	// without forcing the effect to restart on every state change.
@@ -97,10 +95,7 @@ export function useDocumentStatusPolling({
 			const controller = new AbortController();
 			inflightRef.current = controller;
 			try {
-				const { items } = await knowledgeBaseApi.getDocumentStatus(
-					knowledgeBaseId,
-					ids,
-				);
+				const { items } = await knowledgeBaseApi.getDocumentStatus(knowledgeBaseId, ids);
 				if (cancelled) return;
 				setStatuses((prev) => {
 					const next = { ...prev };

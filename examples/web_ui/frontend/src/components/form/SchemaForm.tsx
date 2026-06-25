@@ -124,10 +124,7 @@ export function SchemaForm({
 								{label}
 								{isRequired && <span className="text-destructive ml-0.5">*</span>}
 							</FieldLabel>
-							<Select
-								value={currentStr}
-								onValueChange={(v) => onChange(key, v)}
-							>
+							<Select value={currentStr} onValueChange={(v) => onChange(key, v)}>
 								<SelectTrigger id={fieldId} className="w-full">
 									<SelectValue placeholder={placeholder} />
 								</SelectTrigger>

@@ -49,9 +49,7 @@ export function CreateKnowledgeBaseDialog({
 }: Props) {
 	const { t } = useTranslation();
 	const { create } = useKnowledgeBases();
-	const { providers, policy, loading } = useKbEmbeddingModels(
-		credentialRefetchTrigger,
-	);
+	const { providers, policy, loading } = useKbEmbeddingModels(credentialRefetchTrigger);
 
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
@@ -141,7 +139,9 @@ export function CreateKnowledgeBaseDialog({
 					<Alert>
 						<Info className="size-4" />
 						<AlertTitle>
-							{t('dialog-knowledge-base-create.policy.lockedTitle', { dimension: policy.dimension })}
+							{t('dialog-knowledge-base-create.policy.lockedTitle', {
+								dimension: policy.dimension,
+							})}
 						</AlertTitle>
 						<AlertDescription>
 							{t('dialog-knowledge-base-create.policy.lockedDescription', {
@@ -159,10 +159,9 @@ export function CreateKnowledgeBaseDialog({
 						</AlertTitle>
 						<AlertDescription>
 							{isLockedPolicy && policy?.dimension != null
-								? t(
-										'dialog-knowledge-base-create.policy.noCompatibleLocked',
-										{ dimension: policy.dimension },
-									)
+								? t('dialog-knowledge-base-create.policy.noCompatibleLocked', {
+										dimension: policy.dimension,
+									})
 								: t('dialog-knowledge-base-create.policy.noCompatibleAny')}
 						</AlertDescription>
 					</Alert>
@@ -170,9 +169,7 @@ export function CreateKnowledgeBaseDialog({
 
 				<FieldGroup>
 					<Field>
-						<FieldLabel>
-							{t('dialog-knowledge-base-create.name.label')}
-						</FieldLabel>
+						<FieldLabel>{t('dialog-knowledge-base-create.name.label')}</FieldLabel>
 						<Input
 							value={name}
 							onChange={(e) => setName(e.target.value)}
@@ -215,9 +212,7 @@ export function CreateKnowledgeBaseDialog({
 						/>
 					</Field>
 					<Field orientation="horizontal">
-						<FieldLabel>
-							{t('dialog-knowledge-base-create.dimension.label')}
-						</FieldLabel>
+						<FieldLabel>{t('dialog-knowledge-base-create.dimension.label')}</FieldLabel>
 						<DimensionSelect
 							value={dimension}
 							options={dimensionOptions}
@@ -225,9 +220,7 @@ export function CreateKnowledgeBaseDialog({
 							disabled={submitting}
 						/>
 					</Field>
-					{errorKey && (
-						<p className="text-destructive text-sm">{t(errorKey)}</p>
-					)}
+					{errorKey && <p className="text-destructive text-sm">{t(errorKey)}</p>}
 				</FieldGroup>
 				<DialogFooter>
 					<Button
@@ -238,10 +231,7 @@ export function CreateKnowledgeBaseDialog({
 						<CircleAlert className="size-3.5" />
 						{t('common.cancel')}
 					</Button>
-					<Button
-						onClick={handleSubmit}
-						disabled={submitting || noCompatibleModels}
-					>
+					<Button onClick={handleSubmit} disabled={submitting || noCompatibleModels}>
 						{submitting ? (
 							<Loader2 className="size-3.5 animate-spin" />
 						) : (

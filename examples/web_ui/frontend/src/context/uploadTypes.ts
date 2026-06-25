@@ -8,11 +8,7 @@ import type { KnowledgeDocumentStatus } from '@/api';
  * :type:`KnowledgeDocumentStatus`. `cancelled` is also a client-side
  * terminal — set when the user aborts before the upload completes.
  */
-export type UploadPhase =
-	| 'queued'
-	| 'uploading'
-	| KnowledgeDocumentStatus
-	| 'cancelled';
+export type UploadPhase = 'queued' | 'uploading' | KnowledgeDocumentStatus | 'cancelled';
 
 export interface UploadTask {
 	/** Stable client-side id; survives across React renders. */

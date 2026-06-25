@@ -49,15 +49,10 @@ export function KnowledgeBasePanel({
 	const { t } = useTranslation();
 	const [search, setSearch] = useState('');
 
-	const selectedIds = useMemo(
-		() => new Set(value?.knowledge_base_ids ?? []),
-		[value],
-	);
+	const selectedIds = useMemo(() => new Set(value?.knowledge_base_ids ?? []), [value]);
 
 	const filtered = search
-		? knowledgeBases.filter((kb) =>
-				kb.name.toLowerCase().includes(search.toLowerCase()),
-			)
+		? knowledgeBases.filter((kb) => kb.name.toLowerCase().includes(search.toLowerCase()))
 		: knowledgeBases;
 
 	const toggleKb = (kbId: string, checked: boolean) => {
@@ -101,9 +96,7 @@ export function KnowledgeBasePanel({
 					<PanelEmpty
 						icon={search ? SearchX : FileX}
 						title={
-							search
-								? t('panel.search.emptyTitle')
-								: t('panel.knowledge.emptyTitle')
+							search ? t('panel.search.emptyTitle') : t('panel.knowledge.emptyTitle')
 						}
 						description={
 							search
@@ -126,16 +119,11 @@ export function KnowledgeBasePanel({
 										id={inputId}
 										checked={isSelected}
 										disabled={disabled}
-										onCheckedChange={(checked) =>
-											toggleKb(kb.id, !!checked)
-										}
+										onCheckedChange={(checked) => toggleKb(kb.id, !!checked)}
 									/>
 									<ItemContent>
 										<ItemTitle>
-											<label
-												htmlFor={inputId}
-												className="cursor-pointer"
-											>
+											<label htmlFor={inputId} className="cursor-pointer">
 												{kb.name}
 											</label>
 										</ItemTitle>

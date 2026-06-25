@@ -9,14 +9,9 @@ import {
 	type ReactNode,
 } from 'react';
 
-import {
-	MAX_CONCURRENT_UPLOADS,
-	isTerminal,
-	type UploadTask,
-} from './uploadTypes';
+import { MAX_CONCURRENT_UPLOADS, isTerminal, type UploadTask } from './uploadTypes';
 import { knowledgeBaseApi } from '@/api';
 import type { KnowledgeDocumentStatus } from '@/api';
-
 
 /**
  * Public contract the surrounding app sees. Exposed via the React
@@ -101,9 +96,7 @@ function reducer(state: UploadTask[], action: Action): UploadTask[] {
 			return [...state, ...action.tasks];
 		case 'START_UPLOAD':
 			return state.map((t) =>
-				t.taskId === action.taskId
-					? { ...t, phase: 'uploading', loaded: 0 }
-					: t,
+				t.taskId === action.taskId ? { ...t, phase: 'uploading', loaded: 0 } : t,
 			);
 		case 'PROGRESS':
 			return state.map((t) =>
@@ -130,15 +123,11 @@ function reducer(state: UploadTask[], action: Action): UploadTask[] {
 			);
 		case 'UPLOAD_FAILED':
 			return state.map((t) =>
-				t.taskId === action.taskId
-					? { ...t, phase: 'error', error: action.error }
-					: t,
+				t.taskId === action.taskId ? { ...t, phase: 'error', error: action.error } : t,
 			);
 		case 'CANCEL':
 			return state.map((t) =>
-				t.taskId === action.taskId
-					? { ...t, phase: 'cancelled' }
-					: t,
+				t.taskId === action.taskId ? { ...t, phase: 'cancelled' } : t,
 			);
 		case 'REMOVE':
 			return state.filter((t) => t.taskId !== action.taskId);
@@ -153,10 +142,7 @@ function reducer(state: UploadTask[], action: Action): UploadTask[] {
 				// server might still drive the doc to `ready`, but the
 				// user has signalled they no longer care.
 				if (t.phase === 'cancelled') return t;
-				if (
-					t.phase === match.status &&
-					t.error === match.error
-				) {
+				if (t.phase === match.status && t.error === match.error) {
 					return t;
 				}
 				return {
@@ -168,9 +154,7 @@ function reducer(state: UploadTask[], action: Action): UploadTask[] {
 		}
 		case 'CLEAR_FINISHED':
 			return state.filter(
-				(t) =>
-					t.knowledgeBaseId !== action.knowledgeBaseId ||
-					!isTerminal(t.phase),
+				(t) => t.knowledgeBaseId !== action.knowledgeBaseId || !isTerminal(t.phase),
 			);
 	}
 }
@@ -256,8 +240,7 @@ export function UploadProvider({ children }: UploadProviderProps) {
 					// Already handled by the cancel() path.
 					return;
 				}
-				const message =
-					err instanceof Error ? err.message : 'Upload failed.';
+				const message = err instanceof Error ? err.message : 'Upload failed.';
 				dispatch({
 					type: 'UPLOAD_FAILED',
 					taskId: task.taskId,
@@ -285,30 +268,27 @@ export function UploadProvider({ children }: UploadProviderProps) {
 		}
 	}, [tasks, startUpload]);
 
-	const enqueue = useCallback(
-		(knowledgeBaseId: string, files: File[]): UploadTask[] => {
-			const refs = refsRef.current!;
-			const now = Date.now();
-			const newTasks = files.map((file): UploadTask => {
-				const taskId = newTaskId();
-				refs.files.set(taskId, file);
-				return {
-					taskId,
-					knowledgeBaseId,
-					filename: file.name,
-					size: file.size,
-					documentId: null,
-					phase: 'queued',
-					loaded: 0,
-					error: null,
-					createdAt: now,
-				};
-			});
-			dispatch({ type: 'ADD', tasks: newTasks });
-			return newTasks;
-		},
-		[],
-	);
+	const enqueue = useCallback((knowledgeBaseId: string, files: File[]): UploadTask[] => {
+		const refs = refsRef.current!;
+		const now = Date.now();
+		const newTasks = files.map((file): UploadTask => {
+			const taskId = newTaskId();
+			refs.files.set(taskId, file);
+			return {
+				taskId,
+				knowledgeBaseId,
+				filename: file.name,
+				size: file.size,
+				documentId: null,
+				phase: 'queued',
+				loaded: 0,
+				error: null,
+				createdAt: now,
+			};
+		});
+		dispatch({ type: 'ADD', tasks: newTasks });
+		return newTasks;
+	}, []);
 
 	const cancel = useCallback(
 		(taskId: string) => {
@@ -342,11 +322,12 @@ export function UploadProvider({ children }: UploadProviderProps) {
 		dispatch({ type: 'CLEAR_FINISHED', knowledgeBaseId });
 	}, []);
 
-	const applyServerStatuses = useCallback<
-		UploadContextValue['applyServerStatuses']
-	>((knowledgeBaseId, items) => {
-		dispatch({ type: 'SERVER_STATUS', knowledgeBaseId, items });
-	}, []);
+	const applyServerStatuses = useCallback<UploadContextValue['applyServerStatuses']>(
+		(knowledgeBaseId, items) => {
+			dispatch({ type: 'SERVER_STATUS', knowledgeBaseId, items });
+		},
+		[],
+	);
 
 	// `tasksForKb` and `pollableDocumentIds` need stable references per
 	// (knowledgeBaseId, tasks) tuple so downstream effects don't churn.
@@ -361,8 +342,7 @@ export function UploadProvider({ children }: UploadProviderProps) {
 	}, [tasks]);
 
 	const tasksForKb = useCallback(
-		(knowledgeBaseId: string): UploadTask[] =>
-			byKb.get(knowledgeBaseId) ?? [],
+		(knowledgeBaseId: string): UploadTask[] => byKb.get(knowledgeBaseId) ?? [],
 		[byKb],
 	);
 
@@ -429,19 +409,13 @@ export function UploadProvider({ children }: UploadProviderProps) {
 		],
 	);
 
-	return (
-		<UploadContext.Provider value={value}>
-			{children}
-		</UploadContext.Provider>
-	);
+	return <UploadContext.Provider value={value}>{children}</UploadContext.Provider>;
 }
 
 export function useUploadContext(): UploadContextValue {
 	const ctx = useContext(UploadContext);
 	if (!ctx) {
-		throw new Error(
-			'useUploadContext must be used inside <UploadProvider>',
-		);
+		throw new Error('useUploadContext must be used inside <UploadProvider>');
 	}
 	return ctx;
 }

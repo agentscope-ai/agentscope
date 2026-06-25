@@ -70,9 +70,7 @@ function DetailPanel({ knowledgeBase, onTest }: DetailPanelProps) {
 				<div className="flex flex-col gap-y-1 min-w-0">
 					<h2 className="text-lg font-semibold truncate">{knowledgeBase.name}</h2>
 					{knowledgeBase.description ? (
-						<p className="text-sm text-muted-foreground">
-							{knowledgeBase.description}
-						</p>
+						<p className="text-sm text-muted-foreground">{knowledgeBase.description}</p>
 					) : null}
 				</div>
 				<div className="flex items-center gap-x-2 shrink-0">
@@ -103,9 +101,7 @@ export const KnowledgePage = () => {
 	const [credentialRefetchTrigger, setCredentialRefetchTrigger] = useState(0);
 
 	const [editTarget, setEditTarget] = useState<KnowledgeBaseView | null>(null);
-	const [deleteTarget, setDeleteTarget] = useState<KnowledgeBaseView | null>(
-		null,
-	);
+	const [deleteTarget, setDeleteTarget] = useState<KnowledgeBaseView | null>(null);
 	const [testOpen, setTestOpen] = useState(false);
 
 	const selectedKb = knowledgeBases.find((kb) => kb.id === selectedKbId);
@@ -181,9 +177,7 @@ export const KnowledgePage = () => {
 														navigate(`/knowledge/${kb.id}`);
 													}}
 												>
-													<span className="truncate">
-														{kb.name}
-													</span>
+													<span className="truncate">{kb.name}</span>
 												</SidebarMenuButton>
 												<SidebarMenuAction showOnHover>
 													<DropdownMenu>
@@ -221,10 +215,7 @@ export const KnowledgePage = () => {
 				<SidebarFooter />
 			</Sidebar>
 			<main className="flex-1 min-h-0 overflow-hidden">
-				<DetailPanel
-					knowledgeBase={selectedKb}
-					onTest={() => setTestOpen(true)}
-				/>
+				<DetailPanel knowledgeBase={selectedKb} onTest={() => setTestOpen(true)} />
 			</main>
 			<CreateKnowledgeBaseDialog
 				open={createDialogOpen}

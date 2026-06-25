@@ -154,11 +154,7 @@ export function KnowledgeBaseParametersPopover({
 								control = (
 									<Switch
 										id={id}
-										checked={
-											current !== undefined
-												? !!current
-												: !!prop.default
-										}
+										checked={current !== undefined ? !!current : !!prop.default}
 										onCheckedChange={(checked) =>
 											handleParamChange(key, !!checked)
 										}
@@ -180,9 +176,7 @@ export function KnowledgeBaseParametersPopover({
 												size="sm"
 												className="justify-between gap-1 w-full"
 											>
-												<span className="truncate">
-													{displayValue}
-												</span>
+												<span className="truncate">{displayValue}</span>
 												<ChevronDown className="size-3.5 opacity-50 shrink-0" />
 											</Button>
 										</DropdownMenuTrigger>
@@ -192,9 +186,7 @@ export function KnowledgeBaseParametersPopover({
 										>
 											<DropdownMenuRadioGroup
 												value={displayValue}
-												onValueChange={(v) =>
-													handleParamChange(key, v)
-												}
+												onValueChange={(v) => handleParamChange(key, v)}
 											>
 												{enumValues.map((opt) => (
 													<DropdownMenuRadioItem
@@ -222,9 +214,7 @@ export function KnowledgeBaseParametersPopover({
 										max={prop.maximum}
 										step={type === 'integer' ? 1 : 'any'}
 										placeholder={
-											prop.default != null
-												? String(prop.default)
-												: undefined
+											prop.default != null ? String(prop.default) : undefined
 										}
 										onChange={(e) => {
 											const raw = e.target.value;
@@ -254,13 +244,9 @@ export function KnowledgeBaseParametersPopover({
 												: String(current)
 										}
 										placeholder={
-											prop.default != null
-												? String(prop.default)
-												: undefined
+											prop.default != null ? String(prop.default) : undefined
 										}
-										onChange={(e) =>
-											handleParamChange(key, e.target.value)
-										}
+										onChange={(e) => handleParamChange(key, e.target.value)}
 									/>
 								);
 							}
@@ -269,10 +255,7 @@ export function KnowledgeBaseParametersPopover({
 								<Tooltip key={key}>
 									<TooltipTrigger asChild>
 										<div className="col-span-2 grid grid-cols-subgrid items-center">
-											<Label
-												htmlFor={id}
-												className="whitespace-nowrap"
-											>
+											<Label htmlFor={id} className="whitespace-nowrap">
 												{label}
 											</Label>
 											{control}
