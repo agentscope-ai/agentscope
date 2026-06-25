@@ -151,7 +151,14 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                     )
 
                 elif isinstance(block, ToolResultBlock):
-                    if content_blocks:
+                    # Only flush when we have non-tool-result content
+                    # (i.e. the preceding assistant turn). Once
+                    # `has_tool_result` is True we are already accumulating
+                    # tool_results into the current user message, so we must
+                    # NOT flush on each additional ToolResultBlock — doing so
+                    # would split parallel results into separate user messages
+                    # which strict endpoints (e.g. DeepSeek) reject with 400.
+                    if content_blocks and not has_tool_result:
                         role = "user" if has_tool_result else msg.role
                         messages.append(
                             {"role": role, "content": content_blocks},

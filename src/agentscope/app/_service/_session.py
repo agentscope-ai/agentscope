@@ -47,8 +47,10 @@ imports the bus; bus code never imports storage.
 """
 import asyncio
 
-from ..message_bus import MessageBus
+from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import StorageBase
+from ._session_projection import SessionProjection
+from ._projectors import SubagentHitlProjector
 from ..._logging import logger
 
 
@@ -88,6 +90,7 @@ class SessionService:
         """
         self._storage = storage
         self._bus = message_bus
+        self._projection = SessionProjection(message_bus)
 
     # ------------------------------------------------------------------
     # Cancel
@@ -136,11 +139,16 @@ class SessionService:
                 ``False`` if the lock was still held when the timeout
                 expired.
         """
-        await self._bus.session_publish_cancel(session_id)
+        await self._bus.publish(
+            MessageBusKeys.session_cancel_channel(),
+            {"session_id": session_id},
+        )
 
         deadline = asyncio.get_event_loop().time() + timeout
         while True:
-            if not await self._bus.session_is_running(session_id):
+            if not await self._bus.is_locked(
+                MessageBusKeys.session_lock(session_id),
+            ):
                 return True
             if asyncio.get_event_loop().time() >= deadline:
                 logger.warning(
@@ -205,6 +213,10 @@ class SessionService:
             session_id,
         )
         all_sids = [session_id, *worker_sids]
+
+        # Clean leader-side subagent HITL projections before storage
+        # cascades remove the records we need to resolve roles from.
+        await self._purge_subagent_hitl(user_id, agent_id, session_id)
 
         await self._cancel_runs(all_sids)
         deleted = await self._storage.delete_session(
@@ -379,5 +391,83 @@ class SessionService:
         if not session_ids:
             return
         await asyncio.gather(
-            *(self._bus.session_purge(sid) for sid in session_ids),
+            *(self._purge_session_bus(sid) for sid in session_ids),
         )
+
+    async def _purge_session_bus(self, session_id: str) -> None:
+        """Drop all per-session bus state for one session."""
+        await self._bus.log_trim(
+            MessageBusKeys.session_events(session_id),
+        )
+        await self._bus.queue_delete(
+            MessageBusKeys.inbox(session_id),
+        )
+        await self._bus.registry_drop(
+            MessageBusKeys.bg_tasks(session_id),
+        )
+
+    async def _purge_subagent_hitl(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+    ) -> None:
+        """Clean leader-side subagent HITL projections for a session
+        about to be deleted (design §3.7).
+
+        Two cases, resolved from the session's role:
+
+        - **Leader session** (it leads a team): purge the entire hash
+          keyed by this session — every projected member card goes.
+        - **Worker session** (it has a ``team_id`` but is not the
+          leader): drop just this worker's entries from the *leader's*
+          hash, leaving sibling members' cards intact.
+
+        Must run before storage cascades remove the team / session
+        records this resolution depends on. Failures are swallowed — a
+        stale projection is self-healed by reconcile-on-read and must
+        not block the delete cascade.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            agent_id (`str`):
+                The agent that owns ``session_id``.
+            session_id (`str`):
+                The session being deleted.
+        """
+        try:
+            session = await self._storage.get_session(
+                user_id,
+                agent_id,
+                session_id,
+            )
+            if session is None or not session.team_id:
+                # Not in a team — also clear any hash that may have been
+                # created with this session as a (future) leader key.
+                await SubagentHitlProjector.purge(self._projection, session_id)
+                return
+
+            team = await self._storage.get_team(user_id, session.team_id)
+            if team is None:
+                await SubagentHitlProjector.purge(self._projection, session_id)
+                return
+
+            if team.session_id == session_id:
+                # Leader session — drop the whole projection store.
+                await SubagentHitlProjector.purge(self._projection, session_id)
+            else:
+                # Worker session — drop only its entries from the
+                # leader's store.
+                await SubagentHitlProjector.drop_worker(
+                    self._projection,
+                    team.session_id,
+                    session_id,
+                )
+        except Exception as e:  # pylint: disable=broad-except
+            logger.warning(
+                "Failed to purge subagent HITL projection for session "
+                "%s: %s",
+                session_id,
+                str(e),
+            )

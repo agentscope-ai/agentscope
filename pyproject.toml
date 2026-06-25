@@ -77,6 +77,15 @@ tools = [
     "ripgrep",
 ]
 
+# ------------ Long-term memory ------------
+# Required by `agentscope.middleware._longterm_memory.Mem0Middleware`.
+# Pinned to mem0 v2.x because the middleware targets that
+# architecture: ADDITIVE_EXTRACTION_PROMPT + AGENT_CONTEXT_SUFFIX
+# (replaced v1's USER/AGENT_MEMORY_EXTRACTION_PROMPT split) and the
+# v3 phased pipeline in `_add_to_vector_store`. Running on mem0 1.x
+# wouldn't crash but the 2-tier add fallback degenerates into a
+# wasted LLM call.
+mem0 = ["mem0ai>=2.0.0"]
 # ------------ Full ------------
 full = [
     "agentscope[models]",
@@ -84,6 +93,7 @@ full = [
     "agentscope[storage]",
     "agentscope[workspace]",
     "agentscope[tools]",
+    "agentscope[mem0]",
 ]
 
 # ------------ Development ------------
@@ -115,7 +125,7 @@ include-package-data = true
 #   subdirs that ship with each model provider (they have no
 #   ``__init__.py`` and are not packages, but the files still
 #   live alongside the parent package's source on disk).
-"*" = ["py.typed", "_models/*.yaml"]
+"*" = ["py.typed", "_models/*.yaml", "_cosyvoice_models/*.yaml"]
 "agentscope.workspace._docker" = ["Dockerfile*.template"]
 
 [build-system]

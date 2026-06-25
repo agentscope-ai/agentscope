@@ -59,11 +59,11 @@
 
 AgentScope 2.0 is a production-ready, easy-to-use agent framework with essential abstractions that work with rising model capability and built-in support for .
 
-- [**Event System** →](https://docs.agentscope.io/v2/building-blocks/message-and-event) A unified event bus to the frontend and human-in-the-loop support.
-- [**Permission System** →](https://docs.agentscope.io/v2/building-blocks/permission-system) Fine-grained, configurable control over tools and resources.
-- [**Multi-tenancy & Multi-session Service** →](https://docs.agentscope.io/v2/deploy/agent-service) Production-grade serving with isolation across tenants and sessions.
-- [**Workspace / Sandbox Support** →](https://docs.agentscope.io/v2/building-blocks/workspace) Run tools and code in isolated environments, with built-in backends for local, Docker, and E2B.
-- [**Extensible Middleware System** →](https://docs.agentscope.io/v2/building-blocks/middleware) Composable hooks to customize and extend the agent's reasoning-acting loop.
+- [**Event System** →](https://docs.agentscope.io/latest/en/building-blocks/message-and-event) A unified event bus to the frontend and human-in-the-loop support.
+- [**Permission System** →](https://docs.agentscope.io/latest/en/building-blocks/permission-system) Fine-grained, configurable control over tools and resources.
+- [**Multi-tenancy & Multi-session Service** →](https://docs.agentscope.io/latest/en/deploy/agent-service) Production-grade serving with isolation across tenants and sessions.
+- [**Workspace / Sandbox Support** →](https://docs.agentscope.io/latest/en/building-blocks/workspace) Run tools and code in isolated environments, with built-in backends for local, Docker, and E2B.
+- [**Extensible Middleware System** →](https://docs.agentscope.io/latest/en/building-blocks/middleware) Composable hooks to customize and extend the agent's reasoning-acting loop.
 
 We design for increasingly agentic LLMs.
 Our approach leverages the models' reasoning and tool use abilities
@@ -73,7 +73,8 @@ rather than constraining them with strict prompts and opinionated orchestrations
 
 ## News
 <!-- BEGIN NEWS -->
-- **[2026-06] `FEAT`:** Agent Team supported. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [Docs](https://docs.agentscope.io/v2/deploy/agent-team)
+- **[2026-06] `INTE`:** Mem0 supported. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/long_term_memory) | [Docs](https://docs.agentscope.io/latest/en)
+- **[2026-06] `FEAT`:** Agent Team supported. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_service) | [Docs](https://docs.agentscope.io/latest/en/deploy/agent-team)
 - **[2026-05] `RELS`:** AgentScope 2.0 released! [Docs](https://docs.agentscope.io/)
 <!-- END NEWS -->
 

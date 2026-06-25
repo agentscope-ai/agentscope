@@ -22,7 +22,7 @@ import fakeredis.aioredis
 from utils import AnyString
 
 from agentscope.agent import ContextConfig, ReActConfig
-from agentscope.app._tools import (
+from agentscope.app._tool import (
     AgentCreate,
     DEFAULT_SUB_AGENT_TEMPLATE,
     TeamCreate,
@@ -307,6 +307,8 @@ class TestAgentCreate(_TeamToolsTestBase):
                 "session_id": worker_sessions[0].id,
                 "agent_id": worker_agent_id,
                 "user_id": self.user_id,
+                "kind": "wake",
+                "input": None,
             },
         )
 
@@ -931,6 +933,8 @@ class TestTeamSay(_TeamToolsTestBase):
                     "session_id": target_sid,
                     "agent_id": target_aid,
                     "user_id": self.user_id,
+                    "kind": "wake",
+                    "input": None,
                 },
             ],
         )
@@ -1095,6 +1099,8 @@ class TestTeamSay(_TeamToolsTestBase):
                     "session_id": self.leader_session.id,
                     "agent_id": self.leader_agent.id,
                     "user_id": self.user_id,
+                    "kind": "wake",
+                    "input": None,
                 },
             ],
         )
