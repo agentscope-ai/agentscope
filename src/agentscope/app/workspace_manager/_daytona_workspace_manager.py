@@ -1,5 +1,27 @@
 # -*- coding: utf-8 -*-
-"""DaytonaWorkspaceManager lifecycle manager."""
+"""DaytonaWorkspaceManager — lifecycle manager for Daytona workspaces.
+
+Mirrors :class:`E2BWorkspaceManager` and :class:`DockerWorkspaceManager`
+in its public surface (``get_workspace`` / ``create_workspace`` /
+``close`` / ``close_all``) so service-layer callers do not branch on
+backend.
+
+Daytona-specific behavior:
+
+* Reattachment uses Daytona labels. The ``workspace_id`` is written to
+  the sandbox's ``agentscope.workspace.id`` label at create time and
+  looked up inside :meth:`DaytonaWorkspace.initialize`.
+* ``user_id`` / ``agent_id`` are forwarded as additional labels for
+  dashboard filtering. They do **not** participate in cache resolution;
+  the cache key is strictly ``workspace_id``.
+* The manager does not share an ``AsyncDaytona`` client. Each workspace
+  owns its provider client so network resources and shutdown are scoped
+  to that workspace.
+* Idle workspaces are evicted by a background sweeper task started in
+  :meth:`__aenter__` and cancelled in :meth:`__aexit__`.
+* ``close_all`` fans calls out with :func:`asyncio.gather` because
+  stopping Daytona sandboxes is a remote round-trip per workspace.
+"""
 
 import asyncio
 import time
@@ -17,7 +39,12 @@ from ._base import WorkspaceManagerBase
 
 
 class DaytonaWorkspaceManager(WorkspaceManagerBase):
-    """Manages :class:`DaytonaWorkspace` instances with TTL caching."""
+    """Manages :class:`DaytonaWorkspace` instances with TTL caching.
+
+    Use the manager as an ``async with`` context manager: entering it
+    starts the TTL sweeper task, exiting it stops the sweeper and then
+    closes every cached workspace via :meth:`close_all`.
+    """
 
     def __init__(
         self,
@@ -35,7 +62,44 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
         ttl: float = 3600.0,
         sweep_interval: float = DEFAULT_SWEEP_INTERVAL,
     ) -> None:
-        """Initialize the Daytona workspace manager."""
+        """Initialize the Daytona workspace manager.
+
+        Args:
+            api_key (`str`, defaults to `""`):
+                Daytona API key forwarded to every workspace. ``""``
+                lets the Daytona SDK read credentials from the
+                environment.
+            api_url (`str`, defaults to `""`):
+                Optional Daytona API URL for self-hosted or non-default
+                deployments.
+            target (`str`, defaults to `""`):
+                Optional Daytona target / region.
+            timeout_seconds (`int`, defaults to `DEFAULT_TIMEOUT`):
+                Timeout forwarded to workspace create/start/recover/stop
+                operations.
+            gateway_port (`int`, defaults to `DEFAULT_GATEWAY_PORT`):
+                TCP port the in-sandbox gateway listens on.
+            env (`dict[str, str] | None`, optional):
+                Environment variables passed to Daytona create params.
+            sandbox_metadata (`dict[str, str] | None`, optional):
+                Extra labels merged with the per-workspace
+                ``agentscope.workspace.id`` / ``agentscope.user.id`` /
+                ``agentscope.agent.id`` labels.
+            extra_pip (`list[str] | None`, optional):
+                Extra Python packages installed into the gateway venv
+                during bootstrap.
+            default_mcps (`list[MCPClient] | None`, optional):
+                MCP clients seeded into brand-new workspaces. Persisted
+                ``.mcp`` state wins on reattach.
+            skill_paths (`list[str] | None`, optional):
+                Skill directories seeded into brand-new workspaces.
+            ttl (`float`, defaults to `3600.0`):
+                Seconds before an idle cached workspace is evicted and
+                its sandbox stopped.
+            sweep_interval (`float`, defaults to `DEFAULT_SWEEP_INTERVAL`):
+                How often (seconds) the background sweeper wakes up to
+                look for idle workspaces.
+        """
         self._api_key = api_key
         self._api_url = api_url
         self._target = target
@@ -53,13 +117,22 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
         self._lock = asyncio.Lock()
         self._sweep_task: asyncio.Task | None = None
 
+    # ── metadata helper ───────────────────────────────────────────
+
     def _metadata_for(self, user_id: str, agent_id: str) -> dict[str, str]:
-        """Build user/agent labels for Daytona dashboard filtering."""
+        """Build user/agent labels for Daytona dashboard filtering.
+
+        ``DaytonaWorkspace`` always sets ``agentscope.workspace.id``;
+        this manager adds user/agent labels so provider dashboards can
+        be filtered without changing AgentScope cache semantics.
+        """
         return {
             "agentscope.user.id": user_id,
             "agentscope.agent.id": agent_id,
             **self._sandbox_metadata,
         }
+
+    # ── workspace construction ────────────────────────────────────
 
     async def _build_and_start(
         self,
@@ -68,7 +141,13 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
         user_id: str,
         agent_id: str,
     ) -> DaytonaWorkspace:
-        """Construct and initialize one Daytona workspace."""
+        """Construct a :class:`DaytonaWorkspace` and initialize it.
+
+        ``workspace_id=None`` lets :class:`WorkspaceBase` allocate a
+        fresh UUID, used by :meth:`create_workspace`. Otherwise the
+        provided id is forwarded so label-based reattachment works on
+        cache miss.
+        """
         ws = DaytonaWorkspace(
             workspace_id=workspace_id,
             api_key=self._api_key,
@@ -85,6 +164,8 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
         await ws.initialize()
         return ws
 
+    # ── public API ────────────────────────────────────────────────
+
     async def get_workspace(
         self,
         user_id: str,
@@ -92,7 +173,27 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
         session_id: str,
         workspace_id: str,
     ) -> DaytonaWorkspace:
-        """Return an initialized workspace, reattaching on cache miss."""
+        """Return an initialized workspace, reattaching on cache miss.
+
+        On miss the manager constructs ``DaytonaWorkspace`` with the
+        requested ``workspace_id`` and lets its ``initialize`` find a
+        matching sandbox by label or create a fresh sandbox otherwise.
+
+        Args:
+            user_id (`str`):
+                Owning user identifier, forwarded as sandbox label only.
+            agent_id (`str`):
+                Agent identifier, forwarded as sandbox label only.
+            session_id (`str`):
+                Session identifier (unused; sessions partition under
+                ``sessions/<session_id>/`` inside a workspace).
+            workspace_id (`str`):
+                Stable workspace identifier and cache key.
+
+        Returns:
+            `DaytonaWorkspace`:
+                A live, initialized workspace.
+        """
         del session_id
 
         async with self._lock:
@@ -102,6 +203,8 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
                 self._cache[workspace_id] = (ws, time.monotonic())
                 return ws
 
+        # Cache miss: build under the lock to prevent two concurrent
+        # calls for the same workspace_id from creating two sandboxes.
         async with self._lock:
             cached = self._cache.get(workspace_id)
             if cached is not None:
@@ -123,7 +226,11 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
         agent_id: str,
         session_id: str,
     ) -> DaytonaWorkspace:
-        """Build a brand-new workspace and track it."""
+        """Build a brand-new workspace and track it.
+
+        The workspace allocates a fresh ``workspace_id`` and creates a
+        new Daytona sandbox labelled with that id.
+        """
         del session_id
 
         ws = await self._build_and_start(
@@ -136,7 +243,7 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
         return ws
 
     async def close(self, workspace_id: str) -> None:
-        """Close and evict a single workspace."""
+        """Close and evict a single cached workspace."""
         async with self._lock:
             entry = self._cache.pop(workspace_id, None)
         if entry is None:
@@ -145,7 +252,11 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
         await self._safe_close(ws)
 
     async def close_all(self) -> None:
-        """Close every cached workspace in parallel."""
+        """Close every cached workspace in parallel.
+
+        Each close is a provider round-trip, so fan-out keeps app
+        shutdown bounded by the slowest sandbox instead of the sum.
+        """
         async with self._lock:
             entries = list(self._cache.values())
             self._cache.clear()
@@ -156,14 +267,16 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
             return_exceptions=True,
         )
 
+    # ── async context manager ─────────────────────────────────────
+
     async def __aenter__(self) -> Self:
-        """Start the TTL sweeper."""
+        """Start the TTL sweeper task."""
         if self._sweep_task is None:
             self._sweep_task = asyncio.create_task(self._sweep_loop())
         return self
 
     async def __aexit__(self, *exc: object) -> None:
-        """Stop the sweeper and close all workspaces."""
+        """Stop the TTL sweeper task, then close every cached workspace."""
         if self._sweep_task is not None:
             self._sweep_task.cancel()
             try:
@@ -173,8 +286,14 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
             self._sweep_task = None
         await self.close_all()
 
+    # ── background sweeper ───────────────────────────────────────
+
     async def _sweep_loop(self) -> None:
-        """Periodically close idle workspaces."""
+        """Periodically close idle workspaces.
+
+        Exceptions are logged and swallowed so one bad provider call
+        does not kill the long-lived manager task.
+        """
         while True:
             try:
                 await asyncio.sleep(self._sweep_interval)
@@ -186,7 +305,7 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
                 logger.exception("Daytona workspace sweeper tick failed")
 
     async def _sweep_once(self) -> None:
-        """One sweeper tick: evict expired entries."""
+        """One sweeper tick: evict expired entries and close them."""
         now = time.monotonic()
         async with self._lock:
             expired_ids = [
@@ -204,7 +323,7 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
 
     @staticmethod
     async def _safe_close(ws: DaytonaWorkspace) -> None:
-        """Close a workspace, logging failures."""
+        """Close a workspace, logging any failure instead of raising."""
         try:
             await ws.close()
         except Exception:

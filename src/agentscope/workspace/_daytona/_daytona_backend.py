@@ -1,5 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Daytona :class:`BackendBase` implementation."""
+"""Daytona sandbox :class:`BackendBase` implementation.
+
+Wraps Daytona SDK ``process.exec`` and ``fs.*`` APIs into the three
+backend primitives (``exec_shell``, ``read_file``, ``write_file``) so
+that builtin tools (Bash, Read, Write, Edit, Grep, Glob) can operate
+inside a Daytona sandbox transparently. All derived filesystem helpers
+(``file_exists``, ``is_dir``, ``list_dir``, ``stat_mtime``,
+``delete_path``) are inherited from :class:`BackendBase`, which
+implements them via ``exec_shell``.
+"""
 
 from __future__ import annotations
 
@@ -11,12 +20,35 @@ from ...tool import BackendBase, ExecResult
 
 
 class DaytonaBackend(BackendBase):
-    """Backend that delegates to a running Daytona sandbox."""
+    """Backend that delegates to a running Daytona sandbox.
+
+    Only the three abstract primitives (``exec_shell``, ``read_file``,
+    ``write_file``) are implemented here; the derived filesystem helpers
+    are inherited from :class:`BackendBase`.
+
+    Args:
+        sandbox (`Any`):
+            A Daytona sandbox object (must already be started /
+            attached).
+        workdir (`str`):
+            Default working directory for ``exec_shell`` calls inside
+            the sandbox.
+    """
 
     def __init__(self, sandbox: Any, workdir: str) -> None:
-        """Initialize the backend with a started Daytona sandbox."""
+        """Initialize the Daytona backend.
+
+        Args:
+            sandbox (`Any`):
+                A started / attached Daytona sandbox object.
+            workdir (`str`):
+                Default working directory for ``exec_shell`` calls
+                inside the sandbox.
+        """
         self._sandbox = sandbox
         self._workdir = workdir
+
+    # ── exec ─────────────────────────────────────────────────────
 
     async def exec_shell(
         self,
@@ -25,7 +57,28 @@ class DaytonaBackend(BackendBase):
         cwd: str | None = None,
         timeout: float | None = None,
     ) -> ExecResult:
-        """Run an argv command through Daytona ``process.exec``."""
+        """Run a program inside the sandbox via ``process.exec``.
+
+        *command* is an argv list. Daytona ``process.exec`` takes one
+        shell command line, so argv is POSIX-quoted back into a string
+        before dispatch. Callers needing shell features pass
+        ``["sh", "-c", line]``.
+
+        Args:
+            command (`list[str]`):
+                Executable path/name followed by its arguments.
+            cwd (`str | None`, optional):
+                Working directory inside the sandbox. When ``None`` the
+                backend's default ``workdir`` is used.
+            timeout (`float | None`, optional):
+                Maximum number of seconds to wait. Daytona expects an
+                integer timeout, so provided values are cast to ``int``.
+
+        Returns:
+            `ExecResult`:
+                The captured exit code, stdout and stderr. Transport
+                errors yield an ``exit_code`` of ``-1``.
+        """
         command_line = " ".join(shlex.quote(arg) for arg in command)
         kwargs: dict[str, Any] = {"cwd": cwd or self._workdir}
         if timeout is not None:
@@ -47,8 +100,23 @@ class DaytonaBackend(BackendBase):
                 stderr=str(e).encode("utf-8"),
             )
 
+    # ── file I/O ─────────────────────────────────────────────────
+
     async def read_file(self, path: str) -> bytes:
-        """Read a file from the sandbox via Daytona ``fs.download_file``."""
+        """Read a file from the sandbox via ``fs.download_file``.
+
+        Args:
+            path (`str`):
+                Path to the file inside the sandbox.
+
+        Returns:
+            `bytes`:
+                The raw file contents.
+
+        Raises:
+            `FileNotFoundError`:
+                If the path does not exist inside the sandbox.
+        """
         try:
             data = await self._sandbox.fs.download_file(path)
         except FileNotFoundError:
@@ -62,11 +130,23 @@ class DaytonaBackend(BackendBase):
         return bytes(data)
 
     async def write_file(self, path: str, data: bytes) -> None:
-        """Write bytes via Daytona ``fs.upload_file``."""
+        """Write *data* to a file inside the sandbox.
+
+        Creates parent directories via ``exec_shell`` first.
+
+        Args:
+            path (`str`):
+                Destination path inside the sandbox.
+            data (`bytes`):
+                The raw bytes to write.
+        """
         parent = posixpath.dirname(path)
         if parent:
             await self.exec_shell(["mkdir", "-p", parent])
         await self._sandbox.fs.upload_file(data, path)
+
+
+# ── SDK response helpers ──────────────────────────────────────────
 
 
 def _response_stdout(response: Any) -> str:

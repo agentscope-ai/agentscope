@@ -1,5 +1,41 @@
 # -*- coding: utf-8 -*-
-"""Daytona workspace implementation."""
+"""DaytonaWorkspace — sandboxed workspace backed by Daytona.
+
+Architecture
+------------
+
+Mirrors :class:`agentscope.workspace.E2BWorkspace` and
+:class:`agentscope.workspace.DockerWorkspace` at the AgentScope boundary,
+but swaps the provider runtime for the Daytona SDK:
+
+* **Lifecycle.** ``initialize()`` looks up a sandbox by the
+  ``agentscope.workspace.id`` label, starts / recovers an existing
+  candidate when possible, or creates a new sandbox and runs the
+  bootstrap shell sequence. ``close()`` calls Daytona ``stop`` with
+  ``force=False`` so provider-level graceful stop semantics are used.
+* **Persistence.** Sandbox filesystem state is the persistence layer.
+  ``.mcp``, ``skills/``, ``sessions/`` and ``data/`` live in the
+  SDK-reported workdir and are restored after reattachment.
+* **Bootstrap.** First-time provisioning installs ripgrep, uv, the
+  gateway virtualenv, AgentScope itself, the gateway script and the
+  glob helper. Bootstrap is detected by probing the gateway script path
+  inside the sandbox and is safe to rerun when a previous attempt was
+  interrupted.
+* **MCP gateway.** Same AgentScope gateway model as Docker/E2B: a
+  FastAPI process runs inside the sandbox while the host talks to it
+  through Daytona's preview URL.
+* **Preview authentication.** AgentScope gateway bearer auth remains
+  separate from Daytona preview proxy auth. The gateway gets a fresh
+  bearer token on every ``initialize()``; Daytona's preview token is
+  forwarded as ``x-daytona-preview-token`` when the SDK returns one.
+* **SDK paths.** The real workdir and user home are read from Daytona
+  before deriving any AgentScope paths. The implementation does not
+  assume a fixed OS user, root home, or ``/home/daytona`` layout.
+
+Configuration is per-workspace. The manager handles cache and TTL
+eviction; each workspace owns its own ``AsyncDaytona`` client and
+runtime sandbox handle.
+"""
 
 from __future__ import annotations
 
@@ -80,8 +116,17 @@ and processes.
 </workspace>"""
 
 
+# ── the workspace ──────────────────────────────────────────────────
+
+
 class DaytonaWorkspace(WorkspaceBase):
-    """Workspace backed by a Daytona sandbox."""
+    """Workspace backed by a Daytona sandbox.
+
+    ``default_mcps`` and ``skill_paths`` are seed-time inputs. They are
+    used only when a brand-new workspace has no persisted ``.mcp`` file
+    or empty ``skills/`` directory; reattached workspaces prefer the
+    sandbox filesystem state.
+    """
 
     def __init__(
         self,
@@ -100,12 +145,60 @@ class DaytonaWorkspace(WorkspaceBase):
         skill_paths: list[str] | None = None,
         os_user: str | None = None,
     ) -> None:
-        """Construct a Daytona workspace without starting the sandbox."""
+        """Construct a :class:`DaytonaWorkspace`.
+
+        The sandbox is *not* started here; call :meth:`initialize`
+        (or use the workspace as an ``async`` context manager).
+
+        Args:
+            workspace_id (`str | None`, optional):
+                Stable identifier; doubles as the
+                ``agentscope.workspace.id`` label used for later
+                reattachment. ``None`` generates a fresh UUID.
+            api_key (`str`, defaults to `""`):
+                Daytona API key. ``""`` lets the Daytona SDK read
+                credentials from its environment.
+            api_url (`str`, defaults to `""`):
+                Optional Daytona API URL for self-hosted or non-default
+                deployments. Empty string defers to SDK defaults.
+            target (`str`, defaults to `""`):
+                Optional Daytona target / region. Empty string defers
+                to SDK defaults.
+            timeout_seconds (`int`, defaults to `DEFAULT_TIMEOUT`):
+                Timeout forwarded to Daytona create/start/recover/stop
+                calls.
+            gateway_port (`int`, defaults to `DEFAULT_GATEWAY_PORT`):
+                TCP port the in-sandbox gateway listens on.
+            env (`dict[str, str] | None`, optional):
+                Environment variables passed to Daytona create params.
+            sandbox_metadata (`dict[str, str] | None`, optional):
+                Extra labels merged with
+                ``{METADATA_WORKSPACE_ID_KEY: workspace_id}``. Useful
+                for dashboard filtering by user / agent.
+            extra_pip (`list[str] | None`, optional):
+                Extra Python packages installed into the gateway venv
+                during bootstrap.
+            instructions (`str`, defaults to `_DEFAULT_INSTRUCTIONS`):
+                System-prompt fragment template returned by
+                :meth:`get_instructions`.
+            default_mcps (`list[MCPClient] | None`, optional):
+                MCPs seeded on first initialization when no persisted
+                ``.mcp`` file exists.
+            skill_paths (`list[str] | None`, optional):
+                Local skill directories copied into ``skills/`` when a
+                new sandbox has no skills yet.
+            os_user (`str | None`, optional):
+                Optional Daytona OS user. ``None`` means AgentScope
+                does not choose a user and lets Daytona / snapshot
+                defaults decide.
+        """
         super().__init__(workspace_id=workspace_id)
 
+        # ── SDK-derived paths ───────────────────────────────────
         self.workdir = ""
         self._user_home = ""
 
+        # ── serializable config ─────────────────────────────────
         self.api_key = api_key
         self.api_url = api_url
         self.target = target
@@ -117,9 +210,11 @@ class DaytonaWorkspace(WorkspaceBase):
         self.instructions = instructions
         self.os_user = os_user
 
+        # ── seed-only ───────────────────────────────────────────
         self.default_mcps: list[MCPClient] = list(default_mcps or [])
         self.skill_paths: list[str] = list(skill_paths or [])
 
+        # ── runtime state ───────────────────────────────────────
         self._daytona: Any = None
         self._sandbox: Any = None
         self._backend: DaytonaBackend | None = None
@@ -130,13 +225,35 @@ class DaytonaWorkspace(WorkspaceBase):
         self._mcp_lock = asyncio.Lock()
         self._skill_lock = asyncio.Lock()
 
+    # ── lifecycle ───────────────────────────────────────────────
+
     @property
     def sandbox_id(self) -> str | None:
         """Daytona sandbox id, or ``None`` if not started."""
         return _sandbox_id(self._sandbox) if self._sandbox is not None else None
 
     async def initialize(self) -> None:
-        """Reattach or create the sandbox, then start the gateway."""
+        """Reattach or create the sandbox, then start the gateway.
+
+        Steps:
+
+        1. Find an existing sandbox with the workspace label. Reuse it
+           when it is started, stopped, paused, starting, stopping,
+           resuming, or recoverable-error.
+        2. Create a new sandbox with minimal Daytona params when no
+           usable candidate exists.
+        3. Derive every AgentScope path from Daytona SDK path APIs.
+        4. Run bootstrap only when the gateway script is missing.
+        5. Restore MCPs from ``$workdir/.mcp`` if present, otherwise
+           seed from ``default_mcps``.
+        6. Mint a fresh gateway bearer token, stop any stale gateway
+           process, write gateway config, launch the gateway and wait
+           for health.
+        7. Build host-side :class:`GatewayMCPClient` handles and seed
+           skills when configured.
+
+        Idempotent — a no-op when already alive.
+        """
         if self.is_alive:
             return
 
@@ -144,6 +261,9 @@ class DaytonaWorkspace(WorkspaceBase):
         await self._derive_sdk_paths()
         self._backend = DaytonaBackend(self._sandbox, workdir=self.workdir)
 
+        # Missing gateway script means a fresh sandbox or an
+        # interrupted previous bootstrap. Commands are idempotent
+        # enough to retry.
         if not await self._backend.file_exists(self._gateway_script):
             await self._backend.exec_shell(["mkdir", "-p", self.workdir])
             await self._run_bootstrap()
@@ -175,7 +295,12 @@ class DaytonaWorkspace(WorkspaceBase):
         self.is_alive = True
 
     async def reset(self) -> None:
-        """Clear MCP registrations and persistent workspace state."""
+        """Return the workspace to an empty persistent state.
+
+        Clears MCP registrations, ``sessions/``, ``data/`` and
+        ``skills/`` inside the sandbox. The sandbox itself remains
+        attached and the gateway process remains available.
+        """
         if self._backend is None:
             raise RuntimeError(
                 "DaytonaWorkspace is not initialized: its sandbox backend "
@@ -205,7 +330,12 @@ class DaytonaWorkspace(WorkspaceBase):
             await self._save_mcp_file()
 
     async def close(self) -> None:
-        """Gracefully stop the sandbox and release host-side resources."""
+        """Gracefully stop the sandbox and release host-side resources.
+
+        ``force=False`` preserves Daytona's non-force stop semantics.
+        Filesystem persistence is left to the provider; host-side
+        gateway clients and SDK clients are always discarded.
+        """
         if self._gateway is not None:
             try:
                 await self._gateway.aclose()
@@ -231,13 +361,22 @@ class DaytonaWorkspace(WorkspaceBase):
 
         self.is_alive = False
 
+    # ── instructions ────────────────────────────────────────────
+
     async def get_instructions(self) -> str:
         """Return the system-prompt fragment for this workspace."""
         workdir = self.workdir or "<sandbox workdir>"
         return self.instructions.format(workdir=workdir)
 
+    # ── tool / MCP / skill discovery ────────────────────────────
+
     async def list_tools(self) -> list[ToolBase]:
-        """Return the six builtin tools backed by Daytona."""
+        """Built-in tools backed by the Daytona sandbox.
+
+        The tool names and behavior intentionally mirror local,
+        Docker, and E2B workspaces; only the backend implementation is
+        Daytona-specific.
+        """
         if self._backend is None:
             raise RuntimeError(
                 "DaytonaWorkspace is not initialized: its sandbox backend "
@@ -257,7 +396,7 @@ class DaytonaWorkspace(WorkspaceBase):
         ]
 
     async def list_mcps(self) -> list[MCPClient]:
-        """Return one gateway-backed MCP client per registered MCP."""
+        """Return one :class:`GatewayMCPClient` per registered MCP."""
         return list(self._gateway_clients.values())
 
     async def list_skills(self) -> list[Skill]:
@@ -302,8 +441,15 @@ class DaytonaWorkspace(WorkspaceBase):
                 logger.warning("Failed to load skill %s: %s", md_path, e)
         return skills
 
+    # ── dynamic MCP management ──────────────────────────────────
+
     async def add_mcp(self, mcp_client: MCPClient) -> None:
-        """Register a new MCP server on the in-sandbox gateway."""
+        """Register a new MCP server on the in-sandbox gateway.
+
+        The gateway process owns the actual MCP subprocess. The host
+        stores a :class:`GatewayMCPClient` proxy and persists the
+        original MCP config to ``$workdir/.mcp`` for the next attach.
+        """
         async with self._mcp_lock:
             if mcp_client.name in self._gateway_clients:
                 raise ValueError(
@@ -331,8 +477,15 @@ class DaytonaWorkspace(WorkspaceBase):
             self._mcps = [m for m in self._mcps if m.name != name]
             await self._save_mcp_file()
 
+    # ── dynamic skill management ────────────────────────────────
+
     async def add_skill(self, skill_path: str) -> None:
-        """Upload a local skill directory into sandbox ``skills/``."""
+        """Upload a local skill directory into sandbox ``skills/``.
+
+        The upload keeps the directory basename so repeated adds of
+        the same local skill are rejected before overwriting sandbox
+        state.
+        """
         skill_md = os.path.join(skill_path, "SKILL.md")
         if not os.path.isfile(skill_md):
             raise ValueError(
@@ -376,12 +529,19 @@ class DaytonaWorkspace(WorkspaceBase):
             )
         await self._backend.delete_path(target_dir)
 
+    # ── offload ─────────────────────────────────────────────────
+
     async def offload_context(
         self,
         session_id: str,
         msgs: list[Msg],
     ) -> str:
-        """Persist a batch of messages as JSONL inside the sandbox."""
+        """Persist a batch of messages as JSONL inside the sandbox.
+
+        Base64 data blocks are first copied into ``data/`` and then
+        rewritten as ``file://`` URLs so subsequent tool calls can use
+        sandbox-local paths.
+        """
         base = f"{self._sessions_dir}/{session_id}"
         path = f"{base}/context.jsonl"
 
@@ -443,8 +603,16 @@ class DaytonaWorkspace(WorkspaceBase):
         await self._backend.write_file(path, "".join(parts).encode("utf-8"))
         return path
 
+    # ── internals: Daytona client / sandbox attach / create ─────
+
     async def _get_daytona_client(self) -> Any:
-        """Return a per-workspace AsyncDaytona client."""
+        """Return a per-workspace ``AsyncDaytona`` client.
+
+        Daytona SDK clients own network resources, so the workspace
+        does not share a global client with the manager or with other
+        workspaces. Empty config fields are omitted to let the SDK read
+        its normal environment defaults.
+        """
         if self._daytona is not None:
             return self._daytona
 
@@ -465,7 +633,13 @@ class DaytonaWorkspace(WorkspaceBase):
         return self._daytona
 
     async def _attach_or_create_sandbox(self) -> None:
-        """Reattach to an existing sandbox by label, or create one."""
+        """Reattach to an existing sandbox by label, or create one.
+
+        Reattachment is label-based: ``_find_existing_sandbox`` looks
+        for ``agentscope.workspace.id == self.workspace_id``. If no
+        usable candidate exists, create params are built from the
+        constructor config captured during ``__init__``.
+        """
         existing = await self._find_existing_sandbox()
         client = await self._get_daytona_client()
 
@@ -478,7 +652,13 @@ class DaytonaWorkspace(WorkspaceBase):
         self._sandbox = await client.create(params, timeout=self.timeout_seconds)
 
     async def _find_existing_sandbox(self) -> Any:
-        """Find the most recent usable Daytona sandbox for this workspace."""
+        """Find the most recent usable Daytona sandbox for this workspace.
+
+        Daytona may return started, stopped, paused, transitional, or
+        error-state sandboxes. Candidate filtering is intentionally
+        conservative: unrecoverable errors are ignored, while stopped
+        and paused sandboxes can be started again.
+        """
         from daytona import ListSandboxesQuery, SandboxState
 
         client = await self._get_daytona_client()
@@ -534,7 +714,13 @@ class DaytonaWorkspace(WorkspaceBase):
         }
 
     async def _ensure_existing_sandbox_ready(self) -> None:
-        """Start or recover an existing sandbox when needed."""
+        """Start or recover an existing sandbox when needed.
+
+        Daytona exposes different state transitions for stopped,
+        paused, stopping, starting, resuming and recoverable error
+        sandboxes. This method normalizes those states into a running
+        sandbox before bootstrap / gateway setup continues.
+        """
         state = _state_value(getattr(self._sandbox, "state", None))
         if state == "error":
             await self._sandbox.recover(timeout=self.timeout_seconds)
@@ -557,7 +743,13 @@ class DaytonaWorkspace(WorkspaceBase):
             await refresh()
 
     def _create_params(self) -> Any:
-        """Build Daytona create params from initialized workspace config."""
+        """Build Daytona create params from initialized workspace config.
+
+        The first release keeps the config surface intentionally
+        minimal and aligned with E2B. Snapshot/image/language/TTL are
+        not exposed here; Daytona defaults apply. AgentScope sets
+        ``public=False`` explicitly and uses its own manager TTL.
+        """
         from daytona import CreateSandboxFromSnapshotParams
 
         labels = {
@@ -574,8 +766,16 @@ class DaytonaWorkspace(WorkspaceBase):
             kwargs["os_user"] = self.os_user
         return CreateSandboxFromSnapshotParams(**kwargs)
 
+    # ── internals: SDK paths / bootstrap ────────────────────────
+
     async def _derive_sdk_paths(self) -> None:
-        """Derive all sandbox paths from Daytona SDK path APIs."""
+        """Derive all sandbox paths from Daytona SDK path APIs.
+
+        Daytona docs show common ``/home/daytona`` examples, but the
+        SDK is the source of truth. Every AgentScope path is derived
+        from ``get_work_dir()`` or ``get_user_home_dir()`` so custom
+        snapshots or OS users keep working.
+        """
         self.workdir = await self._sandbox.get_work_dir()
         self._user_home = await self._sandbox.get_user_home_dir()
 
@@ -624,7 +824,14 @@ class DaytonaWorkspace(WorkspaceBase):
         )
 
     async def _run_bootstrap(self) -> None:
-        """Provision a fresh sandbox."""
+        """Provision a fresh sandbox: tools → uv → venv → scripts.
+
+        Released installs pin the host AgentScope version. Dev installs
+        upload a tarball of the current source tree and install it into
+        the gateway venv with ``--no-deps``. Each shell command is
+        executed through :class:`DaytonaBackend` so failures include
+        command, exit code, stdout and stderr.
+        """
         if _is_released_install():
             log_bootstrap_attempt(self.workspace_id, "released")
             install_cmd = render_install_agentscope_cmd_released(
@@ -677,8 +884,15 @@ class DaytonaWorkspace(WorkspaceBase):
             _read_gateway_script_bytes(),
         )
 
+    # ── internals: gateway lifecycle ────────────────────────────
+
     async def _restore_or_seed_mcps(self) -> list[MCPClient]:
-        """Read persisted MCP config or use default MCPs."""
+        """Decide the MCP set to ship to the gateway on startup.
+
+        The sandbox's persisted ``.mcp`` file wins on reattach. If the
+        file is missing or invalid, seed-time ``default_mcps`` are used
+        instead so a brand-new workspace still has its configured MCPs.
+        """
         try:
             raw = await self._backend.read_file(self._mcp_file)
         except FileNotFoundError:
@@ -696,7 +910,7 @@ class DaytonaWorkspace(WorkspaceBase):
             return list(self.default_mcps)
 
     async def _save_mcp_file(self) -> None:
-        """Persist ``self._mcps`` to the sandbox workdir."""
+        """Persist ``self._mcps`` to ``$workdir/.mcp`` inside sandbox."""
         payload = json.dumps(
             [m.model_dump(mode="json") for m in self._mcps],
             indent=2,
@@ -716,7 +930,7 @@ class DaytonaWorkspace(WorkspaceBase):
             )
 
     async def _write_gateway_config(self) -> None:
-        """Write the in-sandbox gateway config file."""
+        """Drop the gateway's ``--config`` JSON into the sandbox."""
         cfg = {
             "token": self._gateway_token,
             "servers": [m.model_dump(mode="json") for m in self._mcps],
@@ -728,7 +942,7 @@ class DaytonaWorkspace(WorkspaceBase):
         )
 
     async def _start_gateway_process(self) -> None:
-        """Launch the gateway inside the sandbox."""
+        """Launch the gateway inside the sandbox as a detached process."""
         cmd = (
             f"nohup {shlex.quote(self._gateway_venv_py)} -u "
             f"{shlex.quote(self._gateway_script)} "
@@ -739,7 +953,12 @@ class DaytonaWorkspace(WorkspaceBase):
         await self._backend.exec_shell(["sh", "-c", cmd])
 
     async def _wait_for_gateway(self, timeout: float = 30.0) -> None:
-        """Block until the gateway answers health checks."""
+        """Block until the gateway answers ``/health``.
+
+        If startup fails, include the tail of the gateway log in the
+        exception so provider-side bootstrap issues are debuggable from
+        host logs.
+        """
         assert self._gateway is not None
         deadline = asyncio.get_event_loop().time() + timeout
         delay = 0.1
@@ -759,7 +978,12 @@ class DaytonaWorkspace(WorkspaceBase):
         )
 
     async def _seed_skills(self) -> None:
-        """Copy configured skills into the sandbox once."""
+        """Copy ``self.skill_paths`` into ``skills/`` once.
+
+        Existing files in ``skills/`` mean a previous initialization or
+        user action already populated the sandbox, so seed paths are not
+        reapplied on reattach.
+        """
         if not self.skill_paths:
             return
         listing = await self._backend.exec_shell(
@@ -778,8 +1002,14 @@ class DaytonaWorkspace(WorkspaceBase):
             except Exception as e:  # noqa: BLE001
                 logger.warning("DaytonaWorkspace: skip skill %r: %s", path, e)
 
+    # ── internals: data offload ─────────────────────────────────
+
     async def _offload_data_block(self, block: DataBlock) -> DataBlock:
-        """Persist a base64 :class:`DataBlock` under ``data/``."""
+        """Persist a base64 :class:`DataBlock` under ``data/``.
+
+        The returned block points at a sandbox-local ``file://`` URL,
+        which keeps later tool execution independent from host paths.
+        """
         if not isinstance(block.source, Base64Source):
             return block
         digest = hashlib.sha256(block.source.data.encode()).hexdigest()
@@ -797,11 +1027,18 @@ class DaytonaWorkspace(WorkspaceBase):
         )
 
     def _sandbox_proxy_headers(self, preview: Any) -> dict[str, str]:
-        """Headers required by Daytona preview proxy."""
+        """Headers required by Daytona's preview proxy.
+
+        This is provider authentication only. It is deliberately kept
+        separate from the AgentScope gateway bearer token.
+        """
         token = getattr(preview, "token", None)
         if not token:
             return {}
         return {DAYTONA_PREVIEW_TOKEN_HEADER: str(token)}
+
+
+# ── SDK response helpers ──────────────────────────────────────────
 
 
 async def _collect_sandboxes(result: Any) -> list[Any]:

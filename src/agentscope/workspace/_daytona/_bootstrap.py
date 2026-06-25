@@ -1,9 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Bootstrap helpers for :class:`DaytonaWorkspace`.
+"""Bootstrap helpers for :class:`DaytonaWorkspace` first-time setup.
 
-Daytona workspaces are provisioned at runtime, like E2B. The sandbox's
-real user home and workdir are discovered from the SDK before any path
-is derived, so AgentScope does not assume a particular OS user.
+Daytona workspaces are provisioned at runtime, like E2B. Before calling
+these helpers, :class:`DaytonaWorkspace` asks the SDK for the sandbox's
+real workdir and user home, then passes those paths in. This module
+therefore does not assume a fixed OS user, root home, or
+``/home/daytona`` layout.
+
+The bootstrap sequence installs only what the AgentScope runtime needs
+inside the sandbox: ripgrep for builtin search tools, uv, a gateway
+virtualenv, AgentScope itself, and optional user-provided Python
+packages for gateway-side MCP/tool execution.
 """
 
 import io
@@ -15,6 +22,8 @@ from .._utils import (
     _agentscope_source_root,
     _is_source_ignored,
 )
+
+# ── shared constants ───────────────────────────────────────────────
 
 DEFAULT_TIMEOUT = 60
 DEFAULT_GATEWAY_PORT = 5600
@@ -39,8 +48,11 @@ DEV_SRC_DIR_NAME = "agentscope_src"
 DAYTONA_PREVIEW_TOKEN_HEADER = "x-daytona-preview-token"
 
 
+# ── source tarball (dev mode only) ─────────────────────────────────
+
+
 def _tar_filter(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
-    """Filter source archive entries for dev-mode install."""
+    """``tarfile.add`` filter used for dev-mode source upload."""
     if info.name == ".":
         return info
     name = info.name.split("/")[-1]
@@ -50,12 +62,15 @@ def _tar_filter(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
 
 
 def build_source_tarball() -> bytes:
-    """Tar up the agentscope source tree for dev-mode upload."""
+    """Tar up the AgentScope source tree for dev-mode upload."""
     root = _agentscope_source_root()
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w") as tf:
         tf.add(str(root), arcname=".", filter=_tar_filter)
     return buf.getvalue()
+
+
+# ── bootstrap command sequence ─────────────────────────────────────
 
 
 def bootstrap_commands(
@@ -72,7 +87,13 @@ def bootstrap_commands(
     extra_pip: list[str] | None,
     install_agentscope_cmd: str,
 ) -> list[str]:
-    """Return shell commands that provision a fresh Daytona sandbox."""
+    """Return shell commands that provision a fresh Daytona sandbox.
+
+    Commands are returned as strings because provider backends execute
+    them through ``["sh", "-c", command]``. Callers provide all paths
+    after SDK path discovery so this sequence remains independent from
+    Daytona snapshot defaults.
+    """
     pip_pkgs = list(_GATEWAY_BASE_REQUIREMENTS) + list(extra_pip or [])
     pip_args = " ".join(pip_pkgs)
 
@@ -97,7 +118,7 @@ def render_install_agentscope_cmd_released(
     gateway_venv_py: str,
     version: str,
 ) -> str:
-    """Released-mode install: pin the same version as the host."""
+    """Released-mode install: pin the same AgentScope version as host."""
     return (
         f"{uv_bin} pip install --python {gateway_venv_py} "
         f"--no-deps 'agentscope=={version}'"
@@ -122,7 +143,7 @@ def render_install_agentscope_cmd_dev(
 
 
 def log_bootstrap_attempt(workspace_id: str, mode: str) -> None:
-    """Log a first-time bootstrap attempt."""
+    """Single info-level log so first-time bootstraps are easy to spot."""
     logger.info(
         "DaytonaWorkspace: bootstrapping sandbox for workspace_id=%r "
         "(mode=%s)",
