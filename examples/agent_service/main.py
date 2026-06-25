@@ -66,7 +66,6 @@ app = create_app(
     # Knowledge base feature — backed by an in-memory Qdrant store. The
     # CollectionPerKbManager allocates one collection per knowledge base,
     # so any embedding dimension is allowed.
-    vector_store=vector_store,
     knowledge_base_manager=CollectionPerKbManager(
         storage=storage,
         vector_store=vector_store,

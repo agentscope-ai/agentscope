@@ -17,7 +17,6 @@ from .storage import StorageBase
 
 if TYPE_CHECKING:
     from .blob_store import BlobStoreBase
-    from .index_dispatch import IndexDispatcherBase
     from .knowledge_base_manager import KnowledgeBaseManagerBase
     from ._service import KnowledgeBaseService
 
@@ -265,31 +264,3 @@ async def get_blob_store(request: Request) -> "BlobStoreBase":
             ),
         )
     return blob_store
-
-
-async def get_index_dispatcher(request: Request) -> "IndexDispatcherBase":
-    """Return the application-wide index dispatcher.
-
-    Args:
-        request (`Request`):
-            The incoming FastAPI request.
-
-    Returns:
-        `IndexDispatcherBase`:
-            The dispatcher stored in ``app.state``.
-
-    Raises:
-        `HTTPException`:
-            ``503`` when no dispatcher is configured (KB feature
-            disabled).
-    """
-    dispatcher = getattr(request.app.state, "index_dispatcher", None)
-    if dispatcher is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "Index dispatcher is not configured — knowledge base "
-                "uploads are disabled."
-            ),
-        )
-    return dispatcher

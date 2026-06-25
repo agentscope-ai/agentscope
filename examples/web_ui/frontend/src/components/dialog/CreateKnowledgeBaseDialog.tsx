@@ -141,7 +141,7 @@ export function CreateKnowledgeBaseDialog({
 					<Alert>
 						<Info className="size-4" />
 						<AlertTitle>
-							{t('dialog-knowledge-base-create.policy.lockedTitle')}
+							{t('dialog-knowledge-base-create.policy.lockedTitle', { dimension: policy.dimension })}
 						</AlertTitle>
 						<AlertDescription>
 							{t('dialog-knowledge-base-create.policy.lockedDescription', {

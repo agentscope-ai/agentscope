@@ -204,8 +204,10 @@ class MessageBusKeys:
         """Shared, durable index-task queue.
 
         The producer-side
-        :class:`~agentscope.app.index_dispatch.MessageBusDispatcher`
-        ``queue_push``\\ es here; the worker-process-side
+        :class:`~agentscope.app._service.KnowledgeBaseService`
+        ``queue_push``\\ es here through
+        :func:`~agentscope.app._bus_ops.enqueue_index_task`; the
+        consumer-side
         :class:`~agentscope.app._service.IndexTaskConsumer`
         ``queue_drain``\\ s it on each signal — plus once eagerly on
         consumer start-up so tasks queued while every worker was down

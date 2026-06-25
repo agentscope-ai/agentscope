@@ -61,7 +61,6 @@ Example::
         asyncio.run(main())
 """
 import asyncio
-import logging
 import signal
 import socket
 import uuid
@@ -70,6 +69,7 @@ from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING
 
 from .._service import IndexTaskConsumer, IndexWorker
+from ..._logging import logger
 
 if TYPE_CHECKING:
     from ..blob_store import BlobStoreBase
@@ -77,9 +77,6 @@ if TYPE_CHECKING:
     from ..message_bus import MessageBus
     from ..storage import StorageBase
     from ...rag import ChunkerBase, ParserBase
-
-
-_logger = logging.getLogger(__name__)
 
 
 async def run_worker(
@@ -164,7 +161,7 @@ async def run_worker(
             ),
         )
 
-        _logger.info(
+        logger.info(
             "Index worker %s ready (max_concurrency=%d, max_batch=%d)",
             resolved_node_id,
             worker_max_concurrency,
@@ -194,4 +191,4 @@ async def run_worker(
         try:
             await stop
         finally:
-            _logger.info("Index worker %s shutting down", resolved_node_id)
+            logger.info("Index worker %s shutting down", resolved_node_id)

@@ -8,30 +8,29 @@ moving when something goes wrong:
   upper bound on how long a worker may sit on the document before
   another worker is allowed to take over;
 - a *creation timestamp* on every ``pending`` record — used to catch
-  documents that the dispatcher never managed to hand off (e.g.
-  process died right after the upload endpoint persisted the record).
+  documents that were never picked up by a worker (e.g. process died
+  right after the upload endpoint persisted the record).
 
 The sweeper periodically scans storage for both classes of stuck
-records and pushes them back through the dispatcher.  Re-dispatch is
+records and re-enqueues them on the index-task channel.  Re-enqueue is
 safe because the worker's CAS lease acquisition rejects duplicates,
 so multiple nodes running their own sweeper does not produce double
 processing.
 """
 import asyncio
-import logging
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
+from ..._logging import logger
+from .._bus_ops import enqueue_index_task
+
 if TYPE_CHECKING:
-    from ..index_dispatch import IndexDispatcherBase
+    from ..message_bus import MessageBus
     from ..storage import StorageBase
 
 
-_logger = logging.getLogger(__name__)
-
-
 class IndexSweeper:
-    """Periodically redispatches documents stuck in indexing.
+    """Periodically re-enqueues documents stuck in indexing.
 
     Lifecycle is wired into the app's lifespan: :meth:`start` schedules
     the background task and runs an immediate sweep so that documents
@@ -42,7 +41,7 @@ class IndexSweeper:
     def __init__(
         self,
         storage: "StorageBase",
-        dispatcher: "IndexDispatcherBase",
+        message_bus: "MessageBus",
         interval: timedelta = timedelta(seconds=60),
         pending_grace: timedelta = timedelta(minutes=5),
     ) -> None:
@@ -52,11 +51,11 @@ class IndexSweeper:
             storage (`StorageBase`):
                 Used to find stuck records and as the contract holder
                 for the lease semantics.
-            dispatcher (`IndexDispatcherBase`):
-                The same dispatcher the upload endpoint uses.
-                Re-dispatching a document re-enters the worker
-                pipeline, where the CAS lease acquisition decides
-                whether to actually process or bail.
+            message_bus (`MessageBus`):
+                The same bus the upload endpoint uses.  Re-enqueuing
+                a document re-enters the worker pipeline, where the
+                CAS lease acquisition decides whether to actually
+                process or bail.
             interval (`timedelta`, defaults to ``60s``):
                 How often the loop wakes up.  Roughly one order of
                 magnitude shorter than the typical lease TTL — fast
@@ -64,11 +63,11 @@ class IndexSweeper:
                 slow enough not to thrash storage.
             pending_grace (`timedelta`, defaults to ``5min``):
                 A record may legitimately sit in ``pending`` while the
-                dispatcher's scheduling task is queued; only after
-                this grace period do we treat the record as orphaned.
+                bus push is still queued; only after this grace period
+                do we treat the record as orphaned.
         """
         self._storage = storage
-        self._dispatcher = dispatcher
+        self._bus = message_bus
         self._interval = interval
         self._pending_grace = pending_grace
         self._task: asyncio.Task[None] | None = None
@@ -108,15 +107,15 @@ class IndexSweeper:
             except asyncio.CancelledError:
                 return
             except Exception:  # noqa: BLE001 — keep the loop alive
-                _logger.exception("Sweep iteration failed")
+                logger.exception("Sweep iteration failed")
 
     async def _sweep_once(self) -> None:
-        """Find and redispatch every stuck document.
+        """Find and re-enqueue every stuck document.
 
         De-duplication: a document showing up in both the
         expired-lease and orphan-pending queries (a record that was
         never picked up and whose lease pre-dates the grace period)
-        is dispatched only once per sweep, by record id.
+        is enqueued only once per sweep, by record id.
         """
         now = datetime.now()
         pending_threshold = now - self._pending_grace
@@ -135,16 +134,17 @@ class IndexSweeper:
                 continue
             seen.add(record.id)
             try:
-                await self._dispatcher.dispatch(
+                await enqueue_index_task(
+                    self._bus,
                     user_id=record.user_id,
                     knowledge_base_id=record.knowledge_base_id,
                     document_id=record.id,
                 )
             except Exception:  # noqa: BLE001 — keep iterating
-                _logger.exception(
-                    "Failed to redispatch document %s",
+                logger.exception(
+                    "Failed to re-enqueue document %s",
                     record.id,
                 )
 
         if seen:
-            _logger.info("Redispatched %d stuck document(s)", len(seen))
+            logger.info("Re-enqueued %d stuck document(s)", len(seen))

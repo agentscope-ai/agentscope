@@ -7,13 +7,14 @@ argument:
 - ``"agentic"`` — the middleware exposes a ``retrieve_knowledge`` tool
   via :meth:`RAGMiddleware.list_tools`, and the agent decides when to
   call it.  Nothing is injected automatically.
-- ``"hint"`` — on each reply the middleware retrieves with the reply
-  **inputs** as the query (text always; multimodal :class:`DataBlock`
-  inputs too when the embedding model supports them), and injects the
-  results into ``agent.state.context`` as a
-  :class:`~agentscope.message.HintBlock` before the first reasoning
-  step.  The hint can be one-shot (removed right after the model call
-  it participated in) or persistent, and can optionally be surfaced to
+- ``"hint"`` — on the **first** reasoning step of each reply
+  (``agent.state.cur_iter == 0``) the middleware retrieves with the
+  fresh user turn as the query (text always; multimodal
+  :class:`DataBlock` inputs too when the embedding model supports
+  them), and injects the results into ``agent.state.context`` as a
+  :class:`~agentscope.message.HintBlock` before the model call. The
+  hint can be one-shot (removed right after the model call it
+  participated in) or persistent, and can optionally be surfaced to
   the front-end via :class:`~agentscope.event.HintBlockEvent`.
 
 Document indexing (parsing, chunking, embedding, insertion) is *not*
@@ -41,6 +42,7 @@ from ..message import (
     ToolResultState,
 )
 from ..tool import ToolBase, ToolChunk
+from ..permission import PermissionBehavior, PermissionDecision
 
 if TYPE_CHECKING:
     from ..agent import Agent
@@ -126,6 +128,7 @@ class _RetrieveKnowledgeTool(ToolBase):
                 The owning middleware, whose retrieval pipeline is
                 reused for the actual search.
         """
+        super().__init__(middleware)
         self._middleware = middleware
 
     async def check_permissions(
@@ -143,17 +146,16 @@ class _RetrieveKnowledgeTool(ToolBase):
 
         Returns:
             `PermissionDecision`:
-                A PASSTHROUGH decision — knowledge retrieval is
+                An allow decision — knowledge retrieval is
                 read-only.
         """
-        from ..permission import PermissionBehavior, PermissionDecision
 
         return PermissionDecision(
-            behavior=PermissionBehavior.PASSTHROUGH,
+            behavior=PermissionBehavior.ALLOW,
             message="Knowledge retrieval is read-only.",
         )
 
-    async def __call__(  # type: ignore[override]
+    async def call(  # type: ignore[override]
         self,
         query: str,
     ) -> ToolChunk:
@@ -194,7 +196,7 @@ class _RetrieveKnowledgeTool(ToolBase):
         )
 
 
-class RAGMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
+class RAGMiddleware(MiddlewareBase):
     """Middleware that integrates knowledge retrieval into the agent.
 
     Constructed with already-resolved instances — the caller (e.g. the
@@ -299,8 +301,6 @@ class RAGMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         self._persist_hint = persist_hint
         self._hint_template = hint_template or _DEFAULT_HINT_TEMPLATE
 
-        self._pending_hint: HintBlock | None = None
-
     # ------------------------------------------------------------------
     # Agentic mode — expose the retrieval tool
     # ------------------------------------------------------------------
@@ -318,56 +318,9 @@ class RAGMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         return []
 
     # ------------------------------------------------------------------
-    # Hint mode — retrieve on reply inputs, inject before reasoning
+    # Hint mode — retrieve on the first reasoning step of each reply,
+    # inject before the model call
     # ------------------------------------------------------------------
-
-    async def on_reply(
-        self,
-        agent: "Agent",
-        input_kwargs: dict,
-        next_handler: Callable[..., AsyncGenerator],
-    ) -> AsyncGenerator:
-        """Retrieve with the reply inputs and stage a hint block.
-
-        Only active in ``"hint"`` mode and only when the inputs are a
-        new ``Msg`` / ``list[Msg]`` (resumption events and ``None``
-        pass through).  The retrieval result is staged and injected by
-        :meth:`on_reasoning`, after the agent has appended the inputs
-        to its context — keeping the context order intact.
-
-        Args:
-            agent (`Agent`):
-                The Agent instance executing this middleware.
-            input_kwargs (`dict`):
-                Dictionary containing ``inputs`` — the unified reply
-                inputs.
-            next_handler (`Callable[..., AsyncGenerator]`):
-                The downstream middleware or core reply logic.
-
-        Yields:
-            `AgentEvent | Msg`:
-                Events from the downstream reply process.
-        """
-        if self._mode == "hint":
-            queries = self._extract_queries(input_kwargs.get("inputs"))
-            if queries:
-                try:
-                    results = await self.retrieve(queries)
-                except Exception:
-                    logger.exception(
-                        "RAG retrieval failed, proceeding without "
-                        "retrieved context.",
-                    )
-                    results = []
-                formatted = _format_results(results)
-                if formatted is not None:
-                    self._pending_hint = HintBlock(
-                        hint=self._hint_template.format(context=formatted),
-                        source=_HINT_SOURCE,
-                    )
-
-        async for evt in next_handler(**input_kwargs):
-            yield evt
 
     async def on_reasoning(
         self,
@@ -375,15 +328,23 @@ class RAGMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         input_kwargs: dict,
         next_handler: Callable[..., AsyncGenerator],
     ) -> AsyncGenerator:
-        """Inject the staged hint into the context for one reasoning
-        step.
+        """Inject a one-shot RAG hint on the first reasoning step.
+
+        Only active in ``"hint"`` mode and only when
+        ``agent.state.cur_iter == 0`` — i.e. the first reasoning
+        cycle right after the agent appended the new user turn to
+        ``agent.state.context``. Subsequent reasoning iterations of
+        the same reply (cur_iter > 0) skip retrieval so the agent
+        does not re-embed and re-inject for every tool-call round.
 
         Follows the ``InboxMiddleware`` injection pattern: the hint
         block is appended to the last assistant message, or a new
-        assistant message is created.  When ``persist_hint`` is
+        assistant message is created. When ``persist_hint`` is
         ``False`` the block is removed right after the wrapped
         reasoning step completes — it participates in exactly one
-        model inference.
+        model inference. Removal keys on ``hint.id`` rather than block
+        type, so other middlewares (Inbox, …) can append their own
+        HintBlocks to the same carrier without interfering.
 
         Args:
             agent (`Agent`):
@@ -399,8 +360,26 @@ class RAGMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 An optional ``HintBlockEvent`` followed by events from
                 downstream.
         """
-        hint = self._pending_hint
-        self._pending_hint = None
+        hint: HintBlock | None = None
+
+        # Manually retrieval knowledge base at the first reasoning step
+        if self._mode == "hint" and agent.state.cur_iter == 0:
+            queries = self._extract_queries_from_context(agent)
+            if queries:
+                try:
+                    results = await self.retrieve(queries)
+                except Exception:
+                    logger.exception(
+                        "RAG retrieval failed, proceeding without "
+                        "retrieved context.",
+                    )
+                    results = []
+                formatted = _format_results(results)
+                if formatted is not None:
+                    hint = HintBlock(
+                        hint=self._hint_template.format(context=formatted),
+                        source=_HINT_SOURCE,
+                    )
 
         carrier: Msg | None = None
         created_new = False
@@ -437,67 +416,55 @@ class RAGMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 yield evt
         finally:
             if hint is not None and not self._persist_hint:
-                self._remove_hint(agent, carrier, hint, created_new)
-
-    @staticmethod
-    def _remove_hint(
-        agent: "Agent",
-        carrier: Msg | None,
-        hint: HintBlock,
-        created_new: bool,
-    ) -> None:
-        """Remove a one-shot hint block from the agent context.
-
-        Args:
-            agent (`Agent`):
-                The executing agent.
-            carrier (`Msg | None`):
-                The message the hint was appended to.
-            hint (`HintBlock`):
-                The hint block to remove.
-            created_new (`bool`):
-                Whether ``carrier`` was created solely for the hint —
-                if so and it carries nothing else, the whole message
-                is dropped.
-        """
-        if carrier is None:
-            return
-        carrier.content = [b for b in carrier.content if b.id != hint.id]
-        if created_new and not carrier.content:
-            try:
-                agent.state.context.remove(carrier)
-            except ValueError:
-                pass
+                if carrier is None:
+                    return
+                carrier.content = [
+                    b for b in carrier.content if b.id != hint.id
+                ]
+                if created_new and not carrier.content:
+                    try:
+                        agent.state.context.remove(carrier)
+                    except ValueError:
+                        pass
 
     # ------------------------------------------------------------------
     # Retrieval pipeline (shared by both modes)
     # ------------------------------------------------------------------
 
-    def _extract_queries(self, inputs: Any) -> list[str | DataBlock]:
-        """Build the query list from the reply inputs.
+    def _extract_queries_from_context(
+        self,
+        agent: "Agent",
+    ) -> list[str | DataBlock]:
+        """Build the query list from the current user turn in context.
 
-        All text across the input messages is joined into one text
-        query.  When the embedding model supports multimodal inputs,
-        each :class:`DataBlock` in the messages becomes an additional
-        query.
+        The agent appends the new user ``Msg`` objects to
+        ``agent.state.context`` before the first reasoning step, so
+        the "fresh user turn" is the trailing run of ``role=='user'``
+        messages.  All their text content is joined into one text
+        query; when the embedding model supports multimodal inputs,
+        each :class:`DataBlock` in those messages becomes an
+        additional query.
 
         Args:
-            inputs (`Any`):
-                The unified reply inputs — only ``Msg`` /
-                ``list[Msg]`` produce queries; events and ``None``
-                yield an empty list.
+            agent (`Agent`):
+                The executing agent; its ``state.context`` is read
+                to locate the fresh user turn.
 
         Returns:
             `list[str | DataBlock]`:
-                The query inputs for the embedding model.
+                The query inputs for the embedding model. Empty list
+                when the reply was triggered by a resumption / event
+                (no fresh user message at the tail of the context).
         """
-        if isinstance(inputs, Msg):
-            msgs = [inputs]
-        elif isinstance(inputs, list) and all(
-            isinstance(m, Msg) for m in inputs
-        ):
-            msgs = inputs
-        else:
+        context = agent.state.context
+        msgs: list[Msg] = []
+        for msg in reversed(context):
+            if msg.role == "user":
+                msgs.append(msg)
+            else:
+                break
+        msgs.reverse()
+        if not msgs:
             return []
 
         queries: list[str | DataBlock] = []
@@ -509,7 +476,7 @@ class RAGMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         if texts:
             queries.append("\n".join(texts))
 
-        if getattr(self._embedding_model, "supports_multimodal", False):
+        if self._embedding_model.supports_multimodal:
             for msg in msgs:
                 queries.extend(msg.get_content_blocks("data"))
 
@@ -549,7 +516,7 @@ class RAGMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
             ),
         )
 
-        best: dict[str, "VectorSearchResult"] = {}
+        best: dict[tuple[str, int], "VectorSearchResult"] = {}
         for results in results_per_search:
             for result in results:
                 if (
@@ -557,7 +524,11 @@ class RAGMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                     and result.score < self._score_threshold
                 ):
                     continue
-                key = result.chunk.content.id
+                # ``(document_id, chunk_index)`` is the stable identity
+                # of a chunk: it survives reindex (block UUIDs do not),
+                # and uniquely names "this slice of that document"
+                # regardless of which query / collection surfaced it.
+                key = (result.document_id, result.chunk.chunk_index)
                 if key not in best or result.score > best[key].score:
                     best[key] = result
 

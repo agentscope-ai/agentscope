@@ -21,20 +21,18 @@ is done entirely through the storage lease — workers do not need to
 know about each other.
 """
 import asyncio
-import logging
 import mimetypes
 from concurrent.futures import ProcessPoolExecutor
 from datetime import timedelta
 from typing import TYPE_CHECKING
+
+from ..._logging import logger
 
 if TYPE_CHECKING:
     from ..blob_store import BlobStoreBase
     from ..knowledge_base_manager import KnowledgeBaseManagerBase
     from ..storage import StorageBase
     from ...rag import ChunkerBase, ParserBase, Section
-
-
-_logger = logging.getLogger(__name__)
 
 # Read blob bytes in chunks bounded so the worker never holds the whole
 # file in memory at once even when the parser is byte-oriented.
@@ -153,7 +151,7 @@ class IndexWorker:
             lease_ttl=self._lease_ttl,
         )
         if not acquired:
-            _logger.debug(
+            logger.debug(
                 "Skipping %s — another worker holds the lease.",
                 document_id,
             )
@@ -212,7 +210,7 @@ class IndexWorker:
             document_id,
         )
         if record is None:
-            _logger.warning(
+            logger.warning(
                 "Document %s vanished before processing.",
                 document_id,
             )
@@ -351,7 +349,7 @@ class IndexWorker:
                 lease_ttl=self._lease_ttl,
             )
             if not ok:
-                _logger.warning(
+                logger.warning(
                     "Lost lease on %s while processing.",
                     document_id,
                 )
@@ -369,7 +367,7 @@ class IndexWorker:
         exc: BaseException,
     ) -> None:
         """Persist a sanitised error and mark the document failed."""
-        _logger.exception(
+        logger.exception(
             "Indexing failed for %s/%s",
             knowledge_base_id,
             document_id,
@@ -385,7 +383,7 @@ class IndexWorker:
                 error=message,
             )
         except Exception:  # noqa: BLE001 — last-resort log
-            _logger.exception(
+            logger.exception(
                 "Failed to persist error status for %s",
                 document_id,
             )

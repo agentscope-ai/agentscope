@@ -25,17 +25,14 @@ the channel; introducing a separate ``IndexTaskBroker`` would be
 ceremony without gain.
 """
 import asyncio
-import logging
 from typing import TYPE_CHECKING, Any, Self
 
 from ..message_bus import MessageBusKeys
+from ..._logging import logger
 
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
     from ._index_worker import IndexWorker
-
-
-_logger = logging.getLogger(__name__)
 
 
 class IndexTaskConsumer:
@@ -143,9 +140,15 @@ class IndexTaskConsumer:
         except asyncio.CancelledError:
             raise
         except Exception:  # pylint: disable=broad-except
-            _logger.exception(
+            logger.exception(
                 "IndexTaskConsumer loop crashed; subscription ended.",
             )
+        finally:
+            # If ``subscribe`` raises before ``on_ready`` fires, the
+            # ``__aenter__`` coroutine would deadlock on ``ready.wait()``.
+            # Set the event unconditionally on the way out so startup
+            # cannot stall on a transient bus failure.
+            ready.set()
 
     async def _drain_and_dispatch(self) -> None:
         """Read up to a batch of task entries and dispatch each one."""
@@ -155,7 +158,7 @@ class IndexTaskConsumer:
                 max_count=self._max_batch,
             )
         except Exception:  # pylint: disable=broad-except
-            _logger.exception("IndexTaskConsumer: drain failed.")
+            logger.exception("IndexTaskConsumer: drain failed.")
             return
 
         for _entry_id, payload in entries:
@@ -164,7 +167,7 @@ class IndexTaskConsumer:
                 knowledge_base_id = payload["knowledge_base_id"]
                 document_id = payload["document_id"]
             except (KeyError, TypeError):
-                _logger.warning(
+                logger.warning(
                     "IndexTaskConsumer: skipping malformed entry %r",
                     payload,
                 )
@@ -208,7 +211,7 @@ class IndexTaskConsumer:
             return
         exc = task.exception()
         if exc is not None:
-            _logger.exception(
+            logger.exception(
                 "IndexTaskConsumer: worker.process(%s) raised",
                 task.get_name(),
                 exc_info=exc,

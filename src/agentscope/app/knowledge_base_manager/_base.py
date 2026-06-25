@@ -68,11 +68,20 @@ class KnowledgeBaseManagerBase(ABC):
     # ------------------------------------------------------------------
 
     async def __aenter__(self) -> Self:
-        """Enter the manager's lifetime.  Default is a no-op."""
+        """Enter the manager's lifetime.
+
+        Enters the bound vector store's async context so a single
+        ``create_app`` parameter (the manager) covers the vector store's
+        lifecycle too. Subclasses that override this MUST call
+        ``await super().__aenter__()`` first to keep the vector store
+        ready before subclass-specific setup runs.
+        """
+        await self._vector_store.__aenter__()
         return self
 
     async def __aexit__(self, *exc: object) -> None:
-        """Exit the manager's lifetime.  Default is a no-op."""
+        """Exit the manager's lifetime, releasing the vector store."""
+        await self._vector_store.__aexit__(*exc)
 
     # ------------------------------------------------------------------
     # Capability discovery

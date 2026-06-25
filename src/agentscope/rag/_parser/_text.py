@@ -41,14 +41,16 @@ class TextParser(ParserBase):
 
     async def parse(
         self,
-        file: bytes,
+        file: bytes | str,
         filename: str,
     ) -> list[Section]:
         """Read the file as text and return a single :class:`Section`.
 
         Args:
-            file (`bytes`):
-                The raw file content.
+            file (`bytes | str`):
+                The file content. ``bytes`` is decoded with the
+                configured encoding; ``str`` is used verbatim — letting
+                local-mode callers skip the encode → decode round trip.
             filename (`str`):
                 The source filename, copied verbatim into
                 :attr:`Section.source`.
@@ -62,12 +64,16 @@ class TextParser(ParserBase):
             `ValueError`: If the bytes cannot be decoded with the
                 configured encoding.
         """
-        try:
-            text = file.decode(self.encoding)
-        except UnicodeDecodeError as e:
-            raise ValueError(
-                f"Failed to decode {filename!r} as " f"{self.encoding!r}: {e}",
-            ) from e
+        if isinstance(file, str):
+            text = file
+        else:
+            try:
+                text = file.decode(self.encoding)
+            except UnicodeDecodeError as e:
+                raise ValueError(
+                    f"Failed to decode {filename!r} as "
+                    f"{self.encoding!r}: {e}",
+                ) from e
 
         return [
             Section(

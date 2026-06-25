@@ -20,11 +20,12 @@ import asyncio
 import uuid
 from typing import TYPE_CHECKING
 
-from ...message import DataBlock
+from ...message import DataBlock, TextBlock
 
 if TYPE_CHECKING:
     from ...embedding import EmbeddingModelBase
     from ...rag import (
+        Chunk,
         DocumentSummary,
         VectorSearchResult,
         VectorStoreBase,
@@ -158,7 +159,7 @@ class Knowledge:
             ),
         )
 
-        best: dict[str, "VectorSearchResult"] = {}
+        best: dict[tuple[str, int], "VectorSearchResult"] = {}
         for results in results_per_query:
             for result in results:
                 if (
@@ -166,7 +167,11 @@ class Knowledge:
                     and result.score < score_threshold
                 ):
                     continue
-                key = result.chunk.content.id
+                # ``(document_id, chunk_index)`` is the stable identity
+                # of a chunk: it survives reindex (block UUIDs do not),
+                # and uniquely names "this slice of that document"
+                # regardless of which query embedding surfaced it.
+                key = (result.document_id, result.chunk.chunk_index)
                 if key not in best or result.score > best[key].score:
                     best[key] = result
 
@@ -183,7 +188,7 @@ class Knowledge:
 
     async def insert_document(
         self,
-        chunks: list,
+        chunks: "list[Chunk]",
         document_id: str | None = None,
         document_metadata: dict | None = None,
     ) -> str:
@@ -192,7 +197,11 @@ class Knowledge:
         All chunks of the same document share the same
         ``document_id``; ``delete_document`` later removes them as a
         unit.  The manager's metadata filter (when present) is merged
-        into each chunk's metadata so cross-tenant scoping works.
+        into each chunk's metadata so cross-tenant scoping works —
+        ``metadata_filter`` keys take precedence over chunk- and
+        document-level metadata to prevent a malicious or accidental
+        ``metadata`` value from leaking a record into another tenant's
+        scope.
 
         Args:
             chunks (`list[Chunk]`):
@@ -218,16 +227,24 @@ class Knowledge:
             return document_id or uuid.uuid4().hex
         document_id = document_id or uuid.uuid4().hex
 
-        extra_metadata: dict = {}
-        if self._metadata_filter:
-            extra_metadata.update(self._metadata_filter)
-        if document_metadata:
-            extra_metadata.update(document_metadata)
-        if extra_metadata:
-            for chunk in chunks:
-                chunk.metadata = {**extra_metadata, **chunk.metadata}
+        # ``metadata_filter`` is defense-in-depth scoping; it MUST win
+        # over chunk- and document-level metadata so a parser cannot
+        # accidentally (or maliciously) rebind a record into a
+        # different tenant's filter scope.
+        for chunk in chunks:
+            merged = {
+                **(document_metadata or {}),
+                **chunk.metadata,
+                **(self._metadata_filter or {}),
+            }
+            chunk.metadata = merged
 
-        contents = [chunk.content for chunk in chunks]
+        contents: list[str | DataBlock] = [
+            chunk.content.text
+            if isinstance(chunk.content, TextBlock)
+            else chunk.content
+            for chunk in chunks
+        ]
         response = await self._embedding_model(contents)
 
         if len(response.embeddings) != len(chunks):

@@ -27,7 +27,6 @@ from ..rag import (
     ChunkerBase,
     ParserBase,
     TextParser,
-    VectorStoreBase,
 )
 from .._version import __version__
 
@@ -44,7 +43,6 @@ def create_app(
     storage: StorageBase,
     message_bus: MessageBus,
     workspace_manager: WorkspaceManagerBase,
-    vector_store: VectorStoreBase | None = None,
     knowledge_base_manager: KnowledgeBaseManagerBase | None = None,
     knowledge_parsers: list[ParserBase] | None = None,
     knowledge_chunker: ChunkerBase | None = None,
@@ -101,20 +99,17 @@ def create_app(
             ``__aenter__`` / ``__aexit__``) is managed by the app
             lifespan. Pass a :class:`~agentscope.app._manager.
             LocalWorkspaceManager` for local-directory workspaces.
-        vector_store (`VectorStoreBase | None`, optional):
-            The application-wide vector store backing every knowledge
-            base.  Required when ``knowledge_base_manager`` is set;
-            ``None`` disables knowledge base endpoints entirely.  Its
-            lifecycle (``__aenter__`` / ``__aexit__``) is managed by
-            the app lifespan.
         knowledge_base_manager (`KnowledgeBaseManagerBase | None`, \
          optional):
             The knowledge base manager that owns knowledge base
             lifecycle and serves
             :class:`~agentscope.app.knowledge_base_manager.Knowledge`
             runtime handles to both HTTP service and agent code.
-            ``None`` disables knowledge base endpoints entirely.  Its
-            lifecycle is managed by the app lifespan.
+            The manager carries its own vector store instance — its
+            ``__aenter__`` / ``__aexit__`` enter and release that
+            vector store, so the caller does not pass the vector
+            store separately.  ``None`` disables knowledge base
+            endpoints entirely.
         knowledge_parsers (`list[ParserBase] | None`, optional):
             Parsers registered for knowledge base document uploads.
             Each parser declares ``supported_media_types`` and the
@@ -198,16 +193,10 @@ def create_app(
     app.state.storage = storage
     app.state.message_bus = message_bus
     app.state.workspace_manager = workspace_manager
-    app.state.vector_store = vector_store
     app.state.knowledge_base_manager = knowledge_base_manager
     app.state.extra_agent_middlewares = extra_agent_middlewares
     app.state.extra_agent_tools = extra_agent_tools
     app.state.custom_agent_cls = custom_agent_cls
-
-    if knowledge_base_manager is not None and vector_store is None:
-        raise ValueError(
-            "knowledge_base_manager requires vector_store to be set.",
-        )
 
     app.state.knowledge_parsers = (
         knowledge_parsers if knowledge_parsers is not None else [TextParser()]

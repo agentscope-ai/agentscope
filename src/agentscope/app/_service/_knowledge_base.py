@@ -2,7 +2,7 @@
 """Knowledge base service: HTTP-side orchestration.
 
 The router stays thin and DTO-shaped; everything HTTP-side that needs
-to coordinate persistence, the blob store, the indexing dispatcher,
+to coordinate persistence, the blob store, the indexing pipeline,
 and the vector store goes through this service.
 
 The split with :class:`~agentscope.app.knowledge_base_manager.Knowledge`
@@ -30,11 +30,13 @@ from ..storage import (
     KnowledgeDocumentData,
     KnowledgeDocumentRecord,
 )
+from ..._logging import logger
+from .._bus_ops import enqueue_index_task
 
 if TYPE_CHECKING:
     from ..blob_store import BlobStoreBase
-    from ..index_dispatch import IndexDispatcherBase
     from ..knowledge_base_manager import KnowledgeBaseManagerBase
+    from ..message_bus import MessageBus
     from ..storage import (
         EmbeddingModelConfig,
         KnowledgeBaseRecord,
@@ -47,11 +49,11 @@ class KnowledgeBaseService:
     """HTTP service for knowledge bases.
 
     Owns the document lifecycle in service mode: register on upload,
-    dispatch for indexing, query status during indexing, and clean up
+    enqueue an index task, query status during indexing, and clean up
     record + blob + vector store on delete.  All parsing / chunking /
     embedding work happens inside the
     :class:`~agentscope.app._service.IndexWorker`; the service only
-    hands off and observes.
+    hands off (via the message bus) and observes.
     """
 
     def __init__(
@@ -59,7 +61,7 @@ class KnowledgeBaseService:
         storage: "StorageBase",
         knowledge_base_manager: "KnowledgeBaseManagerBase",
         blob_store: "BlobStoreBase",
-        dispatcher: "IndexDispatcherBase",
+        message_bus: "MessageBus",
     ) -> None:
         """Initialize the service.
 
@@ -74,15 +76,17 @@ class KnowledgeBaseService:
                 Owns the bytes from upload until the worker is done.
                 The service writes on upload and deletes on document
                 removal.
-            dispatcher (`IndexDispatcherBase`):
-                Hands document ids off to a worker.  Implementation
-                determines whether the worker runs in-process or out
-                of process.
+            message_bus (`MessageBus`):
+                Application message bus.  The service publishes one
+                index-task entry per uploaded document via
+                :func:`~agentscope.app._bus_ops.enqueue_index_task`;
+                a co-located or out-of-process
+                :class:`IndexTaskConsumer` drains and processes them.
         """
         self._storage = storage
         self._manager = knowledge_base_manager
         self._blob_store = blob_store
-        self._dispatcher = dispatcher
+        self._bus = message_bus
 
     # ------------------------------------------------------------------
     # Knowledge base CRUD
@@ -212,13 +216,14 @@ class KnowledgeBaseService:
         size: int,
         content_type: str | None = None,
     ) -> KnowledgeDocumentRecord:
-        """Persist an uploaded document and dispatch it for indexing.
+        """Persist an uploaded document and enqueue it for indexing.
 
         Streams ``stream`` into the blob store (so the bytes never
         live fully in memory), records a ``pending`` document, and
-        hands the id off to the dispatcher.  Returns immediately —
-        the worker takes over from here and the client tracks
-        progress via :meth:`get_document_status`.
+        pushes an index-task entry onto the message bus.  Returns
+        immediately — a worker (in-process or dedicated) takes over
+        from here and the client tracks progress via
+        :meth:`get_document_status`.
 
         Args:
             user_id (`str`):
@@ -278,7 +283,8 @@ class KnowledgeBaseService:
             await self._delete_blob_quietly(blob_uri)
             raise
 
-        await self._dispatcher.dispatch(
+        await enqueue_index_task(
+            self._bus,
             user_id=user_id,
             knowledge_base_id=knowledge_base_id,
             document_id=document_id,
@@ -503,9 +509,7 @@ class KnowledgeBaseService:
         try:
             await self._blob_store.delete(blob_uri)
         except Exception:  # noqa: BLE001 — cleanup only
-            import logging
-
-            logging.getLogger(__name__).exception(
+            logger.exception(
                 "Failed to delete blob %s",
                 blob_uri,
             )

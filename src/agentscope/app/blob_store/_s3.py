@@ -59,42 +59,7 @@ class _StreamingBody:
 
 
 class S3BlobStore(BlobStoreBase):
-    """Store blobs in an S3-compatible bucket.
-
-    Args:
-        bucket (`str`):
-            Bucket name. The bucket MUST exist; this store will not
-            create it. Production deployments commonly provision the
-            bucket out-of-band via Terraform / CloudFormation so the
-            app's IAM role does not need ``s3:CreateBucket``.
-        region_name (`str | None`, optional):
-            AWS region for AWS S3. Required for AWS, ignored for
-            MinIO / R2 / other services that locate the bucket via
-            ``endpoint_url``.
-        endpoint_url (`str | None`, optional):
-            Full URL of the S3-compatible service. ``None`` selects
-            real AWS S3. Examples: ``http://minio:9000``,
-            ``https://<account>.r2.cloudflarestorage.com``,
-            ``https://oss-cn-hangzhou.aliyuncs.com``.
-        aws_access_key_id (`str | None`, optional):
-            Static credential. Prefer leaving this ``None`` and letting
-            the IAM role / environment chain resolve credentials when
-            running on AWS infrastructure.
-        aws_secret_access_key (`str | None`, optional):
-            Paired with ``aws_access_key_id``.
-        session_token (`str | None`, optional):
-            For STS-issued temporary credentials.
-        use_ssl (`bool`, defaults to ``True``):
-            Force HTTPS. Production deployments must keep this on;
-            local MinIO with self-signed certs is the only place
-            ``False`` is reasonable.
-        config (`Any | None`, optional):
-            ``aiobotocore.config.AioConfig`` instance for users who
-            need to tune timeouts, retry mode, signature version
-            (e.g. ``s3v4`` for Aliyun OSS), or addressing style.
-            Path-style addressing is needed for MinIO; pass
-            ``AioConfig(s3={"addressing_style": "path"})``.
-    """
+    """Store blobs in an S3-compatible bucket."""
 
     def __init__(
         self,
@@ -108,6 +73,42 @@ class S3BlobStore(BlobStoreBase):
         use_ssl: bool = True,
         config: Any = None,
     ) -> None:
+        """Initialize an S3-compatible bucket.
+
+        Args:
+            bucket (`str`):
+                Bucket name. The bucket MUST exist; this store will not
+                create it. Production deployments commonly provision the
+                bucket out-of-band via Terraform / CloudFormation so the
+                app's IAM role does not need ``s3:CreateBucket``.
+            region_name (`str | None`, optional):
+                AWS region for AWS S3. Required for AWS, ignored for
+                MinIO / R2 / other services that locate the bucket via
+                ``endpoint_url``.
+            endpoint_url (`str | None`, optional):
+                Full URL of the S3-compatible service. ``None`` selects
+                real AWS S3. Examples: ``http://minio:9000``,
+                ``https://<account>.r2.cloudflarestorage.com``,
+                ``https://oss-cn-hangzhou.aliyuncs.com``.
+            aws_access_key_id (`str | None`, optional):
+                Static credential. Prefer leaving this ``None`` and letting
+                the IAM role / environment chain resolve credentials when
+                running on AWS infrastructure.
+            aws_secret_access_key (`str | None`, optional):
+                Paired with ``aws_access_key_id``.
+            session_token (`str | None`, optional):
+                For STS-issued temporary credentials.
+            use_ssl (`bool`, defaults to ``True``):
+                Force HTTPS. Production deployments must keep this on;
+                local MinIO with self-signed certs is the only place
+                ``False`` is reasonable.
+            config (`Any | None`, optional):
+                ``aiobotocore.config.AioConfig`` instance for users who
+                need to tune timeouts, retry mode, signature version
+                (e.g. ``s3v4`` for Aliyun OSS), or addressing style.
+                Path-style addressing is needed for MinIO; pass
+                ``AioConfig(s3={"addressing_style": "path"})``.
+        """
         if aioboto3 is None:
             raise RuntimeError(
                 "S3BlobStore requires the optional dependency "
@@ -164,19 +165,26 @@ class S3BlobStore(BlobStoreBase):
         )
 
     @staticmethod
-    def _key_from_uri(uri: str, expected_bucket: str) -> str:
-        """Extract the object key from an ``s3://{bucket}/{key}`` URI."""
+    def _parse_uri(uri: str) -> tuple[str, str]:
+        """Split an ``s3://{bucket}/{key}`` URI into ``(bucket, key)``."""
         if not uri.startswith(_SCHEME):
             raise ValueError(f"Not an S3 blob URI: {uri!r}")
         rest = uri[len(_SCHEME) :]
         bucket, _, key = rest.partition("/")
         if not bucket or not key:
             raise ValueError(f"Malformed S3 blob URI: {uri!r}")
+        return bucket, key
+
+    @classmethod
+    def _key_from_uri(cls, uri: str, expected_bucket: str) -> str:
+        """Return the object key, asserting the bucket matches.
+
+        Used by mutating operations (``delete``, ``exists``) where
+        crossing into another bucket would be a bug — the configured
+        bucket is the only place the store owns objects.
+        """
+        bucket, key = cls._parse_uri(uri)
         if bucket != expected_bucket:
-            # Bucket mismatch is allowed at read time (post-migration
-            # records still resolve) but rejected for delete/exists
-            # via the callers — see method docstrings. For now: log
-            # by raising; callers can downgrade if needed.
             raise ValueError(
                 f"Bucket {bucket!r} in URI {uri!r} does not match "
                 f"configured bucket {expected_bucket!r}.",
@@ -203,10 +211,16 @@ class S3BlobStore(BlobStoreBase):
         ``Body``. The S3 GET response is held open for the duration
         of the ``async with`` block — exit promptly so the connection
         returns to the pool.
+
+        The bucket is read from the URI rather than the configured
+        bucket so post-migration deployments can still resolve
+        document records that were written under the previous bucket.
+        The IAM role must grant ``s3:GetObject`` on the legacy bucket
+        for this to actually succeed at the wire level.
         """
-        key = self._key_from_uri(uri, self._bucket)
+        bucket, key = self._parse_uri(uri)
         async with self._client() as s3:
-            response = await s3.get_object(Bucket=self._bucket, Key=key)
+            response = await s3.get_object(Bucket=bucket, Key=key)
             body = response["Body"]
             try:
                 yield _StreamingBody(body)

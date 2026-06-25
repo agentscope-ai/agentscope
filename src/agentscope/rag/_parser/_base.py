@@ -42,14 +42,24 @@ class ParserBase(ABC):
     @abstractmethod
     async def parse(
         self,
-        file: bytes,
+        file: bytes | str,
         filename: str,
     ) -> list[Section]:
         """Parse a file into a list of :class:`Section` objects.
 
+        The ``file`` argument is intentionally a union: HTTP uploads
+        and blob-store reads hand the parser raw ``bytes``, while
+        local-mode callers (CLI, notebook, tests) can pass an already
+        decoded ``str`` so they do not have to round-trip through an
+        encoding step. Subclasses that only understand one of the two
+        forms (e.g. a PDF parser that always wants bytes) MUST raise
+        :class:`TypeError` for the other form rather than guessing.
+
         Args:
-            file (`bytes`):
-                The raw file content.
+            file (`bytes | str`):
+                The file content. ``bytes`` is the raw payload as
+                stored in the blob store; ``str`` is pre-decoded text
+                supplied by a local-mode caller.
             filename (`str`):
                 The original filename (e.g. ``"report.pdf"``).  Used
                 for error messages and copied into each Section's
@@ -64,5 +74,7 @@ class ParserBase(ABC):
                 are returned in document order.
 
         Raises:
+            `TypeError`: If the subclass does not accept the supplied
+                ``file`` form (e.g. a binary parser handed a ``str``).
             `ValueError`: If the file cannot be parsed.
         """
