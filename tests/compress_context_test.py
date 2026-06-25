@@ -4,6 +4,7 @@
 import json
 import os
 import tempfile
+from typing import Any
 
 from unittest.async_case import IsolatedAsyncioTestCase
 
@@ -12,8 +13,39 @@ from utils import MockModel, AnyString
 from agentscope.model import StructuredResponse
 from agentscope.agent import Agent, ContextConfig
 from agentscope.state import AgentState
-from agentscope.message import UserMsg, AssistantMsg, TextBlock, ToolCallBlock
+from agentscope.message import (
+    UserMsg,
+    AssistantMsg,
+    TextBlock,
+    ToolCallBlock,
+    HintBlock,
+)
 from agentscope.tool import Toolkit
+
+
+class RecordingMockModel(MockModel):
+    """A MockModel that records structured-output calls."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize the recording mock model."""
+        super().__init__(*args, **kwargs)
+        self.recorded_calls: list[tuple[list[Any], dict[str, Any]]] = []
+
+    async def _call_api_with_structured_output(
+        self,
+        model_name: str,
+        messages: list[Any],
+        structured_model: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Record the call and delegate to the parent mock."""
+        self.recorded_calls.append((messages, structured_model))
+        return await super()._call_api_with_structured_output(
+            model_name,
+            messages,
+            structured_model,
+            **kwargs,
+        )
 
 
 class ContextCompressionTest(IsolatedAsyncioTestCase):
@@ -870,6 +902,73 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             self.assertIsNone(
                 await agent.state.tool_context.get_cache(file_path),
             )
+
+    async def test_compress_context_with_instructions(self) -> None:
+        """Test that user-defined instructions are injected into the
+        compression prompt."""
+        model = RecordingMockModel(context_size=100)
+        agent = Agent(
+            name="Friday",
+            system_prompt="".join(["0" for _ in range(20 * 4)]),
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.7,
+                reserve_ratio=0.4,
+            ),
+            state=AgentState(
+                session_id="123",
+                context=[
+                    UserMsg(
+                        "User",
+                        "".join(["1" for _ in range(30 * 4)]),
+                        id="1",
+                    ),
+                    AssistantMsg(
+                        "Friday",
+                        "".join(["2" for _ in range(10 * 4)]),
+                        id="2",
+                    ),
+                    UserMsg(
+                        "User",
+                        "".join(["3" for _ in range(10 * 4)]),
+                        id="3",
+                    ),
+                ],
+            ),
+            toolkit=Toolkit(),
+        )
+
+        model.set_structured_response(
+            StructuredResponse(
+                content={
+                    "task_overview": "1",
+                    "current_state": "2",
+                    "important_discoveries": "3",
+                    "next_steps": "4",
+                    "context_to_preserve": "5",
+                },
+            ),
+        )
+
+        instructions = HintBlock(
+            hint="Focus on the user's intent, not the assistant's filler.",
+            source="system",
+        )
+
+        await agent.compress_context(instructions=instructions)
+
+        self.assertEqual(len(model.recorded_calls), 1)
+        messages, _ = model.recorded_calls[0]
+
+        # The instruction should appear as a user message right before the
+        # compression prompt.
+        self.assertTrue(
+            any(
+                msg.role == "user"
+                and msg.content[0].text == instructions.hint
+                for msg in messages
+            ),
+        )
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""
