@@ -49,7 +49,7 @@ import posixpath
 import shlex
 import uuid
 from copy import deepcopy
-from typing import Any, AsyncIterator
+from typing import Any
 
 from pydantic import AnyUrl
 
@@ -193,10 +193,25 @@ class DaytonaWorkspace(WorkspaceBase):
                 defaults decide.
         """
         super().__init__(workspace_id=workspace_id)
+        self.is_alive: bool = False
 
         # ── SDK-derived paths ───────────────────────────────────
         self.workdir = ""
         self._user_home = ""
+        self._data_dir = ""
+        self._skills_dir = ""
+        self._sessions_dir = ""
+        self._mcp_file = ""
+        self._gateway_home = ""
+        self._gateway_venv = ""
+        self._gateway_venv_py = ""
+        self._gateway_script = ""
+        self._glob_helper_script = ""
+        self._gateway_config = ""
+        self._gateway_log = ""
+        self._uv_bin = ""
+        self._dev_src_tar = ""
+        self._dev_src_dir = ""
 
         # ── serializable config ─────────────────────────────────
         self.api_key = api_key
@@ -230,7 +245,9 @@ class DaytonaWorkspace(WorkspaceBase):
     @property
     def sandbox_id(self) -> str | None:
         """Daytona sandbox id, or ``None`` if not started."""
-        return _sandbox_id(self._sandbox) if self._sandbox is not None else None
+        return (
+            _sandbox_id(self._sandbox) if self._sandbox is not None else None
+        )
 
     async def initialize(self) -> None:
         """Reattach or create the sandbox, then start the gateway.
@@ -361,7 +378,10 @@ class DaytonaWorkspace(WorkspaceBase):
 
         if self._sandbox is not None:
             try:
-                await self._sandbox.stop(timeout=self.timeout_seconds, force=False)
+                await self._sandbox.stop(
+                    timeout=self.timeout_seconds,
+                    force=False,
+                )
             except Exception as e:  # noqa: BLE001
                 logger.warning("DaytonaWorkspace: stop failed: %s", e)
             self._sandbox = None
@@ -417,7 +437,10 @@ class DaytonaWorkspace(WorkspaceBase):
         return [
             Bash(cwd=self.workdir, backend=self._backend),
             Edit(backend=self._backend),
-            Glob(backend=self._backend, glob_helper_path=self._glob_helper_script),
+            Glob(
+                backend=self._backend,
+                glob_helper_path=self._glob_helper_script,
+            ),
             Grep(backend=self._backend),
             Read(backend=self._backend),
             Write(backend=self._backend),
@@ -698,7 +721,10 @@ class DaytonaWorkspace(WorkspaceBase):
             return
 
         params = self._create_params()
-        self._sandbox = await client.create(params, timeout=self.timeout_seconds)
+        self._sandbox = await client.create(
+            params,
+            timeout=self.timeout_seconds,
+        )
 
     async def _find_existing_sandbox(self) -> Any:
         """Find the most recent usable Daytona sandbox for this workspace.
@@ -1086,7 +1112,10 @@ class DaytonaWorkspace(WorkspaceBase):
         ext = mimetypes.guess_extension(block.source.media_type) or ".bin"
         path = f"{self._data_dir}/{digest}{ext}"
         await self._backend.exec_shell(["mkdir", "-p", self._data_dir])
-        await self._backend.write_file(path, base64.b64decode(block.source.data))
+        await self._backend.write_file(
+            path,
+            base64.b64decode(block.source.data),
+        )
         return DataBlock(
             id=block.id,
             name=block.name,
@@ -1135,7 +1164,11 @@ def _preview_url(preview: Any) -> str:
 
 def _sandbox_id(sandbox: Any) -> str | None:
     """Return sandbox id from SDK object variants."""
-    value = getattr(sandbox, "id", None) or getattr(sandbox, "sandbox_id", None)
+    value = getattr(sandbox, "id", None) or getattr(
+        sandbox,
+        "sandbox_id",
+        None,
+    )
     return None if value is None else str(value)
 
 

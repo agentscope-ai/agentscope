@@ -50,7 +50,9 @@ async def delete_live_daytona_workspace(workspace_id: str) -> None:
     config = {
         key: value for key, value in live_daytona_kwargs().items() if value
     }
-    client = AsyncDaytona(DaytonaConfig(**config)) if config else AsyncDaytona()
+    client = (
+        AsyncDaytona(DaytonaConfig(**config)) if config else AsyncDaytona()
+    )
     try:
         query = ListSandboxesQuery(
             labels={METADATA_WORKSPACE_ID_KEY: workspace_id},

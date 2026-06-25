@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=protected-access
+# pylint: disable=protected-access,too-many-public-methods,consider-using-with
 """Test cases for :class:`DaytonaWorkspace`.
 
 Most tests patch the Daytona SDK boundary so they run in normal CI.
@@ -13,8 +13,10 @@ import sys
 import tempfile
 import types
 import unittest
+from collections.abc import Callable
 from enum import Enum
 from types import SimpleNamespace
+from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 
@@ -51,19 +53,8 @@ from agentscope.tool import ExecResult, ToolResponse
 from agentscope.workspace import DaytonaBackend, DaytonaWorkspace
 from agentscope.workspace._daytona import _daytona_workspace as daytona_mod
 from agentscope.workspace._daytona._bootstrap import (
-    DATA_DIR_NAME,
     DEFAULT_GATEWAY_PORT,
-    DEV_SRC_DIR_NAME,
-    DEV_SRC_TAR_NAME,
-    GATEWAY_HOME_NAME,
-    GATEWAY_CONFIG_NAME,
-    GATEWAY_LOG_NAME,
-    GATEWAY_SCRIPT_NAME,
-    GLOB_HELPER_NAME,
     METADATA_WORKSPACE_ID_KEY,
-    MCP_FILE_NAME,
-    SESSIONS_DIR_NAME,
-    SKILLS_DIR_NAME,
     bootstrap_commands,
     render_install_agentscope_cmd_dev,
     render_install_agentscope_cmd_released,
@@ -136,7 +127,10 @@ class _FakeSandbox:
         self.recovered = False
         self.stopped: list[dict[str, object]] = []
         self.waited_for_stop = False
-        self.preview = SimpleNamespace(url="https://preview.example", token="ptok")
+        self.preview = SimpleNamespace(
+            url="https://preview.example",
+            token="ptok",
+        )
 
     async def get_work_dir(self) -> str:
         """Return SDK-derived workdir."""
@@ -148,11 +142,13 @@ class _FakeSandbox:
 
     async def start(self, timeout: float | None = 60) -> None:
         """Mark sandbox started."""
+        del timeout
         self.started = True
         self.state = "started"
 
     async def recover(self, timeout: float | None = 60) -> None:
         """Mark sandbox recovered."""
+        del timeout
         self.recovered = True
         self.state = "started"
 
@@ -170,12 +166,14 @@ class _FakeSandbox:
         timeout: float | None = 60,
     ) -> None:
         """No-op wait hook."""
+        del timeout
 
     async def wait_for_sandbox_stop(
         self,
         timeout: float | None = 60,
     ) -> None:
         """Mark stop wait."""
+        del timeout
         self.waited_for_stop = True
         self.state = "stopped"
 
@@ -212,12 +210,11 @@ class _MappedProcess:
     ) -> object:
         """Run the shell command locally with path translation."""
         mapped_command = self._to_host(command)
+        assert mapped_command is not None
         mapped_cwd = self._to_host(cwd) or self.host_root
         env = dict(os.environ)
         env["PATH"] = (
-            os.path.dirname(sys.executable)
-            + os.pathsep
-            + env.get("PATH", "")
+            os.path.dirname(sys.executable) + os.pathsep + env.get("PATH", "")
         )
         proc = await asyncio.create_subprocess_shell(
             mapped_command,
@@ -310,7 +307,11 @@ class _FakeDaytona:
         _FakeDaytona.instances.append(self)
         _FakeDaytona.configs.append(config)
 
-    async def create(self, params: object | None = None, **_kwargs: object) -> _FakeSandbox:
+    async def create(
+        self,
+        params: object | None = None,
+        **_kwargs: object,
+    ) -> _FakeSandbox:
         """Create and return a fake sandbox."""
         _FakeDaytona.created_params.append(params)
         sandbox = _FakeSandbox(f"sandbox-created-{len(self.created) + 1}")
@@ -593,7 +594,9 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
 
         self.assertIsNone(_FakeDaytona.configs[0])
 
-    async def test_initialize_reuses_stopped_candidate_and_starts_it(self) -> None:
+    async def test_initialize_reuses_stopped_candidate_and_starts_it(
+        self,
+    ) -> None:
         """Stopped candidates are started instead of creating a new one."""
         candidate = _FakeSandbox("sandbox-old", state="stopped")
         candidate.labels = {METADATA_WORKSPACE_ID_KEY: "wid-3"}
@@ -606,7 +609,9 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
         self.assertTrue(candidate.started)
         self.assertEqual(_FakeDaytona.created_params, [])
 
-    async def test_initialize_waits_for_stopping_candidate_then_starts_it(self) -> None:
+    async def test_initialize_waits_for_stopping_candidate_then_starts_it(
+        self,
+    ) -> None:
         """Stopping candidates are waited to stopped before start."""
         candidate = _FakeSandbox("sandbox-stopping", state="stopping")
         candidate.labels = {METADATA_WORKSPACE_ID_KEY: "wid-stopping"}
@@ -635,7 +640,10 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
         self.assertEqual(workspace._user_home, "/users/daytona")
         self.assertEqual(workspace._data_dir, "/workspace/project/data")
         self.assertEqual(workspace._skills_dir, "/workspace/project/skills")
-        self.assertEqual(workspace._sessions_dir, "/workspace/project/sessions")
+        self.assertEqual(
+            workspace._sessions_dir,
+            "/workspace/project/sessions",
+        )
         self.assertEqual(workspace._mcp_file, "/workspace/project/.mcp")
         self.assertEqual(workspace._gateway_home, "/users/daytona/.agentscope")
         self.assertEqual(
@@ -668,7 +676,9 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
             "/users/daytona/.agentscope/agentscope_src",
         )
 
-    async def test_initialize_recovers_recoverable_error_candidate(self) -> None:
+    async def test_initialize_recovers_recoverable_error_candidate(
+        self,
+    ) -> None:
         """Recoverable candidates are recovered before use."""
         candidate = _FakeSandbox(
             "sandbox-error",
@@ -684,7 +694,9 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
         self.assertIs(workspace._sandbox, candidate)
         self.assertTrue(candidate.recovered)
 
-    async def test_initialize_skips_unrecoverable_error_candidate(self) -> None:
+    async def test_initialize_skips_unrecoverable_error_candidate(
+        self,
+    ) -> None:
         """Unrecoverable candidates are ignored and a new sandbox is made."""
         candidate = _FakeSandbox(
             "sandbox-error",
@@ -716,10 +728,15 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
             {"x-daytona-preview-token": "ptok"},
         )
 
-    async def test_gateway_preview_without_token_has_no_extra_headers(self) -> None:
+    async def test_gateway_preview_without_token_has_no_extra_headers(
+        self,
+    ) -> None:
         """Preview auth header is omitted when Daytona returns no token."""
         candidate = _FakeSandbox("sandbox-no-preview-token")
-        candidate.preview = SimpleNamespace(url="https://preview.example", token=None)
+        candidate.preview = SimpleNamespace(
+            url="https://preview.example",
+            token=None,
+        )
         candidate.labels = {METADATA_WORKSPACE_ID_KEY: "wid-no-preview-token"}
         _FakeDaytona.list_result[:] = [candidate]
 
@@ -837,9 +854,14 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
 
         self.assertEqual([m.name for m in workspace._mcps], ["fallback"])
         raw = await workspace._backend.read_file("/home/daytona/.mcp")
-        self.assertEqual(json.loads(raw.decode("utf-8"))[0]["name"], "fallback")
+        self.assertEqual(
+            json.loads(raw.decode("utf-8"))[0]["name"],
+            "fallback",
+        )
 
-    async def test_run_bootstrap_error_includes_command_and_output(self) -> None:
+    async def test_run_bootstrap_error_includes_command_and_output(
+        self,
+    ) -> None:
         """Bootstrap failures include command, exit code, stderr and stdout."""
         self.bootstrap_patch.stop()
         try:
@@ -855,7 +877,9 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
                 "/home/daytona/.agentscope/.venv/bin/python"
             )
             workspace._uv_bin = "/home/daytona/.local/bin/uv"
-            workspace._dev_src_tar = "/home/daytona/.agentscope/agentscope_src.tar"
+            workspace._dev_src_tar = (
+                "/home/daytona/.agentscope/agentscope_src.tar"
+            )
             workspace._dev_src_dir = "/home/daytona/.agentscope/agentscope_src"
             workspace._glob_helper_script = "/home/daytona/.agentscope/glob.py"
             workspace._gateway_script = "/home/daytona/.agentscope/gateway.py"
@@ -872,8 +896,16 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
             workspace._backend = backend
 
             with (
-                patch.object(daytona_mod, "_is_released_install", return_value=True),
-                patch.object(daytona_mod, "_agentscope_version", return_value="1.2.3"),
+                patch.object(
+                    daytona_mod,
+                    "_is_released_install",
+                    return_value=True,
+                ),
+                patch.object(
+                    daytona_mod,
+                    "_agentscope_version",
+                    return_value="1.2.3",
+                ),
             ):
                 with self.assertRaisesRegex(
                     RuntimeError,
@@ -889,7 +921,9 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
         finally:
             self.bootstrap_patch.start()
 
-    async def test_close_stops_gracefully_and_clears_runtime_state(self) -> None:
+    async def test_close_stops_gracefully_and_clears_runtime_state(
+        self,
+    ) -> None:
         """``close`` uses graceful stop and releases host-side handles."""
         workspace = DaytonaWorkspace(workspace_id="wid-10")
         await workspace.initialize()
@@ -909,7 +943,7 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
         self.assertFalse(workspace.is_alive)
 
 
-async def _tool_text(tool: object, **kwargs: object) -> str:
+async def _tool_text(tool: Callable[..., Any], **kwargs: object) -> str:
     """Call a tool and return the concatenated text content."""
     result = await tool(**kwargs)
     chunks = []
@@ -1050,7 +1084,11 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
         """Skill management stores and reads skills under SDK workdir."""
         skill_dir = os.path.join(self.temp_dir.name, "local-skill")
         os.makedirs(skill_dir)
-        with open(os.path.join(skill_dir, "SKILL.md"), "w", encoding="utf-8") as f:
+        with open(
+            os.path.join(skill_dir, "SKILL.md"),
+            "w",
+            encoding="utf-8",
+        ) as f:
             f.write(
                 "---\n"
                 "name: demo-skill\n"
@@ -1080,7 +1118,11 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
 
         skill_dir = os.path.join(self.temp_dir.name, "dupe-skill")
         os.makedirs(skill_dir)
-        with open(os.path.join(skill_dir, "SKILL.md"), "w", encoding="utf-8") as f:
+        with open(
+            os.path.join(skill_dir, "SKILL.md"),
+            "w",
+            encoding="utf-8",
+        ) as f:
             f.write(
                 "---\n"
                 "name: dupe-skill\n"
@@ -1101,7 +1143,12 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
         )
         context_path = await self.workspace.offload_context(
             "session-1",
-            [UserMsg(name="user", content=[TextBlock(text="see"), data_block])],
+            [
+                UserMsg(
+                    name="user",
+                    content=[TextBlock(text="see"), data_block],
+                ),
+            ],
         )
 
         self.assertEqual(
@@ -1109,7 +1156,10 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
             "/home/daytona/sessions/session-1/context.jsonl",
         )
         context_raw = await self.workspace._backend.read_file(context_path)
-        self.assertIn("file:///home/daytona/data/", context_raw.decode("utf-8"))
+        self.assertIn(
+            "file:///home/daytona/data/",
+            context_raw.decode("utf-8"),
+        )
 
         tool_path = await self.workspace.offload_tool_result(
             "session-1",
@@ -1129,7 +1179,9 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
         )
 
         self.assertTrue(
-            await self.workspace._backend.file_exists("/home/daytona/sessions"),
+            await self.workspace._backend.file_exists(
+                "/home/daytona/sessions",
+            ),
         )
         self.assertTrue(
             await self.workspace._backend.file_exists("/home/daytona/data"),
@@ -1138,7 +1190,9 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
         await self.workspace.reset()
 
         self.assertFalse(
-            await self.workspace._backend.file_exists("/home/daytona/sessions"),
+            await self.workspace._backend.file_exists(
+                "/home/daytona/sessions",
+            ),
         )
         self.assertFalse(
             await self.workspace._backend.file_exists("/home/daytona/data"),
@@ -1377,7 +1431,10 @@ class TestDaytonaWorkspaceLive(IsolatedAsyncioTestCase):
                 },
             )
             self.assertEqual(write_response.state, ToolResultState.SUCCESS)
-            self.assertIn("written successfully", _response_text(write_response))
+            self.assertIn(
+                "written successfully",
+                _response_text(write_response),
+            )
 
             read_response = await _call_tool(
                 toolkit,

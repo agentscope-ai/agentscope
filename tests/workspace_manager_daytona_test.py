@@ -40,7 +40,8 @@ class TestDaytonaWorkspaceManager(IsolatedAsyncioTestCase):
         """Patch the workspace class used by the manager."""
         _FakeWorkspace.created.clear()
         self.workspace_patch = patch(
-            "agentscope.app.workspace_manager._daytona_workspace_manager.DaytonaWorkspace",
+            "agentscope.app.workspace_manager."
+            "_daytona_workspace_manager.DaytonaWorkspace",
             _FakeWorkspace,
         )
         self.workspace_patch.start()
@@ -146,14 +147,12 @@ class TestDaytonaWorkspaceManager(IsolatedAsyncioTestCase):
         manager = DaytonaWorkspaceManager(sweep_interval=60)
         manager.close_all = AsyncMock(wraps=manager.close_all)
 
-        entered = await manager.__aenter__()
-        sweep_task = manager._sweep_task
+        async with manager as entered:
+            sweep_task = manager._sweep_task
 
-        self.assertIs(entered, manager)
-        self.assertIsNotNone(sweep_task)
-        self.assertFalse(sweep_task.done())
-
-        await manager.__aexit__(None, None, None)
+            self.assertIs(entered, manager)
+            self.assertIsNotNone(sweep_task)
+            self.assertFalse(sweep_task.done())
 
         self.assertIsNone(manager._sweep_task)
         self.assertTrue(sweep_task.done())
@@ -170,7 +169,9 @@ class TestDaytonaWorkspaceManager(IsolatedAsyncioTestCase):
             close=_raise_close,
         )
 
-        await DaytonaWorkspaceManager._safe_close(workspace)  # type: ignore[arg-type]
+        await DaytonaWorkspaceManager._safe_close(  # type: ignore[arg-type]
+            workspace,
+        )
 
 
 if __name__ == "__main__":

@@ -212,7 +212,9 @@ class TestDaytonaBackendMock(IsolatedAsyncioTestCase):
             ),
         )
 
-    async def test_list_dir_recursive_uses_inherited_shell_helper(self) -> None:
+    async def test_list_dir_recursive_uses_inherited_shell_helper(
+        self,
+    ) -> None:
         """Recursive ``list_dir`` returns sandbox file paths."""
         self.sandbox.process.response = SimpleNamespace(
             exit_code=0,
