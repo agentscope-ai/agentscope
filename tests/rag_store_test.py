@@ -16,6 +16,7 @@ from agentscope.rag import (
     OceanBaseStore,
     AlibabaCloudMySQLStore,
     MongoDBStore,
+    ValkeyStore,
 )
 
 
@@ -595,3 +596,205 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
         # Remove Milvus Lite database file
         if os.path.exists("./milvus_demo.db"):
             os.remove("./milvus_demo.db")
+
+    async def test_valkey_store(self) -> None:  # pylint: disable=R0915
+        """Test the ValkeyStore implementation using mocks."""
+        import json
+
+        # Create mock glide modules
+        mock_glide = MagicMock()
+        mock_glide_shared = MagicMock()
+        mock_ft_create_options = MagicMock()
+        mock_ft_search_options = MagicMock()
+
+        # Mock GlideClient and GlideClusterClient
+        mock_client_instance = AsyncMock()
+        mock_glide.GlideClient = MagicMock()
+        mock_glide.GlideClient.create = AsyncMock(
+            return_value=mock_client_instance,
+        )
+        mock_glide.GlideClusterClient = MagicMock()
+        mock_glide.GlideClientConfiguration = MagicMock()
+        mock_glide.GlideClusterClientConfiguration = MagicMock()
+        mock_glide.NodeAddress = MagicMock()
+
+        # Mock Batch
+        mock_batch_instance = MagicMock()
+        mock_batch_instance.hset = MagicMock()
+        mock_glide.Batch = MagicMock(return_value=mock_batch_instance)
+
+        # Mock ft module
+        mock_ft = MagicMock()
+        mock_ft.list = AsyncMock(return_value=[])
+        mock_ft.create = AsyncMock(return_value="OK")
+        mock_ft.dropindex = AsyncMock(return_value="OK")
+        mock_glide.ft = mock_ft
+
+        # Mock ft_create_options classes
+        mock_ft_create_options.FtCreateOptions = MagicMock()
+        mock_ft_create_options.DataType = MagicMock()
+        mock_ft_create_options.DataType.HASH = "HASH"
+        mock_ft_create_options.VectorField = MagicMock()
+        mock_ft_create_options.VectorAlgorithm = MagicMock()
+        mock_ft_create_options.VectorAlgorithm.HNSW = "HNSW"
+        mock_ft_create_options.VectorFieldAttributesHnsw = MagicMock()
+        mock_ft_create_options.DistanceMetricType = MagicMock()
+        mock_ft_create_options.DistanceMetricType.COSINE = "COSINE"
+        mock_ft_create_options.VectorType = MagicMock()
+        mock_ft_create_options.VectorType.FLOAT32 = "FLOAT32"
+        mock_ft_create_options.TagField = MagicMock()
+        mock_ft_create_options.NumericField = MagicMock()
+
+        # Mock ft_search_options classes
+        mock_ft_search_options.FtSearchOptions = MagicMock()
+        mock_ft_search_options.FtSearchLimit = MagicMock()
+        mock_ft_search_options.ReturnField = MagicMock()
+
+        # Mock hset
+        mock_client_instance.hset = AsyncMock()
+
+        # Mock exec (for batch operations)
+        mock_client_instance.exec = AsyncMock(return_value=[])
+
+        # Mock delete
+        mock_client_instance.delete = AsyncMock()
+
+        # Prepare search response
+        # Valkey FT.SEARCH returns [count, {key: {field: value}}]
+        metadata_doc = {
+            "doc_id": "doc1",
+            "chunk_id": 0,
+            "total_chunks": 2,
+            "content": {
+                "type": "text",
+                "text": "This is a test document.",
+            },
+        }
+        # COSINE distance of 0.0026 => similarity = 1 - 0.0026 = 0.9974
+        mock_search_response = [
+            1,
+            {
+                b"agentscope:doc:some-uuid": {
+                    b"metadata": json.dumps(metadata_doc).encode(),
+                    b"vector_score": b"0.0026",
+                },
+            },
+        ]
+        mock_ft.search = AsyncMock(return_value=mock_search_response)
+
+        # Mock search for delete (find keys by doc_id)
+        mock_delete_search_response = [
+            2,
+            {
+                b"agentscope:doc:uuid-1": {},
+                b"agentscope:doc:uuid-2": {},
+            },
+        ]
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "glide": mock_glide,
+                "glide.async_commands": MagicMock(),
+                "glide.async_commands.ft": mock_ft,
+                "glide_shared": mock_glide_shared,
+                "glide_shared.commands": MagicMock(),
+                "glide_shared.commands.server_modules": MagicMock(),
+                "glide_shared.commands.server_modules.ft_options": (
+                    MagicMock()
+                ),
+                "glide_shared.commands.server_modules.ft_options"
+                ".ft_create_options": mock_ft_create_options,
+                "glide_shared.commands.server_modules.ft_options"
+                ".ft_search_options": mock_ft_search_options,
+            },
+        ):
+            store = ValkeyStore(
+                host="localhost",
+                port=6379,
+                index_name="test_idx",
+                prefix="test:doc:",
+                dimensions=3,
+                distance="COSINE",
+            )
+
+            # Inject the mock client directly
+            store._client = mock_client_instance  # pylint: disable=W0212
+
+            # Test add operation
+            await store.add(
+                [
+                    Document(
+                        embedding=[0.1, 0.2, 0.3],
+                        metadata=DocMetadata(
+                            content=TextBlock(
+                                type="text",
+                                text="This is a test document.",
+                            ),
+                            doc_id="doc1",
+                            chunk_id=0,
+                            total_chunks=2,
+                        ),
+                    ),
+                    Document(
+                        embedding=[0.9, 0.1, 0.4],
+                        metadata=DocMetadata(
+                            content=TextBlock(
+                                type="text",
+                                text="This is another test document.",
+                            ),
+                            doc_id="doc1",
+                            chunk_id=1,
+                            total_chunks=2,
+                        ),
+                    ),
+                ],
+            )
+
+            # Verify exec was called (batch HSET)
+            self.assertTrue(mock_client_instance.exec.called)
+
+            # Test search operation
+            res = await store.search(
+                query_embedding=[0.15, 0.25, 0.35],
+                limit=3,
+                score_threshold=0.8,
+            )
+
+            # Verify search results
+            self.assertEqual(len(res), 1)
+            self.assertEqual(
+                round(res[0].score, 4),
+                0.9974,
+            )
+            self.assertEqual(
+                res[0].metadata.content["text"],
+                "This is a test document.",
+            )
+            self.assertEqual(res[0].metadata.doc_id, "doc1")
+            self.assertEqual(res[0].metadata.chunk_id, 0)
+            self.assertEqual(res[0].metadata.total_chunks, 2)
+
+            # Verify ft.search was called
+            self.assertTrue(mock_ft.search.called)
+
+            # Test delete operation
+            mock_ft.search = AsyncMock(
+                return_value=mock_delete_search_response,
+            )
+            await store.delete(ids="doc1")
+
+            # Verify delete was called with all keys in one batch
+            self.assertTrue(mock_client_instance.delete.called)
+            delete_call_args = mock_client_instance.delete.call_args_list[-1]
+            self.assertEqual(len(delete_call_args[0][0]), 2)
+
+            # Test drop_index
+            mock_ft.list = AsyncMock(
+                return_value=[b"test_idx"],
+            )
+            await store.drop_index()
+            mock_ft.dropindex.assert_called_once()
+            self.assertFalse(
+                store._index_created,  # pylint: disable=W0212
+            )
