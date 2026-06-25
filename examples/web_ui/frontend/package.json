@@ -11,7 +11,7 @@
 		"preview": "vite preview"
 	},
 	"dependencies": {
-		"@agentscope-ai/agentscope": "^0.0.11",
+		"@agentscope-ai/agentscope": "^0.0.12",
 		"@fontsource-variable/geist": "^5.2.8",
 		"@tailwindcss/vite": "^4.3.0",
 		"class-variance-authority": "^0.7.1",
@@ -33,6 +33,7 @@
 		"react-dom": "^19.2.6",
 		"react-i18next": "^17.0.8",
 		"react-markdown": "^10.1.0",
+		"react-resizable-panels": "^4.11.2",
 		"react-router-dom": "^7.15.1",
 		"remark-gfm": "^4.0.1",
 		"shadcn": "^4.7.0",

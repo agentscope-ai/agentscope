@@ -266,7 +266,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 							onBlur={() => setIsFocused(false)}
 							placeholder={defaultPlaceholder}
 							disabled={disabled}
-							rows={3}
+							rows={1}
 							className="w-full resize-none rounded-md border-0 bg-transparent px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
 							style={{
 								maxHeight: 'calc(1.5em * 6)',

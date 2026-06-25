@@ -346,6 +346,50 @@
 		"completed": "已完成",
 		"blockedBy": "依赖"
 	},
+	"panel": {
+		"plan": {
+			"title": "计划",
+			"completed": "已完成：{{count}}",
+			"total": "总计：{{count}}",
+			"emptyTitle": "暂无任务",
+			"emptyDescription": "智能体规划的任务会显示在这里。"
+		},
+		"mcp": {
+			"title": "MCP",
+			"description": "工作区中配置的 MCP 服务器。",
+			"searchPlaceholder": "在工作区中搜索 MCP",
+			"add": "添加 MCP",
+			"tools": "{{count}} 个工具",
+			"emptyTitle": "暂无 MCP 服务器",
+			"emptyDescription": "添加 MCP 服务器为工作区配备工具。"
+		},
+		"skill": {
+			"title": "技能",
+			"description": "工作区中配置的技能。",
+			"searchPlaceholder": "在工作区中搜索技能",
+			"add": "添加技能",
+			"emptyTitle": "暂无技能",
+			"emptyDescription": "添加技能为工作区配备能力。"
+		},
+		"permission": {
+			"title": "权限",
+			"description": "本会话应用的权限。",
+			"mode": "模式：{{mode}}",
+			"workingDirectories": "工作目录",
+			"noWorkingDirectories": "暂无工作目录。",
+			"allow": "允许",
+			"deny": "拒绝",
+			"ask": "询问",
+			"anyInvocation": "任意调用",
+			"emptyTitle": "暂无规则",
+			"emptyDescription": "允许 / 拒绝 / 询问规则会在添加后显示在这里。"
+		},
+		"search": {
+			"emptyTitle": "无结果",
+			"emptyDescription": "没有匹配 “{{query}}” 的结果。"
+		},
+		"loading": "加载中…"
+	},
 	"team-sidebar": {
 		"membersHeading": "成员",
 		"noMembers": "还没有成员——让队长用 AgentCreate 添加一个。",

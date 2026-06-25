@@ -6,8 +6,12 @@ event stream.
 Two kinds of change are detected:
 
 - **State change** — ``tasks_context`` or ``permission_context``
-  modified during the tool call (detected via hash comparison).
-  Pushes ``CustomEvent(name="state_updated", value={...})``.
+  modified (detected via hash comparison). Checked both around each
+  tool call (``on_acting``, for incremental updates during a turn)
+  and around the whole reply (``on_reply``, to catch changes made
+  outside the tool-execution window — e.g. permission rules added
+  while handling a user confirmation). Pushes
+  ``CustomEvent(name="state_updated", value={...})``.
 - **Team change** — the tool that just ran is one of the team tools
   (``TeamCreate``, ``AgentCreate``, ``TeamDelete``). These tools
   directly mutate storage (``TeamRecord``, ``SessionRecord.team_id``),
@@ -82,6 +86,68 @@ class StateChangeMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         )
         return hashlib.md5(raw.encode()).hexdigest()
 
+    async def _publish_state(self, agent: Any) -> None:
+        """Push a ``state_updated`` event with the current tracked state.
+
+        Args:
+            agent: The agent instance whose state to publish.
+        """
+        event = CustomEvent(
+            name="state_updated",
+            value={
+                "tasks_context": agent.state.tasks_context.model_dump(
+                    mode="json",
+                ),
+                "permission_context": (
+                    agent.state.permission_context.model_dump(
+                        mode="json",
+                    )
+                ),
+            },
+        )
+        await publish_session_event(
+            self._bus,
+            self._session_id,
+            event.model_dump(mode="json"),
+        )
+
+    async def on_reply(
+        self,
+        agent: Any,
+        input_kwargs: dict,
+        next_handler: Callable[..., AsyncGenerator],
+    ) -> AsyncGenerator:
+        """Wrap the whole reply turn to catch state changes that happen
+        **outside** the ``on_acting`` tool-execution window.
+
+        Permission rules added while handling a
+        ``UserConfirmResultEvent`` (the user's "always allow" choice)
+        mutate ``permission_context`` in ``_handle_incoming_event`` —
+        which runs at the *start* of the reply turn, before the
+        confirmed tool's ``on_acting`` snapshot is taken. ``on_acting``
+        therefore sees no diff (the rule is already present in both its
+        before- and after-hash) and never pushes. Snapshotting around
+        the entire reply closes that gap.
+
+        Args:
+            agent: The executing agent.
+            input_kwargs (`dict`):
+                The reply inputs (new message(s) or a resumption event).
+            next_handler (`Callable[..., AsyncGenerator]`):
+                The downstream middleware or core reply logic.
+
+        Yields:
+            ``AgentEvent | Msg`` — unchanged from downstream.
+        """
+        hash_before = self._state_hash(agent)
+
+        async for item in next_handler(**input_kwargs):
+            yield item
+
+        hash_after = self._state_hash(agent)
+        if hash_before != hash_after:
+            await self._publish_state(agent)
+
     async def on_acting(
         self,
         agent: Any,
@@ -112,24 +178,7 @@ class StateChangeMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         # Check 1: state fields changed?
         hash_after = self._state_hash(agent)
         if hash_before != hash_after:
-            event = CustomEvent(
-                name="state_updated",
-                value={
-                    "tasks_context": agent.state.tasks_context.model_dump(
-                        mode="json",
-                    ),
-                    "permission_context": (
-                        agent.state.permission_context.model_dump(
-                            mode="json",
-                        )
-                    ),
-                },
-            )
-            await publish_session_event(
-                self._bus,
-                self._session_id,
-                event.model_dump(mode="json"),
-            )
+            await self._publish_state(agent)
 
         # Check 2: team tool ran?
         if tool_name in _TEAM_TOOL_NAMES:

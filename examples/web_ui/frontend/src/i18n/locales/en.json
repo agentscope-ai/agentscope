@@ -346,6 +346,50 @@
 		"completed": "Completed",
 		"blockedBy": "blocked by"
 	},
+	"panel": {
+		"plan": {
+			"title": "Plan",
+			"completed": "Completed: {{count}}",
+			"total": "Total: {{count}}",
+			"emptyTitle": "No tasks yet",
+			"emptyDescription": "Tasks the agent plans will show up here."
+		},
+		"mcp": {
+			"title": "MCP",
+			"description": "The MCP servers equipped in the workspace.",
+			"searchPlaceholder": "Search MCP in the workspace",
+			"add": "Add MCP",
+			"tools": "{{count}} tools",
+			"emptyTitle": "No MCP servers",
+			"emptyDescription": "Add an MCP server to equip the workspace with tools."
+		},
+		"skill": {
+			"title": "Skills",
+			"description": "The skills equipped in the workspace.",
+			"searchPlaceholder": "Search skills in the workspace",
+			"add": "Add Skill",
+			"emptyTitle": "No skills",
+			"emptyDescription": "Add a skill to equip the workspace."
+		},
+		"permission": {
+			"title": "Permissions",
+			"description": "The permissions applied in this session.",
+			"mode": "Mode: {{mode}}",
+			"workingDirectories": "Working Directories",
+			"noWorkingDirectories": "No working directories.",
+			"allow": "Allow",
+			"deny": "Deny",
+			"ask": "Ask",
+			"anyInvocation": "any invocation",
+			"emptyTitle": "No rules configured",
+			"emptyDescription": "Allow / deny / ask rules will appear here as they are added."
+		},
+		"search": {
+			"emptyTitle": "No results",
+			"emptyDescription": "Nothing matches “{{query}}”."
+		},
+		"loading": "Loading…"
+	},
 	"team-sidebar": {
 		"membersHeading": "Members",
 		"noMembers": "No members yet — ask the leader to spawn one with AgentCreate.",
