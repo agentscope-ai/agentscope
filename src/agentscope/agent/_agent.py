@@ -16,7 +16,12 @@ from typing import (
 
 import jsonschema
 
-from ._config import ContextConfig, ReActConfig, ModelConfig
+from ._config import (
+    ContextConfig,
+    ReActConfig,
+    ModelConfig,
+    SELF_COMPACT_DECISION_SCHEMA,
+)
 from ..state import AgentState
 from ._utils import _ToolCallBatch
 from .._logging import logger
@@ -317,16 +322,45 @@ class Agent:
 
         # Skip if no compression is needed
         threshold = cfg.trigger_ratio * self.model.context_size
-        if estimated_tokens < threshold:
+        exceeds_threshold = estimated_tokens >= threshold
+        self_compact_requested = False
+        if (
+            not exceeds_threshold
+            and cfg.self_compact_enabled
+            and self.state.context
+        ):
+            try:
+                self_compact_requested = await self._should_self_compact(
+                    cfg,
+                    kwargs["messages"],
+                )
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                logger.warning(
+                    "[AGENT %s]: Self-compaction rubric failed, skipping "
+                    "optional early compression: %s",
+                    self.name,
+                    e,
+                )
+
+        if not exceeds_threshold and not self_compact_requested:
             return
 
-        logger.info(
-            "[AGENT %s]: Current token count %d exceeds the threshold %d, "
-            "activating compression.",
-            self.name,
-            int(estimated_tokens),
-            int(threshold),
-        )
+        if exceeds_threshold:
+            logger.info(
+                "[AGENT %s]: Current token count %d exceeds the threshold "
+                "%d, activating compression.",
+                self.name,
+                int(estimated_tokens),
+                int(threshold),
+            )
+        else:
+            logger.info(
+                "[AGENT %s]: Self-compaction rubric requested compression "
+                "at token count %d below threshold %d.",
+                self.name,
+                int(estimated_tokens),
+                int(threshold),
+            )
 
         if len(self.state.context) == 0:
             # The system prompt and the summary (if exists) exceeds the
@@ -352,6 +386,14 @@ class Agent:
         )
 
         if len(msgs_to_compress) == 0:
+            if not exceeds_threshold:
+                logger.info(
+                    "[AGENT %s]: Self-compaction skipped because there is no "
+                    "context outside the reserved window to compress.",
+                    self.name,
+                )
+                return
+
             # The reserve ratio is too large so that although it exceeds the
             # trigger threshold, the context to be compressed is empty
             # Fallback by lowering the reserve ratio to compress more context.
@@ -426,6 +468,15 @@ class Agent:
             )
 
         except Exception as e:
+            if self_compact_requested and not exceeds_threshold:
+                logger.warning(
+                    "[AGENT %s]: Optional self-compaction failed below the "
+                    "token threshold, keeping the original context: %s",
+                    self.name,
+                    e,
+                )
+                return
+
             if context_overflow:
                 logger.warning(
                     "Failed to compress context, which may be caused by "
@@ -488,6 +539,40 @@ class Agent:
             "[AGENT %s]: The context compression finished.",
             self.name,
         )
+
+    async def _should_self_compact(
+        self,
+        context_config: ContextConfig,
+        messages: list[Msg],
+    ) -> bool:
+        """Decide whether to compact context using the SELFCOMPACT rubric."""
+        cur_iter = self.state.cur_iter or 0
+        if cur_iter < context_config.self_compact_min_iters:
+            return False
+
+        probe_interval = context_config.self_compact_probe_interval
+        if probe_interval > 1 and cur_iter % probe_interval != 0:
+            return False
+
+        prompt = context_config.self_compact_rubric_prompt
+        if not prompt:
+            return False
+
+        # SELFCOMPACT (https://arxiv.org/pdf/2606.23525) uses a lightweight
+        # model verdict to choose compaction timing, instead of relying only on
+        # a fixed token threshold.
+        rubric_messages = messages + [
+            UserMsg(
+                name="user",
+                content=prompt,
+            ),
+        ]
+        res = await self.model.generate_structured_output(
+            messages=rubric_messages,
+            structured_model=SELF_COMPACT_DECISION_SCHEMA,
+        )
+        decision = str(res.content.get("decision", "")).upper()
+        return decision == "COMPRESS"
 
     # ======================================================================
     # Agent core methods, including _reply, _reasoning, _acting, etc.
