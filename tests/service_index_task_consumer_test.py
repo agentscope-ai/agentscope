@@ -178,6 +178,23 @@ class _RecordingWorker:
         knowledge_base_id: str,
         document_id: str,
     ) -> None:
+        """Record the call and signal the test, optionally failing or
+        sleeping first to exercise the consumer's error and timing
+        paths.
+
+        Args:
+            user_id (`str`):
+                The owning user id forwarded by the consumer.
+            knowledge_base_id (`str`):
+                The knowledge base id forwarded by the consumer.
+            document_id (`str`):
+                The document id forwarded by the consumer.
+
+        Raises:
+            `RuntimeError`:
+                When ``fail_on_doc`` matches ``document_id`` — used by
+                the consumer-resilience tests.
+        """
         if self.process_delay:
             await asyncio.sleep(self.process_delay)
         self.calls.append(

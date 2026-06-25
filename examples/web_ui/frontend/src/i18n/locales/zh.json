@@ -501,6 +501,16 @@
 			"emptyTitle": "暂无技能",
 			"emptyDescription": "添加技能为工作区配备能力。"
 		},
+		"knowledge": {
+			"title": "知识库",
+			"description": "智能体可检索的知识库。",
+			"searchPlaceholder": "搜索知识库",
+			"emptyTitle": "暂无知识库",
+			"emptyDescription": "请先在「知识库」页面创建一个。",
+			"parametersTitle": "检索配置",
+			"parametersDescription": "知识库检索参数设置",
+			"selectedCount": "已挂载 {{count}} 个"
+		},
 		"permission": {
 			"title": "权限",
 			"description": "本会话应用的权限。",

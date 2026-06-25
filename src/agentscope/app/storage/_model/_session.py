@@ -83,6 +83,33 @@ class EmbeddingModelConfig(BaseModel):
     """
 
 
+class SessionKnowledgeConfig(BaseModel):
+    """Session-level knowledge base attachment.
+
+    Persists which knowledge bases the agent should retrieve from for
+    this session and how the
+    :class:`~agentscope.app.rag.KnowledgeBaseMiddleware` should be
+    configured.  ``parameters`` carries the user-tunable middleware
+    fields verbatim (mirrors :attr:`ChatModelConfig.parameters`); the
+    accepted keys and value types are described by
+    :meth:`KnowledgeBaseMiddleware.Parameters.model_json_schema`.
+    """
+
+    knowledge_base_ids: list[str] = Field(default_factory=list)
+    """Ids of the knowledge bases attached to this session.
+
+    Empty list means no knowledge base is wired and the middleware is
+    not installed.
+    """
+
+    parameters: dict = Field(default_factory=dict)
+    """Middleware parameters keyed by ``KnowledgeBaseMiddleware``'s
+    :class:`Parameters` model fields (``mode``, ``top_k``,
+    ``score_threshold``, ``emit_hint_event``, ``persist_hint``,
+    ``hint_template``).
+    """
+
+
 class SessionConfig(BaseModel):
     """Session configuration — set at creation, updatable via PATCH."""
 
@@ -104,6 +131,11 @@ class SessionConfig(BaseModel):
 
     tts_model_config: TTSModelConfig | None = None
     """The TTS model config. None means TTS is not enabled."""
+
+    knowledge_config: SessionKnowledgeConfig | None = None
+    """Knowledge bases attached to this session and the corresponding
+    :class:`~agentscope.app.rag.KnowledgeBaseMiddleware` parameters.
+    ``None`` means no knowledge base is wired."""
 
 
 class SessionRecord(_RecordBase):

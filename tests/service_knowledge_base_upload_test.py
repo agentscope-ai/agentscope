@@ -24,12 +24,12 @@ import fakeredis.aioredis
 from fastapi.testclient import TestClient
 
 from agentscope.app import create_app
-from agentscope.app.blob_store import LocalBlobStore
-from agentscope.app.knowledge_base_manager import (
+from agentscope.app.rag.blob_store import LocalBlobStore
+from agentscope.app.rag.knowledge_base_manager import (
     KnowledgeBaseManagerBase,
     KnowledgeBaseNotFoundError,
 )
-from agentscope.app.knowledge_base_manager._dimension_policy import (
+from agentscope.app.rag.knowledge_base_manager._dimension_policy import (
     DimensionPolicy,
     DimensionPolicyKind,
 )
@@ -127,6 +127,28 @@ class _FakeKnowledge:
         document_id: str | None = None,
         document_metadata: dict | None = None,
     ) -> str:
+        """Pretend to embed and insert ``chunks`` into the bound store.
+
+        The fake skips the real embedding step — it stamps a single
+        scalar vector on every record so the upload pipeline can be
+        exercised without an embedding model.
+
+        Args:
+            chunks (`list`):
+                The parsed and chunked document content.
+            document_id (`str | None`, optional):
+                Caller-supplied document id; the fake just echoes it
+                back rather than generating a UUID.
+            document_metadata (`dict | None`, optional):
+                Document-level metadata; ignored — the upload tests
+                don't assert on metadata propagation.
+
+        Returns:
+            `str`:
+                The (caller-supplied) document id, or ``""`` when
+                none was passed.
+        """
+        del document_metadata  # unused — see docstring
         records = [
             VectorRecord(
                 vector=[0.0],
@@ -139,9 +161,29 @@ class _FakeKnowledge:
         return document_id or ""
 
     async def delete_document(self, document_id: str) -> None:
+        """Remove every record for ``document_id`` from the bound store.
+
+        Args:
+            document_id (`str`):
+                The document whose records should be deleted.
+        """
         await self._vector_store.delete(self._collection_name, document_id)
 
     async def search(self, queries: list, top_k: int = 5) -> list:
+        """Return an empty result list — search is out of scope here.
+
+        Args:
+            queries (`list`):
+                The query inputs; ignored.
+            top_k (`int`, defaults to ``5``):
+                The maximum result count; ignored.
+
+        Returns:
+            `list`:
+                Always empty — the upload tests do not exercise
+                retrieval.
+        """
+        del queries, top_k  # unused — see docstring
         return []
 
 
@@ -283,7 +325,6 @@ class KnowledgeBaseUploadFlowTest(IsolatedAsyncioTestCase):
             storage=storage,
             message_bus=message_bus,
             workspace_manager=_NoopWorkspaceManager(),
-            vector_store=self._vector_store,
             knowledge_base_manager=_FakeKbManager(
                 storage=storage,
                 vector_store=self._vector_store,

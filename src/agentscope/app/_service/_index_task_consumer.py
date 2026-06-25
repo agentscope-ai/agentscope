@@ -137,8 +137,6 @@ class IndexTaskConsumer:
                 on_ready=ready.set,
             ):
                 await self._drain_and_dispatch()
-        except asyncio.CancelledError:
-            raise
         except Exception:  # pylint: disable=broad-except
             logger.exception(
                 "IndexTaskConsumer loop crashed; subscription ended.",

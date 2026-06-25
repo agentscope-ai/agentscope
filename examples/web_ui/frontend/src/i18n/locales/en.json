@@ -501,6 +501,16 @@
 			"emptyTitle": "No skills",
 			"emptyDescription": "Add a skill to equip the workspace."
 		},
+		"knowledge": {
+			"title": "Knowledge Bases",
+			"description": "Knowledge bases the agent can retrieve from.",
+			"searchPlaceholder": "Search knowledge bases",
+			"emptyTitle": "No knowledge bases",
+			"emptyDescription": "Create one on the Knowledge Bases page first.",
+			"parametersTitle": "Retrieval settings",
+			"parametersDescription": "Knowledge base retrieval settings.",
+			"selectedCount": "{{count}} attached"
+		},
 		"permission": {
 			"title": "Permissions",
 			"description": "The permissions applied in this session.",

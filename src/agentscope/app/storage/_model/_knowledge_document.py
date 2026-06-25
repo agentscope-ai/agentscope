@@ -67,7 +67,7 @@ class KnowledgeDocumentData(BaseModel):
         ),
     )
     """Scheme-qualified URI handed back by
-    :class:`~agentscope.app.blob_store.BlobStoreBase`.  The worker
+    :class:`~agentscope.app.rag.blob_store.BlobStoreBase`.  The worker
     streams bytes back through the same blob store."""
 
     status: KnowledgeDocumentStatus = Field(

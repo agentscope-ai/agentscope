@@ -10,7 +10,7 @@ lifecycle.  Given a ``document_id`` it:
 3. routes to a parser by IANA media type;
 4. chunks the resulting sections;
 5. embeds + writes to the vector store through
-   :class:`~agentscope.app.knowledge_base_manager.Knowledge`;
+   :class:`~agentscope.app.rag.knowledge_base_manager.Knowledge`;
 6. transitions the status through ``parsing → chunking → indexing →
    ready`` (or ``error``) on the way.
 
@@ -29,14 +29,73 @@ from typing import TYPE_CHECKING
 from ..._logging import logger
 
 if TYPE_CHECKING:
-    from ..blob_store import BlobStoreBase
-    from ..knowledge_base_manager import KnowledgeBaseManagerBase
+    from ..rag.blob_store import BlobStoreBase
+    from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
     from ..storage import StorageBase
     from ...rag import ChunkerBase, ParserBase, Section
 
 # Read blob bytes in chunks bounded so the worker never holds the whole
 # file in memory at once even when the parser is byte-oriented.
 _READ_CHUNK = 1 << 20  # 1 MiB
+
+
+def _build_parser_registry(
+    parsers: "list[ParserBase] | dict[str, ParserBase]",
+) -> "dict[str, ParserBase]":
+    """Normalise the user-supplied parser registry.
+
+    Two input shapes are accepted:
+
+    - **List** — each parser's ``supported_media_types`` is expanded;
+      duplicate media types resolve to the **last** parser in the list
+      (so callers can layer custom parsers over the defaults), with a
+      warning logged for each override so silent shadowing is not
+      possible.
+    - **Dict** — the caller's mapping is used verbatim.  This is the
+      escape hatch for callers who want full control over routing (one
+      parser bound to multiple types, type aliases, etc.); a warning is
+      logged when a parser is registered against a media type it does
+      not declare in ``supported_media_types``, since that almost
+      always indicates a typo.
+
+    Args:
+        parsers (`list[ParserBase] | dict[str, ParserBase]`):
+            The user-supplied parser registry.
+
+    Returns:
+        `dict[str, ParserBase]`:
+            The resolved ``media_type → parser`` routing table.
+    """
+    if isinstance(parsers, dict):
+        for media_type, parser in parsers.items():
+            declared = getattr(parser, "supported_media_types", ())
+            if declared and media_type not in declared:
+                logger.warning(
+                    "Parser %s registered for media type %r but it only "
+                    "declares %s — proceeding with the caller-supplied "
+                    "mapping.",
+                    type(parser).__name__,
+                    media_type,
+                    list(declared),
+                )
+        return dict(parsers)
+
+    registry: dict[str, "ParserBase"] = {}
+    for parser in parsers:
+        for media_type in parser.supported_media_types:
+            previous = registry.get(media_type)
+            if previous is not None and previous is not parser:
+                logger.warning(
+                    "Parser %s overrides %s for media type %r — later "
+                    "entries in `parsers` win.  Pass a "
+                    "`dict[str, ParserBase]` if you want explicit "
+                    "routing.",
+                    type(parser).__name__,
+                    type(previous).__name__,
+                    media_type,
+                )
+            registry[media_type] = parser
+    return registry
 
 
 class IndexWorker:
@@ -54,7 +113,7 @@ class IndexWorker:
         storage: "StorageBase",
         blob_store: "BlobStoreBase",
         knowledge_base_manager: "KnowledgeBaseManagerBase",
-        parsers: "list[ParserBase]",
+        parsers: "list[ParserBase] | dict[str, ParserBase]",
         chunker: "ChunkerBase",
         node_id: str,
         max_concurrency: int = 4,
@@ -71,9 +130,21 @@ class IndexWorker:
             knowledge_base_manager (`KnowledgeBaseManagerBase`):
                 Resolves the :class:`Knowledge` runtime for embedding
                 and vector store writes.
-            parsers (`list[ParserBase]`):
-                Parsers indexed by ``supported_media_types``.  Same
-                registry the upload service uses, passed in by DI.
+            parsers (`list[ParserBase] | dict[str, ParserBase]`):
+                Parsers used to dispatch uploads by IANA media type.
+                Two input shapes are accepted:
+
+                - **List** — each parser's ``supported_media_types`` is
+                  expanded into a routing table; later entries override
+                  earlier ones for overlapping types, with a warning
+                  logged at construction time.
+                - **Dict** — caller-supplied ``media_type → parser``
+                  routing table used verbatim.  ``supported_media_types``
+                  is **not** consulted, but a warning is logged if a
+                  parser is registered against a media type it does not
+                  declare.
+
+                Same registry the upload service uses, passed in by DI.
             chunker (`ChunkerBase`):
                 The shared chunker.
             node_id (`str`):
@@ -101,10 +172,7 @@ class IndexWorker:
         self._storage = storage
         self._blob_store = blob_store
         self._manager = knowledge_base_manager
-        self._parsers_by_media_type: dict[str, "ParserBase"] = {}
-        for parser in parsers:
-            for media_type in parser.supported_media_types:
-                self._parsers_by_media_type[media_type] = parser
+        self._parsers_by_media_type = _build_parser_registry(parsers)
         self._chunker = chunker
         self._node_id = node_id
         self._lease_ttl = lease_ttl
@@ -168,11 +236,6 @@ class IndexWorker:
                     knowledge_base_id,
                     document_id,
                 )
-        except asyncio.CancelledError:
-            # Shutdown path — let the sweeper redispatch once the
-            # lease expires; do NOT update status because the work
-            # may still be picked up cleanly.
-            raise
         except Exception as exc:  # noqa: BLE001 — terminal error sink
             await self._mark_error(
                 user_id,

@@ -87,6 +87,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             scheduler_manager=scheduler,
             background_task_manager=bg_manager,
             message_bus=message_bus,
+            knowledge_base_manager=knowledge_base_manager,
             extra_agent_middlewares=app.state.extra_agent_middlewares,
             extra_agent_tools=app.state.extra_agent_tools,
             custom_subagent_templates=app.state.custom_subagent_templates,
@@ -114,8 +115,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             #
             # * Dedicated — ``enable_index_worker=False``: this
             #   lifespan does NOT start a worker. One or more separate
-            #   processes (``python -m agentscope.app.worker``) run
-            #   their own consumer + worker pair subscribed to the
+            #   processes (``python -m agentscope.app.rag.index_worker``)
+            #   run their own consumer + worker pair subscribed to the
             #   same channel.
             #
             # The sweeper STILL runs in the API process either way,

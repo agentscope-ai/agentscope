@@ -204,7 +204,10 @@ class S3BlobStore(BlobStoreBase):
         return f"{_SCHEME}{self._bucket}/{key}"
 
     @asynccontextmanager
-    async def open(self, uri: str) -> AsyncIterator[AsyncReadable]:
+    async def open(  # type: ignore[override]
+        self,
+        uri: str,
+    ) -> AsyncIterator[AsyncReadable]:
         """Stream-read a blob by URI.
 
         Yields an :class:`AsyncReadable` backed by the response

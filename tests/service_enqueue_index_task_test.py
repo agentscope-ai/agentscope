@@ -1,16 +1,18 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
-"""Tests for :class:`MessageBusDispatcher`.
+"""Tests for :func:`agentscope.app._bus_ops.enqueue_index_task`.
 
-The dispatcher is a four-line composition over two bus primitives —
+The helper is a three-line composition over two bus primitives —
 ``queue_push`` and ``publish`` — so the tests verify only that:
 
-- the queued payload carries the three fields IndexTaskConsumer reads;
-- a signal is published exactly once per dispatch;
-- both primitives are reached against the production
-  :class:`RedisMessageBus` backend (proxied by ``fakeredis``), not
-  just an in-memory mock — keeping the test honest against the
-  wire-level contract the worker side will rely on.
+- the queued payload carries the three fields the
+  :class:`~agentscope.app._service.IndexTaskConsumer` reads;
+- a signal is published exactly once per call;
+- both primitives reach the production
+  :class:`~agentscope.app.message_bus.RedisMessageBus` backend
+  (proxied by ``fakeredis``), not just an in-memory mock — keeping
+  the test honest against the wire-level contract the worker side
+  relies on.
 
 If a future change adds metadata to the payload, this test is the
 contract gate: callers are expected to keep ``user_id`` /
@@ -22,40 +24,63 @@ from unittest import IsolatedAsyncioTestCase
 
 import fakeredis.aioredis
 
-from agentscope.app.index_dispatch import MessageBusDispatcher
+from agentscope.app._bus_ops import enqueue_index_task
 from agentscope.app.message_bus import MessageBusKeys, RedisMessageBus
 
 
 def _make_bus(fr: fakeredis.aioredis.FakeRedis) -> RedisMessageBus:
-    """Construct a :class:`RedisMessageBus` bound to *fr*."""
+    """Construct a :class:`RedisMessageBus` bound to *fr*.
+
+    Args:
+        fr (`fakeredis.aioredis.FakeRedis`):
+            The fake Redis client to inject into the bus.
+
+    Returns:
+        `RedisMessageBus`:
+            A bus subclass whose ``__aenter__`` skips the real
+            connection setup and binds *fr* as the client.
+    """
 
     class _B(RedisMessageBus):
+        """Test-only bus that reuses the supplied fakeredis client."""
+
         async def __aenter__(
             self,
         ) -> "RedisMessageBus":  # type: ignore[override]
+            """Bind the pre-supplied fakeredis client and return self.
+
+            Returns:
+                `RedisMessageBus`:
+                    This bus, ready for the with-block body.
+            """
             self._client = fr
             return self
 
         async def aclose(self) -> None:
+            """Drop the client reference without touching the network."""
             self._client = None
 
     return _B()
 
 
-class TestMessageBusDispatcher(IsolatedAsyncioTestCase):
+class TestEnqueueIndexTask(IsolatedAsyncioTestCase):
     """Verifies the queue_push + publish composition."""
 
     async def asyncSetUp(self) -> None:
+        """Wire a fakeredis-backed bus into an async exit stack."""
         self.fr = fakeredis.aioredis.FakeRedis(decode_responses=True)
         self._stack = AsyncExitStack()
         self.bus = await self._stack.enter_async_context(_make_bus(self.fr))
 
     async def asyncTearDown(self) -> None:
+        """Tear the exit stack and the fakeredis client down."""
         await self._stack.aclose()
         await self.fr.aclose()
 
-    async def test_dispatch_pushes_payload_and_publishes_signal(self) -> None:
-        """A dispatch puts one structured entry on the durable queue
+    async def test_enqueue_pushes_payload_and_publishes_signal(
+        self,
+    ) -> None:
+        """One enqueue puts one structured entry on the durable queue
         and one opaque payload on the signal channel.
 
         Order matters: the queue push must precede the publish so a
@@ -68,6 +93,7 @@ class TestMessageBusDispatcher(IsolatedAsyncioTestCase):
         received: list[dict] = []
 
         async def _signal_consumer() -> None:
+            """Consume one signal payload and exit."""
             async for payload in self.bus.subscribe(
                 MessageBusKeys.index_tasks_signal(),
                 on_ready=ready.set,
@@ -78,8 +104,8 @@ class TestMessageBusDispatcher(IsolatedAsyncioTestCase):
         task = asyncio.create_task(_signal_consumer())
         await asyncio.wait_for(ready.wait(), timeout=2.0)
 
-        dispatcher = MessageBusDispatcher(self.bus)
-        await dispatcher.dispatch(
+        await enqueue_index_task(
+            self.bus,
             user_id="u",
             knowledge_base_id="kb",
             document_id="doc",
@@ -105,17 +131,18 @@ class TestMessageBusDispatcher(IsolatedAsyncioTestCase):
             },
         )
 
-    async def test_double_dispatch_queues_twice(self) -> None:
-        """Two dispatches for the same document leave two entries on
-        the queue — the dispatcher is intentionally not deduplicating,
+    async def test_double_enqueue_queues_twice(self) -> None:
+        """Two enqueues for the same document leave two entries on
+        the queue — the helper is intentionally not deduplicating,
         the worker's lease CAS is the dedup contract."""
-        dispatcher = MessageBusDispatcher(self.bus)
-        await dispatcher.dispatch(
+        await enqueue_index_task(
+            self.bus,
             user_id="u",
             knowledge_base_id="kb",
             document_id="doc",
         )
-        await dispatcher.dispatch(
+        await enqueue_index_task(
+            self.bus,
             user_id="u",
             knowledge_base_id="kb",
             document_id="doc",

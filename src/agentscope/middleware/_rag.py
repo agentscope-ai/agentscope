@@ -128,7 +128,10 @@ class _RetrieveKnowledgeTool(ToolBase):
                 The owning middleware, whose retrieval pipeline is
                 reused for the actual search.
         """
-        super().__init__(middleware)
+        # ``ToolBase.__init__`` expects a list of tool middlewares;
+        # this tool has none of its own, so pass ``None`` (the owning
+        # ``RAGMiddleware`` is an agent middleware, not a tool one).
+        super().__init__()
         self._middleware = middleware
 
     async def check_permissions(
@@ -415,9 +418,11 @@ class RAGMiddleware(MiddlewareBase):
             async for evt in next_handler(**input_kwargs):
                 yield evt
         finally:
-            if hint is not None and not self._persist_hint:
-                if carrier is None:
-                    return
+            if (
+                hint is not None
+                and not self._persist_hint
+                and carrier is not None
+            ):
                 carrier.content = [
                     b for b in carrier.content if b.id != hint.id
                 ]

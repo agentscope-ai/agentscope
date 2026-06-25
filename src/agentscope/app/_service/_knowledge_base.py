@@ -5,7 +5,7 @@ The router stays thin and DTO-shaped; everything HTTP-side that needs
 to coordinate persistence, the blob store, the indexing pipeline,
 and the vector store goes through this service.
 
-The split with :class:`~agentscope.app.knowledge_base_manager.Knowledge`
+The split with :class:`~agentscope.app.rag.knowledge_base_manager.Knowledge`
 is deliberate.  ``Knowledge`` is a **library-mode** handle that only
 depends on the vector store; embedded users instantiate one and drive
 the parse → chunk → embed pipeline themselves.  ``KnowledgeBaseService``
@@ -22,7 +22,7 @@ from typing import IO, TYPE_CHECKING
 
 from fastapi import HTTPException, status
 
-from ..knowledge_base_manager import (
+from ..rag.knowledge_base_manager import (
     DimensionPolicyError,
     KnowledgeBaseNotFoundError,
 )
@@ -34,8 +34,8 @@ from ..._logging import logger
 from .._bus_ops import enqueue_index_task
 
 if TYPE_CHECKING:
-    from ..blob_store import BlobStoreBase
-    from ..knowledge_base_manager import KnowledgeBaseManagerBase
+    from ..rag.blob_store import BlobStoreBase
+    from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
     from ..message_bus import MessageBus
     from ..storage import (
         EmbeddingModelConfig,

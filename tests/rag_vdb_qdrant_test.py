@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Unit tests for the QdrantStore class."""
+from contextlib import AsyncExitStack
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString
@@ -70,12 +71,14 @@ class QdrantStoreTest(IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         """Create an in-memory Qdrant store before each test."""
-        self.store = QdrantStore(location=":memory:")
-        await self.store.__aenter__()
+        self._exit_stack = AsyncExitStack()
+        self.store = await self._exit_stack.enter_async_context(
+            QdrantStore(location=":memory:"),
+        )
 
     async def asyncTearDown(self) -> None:
         """Close the store after each test."""
-        await self.store.__aexit__(None, None, None)
+        await self._exit_stack.aclose()
 
     async def test_collection_lifecycle(self) -> None:
         """Collections can be created, checked, and deleted."""

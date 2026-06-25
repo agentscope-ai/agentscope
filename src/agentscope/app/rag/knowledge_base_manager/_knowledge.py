@@ -20,17 +20,17 @@ import asyncio
 import uuid
 from typing import TYPE_CHECKING
 
-from ...message import DataBlock, TextBlock
+from ....message import DataBlock, TextBlock
 
 if TYPE_CHECKING:
-    from ...embedding import EmbeddingModelBase
-    from ...rag import (
+    from ....embedding import EmbeddingModelBase
+    from ....rag import (
         Chunk,
         DocumentSummary,
         VectorSearchResult,
         VectorStoreBase,
     )
-    from ..storage import KnowledgeBaseRecord
+    from ...storage import KnowledgeBaseRecord
 
 
 class Knowledge:
@@ -221,7 +221,7 @@ class Knowledge:
             `str`:
                 The (possibly generated) document id.
         """
-        from ...rag import VectorRecord
+        from ....rag import VectorRecord
 
         if not chunks:
             return document_id or uuid.uuid4().hex

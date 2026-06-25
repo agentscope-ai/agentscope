@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Unit tests for the RAGMiddleware class."""
+from contextlib import AsyncExitStack
 from types import SimpleNamespace
 from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
@@ -80,17 +81,24 @@ def _make_record(
     )
 
 
-def _make_agent(context: list[Msg] | None = None) -> Any:
+def _make_agent(
+    context: list[Msg] | None = None,
+    cur_iter: int = 0,
+) -> Any:
     """Build a minimal stand-in for an Agent.
 
     Args:
         context (`list[Msg] | None`, optional):
             The initial agent context.
+        cur_iter (`int`, defaults to ``0``):
+            Value for ``state.cur_iter``; the middleware only retrieves
+            on the first reasoning step (``0``).
 
     Returns:
         `Any`:
             An object with ``name`` and ``state.context`` /
-            ``state.reply_id`` / ``state.session_id``.
+            ``state.reply_id`` / ``state.session_id`` /
+            ``state.cur_iter``.
     """
     return SimpleNamespace(
         name="assistant",
@@ -98,6 +106,7 @@ def _make_agent(context: list[Msg] | None = None) -> Any:
             context=context if context is not None else [],
             reply_id="reply-1",
             session_id="session-1",
+            cur_iter=cur_iter,
         ),
     )
 
@@ -121,8 +130,10 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         """Create an in-memory store seeded with one collection."""
-        self.store = QdrantStore(location=":memory:")
-        await self.store.__aenter__()
+        self._exit_stack = AsyncExitStack()
+        self.store = await self._exit_stack.enter_async_context(
+            QdrantStore(location=":memory:"),
+        )
         await self.store.create_collection("kb-1", dimensions=3)
         await self.store.insert(
             "kb-1",
@@ -135,7 +146,7 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         """Close the store after each test."""
-        await self.store.__aexit__(None, None, None)
+        await self._exit_stack.aclose()
 
     def _middleware(self, **kwargs: Any) -> RAGMiddleware:
         """Build a middleware bound to the test store.
@@ -155,36 +166,42 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
             **kwargs,
         )
 
-    async def _run_reply_then_reasoning(
+    async def _run_reasoning(
         self,
         middleware: RAGMiddleware,
         agent: Any,
-        inputs: Any,
+        inputs: Msg | list[Msg] | None,
         context_during_reasoning: list[dict] | None = None,
     ) -> list:
-        """Drive the on_reply → on_reasoning sequence like the agent.
+        """Seed the context with the fresh inputs and drive ``on_reasoning``.
 
-        Mimics the real call order: ``on_reply`` runs first (staging
-        the hint), its ``next_handler`` appends the input message to
-        the context (as ``_reply_impl`` does) and then runs
-        ``on_reasoning``, whose ``next_handler`` optionally snapshots
-        the context for assertions.
+        Mirrors the real agent loop: by the time ``on_reasoning`` is
+        called the agent has already appended the new user turn(s)
+        (when any) to ``agent.state.context``.  Non-message inputs
+        (resumption events, ``None``) are *not* appended — the
+        middleware's "skip retrieval" branch is triggered by an empty
+        trailing user turn in the context.
 
         Args:
             middleware (`RAGMiddleware`):
                 The middleware under test.
             agent (`Any`):
                 The fake agent.
-            inputs (`Any`):
-                The reply inputs.
+            inputs (`Msg | list[Msg] | None`):
+                The reply inputs to splice into the context before
+                ``on_reasoning`` runs.  ``None`` skips the splice.
             context_during_reasoning (`list[dict] | None`, optional):
-                When provided, receives a dump of the agent context
-                as seen by the model call.
+                When provided, receives a dump of the agent context as
+                seen by the wrapped (innermost) model call.
 
         Returns:
             `list`:
-                All events yielded by the on_reply chain.
+                All events yielded by the ``on_reasoning`` chain.
         """
+        if isinstance(inputs, Msg):
+            agent.state.context.append(inputs)
+        elif isinstance(inputs, list):
+            agent.state.context.extend(inputs)
 
         async def reasoning_next(**_kwargs: Any) -> AsyncGenerator:
             if context_during_reasoning is not None:
@@ -193,24 +210,11 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
                 )
             yield "reasoning-evt"
 
-        async def reply_next(**kwargs: Any) -> AsyncGenerator:
-            msgs = kwargs.get("inputs")
-            if isinstance(msgs, Msg):
-                agent.state.context.append(msgs)
-            elif isinstance(msgs, list):
-                agent.state.context.extend(msgs)
-            async for evt in middleware.on_reasoning(
+        return await _drain(
+            middleware.on_reasoning(
                 agent=agent,
                 input_kwargs={"tool_choice": None},
                 next_handler=reasoning_next,
-            ):
-                yield evt
-
-        return await _drain(
-            middleware.on_reply(
-                agent=agent,
-                input_kwargs={"inputs": inputs},
-                next_handler=reply_next,
             ),
         )
 
@@ -225,7 +229,7 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
         agent = _make_agent()
         seen_context: list[dict] = []
 
-        events = await self._run_reply_then_reasoning(
+        events = await self._run_reasoning(
             middleware,
             agent,
             UserMsg(name="user", content="Where is Paris?"),
@@ -296,7 +300,7 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
         agent = _make_agent()
         seen_context: list[dict] = []
 
-        await self._run_reply_then_reasoning(
+        await self._run_reasoning(
             middleware,
             agent,
             UserMsg(name="user", content="Where is Paris?"),
@@ -317,7 +321,7 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
         )
         agent = _make_agent()
 
-        events = await self._run_reply_then_reasoning(
+        events = await self._run_reasoning(
             middleware,
             agent,
             UserMsg(name="user", content="Where is Paris?"),
@@ -352,7 +356,7 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
         middleware = self._middleware(mode="hint")
         agent = _make_agent()
 
-        events = await self._run_reply_then_reasoning(
+        events = await self._run_reasoning(
             middleware,
             agent,
             None,
@@ -372,7 +376,7 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
             source=Base64Source(data="aGk=", media_type="image/png"),
         )
 
-        await self._run_reply_then_reasoning(
+        await self._run_reasoning(
             middleware,
             agent,
             UserMsg(
@@ -406,7 +410,7 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
         middleware = self._middleware(mode="agentic")
         agent = _make_agent()
 
-        events = await self._run_reply_then_reasoning(
+        events = await self._run_reasoning(
             middleware,
             agent,
             UserMsg(name="user", content="Where is Paris?"),
@@ -417,7 +421,12 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(agent.state.context), 1)
 
     async def test_retrieve_knowledge_tool_call(self) -> None:
-        """The tool returns formatted results for a query."""
+        """The tool returns a formatted ``ToolChunk`` for a query.
+
+        ``_RetrieveKnowledgeTool.call`` is a regular async function
+        (not an async generator), so ``ToolBase.__call__`` awaits it
+        and returns the single ``ToolChunk`` directly.
+        """
         middleware = self._middleware(mode="agentic", top_k=1)
         tool = (await middleware.list_tools())[0]
 

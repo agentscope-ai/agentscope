@@ -107,7 +107,10 @@ class LocalBlobStore(BlobStoreBase):
         return f"{_SCHEME}{key}"
 
     @asynccontextmanager
-    async def open(self, uri: str) -> AsyncIterator[AsyncReadable]:
+    async def open(  # type: ignore[override]
+        self,
+        uri: str,
+    ) -> AsyncIterator[AsyncReadable]:
         """Open the blob at ``uri`` for streaming reads."""
         path = self._path_for(self._key_from_uri(uri))
         async with aiofiles.open(path, "rb") as fp:

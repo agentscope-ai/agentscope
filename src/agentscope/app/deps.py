@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
 """Shared FastAPI dependencies for the agentscope app."""
-from typing import TYPE_CHECKING
-
 from fastapi import Header, HTTPException, Request, status
 
 from .workspace_manager import WorkspaceManagerBase
@@ -10,15 +8,12 @@ from ._manager import (
     ChatRunRegistry,
     SchedulerManager,
 )
-from ._service import ChatService, SessionService
+from ._service import ChatService, KnowledgeBaseService, SessionService
 from ._types import AgentMiddlewareFactory, AgentToolFactory
 from .message_bus import MessageBus
+from .rag.blob_store import BlobStoreBase
+from .rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from .storage import StorageBase
-
-if TYPE_CHECKING:
-    from .blob_store import BlobStoreBase
-    from .knowledge_base_manager import KnowledgeBaseManagerBase
-    from ._service import KnowledgeBaseService
 
 
 async def get_current_user_id(
@@ -178,7 +173,7 @@ async def get_extra_agent_tools(
 
 async def get_knowledge_base_service(
     request: Request,
-) -> "KnowledgeBaseService":
+) -> KnowledgeBaseService:
     """Return the application-wide knowledge base service.
 
     Args:
@@ -209,7 +204,7 @@ async def get_knowledge_base_service(
 
 async def get_knowledge_base_manager(
     request: Request,
-) -> "KnowledgeBaseManagerBase":
+) -> KnowledgeBaseManagerBase:
     """Return the application-wide knowledge base manager.
 
     Args:
@@ -237,7 +232,7 @@ async def get_knowledge_base_manager(
     return manager
 
 
-async def get_blob_store(request: Request) -> "BlobStoreBase":
+async def get_blob_store(request: Request) -> BlobStoreBase:
     """Return the application-wide blob store.
 
     Args:

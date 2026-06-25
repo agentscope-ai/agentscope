@@ -12,7 +12,7 @@ from ...storage import (
 )
 from ....embedding import EmbeddingModelCard
 from ....rag import VectorSearchResult
-from ...knowledge_base_manager._dimension_policy import DimensionPolicy
+from ...rag.knowledge_base_manager._dimension_policy import DimensionPolicy
 
 
 class CreateKnowledgeBaseRequest(BaseModel):
@@ -243,5 +243,24 @@ class ListKbEmbeddingModelsResponse(BaseModel):
         description=(
             "The dimension policy used to filter the cards; surfaced "
             "verbatim so the UI can explain *why* models were filtered."
+        ),
+    )
+
+
+class KbMiddlewareParametersSchemaResponse(BaseModel):
+    """Response body exposing the KB middleware's parameters schema.
+
+    The schema is derived from
+    :class:`agentscope.app.rag.KnowledgeBaseMiddleware.Parameters`
+    via ``model_json_schema()`` so the front-end can render the
+    session-level KB attachment form with the same schema-driven
+    component used for model parameters.
+    """
+
+    parameter_schema: dict = Field(
+        description=(
+            "JSON Schema produced by `KnowledgeBaseMiddlewareParameters."
+            "model_json_schema()`.  Shaped identically to the "
+            "`parameter_schema` field on `ModelCard`."
         ),
     )

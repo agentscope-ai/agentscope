@@ -153,6 +153,7 @@ async def search(
 
 
 async def main() -> None:
+    """The main entry point of the example."""
     api_key = os.environ.get("DASHSCOPE_API_KEY")
     if not api_key:
         raise RuntimeError(

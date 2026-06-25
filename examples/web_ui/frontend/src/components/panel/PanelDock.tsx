@@ -7,12 +7,13 @@ import {
 	ResizablePanel,
 	ResizablePanelGroup,
 } from '@/components/ui/resizable.tsx';
+import { Separator } from '@/components/ui/separator';
 
 /**
  * Identifier for a dockable panel. Used both as the React key and to
  * look its descriptor up in {@link PanelDockProps.panels}.
  */
-export type PanelKey = 'plan' | 'mcp' | 'skill' | 'permission';
+export type PanelKey = 'plan' | 'mcp' | 'skill' | 'permission' | 'knowledge';
 
 /**
  * The presentation of a single panel: header chrome plus its already
@@ -24,6 +25,13 @@ export interface PanelDescriptor {
 	title: ReactNode;
 	/** Optional leading icon shown next to the title. */
 	icon?: ReactNode;
+	/**
+	 * Optional header-bar actions rendered to the left of the close
+	 * button — typically `<Button variant="ghost" size="icon-sm">` items
+	 * that open popovers / dropdowns (e.g. a parameters popover that
+	 * would otherwise crowd the panel body).
+	 */
+	actions?: ReactNode;
 	/**
 	 * The panel body. Constructed by the owner with live data
 	 * (e.g. `<TaskPanel tasksContext={...} />`) so it always reflects
@@ -69,22 +77,26 @@ const PANEL_MIN_HEIGHT = '6rem';
 interface PanelProps {
 	title: ReactNode;
 	icon?: ReactNode;
+	actions?: ReactNode;
 	onClose: () => void;
 	children: ReactNode;
 }
 
 /**
  * Generic panel chrome: a bordered container with a title bar (icon +
- * title + close button) and a flexible body. Content components are
- * rendered as `children` and should not draw their own header/border.
+ * title + optional actions + close button) and a flexible body. Content
+ * components are rendered as `children` and should not draw their own
+ * header/border.
  *
  * @param title - Header title.
  * @param icon - Optional leading icon.
+ * @param actions - Optional nodes rendered to the left of the close
+ *   button (e.g. a settings popover trigger).
  * @param onClose - Called when the close button is clicked.
  * @param children - The panel body.
  * @returns The panel chrome element.
  */
-export const Panel = ({ title, icon, onClose, children }: PanelProps) => {
+export const Panel = ({ title, icon, actions, onClose, children }: PanelProps) => {
 	return (
 		<div className="flex flex-1 flex-col border rounded-sm h-full py-1 min-h-0">
 			<div className="flex items-center justify-between px-2">
@@ -92,9 +104,18 @@ export const Panel = ({ title, icon, onClose, children }: PanelProps) => {
 					{icon}
 					{title}
 				</span>
-				<Button variant="ghost" size="icon-sm" onClick={onClose}>
-					<X />
-				</Button>
+				<div className="flex items-center gap-x-0.5">
+					{actions}
+					{actions ? (
+						<Separator
+							orientation="vertical"
+							className="mx-0.5 data-vertical:h-4 data-vertical:self-center"
+						/>
+					) : null}
+					<Button variant="ghost" size="icon-sm" onClick={onClose}>
+						<X />
+					</Button>
+				</div>
 			</div>
 			<div className="flex flex-1 flex-col min-h-0 overflow-auto px-2">{children}</div>
 		</div>
@@ -144,6 +165,7 @@ export const PanelDock = ({ layout, panels, onClosePanel }: PanelDockProps) => {
 											<Panel
 												title={descriptor.title}
 												icon={descriptor.icon}
+												actions={descriptor.actions}
 												onClose={() => onClosePanel(key)}
 											>
 												{descriptor.content}

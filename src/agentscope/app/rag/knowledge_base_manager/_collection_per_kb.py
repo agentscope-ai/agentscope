@@ -20,11 +20,11 @@ from ._base import KnowledgeBaseManagerBase
 from ._dimension_policy import DimensionPolicy, DimensionPolicyKind
 from ._errors import KnowledgeBaseNotFoundError
 from ._knowledge import Knowledge
-from .._service._embedding import get_embedding_model
-from ..storage import KnowledgeBaseRecord
+from ..._service._embedding import get_embedding_model
+from ...storage import KnowledgeBaseRecord
 
 if TYPE_CHECKING:
-    from ..storage import EmbeddingModelConfig
+    from ...storage import EmbeddingModelConfig
 
 
 class CollectionPerKbManager(KnowledgeBaseManagerBase):

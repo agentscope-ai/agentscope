@@ -2,6 +2,7 @@ import { ApiError, client, getBaseUrl, getUserId } from './client';
 import type {
 	CreateKnowledgeBaseRequest,
 	CreateKnowledgeBaseResponse,
+	KbMiddlewareParametersSchemaResponse,
 	KnowledgeBaseView,
 	ListKbEmbeddingModelsResponse,
 	ListKnowledgeBasesResponse,
@@ -128,6 +129,12 @@ export const knowledgeBaseApi = {
 	listEmbeddingModels: () =>
 		client.get<ListKbEmbeddingModelsResponse>(
 			'/knowledge_bases/embedding_models',
+		),
+
+	/** Fetch the JSON Schema describing the KB middleware's tunable params. */
+	middlewareParametersSchema: () =>
+		client.get<KbMiddlewareParametersSchemaResponse>(
+			'/knowledge_bases/middleware/parameters_schema',
 		),
 
 	create: (body: CreateKnowledgeBaseRequest) =>

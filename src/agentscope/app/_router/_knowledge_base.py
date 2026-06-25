@@ -7,8 +7,6 @@ The HTTP layer is intentionally thin — every endpoint translates the
 request into a single :class:`~agentscope.app._service.
 KnowledgeBaseService` call and returns the result.
 """
-from typing import TYPE_CHECKING
-
 from fastapi import (
     APIRouter,
     Depends,
@@ -30,6 +28,7 @@ from ._schema import (
     CreateKnowledgeBaseRequest,
     CreateKnowledgeBaseResponse,
     KbEmbeddingProvider,
+    KbMiddlewareParametersSchemaResponse,
     KnowledgeBaseView,
     KnowledgeDocumentView,
     ListKbEmbeddingModelsResponse,
@@ -42,11 +41,10 @@ from ._schema import (
     UploadKnowledgeDocumentResponse,
 )
 from ...credential import CredentialFactory
-
-if TYPE_CHECKING:
-    from ..knowledge_base_manager import KnowledgeBaseManagerBase
-    from ..storage import StorageBase
-    from .._service import KnowledgeBaseService
+from ..rag import KnowledgeBaseMiddleware
+from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
+from ..storage import StorageBase
+from .._service import KnowledgeBaseService
 
 
 knowledge_base_router = APIRouter(
@@ -120,6 +118,40 @@ async def list_kb_embedding_models(
         )
 
     return ListKbEmbeddingModelsResponse(providers=providers, policy=policy)
+
+
+@knowledge_base_router.get(
+    "/middleware/parameters_schema",
+    response_model=KbMiddlewareParametersSchemaResponse,
+    summary="JSON Schema for the KB middleware's tunable parameters",
+)
+async def get_kb_middleware_parameters_schema(
+    _: str = Depends(get_current_user_id),
+) -> KbMiddlewareParametersSchemaResponse:
+    """Return the parameter schema for
+    :class:`agentscope.app.rag.KnowledgeBaseMiddleware`.
+
+    The schema is shaped like every other ``parameter_schema`` served
+    by this service — title / description / default / enum / minimum
+    / maximum — so the front-end can render the session-level KB
+    attachment form with the same schema-driven component used for
+    model parameters.
+
+    Args:
+        _ (`str`):
+            Injected authenticated user ID; only used to gate the
+            endpoint behind authentication.
+
+    Returns:
+        `KbMiddlewareParametersSchemaResponse`:
+            The JSON Schema describing the middleware's
+            user-tunable parameters.
+    """
+    return KbMiddlewareParametersSchemaResponse(
+        parameter_schema=(
+            KnowledgeBaseMiddleware.Parameters.model_json_schema()
+        ),
+    )
 
 
 # ----------------------------------------------------------------------

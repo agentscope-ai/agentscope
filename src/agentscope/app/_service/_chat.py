@@ -15,6 +15,8 @@ from fastapi import HTTPException
 
 from ..message_bus import MessageBus, MessageBusKeys
 from .._bus_ops import publish_session_event
+from ..rag import KnowledgeBaseMiddleware
+from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from ..storage import StorageBase, AgentRecord, SessionRecord
 from .._manager import BackgroundTaskManager, SchedulerManager
 from ..workspace_manager import WorkspaceManagerBase
@@ -70,6 +72,7 @@ class ChatService:
         scheduler_manager: SchedulerManager,
         background_task_manager: BackgroundTaskManager,
         message_bus: MessageBus,
+        knowledge_base_manager: KnowledgeBaseManagerBase | None = None,
         extra_agent_middlewares: AgentMiddlewareFactory | None = None,
         extra_agent_tools: AgentToolFactory | None = None,
         custom_subagent_templates: dict[str, SubAgentTemplate] | None = None,
@@ -97,6 +100,15 @@ class ChatService:
                 distributed locking (via :meth:`session_run`), event
                 replay + live fan-out (via :meth:`session_publish_event`),
                 and inbox delivery (via :class:`InboxMiddleware`).
+            knowledge_base_manager (`KnowledgeBaseManagerBase | None`, \
+             optional):
+                The application's knowledge base manager.  When
+                provided and the session config carries a
+                ``knowledge_config``, a
+                :class:`~agentscope.app.rag.KnowledgeBaseMiddleware`
+                is attached to the agent at run time.  ``None``
+                disables knowledge-base wiring even for sessions that
+                have one configured.
             extra_agent_middlewares (`AgentMiddlewareFactory | None`, \
              optional):
                 Async factory invoked at every chat turn to produce
@@ -125,6 +137,7 @@ class ChatService:
         self._scheduler_manager = scheduler_manager
         self._background_task_manager = background_task_manager
         self._message_bus = message_bus
+        self._knowledge_base_manager = knowledge_base_manager
         self._extra_agent_middlewares = extra_agent_middlewares
         self._extra_agent_tools = extra_agent_tools
         self._sub_agent_templates = custom_subagent_templates
@@ -307,6 +320,47 @@ class ChatService:
                 self._storage,
             )
             middlewares.append(TTSMiddleware(tts_model))
+
+        # ----------------------------------------------------------------
+        # 3c. Knowledge-base middleware — inject when the session has KBs
+        # attached.  Each KB resolves to its own :class:`Knowledge` handle
+        # (own embedding model + vector store), so the middleware can
+        # retrieve across heterogeneous KBs in one fan-out.
+        # ----------------------------------------------------------------
+        kb_cfg = session_record.config.knowledge_config
+        if (
+            kb_cfg is not None
+            and kb_cfg.knowledge_base_ids
+            and self._knowledge_base_manager is not None
+        ):
+            knowledges = []
+            for kb_id in kb_cfg.knowledge_base_ids:
+                try:
+                    knowledge = (
+                        await self._knowledge_base_manager.get_knowledge(
+                            user_id,
+                            kb_id,
+                        )
+                    )
+                except Exception:  # pylint: disable=broad-except
+                    # A KB the session referenced was deleted (or its
+                    # credential revoked) — log and skip so the chat
+                    # turn can still run with the remaining KBs.
+                    logger.exception(
+                        "Skipping knowledge base %r for session %r: "
+                        "failed to resolve runtime handle.",
+                        kb_id,
+                        session_id,
+                    )
+                    continue
+                knowledges.append(knowledge)
+            if knowledges:
+                middlewares.append(
+                    KnowledgeBaseMiddleware(
+                        knowledges=knowledges,
+                        **(kb_cfg.parameters or {}),
+                    ),
+                )
 
         # ----------------------------------------------------------------
         # 4. Model + fallback (resolved from session's config).

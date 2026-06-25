@@ -93,6 +93,8 @@ export interface SessionConfig {
 	fallback_chat_model_config: ChatModelConfig | null;
 	/** TTS model configuration. null means TTS is not enabled. */
 	tts_model_config: TTSModelConfig | null;
+	/** Knowledge bases attached to this session + KB middleware parameters. */
+	knowledge_config: SessionKnowledgeConfig | null;
 	workspace_id: string;
 }
 
@@ -123,6 +125,8 @@ export interface CreateSessionRequest {
 	fallback_chat_model_config?: ChatModelConfig | null;
 	/** Optional TTS model. Omit (or pass null) for no TTS. */
 	tts_model_config?: TTSModelConfig | null;
+	/** Optional knowledge base attachment. Omit (or null) for none. */
+	knowledge_config?: SessionKnowledgeConfig | null;
 }
 
 export interface CreateSessionResponse {
@@ -146,6 +150,13 @@ export interface UpdateSessionRequest {
 	 *   - set to a value → replace the existing TTS config
 	 */
 	tts_model_config?: TTSModelConfig | null;
+	/**
+	 * New knowledge base attachment. PATCH semantics:
+	 *   - omit the field → leave unchanged
+	 *   - set to `null`  → detach every knowledge base
+	 *   - set to a value → replace the existing attachment
+	 */
+	knowledge_config?: SessionKnowledgeConfig | null;
 	permission_mode?: PermissionMode;
 }
 
@@ -235,6 +246,7 @@ export interface JSONSchemaProperty {
 	default?: unknown;
 	const?: unknown;
 	anyOf?: Array<{ type: string }>;
+	enum?: unknown[];
 	title?: string;
 	writeOnly?: boolean;
 	minimum?: number;
@@ -601,12 +613,12 @@ export interface SearchKnowledgeBaseResponse {
 }
 
 /**
- * Mirrors :class:`agentscope.app.knowledge_base_manager.DimensionPolicyKind`.
+ * Mirrors :class:`agentscope.app.rag.knowledge_base_manager.DimensionPolicyKind`.
  */
 export type DimensionPolicyKind = 'any' | 'fixed' | 'locked_by_existing';
 
 /**
- * Mirrors :class:`agentscope.app.knowledge_base_manager.DimensionPolicy`.
+ * Mirrors :class:`agentscope.app.rag.knowledge_base_manager.DimensionPolicy`.
  */
 export interface DimensionPolicy {
 	kind: DimensionPolicyKind;
@@ -630,6 +642,25 @@ export interface KbEmbeddingProvider {
 export interface ListKbEmbeddingModelsResponse {
 	providers: KbEmbeddingProvider[];
 	policy: DimensionPolicy;
+}
+
+/**
+ * Session-level knowledge base attachment. Persisted on
+ * :class:`SessionConfig.knowledge_config` and translated into a
+ * `KnowledgeBaseMiddleware` at chat-run time.
+ *
+ * `parameters` holds the user-tunable middleware fields verbatim — its
+ * accepted keys/values are described by the JSON Schema returned from
+ * `GET /knowledge_bases/middleware/parameters_schema`.
+ */
+export interface SessionKnowledgeConfig {
+	knowledge_base_ids: string[];
+	parameters: Record<string, unknown>;
+}
+
+/** Response of `GET /knowledge_bases/middleware/parameters_schema`. */
+export interface KbMiddlewareParametersSchemaResponse {
+	parameter_schema: Record<string, unknown>;
 }
 
 // ─── TTS ──────────────────────────────────────────────────────────────────────

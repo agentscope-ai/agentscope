@@ -29,13 +29,13 @@ Example::
     import socket
     import uuid
 
-    from agentscope.app.blob_store import S3BlobStore
-    from agentscope.app.knowledge_base_manager import (
+    from agentscope.app.rag.blob_store import S3BlobStore
+    from agentscope.app.rag.knowledge_base_manager import (
         DefaultKnowledgeBaseManager,
     )
     from agentscope.app.message_bus import RedisMessageBus
     from agentscope.app.storage import RedisStorage
-    from agentscope.app.worker import run_worker
+    from agentscope.app.rag.index_worker import run_worker
     from agentscope.rag import ApproxTokenChunker, TextParser, ...
 
     async def main() -> None:
@@ -68,15 +68,15 @@ from concurrent.futures import ProcessPoolExecutor
 from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING
 
-from .._service import IndexTaskConsumer, IndexWorker
-from ..._logging import logger
+from ..._service import IndexTaskConsumer, IndexWorker
+from ...._logging import logger
 
 if TYPE_CHECKING:
     from ..blob_store import BlobStoreBase
     from ..knowledge_base_manager import KnowledgeBaseManagerBase
-    from ..message_bus import MessageBus
-    from ..storage import StorageBase
-    from ...rag import ChunkerBase, ParserBase
+    from ...message_bus import MessageBus
+    from ...storage import StorageBase
+    from ....rag import ChunkerBase, ParserBase
 
 
 async def run_worker(
@@ -85,7 +85,7 @@ async def run_worker(
     message_bus: "MessageBus",
     blob_store: "BlobStoreBase",
     knowledge_base_manager: "KnowledgeBaseManagerBase",
-    parsers: "list[ParserBase]",
+    parsers: "list[ParserBase] | dict[str, ParserBase]",
     chunker: "ChunkerBase",
     node_id: str | None = None,
     worker_max_concurrency: int = 4,
@@ -110,9 +110,13 @@ async def run_worker(
         knowledge_base_manager (`KnowledgeBaseManagerBase`):
             Resolves :class:`Knowledge` runtimes for embedding +
             vector store writes. Lifecycle managed here.
-        parsers (`list[ParserBase]`):
-            Parsers indexed by ``supported_media_types``. Same
-            registry the API uses; pass the same list both places.
+        parsers (`list[ParserBase] | dict[str, ParserBase]`):
+            Parsers used to dispatch uploads by IANA media type.
+            Pass the same registry both to ``create_app`` and to the
+            worker — list mode expands each parser's
+            ``supported_media_types`` (later entries override earlier
+            ones, with a warning); dict mode is used verbatim for
+            explicit routing.
         chunker (`ChunkerBase`):
             Shared chunker.
         node_id (`str | None`, optional):

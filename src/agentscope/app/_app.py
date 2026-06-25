@@ -3,8 +3,8 @@
 from typing import Type, TYPE_CHECKING, Any
 
 from ._lifespan import lifespan
-from .blob_store import BlobStoreBase, LocalBlobStore
-from .knowledge_base_manager import KnowledgeBaseManagerBase
+from .rag.blob_store import BlobStoreBase, LocalBlobStore
+from .rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from .workspace_manager import WorkspaceManagerBase
 from ._router import (
     agent_router,
@@ -44,7 +44,7 @@ def create_app(
     message_bus: MessageBus,
     workspace_manager: WorkspaceManagerBase,
     knowledge_base_manager: KnowledgeBaseManagerBase | None = None,
-    knowledge_parsers: list[ParserBase] | None = None,
+    knowledge_parsers: list[ParserBase] | dict[str, ParserBase] | None = None,
     knowledge_chunker: ChunkerBase | None = None,
     blob_store: BlobStoreBase | None = None,
     enable_index_worker: bool = True,
@@ -103,18 +103,23 @@ def create_app(
          optional):
             The knowledge base manager that owns knowledge base
             lifecycle and serves
-            :class:`~agentscope.app.knowledge_base_manager.Knowledge`
+            :class:`~agentscope.app.rag.knowledge_base_manager.Knowledge`
             runtime handles to both HTTP service and agent code.
             The manager carries its own vector store instance — its
             ``__aenter__`` / ``__aexit__`` enter and release that
             vector store, so the caller does not pass the vector
             store separately.  ``None`` disables knowledge base
             endpoints entirely.
-        knowledge_parsers (`list[ParserBase] | None`, optional):
+        knowledge_parsers (`list[ParserBase] | dict[str, ParserBase] | \
+         None`, optional):
             Parsers registered for knowledge base document uploads.
-            Each parser declares ``supported_media_types`` and the
-            service routes uploads by IANA media type.  Defaults to
-            ``[TextParser()]`` when ``knowledge_base_manager`` is set.
+            Pass a **list** to have the service route by each parser's
+            ``supported_media_types`` (later entries override earlier
+            ones for overlapping types, with a warning); pass a
+            **dict** ``media_type → parser`` for explicit routing
+            (one parser bound to multiple types, type aliases, ...).
+            Defaults to ``[TextParser()]`` when
+            ``knowledge_base_manager`` is set.
         knowledge_chunker (`ChunkerBase | None`, optional):
             The chunker shared across every knowledge base.  Defaults
             to :class:`~agentscope.rag.ApproxTokenChunker()` when
@@ -123,7 +128,7 @@ def create_app(
             Backend storing uploaded document bytes between the
             upload endpoint and the indexing worker.  Required when
             ``knowledge_base_manager`` is set; defaults to
-            :class:`~agentscope.app.blob_store.LocalBlobStore`
+            :class:`~agentscope.app.rag.blob_store.LocalBlobStore`
             rooted at ``./blobs``.  Its lifecycle (``__aenter__`` /
             ``__aexit__``) is managed by the app lifespan.
         enable_index_worker (`bool`, defaults to ``True``):

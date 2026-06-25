@@ -25,13 +25,15 @@ from typing import TYPE_CHECKING, Self
 from ._dimension_policy import DimensionPolicy
 
 if TYPE_CHECKING:
+    from types import TracebackType
+
     from ._knowledge import Knowledge
-    from ..storage import (
+    from ...storage import (
         EmbeddingModelConfig,
         KnowledgeBaseRecord,
         StorageBase,
     )
-    from ...rag import VectorStoreBase
+    from ....rag import VectorStoreBase
 
 
 class KnowledgeBaseManagerBase(ABC):
@@ -79,9 +81,24 @@ class KnowledgeBaseManagerBase(ABC):
         await self._vector_store.__aenter__()
         return self
 
-    async def __aexit__(self, *exc: object) -> None:
-        """Exit the manager's lifetime, releasing the vector store."""
-        await self._vector_store.__aexit__(*exc)
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: "TracebackType | None",
+    ) -> None:
+        """Exit the manager's lifetime, releasing the vector store.
+
+        Args:
+            exc_type (`type[BaseException] | None`):
+                The exception type raised inside the with-block, if any.
+            exc (`BaseException | None`):
+                The exception instance raised inside the with-block,
+                if any.
+            tb (`TracebackType | None`):
+                The traceback for the raised exception, if any.
+        """
+        await self._vector_store.__aexit__(exc_type, exc, tb)
 
     # ------------------------------------------------------------------
     # Capability discovery

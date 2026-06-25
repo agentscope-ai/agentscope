@@ -29,10 +29,13 @@ Properties under test:
 import io
 import os
 import socket
+from typing import TYPE_CHECKING
 from unittest import IsolatedAsyncioTestCase, skipUnless
 
+if TYPE_CHECKING:
+    from agentscope.app.rag.blob_store import S3BlobStore
+
 try:
-    import aioboto3  # noqa: F401
     import boto3
     from moto.server import ThreadedMotoServer
 
@@ -91,10 +94,17 @@ class S3BlobStoreTest(IsolatedAsyncioTestCase):
             else:
                 os.environ[k] = prev
 
-    def _store(self):
+    def _store(self) -> "S3BlobStore":
+        """Build a fresh :class:`S3BlobStore` pointing at the moto endpoint.
+
+        Returns:
+            `S3BlobStore`:
+                The store under test, configured for the moto-backed
+                ``_BUCKET`` in ``_REGION``.
+        """
         # Import inside the method so the skip decorator can fire
         # without the import path running.
-        from agentscope.app.blob_store import S3BlobStore
+        from agentscope.app.rag.blob_store import S3BlobStore
 
         return S3BlobStore(
             bucket=_BUCKET,

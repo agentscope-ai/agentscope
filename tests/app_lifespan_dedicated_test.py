@@ -35,12 +35,12 @@ from fastapi.testclient import TestClient
 
 from agentscope.app import create_app
 from agentscope.app._service import IndexTaskConsumer
-from agentscope.app.blob_store import LocalBlobStore
-from agentscope.app.knowledge_base_manager import (
+from agentscope.app.rag.blob_store import LocalBlobStore
+from agentscope.app.rag.knowledge_base_manager import (
     KnowledgeBaseManagerBase,
     KnowledgeBaseNotFoundError,
 )
-from agentscope.app.knowledge_base_manager._dimension_policy import (
+from agentscope.app.rag.knowledge_base_manager._dimension_policy import (
     DimensionPolicy,
     DimensionPolicyKind,
 )
@@ -212,6 +212,20 @@ class _RecordingWorker:
         knowledge_base_id: str,
         document_id: str,
     ) -> None:
+        """Record the dispatched task and signal the test.
+
+        Stands in for :class:`IndexWorker.process_one` so the lifespan
+        tests can assert that the API process forwarded the right
+        ``user_id`` / ``knowledge_base_id`` / ``document_id`` triple.
+
+        Args:
+            user_id (`str`):
+                The owning user id.
+            knowledge_base_id (`str`):
+                The parent knowledge base id.
+            document_id (`str`):
+                The document id to "process".
+        """
         self.calls.append(
             {
                 "user_id": user_id,
@@ -236,7 +250,6 @@ class DedicatedModeUploadFlowTest(IsolatedAsyncioTestCase):
             storage=storage,
             message_bus=self._api_message_bus,
             workspace_manager=_NoopWorkspaceManager(),
-            vector_store=self._vector_store,
             knowledge_base_manager=_FakeKbManager(
                 storage=storage,
                 vector_store=self._vector_store,

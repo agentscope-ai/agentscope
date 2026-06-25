@@ -16,7 +16,8 @@ where those bytes physically live (local disk, S3-compatible object
 store, etc.) — neither caller cares.
 """
 from abc import ABC, abstractmethod
-from typing import IO, AsyncContextManager, Protocol, Self, Any
+from contextlib import AbstractAsyncContextManager
+from typing import IO, Any, Protocol, Self
 
 
 class AsyncReadable(Protocol):
@@ -29,7 +30,17 @@ class AsyncReadable(Protocol):
     """
 
     async def read(self, n: int = -1) -> bytes:
-        ...
+        """Read up to ``n`` bytes (``-1`` reads to EOF).
+
+        Args:
+            n (`int`, defaults to ``-1``):
+                The maximum number of bytes to read; ``-1`` drains the
+                stream.
+
+        Returns:
+            `bytes`:
+                The bytes read; an empty ``bytes`` at EOF.
+        """
 
 
 class BlobStoreBase(ABC):
@@ -97,7 +108,10 @@ class BlobStoreBase(ABC):
         """
 
     @abstractmethod
-    async def open(self, uri: str) -> AsyncContextManager[AsyncReadable]:
+    async def open(
+        self,
+        uri: str,
+    ) -> AbstractAsyncContextManager[AsyncReadable]:
         """Stream-read a blob by URI.
 
         Returns an async context manager whose ``__aenter__`` yields a
@@ -111,7 +125,7 @@ class BlobStoreBase(ABC):
                 A URI produced by :meth:`write_stream`.
 
         Returns:
-            `AsyncContextManager[AsyncReadable]`:
+            `AbstractAsyncContextManager[AsyncReadable]`:
                 The byte stream, wrapped so the backend can release
                 handles deterministically on context exit.
         """
