@@ -228,7 +228,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 						{t('panel.permission.title')}
 						{permissionContext?.mode ? (
 							<Badge variant="outline" className="capitalize">
-								Mode: {permissionContext.mode}
+								{t('panel.permission.mode', { mode: permissionContext.mode })}
 							</Badge>
 						) : null}
 					</span>

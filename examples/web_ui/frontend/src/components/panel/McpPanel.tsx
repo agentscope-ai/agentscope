@@ -99,7 +99,9 @@ export function McpPanel({ mcps, loading = false, onAdd, onRemove }: McpPanelPro
 										<Kbd>
 											{mcp.mcp_config.type === 'stdio_mcp' ? 'STDIO' : 'HTTP'}
 										</Kbd>
-										<Kbd>{mcp.tools.length} tools</Kbd>
+										<Kbd>
+											{t('panel.mcp.tools', { count: mcp.tools.length })}
+										</Kbd>
 									</KbdGroup>
 								</ItemDescription>
 							</ItemContent>
