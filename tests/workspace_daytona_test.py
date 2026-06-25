@@ -1052,6 +1052,10 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
         sys.modules.pop("daytona", None)
         self.temp_dir.cleanup()
 
+    @unittest.skipIf(
+        os.name == "nt",
+        "host-backed Daytona fake relies on POSIX sandbox commands",
+    )
     async def test_all_builtin_tools_use_daytona_backend(self) -> None:
         """Bash, Write, Read, Edit, Grep and Glob operate in the sandbox."""
         bash_text = await _tool_text(
@@ -1125,6 +1129,10 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
         raw = await self.workspace._backend.read_file("/home/daytona/.mcp")
         self.assertEqual(json.loads(raw.decode("utf-8")), [])
 
+    @unittest.skipIf(
+        os.name == "nt",
+        "host-backed Daytona fake relies on POSIX sandbox commands",
+    )
     async def test_skill_add_list_remove_uses_sandbox_skills_dir(self) -> None:
         """Skill management stores and reads skills under SDK workdir."""
         skill_dir = os.path.join(self.temp_dir.name, "local-skill")

@@ -132,8 +132,9 @@ class TestDaytonaWorkspaceManager(IsolatedAsyncioTestCase):
 
     async def test_sweep_once_evicts_idle_workspaces(self) -> None:
         """The TTL sweeper closes expired cache entries."""
-        manager = DaytonaWorkspaceManager(ttl=0)
+        manager = DaytonaWorkspaceManager(ttl=10)
         workspace = await manager.get_workspace("u", "a", "s", "wid")
+        manager._cache["wid"] = (workspace, 0.0)
         manager._safe_close = AsyncMock(wraps=manager._safe_close)
 
         await manager._sweep_once()
