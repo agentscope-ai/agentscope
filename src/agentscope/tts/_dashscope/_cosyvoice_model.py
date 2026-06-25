@@ -2,7 +2,7 @@
 """DashScope CosyVoice TTS model implementation."""
 import base64
 import io
-from pathlib import Path
+import os
 from typing import Any, AsyncGenerator, Literal, TYPE_CHECKING
 import wave
 
@@ -12,20 +12,17 @@ from .._tts_base import TTSModelBase
 from .._tts_model_card import TTSModelCard
 from .._tts_response import TTSResponse
 from ._cosyvoice_utils import (
+    _BITS_PER_SAMPLE,
+    _CHANNELS,
     _make_cosyvoice_callback_class,
+    _MEDIA_TYPE,
+    _SAMPLE_RATE,
 )
 from ...credential import DashScopeCredential
 from ...message import DataBlock, Base64Source
-from ...types import JSONSerializableObject
 
 if TYPE_CHECKING:
     from dashscope.audio.tts_v2 import SpeechSynthesizer, ResultCallback
-
-
-_SAMPLE_RATE = 24000
-_CHANNELS = 1
-_BITS_PER_SAMPLE = 16
-_MEDIA_TYPE = "audio/wav"
 
 
 class DashScopeCosyVoiceTTSModel(TTSModelBase):
@@ -44,6 +41,8 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
     """The type of the TTS model."""
 
     realtime: bool = False
+
+    _MODELS_DIR = os.path.join(os.path.dirname(__file__), "_cosyvoice_models")
 
     def __init__(
         self,
@@ -79,11 +78,9 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
         custom_yaml_dir: str | None = None,
     ) -> list[TTSModelCard]:
         """List CosyVoice model cards from the dedicated card directory."""
-        if custom_yaml_dir is None:
-            custom_yaml_dir = str(
-                Path(__file__).parent / "_cosyvoice_models",
-            )
-        return super().list_models(custom_yaml_dir)
+        return super().list_models(
+            custom_yaml_dir=custom_yaml_dir or cls._MODELS_DIR,
+        )
 
     async def synthesize(
         self,
@@ -118,13 +115,9 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
             return callback.get_audio_chunks()
 
         audio_data = synthesizer.call(text=text)
-        metadata = self._response_metadata(synthesizer)
         if not audio_data:
-            return TTSResponse(content=None, metadata=metadata)
-        return self._build_wav_response(
-            audio_data,
-            metadata=metadata,
-        )
+            return TTSResponse(content=None)
+        return self._build_wav_response(audio_data)
 
     def _create_synthesizer(
         self,
@@ -151,24 +144,8 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
         return synthesizer, callback_instance
 
     @staticmethod
-    def _response_metadata(
-        synthesizer: "SpeechSynthesizer",
-    ) -> dict[str, JSONSerializableObject] | None:
-        """Build metadata from the WebSocket SDK response."""
-        metadata: dict[str, JSONSerializableObject] = {}
-        request_id = synthesizer.get_last_request_id()
-        response = synthesizer.get_response()
-        if request_id is not None:
-            metadata["request_id"] = request_id
-        if response is not None:
-            metadata["response"] = response
-        return metadata or None
-
-    @staticmethod
     def _build_wav_response(
         audio_data: bytes,
-        *,
-        metadata: dict[str, JSONSerializableObject] | None = None,
     ) -> TTSResponse:
         """Build a self-contained WAV response from PCM audio bytes."""
         buf = io.BytesIO()
@@ -185,5 +162,4 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
                     media_type=_MEDIA_TYPE,
                 ),
             ),
-            metadata=metadata,
         )

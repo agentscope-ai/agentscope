@@ -242,7 +242,7 @@ export function ModelParametersPopover({
 
 	useEffect(() => {
 		setValues(selectedModel?.parameters ?? {});
-	}, [selectedModel?.model, selectedModel?.parameters]);
+	}, [selectedModel?.model]);
 
 	const handleChange = useCallback(
 		(key: string, value: unknown) => {

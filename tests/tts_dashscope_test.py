@@ -17,7 +17,6 @@ Covers:
 """
 import base64
 import io
-import threading
 import wave
 from typing import Any, AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
@@ -340,33 +339,16 @@ class TestDashScopeCosyVoiceTTSModel(IsolatedAsyncioTestCase):
         self.synthesizer_instances: list[Mock] = []
         self.next_audio = b"FULL_AUDIO"
         self.next_chunks = [b"CHUNK"]
-        self.next_response = {
-            "header": {
-                "task_id": "task-id",
-                "event": "task-finished",
-            },
-            "payload": {"output": {}},
-        }
         self.mock_synthesizer_class.side_effect = self._make_synthesizer
 
     def tearDown(self) -> None:
         """Tear down the test case."""
         self.patcher.stop()
 
-    @staticmethod
-    def _wait_for_callback_consumed(callback: Any, length: int) -> None:
-        """Wait until the async consumer has read buffered callback bytes."""
-        for _ in range(1000):
-            if getattr(callback, "_consumed", 0) >= length:
-                return
-            threading.Event().wait(0.001)
-
     def _make_synthesizer(self, **init_kwargs: Any) -> Mock:
         """Create a mocked tts_v2 SpeechSynthesizer instance."""
         synth = Mock()
         synth.init_kwargs = init_kwargs
-        synth.get_last_request_id = Mock(return_value="task-id")
-        synth.get_response = Mock(return_value=self.next_response)
         callback = init_kwargs.get("callback")
 
         if callback is None:
@@ -424,13 +406,6 @@ class TestDashScopeCosyVoiceTTSModel(IsolatedAsyncioTestCase):
             self.assertEqual(wav.getnchannels(), 1)
             self.assertEqual(wav.getframerate(), 24000)
             self.assertEqual(wav.readframes(wav.getnframes()), b"AAAABBBB")
-        self.assertEqual(
-            result.metadata,
-            {
-                "request_id": "task-id",
-                "response": self.next_response,
-            },
-        )
 
         synth = self.synthesizer_instances[-1]
         init_kwargs = synth.init_kwargs
@@ -505,6 +480,28 @@ class TestDashScopeCosyVoiceTTSModel(IsolatedAsyncioTestCase):
         self.assertIs(
             resolved_realtime,
             DashScopeCosyVoiceRealtimeTTSModel,
+        )
+
+        resolved_realtime_fallback = _resolve_tts_class(
+            credential_classes,
+            "qwen3-tts-flash",
+            realtime=True,
+        )
+        resolved_non_realtime_fallback = _resolve_tts_class(
+            credential_classes,
+            "qwen3-tts-flash-realtime",
+            realtime=False,
+        )
+        self.assertTrue(resolved_realtime_fallback.realtime)
+        self.assertFalse(resolved_non_realtime_fallback.realtime)
+
+        resolved_without_realtime = _resolve_tts_class(
+            credential_classes,
+            "cosyvoice-v3-plus",
+        )
+        self.assertIs(
+            resolved_without_realtime,
+            DashScopeCosyVoiceTTSModel,
         )
 
 

@@ -9,7 +9,6 @@ from .._tts_response import TTSResponse
 from ..._logging import logger
 from ..._utils._audio import _build_streaming_wav_header
 from ...message import DataBlock, Base64Source
-from ...types import JSONSerializableObject
 
 if TYPE_CHECKING:
     from dashscope.audio.tts_v2 import ResultCallback
@@ -26,7 +25,6 @@ def _build_audio_response(
     media_type: str,
     *,
     is_last: bool = True,
-    metadata: dict[str, JSONSerializableObject] | None = None,
 ) -> TTSResponse:
     """Build a TTSResponse containing base64-encoded audio data."""
     return TTSResponse(
@@ -36,7 +34,6 @@ def _build_audio_response(
                 media_type=media_type,
             ),
         ),
-        metadata=metadata,
         is_last=is_last,
     )
 

@@ -73,6 +73,10 @@ def _resolve_tts_class(
                 continue
             if any(card.name == model for card in cls.list_models()):
                 return cls
+        for cls in classes:
+            if cls.realtime == realtime:
+                return cls
+        return classes[0]
 
     for cls in classes:
         if any(card.name == model for card in cls.list_models()):
