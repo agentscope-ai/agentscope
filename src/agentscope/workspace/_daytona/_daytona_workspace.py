@@ -51,8 +51,6 @@ import uuid
 from copy import deepcopy
 from typing import Any
 
-from pydantic import AnyUrl
-
 from ..._logging import logger
 from ...mcp import MCPClient
 from ...message import (
@@ -1115,7 +1113,7 @@ class DaytonaWorkspace(WorkspaceBase):
             id=block.id,
             name=block.name,
             source=URLSource(
-                url=AnyUrl(f"file://{path}"),
+                url=f"file://{path}",
                 media_type=block.source.media_type,
             ),
         )

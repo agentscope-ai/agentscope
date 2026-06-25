@@ -8,9 +8,10 @@ credentials. A small live smoke suite is skipped unless
 """
 
 import unittest
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from _daytona_live_utils import (
@@ -21,10 +22,12 @@ from _daytona_live_utils import (
     live_daytona_workspace_id,
 )
 
-from daytona import DaytonaNotFoundError
-
 from agentscope.tool import ExecResult
 from agentscope.workspace import DaytonaBackend, DaytonaWorkspace
+
+
+class _FakeDaytonaNotFoundError(Exception):
+    """Fake Daytona SDK not-found exception for mock backend tests."""
 
 
 class _FakeProcess:
@@ -55,7 +58,7 @@ class _FakeFS:
     async def download_file(self, path: str) -> bytes:
         """Return stored bytes or raise SDK not-found error."""
         if path not in self.files:
-            raise DaytonaNotFoundError("file not found")
+            raise _FakeDaytonaNotFoundError("file not found")
         return self.files[path]
 
     async def upload_file(self, data: bytes, remote_path: str) -> None:
@@ -77,11 +80,23 @@ class TestDaytonaBackendMock(IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         """Create a fake sandbox-backed backend."""
+        self._real_daytona_module = sys.modules.get("daytona")
+        fake_daytona = ModuleType("daytona")
+        fake_daytona.DaytonaNotFoundError = _FakeDaytonaNotFoundError
+        sys.modules["daytona"] = fake_daytona
+
         self.sandbox = _FakeSandbox()
         self.backend = DaytonaBackend(
             self.sandbox,
             workdir="/home/daytona",
         )
+
+    async def asyncTearDown(self) -> None:
+        """Restore the optional Daytona SDK module after mock tests."""
+        if self._real_daytona_module is None:
+            sys.modules.pop("daytona", None)
+        else:
+            sys.modules["daytona"] = self._real_daytona_module
 
     async def test_exec_maps_argv_to_posix_quoted_command(self) -> None:
         """``exec_shell`` passes one POSIX-quoted command string."""
