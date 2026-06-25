@@ -455,6 +455,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                             },
                         ],
                         "state": "success",
+                        "metadata": {},
                     },
                     {
                         "type": "text",
@@ -788,6 +789,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                             },
                         ],
                         "state": "success",
+                        "metadata": {},
                     },
                     {
                         "type": "tool_result",
@@ -801,6 +803,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                             },
                         ],
                         "state": "success",
+                        "metadata": {},
                     },
                     {
                         "type": "text",
@@ -1138,6 +1141,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                             },
                         ],
                         "state": "success",
+                        "metadata": {},
                     },
                     {
                         "type": "tool_result",
@@ -1151,6 +1155,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                             },
                         ],
                         "state": "success",
+                        "metadata": {},
                     },
                     {
                         "type": "text",

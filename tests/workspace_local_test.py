@@ -932,6 +932,7 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                             },
                         ],
                         "state": "success",
+                        "metadata": {},
                     },
                     {
                         "type": "text",
