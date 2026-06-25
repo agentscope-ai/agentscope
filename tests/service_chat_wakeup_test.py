@@ -107,16 +107,18 @@ class _FakeBus:
         self.events: list[dict] = []
 
     @asynccontextmanager
-    async def session_run(
+    async def acquire_lock(
         self,
-        _session_id: str,
+        _key: str,
+        ttl_secs: int | None = None,
     ) -> AsyncGenerator[None, None]:
         """No-op lock context."""
+        del ttl_secs
         yield
 
-    async def inbox_drain(
+    async def queue_drain(
         self,
-        _session_id: str,
+        _key: str,
         max_count: int = 100,
     ) -> list[tuple[str, dict]]:
         """Drain queued test inbox entries."""
@@ -124,14 +126,22 @@ class _FakeBus:
         self.inbox = self.inbox[max_count:]
         return entries
 
-    async def session_publish_event(
+    async def log_append(
         self,
-        _session_id: str,
+        _key: str,
         event: dict,
+        max_len: int | None = None,
     ) -> str:
         """Capture published events."""
+        del max_len
         self.events.append(event)
         return f"evt-{len(self.events)}"
+
+    async def publish(self, _key: str, _payload: dict) -> None:
+        """No-op live event fan-out."""
+
+    async def log_trim(self, _key: str) -> None:
+        """No-op replay-log trim."""
 
 
 class _FakeAgent:

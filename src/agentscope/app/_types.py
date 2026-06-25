@@ -1,14 +1,20 @@
 # -*- coding: utf-8 -*-
 """Shared type aliases for the agentscope app layer."""
 from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Protocol
 
 from pydantic import BaseModel, Field
 
 from ..agent import ContextConfig, ReActConfig
+from ..event import AgentEvent
 from ..middleware import MiddlewareBase
 from ..permission import PermissionContext
 from ..state import TaskContext
 from ..tool import ToolBase
+
+if TYPE_CHECKING:
+    from ._service._session_projection import SessionProjection
+    from .storage import AgentRecord, SessionRecord
 
 
 AgentMiddlewareFactory = Callable[
@@ -24,6 +30,54 @@ AgentToolFactory = Callable[
 ]
 #  Async factory signature: ``(user_id, agent_id, session_id)`` →
 #  awaitable of :class:`~agentscope.tool.ToolBase` instances.
+
+
+class EventProjector(Protocol):
+    """Strategy that projects events from one session onto another.
+
+    Each projector owns one cross-session UI feed (HITL, progress,
+    errors, …). :class:`~agentscope.app._service.ChatService` calls
+    every registered projector once per event produced by a run; a
+    projector decides whether the event is relevant and, if so, mirrors
+    it onto the owning session's target via the shared
+    :class:`SessionProjection` primitive. Adding a feed means adding a
+    projector — no new bus wrapper, dispatcher, or manager.
+
+    Service dependencies a projector needs (e.g. storage, to resolve the
+    team a worker belongs to) are its own concern, injected at
+    construction. Only per-run request data is passed to
+    :meth:`maybe_project`.
+    """
+
+    async def maybe_project(
+        self,
+        user_id: str,
+        session_record: "SessionRecord",
+        agent_record: "AgentRecord",
+        event: AgentEvent,
+        projection: "SessionProjection",
+    ) -> None:
+        """Project ``event`` if it is relevant to this feed.
+
+        Implementations must be a no-op for irrelevant events and
+        sessions. They should not raise for ordinary "not applicable"
+        cases; ``ChatService`` guards the call with a catch-all so a
+        projection failure never tears down the producing run, but
+        projectors should not rely on that for control flow.
+
+        Args:
+            user_id (`str`):
+                The owner of the running session.
+            session_record (`SessionRecord`):
+                The currently-running session's record.
+            agent_record (`AgentRecord`):
+                The currently-running agent's record.
+            event (`AgentEvent`):
+                The event just published to this session's channel.
+            projection (`SessionProjection`):
+                Shared primitive used to write the durable entry and the
+                live notification.
+        """
 
 
 class SubAgentTemplate(BaseModel):

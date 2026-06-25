@@ -39,7 +39,6 @@ import sys
 import tarfile
 import uuid
 from copy import deepcopy
-from dataclasses import dataclass
 from typing import Any
 
 from pydantic import AnyUrl
@@ -61,6 +60,7 @@ from .._gateway_client import (
     GatewayClient,
     GatewayMCPClient,
 )
+from ._docker_backend import DockerBackend
 from ._make_dockerfile import (
     CONTAINER_DATA_DIR,
     CONTAINER_SESSIONS_DIR,
@@ -73,9 +73,9 @@ from ._make_dockerfile import (
     GATEWAY_LOG,
     GATEWAY_SCRIPT,
     GATEWAY_VENV,
+    GLOB_HELPER_SCRIPT,
     prepare_build_context,
 )
-
 
 _DEFAULT_INSTRUCTIONS = """<workspace>
 You have a Docker-based workspace. All tool calls execute **inside the
@@ -93,32 +93,6 @@ Layout:
 Use the MCP-provided tools to interact with the container's filesystem
 and processes.
 </workspace>"""
-
-
-# ── small helpers ──────────────────────────────────────────────────
-
-
-@dataclass(frozen=True, slots=True)
-class _ExecResult:
-    """Result of running a command inside the container via ``docker exec``.
-
-    Attributes:
-        exit_code: Process exit code from the container.
-            ``-1`` indicates the exec call timed out or the engine
-            failed to report a code.
-        stdout: Raw bytes captured from the command's stdout
-            (channel ``1`` of the docker exec stream).
-        stderr: Raw bytes captured from the command's stderr
-            (channel ``2`` of the docker exec stream).
-    """
-
-    exit_code: int
-    stdout: bytes
-    stderr: bytes
-
-    def ok(self) -> bool:
-        """Return ``True`` iff the command exited with code ``0``."""
-        return self.exit_code == 0
 
 
 # ── the workspace ──────────────────────────────────────────────────
@@ -227,6 +201,7 @@ class DockerWorkspace(WorkspaceBase):
         # ── runtime state ───────────────────────────────────────
         self._client: Any = None  # aiodocker.Docker
         self._container: Any = None
+        self._backend: DockerBackend | None = None
         self._port_mapping: dict[int, int] = {}
         self._image_tag: str = ""
         self._gateway: GatewayClient | None = None
@@ -312,6 +287,14 @@ class DockerWorkspace(WorkspaceBase):
         The gateway process keeps running with no upstream MCPs.
         ``default_mcps`` / ``skill_paths`` are not re-seeded.
         """
+        if self._backend is None:
+            raise RuntimeError(
+                "DockerWorkspace is not initialized: its container "
+                "backend is unavailable. Use 'async with workspace:' "
+                "or call 'await workspace.initialize()' before "
+                "'reset()'.",
+            )
+
         async with self._mcp_lock, self._skill_lock:
             for gw_client in list(self._gateway_clients.values()):
                 try:
@@ -325,14 +308,12 @@ class DockerWorkspace(WorkspaceBase):
             self._gateway_clients.clear()
             self._mcps = []
 
-            paths = [
+            for path in (
                 CONTAINER_SESSIONS_DIR,
                 CONTAINER_DATA_DIR,
                 CONTAINER_SKILLS_DIR,
-            ]
-            await self._exec(
-                "rm -rf " + " ".join(shlex.quote(p) for p in paths),
-            )
+            ):
+                await self._backend.delete_path(path)
 
             # Rewrite ``.mcp`` to an empty list so a future restart does
             # not fall back to ``default_mcps`` (which would only happen
@@ -366,11 +347,19 @@ class DockerWorkspace(WorkspaceBase):
             # transparently, so this only matters on Linux. Best-effort:
             # exec failures are swallowed, and we still tear the
             # container down.
-            if self.host_workdir is not None and sys.platform == "linux":
+            if (
+                self.host_workdir is not None
+                and sys.platform == "linux"
+                and self._backend is not None
+            ):
                 try:
-                    await self._exec(
-                        f"chown -R {os.getuid()}:{os.getgid()} "
-                        f"{shlex.quote(CONTAINER_WORKDIR)}",
+                    await self._backend.exec_shell(
+                        [
+                            "chown",
+                            "-R",
+                            f"{os.getuid()}:{os.getgid()}",
+                            CONTAINER_WORKDIR,
+                        ],
                         timeout=10.0,
                     )
                 except Exception:
@@ -384,6 +373,7 @@ class DockerWorkspace(WorkspaceBase):
             except Exception:
                 pass
             self._container = None
+            self._backend = None
 
         if self._client is not None:
             try:
@@ -410,10 +400,36 @@ class DockerWorkspace(WorkspaceBase):
     async def list_tools(self) -> list[ToolBase]:
         """Built-in tools exposed by the workspace itself.
 
-        Always empty — every tool reaches the agent through an MCP
-        server registered on the in-container gateway.
+        Returns the six builtin tools (Bash, Read, Write, Edit, Grep,
+        Glob), each backed by the workspace's :class:`DockerBackend`
+        that executes inside the container.
+
+        Raises:
+            `RuntimeError`:
+                If the workspace has not been initialized yet (the
+                container-backed backend is unavailable). Without this
+                guard the builtin tools would silently fall back to a
+                :class:`LocalBackend` and run on the host instead of
+                inside the container.
         """
-        return []
+        if self._backend is None:
+            raise RuntimeError(
+                "DockerWorkspace is not initialized: its container "
+                "backend is unavailable. Use 'async with workspace:' "
+                "or call 'await workspace.initialize()' before "
+                "'list_tools()'.",
+            )
+
+        from ...tool._builtin import Bash, Edit, Glob, Grep, Read, Write
+
+        return [
+            Bash(cwd=CONTAINER_WORKDIR, backend=self._backend),
+            Edit(backend=self._backend),
+            Glob(backend=self._backend, glob_helper_path=GLOB_HELPER_SCRIPT),
+            Grep(backend=self._backend),
+            Read(backend=self._backend),
+            Write(backend=self._backend),
+        ]
 
     async def list_mcps(self) -> list[MCPClient]:
         """Return one :class:`GatewayMCPClient` per registered MCP.
@@ -438,9 +454,13 @@ class DockerWorkspace(WorkspaceBase):
         """
         import frontmatter as fm
 
-        result = await self._exec(
-            f"find {CONTAINER_SKILLS_DIR} -name SKILL.md "
-            f"2>/dev/null || true",
+        result = await self._backend.exec_shell(
+            [
+                "sh",
+                "-c",
+                f"find {CONTAINER_SKILLS_DIR} -name SKILL.md "
+                f"2>/dev/null || true",
+            ],
         )
         if not result.ok():
             return []
@@ -453,7 +473,7 @@ class DockerWorkspace(WorkspaceBase):
             if not md_path:
                 continue
             try:
-                raw = await self._read(md_path)
+                raw = await self._backend.read_file(md_path)
                 doc = fm.loads(raw.decode("utf-8"))
                 name = doc.get("name")
                 desc = doc.get("description")
@@ -563,15 +583,16 @@ class DockerWorkspace(WorkspaceBase):
             )
 
         async with self._skill_lock:
-            await self._exec(f"mkdir -p {CONTAINER_SKILLS_DIR}")
+            await self._backend.exec_shell(
+                ["mkdir", "-p", CONTAINER_SKILLS_DIR],
+            )
             dir_name = os.path.basename(os.path.abspath(skill_path))
 
             # Refuse to overwrite an existing directory of the same name —
             # mirrors the conflict-rejection behaviour of ``mkdir`` here
             # rather than LocalWorkspace's full hash-dedup index.
-            check = await self._exec(
-                f"test -e "
-                f"{shlex.quote(CONTAINER_SKILLS_DIR + '/' + dir_name)}",
+            check = await self._backend.exec_shell(
+                ["test", "-e", CONTAINER_SKILLS_DIR + "/" + dir_name],
             )
             if check.ok():
                 raise ValueError(
@@ -620,12 +641,7 @@ class DockerWorkspace(WorkspaceBase):
             raise KeyError(
                 f"Skill {name!r} not found. Available: {available}",
             )
-        result = await self._exec(f"rm -rf {shlex.quote(target_dir)}")
-        if not result.ok():
-            raise RuntimeError(
-                f"Failed to remove skill {name!r}: "
-                f"{result.stderr.decode(errors='replace')}",
-            )
+        await self._backend.delete_path(target_dir)
 
     # ── offload ─────────────────────────────────────────────────
 
@@ -674,13 +690,13 @@ class DockerWorkspace(WorkspaceBase):
                 msg.content = content
             lines.append(msg.model_dump_json())
 
-        await self._exec(f"mkdir -p {shlex.quote(base)}")
+        await self._backend.exec_shell(["mkdir", "-p", base])
         existing = b""
         try:
-            existing = await self._read(path)
+            existing = await self._backend.read_file(path)
         except (FileNotFoundError, OSError):
             pass
-        await self._write(
+        await self._backend.write_file(
             path,
             existing + ("\n".join(lines) + "\n").encode("utf-8"),
         )
@@ -730,8 +746,11 @@ class DockerWorkspace(WorkspaceBase):
                         f"media_type='{block.source.media_type}'/>",
                     )
 
-        await self._exec(f"mkdir -p {shlex.quote(base)}")
-        await self._write(path, "".join(parts).encode("utf-8"))
+        await self._backend.exec_shell(["mkdir", "-p", base])
+        await self._backend.write_file(
+            path,
+            "".join(parts).encode("utf-8"),
+        )
         return path
 
     # ── internals: image build ──────────────────────────────────
@@ -880,13 +899,20 @@ class DockerWorkspace(WorkspaceBase):
             )
         self._port_mapping[self.gateway_port] = int(bindings[0]["HostPort"])
 
+        # Create the backend now that the container is running. All
+        # subsequent container I/O in this workspace goes through it.
+        self._backend = DockerBackend(self._container, CONTAINER_WORKDIR)
+
         # Ensure the in-container persistence dirs exist (also makes a
         # newly-bind-mounted host workdir agentscope-shaped on first use).
-        await self._exec(
-            "mkdir -p "
-            f"{shlex.quote(CONTAINER_DATA_DIR)} "
-            f"{shlex.quote(CONTAINER_SKILLS_DIR)} "
-            f"{shlex.quote(CONTAINER_SESSIONS_DIR)}",
+        await self._backend.exec_shell(
+            [
+                "mkdir",
+                "-p",
+                CONTAINER_DATA_DIR,
+                CONTAINER_SKILLS_DIR,
+                CONTAINER_SESSIONS_DIR,
+            ],
         )
 
     async def _restore_or_seed_mcps(self) -> list[MCPClient]:
@@ -960,8 +986,10 @@ class DockerWorkspace(WorkspaceBase):
             "token": self._gateway_token,
             "servers": [m.model_dump(mode="json") for m in self._mcps],
         }
-        await self._exec(f"mkdir -p {shlex.quote(GATEWAY_HOME)}")
-        await self._write(
+        await self._backend.exec_shell(
+            ["mkdir", "-p", GATEWAY_HOME],
+        )
+        await self._backend.write_file(
             GATEWAY_CONFIG,
             json.dumps(cfg, indent=2, ensure_ascii=False).encode("utf-8"),
         )
@@ -988,7 +1016,7 @@ class DockerWorkspace(WorkspaceBase):
             f"> {shlex.quote(GATEWAY_LOG)} 2>&1 &"
         )
         # Detach: we don't await stream completion, just kick it off.
-        await self._exec(cmd)
+        await self._backend.exec_shell(["sh", "-c", cmd])
 
     async def _wait_for_gateway(self, timeout: float = 30.0) -> None:
         """Block until the gateway answers ``/health`` with 200.
@@ -1015,7 +1043,7 @@ class DockerWorkspace(WorkspaceBase):
             delay = min(delay * 1.5, 1.0)
         # Last-ditch: dump the gateway log to help debug startup failures.
         try:
-            log = await self._read(GATEWAY_LOG)
+            log = await self._backend.read_file(GATEWAY_LOG)
             tail = log[-2000:].decode(errors="replace")
         except Exception:
             tail = "<no gateway log available>"
@@ -1056,153 +1084,6 @@ class DockerWorkspace(WorkspaceBase):
                     e,
                 )
 
-    # ── internals: container I/O ────────────────────────────────
-
-    async def _exec(
-        self,
-        command: str,
-        *,
-        timeout: float | None = None,
-    ) -> _ExecResult:
-        """Run ``sh -c <command>`` inside the container.
-
-        The exec stream is consumed entirely so that ``stdout`` /
-        ``stderr`` capture both stream channels in order.  The
-        container's ``CONTAINER_WORKDIR`` is used as the working
-        directory.
-
-        Args:
-            command: Shell command string. Caller is responsible for
-                quoting via :func:`shlex.quote`.
-            timeout: Maximum seconds to wait for completion.  ``None``
-                waits indefinitely; on timeout an
-                :class:`_ExecResult` with ``exit_code=-1`` and
-                ``stderr=b"timed out"`` is returned (no exception).
-
-        Returns:
-            The captured exit code and IO streams.
-        """
-
-        async def _run() -> _ExecResult:
-            exec_obj = await self._container.exec(
-                cmd=["sh", "-c", command],
-                workdir=CONTAINER_WORKDIR,
-            )
-            stdout: list[bytes] = []
-            stderr: list[bytes] = []
-            # ``exec_obj.start()`` returns aiodocker's ``Stream``
-            # object — an async context manager wrapping a
-            # persistent HTTP/1.1-Upgrade connection to the docker
-            # daemon. Drain it with ``read_out()``: each call yields
-            # a ``Message(stream=int, data=bytes)`` (channel 1 =
-            # stdout, channel 2 = stderr), or ``None`` at EOF when
-            # the exec process exits.  ``async with`` is required —
-            # without it the underlying ``ClientResponse`` is leaked
-            # and asyncio logs ``Unclosed response`` at GC time,
-            # which on a closed event loop manifests as ``Event loop
-            # is closed`` errors during pytest teardown.
-            async with exec_obj.start() as stream:
-                while True:
-                    msg = await stream.read_out()
-                    if msg is None:
-                        break
-                    if msg.stream == 1:
-                        stdout.append(msg.data)
-                    else:
-                        stderr.append(msg.data)
-            inspect = await exec_obj.inspect()
-            code = inspect.get("ExitCode", -1)
-            if code is None:
-                code = -1
-            return _ExecResult(
-                exit_code=int(code),
-                stdout=b"".join(stdout),
-                stderr=b"".join(stderr),
-            )
-
-        if timeout is None:
-            return await _run()
-        try:
-            return await asyncio.wait_for(_run(), timeout=timeout)
-        except asyncio.TimeoutError:
-            return _ExecResult(
-                exit_code=-1,
-                stdout=b"",
-                stderr=b"timed out",
-            )
-
-    async def _read(self, path: str) -> bytes:
-        """Fetch a file from the container as raw bytes.
-
-        Uses ``get_archive`` (tarfile stream) and extracts the first
-        regular member.  Compatible with the two stream shapes that
-        aiodocker emits (sync ``dict`` payload or async chunk stream).
-
-        Args:
-            path: Absolute container-side path of the file to read.
-
-        Returns:
-            The file contents.
-
-        Raises:
-            FileNotFoundError: If the path does not exist in the
-                container, or if the tar stream contains no regular
-                file at that path.
-        """
-
-        from aiodocker import exceptions as aiodocker_exceptions
-
-        try:
-            # ``get_archive`` returns an already-parsed
-            # :class:`tarfile.TarFile` (the daemon serves the file
-            # entry as a tar stream, aiodocker drains it into memory
-            # for us). Iterate members and return the first regular
-            # file's bytes.
-            tar = await self._container.get_archive(path)
-        except aiodocker_exceptions.DockerError as exc:
-            # The daemon answers with 404 + ``"Could not find the file
-            # ... in container ..."`` when ``path`` is missing.
-            # Translate that to ``FileNotFoundError`` so callers can
-            # use the standard exception type instead of leaking the
-            # aiodocker-specific class.
-            if exc.status == 404:
-                raise FileNotFoundError(
-                    f"not found in container: {path}",
-                ) from exc
-            raise
-
-        try:
-            for member in tar.getmembers():
-                if member.isfile():
-                    f = tar.extractfile(member)
-                    if f:
-                        return f.read()
-        finally:
-            tar.close()
-        raise FileNotFoundError(f"not found in container: {path}")
-
-    async def _write(self, path: str, data: bytes) -> None:
-        """Write raw bytes to a file inside the container.
-
-        Creates the parent directory with ``mkdir -p`` first, then
-        uploads a single-entry tar via ``put_archive``.  Overwrites
-        an existing file at the same path.
-
-        Args:
-            path: Absolute container-side destination path.
-            data: Raw file contents.
-        """
-        parent = posixpath.dirname(path) or "/"
-        name = posixpath.basename(path)
-
-        await self._exec(f"mkdir -p {shlex.quote(parent)}")
-        buf = io.BytesIO()
-        with tarfile.open(fileobj=buf, mode="w") as tf:
-            info = tarfile.TarInfo(name=name)
-            info.size = len(data)
-            tf.addfile(info, io.BytesIO(data))
-        await self._container.put_archive(parent, buf.getvalue())
-
     # ── internals: data offload ────────────────────────────────
 
     async def _offload_data_block(self, block: DataBlock) -> DataBlock:
@@ -1228,8 +1109,13 @@ class DockerWorkspace(WorkspaceBase):
         h = hashlib.sha256(block.source.data.encode()).hexdigest()
         ext = mimetypes.guess_extension(block.source.media_type) or ".bin"
         path = f"{CONTAINER_DATA_DIR}/{h}{ext}"
-        await self._exec(f"mkdir -p {shlex.quote(CONTAINER_DATA_DIR)}")
-        await self._write(path, base64.b64decode(block.source.data))
+        await self._backend.exec_shell(
+            ["mkdir", "-p", CONTAINER_DATA_DIR],
+        )
+        await self._backend.write_file(
+            path,
+            base64.b64decode(block.source.data),
+        )
         return DataBlock(
             id=block.id,
             name=block.name,

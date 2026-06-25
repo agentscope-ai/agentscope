@@ -11,11 +11,49 @@ import uuid
 from datetime import datetime
 from typing import Any, Callable
 
-import requests
-from json_repair import repair_json
-
 from .._logging import logger
 from ..exception import ToolJSONDecodeError
+
+
+def _default_id_factory() -> str:
+    return uuid.uuid4().hex
+
+
+_id_factory: Callable[[], str] = _default_id_factory
+
+
+def set_id_factory(factory: Callable[[], str]) -> None:
+    """Override the global ID factory used by all AgentScope entities.
+
+    Entity IDs default to ``uuid.uuid4().hex``. Call this once at
+    startup to substitute a different strategy.
+
+    .. note::
+        Security-sensitive tokens (gateway tokens, Redis lock tokens)
+        are **not** affected and always use ``uuid.uuid4().hex``.
+
+    Args:
+        factory (`Callable[[], str]`):
+            A no-arg callable returning a string ID.
+
+    Raises:
+        TypeError: If ``factory`` is not callable.
+
+    Example:
+        >>> from agentscope import set_id_factory
+        >>> set_id_factory(lambda: uuid7().hex)
+    """
+    if not callable(factory):
+        raise TypeError(
+            f"factory must be a callable, got {type(factory).__name__}",
+        )
+    global _id_factory
+    _id_factory = factory
+
+
+def _generate_id() -> str:
+    """Generate an ID string using the current global ID factory."""
+    return _id_factory()
 
 
 def _json_loads_with_repair(
@@ -60,6 +98,8 @@ def _json_loads_with_repair(
 
     try:
         # Try to repair with json_repair
+        from json_repair import repair_json
+
         repaired = repair_json(json_str, stream_stable=True, schema=schema)
         res = json.loads(repaired)
         if isinstance(res, dict):
@@ -162,6 +202,8 @@ def _get_bytes_from_web_url(
         max_retries (`int`, defaults to `3`):
             The maximum number of retries.
     """
+    import requests
+
     for _ in range(max_retries):
         try:
             response = requests.get(url)

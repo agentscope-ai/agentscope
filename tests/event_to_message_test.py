@@ -135,6 +135,7 @@ def _trb(tc_id: str, name: str, output: Any, state: str) -> dict:
         "name": name,
         "output": output,
         "state": state,
+        "metadata": {},
     }
 
 

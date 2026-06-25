@@ -38,7 +38,6 @@ from .._utils import (
     _is_source_ignored,
 )
 
-
 # ── shared constants ───────────────────────────────────────────────
 
 #: Default E2B template. Matches the SDK's ``base`` template — has
@@ -68,6 +67,8 @@ GATEWAY_HOME = f"{SANDBOX_USER_HOME}/.agentscope"
 GATEWAY_VENV = f"{GATEWAY_HOME}/.venv"
 GATEWAY_VENV_PY = f"{GATEWAY_VENV}/bin/python"
 GATEWAY_SCRIPT = f"{GATEWAY_HOME}/_mcp_gateway_app.py"
+# Standalone glob helper script used by the builtin Glob tool.
+GLOB_HELPER_SCRIPT = f"{GATEWAY_HOME}/_glob_helper.py"
 GATEWAY_CONFIG = f"{GATEWAY_HOME}/gateway.config.json"
 GATEWAY_LOG = f"{GATEWAY_HOME}/gateway.log"
 
@@ -81,8 +82,11 @@ UV_BIN = f"{SANDBOX_USER_HOME}/.local/bin/uv"
 METADATA_WORKSPACE_ID_KEY = "agentscope.workspace.id"
 
 #: Tarball drop point for dev-mode ``agentscope`` source uploads.
-DEV_SRC_TAR = "/tmp/agentscope_src.tar"
-DEV_SRC_DIR = "/tmp/agentscope_src"
+#: Lives under ``GATEWAY_HOME`` (user-owned) instead of ``/tmp``
+#: because the E2B ``files.write`` API runs as ``user`` and ``/tmp``
+#: can have restrictive permissions after a sandbox pause/resume cycle.
+DEV_SRC_TAR = f"{GATEWAY_HOME}/agentscope_src.tar"
+DEV_SRC_DIR = f"{GATEWAY_HOME}/agentscope_src"
 
 # ── source tarball (dev mode only) ─────────────────────────────────
 
@@ -146,7 +150,13 @@ def bootstrap_commands(
         #    the command idempotent in case bootstrap is re-run.
         f"mkdir -p {SANDBOX_DATA_DIR} {SANDBOX_SKILLS_DIR} "
         f"{SANDBOX_SESSIONS_DIR} {GATEWAY_HOME}",
-        # 2. Astral uv — same shell installer as Docker. The base E2B
+        # 2. Install ripgrep for the Grep builtin tool. The base E2B
+        #    image runs as non-root, so we use sudo. ``apt-get update``
+        #    + install is idempotent — safe to re-run on resume.
+        "sudo apt-get update -qq "
+        "&& sudo apt-get install -y --no-install-recommends ripgrep "
+        "&& sudo rm -rf /var/lib/apt/lists/*",
+        # 3. Astral uv — same shell installer as Docker. The base E2B
         #    image already ships ``curl``; we land uv at
         #    ``$HOME/.local/bin`` since the sandbox user has no sudo by
         #    default. ``INSTALLER_NO_MODIFY_PATH=1`` suppresses shell
@@ -154,10 +164,10 @@ def bootstrap_commands(
         f"curl -LsSf https://astral.sh/uv/install.sh "
         f"| env UV_INSTALL_DIR={SANDBOX_USER_HOME}/.local/bin "
         f"INSTALLER_NO_MODIFY_PATH=1 sh",
-        # 3. Gateway venv + base requirements.
+        # 4. Gateway venv + base requirements.
         f"{UV_BIN} venv {GATEWAY_VENV}",
         f"{UV_BIN} pip install --python {GATEWAY_VENV_PY} {pip_args}",
-        # 4. agentscope itself (mode-dependent).
+        # 5. agentscope itself (mode-dependent).
         install_agentscope_cmd,
     ]
 

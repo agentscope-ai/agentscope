@@ -128,6 +128,42 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             "usage": None,
         }
 
+    async def test_default_configs_are_not_shared_between_agents(
+        self,
+    ) -> None:
+        """Agents created with defaults own independent config objects."""
+        agent_1 = Agent(
+            name="agent-1",
+            system_prompt="You are agent 1.",
+            model=MockModel(),
+        )
+        agent_2 = Agent(
+            name="agent-2",
+            system_prompt="You are agent 2.",
+            model=MockModel(),
+        )
+
+        self.assertIsNot(agent_1.model_config, agent_2.model_config)
+        self.assertIsNot(agent_1.context_config, agent_2.context_config)
+        self.assertIsNot(agent_1.react_config, agent_2.react_config)
+
+        agent_1.model_config.max_retries = 3
+        agent_1.context_config.tool_result_limit = 123
+        agent_1.react_config.max_iters = 2
+
+        self.assertNotEqual(
+            agent_1.model_config.max_retries,
+            agent_2.model_config.max_retries,
+        )
+        self.assertNotEqual(
+            agent_1.context_config.tool_result_limit,
+            agent_2.context_config.tool_result_limit,
+        )
+        self.assertNotEqual(
+            agent_1.react_config.max_iters,
+            agent_2.react_config.max_iters,
+        )
+
     async def test_streaming_reasoning(self) -> None:
         """Test the streaming model inference without tool calls generated,
         only text in model response.
@@ -759,6 +795,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                         ],
                         "name": "mock_sequential_tool",
                         "state": "success",
+                        "metadata": {},
                     },
                     {
                         "type": "tool_result",
@@ -772,6 +809,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                         ],
                         "name": "mock_sequential_tool",
                         "state": "success",
+                        "metadata": {},
                     },
                     {
                         "type": "text",
@@ -998,6 +1036,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                         ],
                         "name": "mock_concurrent_tool",
                         "state": "success",
+                        "metadata": {},
                     },
                     {
                         "type": "tool_result",
@@ -1011,6 +1050,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                         ],
                         "name": "mock_concurrent_tool",
                         "state": "success",
+                        "metadata": {},
                     },
                     {
                         "type": "text",
@@ -1134,11 +1174,12 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "type": "TOOL_RESULT_END",
                 "tool_call_id": tool_call_id_1,
                 "state": "success",
+                "metadata": {},
             },
         ]
 
         # Expected concurrent events (order may vary)
-        expected_concurrent = [
+        expected_concurrent: list[dict[str, Any]] = [
             {
                 "type": "TOOL_RESULT_START",
                 "tool_call_id": tool_call_id_2,
@@ -1168,6 +1209,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "type": "TOOL_RESULT_END",
                 "tool_call_id": tool_call_id_3,
                 "state": "success",
+                "metadata": {},
             },
         ]
 
@@ -1281,6 +1323,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                                 "text": "Sequential result: seq1",
                             },
                         ],
+                        "metadata": {},
                     },
                     {
                         "type": "tool_result",
@@ -1294,6 +1337,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                                 "text": "Concurrent result: conc1",
                             },
                         ],
+                        "metadata": {},
                     },
                     {
                         "type": "tool_result",
@@ -1307,6 +1351,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                                 "text": "Concurrent result: conc2",
                             },
                         ],
+                        "metadata": {},
                     },
                     {
                         "type": "text",
