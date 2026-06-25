@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """The agent state class."""
-import uuid
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 import aiofiles.os
 
+from .._utils._common import _generate_id
 from ._task import Task
 from ..message import TextBlock, DataBlock, Msg
 from ..permission import PermissionContext
@@ -140,7 +141,7 @@ class TaskContext(BaseModel):
 class AgentState(BaseModel):
     """The agent state that should be saved and loaded from storage."""
 
-    session_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    session_id: str = Field(default_factory=_generate_id)
     """The session id of the agent. Normally, each session will maintain one
     independent agent state for each agent."""
 
@@ -149,7 +150,7 @@ class AgentState(BaseModel):
     context when feed into the LLM."""
     context: list[Msg] = Field(default_factory=list)
     """The uncompressed conversation context, that will be feed into the LLM"""
-    reply_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    reply_id: str = Field(default_factory=_generate_id)
     """The id of the current reply, which is also used as the id of the
     final message of the reply."""
     cur_iter: int = 0
@@ -174,3 +175,10 @@ class AgentState(BaseModel):
     # =================================================================
     tasks_context: TaskContext = Field(default_factory=TaskContext)
     """The task context that records the agent tasks."""
+
+    # =================================================================
+    # The middleware context
+    # =================================================================
+    middle_context: dict[str, Any] = Field(default_factory=dict)
+    """The context that allow the middlewares to store/get data across
+    different replies."""

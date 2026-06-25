@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """The task class."""
-import uuid
 from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+
+from .._utils._common import _generate_id
 
 
 class Task(BaseModel):
@@ -25,7 +26,7 @@ class Task(BaseModel):
     state: Literal["pending", "in_progress", "completed"] = "pending"
     """The task state."""
 
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    id: str = Field(default_factory=_generate_id)
     """The task identifier."""
 
     owner: str | None = None

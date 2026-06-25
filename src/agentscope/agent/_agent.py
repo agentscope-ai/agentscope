@@ -2,7 +2,6 @@
 """The unified agent class in AgentScope library."""
 import asyncio
 import inspect
-import uuid
 
 from asyncio import Queue
 from copy import deepcopy
@@ -21,7 +20,7 @@ from ._config import ContextConfig, ReActConfig, ModelConfig
 from ..state import AgentState
 from ._utils import _ToolCallBatch
 from .._logging import logger
-from .._utils._common import _json_loads_with_repair
+from .._utils._common import _generate_id, _json_loads_with_repair
 from ..event import (
     AgentEvent,
     ModelCallEndEvent,
@@ -104,9 +103,9 @@ class Agent:
         state: AgentState | None = None,
         offloader: Offloader | None = None,
         # The agent configurations
-        model_config: ModelConfig = ModelConfig(),
-        context_config: ContextConfig = ContextConfig(),
-        react_config: ReActConfig = ReActConfig(),
+        model_config: ModelConfig | None = None,
+        context_config: ContextConfig | None = None,
+        react_config: ReActConfig | None = None,
     ) -> None:
         """Initialize the agent class in AgentScope.
 
@@ -145,9 +144,9 @@ class Agent:
         self.model = model
         self.state = state or AgentState()
 
-        self.model_config = model_config
-        self.context_config = context_config
-        self.react_config = react_config
+        self.model_config = model_config or ModelConfig()
+        self.context_config = context_config or ContextConfig()
+        self.react_config = react_config or ReActConfig()
 
         # The permission engine
         self._engine = PermissionEngine(self.state.permission_context)
@@ -579,7 +578,7 @@ class Agent:
         else:
             await self._handle_incoming_messages(msgs)
             # Update the context with the incoming message and state
-            self.state.reply_id = uuid.uuid4().hex
+            self.state.reply_id = _generate_id()
             self.state.cur_iter = 0
 
             yield ReplyStartEvent(
@@ -1058,6 +1057,7 @@ class Agent:
                     reply_id=self.state.reply_id,
                     tool_call_id=tool_result.id,
                     state=tool_result.state,
+                    metadata=tool_result.metadata,
                 )
 
                 self._save_to_context([tool_result])
@@ -1457,6 +1457,7 @@ class Agent:
                         if isinstance(chunk.content, str)
                         else chunk.content,
                         state=chunk.state,
+                        metadata=chunk.metadata,
                     )
 
                     # ========================================================
@@ -1525,6 +1526,7 @@ class Agent:
                         reply_id=self.state.reply_id,
                         tool_call_id=tool_call.id,
                         state=chunk.state,
+                        metadata=chunk.metadata,
                     )
 
                 else:
@@ -2434,7 +2436,7 @@ class Agent:
             # If the current chunk has text blocks but no text block id,
             # start with a start event
             if not block_ids.get("text"):
-                block_ids["text"] = uuid.uuid4().hex
+                block_ids["text"] = _generate_id()
                 yield TextBlockStartEvent(
                     reply_id=self.state.reply_id,
                     block_id=block_ids["text"],
@@ -2458,7 +2460,7 @@ class Agent:
         if thinking_blocks:
             # Generate a new thinking block id and start event
             if not block_ids.get("thinking"):
-                block_ids["thinking"] = uuid.uuid4().hex
+                block_ids["thinking"] = _generate_id()
                 yield ThinkingBlockStartEvent(
                     reply_id=self.state.reply_id,
                     block_id=block_ids["thinking"],

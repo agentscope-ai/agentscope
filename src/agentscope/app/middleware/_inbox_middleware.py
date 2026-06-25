@@ -13,7 +13,7 @@ so the front-end SSE stream can render it in real time.
 """
 from typing import Any, AsyncGenerator, Callable
 
-from ..message_bus import MessageBus
+from ..message_bus import MessageBus, MessageBusKeys
 from ..._logging import logger
 from ...agent import Agent
 from ...event import HintBlockEvent
@@ -97,8 +97,8 @@ class InboxMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 One event per injected :class:`HintBlock`. Empty when
                 the inbox had no pending entries.
         """
-        entries = await self._bus.inbox_drain(
-            agent.state.session_id,
+        entries = await self._bus.queue_drain(
+            MessageBusKeys.inbox(agent.state.session_id),
             max_count=self._max_count,
         )
 
