@@ -29,6 +29,7 @@ from .._service import SessionService, SessionProjection, SubagentHitlProjector
 from ..storage import (
     AgentRecord,
     ChatModelConfig,
+    SessionKnowledgeConfig,
     TTSModelConfig,
     SessionConfig,
     SessionRecord,
@@ -118,6 +119,37 @@ async def _ensure_credential_exists(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Credential '{config.credential_id}' not found.",
         )
+
+
+async def _ensure_knowledge_bases_exist(
+    storage: StorageBase,
+    user_id: str,
+    config: SessionKnowledgeConfig | None,
+) -> None:
+    """Validate every KB id in ``config`` belongs to the given user.
+
+    No-op when ``config`` is ``None`` or its ``knowledge_base_ids``
+    list is empty.
+
+    Args:
+        storage (`StorageBase`): Injected storage backend.
+        user_id (`str`): The authenticated user ID.
+        config (`SessionKnowledgeConfig | None`):
+            Knowledge config to validate.  Pass ``None`` to skip.
+
+    Raises:
+        `HTTPException`: 404 if any KB id does not exist or is not
+            owned by the user.
+    """
+    if config is None or not config.knowledge_base_ids:
+        return
+    for kb_id in config.knowledge_base_ids:
+        kb = await storage.get_knowledge_base(user_id, kb_id)
+        if kb is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Knowledge base '{kb_id}' not found.",
+            )
 
 
 @session_router.get(
@@ -236,6 +268,11 @@ async def create_session(
         body.fallback_chat_model_config,
     )
     await _ensure_credential_exists(storage, user_id, body.tts_model_config)
+    await _ensure_knowledge_bases_exist(
+        storage,
+        user_id,
+        body.knowledge_config,
+    )
 
     session_record = await storage.upsert_session(
         user_id=user_id,
@@ -245,6 +282,7 @@ async def create_session(
             chat_model_config=body.chat_model_config,
             fallback_chat_model_config=body.fallback_chat_model_config,
             tts_model_config=body.tts_model_config,
+            knowledge_config=body.knowledge_config,
             **({"name": body.name} if body.name is not None else {}),
         ),
     )
@@ -333,6 +371,11 @@ async def update_session(
         body.fallback_chat_model_config,
     )
     await _ensure_credential_exists(storage, user_id, body.tts_model_config)
+    await _ensure_knowledge_bases_exist(
+        storage,
+        user_id,
+        body.knowledge_config,
+    )
 
     updated_state = existing.state
     if body.permission_mode is not None:

@@ -296,11 +296,12 @@ class _FakeEmbeddingModel(EmbeddingModelBase):
         super().__init__(
             credential=DashScopeCredential(api_key="fake"),
             model="fake-embed",
-            parameters=self.Parameters(dimensions=3),
+            parameters=self.Parameters(),
             context_size=8192,
             batch_size=10,
             max_retries=0,
             retry_delay=0.0,
+            dimensions=3,
         )
         self.received: list[list[str]] = []
 

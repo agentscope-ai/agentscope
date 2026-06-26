@@ -13,6 +13,7 @@ from agentscope.middleware import MiddlewareBase
 from agentscope.model import ChatResponse
 from agentscope.message import (
     TextBlock,
+    HintBlock,
     UserMsg,
     SystemMsg,
     Msg,
@@ -821,10 +822,12 @@ class TestMiddleware(IsolatedAsyncioTestCase):
 
         Verifies that:
         - Multiple middlewares are chained in onion order (mw1 wraps mw2).
-        - ``input_kwargs`` carries the correct ``context_config``.
+        - ``input_kwargs`` carries the correct ``context_config`` and
+          ``instructions``.
         - The ``next_handler`` ultimately calls ``_compress_context_impl``.
         - A middleware can short-circuit and skip the actual implementation.
         """
+        seen_instructions = []
 
         # ------------------------------------------------------------------ #
         # Middleware that records pre/post and forwards to next_handler.      #
@@ -852,6 +855,7 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             ) -> None:
                 """Forward to next handler, recording pre and post."""
                 self.log.append(f"{self.name}_pre")
+                seen_instructions.append(input_kwargs.get("instructions"))
                 await next_handler(**input_kwargs)
                 self.log.append(f"{self.name}_post")
 
@@ -878,20 +882,86 @@ class TestMiddleware(IsolatedAsyncioTestCase):
         )
 
         # Patch _compress_context_impl to avoid real token counting.
+        instructions = HintBlock(
+            hint="Keep user requirements while compressing.",
+            source="user",
+        )
         with patch.object(
             agent,
             "_compress_context_impl",
             new_callable=AsyncMock,
         ) as mock_impl:
-            await agent.compress_context(context_config=context_config)
+            await agent.compress_context(
+                context_config=context_config,
+                instructions=instructions,
+            )
 
             # _compress_context_impl must have been called exactly once.
-            mock_impl.assert_awaited_once_with(context_config=context_config)
+            mock_impl.assert_awaited_once_with(
+                context_config=context_config,
+                instructions=instructions,
+            )
 
         # Verify onion execution order: mw1_pre -> mw2_pre -> mw2_post ->
         # mw1_post
         expected = ["mw1_pre", "mw2_pre", "mw2_post", "mw1_post"]
         self.assertListEqual(self.execution_log, expected)
+        self.assertListEqual(seen_instructions, [instructions, instructions])
+
+    async def test_on_compress_context_middleware_modify_instructions(
+        self,
+    ) -> None:
+        """Test that middleware can replace compress_context instructions."""
+
+        class ReplaceInstructionsMiddleware(MiddlewareBase):
+            """Middleware that replaces the compression instructions."""
+
+            def __init__(self, replacement: HintBlock) -> None:
+                """Initialize the middleware with replacement instructions."""
+                self.replacement = replacement
+
+            async def on_compress_context(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., Any],
+            ) -> None:
+                """Replace instructions before forwarding."""
+                input_kwargs["instructions"] = self.replacement
+                await next_handler(**input_kwargs)
+
+        original = HintBlock(
+            hint="Keep all requirements.",
+            source="user",
+        )
+        replacement = HintBlock(
+            hint="Keep only unresolved requirements.",
+            source="middleware",
+        )
+        context_config = ContextConfig(trigger_ratio=0.8, reserve_ratio=0.1)
+        agent = Agent(
+            name="test_agent",
+            system_prompt="test prompt",
+            model=self.mock_model,
+            toolkit=self.toolkit,
+            middlewares=[ReplaceInstructionsMiddleware(replacement)],
+            context_config=context_config,
+        )
+
+        with patch.object(
+            agent,
+            "_compress_context_impl",
+            new_callable=AsyncMock,
+        ) as mock_impl:
+            await agent.compress_context(
+                context_config=context_config,
+                instructions=original,
+            )
+
+            mock_impl.assert_awaited_once_with(
+                context_config=context_config,
+                instructions=replacement,
+            )
 
     async def test_on_compress_context_middleware_short_circuit(
         self,
@@ -980,7 +1050,10 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             new_callable=AsyncMock,
         ) as mock_impl:
             await agent.compress_context(context_config=context_config)
-            mock_impl.assert_awaited_once_with(context_config=context_config)
+            mock_impl.assert_awaited_once_with(
+                context_config=context_config,
+                instructions=None,
+            )
 
     async def asyncTearDown(self) -> None:
         """Clean up test fixtures."""

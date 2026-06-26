@@ -2,10 +2,15 @@
 """The Google Gemini embedding model.
 
 Handles both text-only and multimodal models under a single class.
-``gemini-embedding-001`` accepts ``list[str]`` only.
+``gemini-embedding-001`` accepts ``list[str | TextBlock]``.
 ``gemini-embedding-2`` additionally accepts
 :class:`~agentscope.message.DataBlock` (images, video, audio, PDF).
 The model name determines the API call style.
+
+Text payloads may be passed either as bare ``str`` or as
+:class:`~agentscope.message.TextBlock` — the latter is unpacked to its
+``.text`` field on entry so the rest of the pipeline only deals with
+``str`` and ``DataBlock``.
 """
 from __future__ import annotations
 
@@ -20,7 +25,7 @@ from .._embedding_usage import EmbeddingUsage
 from .._embedding_base import EmbeddingModelBase
 from ..._logging import logger
 from ...credential import CredentialBase
-from ...message import DataBlock
+from ...message import DataBlock, TextBlock
 
 #: Model name prefixes that use the multimodal API path.
 _MULTIMODAL_PREFIXES = ("gemini-embedding-2",)
@@ -59,7 +64,7 @@ _MODEL_LIMITS: dict[str, _MultimodalLimits] = {
 _DEFAULT_LIMITS = _MultimodalLimits()
 
 
-class GeminiEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
+class GeminiEmbeddingModel(EmbeddingModelBase[str | TextBlock | DataBlock]):
     """Unified Google Gemini embedding model.
 
     Routes to the text-only or multimodal Gemini API based on the
@@ -89,6 +94,7 @@ class GeminiEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
         self,
         credential: CredentialBase,
         model: str,
+        dimensions: int | None,
         parameters: "GeminiEmbeddingModel.Parameters | None" = None,
         embedding_cache: EmbeddingCacheBase | None = None,
         context_size: int = 8192,
@@ -105,10 +111,16 @@ class GeminiEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
                 The embedding model name (e.g.
                 ``"gemini-embedding-001"`` or
                 ``"gemini-embedding-2"``).
+            dimensions (`int | None`):
+                The output embedding vector dimensions.  Required at
+                the contract level — see :class:`EmbeddingModelBase`
+                for the rationale.  ``None`` is accepted only for
+                backward compatibility with legacy configs that
+                persisted ``dimensions`` inside ``parameters``.
             parameters (`GeminiEmbeddingModel.Parameters | None`, \
             defaults to ``None``):
-                User-configurable parameters (currently only
-                ``dimensions``).
+                Provider-specific non-dimensional parameters.  Currently
+                empty for Gemini.
             embedding_cache (`EmbeddingCacheBase | None`, defaults to \
             ``None``):
                 Optional embedding cache.
@@ -127,12 +139,14 @@ class GeminiEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
         super().__init__(
             credential=credential,
             model=model,
+            dimensions=dimensions,
             parameters=parameters,
             context_size=context_size,
             batch_size=self._TEXT_BATCH_SIZE,
             max_retries=max_retries,
             retry_delay=retry_delay,
         )
+        self.supports_multimodal = self._is_multimodal
 
         self.client: genai.Client = genai.Client(
             api_key=credential.api_key.get_secret_value(),
@@ -148,7 +162,7 @@ class GeminiEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
 
     async def __call__(
         self,
-        inputs: list[str | DataBlock],
+        inputs: list[str | TextBlock | DataBlock],
         **kwargs: Any,
     ) -> EmbeddingResponse:
         """Embed inputs with batching and retry.
@@ -158,24 +172,32 @@ class GeminiEmbeddingModel(EmbeddingModelBase[str | DataBlock]):
         limits on images, videos, audios, and PDFs.
 
         Args:
-            inputs (`list[str | DataBlock]`):
-                The input data to embed.
+            inputs (`list[str | TextBlock | DataBlock]`):
+                The input data to embed.  ``TextBlock`` items are
+                unpacked to their ``.text`` field on entry, so the
+                remainder of the pipeline only sees ``str`` and
+                ``DataBlock``.
             **kwargs:
                 Forwarded to the Gemini API config.
 
         Returns:
             `EmbeddingResponse`: Merged response for all inputs.
         """
-        if not self._is_multimodal:
-            return await super().__call__(inputs, **kwargs)
+        normalized: list[str | DataBlock] = [
+            item.text if isinstance(item, TextBlock) else item
+            for item in inputs
+        ]
 
-        batches = self._split_multimodal_batches(inputs)
+        if not self._is_multimodal:
+            return await super().__call__(normalized, **kwargs)
+
+        batches = self._split_multimodal_batches(normalized)
 
         if len(batches) > 1:
             logger.info(
                 "Embedding %d multimodal inputs in %d batches "
                 "for model %s.",
-                len(inputs),
+                len(normalized),
                 len(batches),
                 self.model,
             )

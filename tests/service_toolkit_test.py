@@ -178,6 +178,7 @@ class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
             agent_record=agent,
             session_record=session,
             extra_factory=None,
+            middlewares=[],
         )
 
         names = set(_tool_names(toolkit))
@@ -232,6 +233,7 @@ class TestGetToolkitWorkerVariant(IsolatedAsyncioTestCase):
             agent_record=agent,
             session_record=session,
             extra_factory=None,
+            middlewares=[],
         )
         names = set(_tool_names(toolkit))
         # Only TeamSay from the team toolset.
@@ -268,6 +270,7 @@ class TestGetToolkitSchedulingGuard(IsolatedAsyncioTestCase):
             agent_record=agent,
             session_record=session,
             extra_factory=None,
+            middlewares=[],
         )
         names = set(_tool_names(toolkit))
         for missing in (
@@ -323,5 +326,6 @@ class TestGetToolkitExtraFactory(IsolatedAsyncioTestCase):
             agent_record=agent,
             session_record=session,
             extra_factory=factory,
+            middlewares=[],
         )
         self.assertIn("my-extra", _tool_names(toolkit))
