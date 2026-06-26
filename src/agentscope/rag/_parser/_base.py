@@ -13,6 +13,7 @@ Section; splitting happens later in a
 worry about output size — only about preserving the structural
 boundaries that downstream consumers must not cross.
 """
+import mimetypes
 from abc import ABC, abstractmethod
 
 from .._document import Section
@@ -38,6 +39,36 @@ class ParserBase(ABC):
     e.g. ``["application/pdf"]`` or
     ``["text/plain", "text/markdown"]``.  Used by the
     KnowledgeBaseManager to select a parser for an uploaded file."""
+
+    @classmethod
+    def supported_extensions(cls) -> list[str]:
+        """Filename extensions (including the leading ``.``) this parser
+        can produce uploads for.
+
+        The base implementation derives extensions from
+        :attr:`supported_media_types` via
+        :func:`mimetypes.guess_all_extensions` — good enough for clean
+        IANA types like ``application/pdf``.  Subclasses **should
+        override** this when the default reverse-lookup is noisy
+        (``text/plain`` resolves to ``.bat`` / ``.c`` / ``.pl`` and a
+        dozen other developer extensions no KB user wants in the file
+        picker) or when a media type has no registered extension at all
+        (``application/x-yaml`` returns the empty list).
+
+        The result is consumed by the front-end's ``<input accept>`` and
+        by the client-side filename guard; it is **not** consulted for
+        media-type routing — that always goes through
+        :attr:`supported_media_types`.
+
+        Returns:
+            `list[str]`:
+                Deduplicated, sorted extensions (each starting with
+                ``.``).  May be empty when no media type resolves.
+        """
+        out: set[str] = set()
+        for media_type in cls.supported_media_types:
+            out.update(mimetypes.guess_all_extensions(media_type))
+        return sorted(out)
 
     @abstractmethod
     async def parse(

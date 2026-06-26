@@ -5,8 +5,8 @@ The router stays thin and DTO-shaped; everything HTTP-side that needs
 to coordinate persistence, the blob store, the indexing pipeline,
 and the vector store goes through this service.
 
-The split with :class:`~agentscope.app.rag.knowledge_base_manager.Knowledge`
-is deliberate.  ``Knowledge`` is a **library-mode** handle that only
+The split with :class:`~agentscope.rag.KnowledgeBase`
+is deliberate.  ``KnowledgeBase`` is a **library-mode** handle that only
 depends on the vector store; embedded users instantiate one and drive
 the parse → chunk → embed pipeline themselves.  ``KnowledgeBaseService``
 is **service-mode** orchestration: it owns the document records
@@ -70,7 +70,7 @@ class KnowledgeBaseService:
                 The application storage backend; documents are
                 persisted here, not inside the vector store.
             knowledge_base_manager (`KnowledgeBaseManagerBase`):
-                Resolves the :class:`Knowledge` runtime used to clear
+                Resolves the :class:`KnowledgeBase` runtime used to clear
                 vector store records on document deletion.
             blob_store (`BlobStoreBase`):
                 Owns the bytes from upload until the worker is done.
@@ -487,7 +487,7 @@ class KnowledgeBaseService:
         user_id: str,
         knowledge_base_id: str,
     ) -> "object":
-        """Resolve a :class:`Knowledge` and translate not-found into 404."""
+        """Resolve a :class:`KnowledgeBase` and translate not-found to 404."""
         try:
             return await self._manager.get_knowledge(
                 user_id,

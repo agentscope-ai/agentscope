@@ -106,7 +106,7 @@ class _FakeVectorStore(VectorStoreBase):
 
 
 class _FakeKnowledge:
-    """Minimal stand-in for :class:`Knowledge` used by the worker.
+    """Minimal stand-in for :class:`KnowledgeBase` used by the worker.
 
     Bypasses embedding-model construction — instead just funnels the
     chunks into the bound :class:`_FakeVectorStore` with a fixed

@@ -7,8 +7,8 @@ from fastapi.middleware import Middleware
 from fastapi.middleware.cors import CORSMiddleware
 
 from agentscope.app import create_app, SubAgentTemplate
+from agentscope.app.message_bus import InMemoryMessageBus
 from agentscope.app.rag.knowledge_base_manager import CollectionPerKbManager
-from agentscope.app.message_bus import RedisMessageBus
 from agentscope.app.storage import RedisStorage
 from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.mcp import MCPClient, StdioMCPConfig, HttpMCPConfig
@@ -47,14 +47,16 @@ vector_store = QdrantStore(location=":memory:")
 
 app = create_app(
     storage=storage,
-    message_bus=RedisMessageBus(
-        host="localhost",
-        port=6379,
-    ),
-    # -- For a single-process / no-Redis setup, swap the lines above for:
+    message_bus=InMemoryMessageBus(),
+    # -- To use a Redis-backed message bus instead (recommended for
+    # -- multi-process / production deployments), uncomment the lines
+    # -- below and replace the InMemoryMessageBus() above:
     #
-    # from agentscope.app.message_bus import InMemoryMessageBus
-    # message_bus=InMemoryMessageBus(),
+    # from agentscope.app.message_bus import RedisMessageBus
+    # message_bus=RedisMessageBus(
+    #     host="localhost",
+    #     port=6379,
+    # ),
     workspace_manager=LocalWorkspaceManager(
         basedir=os.path.join(
             os.path.dirname(os.path.abspath(__file__)),

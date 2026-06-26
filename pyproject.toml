@@ -79,6 +79,8 @@ tools = [
 # ------------ RAG ------------
 rag = [
     "qdrant-client",
+    "pypdf",
+    "python-pptx",
 ]
 
 # ------------ S3-compatible blob store ------------
@@ -118,8 +120,14 @@ dev = [
     "myst_parser",
     "matplotlib",
     "fakeredis",
-    # S3-backend testing
+    # S3-backend testing — moto[server] spins up an in-process S3, the
+    # store-under-test (`S3BlobStore`) uses aioboto3, and boto3 is the
+    # sync client the test fixtures use to seed/verify buckets.
     "moto[server,s3]",
+    "aioboto3",
+    "boto3",
+    # RAG parser tests — used to generate PDF fixtures in-memory
+    "reportlab",
 ]
 
 [project.urls]

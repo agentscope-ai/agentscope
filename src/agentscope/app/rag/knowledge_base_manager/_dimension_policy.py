@@ -23,10 +23,10 @@ Three kinds are modelled:
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 if TYPE_CHECKING:
-    from ...embedding import EmbeddingModelCard
+    from ....embedding import EmbeddingModelCard
 
 
 class DimensionPolicyKind(str, Enum):
@@ -70,6 +70,29 @@ class DimensionPolicy(BaseModel):
         ),
     )
     """The required dimension, or ``None`` when any dimension is fine."""
+
+    @model_validator(mode="after")
+    def _enforce_kind_dimension_invariant(self) -> "DimensionPolicy":
+        """Reject states like ``ANY + dimension=768`` or ``FIXED + None``.
+
+        Without this guard, downstream code silently produces wrong
+        results (``ANY`` ignores a stray dimension) or crashes
+        (``FIXED`` with ``None`` makes ``filter_card`` raise
+        ``TypeError`` on ``target not in card.supported_dimensions``).
+        """
+        if self.kind is DimensionPolicyKind.ANY:
+            if self.dimension is not None:
+                raise ValueError(
+                    "DimensionPolicy: kind=ANY requires dimension=None, "
+                    f"got dimension={self.dimension!r}.",
+                )
+        else:
+            if self.dimension is None or self.dimension <= 0:
+                raise ValueError(
+                    f"DimensionPolicy: kind={self.kind.value} requires a "
+                    f"positive dimension, got dimension={self.dimension!r}.",
+                )
+        return self
 
     def accepts(self, dimensions: int) -> bool:
         """Check whether a candidate dimension satisfies this policy.

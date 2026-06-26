@@ -8,24 +8,27 @@ from abc import abstractmethod
 from pathlib import Path
 from typing import Any, Generic, TypeVar, Type, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from ._embedding_model_card import EmbeddingModelCard
 from ._embedding_response import EmbeddingResponse
 from ._embedding_usage import EmbeddingUsage
 from .._logging import logger
 from ..credential import CredentialBase
-from ..message import DataBlock
+from ..message import DataBlock, TextBlock
 
 #: Type variable for embedding input elements.
 #:
-#: - Text-only models bind this to ``str``.
-#: - Multimodal models bind this to ``str | DataBlock``.
+#: Bound to the union of all element shapes the framework supports;
+#: each concrete subclass narrows it to its accepted input via
+#: ``class Foo(EmbeddingModelBase[str | TextBlock]): ...`` so callers
+#: get accurate IDE completion and type-checking on ``__call__``.
 #:
-#: The IDE resolves the concrete type from each subclass's
-#: ``class Foo(EmbeddingModelBase[str]): ...`` declaration, so
-#: callers get accurate completion and type-checking.
-InputT = TypeVar("InputT", str, Union[str, DataBlock])
+#: ``__call__`` accepts ``TextBlock`` and unpacks it to ``.text``
+#: before invoking :meth:`_call_api`; therefore ``_call_api``'s input
+#: type is intentionally decoupled from :data:`InputT` (it is typed
+#: ``list[Any]`` on the base and narrowed by each subclass).
+InputT = TypeVar("InputT", bound=Union[str, TextBlock, DataBlock])
 
 
 class EmbeddingModelBase(Generic[InputT]):
@@ -33,8 +36,8 @@ class EmbeddingModelBase(Generic[InputT]):
 
     Generic over :data:`InputT` so that text-only subclasses
     (``EmbeddingModelBase[str]``) and multimodal subclasses
-    (``EmbeddingModelBase[str | DataBlock]``) expose the correct
-    ``inputs`` type to the IDE.
+    (``EmbeddingModelBase[str | TextBlock | DataBlock]``) expose the
+    correct ``inputs`` type to the IDE.
 
     Follows the same pattern as :class:`~agentscope.model.ChatModelBase`:
 
@@ -57,7 +60,14 @@ class EmbeddingModelBase(Generic[InputT]):
         required :paramref:`__init__.dimensions` argument.  Subclasses
         extend this class to expose **non-dimensional** knobs (e.g.
         Gemini's ``task_type``, Dashscope's ``text_type``).
+
+        ``extra="allow"`` is set so old persisted configs (where
+        ``dimensions`` lived in ``parameters``) keep deserialising
+        without raising; :meth:`EmbeddingModelBase.__init__` extracts
+        it back out for backward compatibility.
         """
+
+        model_config = ConfigDict(extra="allow")
 
     credential: CredentialBase
     """The API credential."""
@@ -95,7 +105,7 @@ class EmbeddingModelBase(Generic[InputT]):
         self,
         credential: CredentialBase,
         model: str,
-        dimensions: int,
+        dimensions: int | None,
         parameters: BaseModel | None,
         context_size: int,
         batch_size: int,
@@ -109,11 +119,15 @@ class EmbeddingModelBase(Generic[InputT]):
                 The API credential used for authentication.
             model (`str`):
                 The name of the embedding model.
-            dimensions (`int`):
+            dimensions (`int | None`):
                 The output embedding vector dimensions for this
                 instance.  Required and first-class — see the class
                 docstring for the rationale of keeping ``dimensions``
-                outside :class:`Parameters`.
+                outside :class:`Parameters`.  For backward compatibility
+                with older configs that stored ``dimensions`` inside
+                :class:`Parameters`, ``None`` is accepted at the
+                signature level and is back-filled from
+                ``parameters.dimensions`` when present.
             parameters (`BaseModel | None`):
                 Provider-specific non-dimensional parameters.  When
                 ``None``, the default ``Parameters()`` is used.
@@ -131,6 +145,28 @@ class EmbeddingModelBase(Generic[InputT]):
             retry_delay (`float`):
                 Seconds to sleep between retry attempts.
         """
+        resolved_parameters = parameters or self.Parameters()
+        # Backward-compat: older session/KB configs persisted
+        # ``dimensions`` inside ``parameters``.  Promote it to the
+        # constructor argument when the caller did not pass one
+        # explicitly, then strip it from the parameters object so it
+        # never reaches provider-specific request payloads.
+        param_dump = resolved_parameters.model_dump()
+        legacy_dimensions = param_dump.pop("dimensions", None)
+        if dimensions is None:
+            if legacy_dimensions is None:
+                raise ValueError(
+                    "dimensions is required: pass it explicitly to "
+                    "EmbeddingModelBase.__init__ or include it in the "
+                    "legacy `parameters` mapping.",
+                )
+            dimensions = int(legacy_dimensions)
+            resolved_parameters = type(resolved_parameters)(**param_dump)
+        elif legacy_dimensions is not None:
+            # Both routes set it — explicit constructor wins, strip the
+            # legacy mirror so it can't drift.
+            resolved_parameters = type(resolved_parameters)(**param_dump)
+
         if dimensions <= 0:
             raise ValueError(
                 f"dimensions must be a positive integer, got {dimensions}.",
@@ -139,7 +175,7 @@ class EmbeddingModelBase(Generic[InputT]):
         self.credential = credential
         self.model = model
         self.dimensions = dimensions
-        self.parameters = parameters or self.Parameters()
+        self.parameters = resolved_parameters
         self.context_size = context_size
         self.batch_size = batch_size
         self.max_retries = max_retries
@@ -176,7 +212,11 @@ class EmbeddingModelBase(Generic[InputT]):
             inputs (`list[InputT]`):
                 The input data to embed.  For text-only models this is
                 ``list[str]``; for multimodal models it is
-                ``list[str | DataBlock]``.
+                ``list[str | TextBlock | DataBlock]``.  Any
+                :class:`TextBlock` items are transparently unpacked to
+                their ``.text`` field on entry, so subclasses' batching
+                and ``_call_api`` only have to handle ``str`` (and
+                ``DataBlock`` for multimodal variants).
             **kwargs:
                 Additional keyword arguments forwarded to
                 :meth:`_call_api`.
@@ -191,17 +231,22 @@ class EmbeddingModelBase(Generic[InputT]):
                 usage=EmbeddingUsage(tokens=0, time=0),
             )
 
+        normalized: list[Any] = [
+            item.text if isinstance(item, TextBlock) else item
+            for item in inputs
+        ]
+
         # Split into batches.
         batches = [
-            inputs[i : i + self.batch_size]
-            for i in range(0, len(inputs), self.batch_size)
+            normalized[i : i + self.batch_size]
+            for i in range(0, len(normalized), self.batch_size)
         ]
 
         if len(batches) > 1:
             logger.info(
                 "Embedding %d inputs in %d batches (batch_size=%d) "
                 "for model %s.",
-                len(inputs),
+                len(normalized),
                 len(batches),
                 self.batch_size,
                 self.model,
@@ -261,14 +306,18 @@ class EmbeddingModelBase(Generic[InputT]):
 
     async def _call_with_retry(
         self,
-        inputs: list[InputT],
+        inputs: list[Any],
         **kwargs: Any,
     ) -> EmbeddingResponse:
         """Call :meth:`_call_api` with retry logic for a single batch.
 
         Args:
-            inputs (`list[InputT]`):
-                A single batch of inputs (size ≤ ``batch_size``).
+            inputs (`list[Any]`):
+                A single batch of inputs (size ≤ ``batch_size``), already
+                normalised by :meth:`__call__` (any :class:`TextBlock`
+                items unpacked to their ``.text``). Typed as
+                ``list[Any]`` because the concrete element shape depends
+                on the subclass — see :meth:`_call_api`.
             **kwargs:
                 Forwarded to :meth:`_call_api`.
         """
@@ -314,7 +363,7 @@ class EmbeddingModelBase(Generic[InputT]):
     @abstractmethod
     async def _call_api(
         self,
-        inputs: list[InputT],
+        inputs: list[Any],
         **kwargs: Any,
     ) -> EmbeddingResponse:
         """Call the underlying embedding API for a **single batch**.
@@ -323,8 +372,19 @@ class EmbeddingModelBase(Generic[InputT]):
         concurrency, and retry logic are handled by :meth:`__call__`
         — this method only needs to handle one API call.
 
+        .. note::
+            The parameter is typed ``list[Any]`` rather than
+            ``list[InputT]`` because :meth:`__call__` unpacks
+            :class:`TextBlock` items to their ``.text`` field *before*
+            dispatching to this method.  The element shape this method
+            actually receives is therefore subclass-specific
+            (:data:`InputT` minus :class:`TextBlock`).  Subclasses
+            should override with their concrete narrower type, e.g.
+            ``list[str]`` for text-only models or
+            ``list[str | DataBlock]`` for multimodal ones.
+
         Args:
-            inputs (`list[InputT]`):
+            inputs (`list[Any]`):
                 A batch of inputs (guaranteed ``len(inputs) <=
                 self.batch_size``).
             **kwargs:

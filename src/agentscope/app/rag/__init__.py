@@ -6,7 +6,8 @@ one roof so the user-facing import surface stays compact:
 
 - :mod:`.blob_store` — backends storing uploaded document bytes;
 - :mod:`.knowledge_base_manager` — knowledge base lifecycle and the
-  :class:`Knowledge` runtime handle shared between HTTP and agents;
+  runtime :class:`~agentscope.rag.KnowledgeBase` handle shared between
+  HTTP and agents;
 - :mod:`.index_worker` — out-of-process indexing worker entry point.
 
 Commonly used symbols are re-exported here so the typical user import
@@ -23,10 +24,6 @@ For type-level imports or rare subclasses, use the submodules directly.
 """
 from typing import TYPE_CHECKING
 
-from ._middleware import (
-    KnowledgeBaseMiddleware,
-    KnowledgeBaseMiddlewareParameters,
-)
 from .blob_store import (
     AsyncReadable,
     BlobStoreBase,
@@ -38,7 +35,6 @@ from .knowledge_base_manager import (
     DimensionPolicy,
     DimensionPolicyError,
     DimensionPolicyKind,
-    Knowledge,
     KnowledgeBaseError,
     KnowledgeBaseManagerBase,
     KnowledgeBaseNotFoundError,
@@ -87,11 +83,8 @@ __all__ = [
     "DimensionPolicy",
     "DimensionPolicyError",
     "DimensionPolicyKind",
-    "Knowledge",
     "KnowledgeBaseError",
     "KnowledgeBaseManagerBase",
-    "KnowledgeBaseMiddleware",
-    "KnowledgeBaseMiddlewareParameters",
     "KnowledgeBaseNotFoundError",
     "LocalBlobStore",
     "S3BlobStore",

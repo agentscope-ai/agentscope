@@ -2,20 +2,21 @@
 """Wire :class:`RAGMiddleware` into an :class:`Agent` — library mode.
 
 The middleware in :mod:`agentscope.middleware._rag` is the agent-side
-half of RAG: given a live vector store + the embedding model that
-indexed it, retrieve on each new user turn and feed the results into
-the model context.
+half of RAG: given one or more :class:`~agentscope.rag.KnowledgeBase`
+handles (each pairing an embedding model with a vector-store
+collection), the middleware drives search on each new user turn and
+feeds the matched chunks into the model context.
 
 This example reuses the indexing pipeline shown in ``main.py`` (parse →
-chunk → embed → insert) and then attaches the same vector store to two
-agents — one per mode:
+chunk → embed → insert) and then attaches the same knowledge base to
+two agents — one per mode:
 
-- ``"hint"`` (the default): on the first reasoning step of a reply,
-  embed the user's question, search, and inject the top hits as a
-  one-shot :class:`HintBlock` into the agent's context. The model
-  sees the retrieved snippets but never "decides" to search.
-- ``"agentic"``: expose a ``retrieve_knowledge`` tool. The model
-  decides when (and what) to search, the same way it decides any
+- ``"static"``: on the first reasoning step of a reply, embed the
+  user's question, search, and inject the top hits as a one-shot
+  :class:`HintBlock` into the agent's context. The model sees the
+  matched snippets but never "decides" to search.
+- ``"agentic"`` (the default): expose a ``search_knowledge`` tool. The
+  model decides when (and what) to search, the same way it decides any
   other tool call.
 
 Run with::
@@ -24,19 +25,18 @@ Run with::
 """
 import asyncio
 import os
-import uuid
 
 from agentscope.agent import Agent
 from agentscope.credential import DashScopeCredential
 from agentscope.embedding import DashScopeEmbeddingModel
-from agentscope.message import TextBlock, UserMsg
+from agentscope.message import UserMsg
 from agentscope.middleware import RAGMiddleware
 from agentscope.model import DashScopeChatModel
 from agentscope.rag import (
     ApproxTokenChunker,
+    KnowledgeBase,
     QdrantStore,
     TextParser,
-    VectorRecord,
 )
 from agentscope.tool import Toolkit
 
@@ -58,44 +58,31 @@ KNOWLEDGE: dict[str, bytes] = {
         b"# AgentScope 3.0 release notes\n\n"
         b"- New ``agentscope.rag`` module: pluggable parser, chunker, "
         b"embedding, and vector-store backends.\n"
-        b"- ``RAGMiddleware`` ships in two modes -- ``hint`` for "
-        b"automatic injection, ``agentic`` for tool-driven retrieval.\n"
+        b"- ``RAGMiddleware`` ships in two modes -- ``static`` for "
+        b"automatic injection, ``agentic`` for tool-driven search.\n"
         b"- Knowledge base service supports embedded and dedicated "
         b"worker deployments through a single message-bus channel.\n"
     ),
 }
 
 
-async def index_corpus(
-    store: QdrantStore,
-    embedding_model: DashScopeEmbeddingModel,
-) -> None:
-    """Index the demo corpus into the vector store.
+async def index_corpus(knowledge: KnowledgeBase) -> None:
+    """Index the demo corpus into the knowledge base.
 
     Identical pipeline to ``examples/rag/main.py`` — extracted as a
-    helper here so the agent-side wiring stays the focus.
+    helper here so the agent-side wiring stays the focus.  Each source
+    file becomes one logical document; ``KnowledgeBase.insert_document``
+    embeds and inserts every chunk in a single batch.
     """
     parser = TextParser()
     chunker = ApproxTokenChunker(chunk_size=256, overlap=32)
     for filename, file_bytes in KNOWLEDGE.items():
         sections = await parser.parse(file=file_bytes, filename=filename)
         chunks = await chunker.chunk(sections)
-        inputs = [
-            chunk.content.text
-            if isinstance(chunk.content, TextBlock)
-            else chunk.content
-            for chunk in chunks
-        ]
-        response = await embedding_model(inputs)
-        records = [
-            VectorRecord(
-                vector=vector,
-                document_id=uuid.uuid4().hex,
-                chunk=chunk,
-            )
-            for vector, chunk in zip(response.embeddings, chunks)
-        ]
-        await store.insert(COLLECTION, records)
+        await knowledge.insert_document(
+            chunks,
+            document_metadata={"filename": filename},
+        )
 
 
 def build_agent(
@@ -113,7 +100,7 @@ def build_agent(
     return Agent(
         name=name,
         system_prompt=(
-            "You are a concise assistant. Use retrieved context when "
+            "You are a concise assistant. Use matched context when "
             "available; if you don't know, say so."
         ),
         model=chat_model,
@@ -146,46 +133,55 @@ async def main() -> None:
     embedding_model = DashScopeEmbeddingModel(
         credential=credential,
         model="text-embedding-v4",
-        parameters=DashScopeEmbeddingModel.Parameters(),
         dimensions=1024,
     )
 
     store = QdrantStore(location=":memory:")
     async with store:
-        await store.create_collection(COLLECTION, dimensions=1024)
-        await index_corpus(store, embedding_model)
-
-        # ---- Mode 1: hint ----
-        # Retrieval is automatic on the first reasoning step. The
-        # injected ``HintBlock`` is one-shot (removed after the model
-        # call) so it doesn't poison the next turn.
-        hint_mw = RAGMiddleware(
+        # One :class:`KnowledgeBase` handle binds embedding + vector store +
+        # collection together.  ``insert_document`` / ``search`` /
+        # ``list_documents`` all go through it, and the backing
+        # collection is created lazily on first use.
+        knowledge = KnowledgeBase(
+            name="acme-handbook",
+            description="Acme HR policies and AgentScope 3.0 release notes.",
             embedding_model=embedding_model,
             vector_store=store,
-            collections=[COLLECTION],
-            mode="hint",
-            top_k=3,
-            emit_hint_event=False,
+            collection=COLLECTION,
         )
-        hint_agent = build_agent(
-            "rag-hint-agent",
+
+        await index_corpus(knowledge)
+
+        # ---- Mode 1: static ----
+        # Search is automatic on the first reasoning step. The injected
+        # ``HintBlock`` is one-shot (removed after the model call) so it
+        # doesn't poison the next turn.
+        static_mw = RAGMiddleware(
+            knowledge_bases=[knowledge],
+            parameters=RAGMiddleware.Parameters(
+                mode="static",
+                top_k=3,
+                emit_hint_event=False,
+            ),
+        )
+        static_agent = build_agent(
+            "rag-static-agent",
             chat_model=chat_model,
-            rag_mw=hint_mw,
+            rag_mw=static_mw,
         )
         await ask(
-            hint_agent,
+            static_agent,
             "How many remote days per week does Acme allow?",
         )
 
         # ---- Mode 2: agentic ----
-        # The middleware exposes a ``retrieve_knowledge`` tool instead
-        # of auto-injecting. The model decides when to call it.
+        # The middleware exposes a ``search_knowledge`` tool instead of
+        # auto-injecting. The model decides when to call it; it may
+        # also pass ``knowledge_bases=[...]`` to scope the search when
+        # multiple knowledge bases are bound.
         agentic_mw = RAGMiddleware(
-            embedding_model=embedding_model,
-            vector_store=store,
-            collections=[COLLECTION],
-            mode="agentic",
-            top_k=3,
+            knowledge_bases=[knowledge],
+            parameters=RAGMiddleware.Parameters(mode="agentic", top_k=3),
         )
         agentic_agent = build_agent(
             "rag-agentic-agent",

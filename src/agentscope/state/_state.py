@@ -8,7 +8,14 @@ import aiofiles.os
 
 from .._utils._common import _generate_id
 from ._task import Task
-from ..message import TextBlock, DataBlock, Msg
+from ..message import (
+    TextBlock,
+    DataBlock,
+    Msg,
+    ToolCallBlock,
+    ToolResultBlock,
+    HintBlock,
+)
 from ..permission import PermissionContext
 
 
@@ -182,3 +189,33 @@ class AgentState(BaseModel):
     middle_context: dict[str, Any] = Field(default_factory=dict)
     """The context that allow the middlewares to store/get data across
     different replies."""
+
+    def append_context(
+        self,
+        name: str,
+        blocks: list[
+            TextBlock | DataBlock | HintBlock | ToolCallBlock | ToolResultBlock
+        ],
+    ) -> None:
+        """Append the given blocks to the agent's own message with the current
+        `reply_id`. If such message doesn't exist, a new assistant message
+        with agent's name and current reply ID will be created.
+        """
+        # If append to the latest message
+        if (
+            self.context
+            and self.context[-1].role == "assistant"
+            and self.context[-1].name == name
+            and self.context[-1].id == self.reply_id
+        ):
+            self.context[-1].content.extend(blocks)
+        else:
+            # Create a new assistant message with the current reply ID
+            self.context.append(
+                Msg(
+                    id=self.reply_id,
+                    role="assistant",
+                    name=name,
+                    content=blocks,
+                ),
+            )

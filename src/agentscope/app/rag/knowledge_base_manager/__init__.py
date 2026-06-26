@@ -5,8 +5,8 @@ The manager owns the lifecycle of knowledge bases:
 
 - creation / deletion / listing of :class:`KnowledgeBaseRecord` rows,
 - allocation / drop of the matching vector store storage,
-- construction of :class:`Knowledge` runtime handles used by both the
-  HTTP service and the agent runtime.
+- construction of :class:`~agentscope.rag.KnowledgeBase` runtime handles
+  used by both the HTTP service and the agent runtime.
 
 The MVP ships a single isolation strategy
 (:class:`CollectionPerKbManager`); future strategies will live
@@ -21,14 +21,12 @@ from ._errors import (
     KnowledgeBaseError,
     KnowledgeBaseNotFoundError,
 )
-from ._knowledge import Knowledge
 
 __all__ = [
     "CollectionPerKbManager",
     "DimensionPolicy",
     "DimensionPolicyError",
     "DimensionPolicyKind",
-    "Knowledge",
     "KnowledgeBaseError",
     "KnowledgeBaseManagerBase",
     "KnowledgeBaseNotFoundError",

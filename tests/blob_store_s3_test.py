@@ -30,18 +30,13 @@ import io
 import os
 import socket
 from typing import TYPE_CHECKING
-from unittest import IsolatedAsyncioTestCase, skipUnless
+from unittest import IsolatedAsyncioTestCase
+
+import boto3
+from moto.server import ThreadedMotoServer
 
 if TYPE_CHECKING:
     from agentscope.app.rag.blob_store import S3BlobStore
-
-try:
-    import boto3
-    from moto.server import ThreadedMotoServer
-
-    _HAS_DEPS = True
-except ImportError:  # pragma: no cover — surfaces as a skip
-    _HAS_DEPS = False
 
 
 _BUCKET = "test-blobs"
@@ -55,7 +50,6 @@ def _pick_port() -> int:
         return s.getsockname()[1]
 
 
-@skipUnless(_HAS_DEPS, "aioboto3 + moto[server,s3] not installed")
 class S3BlobStoreTest(IsolatedAsyncioTestCase):
     """Round-trip + URI parsing + streaming behaviour."""
 

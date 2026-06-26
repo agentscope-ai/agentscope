@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for the RAGMiddleware class."""
+"""Unit tests for the :class:`RAGMiddleware` class."""
 from contextlib import AsyncExitStack
 from types import SimpleNamespace
 from typing import Any, AsyncGenerator
@@ -17,13 +17,25 @@ from agentscope.message import (
     UserMsg,
 )
 from agentscope.middleware import RAGMiddleware
-from agentscope.rag import Chunk, QdrantStore, VectorRecord
+from agentscope.rag import Chunk, KnowledgeBase, QdrantStore, VectorRecord
+
+
+_HINT_SOURCE = '{"label": "KnowledgeBase", "sublabel": ""}'
+
+_EXPECTED_HINT = (
+    "<system-reminder>The following content is retrieved from the "
+    "knowledge base(s) and may be helpful for the current "
+    "request:\n"
+    "<content>[1] (source: doc-1.txt)\n"
+    "Paris is in France.</content></system-reminder>"
+)
 
 
 class _StubEmbeddingModel:
     """A stub embedding model returning a fixed vector per input."""
 
     supports_multimodal = False
+    dimensions = 3
 
     def __init__(self, vector: list[float]) -> None:
         """Initialize the stub.
@@ -91,24 +103,35 @@ def _make_agent(
         context (`list[Msg] | None`, optional):
             The initial agent context.
         cur_iter (`int`, defaults to ``0``):
-            Value for ``state.cur_iter``; the middleware only retrieves
+            Value for ``state.cur_iter``; the middleware only searches
             on the first reasoning step (``0``).
 
     Returns:
         `Any`:
             An object with ``name`` and ``state.context`` /
             ``state.reply_id`` / ``state.session_id`` /
-            ``state.cur_iter``.
+            ``state.cur_iter`` / ``state.append_context``.
     """
-    return SimpleNamespace(
-        name="assistant",
-        state=SimpleNamespace(
-            context=context if context is not None else [],
-            reply_id="reply-1",
-            session_id="session-1",
-            cur_iter=cur_iter,
-        ),
+
+    msgs: list[Msg] = context if context is not None else []
+
+    def _append_context(name: str, blocks: list) -> None:
+        # Always append a new assistant carrier message keyed on the
+        # static reply_id used in these tests.  Mirrors the real
+        # ``AgentState.append_context`` for the purposes of the
+        # middleware's reverse-scan removal logic.
+        carrier = Msg(name=name, role="assistant", content=blocks)
+        carrier.id = "reply-1"
+        msgs.append(carrier)
+
+    state = SimpleNamespace(
+        context=msgs,
+        reply_id="reply-1",
+        session_id="session-1",
+        cur_iter=cur_iter,
+        append_context=_append_context,
     )
+    return SimpleNamespace(name="assistant", state=state)
 
 
 async def _drain(generator: AsyncGenerator) -> list:
@@ -126,10 +149,11 @@ async def _drain(generator: AsyncGenerator) -> list:
 
 
 class RAGMiddlewareTest(IsolatedAsyncioTestCase):
-    """The test cases for the RAGMiddleware class."""
+    """The test cases for the :class:`RAGMiddleware` class."""
 
     async def asyncSetUp(self) -> None:
-        """Create an in-memory store seeded with one collection."""
+        """Create an in-memory store seeded with one collection +
+        one :class:`KnowledgeBase` handle wired to it."""
         self._exit_stack = AsyncExitStack()
         self.store = await self._exit_stack.enter_async_context(
             QdrantStore(location=":memory:"),
@@ -143,44 +167,67 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
             ],
         )
         self.embedding_model = _StubEmbeddingModel([1.0, 0.0, 0.0])
+        # Build the KnowledgeBase handle once; tests share it.  The
+        # collection already exists, so ``ensure_collection`` will
+        # short-circuit on first use.
+        self.knowledge = KnowledgeBase(
+            name="paris-kb",
+            description="Trivia about Paris and cats.",
+            embedding_model=self.embedding_model,
+            vector_store=self.store,
+            collection="kb-1",
+        )
 
     async def asyncTearDown(self) -> None:
         """Close the store after each test."""
         await self._exit_stack.aclose()
 
-    def _middleware(self, **kwargs: Any) -> RAGMiddleware:
-        """Build a middleware bound to the test store.
+    def _middleware(
+        self,
+        knowledges: list[KnowledgeBase] | None = None,
+        **kwargs: Any,
+    ) -> RAGMiddleware:
+        """Build a middleware bound to ``self.knowledge`` with a
+        :class:`SearchConfig` assembled from ``kwargs``.
 
         Args:
+            knowledges (`list[KnowledgeBase] | None`, optional):
+                Override the bound knowledge bases.  Defaults to
+                ``[self.knowledge]``.
             **kwargs (`Any`):
-                Extra constructor arguments.
+                Forwarded to :class:`SearchConfig` (e.g. ``mode``,
+                ``top_k``, ``score_threshold``, ``emit_hint_event``,
+                ``persist_hint``).
 
         Returns:
             `RAGMiddleware`:
                 The middleware under test.
         """
         return RAGMiddleware(
-            embedding_model=self.embedding_model,
-            vector_store=self.store,
-            collections=["kb-1"],
-            **kwargs,
+            knowledge_bases=knowledges
+            if knowledges is not None
+            else [
+                self.knowledge,
+            ],
+            parameters=RAGMiddleware.Parameters(**kwargs),
         )
 
-    async def _run_reasoning(
+    async def _run_with_inputs(
         self,
         middleware: RAGMiddleware,
         agent: Any,
         inputs: Msg | list[Msg] | None,
         context_during_reasoning: list[dict] | None = None,
     ) -> list:
-        """Seed the context with the fresh inputs and drive ``on_reasoning``.
+        """Drive ``on_reply`` → ``on_reasoning`` end-to-end.
 
-        Mirrors the real agent loop: by the time ``on_reasoning`` is
-        called the agent has already appended the new user turn(s)
-        (when any) to ``agent.state.context``.  Non-message inputs
-        (resumption events, ``None``) are *not* appended — the
-        middleware's "skip retrieval" branch is triggered by an empty
-        trailing user turn in the context.
+        Mirrors the real agent loop: ``on_reply`` captures the inputs
+        in the middleware's scratchpad, then ``on_reasoning`` runs
+        (with ``state.cur_iter == 0``) and may inject a hint.  The
+        reasoning step yields a sentinel ``"reasoning-evt"`` so callers
+        can assert event order; if ``context_during_reasoning`` is
+        provided it is filled with a dump of ``agent.state.context`` as
+        seen by the innermost reasoning callback.
 
         Args:
             middleware (`RAGMiddleware`):
@@ -188,20 +235,15 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
             agent (`Any`):
                 The fake agent.
             inputs (`Msg | list[Msg] | None`):
-                The reply inputs to splice into the context before
-                ``on_reasoning`` runs.  ``None`` skips the splice.
+                The reply inputs to pass through ``on_reply``.
             context_during_reasoning (`list[dict] | None`, optional):
                 When provided, receives a dump of the agent context as
-                seen by the wrapped (innermost) model call.
+                seen by the wrapped (innermost) reasoning call.
 
         Returns:
             `list`:
-                All events yielded by the ``on_reasoning`` chain.
+                All events yielded by the on_reply → on_reasoning chain.
         """
-        if isinstance(inputs, Msg):
-            agent.state.context.append(inputs)
-        elif isinstance(inputs, list):
-            agent.state.context.extend(inputs)
 
         async def reasoning_next(**_kwargs: Any) -> AsyncGenerator:
             if context_during_reasoning is not None:
@@ -210,97 +252,79 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
                 )
             yield "reasoning-evt"
 
-        return await _drain(
-            middleware.on_reasoning(
+        async def reply_next(**_kwargs: Any) -> AsyncGenerator:
+            # The reply branch drives the reasoning branch — same as
+            # the real composition.
+            async for evt in middleware.on_reasoning(
                 agent=agent,
                 input_kwargs={"tool_choice": None},
                 next_handler=reasoning_next,
+            ):
+                yield evt
+
+        return await _drain(
+            middleware.on_reply(
+                agent=agent,
+                input_kwargs={"inputs": inputs},
+                next_handler=reply_next,
             ),
         )
 
     # ------------------------------------------------------------------
-    # Hint mode
+    # Static mode (auto-injection)
     # ------------------------------------------------------------------
 
-    async def test_hint_one_shot_injection(self) -> None:
+    async def test_static_one_shot_injection(self) -> None:
         """The hint participates in one reasoning step and is removed
-        afterwards (persist_hint=False, default)."""
-        middleware = self._middleware(mode="hint", top_k=1)
+        afterwards (``persist_hint=False``, default)."""
+        middleware = self._middleware(
+            mode="static",
+            top_k=1,
+            emit_hint_event=False,
+        )
         agent = _make_agent()
         seen_context: list[dict] = []
 
-        events = await self._run_reasoning(
+        events = await self._run_with_inputs(
             middleware,
             agent,
             UserMsg(name="user", content="Where is Paris?"),
             context_during_reasoning=seen_context,
         )
 
-        # No HintBlockEvent by default; only downstream events.
+        # No HintBlockEvent (emit_hint_event=False); only downstream
+        # events.
         self.assertEqual(events, ["reasoning-evt"])
-        # During reasoning the context contains user msg + hint carrier
-        self.assertEqual(
-            seen_context,
-            [
-                {
-                    "name": "user",
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "Where is Paris?",
-                            "id": AnyString(),
-                        },
-                    ],
-                    "id": AnyString(),
-                    "metadata": {},
-                    "created_at": AnyString(),
-                    "finished_at": AnyString(),
-                    "usage": None,
-                },
-                {
-                    "name": "assistant",
-                    "role": "assistant",
-                    "content": [
-                        {
-                            "type": "hint",
-                            "hint": (
-                                "The following content is retrieved from "
-                                "the knowledge base and may be helpful for "
-                                "the current request:\n"
-                                "[1] (source: doc-1.txt)\n"
-                                "Paris is in France."
-                            ),
-                            "id": AnyString(),
-                            "source": "rag",
-                        },
-                    ],
-                    "id": "reply-1",
-                    "metadata": {},
-                    "created_at": AnyString(),
-                    "finished_at": None,
-                    "usage": None,
-                },
-            ],
-        )
-        # One-shot: after reasoning the hint carrier is gone, only the
-        # user message remains.
-        self.assertEqual(
-            [msg.model_dump() for msg in agent.state.context],
-            [seen_context[0]],
-        )
 
-    async def test_hint_persistent_injection(self) -> None:
-        """persist_hint=True keeps the hint in the context."""
+        # The reasoning callback observed exactly one carrier message
+        # holding the injected hint block.
+        self.assertEqual(len(seen_context), 1)
+        carrier = seen_context[0]
+        self.assertEqual(carrier["role"], "assistant")
+        self.assertEqual(carrier["id"], "reply-1")
+        self.assertEqual(len(carrier["content"]), 1)
+        block = carrier["content"][0]
+        self.assertEqual(block["type"], "hint")
+        self.assertEqual(block["source"], _HINT_SOURCE)
+        self.assertEqual(block["hint"], _EXPECTED_HINT)
+
+        # One-shot: after on_reasoning unwinds, the carrier is emptied.
+        post = [msg.model_dump() for msg in agent.state.context]
+        self.assertEqual(len(post), 1)
+        self.assertEqual(post[0]["content"], [])
+
+    async def test_static_persistent_injection(self) -> None:
+        """``persist_hint=True`` keeps the hint in the context."""
         middleware = self._middleware(
-            mode="hint",
+            mode="static",
             top_k=1,
             persist_hint=True,
+            emit_hint_event=False,
         )
         agent = _make_agent()
         seen_context: list[dict] = []
 
-        await self._run_reasoning(
+        await self._run_with_inputs(
             middleware,
             agent,
             UserMsg(name="user", content="Where is Paris?"),
@@ -312,16 +336,16 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
             seen_context,
         )
 
-    async def test_hint_event_emission(self) -> None:
-        """emit_hint_event=True yields one HintBlockEvent."""
+    async def test_static_event_emission(self) -> None:
+        """``emit_hint_event=True`` yields one :class:`HintBlockEvent`."""
         middleware = self._middleware(
-            mode="hint",
+            mode="static",
             top_k=1,
             emit_hint_event=True,
         )
         agent = _make_agent()
 
-        events = await self._run_reasoning(
+        events = await self._run_with_inputs(
             middleware,
             agent,
             UserMsg(name="user", content="Where is Paris?"),
@@ -335,14 +359,8 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
                 "type": EventType.HINT_BLOCK,
                 "reply_id": "reply-1",
                 "block_id": AnyString(),
-                "source": "rag",
-                "hint": (
-                    "The following content is retrieved from "
-                    "the knowledge base and may be helpful for "
-                    "the current request:\n"
-                    "[1] (source: doc-1.txt)\n"
-                    "Paris is in France."
-                ),
+                "source": _HINT_SOURCE,
+                "hint": _EXPECTED_HINT,
                 "id": AnyString(),
                 "created_at": AnyString(),
                 "metadata": {},
@@ -350,33 +368,33 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(events[1], "reasoning-evt")
 
-    async def test_hint_skips_event_inputs(self) -> None:
-        """Non-message inputs (resumption events / None) skip
-        retrieval entirely."""
-        middleware = self._middleware(mode="hint")
+    async def test_static_skips_event_inputs(self) -> None:
+        """Non-message inputs (resumption events / ``None``) skip the
+        search entirely."""
+        middleware = self._middleware(mode="static")
         agent = _make_agent()
 
-        events = await self._run_reasoning(
-            middleware,
-            agent,
-            None,
-        )
+        events = await self._run_with_inputs(middleware, agent, None)
 
         self.assertEqual(events, ["reasoning-evt"])
         self.assertEqual(self.embedding_model.calls, [])
         self.assertEqual(agent.state.context, [])
 
     async def test_multimodal_query_extraction(self) -> None:
-        """DataBlocks become extra queries when the embedding model
-        supports multimodal inputs."""
+        """DataBlocks reach the embedding model when it declares
+        ``supports_multimodal``."""
         self.embedding_model.supports_multimodal = True
-        middleware = self._middleware(mode="hint", top_k=1)
+        middleware = self._middleware(
+            mode="static",
+            top_k=1,
+            emit_hint_event=False,
+        )
         agent = _make_agent()
         data_block = DataBlock(
             source=Base64Source(data="aGk=", media_type="image/png"),
         )
 
-        await self._run_reasoning(
+        await self._run_with_inputs(
             middleware,
             agent,
             UserMsg(
@@ -385,32 +403,65 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
             ),
         )
 
-        self.assertEqual(
-            self.embedding_model.calls,
-            [["What is this?", data_block]],
+        # The query path prepends ``{name}: `` to the first text
+        # block; the data block is passed through verbatim.
+        self.assertEqual(len(self.embedding_model.calls), 1)
+        query = self.embedding_model.calls[0]
+        self.assertEqual(len(query), 2)
+        self.assertEqual(query[0].text, "user: What is this?")
+        self.assertEqual(query[1], data_block)
+
+    async def test_multimodal_blocks_dropped_for_text_only_model(
+        self,
+    ) -> None:
+        """A text-only embedding model silently drops DataBlock queries
+        (no exception, no crash)."""
+        middleware = self._middleware(
+            mode="static",
+            top_k=1,
+            emit_hint_event=False,
+        )
+        agent = _make_agent()
+        data_block = DataBlock(
+            source=Base64Source(data="aGk=", media_type="image/png"),
         )
 
+        await self._run_with_inputs(
+            middleware,
+            agent,
+            UserMsg(
+                name="user",
+                content=[TextBlock(text="What is this?"), data_block],
+            ),
+        )
+
+        # ``KnowledgeBase.search`` strips the DataBlock when the bound
+        # embedding model isn't multimodal — the model only saw text.
+        self.assertEqual(len(self.embedding_model.calls), 1)
+        for item in self.embedding_model.calls[0]:
+            self.assertNotIsInstance(item, DataBlock)
+
     # ------------------------------------------------------------------
-    # Agentic mode
+    # Agentic mode (tool exposure)
     # ------------------------------------------------------------------
 
     async def test_agentic_list_tools(self) -> None:
-        """Agentic mode exposes the retrieval tool; hint mode none."""
+        """Agentic mode exposes the search tool; static mode none."""
         agentic_tools = await self._middleware(mode="agentic").list_tools()
-        hint_tools = await self._middleware(mode="hint").list_tools()
+        static_tools = await self._middleware(mode="static").list_tools()
 
         self.assertEqual(
             [tool.name for tool in agentic_tools],
-            ["retrieve_knowledge"],
+            ["search_knowledge"],
         )
-        self.assertEqual(hint_tools, [])
+        self.assertEqual(static_tools, [])
 
     async def test_agentic_no_auto_injection(self) -> None:
-        """Agentic mode never retrieves or injects automatically."""
+        """Agentic mode never searches or injects automatically."""
         middleware = self._middleware(mode="agentic")
         agent = _make_agent()
 
-        events = await self._run_reasoning(
+        events = await self._run_with_inputs(
             middleware,
             agent,
             UserMsg(name="user", content="Where is Paris?"),
@@ -418,14 +469,14 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(events, ["reasoning-evt"])
         self.assertEqual(self.embedding_model.calls, [])
-        self.assertEqual(len(agent.state.context), 1)
+        self.assertEqual(agent.state.context, [])
 
-    async def test_retrieve_knowledge_tool_call(self) -> None:
+    async def test_search_knowledge_tool_call(self) -> None:
         """The tool returns a formatted ``ToolChunk`` for a query.
 
-        ``_RetrieveKnowledgeTool.call`` is a regular async function
-        (not an async generator), so ``ToolBase.__call__`` awaits it
-        and returns the single ``ToolChunk`` directly.
+        ``_SearchKnowledgeTool.call`` is a regular async function (not
+        an async generator), so ``ToolBase.__call__`` awaits it and
+        returns the single ``ToolChunk`` directly.
         """
         middleware = self._middleware(mode="agentic", top_k=1)
         tool = (await middleware.list_tools())[0]
@@ -439,14 +490,61 @@ class RAGMiddlewareTest(IsolatedAsyncioTestCase):
                     {
                         "type": "text",
                         "text": (
-                            "[1] (source: doc-1.txt)\n" "Paris is in France."
+                            "[1] (source: doc-1.txt)\nParis is in France."
                         ),
                         "id": AnyString(),
                     },
                 ],
-                "state": "running",
+                "state": "success",
                 "is_last": True,
                 "metadata": {},
                 "id": AnyString(),
             },
         )
+
+    async def test_search_knowledge_tool_input_schema_enum(self) -> None:
+        """The tool's ``input_schema`` narrows ``knowledge_bases.items``
+        to the equipped KB names."""
+        middleware = self._middleware(mode="agentic")
+        tool = (await middleware.list_tools())[0]
+
+        schema = tool.input_schema
+        kb_schema = schema["properties"]["knowledge_bases"]
+        # Pydantic emits Optional[list[str]] as anyOf; pick the array
+        # branch.
+        array_variant = next(
+            v for v in kb_schema["anyOf"] if v.get("type") == "array"
+        )
+        self.assertEqual(array_variant["items"]["enum"], ["paris-kb"])
+
+    async def test_search_knowledge_tool_filters_by_name(self) -> None:
+        """Passing ``knowledge_bases=[<unknown>]`` returns the
+        ``"No relevant content found."`` notice without touching the
+        embedding model."""
+        middleware = self._middleware(mode="agentic", top_k=1)
+        tool = (await middleware.list_tools())[0]
+
+        chunk = await tool(
+            query="Where is Paris?",
+            knowledge_bases=["does-not-exist"],
+        )
+
+        self.assertEqual(
+            [b["text"] for b in chunk.model_dump()["content"]],
+            ["No relevant content found."],
+        )
+        self.assertEqual(self.embedding_model.calls, [])
+
+    # ------------------------------------------------------------------
+    # Config validation
+    # ------------------------------------------------------------------
+
+    async def test_hint_template_must_have_context_placeholder(self) -> None:
+        """:class:`SearchConfig` rejects a template without exactly one
+        ``{context}``."""
+        with self.assertRaises(ValueError):
+            RAGMiddleware.Parameters(hint_template="no placeholder here")
+        with self.assertRaises(ValueError):
+            RAGMiddleware.Parameters(hint_template="{context} twice {context}")
+        # Exactly one placeholder is fine.
+        RAGMiddleware.Parameters(hint_template="wrapped: {context}.")

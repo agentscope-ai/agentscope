@@ -15,7 +15,6 @@ from fastapi import HTTPException
 
 from ..message_bus import MessageBus, MessageBusKeys
 from .._bus_ops import publish_session_event
-from ..rag import KnowledgeBaseMiddleware
 from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from ..storage import StorageBase, AgentRecord, SessionRecord
 from .._manager import BackgroundTaskManager, SchedulerManager
@@ -25,7 +24,8 @@ from ..middleware import (
     StateChangeMiddleware,
     ToolOffloadMiddleware,
 )
-from ...middleware import TTSMiddleware
+from ...middleware import TTSMiddleware, RAGMiddleware
+from ...rag import KnowledgeBase
 from .._types import (
     AgentMiddlewareFactory,
     AgentToolFactory,
@@ -105,7 +105,7 @@ class ChatService:
                 The application's knowledge base manager.  When
                 provided and the session config carries a
                 ``knowledge_config``, a
-                :class:`~agentscope.app.rag.KnowledgeBaseMiddleware`
+                :class:`~agentscope.middleware.RAGMiddleware`
                 is attached to the agent at run time.  ``None``
                 disables knowledge-base wiring even for sessions that
                 have one configured.
@@ -264,24 +264,7 @@ class ChatService:
             )
 
         # ----------------------------------------------------------------
-        # 2. Toolkit (workspace tools + planning + ToolStop + schedule +
-        # team + extras + skills + mcps).
-        # ----------------------------------------------------------------
-        toolkit = await get_toolkit(
-            storage=self._storage,
-            workspace=workspace,
-            scheduler_manager=self._scheduler_manager,
-            background_task_manager=self._background_task_manager,
-            message_bus=self._message_bus,
-            user_id=user_id,
-            agent_record=agent_record,
-            session_record=session_record,
-            extra_factory=self._extra_agent_tools,
-            sub_agent_templates=self._sub_agent_templates,
-        )
-
-        # ----------------------------------------------------------------
-        # 3. Middlewares — framework-supplied first, then caller extras.
+        # 2. Middlewares — framework-supplied first, then caller extras.
         # Background-tool completions deliver their results via
         # ``message_bus.inbox_push + enqueue_wakeup``, so the dispatcher
         # (any process) wakes an idle session — no in-process retrigger
@@ -310,7 +293,7 @@ class ChatService:
             )
 
         # ----------------------------------------------------------------
-        # 3b. TTS middleware — inject when the session has a TTS config.
+        # 2b. TTS middleware — inject when the session has a TTS config.
         # ----------------------------------------------------------------
         tts_cfg = session_record.config.tts_model_config
         if tts_cfg is not None:
@@ -322,8 +305,8 @@ class ChatService:
             middlewares.append(TTSMiddleware(tts_model))
 
         # ----------------------------------------------------------------
-        # 3c. Knowledge-base middleware — inject when the session has KBs
-        # attached.  Each KB resolves to its own :class:`Knowledge` handle
+        # 2c. Knowledge-base middleware — inject when the session has KBs
+        # attached.  Each KB resolves to its own :class:`KnowledgeBase` handle
         # (own embedding model + vector store), so the middleware can
         # retrieve across heterogeneous KBs in one fan-out.
         # ----------------------------------------------------------------
@@ -333,7 +316,7 @@ class ChatService:
             and kb_cfg.knowledge_base_ids
             and self._knowledge_base_manager is not None
         ):
-            knowledges = []
+            knowledges: list[KnowledgeBase] = []
             for kb_id in kb_cfg.knowledge_base_ids:
                 try:
                     knowledge = (
@@ -356,11 +339,31 @@ class ChatService:
                 knowledges.append(knowledge)
             if knowledges:
                 middlewares.append(
-                    KnowledgeBaseMiddleware(
-                        knowledges=knowledges,
-                        **(kb_cfg.parameters or {}),
+                    RAGMiddleware(
+                        knowledge_bases=knowledges,
+                        parameters=RAGMiddleware.Parameters(
+                            **(kb_cfg.parameters or {}),
+                        ),
                     ),
                 )
+
+        # ----------------------------------------------------------------
+        # 3. Toolkit (workspace tools + planning + ToolStop + schedule +
+        # team + extras + skills + mcps).
+        # ----------------------------------------------------------------
+        toolkit = await get_toolkit(
+            storage=self._storage,
+            workspace=workspace,
+            scheduler_manager=self._scheduler_manager,
+            background_task_manager=self._background_task_manager,
+            message_bus=self._message_bus,
+            middlewares=middlewares,
+            user_id=user_id,
+            agent_record=agent_record,
+            session_record=session_record,
+            extra_factory=self._extra_agent_tools,
+            sub_agent_templates=self._sub_agent_templates,
+        )
 
         # ----------------------------------------------------------------
         # 4. Model + fallback (resolved from session's config).

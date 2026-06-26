@@ -8,6 +8,7 @@ import type {
 	ListKnowledgeBasesResponse,
 	ListKnowledgeDocumentsResponse,
 	ListKnowledgeDocumentStatusResponse,
+	ListSupportedContentTypesResponse,
 	SearchKnowledgeBaseRequest,
 	SearchKnowledgeBaseResponse,
 	UpdateKnowledgeBaseRequest,
@@ -126,6 +127,10 @@ export const knowledgeBaseApi = {
 		client.get<KbMiddlewareParametersSchemaResponse>(
 			'/knowledge_bases/middleware/parameters_schema',
 		),
+
+	/** List the union of media types + extensions every parser accepts. */
+	supportedContentTypes: () =>
+		client.get<ListSupportedContentTypesResponse>('/knowledge_bases/supported_content_types'),
 
 	create: (body: CreateKnowledgeBaseRequest) =>
 		client.post<CreateKnowledgeBaseResponse>('/knowledge_bases/', body),

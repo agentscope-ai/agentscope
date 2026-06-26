@@ -7,7 +7,7 @@ The manager is the **lifecycle owner** of knowledge bases:
   storage,
 - it allocates / drops the matching vector store collections,
 - it resolves an embedding model from the record's credential and
-  hands a ready-to-use :class:`Knowledge` runtime back to callers.
+  hands a ready-to-use :class:`KnowledgeBase` runtime back to callers.
 
 Different subclasses encode different *isolation strategies*: one
 collection per knowledge base, a single shared collection scoped by
@@ -27,13 +27,12 @@ from ._dimension_policy import DimensionPolicy
 if TYPE_CHECKING:
     from types import TracebackType
 
-    from ._knowledge import Knowledge
     from ...storage import (
         EmbeddingModelConfig,
         KnowledgeBaseRecord,
         StorageBase,
     )
-    from ....rag import VectorStoreBase
+    from ....rag import KnowledgeBase, VectorStoreBase
 
 
 class KnowledgeBaseManagerBase(ABC):
@@ -268,7 +267,7 @@ class KnowledgeBaseManagerBase(ABC):
         """
 
     # ------------------------------------------------------------------
-    # Knowledge runtime
+    # KnowledgeBase runtime
     # ------------------------------------------------------------------
 
     @abstractmethod
@@ -276,14 +275,14 @@ class KnowledgeBaseManagerBase(ABC):
         self,
         user_id: str,
         knowledge_base_id: str,
-    ) -> "Knowledge":
-        """Resolve a runtime :class:`Knowledge` handle for one KB.
+    ) -> "KnowledgeBase":
+        """Resolve a runtime :class:`KnowledgeBase` handle for one KB.
 
         Implementations are responsible for:
 
         - looking the record up in storage (authorisation);
         - resolving the embedding model from the record's credential;
-        - constructing the :class:`Knowledge` with the strategy's
+        - constructing the :class:`KnowledgeBase` with the strategy's
           collection name and metadata filter.
 
         Args:
@@ -293,7 +292,7 @@ class KnowledgeBaseManagerBase(ABC):
                 The knowledge base id.
 
         Returns:
-            `Knowledge`:
+            `KnowledgeBase`:
                 A runtime handle bound to this knowledge base.
 
         Raises:

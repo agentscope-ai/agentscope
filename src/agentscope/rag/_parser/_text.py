@@ -30,6 +30,31 @@ class TextParser(ParserBase):
     ]
     """Standard IANA media types this parser handles."""
 
+    @classmethod
+    def supported_extensions(cls) -> list[str]:
+        """Return the human-friendly text extensions.
+
+        Override the base reverse-lookup because
+        :func:`mimetypes.guess_all_extensions` returns a long tail of
+        developer-tool extensions for ``text/plain`` (``.bat`` /
+        ``.c`` / ``.pl`` / ``.ksh`` / …) that have no place in a KB
+        file picker, and returns the empty list for
+        ``application/x-yaml``.
+        """
+        return [
+            ".csv",
+            ".htm",
+            ".html",
+            ".json",
+            ".markdown",
+            ".md",
+            ".rst",
+            ".txt",
+            ".xml",
+            ".yaml",
+            ".yml",
+        ]
+
     def __init__(self, encoding: str = "utf-8") -> None:
         """Initialize the text parser.
 

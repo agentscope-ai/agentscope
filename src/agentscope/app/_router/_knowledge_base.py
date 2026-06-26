@@ -22,6 +22,7 @@ from ..deps import (
     get_current_user_id,
     get_knowledge_base_manager,
     get_knowledge_base_service,
+    get_knowledge_parsers,
     get_storage,
 )
 from ._schema import (
@@ -35,16 +36,18 @@ from ._schema import (
     ListKnowledgeBasesResponse,
     ListKnowledgeDocumentsResponse,
     ListKnowledgeDocumentStatusResponse,
+    ListSupportedContentTypesResponse,
     SearchKnowledgeBaseRequest,
     SearchKnowledgeBaseResponse,
     UpdateKnowledgeBaseRequest,
     UploadKnowledgeDocumentResponse,
 )
 from ...credential import CredentialFactory
-from ..rag import KnowledgeBaseMiddleware
 from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from ..storage import StorageBase
 from .._service import KnowledgeBaseService
+from ...middleware import RAGMiddleware
+from ...rag import ParserBase
 
 
 knowledge_base_router = APIRouter(
@@ -129,7 +132,7 @@ async def get_kb_middleware_parameters_schema(
     _: str = Depends(get_current_user_id),
 ) -> KbMiddlewareParametersSchemaResponse:
     """Return the parameter schema for
-    :class:`agentscope.app.rag.KnowledgeBaseMiddleware`.
+    :class:`agentscope.middleware.RAGMiddleware`.
 
     The schema is shaped like every other ``parameter_schema`` served
     by this service — title / description / default / enum / minimum
@@ -148,9 +151,53 @@ async def get_kb_middleware_parameters_schema(
             user-tunable parameters.
     """
     return KbMiddlewareParametersSchemaResponse(
-        parameter_schema=(
-            KnowledgeBaseMiddleware.Parameters.model_json_schema()
-        ),
+        parameter_schema=(RAGMiddleware.Parameters.model_json_schema()),
+    )
+
+
+@knowledge_base_router.get(
+    "/supported_content_types",
+    response_model=ListSupportedContentTypesResponse,
+    summary="List file types the configured parsers can ingest",
+)
+async def list_supported_content_types(
+    _: str = Depends(get_current_user_id),
+    parsers: list[ParserBase]
+    | dict[str, ParserBase] = Depends(
+        get_knowledge_parsers,
+    ),
+) -> ListSupportedContentTypesResponse:
+    """Advertise the union of media types and filename extensions every
+    registered parser accepts.
+
+    Used by the front-end to populate the document picker's ``accept``
+    attribute and to reject drag-dropped files whose extension lies
+    outside the supported set before the upload starts.  Routing on
+    upload still goes through the media type — this endpoint is a
+    capability hint, not authoritative dispatch.
+
+    Args:
+        _ (`str`):
+            Injected authenticated user ID; only used to gate the
+            endpoint behind authentication.
+        parsers (`list[ParserBase] | dict[str, ParserBase]`):
+            Injected parser registry — the same value the index worker
+            uses to dispatch uploads.
+
+    Returns:
+        `ListSupportedContentTypesResponse`:
+            Deduplicated, sorted unions of ``media_types`` and
+            ``extensions``.
+    """
+    parser_iter = parsers.values() if isinstance(parsers, dict) else parsers
+    media_types: set[str] = set()
+    extensions: set[str] = set()
+    for parser in parser_iter:
+        media_types.update(parser.supported_media_types)
+        extensions.update(parser.supported_extensions())
+    return ListSupportedContentTypesResponse(
+        media_types=sorted(media_types),
+        extensions=sorted(extensions),
     )
 
 

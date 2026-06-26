@@ -2,7 +2,7 @@
 """S3-compatible implementation of :class:`BlobStoreBase`.
 
 Works against any service that implements the S3 wire protocol —
-AWS S3, MinIO, Cloudflare R2, 阿里云 OSS (S3-兼容入口), 腾讯云 COS, etc.
+AWS S3, MinIO, Cloudflare R2, Aliyun OSS (S3-compatible), Tencent yun COS, etc.
 The discriminator is ``endpoint_url``: ``None`` means real AWS S3
 (``aioboto3`` resolves the regional endpoint); any other value points
 at the compatible service's S3 endpoint.
@@ -23,11 +23,6 @@ body is large enough) is sufficient.
 from contextlib import asynccontextmanager
 from typing import IO, Any, AsyncIterator
 
-try:
-    import aioboto3
-except ImportError:  # pragma: no cover — surfaced at instantiation
-    aioboto3 = None  # type: ignore[assignment]
-
 from ._base import AsyncReadable, BlobStoreBase
 
 
@@ -46,6 +41,7 @@ class _StreamingBody:
     """
 
     def __init__(self, body: Any) -> None:
+        """Initialize the body."""
         self._body = body
 
     async def read(self, n: int = -1) -> bytes:
@@ -109,12 +105,15 @@ class S3BlobStore(BlobStoreBase):
                 Path-style addressing is needed for MinIO; pass
                 ``AioConfig(s3={"addressing_style": "path"})``.
         """
-        if aioboto3 is None:
-            raise RuntimeError(
-                "S3BlobStore requires the optional dependency "
-                "``aioboto3``. Install it with "
-                "``pip install aioboto3`` or with the ``[s3]`` extra.",
-            )
+        try:
+            import aioboto3
+        except ImportError as e:
+            raise ImportError(
+                "S3BlobStore requires the optional dependency ``aioboto3``. "
+                "Install it with ``uv pip install aioboto3`` or with the "
+                "``[s3]`` extra.",
+            ) from e
+
         self._bucket = bucket
         self._region_name = region_name
         self._endpoint_url = endpoint_url
@@ -135,6 +134,15 @@ class S3BlobStore(BlobStoreBase):
         ) = None  # type: ignore[name-defined]
 
     async def __aenter__(self) -> "S3BlobStore":
+        try:
+            import aioboto3
+        except ImportError as e:
+            raise ImportError(
+                "S3BlobStore requires the optional dependency ``aioboto3``. "
+                "Install it with ``uv pip install aioboto3`` or with the "
+                "``[s3]`` extra.",
+            ) from e
+
         self._session = aioboto3.Session()
         return self
 

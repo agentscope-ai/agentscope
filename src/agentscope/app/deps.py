@@ -14,6 +14,7 @@ from .message_bus import MessageBus
 from .rag.blob_store import BlobStoreBase
 from .rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from .storage import StorageBase
+from ..rag import ParserBase
 
 
 async def get_current_user_id(
@@ -259,3 +260,34 @@ async def get_blob_store(request: Request) -> BlobStoreBase:
             ),
         )
     return blob_store
+
+
+async def get_knowledge_parsers(
+    request: Request,
+) -> list[ParserBase] | dict[str, ParserBase]:
+    """Return the parser registry configured on the app.
+
+    Args:
+        request (`Request`):
+            The incoming FastAPI request.
+
+    Returns:
+        `list[ParserBase] | dict[str, ParserBase]`:
+            The parser registry stored in ``app.state.knowledge_parsers``
+            — the same value the index worker uses to dispatch uploads.
+
+    Raises:
+        `HTTPException`:
+            ``503`` when the KB feature is disabled (no parsers
+            configured).
+    """
+    parsers = getattr(request.app.state, "knowledge_parsers", None)
+    if not parsers:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Knowledge base feature is disabled — pass a "
+                "knowledge_base_manager to create_app() to enable it."
+            ),
+        )
+    return parsers

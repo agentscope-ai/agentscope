@@ -20,6 +20,7 @@ import { isInFlight } from '@/context/uploadTypes';
 import type { UploadPhase, UploadTask } from '@/context/uploadTypes';
 import { useDocumentStatusPolling } from '@/hooks/useDocumentStatusPolling';
 import { useKnowledgeDocuments } from '@/hooks/useKnowledgeDocuments';
+import { useKnowledgeSupportedContentTypes } from '@/hooks/useKnowledgeSupportedContentTypes';
 import { cn } from '@/lib/utils';
 
 interface KnowledgeDocumentsPanelProps {
@@ -249,6 +250,23 @@ export function KnowledgeDocumentsPanel({ knowledgeBaseId }: KnowledgeDocumentsP
 		knowledgeBaseId,
 		documents,
 	});
+	const { mediaTypes, extensions } = useKnowledgeSupportedContentTypes();
+
+	// Lowercased extension set used to gate `handleFiles`. Built once
+	// per render — the underlying list is shared across the app via a
+	// module-level cache so this stays cheap.
+	const extensionSet = useMemo(
+		() => new Set(extensions.map((ext) => ext.toLowerCase())),
+		[extensions],
+	);
+	// `<input accept>` takes a comma-separated string of MIME types and
+	// `.ext` tokens. We hand it both because browsers diverge on which
+	// they honour for any given filename — extensions filter the picker
+	// dialog, MIME types catch programmatic drops.
+	const acceptAttr = useMemo(
+		() => [...extensions, ...mediaTypes].join(','),
+		[extensions, mediaTypes],
+	);
 
 	// Refetch the canonical list whenever a polled doc reaches a
 	// terminal state — this is the single hook that pulls in the worker's
@@ -299,9 +317,32 @@ export function KnowledgeDocumentsPanel({ knowledgeBaseId }: KnowledgeDocumentsP
 		(files: FileList | File[]) => {
 			const arr = Array.from(files);
 			if (arr.length === 0) return;
-			enqueue(knowledgeBaseId, arr);
+			// When the capability list hasn't loaded yet, allow everything
+			// through — the backend still rejects unsupported uploads.
+			// Once we have the list, filter client-side by extension
+			// (`file.type` is unreliable across browsers/OSes).
+			const accepted: File[] = [];
+			for (const f of arr) {
+				if (extensionSet.size === 0) {
+					accepted.push(f);
+					continue;
+				}
+				const dot = f.name.lastIndexOf('.');
+				const ext = dot >= 0 ? f.name.slice(dot).toLowerCase() : '';
+				if (ext && extensionSet.has(ext)) {
+					accepted.push(f);
+				} else {
+					toast.error(
+						t('knowledge.document.unsupportedExtension', {
+							name: f.name,
+						}),
+					);
+				}
+			}
+			if (accepted.length === 0) return;
+			enqueue(knowledgeBaseId, accepted);
 		},
-		[enqueue, knowledgeBaseId],
+		[enqueue, knowledgeBaseId, extensionSet, t],
 	);
 
 	const onFileInputChange = useCallback(
@@ -370,6 +411,7 @@ export function KnowledgeDocumentsPanel({ knowledgeBaseId }: KnowledgeDocumentsP
 				ref={fileInputRef}
 				type="file"
 				multiple
+				accept={acceptAttr || undefined}
 				className="hidden"
 				onChange={onFileInputChange}
 			/>

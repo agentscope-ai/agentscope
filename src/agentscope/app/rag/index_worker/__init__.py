@@ -108,7 +108,7 @@ async def run_worker(
             Backend the worker reads document bytes from. Lifecycle
             managed here.
         knowledge_base_manager (`KnowledgeBaseManagerBase`):
-            Resolves :class:`Knowledge` runtimes for embedding +
+            Resolves :class:`KnowledgeBase` runtimes for embedding +
             vector store writes. Lifecycle managed here.
         parsers (`list[ParserBase] | dict[str, ParserBase]`):
             Parsers used to dispatch uploads by IANA media type.

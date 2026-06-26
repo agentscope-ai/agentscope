@@ -83,7 +83,7 @@ class CreateSessionRequest(BaseModel):
         default=None,
         description=(
             "Knowledge bases attached to this session plus the "
-            "`KnowledgeBaseMiddleware` parameters. Can be set later "
+            "`RAGMiddleware` parameters. Can be set later "
             "via PATCH."
         ),
     )

@@ -663,6 +663,14 @@ export interface KbMiddlewareParametersSchemaResponse {
 	parameter_schema: Record<string, unknown>;
 }
 
+/** Response of `GET /knowledge_bases/supported_content_types`. */
+export interface ListSupportedContentTypesResponse {
+	/** Union of IANA media types every registered parser handles. */
+	media_types: string[];
+	/** Union of filename extensions (each starting with `.`). */
+	extensions: string[];
+}
+
 // ─── TTS ──────────────────────────────────────────────────────────────────────
 
 export interface TTSModelCard {

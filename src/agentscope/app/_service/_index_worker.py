@@ -10,7 +10,7 @@ lifecycle.  Given a ``document_id`` it:
 3. routes to a parser by IANA media type;
 4. chunks the resulting sections;
 5. embeds + writes to the vector store through
-   :class:`~agentscope.app.rag.knowledge_base_manager.Knowledge`;
+   :class:`~agentscope.rag.KnowledgeBase`;
 6. transitions the status through ``parsing → chunking → indexing →
    ready`` (or ``error``) on the way.
 
@@ -21,6 +21,7 @@ is done entirely through the storage lease — workers do not need to
 know about each other.
 """
 import asyncio
+import contextlib
 import mimetypes
 from concurrent.futures import ProcessPoolExecutor
 from datetime import timedelta
@@ -128,7 +129,7 @@ class IndexWorker:
             blob_store (`BlobStoreBase`):
                 Source of the document bytes.
             knowledge_base_manager (`KnowledgeBaseManagerBase`):
-                Resolves the :class:`Knowledge` runtime for embedding
+                Resolves the :class:`KnowledgeBase` runtime for embedding
                 and vector store writes.
             parsers (`list[ParserBase] | dict[str, ParserBase]`):
                 Parsers used to dispatch uploads by IANA media type.
@@ -225,17 +226,51 @@ class IndexWorker:
             )
             return
 
-        heartbeat = asyncio.create_task(
+        pipeline_task = asyncio.create_task(
+            self._guarded_pipeline(
+                user_id,
+                knowledge_base_id,
+                document_id,
+            ),
+            name=f"pipeline:{document_id}",
+        )
+        heartbeat_task = asyncio.create_task(
             self._heartbeat(user_id, knowledge_base_id, document_id),
             name=f"lease-renew:{document_id}",
         )
         try:
-            async with self._sem:
-                await self._run_pipeline(
-                    user_id,
-                    knowledge_base_id,
-                    document_id,
+            # Race the pipeline against the heartbeat: if the heartbeat
+            # returns first, the lease was stolen mid-flight (e.g. the
+            # sweeper reaped this worker after a renewal gap) — we MUST
+            # stop the pipeline before it writes the vector store again,
+            # otherwise the worker that just took over and this one will
+            # both insert the same chunks.
+            await asyncio.wait(
+                {pipeline_task, heartbeat_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            if not pipeline_task.done():
+                # Heartbeat reached the end first; only `_heartbeat`'s
+                # lost-lease branch returns, so cancel the pipeline and
+                # surface it as a terminal error for this document.
+                pipeline_task.cancel()
+                with contextlib.suppress(
+                    asyncio.CancelledError,
+                    Exception,
+                ):
+                    await pipeline_task
+                raise RuntimeError(
+                    f"Lost lease on {document_id} during processing; "
+                    "another worker has taken over.",
                 )
+
+            # Pipeline finished first; stop the heartbeat and re-raise
+            # whatever the pipeline raised (if anything).
+            heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await heartbeat_task
+            await pipeline_task
         except Exception as exc:  # noqa: BLE001 — terminal error sink
             await self._mark_error(
                 user_id,
@@ -244,16 +279,28 @@ class IndexWorker:
                 exc,
             )
         finally:
-            heartbeat.cancel()
-            try:
-                await heartbeat
-            except asyncio.CancelledError:
-                pass
+            # Release is CAS-guarded server-side on ``processing_node``
+            # (storage._base.release_knowledge_document_lease) — calling
+            # it after a stolen lease is a safe no-op.
             await self._storage.release_knowledge_document_lease(
                 user_id=user_id,
                 knowledge_base_id=knowledge_base_id,
                 document_id=document_id,
                 processing_node=self._node_id,
+            )
+
+    async def _guarded_pipeline(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+    ) -> None:
+        """Run the throttled pipeline inside the per-worker semaphore."""
+        async with self._sem:
+            await self._run_pipeline(
+                user_id,
+                knowledge_base_id,
+                document_id,
             )
 
     # ------------------------------------------------------------------
@@ -391,12 +438,18 @@ class IndexWorker:
     ) -> None:
         """Renew the lease in the background while processing runs.
 
-        Cancels itself silently when the surrounding pipeline finishes
-        — the cancel happens in :meth:`process` after the try/finally
-        body has run.  A renewal that fails (e.g. another worker
-        stole the lease after a sweep) is logged; the pipeline finds
-        out via its own write contention and bails on the next
-        ``update_knowledge_document_status``.
+        Two exit paths:
+
+        - The surrounding pipeline finishes first and cancels this
+          task — silent return via :class:`asyncio.CancelledError`.
+        - The renewal fails (the sweeper reaped this worker and
+          another worker now holds the lease).  The task **returns
+          normally** in this case; :meth:`process` is racing this task
+          against the pipeline and treats a normal return as the
+          "lost-lease" signal, cancelling the pipeline before it
+          double-writes the vector store.
+
+        Anything other than ``ok=False`` keeps the loop alive.
         """
         interval_seconds = self._renew_interval.total_seconds()
         while True:

@@ -6,7 +6,7 @@ from ._document import (
     Section,
     Chunk,
 )
-from ._parser import ParserBase, TextParser
+from ._parser import ImageParser, ParserBase, PDFParser, PPTParser, TextParser
 from ._vdb import (
     DocumentSummary,
     VectorStoreBase,
@@ -14,17 +14,22 @@ from ._vdb import (
     VectorSearchResult,
     QdrantStore,
 )
+from ._knowledge import KnowledgeBase
 
 __all__ = [
     "ApproxTokenChunker",
     "ChunkerBase",
     "Chunk",
     "DocumentSummary",
+    "ImageParser",
     "ParserBase",
+    "PDFParser",
+    "PPTParser",
     "TextParser",
     "Section",
     "VectorStoreBase",
     "VectorRecord",
     "VectorSearchResult",
     "QdrantStore",
+    "KnowledgeBase",
 ]

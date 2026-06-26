@@ -275,6 +275,7 @@
 			"dropHint": "拖拽文件到此处上传",
 			"dropHintIdle": "或拖拽文件到此处",
 			"invalidFile": "\"{{name}}\" 添加失败。",
+			"unsupportedExtension": "\"{{name}}\" 已跳过——不支持该文件类型。",
 			"status": {
 				"queued": "排队中",
 				"uploading": "上传中",

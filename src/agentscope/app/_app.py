@@ -103,7 +103,7 @@ def create_app(
          optional):
             The knowledge base manager that owns knowledge base
             lifecycle and serves
-            :class:`~agentscope.app.rag.knowledge_base_manager.Knowledge`
+            :class:`~agentscope.rag.KnowledgeBase`
             runtime handles to both HTTP service and agent code.
             The manager carries its own vector store instance — its
             ``__aenter__`` / ``__aexit__`` enter and release that
@@ -203,19 +203,26 @@ def create_app(
     app.state.extra_agent_tools = extra_agent_tools
     app.state.custom_agent_cls = custom_agent_cls
 
-    app.state.knowledge_parsers = (
-        knowledge_parsers if knowledge_parsers is not None else [TextParser()]
-    )
-    app.state.knowledge_chunker = knowledge_chunker or ApproxTokenChunker()
-    app.state.blob_store = (
-        blob_store
-        if blob_store is not None
-        else (
-            LocalBlobStore(root_dir="./blobs")
-            if knowledge_base_manager is not None
-            else None
+    # Parser / chunker / blob-store defaults only make sense when the
+    # KB feature is actually enabled.  When ``knowledge_base_manager`` is
+    # ``None`` every KB endpoint is disabled, so leaving these as ``None``
+    # avoids unused imports being eagerly constructed at app startup.
+    if knowledge_base_manager is not None:
+        app.state.knowledge_parsers = (
+            knowledge_parsers
+            if knowledge_parsers is not None
+            else [TextParser()]
         )
-    )
+        app.state.knowledge_chunker = knowledge_chunker or ApproxTokenChunker()
+        app.state.blob_store = (
+            blob_store
+            if blob_store is not None
+            else LocalBlobStore(root_dir="./blobs")
+        )
+    else:
+        app.state.knowledge_parsers = knowledge_parsers
+        app.state.knowledge_chunker = knowledge_chunker
+        app.state.blob_store = blob_store
     app.state.enable_index_worker = (
         enable_index_worker and knowledge_base_manager is not None
     )

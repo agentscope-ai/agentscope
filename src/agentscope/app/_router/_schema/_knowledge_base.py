@@ -199,7 +199,7 @@ class SearchKnowledgeBaseResponse(BaseModel):
     """Response body for a knowledge base search."""
 
     results: list[VectorSearchResult] = Field(
-        description=("Matched chunks ordered by descending similarity score."),
+        description="Matched chunks ordered by descending similarity score.",
     )
     total: int = Field(description="Total number of returned results.")
 
@@ -251,7 +251,7 @@ class KbMiddlewareParametersSchemaResponse(BaseModel):
     """Response body exposing the KB middleware's parameters schema.
 
     The schema is derived from
-    :class:`agentscope.app.rag.KnowledgeBaseMiddleware.Parameters`
+    :class:`agentscope.middleware.RAGMiddleware.Parameters`
     via ``model_json_schema()`` so the front-end can render the
     session-level KB attachment form with the same schema-driven
     component used for model parameters.
@@ -259,8 +259,34 @@ class KbMiddlewareParametersSchemaResponse(BaseModel):
 
     parameter_schema: dict = Field(
         description=(
-            "JSON Schema produced by `KnowledgeBaseMiddlewareParameters."
+            "JSON Schema produced by `RAGMiddleware.Parameters"
             "model_json_schema()`.  Shaped identically to the "
             "`parameter_schema` field on `ModelCard`."
+        ),
+    )
+
+
+class ListSupportedContentTypesResponse(BaseModel):
+    """Response body advertising the parser-supported upload types.
+
+    Aggregated across every parser registered on the app — the union of
+    each parser's :attr:`supported_media_types` and
+    :meth:`supported_extensions`.  The front-end uses this to populate
+    ``<input accept>`` and to reject unsupported drops on the client
+    before the file leaves the browser.
+    """
+
+    media_types: list[str] = Field(
+        description=(
+            "Union of IANA media types every registered parser claims "
+            "to handle.  Deduplicated and sorted."
+        ),
+    )
+    extensions: list[str] = Field(
+        description=(
+            "Filename extensions (each starting with `.`) every "
+            "registered parser claims to handle.  Deduplicated and "
+            "sorted.  Derived from `mimetypes` by the base parser; "
+            "subclasses may override the default."
         ),
     )

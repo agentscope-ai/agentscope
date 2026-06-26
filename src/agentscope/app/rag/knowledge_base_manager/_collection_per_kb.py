@@ -19,7 +19,8 @@ from typing import TYPE_CHECKING
 from ._base import KnowledgeBaseManagerBase
 from ._dimension_policy import DimensionPolicy, DimensionPolicyKind
 from ._errors import KnowledgeBaseNotFoundError
-from ._knowledge import Knowledge
+from ...._logging import logger
+from ....rag import KnowledgeBase
 from ..._service._embedding import get_embedding_model
 from ...storage import KnowledgeBaseRecord
 
@@ -87,7 +88,20 @@ class CollectionPerKbManager(KnowledgeBaseManagerBase):
         try:
             return await self._storage.upsert_knowledge_base(user_id, record)
         except Exception:
-            await self._vector_store.delete_collection(record.collection_name)
+            # Compensating delete must not shadow the original exception:
+            # if the delete itself raises, the caller would be misdirected
+            # to investigate the wrong error and the orphan collection
+            # would leave no trace.
+            try:
+                await self._vector_store.delete_collection(
+                    record.collection_name,
+                )
+            except Exception:  # noqa: BLE001 — best-effort cleanup
+                logger.exception(
+                    "Failed to drop orphan collection %r after "
+                    "upsert_knowledge_base failed; collection leaked.",
+                    record.collection_name,
+                )
             raise
 
     async def delete_knowledge_base(
@@ -126,8 +140,8 @@ class CollectionPerKbManager(KnowledgeBaseManagerBase):
         self,
         user_id: str,
         knowledge_base_id: str,
-    ) -> Knowledge:
-        """Resolve a :class:`Knowledge` runtime for one knowledge base.
+    ) -> KnowledgeBase:
+        """Resolve a :class:`KnowledgeBase` runtime for one knowledge base.
 
         Looks the record up in storage (raising
         :class:`KnowledgeBaseNotFoundError` for unknown / un-owned
@@ -142,7 +156,7 @@ class CollectionPerKbManager(KnowledgeBaseManagerBase):
                 The knowledge base id.
 
         Returns:
-            `Knowledge`:
+            `KnowledgeBase`:
                 A runtime handle bound to this knowledge base.
 
         Raises:
@@ -164,10 +178,11 @@ class CollectionPerKbManager(KnowledgeBaseManagerBase):
             config=record.embedding_model_config,
             storage=self._storage,
         )
-        return Knowledge(
-            record=record,
+        return KnowledgeBase(
+            name=record.name,
+            description=record.description,
             embedding_model=embedding_model,
             vector_store=self._vector_store,
-            collection_name=record.collection_name,
+            collection=record.collection_name,
             metadata_filter=None,
         )

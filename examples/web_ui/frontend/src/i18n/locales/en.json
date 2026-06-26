@@ -275,6 +275,7 @@
 			"dropHint": "Drop files here to upload",
 			"dropHintIdle": "or drop files here",
 			"invalidFile": "\"{{name}}\" could not be added.",
+			"unsupportedExtension": "\"{{name}}\" was skipped — file type not supported.",
 			"status": {
 				"queued": "Queued",
 				"uploading": "Uploading",

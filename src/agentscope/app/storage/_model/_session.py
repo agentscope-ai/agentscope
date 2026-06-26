@@ -88,11 +88,11 @@ class SessionKnowledgeConfig(BaseModel):
 
     Persists which knowledge bases the agent should retrieve from for
     this session and how the
-    :class:`~agentscope.app.rag.KnowledgeBaseMiddleware` should be
+    :class:`~agentscope.middleware.RAGMiddleware` should be
     configured.  ``parameters`` carries the user-tunable middleware
     fields verbatim (mirrors :attr:`ChatModelConfig.parameters`); the
     accepted keys and value types are described by
-    :meth:`KnowledgeBaseMiddleware.Parameters.model_json_schema`.
+    :meth:`RAGMiddleware.Config.model_json_schema`.
     """
 
     knowledge_base_ids: list[str] = Field(default_factory=list)
@@ -103,8 +103,8 @@ class SessionKnowledgeConfig(BaseModel):
     """
 
     parameters: dict = Field(default_factory=dict)
-    """Middleware parameters keyed by ``KnowledgeBaseMiddleware``'s
-    :class:`Parameters` model fields (``mode``, ``top_k``,
+    """Middleware parameters keyed by ``RAGMiddleware``'s
+    :class:`Config` model fields (``mode``, ``top_k``,
     ``score_threshold``, ``emit_hint_event``, ``persist_hint``,
     ``hint_template``).
     """
@@ -134,7 +134,7 @@ class SessionConfig(BaseModel):
 
     knowledge_config: SessionKnowledgeConfig | None = None
     """Knowledge bases attached to this session and the corresponding
-    :class:`~agentscope.app.rag.KnowledgeBaseMiddleware` parameters.
+    :class:`~agentscope.middleware.RAGMiddleware` parameters.
     ``None`` means no knowledge base is wired."""
 
 
