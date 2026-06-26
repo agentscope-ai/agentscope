@@ -31,7 +31,7 @@ Search mirrors the same shape: hand the query to
 
 Run with::
 
-    DASHSCOPE_API_KEY=sk-... python examples/rag/main.py
+    DASHSCOPE_API_KEY=sk-... python examples/rag/index_and_search.py
 """
 import asyncio
 import os

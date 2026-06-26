@@ -7,9 +7,9 @@ handles (each pairing an embedding model with a vector-store
 collection), the middleware drives search on each new user turn and
 feeds the matched chunks into the model context.
 
-This example reuses the indexing pipeline shown in ``main.py`` (parse →
-chunk → embed → insert) and then attaches the same knowledge base to
-two agents — one per mode:
+This example reuses the indexing pipeline shown in ``index_and_search.py``
+(parse → chunk → embed → insert) and then attaches the same knowledge base
+to two agents — one per mode:
 
 - ``"static"``: on the first reasoning step of a reply, embed the
   user's question, search, and inject the top hits as a one-shot
@@ -69,8 +69,8 @@ KNOWLEDGE: dict[str, bytes] = {
 async def index_corpus(knowledge: KnowledgeBase) -> None:
     """Index the demo corpus into the knowledge base.
 
-    Identical pipeline to ``examples/rag/main.py`` — extracted as a
-    helper here so the agent-side wiring stays the focus.  Each source
+    Identical pipeline to ``examples/rag/index_and_search.py`` — extracted
+    as a helper here so the agent-side wiring stays the focus.  Each source
     file becomes one logical document; ``KnowledgeBase.insert_document``
     embeds and inserts every chunk in a single batch.
     """
