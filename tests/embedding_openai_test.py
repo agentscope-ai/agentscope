@@ -47,29 +47,15 @@ class OpenAIListModelsTest(IsolatedAsyncioTestCase):
                 "status": "active",
                 "input_types": ["text/plain"],
                 "output_types": ["application/x-embedding"],
+                "dimensions": 1536,
+                "supported_dimensions": [1536, 1024, 768, 512, 256],
                 "context_size": 8191,
                 "parameter_schema": {
                     "type": "object",
-                    "properties": {
-                        "dimensions": {
-                            "default": 1536,
-                            "description": (
-                                "The output embedding vector dimensions."
-                            ),
-                            "enum": [1536, 1024, 768, 512, 256],
-                            "exclusiveMinimum": 0,
-                            "title": "Dimensions",
-                            "type": "integer",
-                        },
-                    },
+                    "properties": {},
                     "required": [],
                 },
-                "parameter_overrides": {
-                    "dimensions": {
-                        "default": 1536,
-                        "enum": [1536, 1024, 768, 512, 256],
-                    },
-                },
+                "parameter_overrides": {},
             },
         )
 
@@ -89,7 +75,7 @@ class OpenAIEmbeddingCallTest(IsolatedAsyncioTestCase):
         model = OpenAIEmbeddingModel(
             credential=OpenAICredential(api_key="k"),
             model="text-embedding-3-small",
-            parameters=OpenAIEmbeddingModel.Parameters(dimensions=2),
+            dimensions=2,
         )
         result = await model(["hello", "world"])
 
@@ -120,7 +106,7 @@ class OpenAIEmbeddingCallTest(IsolatedAsyncioTestCase):
         model = OpenAIEmbeddingModel(
             credential=OpenAICredential(api_key="k"),
             model="text-embedding-3-small",
-            parameters=OpenAIEmbeddingModel.Parameters(dimensions=1),
+            dimensions=1,
         )
         model.batch_size = 2
 
@@ -147,6 +133,7 @@ class OpenAIEmbeddingCallTest(IsolatedAsyncioTestCase):
         model = OpenAIEmbeddingModel(
             credential=OpenAICredential(api_key="k"),
             model="text-embedding-3-small",
+            dimensions=1536,
         )
         result = await model([])
 
@@ -187,7 +174,7 @@ class OpenAIEmbeddingCallTest(IsolatedAsyncioTestCase):
         model = OpenAIEmbeddingModel(
             credential=OpenAICredential(api_key="k"),
             model="text-embedding-3-small",
-            parameters=OpenAIEmbeddingModel.Parameters(dimensions=1),
+            dimensions=1,
             retry_delay=0.0,
         )
         result = await model(["hello"])
