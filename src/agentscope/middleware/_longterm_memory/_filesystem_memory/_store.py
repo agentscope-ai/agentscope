@@ -1,10 +1,11 @@
-# -*- coding: utf-8 -*-
-"""Persistent Markdown document store for file-backed long-term memory.
+﻿# -*- coding: utf-8 -*-
+"""Persistent Markdown document store for filesystem-backed long-term memory.
 
-``FileLTMStore`` owns the on-disk layout, document-size limits, constrained
-mutation semantics, static-extraction metadata, and lightweight retrieval.
-It has no Agent or workspace lifecycle dependency; all I/O is delegated to a
-``BackendFileAccessor`` supplied by the middleware.
+``FileSystemMemoryStore`` owns the on-disk layout, document-size limits, constrained
+mutation semantics, static-extraction metadata, lightweight retrieval, and the
+small amount of backend file access needed by those operations. It has no
+Agent or workspace lifecycle dependency; the middleware supplies only a
+backend instance and the resolved workspace workdir.
 
 The store favors predictable human-editable files over database-like
 features. Updates reread the current document, exact replacements must be
@@ -17,9 +18,10 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from pathlib import PurePosixPath
 from typing import Literal, TypeAlias
 
-from ._accessor import BackendFileAccessor
+from ....tool import BackendBase
 
 
 DEFAULT_MEMORY = """# Long-term Memory
@@ -48,7 +50,7 @@ DEFAULT_USER = """# User Profile
 
 
 @dataclass(slots=True)
-class LTMSnapshot:
+class MemoryPromptSnapshot:
     """The two bounded documents injected into an agent system prompt."""
 
     memory: str
@@ -69,12 +71,13 @@ class MemorySearchResult:
     relevance: float
 
 
-class FileLTMStore:
+class FileSystemMemoryStore:
     """Own the constrained ``Memory/`` layout and document operations."""
 
     def __init__(
         self,
-        accessor: BackendFileAccessor,
+        backend: BackendBase,
+        workdir: str,
         *,
         memory_dir: str = "Memory",
         user_max_chars: int = 2_000,
@@ -84,10 +87,13 @@ class FileLTMStore:
         """Initialize paths and size limits for one workspace store.
 
         Args:
-            accessor:
-                UTF-8 file access rooted at the selected workdir.
+            backend:
+                Backend used for every file operation.
+            workdir:
+                Workspace filesystem root below which every memory path is
+                resolved.
             memory_dir:
-                Workspace-relative root for all LTM files.
+                Workspace-relative root for all memory files.
             user_max_chars:
                 Maximum size of ``USER.md`` after an update.
             memory_max_chars:
@@ -95,7 +101,8 @@ class FileLTMStore:
             daily_max_chars:
                 Maximum size of any one dated daily-memory file.
         """
-        self._accessor = accessor
+        self._backend = backend
+        self._root = workdir.replace("\\", "/").rstrip("/")
         self.memory_dir = memory_dir.strip("/\\")
         self.daily_dir = f"{self.memory_dir}/memory"
         self.memory_path = f"{self.memory_dir}/MEMORY.md"
@@ -106,12 +113,12 @@ class FileLTMStore:
         self.daily_max_chars = daily_max_chars
 
     async def ensure_layout(self) -> None:
-        """Create the LTM directory and initial files idempotently.
+        """Create the memory directory and initial files idempotently.
 
         Existing human-edited documents are never replaced. Metadata is also
         created only when absent, allowing turn counters to survive restarts.
         """
-        await self._accessor.ensure_dir(self.daily_dir)
+        await self._ensure_dir(self.daily_dir)
         meta = {
             "version": 1,
             "turn_count": 0,
@@ -123,15 +130,15 @@ class FileLTMStore:
             (self.user_path, DEFAULT_USER),
             (self.meta_path, json.dumps(meta, indent=2) + "\n"),
         ):
-            if not await self._accessor.exists(path):
-                await self._accessor.write_text(path, content)
+            if not await self._exists(path):
+                await self._write_text(path, content)
 
-    async def read_snapshot(self) -> LTMSnapshot:
+    async def read_snapshot(self) -> MemoryPromptSnapshot:
         """Read the complete USER and MEMORY prompt snapshots."""
         await self.ensure_layout()
-        return LTMSnapshot(
-            memory=await self._accessor.read_text(self.memory_path),
-            user=await self._accessor.read_text(self.user_path),
+        return MemoryPromptSnapshot(
+            memory=await self._read_text(self.memory_path),
+            user=await self._read_text(self.user_path),
         )
 
     async def get_snapshot_version(self) -> SnapshotVersion | None:
@@ -142,8 +149,8 @@ class FileLTMStore:
         This method intentionally performs no layout initialization, keeping
         the unchanged-snapshot path to two lightweight stat operations.
         """
-        memory_mtime = await self._accessor.stat_mtime(self.memory_path)
-        user_mtime = await self._accessor.stat_mtime(self.user_path)
+        memory_mtime = await self._stat_mtime(self.memory_path)
+        user_mtime = await self._stat_mtime(self.user_path)
         if memory_mtime is None or user_mtime is None:
             return None
         return memory_mtime, user_mtime
@@ -174,9 +181,9 @@ class FileLTMStore:
         """
         await self.ensure_layout()
         path = self._target_path(target, daily_date)
-        if not await self._accessor.exists(path):
+        if not await self._exists(path):
             return "", []
-        content = await self._accessor.read_text(path)
+        content = await self._read_text(path)
         return content, self._section_headings(content)
 
     async def update_target(
@@ -204,8 +211,8 @@ class FileLTMStore:
         await self.ensure_layout()
         path = self._target_path(target, daily_date)
         current = (
-            await self._accessor.read_text(path)
-            if await self._accessor.exists(path)
+            await self._read_text(path)
+            if await self._exists(path)
             else self._daily_header(daily_date)
         )
 
@@ -249,7 +256,7 @@ class FileLTMStore:
             raise ValueError(f"Unsupported memory action: {action}")
 
         self._check_limit(target, updated)
-        await self._accessor.write_text(path, updated)
+        await self._write_text(path, updated)
         return path
 
     async def apply_edits(
@@ -334,9 +341,32 @@ class FileLTMStore:
     ) -> list[MemorySearchResult]:
         """Search Markdown sections with simple phrase/token matching.
 
-        Daily filenames outside the requested date window are skipped before
-        file reads. Exact normalized phrase matches rank above token matches;
-        no embedding model, recency weight, or reranker is involved.
+        This is intentionally not a semantic retrieval pipeline. It is a
+        small deterministic scan designed for a human-readable Markdown memory
+        bank:
+
+        1. Select candidate files. Daily memory is limited to files named
+           ``YYYY-MM-DD.md`` whose date is inside the inclusive ``days``
+           lookback window. ``scope="all"`` also appends ``MEMORY.md`` and
+           ``USER.md``.
+        2. Split each file into level-two Markdown sections. A result is a
+           section chunk, not an arbitrary paragraph, so the agent receives
+           enough surrounding context to decide whether the memory is useful.
+        3. Normalize query and chunk text with case folding and whitespace
+           compaction.
+        4. Match either the whole normalized query as a phrase or individual
+           search terms. Latin-like terms use word tokens; contiguous CJK text
+           is expanded into character bigrams so short Chinese queries still
+           match without a tokenizer dependency.
+        5. Rank by a tiny deterministic key: phrase hit first, then number of
+           matched terms, then source name. The public ``relevance`` value is
+           ``1.0`` for phrase hits, otherwise matched-term ratio.
+
+        There is no embedding model, vector index, recency boost, reranker, or
+        learned weighting. For example, a query like ``"JWT 15 minutes"`` will
+        match a daily section containing ``"JWT access tokens expire in 15
+        minutes"`` by token overlap, while ``"access tokens expire"`` ranks as
+        a stronger exact phrase hit.
         """
         await self.ensure_layout()
         query = query.strip()
@@ -359,7 +389,7 @@ class FileLTMStore:
         # window. The first tuple value is user-facing; the second is the
         # workspace-relative backend path.
         files: list[tuple[str, str]] = []
-        for filename in await self._accessor.list_files(self.daily_dir, ".md"):
+        for filename in await self._list_files(self.daily_dir, ".md"):
             try:
                 file_date = date.fromisoformat(filename.removesuffix(".md"))
             except ValueError:
@@ -379,9 +409,9 @@ class FileLTMStore:
         normalized_query = self._normalize(query)
         ranked: list[tuple[tuple[int, int, str], MemorySearchResult]] = []
         for source, path in files:
-            if not await self._accessor.exists(path):
+            if not await self._exists(path):
                 continue
-            text = await self._accessor.read_text(path)
+            text = await self._read_text(path)
             for section, chunk in self._markdown_chunks(text):
                 normalized = self._normalize(chunk)
                 phrase = int(normalized_query in normalized)
@@ -397,7 +427,8 @@ class FileLTMStore:
                 )
                 ranked.append(((phrase, matched, source), result))
         # Phrase hit, number of matched terms, and source name form a small,
-        # deterministic ranking key suitable for this intentionally light LTM.
+        # deterministic ranking key suitable for this intentionally light
+        # filesystem memory.
         ranked.sort(key=lambda item: item[0], reverse=True)
         return [item[1] for item in ranked[:limit]]
 
@@ -439,7 +470,7 @@ class FileLTMStore:
     async def _read_meta(self) -> dict:
         """Read extraction metadata, recovering safely from invalid JSON."""
         try:
-            return json.loads(await self._accessor.read_text(self.meta_path))
+            return json.loads(await self._read_text(self.meta_path))
         except (json.JSONDecodeError, OSError):
             return {
                 "version": 1,
@@ -450,9 +481,68 @@ class FileLTMStore:
 
     async def _write_meta(self, meta: dict) -> None:
         """Persist extraction metadata as readable UTF-8 JSON."""
-        await self._accessor.write_text(
+        await self._write_text(
             self.meta_path,
             json.dumps(meta, indent=2, ensure_ascii=False) + "\n",
+        )
+
+    def _resolve(self, path: str) -> str:
+        """Resolve and validate one workdir-relative backend path.
+
+        Absolute paths, drive-qualified Windows paths, empty paths, and parent
+        traversal are rejected. The returned path uses POSIX separators so it
+        is accepted by local, Docker, and E2B backends.
+        """
+        raw = path.replace("\\", "/")
+        if raw.startswith("/") or re.match(r"^[A-Za-z]:/", raw):
+            raise ValueError(
+                f"Expected a workdir-relative path: {path!r}",
+            )
+        normalized = raw.strip("/")
+        pure = PurePosixPath(normalized)
+        if not normalized or pure.is_absolute() or ".." in pure.parts:
+            raise ValueError(f"Invalid workdir-relative path: {path!r}")
+        return f"{self._root}/{pure}"
+
+    async def _ensure_dir(self, path: str) -> None:
+        """Create an empty directory using backend file primitives only."""
+        target = self._resolve(path)
+        if await self._backend.is_dir(target):
+            return
+        marker = f"{target}/.ltm-init"
+        await self._backend.write_file(marker, b"")
+        await self._backend.delete_path(marker)
+
+    async def _exists(self, path: str) -> bool:
+        """Return whether a workdir-relative file or directory exists."""
+        return await self._backend.file_exists(self._resolve(path))
+
+    async def _read_text(self, path: str) -> str:
+        """Read a workdir-relative file as strict UTF-8 text."""
+        return (await self._backend.read_file(self._resolve(path))).decode(
+            "utf-8",
+        )
+
+    async def _write_text(self, path: str, content: str) -> None:
+        """Overwrite a workdir-relative file with UTF-8 text."""
+        await self._backend.write_file(
+            self._resolve(path),
+            content.encode("utf-8"),
+        )
+
+    async def _stat_mtime(self, path: str) -> float | None:
+        """Return a workdir-relative path's modification timestamp."""
+        return await self._backend.stat_mtime(self._resolve(path))
+
+    async def _list_files(self, path: str, suffix: str) -> list[str]:
+        """List immediate child files whose names end with ``suffix``."""
+        directory = self._resolve(path)
+        if not await self._backend.is_dir(directory):
+            return []
+        return sorted(
+            name
+            for name in await self._backend.list_dir(directory)
+            if "/" not in name and "\\" not in name and name.endswith(suffix)
         )
 
     @staticmethod
@@ -541,7 +631,26 @@ class FileLTMStore:
 
     @staticmethod
     def _search_terms(query: str) -> set[str]:
-        """Build lightweight word and CJK-bigram search terms."""
+        """Build lightweight lexical terms from a search query.
+
+        The filesystem memory search deliberately avoids tokenizer,
+        embedding, and language-model dependencies. This helper therefore
+        extracts only two simple term families:
+
+        - Latin-like terms: contiguous ``[a-z0-9_]`` runs after case folding.
+          Example: ``"JWT 15 Minutes"`` becomes ``{"jwt", "15",
+          "minutes"}``.
+        - CJK terms: contiguous Chinese character runs are split into
+          overlapping character bigrams. Example: ``"杭州记忆"`` becomes
+          ``{"杭州", "州记", "记忆"}``. A one-character run is kept as-is,
+          so ``"杭"`` becomes ``{"杭"}``.
+
+        Mixed queries combine both rules. For example,
+        ``"Hangzhou 杭州 todo"`` yields ``{"hangzhou", "杭州", "todo"}``.
+        The caller later checks whether each term appears in the normalized
+        Markdown section text and uses the matched-term ratio as a rough,
+        deterministic relevance score.
+        """
         lowered = query.casefold()
         words = set(re.findall(r"[a-z0-9_]+", lowered))
         for run in re.findall(r"[\u4e00-\u9fff]+", lowered):
@@ -570,3 +679,4 @@ class FileLTMStore:
         if buffer and any(item.strip() for item in buffer):
             chunks.append((heading, "\n".join(buffer)))
         return chunks
+

@@ -1,5 +1,5 @@
-# -*- coding: utf-8 -*-
-"""Agent-callable tools for file-backed long-term memory.
+﻿# -*- coding: utf-8 -*-
+"""Agent-callable tools for filesystem-backed long-term memory.
 
 The tools are custom :class:`ToolBase` implementations rather than ordinary
 decorated functions because they need the live :class:`AgentState` injected by
@@ -20,7 +20,7 @@ from ....state import AgentState
 from ....tool import ToolBase, ToolChunk
 
 if TYPE_CHECKING:
-    from ._middleware import FileLongTermMemoryMiddleware
+    from ._middleware import FileSystemMemoryMiddleware
 
 
 MemoryTarget: TypeAlias = Literal["user", "memory", "daily"]
@@ -28,12 +28,13 @@ MemoryScope: TypeAlias = Literal["daily", "all"]
 MemoryAction: TypeAlias = Literal["add", "replace", "remove"]
 
 
-class _FileLTMToolBase(ToolBase):
-    """Base class for state-injected, auto-allowed LTM tools.
+class _FileSystemMemoryToolBase(ToolBase):
+    """Base class for state-injected, auto-allowed memory tools.
 
     Memory operations are ordinary internal agent capabilities. Prompting for
     external-execution permission on every read or write would make autonomous
-    memory impractical, so every file-LTM tool allows itself explicitly.
+    memory impractical, so every FileSystemMemory tool allows itself
+    explicitly.
     """
 
     is_external_tool: bool = False
@@ -41,7 +42,7 @@ class _FileLTMToolBase(ToolBase):
     is_mcp: bool = False
     mcp_name: str | None = None
 
-    def __init__(self, middleware: "FileLongTermMemoryMiddleware") -> None:
+    def __init__(self, middleware: "FileSystemMemoryMiddleware") -> None:
         """Bind a tool instance to the middleware's store registry."""
         self._middleware = middleware
 
@@ -57,7 +58,7 @@ class _FileLTMToolBase(ToolBase):
         )
 
 
-class _MemoryReadTool(_FileLTMToolBase):
+class _MemoryReadTool(_FileSystemMemoryToolBase):
     """Read one complete memory document and expose its section names."""
 
     name: str = "memory_read"
@@ -121,7 +122,7 @@ class _MemoryReadTool(_FileLTMToolBase):
             return _error_chunk(f"Error reading memory: {error}")
 
 
-class _MemorySearchTool(_FileLTMToolBase):
+class _MemorySearchTool(_FileSystemMemoryToolBase):
     """Search Markdown memory sections with lightweight lexical matching."""
 
     name: str = "memory_search"
@@ -171,6 +172,31 @@ class _MemorySearchTool(_FileLTMToolBase):
     ) -> ToolChunk:
         """Return the highest-ranked matching Markdown sections.
 
+        The search is intentionally lightweight and filesystem friendly:
+
+        - Daily-memory candidates are discovered by filename and filtered by
+          the inclusive ``days`` window before file reads.
+        - Markdown files are split into ``##`` sections, and each returned
+          result is one complete section chunk.
+        - Query and section text are normalized with case folding and
+          whitespace compaction.
+        - Exact normalized phrase matches rank ahead of token-only matches.
+        - English-like text uses word tokens; CJK runs are expanded into
+          character bigrams, avoiding an external tokenizer dependency.
+        - No embedding model, semantic scorer, recency weighting, vector
+          database, or reranker is involved.
+
+        Example tool calls:
+
+        - ``memory_search(query="app-service demo todo")`` searches recent
+          daily notebooks only.
+        - ``memory_search(query="Hangzhou concise Chinese", scope="all")``
+          also searches ``USER.md`` and ``MEMORY.md``.
+
+        A result with ``Relevance: 1.0`` usually means the full query phrase
+        appeared in the section. Lower scores are simple matched-term ratios,
+        useful for rough recall but not semantic similarity.
+
         Args:
             query (str):
                 Phrase or keywords to find.
@@ -206,7 +232,7 @@ class _MemorySearchTool(_FileLTMToolBase):
             return _error_chunk(f"Error searching memory: {error}")
 
 
-class _MemoryManageTool(_FileLTMToolBase):
+class _MemoryManageTool(_FileSystemMemoryToolBase):
     """Apply one constrained add, replace, or remove operation."""
 
     name: str = "memory_manage"
@@ -324,14 +350,15 @@ class _MemoryManageTool(_FileLTMToolBase):
 
 
 def build_memory_tools(
-    middleware: "FileLongTermMemoryMiddleware",
+    middleware: "FileSystemMemoryMiddleware",
     *,
     writable: bool,
 ) -> list[ToolBase]:
     """Build state-bound memory tools for one middleware instance.
 
     Read and search are available in every mode. ``memory_manage`` is included
-    only when the caller enables autonomous writes (``auto`` or ``both``).
+    only when the caller enables autonomous writes (``agent_control`` or
+    ``both``).
     """
     tools: list[ToolBase] = [
         _MemoryReadTool(middleware),
@@ -353,3 +380,5 @@ def _error_chunk(message: str) -> ToolChunk:
         content=[TextBlock(text=message)],
         state=ToolResultState.ERROR,
     )
+
+
