@@ -44,7 +44,16 @@ class EventTest(IsolatedAsyncioTestCase):
             "name": "Friday",
             "role": "assistant",
         }
-        ReplyStartEvent.model_validate(data)
+        event = ReplyStartEvent.model_validate(data)
+        self.assertIsInstance(event, ReplyStartEvent)
+        self.assertEqual(event.id, "test_id")
+        self.assertEqual(event.created_at, "2024-01-01T00:00:00")
+        self.assertEqual(event.session_id, "test_session")
+        self.assertEqual(event.reply_id, "test_reply")
+        self.assertEqual(event.name, "Friday")
+        self.assertEqual(event.role, "assistant")
+        self.assertEqual(event.metadata, {})
+        self.assertIsInstance(event.type, str)
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""
