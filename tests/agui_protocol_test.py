@@ -1,8 +1,16 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
 """Test cases for AGUI protocol middleware."""
+
+import json
+from typing import AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock
+
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+from fastapi.responses import StreamingResponse
+from fastapi.testclient import TestClient
 
 from agentscope.app.middleware import AGUIProtocolMiddleware
 from agentscope.event import (
@@ -34,6 +42,148 @@ from agentscope.event import (
     UserConfirmResultEvent,
 )
 from agentscope.message import ToolCallBlock, ToolResultBlock, ToolResultState
+
+
+async def _collect_stream(
+    mw: AGUIProtocolMiddleware,
+    chunks: list[str],
+) -> str:
+    """Collect converted stream chunks as text."""
+
+    async def _stream() -> AsyncGenerator[str, None]:
+        """Yield the provided chunks."""
+        for chunk in chunks:
+            yield chunk
+
+    out: list[str] = []
+    async for item in mw._convert_stream(_stream()):
+        out.append(item.decode("utf-8"))
+    return "".join(out)
+
+
+class AGUIProtocolStreamTest(IsolatedAsyncioTestCase):
+    """Test stream-level conversion behavior."""
+
+    async def asyncSetUp(self) -> None:
+        """The async setup method."""
+        self.mw = AGUIProtocolMiddleware(app=MagicMock())
+
+    async def test_raw_json_stream_is_converted(self) -> None:
+        """Test raw AgentEvent JSON stream conversion."""
+        event = ReplyStartEvent(
+            session_id="sess_1",
+            reply_id="reply_1",
+            name="agent",
+        )
+
+        body = await _collect_stream(self.mw, [event.model_dump_json()])
+        data = json.loads(body)
+
+        self.assertEqual(data["type"], "RUN_STARTED")
+        self.assertEqual(data["threadId"], "sess_1")
+        self.assertEqual(data["runId"], "reply_1")
+
+    async def test_sse_data_frame_is_converted(self) -> None:
+        """Test AgentEvent JSON inside an SSE data frame is converted."""
+        event = ReplyStartEvent(
+            session_id="sess_1",
+            reply_id="reply_1",
+            name="agent",
+        )
+
+        body = await _collect_stream(
+            self.mw,
+            [f"data: {event.model_dump_json()}\n\n"],
+        )
+        self.assertTrue(body.startswith("data: "))
+
+        data = json.loads(body.removeprefix("data: ").strip())
+        self.assertEqual(data["type"], "RUN_STARTED")
+        self.assertEqual(data["threadId"], "sess_1")
+        self.assertEqual(data["runId"], "reply_1")
+        self.assertNotIn("session_id", data)
+
+    async def test_sse_heartbeat_is_passed_through(self) -> None:
+        """Test SSE heartbeat frames are not modified."""
+        self.assertEqual(
+            await _collect_stream(self.mw, [":\n\n"]),
+            ":\n\n",
+        )
+
+    async def test_sse_data_frame_with_crlf_is_converted(self) -> None:
+        """Test AgentEvent JSON inside a CRLF SSE frame is converted."""
+        event = ReplyStartEvent(
+            session_id="sess_1",
+            reply_id="reply_1",
+            name="agent",
+        )
+
+        body = await _collect_stream(
+            self.mw,
+            [f"data: {event.model_dump_json()}\r\n\r\n"],
+        )
+        self.assertTrue(body.startswith("data: "))
+        self.assertTrue(body.endswith("\r\n\r\n"))
+
+        data = json.loads(body.removeprefix("data: ").strip())
+        self.assertEqual(data["type"], "RUN_STARTED")
+        self.assertEqual(data["threadId"], "sess_1")
+        self.assertEqual(data["runId"], "reply_1")
+
+    async def test_fastapi_sse_response_is_converted(self) -> None:
+        """Test middleware converts a real FastAPI SSE response."""
+        app = FastAPI()
+        app.add_middleware(AGUIProtocolMiddleware)
+
+        @app.get("/sessions/sess_1/stream")
+        async def stream() -> StreamingResponse:
+            event = ReplyStartEvent(
+                session_id="sess_1",
+                reply_id="reply_1",
+                name="agent",
+            )
+
+            async def gen() -> AsyncGenerator[str, None]:
+                yield f"data: {event.model_dump_json()}\n\n"
+
+            return StreamingResponse(gen(), media_type="text/event-stream")
+
+        client = TestClient(app)
+        with client.stream("GET", "/sessions/sess_1/stream") as response:
+            body = "".join(response.iter_text())
+
+        self.assertTrue(body.startswith("data: "))
+        data = json.loads(body.removeprefix("data: ").strip())
+        self.assertEqual(data["type"], "RUN_STARTED")
+        self.assertEqual(data["threadId"], "sess_1")
+        self.assertEqual(data["runId"], "reply_1")
+        self.assertNotIn("session_id", data)
+
+    async def test_fastapi_json_response_is_not_converted(self) -> None:
+        """Test non-SSE responses are outside protocol conversion scope."""
+        app = FastAPI()
+        app.add_middleware(AGUIProtocolMiddleware)
+
+        @app.get("/event")
+        def event() -> JSONResponse:
+            agent_event = ReplyStartEvent(
+                session_id="sess_1",
+                reply_id="reply_1",
+                name="agent",
+            )
+            return JSONResponse(agent_event.model_dump(mode="json"))
+
+        client = TestClient(app)
+        response = client.get("/event")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["type"], "REPLY_START")
+        self.assertEqual(data["session_id"], "sess_1")
+        self.assertNotIn("RUN_STARTED", response.text)
+
+    async def asyncTearDown(self) -> None:
+        """The async teardown method."""
 
 
 class AGUIProtocolLifecycleTest(IsolatedAsyncioTestCase):

@@ -81,17 +81,18 @@ async def get_embedding_model(
             context_size = card.context_size
             break
 
-    # 4. Build parameters.
+    # 4. Build parameters (provider-specific, no dimensions).
     parameters = (
         embedding_cls.Parameters(**config.parameters)
         if config.parameters
         else None
     )
 
-    # 5. Construct the model, passing context_size from the card.
+    # 5. Construct the model — dimensions is first-class, not in parameters.
     kwargs: dict = {
         "credential": credential,
         "model": config.model,
+        "dimensions": config.dimensions,
         "parameters": parameters,
     }
     if context_size is not None:

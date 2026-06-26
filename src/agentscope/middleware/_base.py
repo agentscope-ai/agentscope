@@ -199,6 +199,7 @@ class MiddlewareBase:  # pylint: disable=unused-argument
             input_kwargs (`dict`):
                 Dictionary containing:
                 - context_config: ContextConfig | None
+                - instructions: HintBlock | None
             next_handler (`Callable[..., Awaitable[None]]`):
                 Callable that executes the next middleware or
                 original method
@@ -238,3 +239,12 @@ class MiddlewareBase:  # pylint: disable=unused-argument
                 A list of tools provided by this middleware.
         """
         return []
+
+    async def get_middleware_key(self) -> str:
+        """Get the unique key for this middleware, used to save middleware
+        states in `AgentState` instances.
+
+        Optionally, middleware classes can override this method to
+        provide their own unique key.
+        """
+        return self.__class__.__name__

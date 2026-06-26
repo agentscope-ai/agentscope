@@ -355,12 +355,20 @@ class TestInboxAndWakeupHelpers(IsolatedAsyncioTestCase):
         # Signal fired.
         self.assertEqual(len(received), 1)
 
-        # Queue holds the structured entry.
+        # Queue holds the structured entry. ``enqueue_wakeup`` is the
+        # idle-wake shortcut, so the entry carries ``kind="wake"`` and a
+        # null input alongside the routing fields.
         entries = await self.bus.dequeue_wakeups(max_count=10)
         self.assertEqual(len(entries), 1)
         self.assertEqual(
             entries[0],
-            {"user_id": "u", "session_id": "s", "agent_id": "a"},
+            {
+                "user_id": "u",
+                "session_id": "s",
+                "agent_id": "a",
+                "kind": "wake",
+                "input": None,
+            },
         )
 
 

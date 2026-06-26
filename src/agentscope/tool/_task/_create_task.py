@@ -80,7 +80,7 @@ All tasks are created with status `pending`.
 
     input_schema: dict = _TaskCreateParams.model_json_schema()
 
-    async def __call__(
+    async def call(
         self,
         _agent_state: AgentState,
         subject: str,

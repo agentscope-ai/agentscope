@@ -12,7 +12,7 @@
 # ``INSTALLER_NO_MODIFY_PATH=1`` suppresses the installer's attempt to
 # patch shell rc files (we don't need it — PATH already covers it).
 RUN apt-get update \
- && apt-get install -y --no-install-recommends curl ca-certificates \
+ && apt-get install -y --no-install-recommends curl ca-certificates ripgrep \
  && rm -rf /var/lib/apt/lists/* \
  && curl -LsSf https://astral.sh/uv/install.sh \
         | env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 sh
@@ -41,5 +41,7 @@ RUN uv pip install -r {gateway_home}/requirements.txt
 # graph (skill, tool, …). The script imports only
 # ``agentscope.mcp.MCPClient``.
 COPY _mcp_gateway_app.py {gateway_home}/_mcp_gateway_app.py
+# Glob helper script used by the builtin Glob tool.
+COPY _glob_helper.py {gateway_home}/_glob_helper.py
 
 WORKDIR {container_workdir}

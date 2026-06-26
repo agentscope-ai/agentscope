@@ -17,6 +17,7 @@ import asyncio
 from typing import TYPE_CHECKING, Self
 
 from ..._logging import logger
+from ..message_bus import MessageBusKeys
 
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
@@ -108,10 +109,13 @@ class CancelDispatcher:
                 Signalled after the underlying SUBSCRIBE completes.
         """
         try:
-            async for session_id in self._bus.session_subscribe_cancel(
+            async for payload in self._bus.subscribe(
+                MessageBusKeys.session_cancel_channel(),
                 on_ready=ready.set,
             ):
-                self._cancel_session(session_id)
+                sid = payload.get("session_id")
+                if isinstance(sid, str):
+                    self._cancel_session(sid)
         except Exception:  # pylint: disable=broad-except
             logger.exception(
                 "CancelDispatcher session-cancel loop crashed.",
@@ -158,9 +162,13 @@ class CancelDispatcher:
                 Signalled after the underlying SUBSCRIBE completes.
         """
         try:
-            async for task_id in self._bus.task_subscribe_cancel(
+            async for payload in self._bus.subscribe(
+                MessageBusKeys.task_cancel_channel(),
                 on_ready=ready.set,
             ):
+                task_id = payload.get("task_id")
+                if not isinstance(task_id, str):
+                    continue
                 cancelled = self._bg_manager.cancel_task(task_id)
                 if cancelled:
                     logger.info(

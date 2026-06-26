@@ -12,14 +12,18 @@ from .._embedding_usage import EmbeddingUsage
 from .._cache_base import EmbeddingCacheBase
 from .._embedding_base import EmbeddingModelBase
 from ...credential import CredentialBase
+from ...message import TextBlock
 
 
-class OpenAIEmbeddingModel(EmbeddingModelBase[str]):
+class OpenAIEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
     """OpenAI text embedding model.
 
     Supports ``text-embedding-3-small``, ``text-embedding-3-large``,
     and other OpenAI-compatible embedding models.  Inherits batching
-    and retry logic from :class:`EmbeddingModelBase`.
+    and retry logic from :class:`EmbeddingModelBase`.  ``TextBlock``
+    items in the input list are unpacked to their ``.text`` field by
+    the base class before ``_call_api`` runs, so this subclass only
+    has to handle plain ``str``.
     """
 
     #: OpenAI does not document an explicit per-request item limit;
@@ -30,18 +34,22 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str]):
     class Parameters(EmbeddingModelBase.Parameters):
         """Parameters for OpenAI and OpenAI-compatible embedding models."""
 
-        dimensions: int | None = Field(
-            default=None,
-            title="Dimensions",
-            description="The output embedding vector dimensions.",
-            gt=0,
+        pass_dimensions: bool = Field(
+            default=True,
+            title="Pass Dimensions",
+            description=(
+                "Whether to send the dimensions parameter to the "
+                "OpenAI-compatible embedding API."
+            ),
         )
 
     def __init__(
         self,
         credential: CredentialBase,
         model: str,
+        dimensions: int | None,
         parameters: "OpenAIEmbeddingModel.Parameters | None" = None,
+        pass_dimensions: bool = True,
         embedding_cache: EmbeddingCacheBase | None = None,
         context_size: int = 8191,
         max_retries: int = 3,
@@ -57,10 +65,21 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str]):
             model (`str`):
                 The embedding model name (e.g.
                 ``"text-embedding-3-small"``).
+            dimensions (`int | None`):
+                The output embedding vector dimensions.  Required at
+                the contract level — see :class:`EmbeddingModelBase`
+                for the rationale.  ``None`` is accepted only for
+                backward compatibility with legacy configs that
+                persisted ``dimensions`` inside ``parameters``.
             parameters (`OpenAIEmbeddingModel.Parameters | None`, \
             defaults to ``None``):
-                User-configurable parameters (currently only
-                ``dimensions``).
+                Provider-specific parameters.  Set
+                ``pass_dimensions=False`` for OpenAI-compatible
+                providers that expose a fixed native output dimension
+                and reject the API ``dimensions`` parameter.
+            pass_dimensions (`bool`, defaults to `True`):
+                Whether to pass the ``dimensions`` parameter to the API.
+                Some OpenAI-compatible providers do not support it.
             embedding_cache (`EmbeddingCacheBase | None`, defaults to \
             ``None``):
                 Optional embedding cache.
@@ -76,6 +95,7 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str]):
         super().__init__(
             credential=credential,
             model=model,
+            dimensions=dimensions,
             parameters=parameters,
             context_size=context_size,
             batch_size=self._TEXT_BATCH_SIZE,
@@ -92,6 +112,11 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str]):
         self.client: openai.AsyncClient = openai.AsyncClient(
             api_key=credential.api_key.get_secret_value(),
             **client_kwargs,
+        )
+        self.pass_dimensions = (
+            parameters.pass_dimensions
+            if parameters is not None
+            else pass_dimensions
         )
         self.embedding_cache: EmbeddingCacheBase | None = embedding_cache
 
@@ -129,7 +154,7 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str]):
             "encoding_format": "float",
             **kwargs,
         }
-        if self.dimensions is not None:
+        if self.pass_dimensions:
             api_kwargs["dimensions"] = self.dimensions
 
         if self.embedding_cache:
@@ -147,7 +172,17 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str]):
         response = await self.client.embeddings.create(**api_kwargs)
         time = (datetime.now() - start_time).total_seconds()
 
-        embeddings = [item.embedding for item in response.data]
+        embeddings: list[Any] = [None] * len(inputs)
+        for pos, item in enumerate(response.data):
+            index = getattr(item, "index", pos)
+            if not isinstance(index, int):
+                index = pos
+            if 0 <= index < len(inputs):
+                embeddings[index] = item.embedding or getattr(
+                    item,
+                    "dense_embedding",
+                    None,
+                )
 
         if self.embedding_cache:
             await self.embedding_cache.store(

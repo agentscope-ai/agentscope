@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from utils import AnyString, MockModel
 
 from agentscope.agent import Agent
-from agentscope.app.message_bus import MessageBus
+from agentscope.app.message_bus import MessageBus, MessageBusKeys
 from agentscope.app.middleware import ToolOffloadMiddleware
 from agentscope.app._manager import BackgroundTaskManager
 from agentscope.message import TextBlock, ToolCallBlock
@@ -291,8 +291,16 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         # The completed result should now have been pushed to the message bus
         # inbox as a model-dumped HintBlock.
         mock_bus = middleware._message_bus
-        mock_bus.inbox_push.assert_called_once()
-        session_id_called, hint_dict = mock_bus.inbox_push.call_args.args
+        # The middleware uses queue_push(inbox_key, payload) rather
+        # than the deprecated inbox_push(session_id, payload).
+        inbox_calls = [
+            c
+            for c in mock_bus.queue_push.call_args_list
+            if c.args[0] == MessageBusKeys.inbox(agent.state.session_id)
+        ]
+        self.assertEqual(len(inbox_calls), 1)
+        _, hint_dict = inbox_calls[0].args
+        session_id_called = agent.state.session_id
         self.assertEqual(session_id_called, agent.state.session_id)
         self.maxDiff = None
         self.assertDictEqual(
@@ -341,11 +349,18 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
         # enqueue_wakeup must be called exactly once with the correct ids so
         # WakeupDispatcher can re-invoke ChatService.run for this session.
         mock_bus = middleware._message_bus
-        mock_bus.enqueue_wakeup.assert_called_once_with(
-            user_id="u",
-            session_id=agent.state.session_id,
-            agent_id="a",
-        )
+        # enqueue_run_trigger is a standalone function that calls
+        # bus.queue_push + bus.publish under the hood.
+        wakeup_calls = [
+            c
+            for c in mock_bus.queue_push.call_args_list
+            if c.args[0] == MessageBusKeys.wakeup_queue()
+        ]
+        self.assertEqual(len(wakeup_calls), 1)
+        payload = wakeup_calls[0].args[1]
+        self.assertEqual(payload["user_id"], "u")
+        self.assertEqual(payload["session_id"], agent.state.session_id)
+        self.assertEqual(payload["agent_id"], "a")
 
     async def test_tool_stop_cancels_background_task(self) -> None:
         """ToolStop tool cancels the running background asyncio task."""
