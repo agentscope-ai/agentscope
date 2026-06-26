@@ -299,6 +299,10 @@ class MCPTool(ToolBase):
             `ToolChunk`: The converted tool execution result.
         """
 
+        meta = kwargs.pop("_meta", None)
+        if meta is not None and not isinstance(meta, dict):
+            meta = None
+
         # Call the MCP tool
         if self._client_gen:
             # Stateless client: create temporary session
@@ -310,6 +314,7 @@ class MCPTool(ToolBase):
                         self._tool.name,
                         arguments=kwargs,
                         read_timeout_seconds=self._timeout,
+                        meta=meta,
                     )
         else:
             # Stateful client: use existing session
@@ -317,6 +322,7 @@ class MCPTool(ToolBase):
                 self._tool.name,
                 arguments=kwargs,
                 read_timeout_seconds=self._timeout,
+                meta=meta,
             )
 
         # Convert MCP result to AgentScope blocks
