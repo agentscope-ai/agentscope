@@ -56,9 +56,8 @@ class ImageParser(ParserBase):
 
         Args:
             file (`bytes | str`):
-                The raw image bytes.  ``str`` is rejected with
-                :class:`TypeError` because images are inherently
-                binary.
+                Either the raw image bytes, or a filesystem path to
+                the image file.
             filename (`str`):
                 The source filename, copied into
                 :attr:`Section.source`.
@@ -69,13 +68,12 @@ class ImageParser(ParserBase):
                 :class:`DataBlock` with the base64-encoded image data.
 
         Raises:
-            `TypeError`: If ``file`` is a ``str``.
+            `FileNotFoundError`: If ``file`` is a ``str`` pointing to
+                a path that does not exist.
         """
         if isinstance(file, str):
-            raise TypeError(
-                "ImageParser only accepts ``bytes``; got ``str`` for "
-                f"{filename!r}.",
-            )
+            with open(file, "rb") as fp:
+                file = fp.read()
 
         media_type = _guess_image_media_type(file)
         data = base64.b64encode(file).decode("utf-8")

@@ -7,6 +7,7 @@ run anywhere ``agentscope[rag]`` is installed.
 """
 import base64
 import io
+import os
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString
@@ -131,7 +132,7 @@ class TextParserTest(IsolatedAsyncioTestCase):
         )
 
     async def test_pre_decoded_string_round_trips(self) -> None:
-        """``str`` inputs skip the decode step."""
+        """``str`` inputs skip the decode step when no such file exists."""
         parser = TextParser()
         sections = await parser.parse("preset", "x.md")
         self.assertEqual(
@@ -148,6 +149,25 @@ class TextParserTest(IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+    async def test_string_input_treated_as_path(self) -> None:
+        """A ``str`` that names an existing file is read as a path."""
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".txt",
+            delete=False,
+        ) as f:
+            f.write("from disk")
+            path = f.name
+        try:
+            parser = TextParser()
+            sections = await parser.parse(path, "x.txt")
+            self.assertEqual(len(sections), 1)
+            self.assertEqual(sections[0].content.text, "from disk")
+        finally:
+            os.unlink(path)
 
     async def test_bad_encoding_raises_value_error(self) -> None:
         """An undecodable byte sequence surfaces a clear error."""
@@ -189,11 +209,29 @@ class PDFParserTest(IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_string_input_rejected(self) -> None:
-        """``str`` is not a valid PDF payload."""
+    async def test_string_input_treated_as_path(self) -> None:
+        """``str`` is interpreted as a filesystem path to the PDF."""
+        import tempfile
+
+        pdf_bytes = _make_pdf(["Hello"])
+        with tempfile.NamedTemporaryFile(
+            suffix=".pdf",
+            delete=False,
+        ) as f:
+            f.write(pdf_bytes)
+            path = f.name
+        try:
+            parser = PDFParser()
+            sections = await parser.parse(path, "demo.pdf")
+            self.assertEqual(len(sections), 1)
+        finally:
+            os.unlink(path)
+
+    async def test_missing_path_raises_file_not_found(self) -> None:
+        """A ``str`` pointing at a missing path raises FileNotFoundError."""
         parser = PDFParser()
-        with self.assertRaises(TypeError):
-            await parser.parse("not bytes", "demo.pdf")
+        with self.assertRaises(FileNotFoundError):
+            await parser.parse("/no/such/file.pdf", "x.pdf")
 
     async def test_invalid_bytes_raise_value_error(self) -> None:
         """Garbage bytes surface as :class:`ValueError`."""
@@ -261,11 +299,28 @@ class ImageParserTest(IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_string_input_rejected(self) -> None:
-        """Images are inherently binary; ``str`` is rejected."""
+    async def test_string_input_treated_as_path(self) -> None:
+        """``str`` is interpreted as a filesystem path to the image."""
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(
+            suffix=".png",
+            delete=False,
+        ) as f:
+            f.write(_PNG_PIXEL)
+            path = f.name
+        try:
+            parser = ImageParser()
+            sections = await parser.parse(path, "pixel.png")
+            self.assertEqual(len(sections), 1)
+        finally:
+            os.unlink(path)
+
+    async def test_missing_path_raises_file_not_found(self) -> None:
+        """A ``str`` pointing at a missing path raises FileNotFoundError."""
         parser = ImageParser()
-        with self.assertRaises(TypeError):
-            await parser.parse("hello", "x.png")
+        with self.assertRaises(FileNotFoundError):
+            await parser.parse("/no/such/file.png", "x.png")
 
 
 class PPTParserTest(IsolatedAsyncioTestCase):
@@ -590,8 +645,26 @@ class PPTParserTest(IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             PPTParser(table_format="csv")  # type: ignore[arg-type]
 
-    async def test_string_input_rejected(self) -> None:
-        """PPTX is binary; ``str`` is rejected."""
+    async def test_string_input_treated_as_path(self) -> None:
+        """``str`` is interpreted as a filesystem path to the PPTX."""
+        import tempfile
+
+        pptx_bytes = _make_pptx_simple(["Alpha"])
+        with tempfile.NamedTemporaryFile(
+            suffix=".pptx",
+            delete=False,
+        ) as f:
+            f.write(pptx_bytes)
+            path = f.name
+        try:
+            parser = PPTParser(include_image=False)
+            sections = await parser.parse(path, "demo.pptx")
+            self.assertEqual(len(sections), 1)
+        finally:
+            os.unlink(path)
+
+    async def test_missing_path_raises_file_not_found(self) -> None:
+        """A ``str`` pointing at a missing path raises FileNotFoundError."""
         parser = PPTParser()
-        with self.assertRaises(TypeError):
-            await parser.parse("not bytes", "x.pptx")
+        with self.assertRaises(FileNotFoundError):
+            await parser.parse("/no/such/file.pptx", "x.pptx")

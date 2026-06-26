@@ -4,7 +4,7 @@
 One :class:`Section` per page so a downstream
 :class:`~agentscope.rag.ChunkerBase` never combines text across page
 boundaries.  Each section's :attr:`Section.metadata` carries the
-1-based ``page`` number for later citation.
+page number (starting at 1) for later citation.
 """
 import io
 
@@ -41,9 +41,8 @@ class PDFParser(ParserBase):
 
         Args:
             file (`bytes | str`):
-                The PDF file content.  Must be raw ``bytes`` — passing
-                a ``str`` raises :class:`TypeError` since PDF is a
-                binary format.
+                Either the raw PDF bytes, or a filesystem path to
+                the PDF file.
             filename (`str`):
                 The source filename, copied verbatim into each
                 Section's :attr:`Section.source` field.
@@ -51,18 +50,17 @@ class PDFParser(ParserBase):
         Returns:
             `list[Section]`:
                 One Section per page, in document order.  Each
-                section's metadata holds ``{"page": <1-based>}``.
+                section's metadata holds ``{"page": <starting at 1>}``.
 
         Raises:
-            `TypeError`: If ``file`` is a ``str``.
+            `FileNotFoundError`: If ``file`` is a ``str`` pointing to
+                a path that does not exist.
             `ImportError`: If :mod:`pypdf` is not installed.
             `ValueError`: If the bytes cannot be parsed as PDF.
         """
         if isinstance(file, str):
-            raise TypeError(
-                "PDFParser only accepts ``bytes``; got ``str`` for "
-                f"{filename!r}.",
-            )
+            with open(file, "rb") as fp:
+                file = fp.read()
 
         try:
             from pypdf import PdfReader

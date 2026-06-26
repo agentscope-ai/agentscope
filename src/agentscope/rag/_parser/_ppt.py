@@ -5,7 +5,7 @@ Walks the deck slide-by-slide and emits one :class:`Section` per
 contiguous content block — adjacent text runs (and, by default,
 tables) are merged into a single text section; embedded images are
 emitted as their own :class:`DataBlock` sections.  Each section's
-metadata carries the 1-based ``slide`` index for later citation.
+metadata carries the slide index (starting at 1) for later citation.
 
 Mirrors the knob set of the v1 ``PowerPointReader``:
 ``include_image``, ``separate_table``, ``table_format``,
@@ -139,7 +139,7 @@ class PPTParser(ParserBase):
             slide_prefix (`str | None`, defaults to
                 ``"<slide index={index}>"``):
                 Prepended to the first text section of each slide.
-                Supports the ``{index}`` placeholder (1-based).  Use
+                Supports the ``{index}`` placeholder (starting at 1).  Use
                 ``None`` to disable.
             slide_suffix (`str | None`, defaults to ``"</slide>"``):
                 Appended to the last text section of each slide.  Use
@@ -169,8 +169,8 @@ class PPTParser(ParserBase):
 
         Args:
             file (`bytes | str`):
-                The PPTX file content.  ``str`` is rejected with
-                :class:`TypeError`.
+                Either the raw PPTX bytes, or a filesystem path to
+                the PPTX file.
             filename (`str`):
                 The source filename, copied into each Section's
                 :attr:`Section.source`.
@@ -178,19 +178,18 @@ class PPTParser(ParserBase):
         Returns:
             `list[Section]`:
                 Sections in deck order.  Text sections carry
-                ``{"slide": <1-based>}``; image sections add
+                ``{"slide": <starting at 1>}``; image sections add
                 ``{"media_type": "image/..."}``.
 
         Raises:
-            `TypeError`: If ``file`` is a ``str``.
+            `FileNotFoundError`: If ``file`` is a ``str`` pointing to
+                a path that does not exist.
             `ImportError`: If :mod:`python-pptx` is not installed.
             `ValueError`: If the bytes cannot be parsed.
         """
         if isinstance(file, str):
-            raise TypeError(
-                "PPTParser only accepts ``bytes``; got ``str`` for "
-                f"{filename!r}.",
-            )
+            with open(file, "rb") as fp:
+                file = fp.read()
 
         try:
             from pptx import Presentation

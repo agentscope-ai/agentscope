@@ -78,19 +78,22 @@ class ParserBase(ABC):
     ) -> list[Section]:
         """Parse a file into a list of :class:`Section` objects.
 
-        The ``file`` argument is intentionally a union: HTTP uploads
-        and blob-store reads hand the parser raw ``bytes``, while
-        local-mode callers (CLI, notebook, tests) can pass an already
-        decoded ``str`` so they do not have to round-trip through an
-        encoding step. Subclasses that only understand one of the two
-        forms (e.g. a PDF parser that always wants bytes) MUST raise
-        :class:`TypeError` for the other form rather than guessing.
+        The ``file`` argument is a union covering the three call sites
+        a parser sees in practice:
+
+        - ``bytes`` — the raw payload, as handed in by HTTP uploads
+          and blob-store reads.
+        - ``str`` for binary parsers (PDF, PPT, image, …) — a
+          **filesystem path** to the file to read.  The parser opens
+          the path itself; callers do not need to read the bytes first.
+        - ``str`` for :class:`TextParser` — disambiguated at runtime:
+          if the string names an existing file on disk it is treated
+          as a path and the file is decoded with the configured
+          encoding; otherwise it is treated as pre-decoded text.
 
         Args:
             file (`bytes | str`):
-                The file content. ``bytes`` is the raw payload as
-                stored in the blob store; ``str`` is pre-decoded text
-                supplied by a local-mode caller.
+                The file content or a path to it (see above).
             filename (`str`):
                 The original filename (e.g. ``"report.pdf"``).  Used
                 for error messages and copied into each Section's
@@ -106,6 +109,8 @@ class ParserBase(ABC):
 
         Raises:
             `TypeError`: If the subclass does not accept the supplied
-                ``file`` form (e.g. a binary parser handed a ``str``).
+                ``file`` form.
+            `FileNotFoundError`: If a binary parser is handed a
+                ``str`` that does not name an existing file.
             `ValueError`: If the file cannot be parsed.
         """

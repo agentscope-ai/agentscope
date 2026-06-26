@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """Plain-text file parser."""
+import os
+
 from ...message import TextBlock
 from .._document import Section
 from ._base import ParserBase
@@ -73,9 +75,12 @@ class TextParser(ParserBase):
 
         Args:
             file (`bytes | str`):
-                The file content. ``bytes`` is decoded with the
-                configured encoding; ``str`` is used verbatim — letting
-                local-mode callers skip the encode → decode round trip.
+                The file content.  ``bytes`` is decoded with the
+                configured encoding.  ``str`` is disambiguated at
+                runtime: if it names an existing file on disk the
+                file is read and decoded; otherwise it is used
+                verbatim as pre-decoded text — letting local-mode
+                callers skip the encode → decode round trip.
             filename (`str`):
                 The source filename, copied verbatim into
                 :attr:`Section.source`.
@@ -90,7 +95,18 @@ class TextParser(ParserBase):
                 configured encoding.
         """
         if isinstance(file, str):
-            text = file
+            if os.path.isfile(file):
+                with open(file, "rb") as fp:
+                    raw = fp.read()
+                try:
+                    text = raw.decode(self.encoding)
+                except UnicodeDecodeError as e:
+                    raise ValueError(
+                        f"Failed to decode {filename!r} as "
+                        f"{self.encoding!r}: {e}",
+                    ) from e
+            else:
+                text = file
         else:
             try:
                 text = file.decode(self.encoding)
