@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """Middleware system for AgentScope agents."""
 
 from ._base import MiddlewareBase

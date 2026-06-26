@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """Workspace-scoped, filesystem-backed long-term memory middleware.
 
 The middleware combines three responsibilities around a Markdown store:
@@ -27,7 +27,11 @@ from ....event import ExternalExecutionResultEvent, UserConfirmResultEvent
 from ....message import HintBlock, Msg, SystemMsg, UserMsg
 from ....tool import BackendBase
 from ....workspace import WorkspaceBase
-from ._store import FileSystemMemoryStore, MemoryPromptSnapshot, SnapshotVersion
+from ._store import (
+    FileSystemMemoryStore,
+    MemoryPromptSnapshot,
+    SnapshotVersion,
+)
 from ._tools import build_memory_tools
 
 if TYPE_CHECKING:
@@ -412,7 +416,9 @@ class FileSystemMemoryMiddleware(MiddlewareBase):
         """Return the write lock shared by sessions in one workspace."""
         key = self._workspace_keys_by_session.get(state.session_id)
         if key is None:
-            raise RuntimeError("The FileSystemMemory workspace has not been resolved yet.")
+            raise RuntimeError(
+                "The FileSystemMemory workspace has not been resolved yet.",
+            )
         return self._locks.setdefault(key, asyncio.Lock())
 
     def _snapshot_key(self, state: "AgentState") -> str:
@@ -552,6 +558,3 @@ class FileSystemMemoryMiddleware(MiddlewareBase):
                 if text:
                     texts.append(text)
         return "\n".join(texts) if texts else None
-
-
-

@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 # pylint: disable=protected-access,unused-argument,consider-using-with
 """Unit tests for ``FileSystemMemoryMiddleware`` and its Markdown store.
 
@@ -303,9 +303,7 @@ class TestFileSystemMemoryMiddleware(IsolatedAsyncioTestCase):
         static_names = [
             tool.name for tool in await static_control.list_tools()
         ]
-        agent_names = [
-            tool.name for tool in await agent_control.list_tools()
-        ]
+        agent_names = [tool.name for tool in await agent_control.list_tools()]
         self.assertEqual(static_names, ["memory_read", "memory_search"])
         self.assertIn("memory_manage", agent_names)
 
@@ -677,5 +675,3 @@ class TestFileSystemMemoryMiddleware(IsolatedAsyncioTestCase):
         )
         self.assertIsNotNone(middleware._owned_local_workspace)
         await middleware.close()
-
-

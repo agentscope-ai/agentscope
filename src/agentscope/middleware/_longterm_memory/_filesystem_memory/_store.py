@@ -1,11 +1,11 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """Persistent Markdown document store for filesystem-backed long-term memory.
 
-``FileSystemMemoryStore`` owns the on-disk layout, document-size limits, constrained
-mutation semantics, static-extraction metadata, lightweight retrieval, and the
-small amount of backend file access needed by those operations. It has no
-Agent or workspace lifecycle dependency; the middleware supplies only a
-backend instance and the resolved workspace workdir.
+``FileSystemMemoryStore`` owns the on-disk layout, document-size limits,
+constrained mutation semantics, static-extraction metadata, lightweight
+retrieval, and the small amount of backend file access needed by those
+operations. It has no Agent or workspace lifecycle dependency; the middleware
+supplies only a backend instance and the resolved workspace workdir.
 
 The store favors predictable human-editable files over database-like
 features. Updates reread the current document, exact replacements must be
@@ -679,4 +679,3 @@ class FileSystemMemoryStore:
         if buffer and any(item.strip() for item in buffer):
             chunks.append((heading, "\n".join(buffer)))
         return chunks
-

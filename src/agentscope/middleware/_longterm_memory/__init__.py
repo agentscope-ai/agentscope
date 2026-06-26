@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """Long-term memory middlewares for AgentScope agents.
 
 Import the public middleware classes from the middleware package::

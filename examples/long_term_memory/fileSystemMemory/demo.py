@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """FileSystemMemory mode demo.
 
 This demo shows how the same Agent task behaves with the three

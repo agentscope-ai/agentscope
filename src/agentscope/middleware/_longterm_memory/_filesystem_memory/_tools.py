@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """Agent-callable tools for filesystem-backed long-term memory.
 
 The tools are custom :class:`ToolBase` implementations rather than ordinary
@@ -380,5 +380,3 @@ def _error_chunk(message: str) -> ToolChunk:
         content=[TextBlock(text=message)],
         state=ToolResultState.ERROR,
     )
-
-
