@@ -270,8 +270,9 @@ class ChatService:
         # (any process) wakes an idle session — no in-process retrigger
         # plumbing is needed here.
         # ----------------------------------------------------------------
+        inbox_middleware = InboxMiddleware(self._message_bus)
         middlewares: list = [
-            InboxMiddleware(self._message_bus),
+            inbox_middleware,
             StateChangeMiddleware(
                 message_bus=self._message_bus,
                 session_id=session_id,
@@ -462,6 +463,28 @@ class ChatService:
                                 user_id,
                                 session_id,
                                 msg,
+                            )
+
+                    if input_msg is None:
+                        inbox_events = await inbox_middleware.drain(agent)
+                        if not inbox_events:
+                            logger.info(
+                                "Skipping wake-up for session %s: inbox is "
+                                "empty.",
+                                session_id,
+                            )
+                            return
+                        for event in inbox_events:
+                            await publish_session_event(
+                                self._message_bus,
+                                session_id,
+                                event.model_dump(mode="json"),
+                            )
+                            await self._project_event(
+                                user_id,
+                                session_record,
+                                agent_record,
+                                event,
                             )
 
                     async for event in agent.reply_stream(inputs=input_msg):
