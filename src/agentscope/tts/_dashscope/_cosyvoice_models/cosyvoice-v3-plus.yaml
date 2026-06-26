@@ -1,7 +1,6 @@
 name: cosyvoice-v3-plus
 label: CosyVoice-v3-Plus
 status: active
-realtime: false
 
 input_types:
   - text/plain

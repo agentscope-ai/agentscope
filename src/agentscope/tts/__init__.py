@@ -6,7 +6,6 @@ from ._tts_model_card import TTSModelCard
 from ._tts_response import TTSResponse, TTSUsage
 from ._dashscope import (
     DashScopeCosyVoiceTTSModel,
-    DashScopeCosyVoiceRealtimeTTSModel,
     DashScopeTTSModel,
     DashScopeRealtimeTTSModel,
 )
@@ -19,5 +18,4 @@ __all__ = [
     "DashScopeCosyVoiceTTSModel",
     "DashScopeTTSModel",
     "DashScopeRealtimeTTSModel",
-    "DashScopeCosyVoiceRealtimeTTSModel",
 ]

@@ -51,9 +51,14 @@ async def get_tts_model(
         config.model,
         config.realtime,
     )
-    parameters = (
-        tts_cls.Parameters(**config.parameters) if config.parameters else None
-    )
+    parameters_dict = dict(config.parameters or {})
+    if (
+        config.realtime is not None
+        and "realtime" in tts_cls.Parameters.model_fields
+        and "realtime" not in parameters_dict
+    ):
+        parameters_dict["realtime"] = config.realtime
+    parameters = tts_cls.Parameters(**parameters_dict)
     return tts_cls(
         credential=credential,
         model=config.model,
@@ -70,6 +75,11 @@ def _resolve_tts_class(
     if realtime is not None:
         for cls in classes:
             if cls.realtime != realtime:
+                continue
+            if any(card.name == model for card in cls.list_models()):
+                return cls
+        for cls in classes:
+            if "realtime" not in cls.Parameters.model_fields:
                 continue
             if any(card.name == model for card in cls.list_models()):
                 return cls

@@ -1,7 +1,6 @@
 name: cosyvoice-v3-flash
 label: CosyVoice-v3-Flash
 status: active
-realtime: false
 
 input_types:
   - text/plain

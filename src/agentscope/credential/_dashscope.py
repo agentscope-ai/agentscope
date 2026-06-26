@@ -49,7 +49,6 @@ class DashScopeCredential(CredentialBase):
         """Return the DashScope TTS model classes."""
         from ..tts import (
             DashScopeCosyVoiceTTSModel,
-            DashScopeCosyVoiceRealtimeTTSModel,
             DashScopeRealtimeTTSModel,
             DashScopeTTSModel,
         )
@@ -58,7 +57,6 @@ class DashScopeCredential(CredentialBase):
             DashScopeTTSModel,
             DashScopeRealtimeTTSModel,
             DashScopeCosyVoiceTTSModel,
-            DashScopeCosyVoiceRealtimeTTSModel,
         ]
 
     @classmethod

@@ -12,7 +12,7 @@ Covers:
     output over a mocked SDK.
   * ``DashScopeRealtimeTTSModel`` connect / close / push / synthesize
     lifecycle over a mocked WebSocket.
-  * ``DashScopeCosyVoiceRealtimeTTSModel`` connect / close / push /
+  * ``DashScopeCosyVoiceTTSModel`` realtime connect / close / push /
     synthesize lifecycle over a mocked SpeechSynthesizer.
 """
 import base64
@@ -26,7 +26,6 @@ from agentscope.app._service._tts_model import _resolve_tts_class
 from agentscope.credential import DashScopeCredential
 from agentscope.tts import (
     DashScopeCosyVoiceTTSModel,
-    DashScopeCosyVoiceRealtimeTTSModel,
     DashScopeTTSModel,
     DashScopeRealtimeTTSModel,
     TTSModelBase,
@@ -440,19 +439,23 @@ class TestDashScopeCosyVoiceTTSModel(IsolatedAsyncioTestCase):
         and DashScope credentials expose the class."""
         cosyvoice_cards = DashScopeCosyVoiceTTSModel.list_models()
         cosyvoice_names = {card.name for card in cosyvoice_cards}
+        self.assertEqual(len(cosyvoice_cards), 2)
         self.assertIn("cosyvoice-v3-flash", cosyvoice_names)
         self.assertIn("cosyvoice-v3-plus", cosyvoice_names)
         self.assertTrue(all(not card.realtime for card in cosyvoice_cards))
+        for card in cosyvoice_cards:
+            properties = card.parameter_schema["properties"]
+            self.assertIn("voice", properties)
+            self.assertIn("realtime", properties)
+        plus_card = next(
+            card
+            for card in cosyvoice_cards
+            if card.name == "cosyvoice-v3-plus"
+        )
         self.assertIn(
             "longanhuan",
-            cosyvoice_cards[0].parameter_schema["properties"]["voice"]["enum"],
+            plus_card.parameter_schema["properties"]["voice"]["enum"],
         )
-
-        realtime_cards = DashScopeCosyVoiceRealtimeTTSModel.list_models()
-        realtime_names = {card.name for card in realtime_cards}
-        self.assertIn("cosyvoice-v3-flash", realtime_names)
-        self.assertIn("cosyvoice-v3-plus", realtime_names)
-        self.assertTrue(all(card.realtime for card in realtime_cards))
 
         qwen_names = {card.name for card in DashScopeTTSModel.list_models()}
         self.assertNotIn("cosyvoice-v3-flash", qwen_names)
@@ -477,10 +480,7 @@ class TestDashScopeCosyVoiceTTSModel(IsolatedAsyncioTestCase):
             realtime=True,
         )
         self.assertIs(resolved_non_realtime, DashScopeCosyVoiceTTSModel)
-        self.assertIs(
-            resolved_realtime,
-            DashScopeCosyVoiceRealtimeTTSModel,
-        )
+        self.assertIs(resolved_realtime, DashScopeCosyVoiceTTSModel)
 
         resolved_realtime_fallback = _resolve_tts_class(
             credential_classes,
@@ -888,15 +888,15 @@ class TestDashScopeRealtimeTTSModel(  # pylint: disable=too-many-public-methods
 
 
 # ---------------------------------------------------------------------------
-# DashScopeCosyVoiceRealtimeTTSModel — realtime push / synthesize lifecycle
+# DashScopeCosyVoiceTTSModel — realtime push / synthesize lifecycle
 # ---------------------------------------------------------------------------
 
 
 # pylint: disable=too-many-public-methods
-class TestDashScopeCosyVoiceRealtimeTTSModel(
+class TestDashScopeCosyVoiceRealtimeMode(
     IsolatedAsyncioTestCase,
 ):
-    """Unit tests for the CosyVoice Realtime TTS model."""
+    """Unit tests for CosyVoice realtime mode."""
 
     def setUp(self) -> None:
         self.mock_modules = self._create_mock_cosyvoice_modules()
@@ -940,16 +940,20 @@ class TestDashScopeCosyVoiceRealtimeTTSModel(
     def _make_model(
         self,
         **kwargs: Any,
-    ) -> DashScopeCosyVoiceRealtimeTTSModel:
+    ) -> DashScopeCosyVoiceTTSModel:
         defaults: dict[str, Any] = {
             "credential": DashScopeCredential(api_key="test"),
             "model": "cosyvoice-v3-plus",
+            "parameters": DashScopeCosyVoiceTTSModel.Parameters(
+                voice="longanhuan",
+                realtime=True,
+            ),
             "stream": True,
             "max_retries": 1,
             "retry_delay": 0.0,
         }
         defaults.update(kwargs)
-        return DashScopeCosyVoiceRealtimeTTSModel(**defaults)
+        return DashScopeCosyVoiceTTSModel(**defaults)
 
     def _mock_synthesize_callback(self, model: Any) -> None:
         """Set up callback mocks so synthesize() doesn't block."""
@@ -969,6 +973,21 @@ class TestDashScopeCosyVoiceRealtimeTTSModel(
             async with model:
                 self.assertTrue(model._connected)
             self.assertFalse(model._connected)
+
+    async def test_async_context_skips_connect_when_not_realtime(self) -> None:
+        """async with does not connect when the realtime parameter is off."""
+        with patch.dict("sys.modules", self.mock_modules):
+            model = self._make_model(
+                parameters=DashScopeCosyVoiceTTSModel.Parameters(
+                    voice="longanhuan",
+                    realtime=False,
+                ),
+            )
+            async with model:
+                self.assertFalse(model._connected)
+            self.mock_modules[
+                "dashscope.audio.tts_v2"
+            ].SpeechSynthesizer.assert_not_called()
 
     # -- push --
 

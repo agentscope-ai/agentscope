@@ -431,11 +431,10 @@ export function ModelParametersPopover({
 										models.map((m) => {
 											const isSelected =
 												selectedTTSModel?.credential_id === credential.id &&
-												selectedTTSModel?.model === m.name &&
-												selectedTTSModel?.realtime === m.realtime;
+												selectedTTSModel?.model === m.name;
 											return (
 												<DropdownMenuCheckboxItem
-													key={`${credential.id}-${m.name}-${m.realtime}`}
+													key={`${credential.id}-${m.name}`}
 													checked={isSelected}
 													onSelect={(e) => e.preventDefault()}
 													onCheckedChange={(checked) => {
@@ -458,7 +457,6 @@ export function ModelParametersPopover({
 															type,
 															credential_id: credential.id,
 															model: m.name,
-															realtime: m.realtime,
 															parameters: defaults,
 														});
 													}}
@@ -509,9 +507,7 @@ export function ModelParametersPopover({
 												)
 													continue;
 												selModel = models.find(
-													(m) =>
-														m.name === selectedTTSModel.model &&
-														m.realtime === selectedTTSModel.realtime,
+													(m) => m.name === selectedTTSModel.model,
 												);
 												if (selModel) break;
 											}
