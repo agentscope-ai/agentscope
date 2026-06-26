@@ -11,7 +11,8 @@ from ....state import AgentState
 from ....tool import ToolBase
 from ...._logging import logger
 from ._tools import ScheduleCreate, ScheduleDelete, ScheduleList, ScheduleView
-from ...message_bus import MessageBus
+from ...message_bus import MessageBus, MessageBusKeys
+from ..._bus_ops import enqueue_run_trigger
 from ...storage import (
     StorageBase,
     ScheduleRecord,
@@ -232,11 +233,12 @@ class SchedulerManager:
                         ensure_ascii=False,
                     ),
                 )
-                await message_bus.inbox_push(
-                    session.id,
+                await message_bus.queue_push(
+                    MessageBusKeys.inbox(session.id),
                     hint.model_dump(mode="json"),
                 )
-                await message_bus.enqueue_wakeup(
+                await enqueue_run_trigger(
+                    message_bus,
                     user_id=record.user_id,
                     session_id=session.id,
                     agent_id=record.agent_id,

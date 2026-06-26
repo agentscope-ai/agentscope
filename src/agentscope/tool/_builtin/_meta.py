@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """The meta tool class."""
-from typing import Any
+from typing import Any, List
 
 from pydantic import Field, create_model
 from jinja2 import Template
@@ -12,7 +12,7 @@ from ...permission import (
     PermissionBehavior,
 )
 from .._response import ToolChunk
-from .._base import ToolBase
+from .._base import ToolBase, ToolMiddlewareBase
 from ...exception import DeveloperOrientedException
 from ...message import TextBlock
 from ...state import AgentState
@@ -49,8 +49,10 @@ class ResetTools(ToolBase):
         self,
         groups: list[ToolGroup],
         response_template: str,
+        middlewares: List[ToolMiddlewareBase] | None = None,
     ) -> None:
         """Initialize the meta tool with the current tool groups."""
+        super().__init__(middlewares=middlewares)
         self.groups = groups
         self.response_template = response_template
 
@@ -85,7 +87,7 @@ class ResetTools(ToolBase):
             message="The meta tool is always allowed to be called.",
         )
 
-    async def __call__(
+    async def call(
         self,
         _agent_state: AgentState,
         **kwargs: Any,

@@ -4,14 +4,13 @@ import os
 import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
 
+from utils import AnyString
 from agentscope.tool import Glob
 from agentscope.permission import (
     PermissionContext,
     PermissionBehavior,
     PermissionRule,
 )
-
-from tests.utils import AnyString
 
 
 class GlobToolTest(IsolatedAsyncioTestCase):

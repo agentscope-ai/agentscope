@@ -5,6 +5,8 @@ from typing import Any
 from pydantic import Field
 
 from ._team_tool_base import _TeamToolBase
+from ..message_bus import MessageBusKeys
+from .._bus_ops import enqueue_run_trigger
 from ...message import HintBlock, TextBlock, ToolResultState
 from ...tool import ToolChunk, ParamsBase
 
@@ -130,8 +132,12 @@ class TeamSay(_TeamToolBase):
             content (`str`):
                 Message body.
             to (`str | None`, defaults to ``None``):
-                Specific member agent id to target, or ``None`` for
-                broadcast.
+                Display name of a specific team member to target, or
+                ``None`` for broadcast.  Routing is by name (not
+                agent id) so workers can address the leader by the
+                name they see in ``<team-message from="...">``.
+                Name uniqueness within a team is enforced at
+                ``AgentCreate`` time.
 
         Returns:
             `ToolChunk`:
@@ -303,8 +309,12 @@ class TeamSay(_TeamToolBase):
             payload = hint.model_dump(mode="json")
 
             for sid, aid in recipients:
-                await self._message_bus.inbox_push(sid, payload)
-                await self._message_bus.enqueue_wakeup(
+                await self._message_bus.queue_push(
+                    MessageBusKeys.inbox(sid),
+                    payload,
+                )
+                await enqueue_run_trigger(
+                    self._message_bus,
                     user_id=self._user_id,
                     session_id=sid,
                     agent_id=aid,

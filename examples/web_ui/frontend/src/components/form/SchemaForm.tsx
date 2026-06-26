@@ -2,6 +2,13 @@ import type { JSONSchema, JSONSchemaProperty } from '@/api';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field.tsx';
 import { Input } from '@/components/ui/input';
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 
 const DEFAULT_SKIP_FIELDS = new Set(['id', 'type']);
@@ -26,6 +33,18 @@ interface Props {
 
 function effectiveType(prop: JSONSchemaProperty): string {
 	return prop.type ?? prop.anyOf?.find((t) => t.type !== 'null')?.type ?? 'string';
+}
+
+/** Surface enum values whether they appear at the property root or inside an
+ *  `anyOf` variant (Pydantic puts `Literal[...]` directly on the property and
+ *  `Literal[...] | None` on the non-null `anyOf` branch). */
+function enumValues(prop: JSONSchemaProperty): unknown[] | null {
+	if (prop.enum) return prop.enum;
+	for (const variant of prop.anyOf ?? []) {
+		const v = (variant as JSONSchemaProperty).enum;
+		if (v) return v;
+	}
+	return null;
 }
 
 function inferStep(type: string): number | string | undefined {
@@ -73,6 +92,7 @@ export function SchemaForm({
 				const isPassword = prop.format === 'password';
 				const isTextarea = prop.format === 'textarea';
 				const isNumber = type === 'number' || type === 'integer';
+				const enumOpts = enumValues(prop);
 
 				const label = labelFor?.(key, prop) ?? prop.title ?? key.replace(/_/g, ' ');
 				const placeholder = placeholderFor?.(key, prop) ?? prop.description;
@@ -90,6 +110,32 @@ export function SchemaForm({
 							<FieldLabel htmlFor={fieldId} className="font-normal">
 								{label}
 							</FieldLabel>
+							{description && <FieldDescription>{description}</FieldDescription>}
+						</Field>
+					);
+				}
+
+				if (enumOpts) {
+					const currentStr =
+						current === undefined || current === null ? '' : String(current);
+					return (
+						<Field key={key}>
+							<FieldLabel htmlFor={fieldId}>
+								{label}
+								{isRequired && <span className="text-destructive ml-0.5">*</span>}
+							</FieldLabel>
+							<Select value={currentStr} onValueChange={(v) => onChange(key, v)}>
+								<SelectTrigger id={fieldId} className="w-full">
+									<SelectValue placeholder={placeholder} />
+								</SelectTrigger>
+								<SelectContent>
+									{enumOpts.map((opt) => (
+										<SelectItem key={String(opt)} value={String(opt)}>
+											{String(opt)}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
 							{description && <FieldDescription>{description}</FieldDescription>}
 						</Field>
 					);

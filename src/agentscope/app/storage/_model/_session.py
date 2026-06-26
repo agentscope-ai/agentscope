@@ -66,8 +66,48 @@ class EmbeddingModelConfig(BaseModel):
     model: str
     """The embedding model name (e.g. ``"text-embedding-3-small"``)."""
 
-    parameters: dict
-    """The embedding model parameters (e.g. ``{"dimensions": 1024}``)."""
+    dimensions: int = Field(..., gt=0)
+    """The output embedding vector dimensions.
+
+    Required and first-class — chosen at config-creation time and
+    pinned to the resulting :class:`KnowledgeBaseRecord` so subsequent
+    indexing / retrieval calls are dim-deterministic without any
+    fallback lookup.
+    """
+
+    parameters: dict = Field(default_factory=dict)
+    """The provider-specific non-dimensional parameters.
+
+    Does **not** carry ``dimensions`` — that field is promoted to a
+    top-level attribute above.
+    """
+
+
+class SessionKnowledgeConfig(BaseModel):
+    """Session-level knowledge base attachment.
+
+    Persists which knowledge bases the agent should retrieve from for
+    this session and how the
+    :class:`~agentscope.middleware.RAGMiddleware` should be
+    configured.  ``parameters`` carries the user-tunable middleware
+    fields verbatim (mirrors :attr:`ChatModelConfig.parameters`); the
+    accepted keys and value types are described by
+    :meth:`RAGMiddleware.Config.model_json_schema`.
+    """
+
+    knowledge_base_ids: list[str] = Field(default_factory=list)
+    """Ids of the knowledge bases attached to this session.
+
+    Empty list means no knowledge base is wired and the middleware is
+    not installed.
+    """
+
+    parameters: dict = Field(default_factory=dict)
+    """Middleware parameters keyed by ``RAGMiddleware``'s
+    :class:`Config` model fields (``mode``, ``top_k``,
+    ``score_threshold``, ``emit_hint_event``, ``persist_hint``,
+    ``hint_template``).
+    """
 
 
 class SessionConfig(BaseModel):
@@ -91,6 +131,11 @@ class SessionConfig(BaseModel):
 
     tts_model_config: TTSModelConfig | None = None
     """The TTS model config. None means TTS is not enabled."""
+
+    knowledge_config: SessionKnowledgeConfig | None = None
+    """Knowledge bases attached to this session and the corresponding
+    :class:`~agentscope.middleware.RAGMiddleware` parameters.
+    ``None`` means no knowledge base is wired."""
 
 
 class SessionRecord(_RecordBase):

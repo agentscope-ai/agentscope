@@ -10,6 +10,8 @@ from pydantic import Field
 
 from ._team_tool_base import _TeamToolBase
 from .._types import SubAgentTemplate
+from ..message_bus import MessageBusKeys
+from .._bus_ops import enqueue_run_trigger
 from ..storage import AgentData, AgentRecord, SessionConfig
 from ...message import HintBlock, TextBlock, ToolResultState
 from ...permission import PermissionContext
@@ -500,11 +502,12 @@ optional):
                     ensure_ascii=False,
                 ),
             )
-            await self._message_bus.inbox_push(
-                worker_session.id,
+            await self._message_bus.queue_push(
+                MessageBusKeys.inbox(worker_session.id),
                 hint.model_dump(mode="json"),
             )
-            await self._message_bus.enqueue_wakeup(
+            await enqueue_run_trigger(
+                self._message_bus,
                 user_id=self._user_id,
                 session_id=worker_session.id,
                 agent_id=worker_agent.id,
