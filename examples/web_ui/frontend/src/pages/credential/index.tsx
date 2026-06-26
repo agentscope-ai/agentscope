@@ -274,7 +274,7 @@ function DetailPanel({ credential, schema, onEdit, onDelete }: DetailPanelProps)
 				) : (
 					<div className="grid grid-cols-2 xl:grid-cols-3 gap-3">
 						{models.map((m) => (
-							<ModelCardItem key={m.name} model={m} />
+							<ModelCardItem key={`${m.model_class}:${m.name}`} model={m} />
 						))}
 					</div>
 				)}

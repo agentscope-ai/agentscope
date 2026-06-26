@@ -10,6 +10,7 @@ export interface ChatModelConfig {
 	type: string;
 	credential_id: string;
 	model: string;
+	model_class: string;
 	parameters: Record<string, unknown>;
 }
 
@@ -420,6 +421,7 @@ export interface ScheduleListResponse {
 
 export interface ModelCard {
 	type: 'chat_model';
+	model_class: string;
 	name: string;
 	label: string;
 	status: 'active' | 'deprecated' | 'sunset';

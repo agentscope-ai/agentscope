@@ -1458,6 +1458,12 @@ class Agent:
                         else chunk.content,
                         state=chunk.state,
                         metadata=chunk.metadata,
+                        **(
+                            {"call_id": _cid}
+                            if (_cid := getattr(tool_call, "call_id", None))
+                            is not None
+                            else {}
+                        ),
                     )
 
                     # ========================================================
@@ -1674,6 +1680,12 @@ class Agent:
                     name=tool_call.name,
                     output=message,
                     state=state,
+                    **(
+                        {"call_id": _cid}
+                        if (_cid := getattr(tool_call, "call_id", None))
+                        is not None
+                        else {}
+                    ),
                 ),
             ],
         )
@@ -1966,12 +1978,22 @@ class Agent:
             name=tool_result.name,
             output=reserved_blocks,
             state=tool_result.state,
+            **(
+                {"call_id": _cid}
+                if (_cid := getattr(tool_result, "call_id", None)) is not None
+                else {}
+            ),
         )
         offload_tool_result = ToolResultBlock(
             id=tool_result.id,
             name=tool_result.name,
             output=offload_blocks,
             state=tool_result.state,
+            **(
+                {"call_id": _cid}
+                if (_cid := getattr(tool_result, "call_id", None)) is not None
+                else {}
+            ),
         )
 
         return reserved_tool_result, offload_tool_result

@@ -476,5 +476,75 @@ class ToolResultCompressionTest(IsolatedAsyncioTestCase):
             expected_offload,
         )
 
+    async def test_call_id_preserved_after_split(self) -> None:
+        """call_id extra field on ToolResultBlock is preserved in both
+        reserved and offload blocks after splitting."""
+        block1 = TextBlock(text="A" * 20, id="block1")
+        block2 = TextBlock(text="B" * 200, id="block2")
+
+        tool_result = ToolResultBlock(
+            id="fc_xyz",
+            call_id="call-xyz",
+            name="test_tool",
+            output=[block1, block2],
+        )
+
+        async def mock_count_tokens(
+            messages: list,
+            tools: list | None = None,
+        ) -> int:
+            """Mock token counting that exceeds limit for the full output."""
+            content = messages[0].content
+            if isinstance(content, list):
+                return sum(len(b.text) for b in content if hasattr(b, "text"))
+            return 0
+
+        self.mock_model.count_tokens = mock_count_tokens
+        (
+            reserved,
+            offload,
+        ) = await self.agent._split_tool_result_for_compression(
+            tool_result,
+        )
+
+        self.assertIsNotNone(reserved)
+        self.assertIsNotNone(offload)
+        self.assertEqual(
+            reserved.model_dump(),
+            {
+                "type": "tool_result",
+                "id": "fc_xyz",
+                "call_id": "call-xyz",
+                "name": "test_tool",
+                "state": "running",
+                "metadata": {},
+                "output": [
+                    {
+                        "type": "text",
+                        "id": "block1",
+                        "text": "A" * 20 + "B" * 80,
+                    },
+                ],
+            },
+        )
+        self.assertEqual(
+            offload.model_dump(),
+            {
+                "type": "tool_result",
+                "id": "fc_xyz",
+                "call_id": "call-xyz",
+                "name": "test_tool",
+                "state": "running",
+                "metadata": {},
+                "output": [
+                    {
+                        "type": "text",
+                        "id": "block2",
+                        "text": "B" * 120,
+                    },
+                ],
+            },
+        )
+
     async def asyncTearDown(self) -> None:
         """The async teardown method."""
