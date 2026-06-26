@@ -37,6 +37,13 @@ DEFAULT_IMAGE = "python:3.11-slim"
 #: Default port the in-Pod gateway listens on.
 DEFAULT_GATEWAY_PORT = 5600
 
+#: Per-command timeout for bootstrap steps (seconds). K8s Pods use a
+#: minimal base image and provision from scratch, so ``apt-get`` and
+#: ``pip install`` can be slow when registry mirrors are far or the
+#: network is throttled.  30 min is a defensive upper bound; typical
+#: runs complete well within 10 min.
+BOOTSTRAP_CMD_TIMEOUT = 1800.0
+
 #: Minimum system packages the bootstrap apt-installs before anything
 #: else. ``curl`` + ``ca-certificates`` are needed for the uv
 #: installer; ``ripgrep`` is needed by the builtin Grep tool.

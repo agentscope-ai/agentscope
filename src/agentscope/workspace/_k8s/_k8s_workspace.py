@@ -32,6 +32,7 @@ import json
 import mimetypes
 import os
 import posixpath
+import random
 import shlex
 import uuid
 from copy import deepcopy
@@ -64,6 +65,7 @@ from .._utils import (
 )
 from ._k8s_backend import K8sBackend
 from ._k8s_bootstrap import (
+    BOOTSTRAP_CMD_TIMEOUT,
     DEFAULT_GATEWAY_PORT,
     DEFAULT_IMAGE,
     DEV_SRC_TAR,
@@ -294,11 +296,9 @@ class K8sWorkspace(WorkspaceBase):
             token=self._gateway_token,
             timeout=30.0,
         )
-        await self._wait_for_gateway()
+        gateway_mcps = await self._wait_for_gateway()
 
-        self._gateway_clients = {
-            c.name: c for c in await self._gateway.list_mcps()
-        }
+        self._gateway_clients = {c.name: c for c in gateway_mcps}
 
         await self._save_mcp_file()
         await self._seed_skills()
@@ -969,7 +969,7 @@ class K8sWorkspace(WorkspaceBase):
         for cmd in commands:
             r = await self._backend.exec_shell(
                 ["sh", "-c", cmd],
-                timeout=600.0,
+                timeout=BOOTSTRAP_CMD_TIMEOUT,
             )
             if not r.ok():
                 raise RuntimeError(
@@ -1083,8 +1083,9 @@ class K8sWorkspace(WorkspaceBase):
 
         Returns the local ``http://127.0.0.1:<port>`` URL.
         """
-        local_port = self._gateway_port + hash(self.workspace_id) % 10000
-        local_port = max(1024, min(65535, local_port))
+        # Use a random high port to avoid TIME_WAIT conflicts when
+        # re-initializing the same workspace_id in quick succession.
+        local_port = random.randint(10000, 60000)
 
         self._port_forward_proc = await asyncio.create_subprocess_exec(
             "kubectl",
@@ -1111,14 +1112,49 @@ class K8sWorkspace(WorkspaceBase):
 
         return f"http://127.0.0.1:{local_port}"
 
-    async def _wait_for_gateway(self, timeout: float = 30.0) -> None:
-        """Block until the gateway answers ``/health`` with 200."""
+    async def _wait_for_gateway(
+        self,
+        timeout: float = 30.0,
+    ) -> list[GatewayMCPClient]:
+        """Block until the gateway is healthy **and** token-auth works.
+
+        The gateway process may respond to the unauthenticated
+        ``/health`` endpoint before it finishes loading the config
+        file (and thus the token). If we return as soon as ``/health``
+        passes, the very next ``list_mcps()`` call in ``initialize()``
+        can hit a 401.  To close this window we issue one
+        token-authenticated ``list_mcps()`` call as the final
+        readiness gate and return its result so ``initialize()`` can
+        reuse it without a redundant round-trip.
+
+        Args:
+            timeout (`float`, defaults to `30.0`):
+                Maximum seconds to wait for readiness.
+
+        Returns:
+            `list[GatewayMCPClient]`:
+                The MCP clients reported by the gateway once it is
+                fully ready.
+
+        Raises:
+            `RuntimeError`:
+                If the gateway does not become healthy and
+                authenticated before the deadline.
+        """
+        import httpx
+
         assert self._gateway is not None
         deadline = asyncio.get_event_loop().time() + timeout
         delay = 0.1
         while asyncio.get_event_loop().time() < deadline:
             if await self._gateway.health():
-                return
+                try:
+                    return await self._gateway.list_mcps()
+                except httpx.HTTPStatusError as exc:
+                    if exc.response.status_code in (401, 403):
+                        pass  # Token not yet active; keep retrying.
+                    else:
+                        raise
             await asyncio.sleep(delay)
             delay = min(delay * 1.5, 1.0)
         try:
