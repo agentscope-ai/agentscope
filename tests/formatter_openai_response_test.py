@@ -145,7 +145,7 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                 "role": "assistant",
                 "content": [
                     {
-                        "type": "input_text",
+                        "type": "output_text",
                         "text": "The capital of France is Paris.",
                     },
                 ],
@@ -163,7 +163,7 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                 "role": "assistant",
                 "content": [
                     {
-                        "type": "input_text",
+                        "type": "output_text",
                         "text": "The capital of Germany is Berlin.",
                     },
                 ],
@@ -193,7 +193,7 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                 "role": "assistant",
                 "content": [
                     {
-                        "type": "input_text",
+                        "type": "output_text",
                         "text": "The capital of Japan is Tokyo.",
                     },
                 ],
@@ -223,7 +223,7 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
             "role": "assistant",
             "content": [
                 {
-                    "type": "input_text",
+                    "type": "output_text",
                     "text": "The capital of Japan is Tokyo.",
                 },
             ],
@@ -358,7 +358,7 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                 {
                     "role": "assistant",
                     "content": [
-                        {"type": "input_text", "text": "reply"},
+                        {"type": "output_text", "text": "reply"},
                     ],
                 },
             ],
@@ -393,7 +393,7 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                 {
                     "role": "assistant",
                     "content": [
-                        {"type": "input_text", "text": "reply"},
+                        {"type": "output_text", "text": "reply"},
                     ],
                 },
             ],
@@ -489,7 +489,7 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                     "role": "assistant",
                     "content": [
                         {
-                            "type": "input_text",
+                            "type": "output_text",
                             "text": "Here is the map of Tokyo.",
                         },
                     ],
@@ -622,7 +622,7 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                 {
                     "role": "assistant",
                     "content": [
-                        {"type": "input_text", "text": "text_1"},
+                        {"type": "output_text", "text": "text_1"},
                     ],
                 },
                 {
@@ -652,7 +652,7 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                 {
                     "role": "assistant",
                     "content": [
-                        {"type": "input_text", "text": "text_2"},
+                        {"type": "output_text", "text": "text_2"},
                     ],
                 },
                 {
@@ -682,7 +682,7 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                 {
                     "role": "assistant",
                     "content": [
-                        {"type": "input_text", "text": "text_3"},
+                        {"type": "output_text", "text": "text_3"},
                     ],
                 },
             ],
@@ -709,7 +709,7 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                     "role": "assistant",
                     "content": [
                         {
-                            "type": "input_text",
+                            "type": "output_text",
                             "text": "Let me think about that.",
                         },
                     ],
@@ -727,7 +727,7 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                     "role": "assistant",
                     "content": [
                         {
-                            "type": "input_text",
+                            "type": "output_text",
                             "text": "Here is my answer.",
                         },
                     ],
@@ -773,6 +773,50 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                             "image_url": self.image_data_uri,
                         },
                     ],
+                },
+            ],
+            res,
+        )
+
+    async def test_tool_call_two_id_scenario(self) -> None:
+        """When ToolCallBlock carries a separate call_id (OpenAI Responses
+        API two-ID style), the formatter must use call_id (not id) for
+        function_call_output."""
+        fmt = OpenAIResponseFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="fc_abc",
+                        call_id="call-1",
+                        name="search",
+                        input='{"q": "test"}',
+                    ),
+                    ToolResultBlock(
+                        id="fc_abc",
+                        call_id="call-1",
+                        name="search",
+                        output=[TextBlock(text="result")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "type": "function_call",
+                    "id": "fc_abc",
+                    "call_id": "call-1",
+                    "name": "search",
+                    "arguments": '{"q": "test"}',
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call-1",
+                    "output": "result",
                 },
             ],
             res,

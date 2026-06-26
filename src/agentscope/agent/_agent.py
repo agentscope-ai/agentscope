@@ -1989,17 +1989,20 @@ class Agent:
             return tool_result, None
 
         # Create new ToolResultBlock instances for reserved and offload
+        extra_fields = tool_result.model_extra or {}
         reserved_tool_result = ToolResultBlock(
             id=tool_result.id,
             name=tool_result.name,
             output=reserved_blocks,
             state=tool_result.state,
+            **extra_fields,
         )
         offload_tool_result = ToolResultBlock(
             id=tool_result.id,
             name=tool_result.name,
             output=offload_blocks,
             state=tool_result.state,
+            **extra_fields,
         )
 
         return reserved_tool_result, offload_tool_result
