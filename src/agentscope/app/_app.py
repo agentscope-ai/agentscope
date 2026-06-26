@@ -6,6 +6,7 @@ from ._lifespan import lifespan
 from .workspace_manager import WorkspaceManagerBase
 from ._router import (
     agent_router,
+    background_task_router,
     chat_router,
     credential_router,
     model_router,
@@ -164,6 +165,7 @@ def create_app(
     # Built-in routers
     for router in (
         agent_router,
+        background_task_router,
         chat_router,
         credential_router,
         schedule_router,
