@@ -62,6 +62,8 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         *,
         template: str = DEFAULT_TEMPLATE,
         api_key: str = "",
+        api_url: str = "",
+        sandbox_url: str = "",
         domain: str = "",
         timeout_seconds: int = DEFAULT_TIMEOUT,
         gateway_port: int = DEFAULT_GATEWAY_PORT,
@@ -82,6 +84,12 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
             api_key (`str`, defaults to `""`):
                 E2B API key. ``""`` falls back to the ``E2B_API_KEY``
                 env var on the SDK side.
+            api_url (`str`, defaults to `""`):
+                Optional E2B API URL. ``""`` falls back to the
+                ``E2B_API_URL`` env var on the SDK side.
+            sandbox_url (`str`, defaults to `""`):
+                Optional E2B sandbox proxy URL. ``""`` falls back to
+                the ``E2B_SANDBOX_URL`` env var on the SDK side.
             domain (`str`, defaults to `""`):
                 Optional custom E2B domain (self-hosted etc.).
             timeout_seconds (`int`, defaults to `DEFAULT_TIMEOUT`):
@@ -115,6 +123,8 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
         """
         self._template = template
         self._api_key = api_key
+        self._api_url = api_url
+        self._sandbox_url = sandbox_url
         self._domain = domain
         self._timeout_seconds = timeout_seconds
         self._gateway_port = gateway_port
@@ -170,6 +180,8 @@ class E2BWorkspaceManager(WorkspaceManagerBase):
             workspace_id=workspace_id,
             template=self._template,
             api_key=self._api_key,
+            api_url=self._api_url,
+            sandbox_url=self._sandbox_url,
             domain=self._domain,
             timeout_seconds=self._timeout_seconds,
             gateway_port=self._gateway_port,
