@@ -6,10 +6,12 @@ from ._base import WorkspaceManagerBase
 from ._local_workspace_manager import LocalWorkspaceManager
 from ._docker_workspace_manager import DockerWorkspaceManager
 from ._e2b_workspace_manager import E2BWorkspaceManager
+from ._daytona_workspace_manager import DaytonaWorkspaceManager
 
 __all__ = [
     "WorkspaceManagerBase",
     "LocalWorkspaceManager",
     "DockerWorkspaceManager",
     "E2BWorkspaceManager",
+    "DaytonaWorkspaceManager",
 ]
