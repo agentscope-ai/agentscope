@@ -1,0 +1,44 @@
+name: gemini-2.5-flash-preview-tts
+label: Gemini 2.5 Flash Preview TTS
+status: active
+
+input_types:
+  - text/plain
+
+output_types:
+  - audio/wav
+
+voices:
+  # Source: https://ai.google.dev/gemini-api/docs/speech-generation#voices
+  - Zephyr
+  - Puck
+  - Charon
+  - Kore
+  - Fenrir
+  - Leda
+  - Orus
+  - Aoede
+  - Callirrhoe
+  - Autonoe
+  - Enceladus
+  - Iapetus
+  - Umbriel
+  - Algieba
+  - Despina
+  - Erinome
+  - Algenib
+  - Rasalgethi
+  - Laomedeia
+  - Achernar
+  - Alnilam
+  - Schedar
+  - Gacrux
+  - Pulcherrima
+  - Achird
+  - Zubenelgenubi
+  - Vindemiatrix
+  - Sadachbia
+  - Sadaltager
+  - Sulafat
+
+parameter_overrides: {}
