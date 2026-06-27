@@ -959,9 +959,7 @@ class LocalWorkspace(WorkspaceBase):
                 mcp_file,
                 json.dumps(
                     {
-                        agent_id: [
-                            m.model_dump() for m in mcps
-                        ]
+                        agent_id: [m.model_dump() for m in mcps]
                         for agent_id, mcps in self._mcps.items()
                     },
                     indent=2,

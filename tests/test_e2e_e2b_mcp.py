@@ -3,7 +3,6 @@
 
 Requires: ``E2B_API_KEY`` environment variable.
 """
-import json
 import os
 import unittest
 
