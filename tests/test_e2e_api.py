@@ -11,6 +11,7 @@ import threading
 
 import httpx
 import pytest
+import redis.asyncio as aioredis
 import uvicorn
 
 from agentscope.app import create_app
@@ -41,8 +42,26 @@ _server = None
 _thread = None
 
 
+async def _check_redis() -> bool:
+    """Check if Redis is reachable at localhost:6379."""
+    redis_client = aioredis.Redis(host="localhost", port=6379)
+    try:
+        await redis_client.ping()
+        return True
+    except Exception:
+        return False
+    finally:
+        await redis_client.aclose()
+
+
 def _setup_module() -> None:
     """Start uvicorn in background thread."""
+    if not asyncio.run(_check_redis()):
+        pytest.skip(
+            "Redis not available on localhost:6379",
+            allow_module_level=True,
+        )
+
     global _server, _thread
     config = uvicorn.Config(
         _app,

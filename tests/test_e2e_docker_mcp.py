@@ -6,6 +6,7 @@ Requires: Docker running locally.
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import unittest
 
@@ -13,6 +14,27 @@ from agentscope.workspace import DockerWorkspace
 from agentscope.mcp import MCPClient, HttpMCPConfig
 
 
+def _docker_available() -> bool:
+    """Return ``True`` iff the Docker daemon is reachable."""
+    if shutil.which("docker") is None:
+        return False
+    try:
+        result = subprocess.run(
+            ["docker", "info"],
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return False
+
+
+_DOCKER_OK = _docker_available()
+_SKIP_REASON = "Docker daemon not available"
+
+
+@unittest.skipUnless(_DOCKER_OK, _SKIP_REASON)
 class TestDockerPerAgentMCP(unittest.IsolatedAsyncioTestCase):
     """Per-agent MCP isolation tests for DockerWorkspace."""
 
