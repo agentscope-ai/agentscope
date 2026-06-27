@@ -705,7 +705,10 @@ class TestDockerWorkspaceLifecycle(IsolatedAsyncioTestCase):
         )
         try:
             await ws.initialize()
-            self.assertListEqual(await ws.list_mcps(), [])
+            self.assertListEqual(
+                await ws.list_mcps("test-agent"),
+                [],
+            )
         finally:
             await ws.close()
 

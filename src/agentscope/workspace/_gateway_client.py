@@ -59,6 +59,7 @@ class GatewayMCPTool(ToolBase):
         token: str,
         http: httpx.AsyncClient | None = None,
         timeout: float | None = None,
+        agent_id: str = "",
     ) -> None:
         """Build a gateway-backed MCP tool.
 
@@ -89,6 +90,9 @@ class GatewayMCPTool(ToolBase):
             timeout: Per-call HTTP timeout in seconds. Only consulted
                 when ``http`` is ``None`` (the shared client carries
                 its own timeout).
+            agent_id: The agent this tool belongs to. Sent as a query
+                parameter on the gateway call so the gateway routes to
+                the correct per-agent MCP session.
         """
         self.mcp_name = mcp_name
         self.name = f"mcp__{mcp_name}__{tool.name}"
@@ -112,6 +116,7 @@ class GatewayMCPTool(ToolBase):
         self._token = token
         self._http = http
         self._timeout = timeout
+        self._agent_id = agent_id
 
     async def check_permissions(
         self,
@@ -156,6 +161,7 @@ class GatewayMCPTool(ToolBase):
         url = (
             f"{self._gateway_url}/mcps/{self.mcp_name}"
             f"/tools/{self._tool.name}"
+            f"?agent_id={self._agent_id}"
         )
         headers = _bearer_headers(self._token)
         async with _http_session(self._http, self._timeout) as http:
@@ -203,6 +209,7 @@ class GatewayMCPClient(MCPClient):
     _gateway_token: str = PrivateAttr(default="")
     _http_timeout: float | None = PrivateAttr(default=None)
     _http: httpx.AsyncClient | None = PrivateAttr(default=None)
+    _agent_id: str = PrivateAttr(default="")
 
     def model_post_init(self, __context: Any) -> None:
         """Skip the parent's stdio/HTTP client preparation.
@@ -226,6 +233,7 @@ class GatewayMCPClient(MCPClient):
         http: httpx.AsyncClient | None,
         timeout: float | None,
         connected: bool = False,
+        agent_id: str = "",
     ) -> None:
         """Wire this client to a gateway transport.
 
@@ -258,11 +266,15 @@ class GatewayMCPClient(MCPClient):
                 :meth:`GatewayClient.list_mcps` for clients that came
                 back from the gateway as registered. Leave ``False``
                 when the caller will call :meth:`connect` themselves.
+            agent_id: The agent this MCP client belongs to. Sent as a
+                query parameter on every gateway request so the gateway
+                can isolate stateful MCP sessions per agent.
         """
         self._gateway_url = gateway_url.rstrip("/")
         self._gateway_token = token
         self._http = http
         self._http_timeout = timeout
+        self._agent_id = agent_id
         if connected:
             self._is_connected = True
 
@@ -288,7 +300,7 @@ class GatewayMCPClient(MCPClient):
         body = self.model_dump(mode="json")
         async with _http_session(self._http, self._http_timeout) as http:
             resp = await http.post(
-                f"{self._gateway_url}/mcps",
+                f"{self._gateway_url}/mcps?agent_id={self._agent_id}",
                 json=body,
                 headers=_bearer_headers(self._gateway_token),
             )
@@ -325,7 +337,8 @@ class GatewayMCPClient(MCPClient):
         try:
             async with _http_session(self._http, self._http_timeout) as http:
                 resp = await http.delete(
-                    f"{self._gateway_url}/mcps/{self.name}",
+                    f"{self._gateway_url}/mcps/{self.name}"
+                    f"?agent_id={self._agent_id}",
                     headers=_bearer_headers(self._gateway_token),
                 )
                 if resp.status_code >= 400 and not ignore_errors:
@@ -362,7 +375,8 @@ class GatewayMCPClient(MCPClient):
         """
         async with _http_session(self._http, self._http_timeout) as http:
             resp = await http.get(
-                f"{self._gateway_url}/mcps/{self.name}/tools",
+                f"{self._gateway_url}/mcps/{self.name}/tools"
+                f"?agent_id={self._agent_id}",
                 headers=_bearer_headers(self._gateway_token),
             )
             resp.raise_for_status()
@@ -441,6 +455,7 @@ class GatewayMCPClient(MCPClient):
             token=self._gateway_token,
             http=self._http,
             timeout=self._http_timeout,
+            agent_id=self._agent_id,
         )
 
 
@@ -520,14 +535,20 @@ class GatewayClient:
             return False
         return resp.status_code == 200
 
-    async def list_mcps(self) -> list[GatewayMCPClient]:
-        """Fetch every MCP currently registered on the gateway.
+    async def list_mcps(
+        self,
+        agent_id: str,
+    ) -> list[GatewayMCPClient]:
+        """Fetch every MCP currently registered for an agent on the gateway.
 
         The returned clients are marked as already connected (via
         :meth:`GatewayMCPClient.attach`'s ``connected=True``) because
         the gateway is already maintaining their upstream sessions —
         the host should not invoke :meth:`GatewayMCPClient.connect`
         again.
+
+        Args:
+            agent_id: The agent whose MCP clients to fetch.
 
         Returns:
             `list[GatewayMCPClient]`:
@@ -540,16 +561,20 @@ class GatewayClient:
                 response.
         """
         resp = await self._client().get(
-            f"{self.base_url}/mcps",
+            f"{self.base_url}/mcps?agent_id={agent_id}",
             headers=self._headers(),
         )
         resp.raise_for_status()
-        return [self.make_client(spec, connected=True) for spec in resp.json()]
+        return [
+            self.make_client(spec, agent_id=agent_id, connected=True)
+            for spec in resp.json()
+        ]
 
     def make_client(
         self,
         spec: dict[str, Any],
         *,
+        agent_id: str = "",
         connected: bool = False,
     ) -> GatewayMCPClient:
         """Build a :class:`GatewayMCPClient` wired to this gateway.
@@ -566,6 +591,8 @@ class GatewayClient:
                 — typically the body returned by the gateway's
                 ``GET /mcps`` endpoint, or built from user input by
                 ``DockerWorkspace.add_mcp``.
+            agent_id: The agent this MCP client belongs to. Sent as a
+                query parameter on every gateway request.
             connected: When ``True``, mark the new client as already
                 connected so :meth:`GatewayMCPClient.connect` need not
                 run again. Set by :meth:`list_mcps` for clients that
@@ -586,6 +613,7 @@ class GatewayClient:
             http=self._client(),
             timeout=self.timeout,
             connected=connected,
+            agent_id=agent_id,
         )
         return client
 

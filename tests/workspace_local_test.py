@@ -1269,7 +1269,8 @@ class TestLocalWorkspaceMCPInit(IsolatedAsyncioTestCase):
         ws = LocalWorkspace(workdir=self.temp_dir.name)
         await ws.initialize()
 
-        mcps = await ws.list_mcps()
+        # Old flat-list .mcp is migrated to "_default" agent
+        mcps = await ws.list_mcps("_default")
         names = [m.name for m in mcps]
         self.assertIn("good_one", names)
         self.assertNotIn("bad_one", names)
@@ -1295,5 +1296,6 @@ class TestLocalWorkspaceMCPInit(IsolatedAsyncioTestCase):
         )
         await ws.initialize()
         self.assertTrue(ws.is_alive)
-        names = [m.name for m in await ws.list_mcps()]
+        # Lazy clone on first list_mcps for this agent
+        names = [m.name for m in await ws.list_mcps("test-agent")]
         self.assertNotIn("will_fail_connect", names)

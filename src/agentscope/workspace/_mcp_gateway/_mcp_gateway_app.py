@@ -26,12 +26,18 @@ Endpoints
 Auth: every endpoint except ``/health`` requires
 ``Authorization: Bearer <token>`` when a token is configured.
 
-Config schema::
+Config schema (new per-agent format)::
 
     {
         "token": "bearer-token",
-        "servers": [<MCPClient.model_dump()>, ...]
+        "servers": {
+            "agent-leader": [<MCPClient.model_dump()>, ...],
+            "agent-worker": [<MCPClient.model_dump()>, ...]
+        }
     }
+
+An old-style flat ``"servers": [...]`` list is still accepted and
+auto-migrated under ``"_default"``.
 """
 
 import argparse
@@ -52,7 +58,7 @@ class _State:
     """Mutable runtime state shared by FastAPI routes."""
 
     def __init__(self) -> None:
-        self.clients: dict[str, MCPClient] = {}
+        self.clients: dict[str, dict[str, MCPClient]] = {}
         self.token: str = ""
         self.lock = asyncio.Lock()
 
@@ -102,20 +108,30 @@ def _build_app(state: _State) -> FastAPI:
         return PlainTextResponse("ok")
 
     @app.get("/mcps", dependencies=[auth])
-    async def _list_mcps() -> list[dict[str, Any]]:
-        # Dump the full MCPClient field set so the host can rebuild
-        # `GatewayMCPClient.model_validate(spec)` losslessly.
-        return [c.model_dump(mode="json") for c in state.clients.values()]
+    async def _list_mcps(agent_id: str) -> list[dict[str, Any]]:
+        # Return the client specs for the requested agent only.
+        return [
+            clients[agent_id].model_dump(mode="json")
+            for clients in state.clients.values()
+            if agent_id in clients
+        ]
 
     @app.post("/mcps", dependencies=[auth])
-    async def _add_mcp(request: Request) -> dict[str, Any]:
+    async def _add_mcp(
+        agent_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
         body = await request.json()
         name = body.get("name", "")
         if not name:
             raise HTTPException(400, "name required")
         async with state.lock:
-            if name in state.clients:
-                raise HTTPException(409, f"{name!r} already exists")
+            by_agent = state.clients.setdefault(name, {})
+            if agent_id in by_agent:
+                raise HTTPException(
+                    409,
+                    f"{name!r} already exists for agent {agent_id!r}",
+                )
             try:
                 client = await _build_client(body)
             except HTTPException:
@@ -125,39 +141,49 @@ def _build_app(state: _State) -> FastAPI:
                     500,
                     f"connect failed: {e}",
                 ) from e
-            state.clients[name] = client
+            by_agent[agent_id] = client
         return {"ok": True}
 
     @app.delete("/mcps/{name}", dependencies=[auth])
-    async def _remove_mcp(name: str) -> dict[str, Any]:
+    async def _remove_mcp(agent_id: str, name: str) -> dict[str, Any]:
         async with state.lock:
-            client = state.clients.pop(name, None)
+            by_agent = state.clients.get(name, {})
+            client = by_agent.pop(agent_id, None)
             if client is None:
-                raise HTTPException(404, f"{name!r} not found")
+                raise HTTPException(
+                    404,
+                    f"{name!r} not found for agent {agent_id!r}",
+                )
             if client.is_stateful and client.is_connected:
                 await client.close()
         return {"ok": True}
 
     @app.get("/mcps/{name}/tools", dependencies=[auth])
-    async def _list_tools(name: str) -> list[dict[str, Any]]:
-        client = state.clients.get(name)
+    async def _list_tools(agent_id: str, name: str) -> list[dict[str, Any]]:
+        by_agent = state.clients.get(name, {})
+        client = by_agent.get(agent_id)
         if client is None:
-            raise HTTPException(404, f"{name!r} not found")
-        # Send raw mcp.types.Tool over the wire so the host-side
-        # GatewayMCPClient can re-wrap them via the standard MCPClient
-        # path (preserves inputSchema, annotations.readOnlyHint, ...).
+            raise HTTPException(
+                404,
+                f"{name!r} not found for agent {agent_id!r}",
+            )
         raw = await client.list_raw_tools()
         return [t.model_dump(mode="json") for t in raw]
 
     @app.post("/mcps/{name}/tools/{tool}", dependencies=[auth])
     async def _call_tool(
+        agent_id: str,
         name: str,
         tool: str,
         request: Request,
     ) -> dict[str, Any]:
-        client = state.clients.get(name)
+        by_agent = state.clients.get(name, {})
+        client = by_agent.get(agent_id)
         if client is None:
-            raise HTTPException(404, f"{name!r} not found")
+            raise HTTPException(
+                404,
+                f"{name!r} not found for agent {agent_id!r}",
+            )
         body = await request.json()
         arguments = body.get("arguments") or {}
         try:
@@ -167,7 +193,6 @@ def _build_app(state: _State) -> FastAPI:
             raise HTTPException(404, str(e)) from e
         except Exception as e:  # noqa: BLE001
             raise HTTPException(500, str(e)) from e
-        # ToolChunk is a pydantic model — let host reconstruct it.
         return {"chunk": chunk.model_dump(mode="json")}
 
     return app
@@ -178,19 +203,34 @@ def _build_app(state: _State) -> FastAPI:
 
 async def _connect_initial(
     state: _State,
-    server_cfgs: list[dict[str, Any]],
+    server_cfgs: list[dict[str, Any]] | dict[str, list[dict[str, Any]]],
 ) -> None:
-    """Connect every server listed in the static config file."""
-    for cfg in server_cfgs:
-        client = await _build_client(cfg)
-        if client.name in state.clients:
-            if client.is_stateful and client.is_connected:
-                await client.close()
-            raise ValueError(
-                f"Duplicated server name in config: {client.name!r}",
+    """Connect every server listed in the static config file.
+
+    Supports both old and new config formats:
+
+    * Old: ``[config, ...]`` (flat list; migrated under ``"_default"``).
+    * New: ``{"agent_id": [config, ...], ...}`` (per-agent).
+    """
+    if isinstance(server_cfgs, list):
+        # Old flat-list format — auto-migrate
+        for cfg in server_cfgs:
+            client = await _build_client(cfg)
+            state.clients.setdefault(client.name, {})["_default"] = client
+            print(
+                f"[gateway] connected {client.name!r} (agent _default)",
+                flush=True,
             )
-        state.clients[client.name] = client
-        print(f"[gateway] connected {client.name!r}", flush=True)
+    else:
+        for agent_id, cfgs in server_cfgs.items():
+            for cfg in cfgs:
+                client = await _build_client(cfg)
+                state.clients.setdefault(client.name, {})[agent_id] = client
+                print(
+                    f"[gateway] connected {client.name!r} "
+                    f"(agent {agent_id})",
+                    flush=True,
+                )
 
 
 async def _run(config_path: str, port: int) -> None:
@@ -220,9 +260,10 @@ async def _run(config_path: str, port: int) -> None:
     try:
         await server.serve()
     finally:
-        for client in list(state.clients.values()):
-            if client.is_stateful and client.is_connected:
-                await client.close()
+        for by_agent in state.clients.values():
+            for client in by_agent.values():
+                if client.is_stateful and client.is_connected:
+                    await client.close()
 
 
 def main() -> None:

@@ -57,7 +57,10 @@ class _FakeWorkspace:
         """Return the configured workspace skills."""
         return list(self._skills)
 
-    async def list_mcps(self) -> list:
+    async def list_mcps(
+        self,
+        agent_id: str,  # pylint: disable=unused-argument
+    ) -> list:
         """Return the configured workspace MCP descriptors."""
         return list(self._mcps)
 
