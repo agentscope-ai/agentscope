@@ -114,8 +114,15 @@ class WorkspaceBase:
         """Built-in tools scoped to this workspace."""
 
     @abstractmethod
-    async def list_mcps(self) -> list[MCPClient]:
-        """Active MCP clients (each provides its own tools)."""
+    async def list_mcps(self, agent_id: str) -> list[MCPClient]:
+        """Active MCP clients for the given agent (each provides its own
+        tools).
+
+        Args:
+            agent_id: The agent whose MCP clients to return. Each
+                agent gets its own client instances so that stateful
+                MCP sessions are isolated.
+        """
 
     @abstractmethod
     async def list_skills(self) -> list[Skill]:
@@ -160,22 +167,25 @@ class WorkspaceBase:
     # ── for User: dynamic MCP management ───────────────────────────
 
     @abstractmethod
-    async def add_mcp(self, mcp_client: MCPClient) -> None:
-        """Dynamically register a new MCP server.
+    async def add_mcp(self, agent_id: str, mcp_client: MCPClient) -> None:
+        """Dynamically register a new MCP server for an agent.
 
         Args:
+            agent_id: The agent this MCP client belongs to.
             mcp_client: An :class:`MCPClient` instance describing
                 the MCP server to add.
 
         Raises:
-            ValueError: If an MCP with the same name already exists.
+            ValueError: If an MCP with the same name already exists
+                for this agent.
         """
 
     @abstractmethod
-    async def remove_mcp(self, name: str) -> None:
-        """Dynamically remove an MCP server by name.
+    async def remove_mcp(self, agent_id: str, name: str) -> None:
+        """Dynamically remove an MCP server by name for an agent.
 
         Args:
+            agent_id: The agent whose MCP client to remove.
             name: Name of the MCP server to remove.
         """
 

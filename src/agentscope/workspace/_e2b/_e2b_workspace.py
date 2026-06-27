@@ -208,8 +208,8 @@ class E2BWorkspace(WorkspaceBase):
         self._backend: E2BBackend | None = None
         self._gateway: GatewayClient | None = None
         self._gateway_token: str = ""
-        self._mcps: list[MCPClient] = []
-        self._gateway_clients: dict[str, GatewayMCPClient] = {}
+        self._mcps: dict[str, list[MCPClient]] = {}
+        self._gateway_clients: dict[str, dict[str, GatewayMCPClient]] = {}
         self._mcp_lock = asyncio.Lock()
         self._skill_lock = asyncio.Lock()
 
@@ -294,9 +294,10 @@ class E2BWorkspace(WorkspaceBase):
         )
         await self._wait_for_gateway()
 
-        self._gateway_clients = {
-            c.name: c for c in await self._gateway.list_mcps()
-        }
+        self._gateway_clients = {}
+        for agent_id in self._mcps:
+            gw_clients = await self._gateway.list_mcps(agent_id)
+            self._gateway_clients[agent_id] = {c.name: c for c in gw_clients}
 
         # Persist the MCP set unconditionally so a freshly seeded
         # ``self._mcps`` (default_mcps path) is rewritten as the
@@ -326,17 +327,18 @@ class E2BWorkspace(WorkspaceBase):
             )
 
         async with self._mcp_lock, self._skill_lock:
-            for gw_client in list(self._gateway_clients.values()):
-                try:
-                    await gw_client.close()
-                except Exception as e:
-                    logger.warning(
-                        "MCP %r close failed during reset: %s",
-                        gw_client.name,
-                        e,
-                    )
+            for agent_map in self._gateway_clients.values():
+                for gw_client in list(agent_map.values()):
+                    try:
+                        await gw_client.close()
+                    except Exception as e:
+                        logger.warning(
+                            "MCP %r close failed during reset: %s",
+                            gw_client.name,
+                            e,
+                        )
             self._gateway_clients.clear()
-            self._mcps = []
+            self._mcps = {}
 
             for path in (
                 SANDBOX_SESSIONS_DIR,
@@ -424,14 +426,42 @@ class E2BWorkspace(WorkspaceBase):
             Write(backend=self._backend),
         ]
 
-    async def list_mcps(self) -> list[MCPClient]:
-        """Return one :class:`GatewayMCPClient` per registered MCP.
+    async def list_mcps(self, agent_id: str) -> list[MCPClient]:
+        """Return per-agent :class:`GatewayMCPClient` list.
 
-        Each entry's ``name`` matches the upstream MCP server name and
-        all of its protocol calls are routed over HTTPS to the
-        in-sandbox gateway.
+        On first access for an ``agent_id``, clones from
+        :attr:`default_mcps`, registers each on the gateway via
+        ``POST /mcps``, and persists.
         """
-        return list(self._gateway_clients.values())
+        if agent_id not in self._gateway_clients:
+            async with self._mcp_lock:
+                if agent_id not in self._gateway_clients:
+                    assert self._gateway is not None
+                    clones: list[MCPClient] = []
+                    gw_map: dict[str, GatewayMCPClient] = {}
+                    for seed in self.default_mcps:
+                        try:
+                            spec = seed.model_dump(mode="json")
+                            gw_client = self._gateway.make_client(
+                                spec,
+                                agent_id=agent_id,
+                            )
+                            await gw_client.connect()
+                            gw_map[gw_client.name] = gw_client
+                            clones.append(
+                                MCPClient.model_validate(spec),
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to clone MCP '%s' for agent %r: %s",
+                                seed.name,
+                                agent_id,
+                                e,
+                            )
+                    self._mcps[agent_id] = clones
+                    self._gateway_clients[agent_id] = gw_map
+                    await self._save_mcp_file()
+        return list(self._gateway_clients.get(agent_id, {}).values())
 
     async def list_skills(self) -> list[Skill]:
         """Enumerate skills by scanning ``skills/`` inside the sandbox.
@@ -482,41 +512,50 @@ class E2BWorkspace(WorkspaceBase):
 
     # ── dynamic MCP management ──────────────────────────────────
 
-    async def add_mcp(self, mcp_client: MCPClient) -> None:
-        """Register a new MCP server on the in-sandbox gateway.
-
-        Mirrors :meth:`DockerWorkspace.add_mcp` but persists ``.mcp``
-        unconditionally — the sandbox filesystem is always
-        persistent for E2B.
+    async def add_mcp(
+        self,
+        agent_id: str,
+        mcp_client: MCPClient,
+    ) -> None:
+        """Register a new MCP server for an agent on the in-sandbox
+        gateway.
         """
         async with self._mcp_lock:
-            if mcp_client.name in self._gateway_clients:
+            agent_gw = self._gateway_clients.setdefault(agent_id, {})
+            if mcp_client.name in agent_gw:
                 raise ValueError(
-                    f"MCP {mcp_client.name!r} already exists in workspace.",
+                    f"MCP {mcp_client.name!r} already exists for "
+                    f"agent {agent_id!r}.",
                 )
             spec = mcp_client.model_dump(mode="json")
             assert self._gateway is not None
-            gw_client = self._gateway.make_client(spec)
+            gw_client = self._gateway.make_client(
+                spec,
+                agent_id=agent_id,
+            )
             await gw_client.connect()
-            self._mcps.append(mcp_client)
-            self._gateway_clients[gw_client.name] = gw_client
+            self._mcps.setdefault(agent_id, []).append(mcp_client)
+            agent_gw[gw_client.name] = gw_client
             await self._save_mcp_file()
 
-    async def remove_mcp(self, name: str) -> None:
-        """Unregister an MCP server by name.
-
-        Mirrors :meth:`DockerWorkspace.remove_mcp`.
-        """
+    async def remove_mcp(self, agent_id: str, name: str) -> None:
+        """Unregister an MCP server by name for an agent."""
         async with self._mcp_lock:
-            gw_client = self._gateway_clients.pop(name, None)
+            agent_gw = self._gateway_clients.get(agent_id, {})
+            gw_client = agent_gw.pop(name, None)
             if gw_client is None:
-                logger.warning("MCP %r not found in workspace", name)
+                logger.warning(
+                    "MCP %r not found for agent %r in workspace",
+                    name,
+                    agent_id,
+                )
                 return
             try:
                 await gw_client.close()
             except Exception as e:
                 logger.warning("MCP %r close failed: %s", name, e)
-            self._mcps = [m for m in self._mcps if m.name != name]
+            agent_mcps = self._mcps.get(agent_id, [])
+            self._mcps[agent_id] = [m for m in agent_mcps if m.name != name]
             await self._save_mcp_file()
 
     # ── dynamic skill management ────────────────────────────────
@@ -857,37 +896,64 @@ class E2BWorkspace(WorkspaceBase):
 
     # ── internals: gateway lifecycle ────────────────────────────
 
-    async def _restore_or_seed_mcps(self) -> list[MCPClient]:
-        """Decide the MCP set to ship to the gateway on startup.
+    async def _restore_or_seed_mcps(
+        self,
+    ) -> dict[str, list[MCPClient]]:
+        """Decide the per-agent MCP set to ship to the gateway on startup.
 
-        * ``$workdir/.mcp`` missing → return ``default_mcps``.
-        * ``.mcp`` present → :meth:`MCPClient.model_validate` each
-          entry. Read / parse error → log and fall back to
-          ``default_mcps``.
+        Returns ``{agent_id: [MCPClient, ...], ...}``. Old flat-list
+        ``.mcp`` is auto-migrated under ``"_default"``.
         """
         try:
             raw = await self._backend.read_file(SANDBOX_MCP_FILE)
         except FileNotFoundError:
-            return list(self.default_mcps)
+            return {}
         try:
             data = json.loads(raw.decode("utf-8"))
-            return [MCPClient.model_validate(m) for m in data]
+            if isinstance(data, list):
+                logger.info(
+                    "Migrating .mcp from flat list to per-agent format "
+                    "under agent '_default'.",
+                )
+                return {
+                    "_default": [MCPClient.model_validate(m) for m in data],
+                }
+            result: dict[str, list[MCPClient]] = {}
+            for agent_id, cfgs in data.items():
+                parsed = []
+                for m in cfgs:
+                    try:
+                        parsed.append(MCPClient.model_validate(m))
+                    except Exception as ex:
+                        logger.warning(
+                            "Skipping invalid MCP entry '%s' for "
+                            "agent %r: %s",
+                            m.get("name", "?"),
+                            agent_id,
+                            ex,
+                        )
+                if parsed:
+                    result[agent_id] = parsed
+            return result
         except Exception as e:
             logger.warning(
                 "E2BWorkspace: failed to parse %s, falling back to "
-                "default_mcps: %s",
+                "empty dict: %s",
                 SANDBOX_MCP_FILE,
                 e,
             )
-            return list(self.default_mcps)
+            return {}
 
     async def _save_mcp_file(self) -> None:
         """Persist ``self._mcps`` to ``$workdir/.mcp`` inside the sandbox.
 
-        Failures are logged but not raised.
+        Format: ``{"agent_id": [MCPClient.model_dump(), ...], ...}``.
         """
         payload = json.dumps(
-            [m.model_dump(mode="json") for m in self._mcps],
+            {
+                agent_id: [m.model_dump(mode="json") for m in mcps]
+                for agent_id, mcps in self._mcps.items()
+            },
             indent=2,
             ensure_ascii=False,
         )
@@ -910,7 +976,10 @@ class E2BWorkspace(WorkspaceBase):
         """Drop the gateway's ``--config`` JSON into the sandbox."""
         cfg = {
             "token": self._gateway_token,
-            "servers": [m.model_dump(mode="json") for m in self._mcps],
+            "servers": {
+                agent_id: [m.model_dump(mode="json") for m in mcps]
+                for agent_id, mcps in self._mcps.items()
+            },
         }
         await self._backend.exec_shell(
             ["mkdir", "-p", GATEWAY_HOME],

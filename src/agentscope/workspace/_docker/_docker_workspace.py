@@ -206,8 +206,8 @@ class DockerWorkspace(WorkspaceBase):
         self._image_tag: str = ""
         self._gateway: GatewayClient | None = None
         self._gateway_token: str = ""
-        self._mcps: list[MCPClient] = []
-        self._gateway_clients: dict[str, GatewayMCPClient] = {}
+        self._mcps: dict[str, list[MCPClient]] = {}
+        self._gateway_clients: dict[str, dict[str, GatewayMCPClient]] = {}
         self._mcp_lock = asyncio.Lock()
         self._skill_lock = asyncio.Lock()
 
@@ -265,12 +265,13 @@ class DockerWorkspace(WorkspaceBase):
         )
         await self._wait_for_gateway()
 
-        # Pull back the gateway-side MCP view as GatewayMCPClient instances.
-        # The gateway loaded these from the config we just wrote, so the set
-        # matches self._mcps name-for-name.
-        self._gateway_clients = {
-            c.name: c for c in await self._gateway.list_mcps()
-        }
+        # Pull back the gateway-side MCP view as per-agent
+        # GatewayMCPClient instances.  The gateway loaded these from
+        # the config we just wrote.
+        self._gateway_clients = {}
+        for agent_id in self._mcps:
+            gw_clients = await self._gateway.list_mcps(agent_id)
+            self._gateway_clients[agent_id] = {c.name: c for c in gw_clients}
 
         if self.host_workdir is not None:
             await self._save_mcp_file()
@@ -296,17 +297,18 @@ class DockerWorkspace(WorkspaceBase):
             )
 
         async with self._mcp_lock, self._skill_lock:
-            for gw_client in list(self._gateway_clients.values()):
-                try:
-                    await gw_client.close()
-                except Exception as e:
-                    logger.warning(
-                        "MCP %r close failed during reset: %s",
-                        gw_client.name,
-                        e,
-                    )
+            for agent_map in self._gateway_clients.values():
+                for gw_client in list(agent_map.values()):
+                    try:
+                        await gw_client.close()
+                    except Exception as e:
+                        logger.warning(
+                            "MCP %r close failed during reset: %s",
+                            gw_client.name,
+                            e,
+                        )
             self._gateway_clients.clear()
-            self._mcps = []
+            self._mcps = {}
 
             for path in (
                 CONTAINER_SESSIONS_DIR,
@@ -431,15 +433,45 @@ class DockerWorkspace(WorkspaceBase):
             Write(backend=self._backend),
         ]
 
-    async def list_mcps(self) -> list[MCPClient]:
-        """Return one :class:`GatewayMCPClient` per registered MCP.
+    async def list_mcps(self, agent_id: str) -> list[MCPClient]:
+        """Return one :class:`GatewayMCPClient` per registered MCP for
+        the given agent.
 
-        Each entry's ``name`` matches the upstream MCP server name and
-        all of its protocol calls (connect / close / list_tools /
-        get_tool / tool ``__call__``) are routed over HTTP to the
-        in-container gateway.
+        On first access for an ``agent_id`` that has no cached clients,
+        new instances are cloned from :attr:`default_mcps`, registered
+        on the gateway, and persisted.
         """
-        return list(self._gateway_clients.values())
+        if agent_id not in self._gateway_clients:
+            async with self._mcp_lock:
+                if agent_id not in self._gateway_clients:
+                    assert self._gateway is not None
+                    clones: list[MCPClient] = []
+                    gw_map: dict[str, GatewayMCPClient] = {}
+                    for seed in self.default_mcps:
+                        try:
+                            spec = seed.model_dump(mode="json")
+                            gw_client = self._gateway.make_client(
+                                spec,
+                                agent_id=agent_id,
+                            )
+                            await gw_client.connect()
+                            gw_map[gw_client.name] = gw_client
+                            # Rebuild the spec MCPClient for persistence
+                            clones.append(
+                                MCPClient.model_validate(spec),
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to clone MCP '%s' for agent %r: %s",
+                                seed.name,
+                                agent_id,
+                                e,
+                            )
+                    self._mcps[agent_id] = clones
+                    self._gateway_clients[agent_id] = gw_map
+                    if self.host_workdir is not None:
+                        await self._save_mcp_file()
+        return list(self._gateway_clients.get(agent_id, {}).values())
 
     async def list_skills(self) -> list[Skill]:
         """Enumerate skills by scanning ``skills/`` inside the container.
@@ -494,64 +526,62 @@ class DockerWorkspace(WorkspaceBase):
 
     # ── dynamic MCP management ──────────────────────────────────
 
-    async def add_mcp(self, mcp_client: MCPClient) -> None:
-        """Register a new MCP server on the in-container gateway.
-
-        Serialises the supplied client, registers it on the gateway
-        (which spawns the upstream MCP session inside the container),
-        and adds the corresponding :class:`GatewayMCPClient` handle to
-        :meth:`list_mcps`. The change is persisted to ``.mcp`` when
-        ``workdir`` is set.
+    async def add_mcp(self, agent_id: str, mcp_client: MCPClient) -> None:
+        """Register a new MCP server for an agent on the in-container
+        gateway.
 
         Args:
+            agent_id: The agent this MCP client belongs to.
             mcp_client: An :class:`MCPClient` describing the upstream
-                server (stdio / HTTP / SSE config).  Its
-                ``model_dump()`` is what the gateway consumes, so any
-                ``MCPClient`` subclass is accepted.
+                server (stdio / HTTP / SSE config).
 
         Raises:
             ValueError: If an MCP with the same name is already
-                registered in this workspace.
-            RuntimeError: If the gateway rejects the registration
-                (e.g. upstream command not found inside the
-                container).
+                registered for this agent.
+            RuntimeError: If the gateway rejects the registration.
         """
         async with self._mcp_lock:
-            if mcp_client.name in self._gateway_clients:
+            agent_gw = self._gateway_clients.setdefault(agent_id, {})
+            if mcp_client.name in agent_gw:
                 raise ValueError(
-                    f"MCP {mcp_client.name!r} already exists in workspace.",
+                    f"MCP {mcp_client.name!r} already exists for "
+                    f"agent {agent_id!r}.",
                 )
             spec = mcp_client.model_dump(mode="json")
-            gw_client = self._gateway.make_client(spec)
+            assert self._gateway is not None
+            gw_client = self._gateway.make_client(
+                spec,
+                agent_id=agent_id,
+            )
             await gw_client.connect()
-            self._mcps.append(mcp_client)
-            self._gateway_clients[gw_client.name] = gw_client
+            self._mcps.setdefault(agent_id, []).append(mcp_client)
+            agent_gw[gw_client.name] = gw_client
             if self.host_workdir is not None:
                 await self._save_mcp_file()
 
-    async def remove_mcp(self, name: str) -> None:
-        """Unregister an MCP server by name.
-
-        Tells the gateway to close the upstream session and drops the
-        :class:`GatewayMCPClient` handle from :meth:`list_mcps`. The
-        change is persisted to ``.mcp`` when ``workdir`` is set.
+    async def remove_mcp(self, agent_id: str, name: str) -> None:
+        """Unregister an MCP server by name for an agent.
 
         Args:
-            name: The ``name`` field of the registered MCP. If no
-                MCP by that name exists, a warning is logged and the
-                call is a no-op (matching the silent behaviour of the
-                local workspace).
+            agent_id: The agent whose MCP client to remove.
+            name: The ``name`` field of the registered MCP.
         """
         async with self._mcp_lock:
-            gw_client = self._gateway_clients.pop(name, None)
+            agent_gw = self._gateway_clients.get(agent_id, {})
+            gw_client = agent_gw.pop(name, None)
             if gw_client is None:
-                logger.warning("MCP %r not found in workspace", name)
+                logger.warning(
+                    "MCP %r not found for agent %r in workspace",
+                    name,
+                    agent_id,
+                )
                 return
             try:
                 await gw_client.close()
             except Exception as e:
                 logger.warning("MCP %r close failed: %s", name, e)
-            self._mcps = [m for m in self._mcps if m.name != name]
+            agent_mcps = self._mcps.get(agent_id, [])
+            self._mcps[agent_id] = [m for m in agent_mcps if m.name != name]
             if self.host_workdir is not None:
                 await self._save_mcp_file()
 
@@ -915,45 +945,66 @@ class DockerWorkspace(WorkspaceBase):
             ],
         )
 
-    async def _restore_or_seed_mcps(self) -> list[MCPClient]:
-        """Decide the MCP set to ship to the gateway on startup.
+    async def _restore_or_seed_mcps(self) -> dict[str, list[MCPClient]]:
+        """Decide the per-agent MCP set to ship to the gateway on startup.
 
-        * No ``workdir`` → return ``default_mcps`` (purely ephemeral).
-        * ``workdir`` set, ``<workdir>/.mcp`` missing → return
-          ``default_mcps`` and let the next ``_save_mcp_file`` write
-          it.
-        * ``<workdir>/.mcp`` present → :meth:`MCPClient.model_validate`
-          each entry and return them.  A read / parse error is
-          logged and the call falls back to ``default_mcps`` rather
-          than crashing the whole workspace.
+        * No ``workdir`` → return empty dict (purely ephemeral).
+        * ``workdir`` set, ``<workdir>/.mcp`` missing → return empty
+          dict; first agent access will clone from ``default_mcps``.
+        * ``<workdir>/.mcp`` present → parse per-agent dict (new format)
+          or auto-migrate flat list (old format). A read / parse error
+          is logged and falls back to empty dict.
 
         Returns:
-            The MCPClient instances to register on the gateway.
+            ``{agent_id: [MCPClient, ...], ...}``.
         """
         if self.host_workdir is None:
-            return list(self.default_mcps)
+            return {}
         host_mcp = os.path.join(self.host_workdir, ".mcp")
         if not os.path.isfile(host_mcp):
-            return list(self.default_mcps)
+            return {}
         try:
             with open(host_mcp, encoding="utf-8") as f:
                 data = json.load(f)
-            return [MCPClient.model_validate(m) for m in data]
+            if isinstance(data, list):
+                logger.info(
+                    "Migrating .mcp from flat list to per-agent format "
+                    "under agent '_default'.",
+                )
+                return {
+                    "_default": [MCPClient.model_validate(m) for m in data],
+                }
+            # New format: {"agent_id": [configs], ...}
+            result: dict[str, list[MCPClient]] = {}
+            for agent_id, cfgs in data.items():
+                parsed = []
+                for m in cfgs:
+                    try:
+                        parsed.append(MCPClient.model_validate(m))
+                    except Exception as ex:
+                        logger.warning(
+                            "Skipping invalid MCP entry '%s' for "
+                            "agent %r: %s",
+                            m.get("name", "?"),
+                            agent_id,
+                            ex,
+                        )
+                if parsed:
+                    result[agent_id] = parsed
+            return result
         except Exception as e:
             logger.warning(
                 "DockerWorkspace: failed to read %s, falling back to "
-                "default_mcps: %s",
+                "empty dict: %s",
                 host_mcp,
                 e,
             )
-            return list(self.default_mcps)
+            return {}
 
     async def _save_mcp_file(self) -> None:
         """Persist ``self._mcps`` to ``<workdir>/.mcp`` (host-side JSON).
 
-        No-op when ``workdir`` is ``None``.  Failures are logged but
-        not raised — losing the persistence file should not
-        propagate as an MCP-add/remove error to the caller.
+        Format: ``{"agent_id": [MCPClient.model_dump(), ...], ...}``.
         """
         if self.host_workdir is None:
             return
@@ -962,7 +1013,10 @@ class DockerWorkspace(WorkspaceBase):
             os.makedirs(self.host_workdir, exist_ok=True)
             with open(host_mcp, "w", encoding="utf-8") as f:
                 json.dump(
-                    [m.model_dump() for m in self._mcps],
+                    {
+                        agent_id: [m.model_dump() for m in mcps]
+                        for agent_id, mcps in self._mcps.items()
+                    },
                     f,
                     indent=2,
                     ensure_ascii=False,
@@ -984,7 +1038,10 @@ class DockerWorkspace(WorkspaceBase):
         """
         cfg = {
             "token": self._gateway_token,
-            "servers": [m.model_dump(mode="json") for m in self._mcps],
+            "servers": {
+                agent_id: [m.model_dump(mode="json") for m in mcps]
+                for agent_id, mcps in self._mcps.items()
+            },
         }
         await self._backend.exec_shell(
             ["mkdir", "-p", GATEWAY_HOME],

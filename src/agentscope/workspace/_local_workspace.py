@@ -171,7 +171,10 @@ class LocalWorkspace(WorkspaceBase):
 
         # ── runtime state ───────────────────────────────────────
         self._backend = LocalBackend()
-        self._mcps: list[MCPClient] = []
+        self._mcps: dict[str, list[MCPClient]] = {}
+        """Per-agent MCP clients, keyed by ``agent_id``. Each agent
+        gets independent client instances so stateful MCP sessions
+        (e.g. browser-user) do not interfere across agents."""
 
         self._skill_lock = asyncio.Lock()
         self._mcp_lock = asyncio.Lock()
@@ -192,36 +195,73 @@ class LocalWorkspace(WorkspaceBase):
 
         # Restore or seed MCPs
         mcp_file = os.path.join(self.workdir, ".mcp")
+        # Restore or seed MCPs
+        mcp_file = os.path.join(self.workdir, ".mcp")
         if await self._backend.file_exists(mcp_file):
             raw = await self._backend.read_file(mcp_file)
-            raw_list = json.loads(raw.decode("utf-8"))
-            for m in raw_list:
-                try:
-                    self._mcps.append(MCPClient.model_validate(m))
-                except Exception as e:
-                    logger.warning(
-                        "Skipping invalid MCP entry '%s': %s",
-                        m.get("name", "?"),
-                        e,
-                    )
-        else:
-            self._mcps = list(self.default_mcps)
-            await self._save_mcp_file()
+            data = json.loads(raw.decode("utf-8"))
+            if isinstance(data, list):
+                # ── old format: flat list → auto-migrate ─────────
+                logger.info(
+                    "Migrating .mcp from flat list to per-agent format "
+                    "under agent '_default'.",
+                )
+                self._mcps = {}
+                for m in data:
+                    try:
+                        self._mcps.setdefault("_default", []).append(
+                            MCPClient.model_validate(m),
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Skipping invalid MCP entry '%s': %s",
+                            m.get("name", "?"),
+                            e,
+                        )
+                await self._save_mcp_file()
+            elif isinstance(data, dict):
+                # ── new format: {"agent_id": [configs], ...} ─────
+                for agent_id, cfg_list in data.items():
+                    parsed = []
+                    for m in cfg_list:
+                        try:
+                            parsed.append(MCPClient.model_validate(m))
+                        except Exception as e:
+                            logger.warning(
+                                "Skipping invalid MCP entry '%s' for "
+                                "agent %r: %s",
+                                m.get("name", "?"),
+                                agent_id,
+                                e,
+                            )
+                    if parsed:
+                        self._mcps[agent_id] = parsed
+            else:
+                logger.warning(
+                    "Unexpected .mcp format, starting with empty MCPs.",
+                )
+                self._mcps = {}
 
-        failed: list[MCPClient] = []
-        for mcp in self._mcps:
-            if mcp.is_stateful and not mcp.is_connected:
-                try:
-                    await mcp.connect()
-                except Exception as e:
-                    logger.warning(
-                        "Failed to connect stateful MCP '%s': %s, removing.",
-                        mcp.name,
-                        e,
-                    )
-                    failed.append(mcp)
-        for mcp in failed:
-            self._mcps.remove(mcp)
+        # ── Eagerly connect any restored stateful clients so they
+        #    are ready when agents ask for them.  Restored clients
+        #    are already per-agent; each gets its own connect().
+        failed: list[tuple[str, MCPClient]] = []
+        for agent_id, mcps in list(self._mcps.items()):
+            for mcp in mcps:
+                if mcp.is_stateful and not mcp.is_connected:
+                    try:
+                        await mcp.connect()
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to connect stateful MCP '%s' "
+                            "for agent %r: %s, removing.",
+                            mcp.name,
+                            agent_id,
+                            e,
+                        )
+                        failed.append((agent_id, mcp))
+        for agent_id, mcp in failed:
+            self._mcps.get(agent_id, []).remove(mcp)
 
         # Seed skills
         skills_dir = os.path.join(self.workdir, "skills")
@@ -611,19 +651,18 @@ class LocalWorkspace(WorkspaceBase):
         spin up an ad-hoc session per call and have nothing to close.
         """
         async with self._mcp_lock:
-            for mcp in self._mcps:
-                if mcp.is_stateful and mcp.is_connected:
-                    try:
-                        await mcp.close()
-                    except Exception as e:
-                        logger.warning(
-                            (
+            for agent_mcps in self._mcps.values():
+                for mcp in agent_mcps:
+                    if mcp.is_stateful and mcp.is_connected:
+                        try:
+                            await mcp.close()
+                        except Exception as e:
+                            logger.warning(
                                 "Failed to close MCP %r "
-                                "when closing local workspace: %s"
-                            ),
-                            mcp.name,
-                            e,
-                        )
+                                "when closing local workspace: %s",
+                                mcp.name,
+                                e,
+                            )
         self.is_alive = False
 
     async def reset(self) -> None:
@@ -634,17 +673,18 @@ class LocalWorkspace(WorkspaceBase):
         ``default_mcps`` and ``skill_paths`` are not re-seeded.
         """
         async with self._mcp_lock:
-            for mcp in self._mcps:
-                if mcp.is_stateful and mcp.is_connected:
-                    try:
-                        await mcp.close()
-                    except Exception as e:
-                        logger.warning(
-                            "MCP %r close failed during reset: %s",
-                            mcp.name,
-                            e,
-                        )
-            self._mcps = []
+            for agent_mcps in self._mcps.values():
+                for mcp in agent_mcps:
+                    if mcp.is_stateful and mcp.is_connected:
+                        try:
+                            await mcp.close()
+                        except Exception as e:
+                            logger.warning(
+                                "MCP %r close failed during reset: %s",
+                                mcp.name,
+                                e,
+                            )
+            self._mcps = {}
 
             mcp_file = os.path.join(self.workdir, ".mcp")
             await self._backend.delete_path(mcp_file)
@@ -876,19 +916,52 @@ class LocalWorkspace(WorkspaceBase):
             )
             return None
 
-    async def list_mcps(self) -> list[MCPClient]:
-        """Return all MCP clients attached to this workspace."""
-        return self._mcps
+    async def list_mcps(self, agent_id: str) -> list[MCPClient]:
+        """Return all MCP clients for the given agent.
+
+        On first access for an ``agent_id`` that has no cached clients
+        (e.g. a freshly spawned worker), new :class:`MCPClient`
+        instances are built from :attr:`default_mcps` (deep-copied
+        via ``model_dump`` / ``model_validate``) and connected, so
+        each agent gets its own isolated session.
+        """
+        if agent_id not in self._mcps:
+            async with self._mcp_lock:
+                if agent_id not in self._mcps:
+                    clones: list[MCPClient] = []
+                    for seed in self.default_mcps:
+                        try:
+                            clone = MCPClient.model_validate(
+                                seed.model_dump(),
+                            )
+                            if clone.is_stateful:
+                                await clone.connect()
+                            clones.append(clone)
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to clone MCP '%s' for agent %r: %s",
+                                seed.name,
+                                agent_id,
+                                e,
+                            )
+                    self._mcps[agent_id] = clones
+                    await self._save_mcp_file()
+        return self._mcps.get(agent_id, [])
 
     async def _save_mcp_file(self) -> None:
-        """Persist the current MCP client list to ``.mcp`` in workdir."""
+        """Persist the current MCP client dict to ``.mcp`` in workdir.
+
+        Format: ``{"agent_id": [MCPClient.model_dump(), ...], ...}``.
+        """
         mcp_file = os.path.join(self.workdir, ".mcp")
         try:
-            # callers have lock.
             await self._backend.write_file(
                 mcp_file,
                 json.dumps(
-                    [m.model_dump() for m in self._mcps],
+                    {
+                        agent_id: [m.model_dump() for m in mcps]
+                        for agent_id, mcps in self._mcps.items()
+                    },
                     indent=2,
                     ensure_ascii=False,
                 ).encode("utf-8"),
@@ -896,33 +969,47 @@ class LocalWorkspace(WorkspaceBase):
         except Exception as e:
             logger.warning("Failed to save .mcp to %s: %s", mcp_file, str(e))
 
-    async def add_mcp(self, mcp_client: MCPClient) -> None:
-        """Add an MCP client, connect it if stateful, and persist.
+    async def add_mcp(self, agent_id: str, mcp_client: MCPClient) -> None:
+        """Add an MCP client for an agent, connect if stateful, and persist.
 
         Args:
+            agent_id: The agent this MCP client belongs to.
             mcp_client: The MCP client to add.
         """
         async with self._mcp_lock:
+            agent_mcps = self._mcps.setdefault(agent_id, [])
+            if any(m.name == mcp_client.name for m in agent_mcps):
+                raise ValueError(
+                    f"MCP {mcp_client.name!r} already exists for "
+                    f"agent {agent_id!r}.",
+                )
             if mcp_client.is_stateful and not mcp_client.is_connected:
                 await mcp_client.connect()
-            self._mcps.append(mcp_client)
+            agent_mcps.append(mcp_client)
             await self._save_mcp_file()
 
-    async def remove_mcp(self, name: str) -> None:
-        """Remove an MCP client by name, disconnecting it if stateful.
+    async def remove_mcp(self, agent_id: str, name: str) -> None:
+        """Remove an MCP client by name for an agent, disconnecting if
+        stateful.
 
         Args:
+            agent_id: The agent whose MCP client to remove.
             name: The ``name`` field of the client to remove.
         """
         async with self._mcp_lock:
-            for i, mcp in enumerate(self._mcps):
+            agent_mcps = self._mcps.get(agent_id, [])
+            for i, mcp in enumerate(agent_mcps):
                 if mcp.name == name:
                     if mcp.is_stateful and mcp.is_connected:
                         await mcp.close()
-                    self._mcps.pop(i)
+                    agent_mcps.pop(i)
                     await self._save_mcp_file()
                     return
-        logger.warning("MCP client %r not found in workspace", name)
+        logger.warning(
+            "MCP client %r not found for agent %r in workspace",
+            name,
+            agent_id,
+        )
 
     async def add_skill(self, skill_path: str) -> None:
         """Add a skill to the workspace by copying from the given path.
