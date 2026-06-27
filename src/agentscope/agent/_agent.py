@@ -299,7 +299,10 @@ class Agent:
                     }
 
                     async def next_handler(**kwargs: Any) -> None:
-                        await execute_chain(index + 1, **kwargs)
+                        await execute_chain(
+                            index + 1,
+                            **{**input_kwargs, **kwargs},
+                        )
 
                     await mw.on_compress_context(
                         agent=self,
@@ -553,7 +556,10 @@ class Agent:
                     async def next_handler(
                         **kwargs: Any,
                     ) -> AsyncGenerator[AgentEvent | Msg, None]:
-                        async for item in execute_chain(index + 1, **kwargs):
+                        async for item in execute_chain(
+                            index + 1,
+                            **{**input_kwargs, **kwargs},
+                        ):
                             yield item
 
                     async for item in mw.on_reply(
@@ -766,7 +772,10 @@ class Agent:
                     input_kwargs = {"tool_choice": tool_choice}
 
                     async def next_handler(**kwargs: Any) -> AsyncGenerator:
-                        async for item in execute_chain(index + 1, **kwargs):
+                        async for item in execute_chain(
+                            index + 1,
+                            **{**input_kwargs, **kwargs},
+                        ):
                             yield item
 
                     async for item in mw.on_reasoning(
@@ -1609,7 +1618,10 @@ class Agent:
                     input_kwargs = {"tool_call": tool_call}
 
                     async def next_handler(**kwargs: Any) -> AsyncGenerator:
-                        async for item in execute_chain(index + 1, **kwargs):
+                        async for item in execute_chain(
+                            index + 1,
+                            **{**input_kwargs, **kwargs},
+                        ):
                             yield item
 
                     async for item in mw.on_acting(
@@ -2145,7 +2157,7 @@ class Agent:
                                     # pylint: disable=cell-var-from-loop
                                     return await execute_chain(
                                         index + 1,
-                                        **kwargs,
+                                        **{**input_kwargs, **kwargs},
                                     )
 
                                 return await mw.on_model_call(
