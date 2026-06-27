@@ -151,6 +151,30 @@ class EmbeddingModelCard(BaseModel):
 
                 # Simple dict merge
                 if param_name in properties:
+                    property_schema = properties[param_name]
+                    if (
+                        override.get("default") is not None
+                        and isinstance(property_schema, dict)
+                        and isinstance(property_schema.get("anyOf"), list)
+                    ):
+                        non_null_schema = next(
+                            (
+                                item
+                                for item in property_schema["anyOf"]
+                                if item.get("type") != "null"
+                            ),
+                            None,
+                        )
+                        if non_null_schema is not None:
+                            properties[param_name] = {
+                                **non_null_schema,
+                                **{
+                                    key: value
+                                    for key, value in property_schema.items()
+                                    if key != "anyOf"
+                                },
+                            }
+
                     properties[param_name] = {
                         **properties[param_name],
                         **override,
