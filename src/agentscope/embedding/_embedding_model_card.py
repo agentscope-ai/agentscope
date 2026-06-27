@@ -50,6 +50,34 @@ class EmbeddingModelCard(BaseModel):
     )
     """Output types. ``application/x-embedding`` for vector output."""
 
+    dimensions: int = Field(
+        ...,
+        description="Default output vector dimensions for this model.",
+        gt=0,
+    )
+    """The default output dimensions for this model.
+
+    First-class top-level field — kept outside of
+    :attr:`parameter_schema` so that callers can rely on a strongly
+    typed ``int`` rather than the soft ``parameter_schema['properties']
+    ['dimensions']['default']`` lookup.
+    """
+
+    supported_dimensions: list[int] | None = Field(
+        default=None,
+        description=(
+            "If set, the only dimensions this model can produce. "
+            "``None`` means dimensions are fixed at "
+            ":attr:`dimensions` and cannot be overridden."
+        ),
+    )
+    """Optional set of allowed output dimensions.
+
+    Set for Matryoshka-style models (e.g. OpenAI's
+    ``text-embedding-3-*``) that can be truncated to a smaller size.
+    ``None`` indicates a fixed-dimension model.
+    """
+
     context_size: int | None = Field(
         default=None,
         description="Maximum input length (in tokens) per request.",
@@ -98,6 +126,12 @@ class EmbeddingModelCard(BaseModel):
         with open(yaml_path, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
 
+        if "dimensions" not in config:
+            raise ValueError(
+                f"Embedding model card {yaml_path!r} is missing the "
+                f"required top-level 'dimensions' field.",
+            )
+
         # Build parameter schema from the Parameters class
         base_schema = parameter_class.model_json_schema()
         properties = copy.deepcopy(base_schema.get("properties", {}))
@@ -137,6 +171,8 @@ class EmbeddingModelCard(BaseModel):
                 "output_types",
                 ["application/x-embedding"],
             ),
+            dimensions=config["dimensions"],
+            supported_dimensions=config.get("supported_dimensions"),
             context_size=config.get("context_size"),
             parameter_schema=final_schema,
             parameter_overrides=overrides,

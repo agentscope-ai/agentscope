@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The local workspace class."""
+
 import asyncio
 import base64
 import hashlib
@@ -12,32 +13,31 @@ from copy import deepcopy
 from pathlib import Path
 from typing import TypedDict
 
-import aiofiles
-import aiofiles.ospath
 import frontmatter
 from pydantic import AnyUrl
 
-from ._base import WorkspaceBase
+from .._logging import logger
 from ..mcp import MCPClient
 from ..message import (
-    TextBlock,
-    DataBlock,
-    ToolResultBlock,
-    Msg,
-    URLSource,
     Base64Source,
+    DataBlock,
+    Msg,
+    TextBlock,
+    ToolResultBlock,
+    URLSource,
 )
 from ..skill import Skill
 from ..tool import (
-    ToolBase,
     Bash,
     Edit,
     Glob,
     Grep,
     Read,
+    ToolBase,
     Write,
 )
-from .._logging import logger
+from ..tool._builtin._backend import LocalBackend
+from ._base import WorkspaceBase
 
 
 class _SkillEntry(TypedDict):
@@ -170,6 +170,7 @@ class LocalWorkspace(WorkspaceBase):
         self.skill_paths: list[str] = list(skill_paths or [])
 
         # ── runtime state ───────────────────────────────────────
+        self._backend = LocalBackend()
         self._mcps: dict[str, list[MCPClient]] = {}
         """Per-agent MCP clients, keyed by ``agent_id``. Each agent
         gets independent client instances so stateful MCP sessions
@@ -194,17 +195,19 @@ class LocalWorkspace(WorkspaceBase):
 
         # Restore or seed MCPs
         mcp_file = os.path.join(self.workdir, ".mcp")
-        if await aiofiles.ospath.exists(mcp_file):
-            async with aiofiles.open(mcp_file, "r", encoding="utf-8") as f:
-                raw = json.loads(await f.read())
-            if isinstance(raw, list):
+        # Restore or seed MCPs
+        mcp_file = os.path.join(self.workdir, ".mcp")
+        if await self._backend.file_exists(mcp_file):
+            raw = await self._backend.read_file(mcp_file)
+            data = json.loads(raw.decode("utf-8"))
+            if isinstance(data, list):
                 # ── old format: flat list → auto-migrate ─────────
                 logger.info(
                     "Migrating .mcp from flat list to per-agent format "
                     "under agent '_default'.",
                 )
                 self._mcps = {}
-                for m in raw:
+                for m in data:
                     try:
                         self._mcps.setdefault("_default", []).append(
                             MCPClient.model_validate(m),
@@ -216,9 +219,9 @@ class LocalWorkspace(WorkspaceBase):
                             e,
                         )
                 await self._save_mcp_file()
-            elif isinstance(raw, dict):
+            elif isinstance(data, dict):
                 # ── new format: {"agent_id": [configs], ...} ─────
-                for agent_id, cfg_list in raw.items():
+                for agent_id, cfg_list in data.items():
                     parsed = []
                     for m in cfg_list:
                         try:
@@ -351,8 +354,9 @@ class LocalWorkspace(WorkspaceBase):
 
         if updated:
             skills_file["skills"] = existing
-            skills_file["skills_dir_mtime"] = await aiofiles.ospath.getmtime(
-                skills_dir,
+            mtime = await self._backend.stat_mtime(skills_dir)
+            skills_file["skills_dir_mtime"] = (
+                mtime if mtime is not None else 0.0
             )
             await self._save_skills_file(skills_dir, skills_file)
 
@@ -372,12 +376,12 @@ class LocalWorkspace(WorkspaceBase):
             `_SkillsFile`: The parsed index, or a fresh empty structure.
         """
         path = os.path.join(skills_dir, ".skills")
-        if not await aiofiles.ospath.exists(path):
+        if not await self._backend.file_exists(path):
             return {"skills_dir_mtime": 0.0, "skills": {}}
 
         try:
-            async with aiofiles.open(path, "r", encoding="utf-8") as f:
-                data = json.loads(await f.read())
+            raw = await self._backend.read_file(path)
+            data = json.loads(raw.decode("utf-8"))
             return _SkillsFile(
                 skills_dir_mtime=float(data.get("skills_dir_mtime", 0.0)),
                 skills=data.get("skills", {}),
@@ -399,8 +403,10 @@ class LocalWorkspace(WorkspaceBase):
         """
         path = os.path.join(skills_dir, ".skills")
         try:
-            async with aiofiles.open(path, "w", encoding="utf-8") as f:
-                await f.write(json.dumps(data, indent=2, ensure_ascii=False))
+            await self._backend.write_file(
+                path,
+                json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8"),
+            )
         except Exception as e:
             logger.warning("Failed to save .skills to %s: %s", path, str(e))
 
@@ -423,7 +429,7 @@ class LocalWorkspace(WorkspaceBase):
 
         try:
             # Check if SKILL.md exists
-            if not await aiofiles.ospath.isfile(skill_md_path):
+            if not await self._backend.file_exists(skill_md_path):
                 logger.warning(
                     "Invalid skill at %s: SKILL.md not found",
                     skill_path,
@@ -431,12 +437,8 @@ class LocalWorkspace(WorkspaceBase):
                 return None
 
             # Read and parse SKILL.md
-            async with aiofiles.open(
-                skill_md_path,
-                "r",
-                encoding="utf-8",
-            ) as f:
-                content_str = await f.read()
+            raw = await self._backend.read_file(skill_md_path)
+            content_str = raw.decode("utf-8")
 
             # Parse frontmatter
             content = frontmatter.loads(content_str)
@@ -490,7 +492,9 @@ class LocalWorkspace(WorkspaceBase):
         return skill_path, skill_name, skill_hash
 
     async def _offload_data_block(self, data_block: DataBlock) -> DataBlock:
-        """Offload the data block by persisting it as local files. This avoids
+        """Offload the data block by persisting it as local files.
+
+        Uses the backend to write the decoded binary data, avoiding
         embedding large base64-encoded data directly in the offload files,
         keeping them lightweight and readable.
 
@@ -512,14 +516,15 @@ class LocalWorkspace(WorkspaceBase):
         # no need to read and compare bytes.
         hash_str = hashlib.sha256(data_block.source.data.encode()).hexdigest()
         ext = mimetypes.guess_extension(data_block.source.media_type) or ".bin"
-        path = os.path.join(self.workdir, "data", f"{hash_str}{ext}")
+        data_dir = os.path.join(self.workdir, "data")
+        path = os.path.join(data_dir, f"{hash_str}{ext}")
 
         # Reuse the existing file directly — same hash ⟹ same content.
-        if not await aiofiles.ospath.exists(path):
-            # Write decoded bytes to disk and return a URL-source DataBlock.
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            async with aiofiles.open(path, "wb") as f:
-                await f.write(base64.b64decode(data_block.source.data))
+        if not await self._backend.file_exists(path):
+            await self._backend.write_file(
+                path,
+                base64.b64decode(data_block.source.data),
+            )
 
         return DataBlock(
             id=data_block.id,
@@ -548,15 +553,11 @@ class LocalWorkspace(WorkspaceBase):
             `str`:
                 The file path to the offloaded message.
         """
-        path = os.path.join(
-            self.workdir,
-            "sessions",
-            session_id,
-            "context.jsonl",
-        )
+        base = os.path.join(self.workdir, "sessions", session_id)
+        path = os.path.join(base, "context.jsonl")
 
         copied_msgs = deepcopy(msgs)
-        msgs_strs = []
+        lines: list[str] = []
         for msg in copied_msgs:
             if not isinstance(msg.content, str):
                 content = []
@@ -569,20 +570,21 @@ class LocalWorkspace(WorkspaceBase):
                     else:
                         content.append(block)
                 msg.content = content
-            msgs_strs.append(msg.model_dump_json())
+            lines.append(msg.model_dump_json())
 
-        msgs_str = "\n".join(msgs_strs)
-        # Create parent directory if it doesn't exist
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        # Offload the context into the local file
-        # Always end with a newline to ensure proper JSONL format when
-        # appending
-        async with aiofiles.open(
+        payload = "\n".join(lines) + "\n"
+
+        # Read existing content if any, then append. ``write_file``
+        # creates parent directories, so no explicit mkdir is needed.
+        existing = b""
+        try:
+            existing = await self._backend.read_file(path)
+        except (FileNotFoundError, OSError):
+            pass
+        await self._backend.write_file(
             path,
-            mode="a",
-            encoding="utf-8",
-        ) as file:
-            await file.write(msgs_str + "\n")
+            existing + payload.encode("utf-8"),
+        )
         return path
 
     async def offload_tool_result(
@@ -603,47 +605,40 @@ class LocalWorkspace(WorkspaceBase):
             `str`:
                 The file path to the offloaded tool results.
         """
-        path = os.path.join(
-            self.workdir,
-            "sessions",
-            session_id,
-            f"tool_result-{tool_result.id}.txt",
-        )
+        base = os.path.join(self.workdir, "sessions", session_id)
+        path = os.path.join(base, f"tool_result-{tool_result.id}.txt")
 
         # Avoid filename conflict
         index = 1
-        while os.path.exists(path):
+        while await self._backend.file_exists(path):
             path = os.path.join(
-                self.workdir,
-                "sessions",
-                session_id,
+                base,
                 f"tool_result-{tool_result.id}({index}).txt",
             )
             index += 1
 
-        res_strs = []
+        parts: list[str] = []
         if isinstance(tool_result.output, str):
-            res_strs.append(tool_result.output)
+            parts.append(tool_result.output)
         else:
             for block in tool_result.output:
                 if isinstance(block, TextBlock):
-                    res_strs.append(block.text)
+                    parts.append(block.text)
                 elif isinstance(block, DataBlock):
                     if isinstance(block.source, Base64Source):
                         data_block = await self._offload_data_block(block)
                         url = data_block.source.url
                     else:
                         url = block.source.url
-                    res_strs.append(
+                    parts.append(
                         f"<data url='{url}' name='{block.name}' "
                         f"media_type='{block.source.media_type}'/>",
                     )
 
-        # Create parent directory if it doesn't exist
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        async with aiofiles.open(path, mode="w", encoding="utf-8") as file:
-            await file.write("".join(res_strs))
-
+        await self._backend.write_file(
+            path,
+            "".join(parts).encode("utf-8"),
+        )
         return path
 
     async def close(self) -> None:
@@ -692,28 +687,29 @@ class LocalWorkspace(WorkspaceBase):
             self._mcps = {}
 
             mcp_file = os.path.join(self.workdir, ".mcp")
-            if await aiofiles.ospath.exists(mcp_file):
-                await asyncio.to_thread(os.remove, mcp_file)
+            await self._backend.delete_path(mcp_file)
 
         async with self._skill_lock:
-            path = os.path.join(self.workdir, "skills")
-            if await aiofiles.ospath.isdir(path):
-                await asyncio.to_thread(shutil.rmtree, path)
+            skills_path = os.path.join(self.workdir, "skills")
+            await self._backend.delete_path(skills_path)
 
         for sub in ("sessions", "data"):
             path = os.path.join(self.workdir, sub)
-            if await aiofiles.ospath.isdir(path):
-                await asyncio.to_thread(shutil.rmtree, path)
+            await self._backend.delete_path(path)
 
     async def list_tools(self) -> list[ToolBase]:
-        """List all tools available in the workspace."""
+        """List all tools available in the workspace.
+
+        Returns the six builtin tools (Bash, Read, Write, Edit, Grep,
+        Glob), each backed by the workspace's :class:`LocalBackend`.
+        """
         return [
-            Bash(cwd=self.workdir),
-            Edit(),
-            Glob(),
-            Grep(),
-            Read(),
-            Write(),
+            Bash(cwd=self.workdir, backend=self._backend),
+            Edit(backend=self._backend),
+            Glob(backend=self._backend),
+            Grep(backend=self._backend),
+            Read(backend=self._backend),
+            Write(backend=self._backend),
         ]
 
     async def list_skills(self) -> list[Skill]:
@@ -729,11 +725,13 @@ class LocalWorkspace(WorkspaceBase):
         """
         skills_dir = os.path.join(self.workdir, "skills")
         async with self._skill_lock:
-            if not await aiofiles.ospath.isdir(skills_dir):
+            if not await self._backend.is_dir(skills_dir):
                 return []
 
             skills_file = await self._load_skills_file(skills_dir)
-            current_mtime = await aiofiles.ospath.getmtime(skills_dir)
+            current_mtime = await self._backend.stat_mtime(skills_dir)
+            if current_mtime is None:
+                current_mtime = 0.0
 
             # Detect if the skills directory has changed since last indexing
             if current_mtime != skills_file["skills_dir_mtime"]:
@@ -791,14 +789,13 @@ class LocalWorkspace(WorkspaceBase):
         original_mtime = skills_file["skills_dir_mtime"]
 
         # Collect actual subdirectories on disk
-        def _list_dirs() -> set[str]:
-            return {
-                d
-                for d in os.listdir(skills_dir)
-                if os.path.isdir(os.path.join(skills_dir, d))
-            }
+        entries = await self._backend.list_dir(skills_dir)
+        actual_dirs: set[str] = set()
+        for d in entries:
+            dir_path = os.path.join(skills_dir, d)
+            if await self._backend.is_dir(dir_path):
+                actual_dirs.add(d)
 
-        actual_dirs = await asyncio.to_thread(_list_dirs)
         indexed_dirs = set(existing.keys())
 
         updated = False
@@ -884,18 +881,16 @@ class LocalWorkspace(WorkspaceBase):
         skill_md_path = os.path.join(skill_dir, "SKILL.md")
 
         try:
-            if not await aiofiles.ospath.isfile(skill_md_path):
+            if not await self._backend.file_exists(skill_md_path):
                 return None
 
-            updated_at = await aiofiles.ospath.getmtime(skill_md_path)
+            updated_at = await self._backend.stat_mtime(skill_md_path)
+            if updated_at is None:
+                updated_at = 0.0
 
-            async with aiofiles.open(
-                skill_md_path,
-                "r",
-                encoding="utf-8",
-            ) as f:
-                content_str = await f.read()
-                content = frontmatter.loads(content_str)
+            raw = await self._backend.read_file(skill_md_path)
+            content_str = raw.decode("utf-8")
+            content = frontmatter.loads(content_str)
 
             description = content.get("description")
             if not description:
@@ -960,17 +955,19 @@ class LocalWorkspace(WorkspaceBase):
         """
         mcp_file = os.path.join(self.workdir, ".mcp")
         try:
-            async with aiofiles.open(mcp_file, "w", encoding="utf-8") as f:
-                await f.write(
-                    json.dumps(
-                        {
-                            agent_id: [m.model_dump() for m in mcps]
-                            for agent_id, mcps in self._mcps.items()
-                        },
-                        indent=2,
-                        ensure_ascii=False,
-                    ),
-                )
+            await self._backend.write_file(
+                mcp_file,
+                json.dumps(
+                    {
+                        agent_id: [
+                            m.model_dump() for m in mcps
+                        ]
+                        for agent_id, mcps in self._mcps.items()
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
         except Exception as e:
             logger.warning("Failed to save .mcp to %s: %s", mcp_file, str(e))
 
@@ -1104,8 +1101,9 @@ class LocalWorkspace(WorkspaceBase):
 
             existing[dir_name] = {"hash": skill_hash, "skill_name": agent_name}
             skills_file["skills"] = existing
-            skills_file["skills_dir_mtime"] = await aiofiles.ospath.getmtime(
-                skills_dir,
+            mtime = await self._backend.stat_mtime(skills_dir)
+            skills_file["skills_dir_mtime"] = (
+                mtime if mtime is not None else 0.0
             )
             await self._save_skills_file(skills_dir, skills_file)
 
@@ -1124,7 +1122,7 @@ class LocalWorkspace(WorkspaceBase):
         """
         skills_dir = os.path.join(self.workdir, "skills")
         async with self._skill_lock:
-            if not await aiofiles.ospath.isdir(skills_dir):
+            if not await self._backend.is_dir(skills_dir):
                 logger.warning(
                     "Skills directory does not exist; cannot remove skill %r",
                     name,
@@ -1145,8 +1143,8 @@ class LocalWorkspace(WorkspaceBase):
                 return
 
             skill_dir_path = os.path.join(skills_dir, target_dir)
-            if await aiofiles.ospath.isdir(skill_dir_path):
-                await asyncio.to_thread(shutil.rmtree, skill_dir_path)
+            if await self._backend.is_dir(skill_dir_path):
+                await self._backend.delete_path(skill_dir_path)
                 logger.info(
                     "Removed skill '%s' from %s",
                     name,
@@ -1163,7 +1161,8 @@ class LocalWorkspace(WorkspaceBase):
 
             del existing[target_dir]
             skills_file["skills"] = existing
-            skills_file["skills_dir_mtime"] = await aiofiles.ospath.getmtime(
-                skills_dir,
+            mtime = await self._backend.stat_mtime(skills_dir)
+            skills_file["skills_dir_mtime"] = (
+                mtime if mtime is not None else 0.0
             )
             await self._save_skills_file(skills_dir, skills_file)

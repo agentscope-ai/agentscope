@@ -2,6 +2,7 @@
 """The common utilities for agentscope library."""
 import asyncio
 import base64
+import copy
 import functools
 import inspect
 import json
@@ -237,3 +238,92 @@ def _map_text_to_uuid(text: str) -> str:
             A deterministic UUID string derived from the input text.
     """
     return str(uuid.uuid3(uuid.NAMESPACE_DNS, text))
+
+
+def _flatten_json_schema(schema: dict) -> dict:
+    """Flatten a JSON schema by resolving all local ``$ref`` references.
+
+    Some LLM providers (e.g. Gemini, GLM-5.x via OpenCode Go) cannot
+    process ``$defs`` / ``$ref`` patterns in tool parameter schemas.
+    When Pydantic generates schemas for complex nested types it emits a
+    ``$defs`` block (or the legacy ``definitions`` block) and refers to
+    it with ``{"$ref": "#/$defs/TypeName"}``.
+
+    This function resolves every such reference by substituting the full
+    definition inline, then drops the ``$defs`` / ``definitions``
+    sections so the output is a flat, self-contained schema.
+
+    Circular references are detected and replaced with a fallback object
+    schema to avoid infinite recursion.  Only local references of the
+    form ``#/$defs/<name>`` or ``#/definitions/<name>`` are expanded;
+    external ``$ref`` URLs are left unchanged.
+
+    Args:
+        schema (`dict`):
+            The JSON schema that may contain ``$defs`` and ``$ref``
+            references.
+
+    Returns:
+        `dict`:
+            A flattened JSON schema with all references resolved inline.
+    """
+    has_defs = isinstance(schema.get("$defs"), dict) or isinstance(
+        schema.get("definitions"),
+        dict,
+    )
+    if not has_defs:
+        return schema
+
+    schema = copy.deepcopy(schema)
+    defs: dict[str, Any] = {}
+    if isinstance(schema.get("$defs"), dict):
+        defs.update(schema.pop("$defs"))
+    if isinstance(schema.get("definitions"), dict):
+        defs.update(schema.pop("definitions"))
+
+    if not defs:
+        return schema
+
+    def _resolve_ref(obj: Any, visited: frozenset = frozenset()) -> Any:
+        if isinstance(obj, list):
+            return [_resolve_ref(item, visited) for item in obj]
+        if not isinstance(obj, dict):
+            return obj
+        if "$ref" in obj:
+            ref_path = obj["$ref"]
+            if isinstance(ref_path, str) and (
+                ref_path.startswith("#/$defs/")
+                or ref_path.startswith("#/definitions/")
+            ):
+                def_name = ref_path.split("/")[-1]
+                if def_name in visited:
+                    logger.warning(
+                        "Circular reference detected for '%s' in tool "
+                        "schema",
+                        def_name,
+                    )
+                    return {
+                        "type": "object",
+                        "description": f"(circular: {def_name})",
+                    }
+                if def_name in defs:
+                    resolved = _resolve_ref(
+                        defs[def_name],
+                        visited | {def_name},
+                    )
+                    for key, value in obj.items():
+                        if key != "$ref":
+                            resolved[key] = _resolve_ref(
+                                value,
+                                visited | {def_name},
+                            )
+                    return resolved
+            return obj
+        result: dict[str, Any] = {}
+        for key, value in obj.items():
+            if key in ("$defs", "definitions"):
+                continue
+            result[key] = _resolve_ref(value, visited)
+        return result
+
+    return _resolve_ref(schema)

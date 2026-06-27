@@ -453,6 +453,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                             },
                         ],
                         "state": "success",
+                        "metadata": {},
                     },
                     {
                         "type": "text",
@@ -738,6 +739,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                             },
                         ],
                         "state": "success",
+                        "metadata": {},
                     },
                     {
                         "type": "tool_result",
@@ -751,6 +753,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                             },
                         ],
                         "state": "error",
+                        "metadata": {},
                     },
                     {
                         "type": "text",
@@ -1037,6 +1040,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                             },
                         ],
                         "state": "success",
+                        "metadata": {},
                     },
                     {
                         "type": "tool_result",
@@ -1050,6 +1054,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                             },
                         ],
                         "state": "success",
+                        "metadata": {},
                     },
                     {
                         "type": "text",
@@ -1305,6 +1310,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                             },
                         ],
                         "state": "success",
+                        "metadata": {},
                     },
                     {
                         "type": "tool_result",
@@ -1318,6 +1324,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                             },
                         ],
                         "state": "success",
+                        "metadata": {},
                     },
                     {
                         "type": "text",

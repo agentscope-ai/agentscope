@@ -14,6 +14,9 @@ from ._builtin import (
     Grep,
     Read,
     Write,
+    BackendBase,
+    ExecResult,
+    LocalBackend,
 )
 from ._task import (
     TaskUpdate,
@@ -38,6 +41,9 @@ __all__ = [
     "ToolResponse",
     "RegisteredTool",
     # Builtin tools
+    "BackendBase",
+    "LocalBackend",
+    "ExecResult",
     "ResetTools",
     "Bash",
     "Edit",

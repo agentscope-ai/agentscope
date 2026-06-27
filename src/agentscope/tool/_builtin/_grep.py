@@ -1,13 +1,10 @@
 # -*- coding: utf-8 -*-
 """The grep tool in agentscope."""
-import asyncio
 import fnmatch
 import os
-import shutil
 from typing import Any, List, Literal
 
 from .._base import ToolBase, ToolMiddlewareBase
-from ..._logging import logger
 from ...permission import (
     PermissionContext,
     PermissionDecision,
@@ -16,6 +13,7 @@ from ...permission import (
 )
 from .._response import ToolChunk
 from ...message import TextBlock, ToolResultState
+from ._backend import BackendBase
 
 # Version control system directories to exclude from searches
 VCS_DIRECTORIES_TO_EXCLUDE = [
@@ -160,22 +158,24 @@ class Grep(ToolBase):
     def __init__(
         self,
         middlewares: List[ToolMiddlewareBase] | None = None,
+        backend: BackendBase | None = None,
     ) -> None:
         """Initialize the grep tool.
 
         Args:
             middlewares (`List[ToolMiddlewareBase] | None`, optional):
                 Tool middlewares wrapping the tool execution.
+            backend (`BackendBase | None`, optional):
+                The sandbox backend to use for shell execution. When
+                ``None``, a :class:`LocalBackend` is created.
+                Ripgrep is always invoked via ``exec_shell`` so that
+                the same code path works for local, Docker, and E2B
+                backends.
         """
+        from ._backend import LocalBackend
+
         super().__init__(middlewares=middlewares)
-        self._rg_path = shutil.which("rg")
-        if self._rg_path is None:
-            logger.warning(
-                "ripgrep (rg) binary not found. To use the Grep tool, "
-                "install ripgrep: pip install agentscope[tools] or "
-                "brew install ripgrep / apt install ripgrep / "
-                "choco install ripgrep",
-            )
+        self._backend = backend or LocalBackend()
 
     async def check_permissions(
         self,
@@ -277,37 +277,39 @@ class Grep(ToolBase):
         search_path: str,
         timeout: int = 30,
     ) -> list[str]:
-        """Run ripgrep and return output lines."""
-        full_args: list = [self._rg_path, *args, search_path]
+        """Run ripgrep and return output lines.
 
-        proc = await asyncio.create_subprocess_exec(
-            *full_args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        Builds an argument vector and dispatches it through
+        ``backend.exec_shell`` (which runs the program directly, without
+        a shell), so the same code path works for local, Docker, and E2B
+        backends and needs no platform-specific argument quoting.
+        """
+        command = ["rg", *args, search_path]
+
+        result = await self._backend.exec_shell(
+            command,
+            timeout=float(timeout),
         )
 
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(),
-                timeout=timeout,
-            )
-        except asyncio.TimeoutError as e:
-            proc.kill()
-            await proc.communicate()
+        if result.exit_code == -1 and result.stderr == b"timed out":
             raise RipgrepTimeoutError(
                 f"Ripgrep search timed out after {timeout} seconds. "
                 "Try searching a more specific path or pattern.",
                 [],
-            ) from e
-
-        # returncode 0 = matches found, 1 = no matches (both are success)
-        if proc.returncode not in (0, 1):
-            error_msg = stderr.decode("utf-8", errors="ignore").strip()
-            raise RuntimeError(
-                f"ripgrep error (code {proc.returncode}): {error_msg}",
             )
 
-        raw = stdout.decode("utf-8", errors="ignore")
+        # returncode 0 = matches found, 1 = no matches
+        if result.exit_code not in (0, 1):
+            error_msg = result.stderr.decode(
+                "utf-8",
+                errors="ignore",
+            ).strip()
+            raise RuntimeError(
+                f"ripgrep error (code {result.exit_code}): {error_msg}",
+            )
+
+        raw = result.stdout.decode("utf-8", errors="ignore")
+
         lines = [
             line.rstrip("\r") for line in raw.split("\n") if line.rstrip("\r")
         ]
@@ -351,20 +353,6 @@ class Grep(ToolBase):
             n: Show line numbers (content mode only, default True)
             **kwargs: Additional parameters (-A, -B, -C)
         """
-        if self._rg_path is None:
-            return ToolChunk(
-                content=[
-                    TextBlock(
-                        text="ripgrep (rg) not found. Please install it: "
-                        "macOS: brew install ripgrep | "
-                        "Linux: apt/yum install ripgrep | "
-                        "Windows: choco install ripgrep",
-                    ),
-                ],
-                state=ToolResultState.ERROR,
-                is_last=True,
-            )
-
         search_path = path or os.getcwd()
 
         args: list[str] = ["--hidden"]

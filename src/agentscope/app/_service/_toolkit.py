@@ -10,9 +10,10 @@ from typing import Any
 
 from .._manager import BackgroundTaskManager, SchedulerManager
 from ..message_bus import MessageBus
-from .._tools import AgentCreate, TeamCreate, TeamDelete, TeamSay
+from .._tool import AgentCreate, TeamCreate, TeamDelete, TeamSay
 from .._types import AgentToolFactory, SubAgentTemplate
 from ..storage import AgentRecord, SessionRecord, StorageBase
+from ...middleware import MiddlewareBase
 from ...tool import (
     TaskCreate,
     TaskGet,
@@ -31,6 +32,7 @@ async def get_toolkit(
     scheduler_manager: SchedulerManager,
     background_task_manager: BackgroundTaskManager,
     message_bus: MessageBus,
+    middlewares: list[MiddlewareBase],
     user_id: str,
     agent_record: AgentRecord,
     session_record: SessionRecord,
@@ -79,6 +81,9 @@ async def get_toolkit(
             Application message bus; passed to team tools so they can
             push HintBlocks + wakeups when delivering inter-session
             messages.
+        middlewares (`list[MiddlewareBase]`):
+            The agent middlewares that may provide tools to the agent via the
+            `list_tools` interface.
         user_id (`str`):
             Caller user id.
         agent_record (`AgentRecord`):
@@ -174,6 +179,10 @@ time or interval"
             agent_record.id,
             session_record.id,
         )
+
+    # Tools from middleware
+    for mw in middlewares:
+        tools.extend(await mw.list_tools())
 
     return Toolkit(
         tools=tools,

@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 """The edit tool in agentscope."""
+import difflib
 import fnmatch
 import os
 from typing import Any, List
-
-import aiofiles
 
 from .._base import ToolBase, ToolMiddlewareBase
 from .._constants import (
@@ -21,6 +20,7 @@ from ...permission import (
 from .._response import ToolChunk
 from ...message import TextBlock, ToolResultState
 from ...state import AgentState
+from ._backend import BackendBase, _normalize_newlines
 
 
 class Edit(ToolBase):
@@ -90,6 +90,7 @@ Usage:
         dangerous_files: list[str] = DEFAULT_DANGEROUS_FILES,
         dangerous_directories: list[str] = DEFAULT_DANGEROUS_DIRECTORIES,
         middlewares: List[ToolMiddlewareBase] | None = None,
+        backend: BackendBase | None = None,
     ) -> None:
         """Initialize the edit tool.
 
@@ -109,10 +110,16 @@ Usage:
                 directory check.
             middlewares (`List[ToolMiddlewareBase] | None`, optional):
                 Tool middlewares wrapping the tool execution.
+            backend (`BackendBase | None`, optional):
+                The sandbox backend to use for file I/O. When ``None``,
+                a :class:`LocalBackend` is created.
         """
+        from ._backend import LocalBackend
+
         super().__init__(middlewares=middlewares)
         self.dangerous_files = list(dangerous_files)
         self.dangerous_directories = list(dangerous_directories)
+        self._backend = backend or LocalBackend()
 
     async def check_permissions(
         self,
@@ -261,7 +268,7 @@ Usage:
             )
 
         # Check file exists
-        if not os.path.exists(file_path):
+        if not await self._backend.file_exists(file_path):
             return ToolChunk(
                 content=[
                     TextBlock(text=f"Error: File not found: {file_path}"),
@@ -302,14 +309,14 @@ Usage:
                 )
             content = "".join(cache.lines)
         else:
-            # No state provided, read from disk
+            # No state provided, read from backend
             try:
-                async with aiofiles.open(
-                    file_path,
-                    "r",
-                    encoding="utf-8",
-                ) as f:
-                    content = await f.read()
+                raw = await self._backend.read_file(file_path)
+                # Normalize CRLF/CR to match the cached-content path and
+                # the LF-based old_string the caller supplies.
+                content = _normalize_newlines(
+                    raw.decode("utf-8", errors="replace"),
+                )
             except Exception as e:
                 return ToolChunk(
                     content=[TextBlock(text=f"Error reading file: {str(e)}")],
@@ -359,14 +366,12 @@ Usage:
                 1,
             )
 
-        # Write updated content back to file
+        # Write updated content back to file via backend
         try:
-            async with aiofiles.open(
+            await self._backend.write_file(
                 file_path,
-                "w",
-                encoding="utf-8",
-            ) as f:
-                await f.write(updated_content)
+                updated_content.encode("utf-8"),
+            )
         except Exception as e:
             return ToolChunk(
                 content=[TextBlock(text=f"Error writing file: {str(e)}")],
@@ -378,6 +383,21 @@ Usage:
         replacement_msg = (
             f"all {occurrences} occurrences" if replace_all else "1 occurrence"
         )
+
+        # Build a unified diff of the change with absolute line numbers so the
+        # web UI can render it with real line numbers and proper inter-hunk
+        # gaps. The diff is kept in ``metadata`` only (not in the textual
+        # output) so it does not bloat the LLM context.
+        diff_text = "".join(
+            difflib.unified_diff(
+                content.splitlines(keepends=True),
+                updated_content.splitlines(keepends=True),
+                fromfile=f"a/{file_path}",
+                tofile=f"b/{file_path}",
+                n=3,
+            ),
+        )
+
         return ToolChunk(
             content=[
                 TextBlock(
@@ -387,4 +407,9 @@ Usage:
             ],
             state=ToolResultState.RUNNING,
             is_last=True,
+            metadata={
+                "diff": diff_text,
+                "file_path": file_path,
+                "occurrences": occurrences if replace_all else 1,
+            },
         )

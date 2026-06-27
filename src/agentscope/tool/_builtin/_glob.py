@@ -1,19 +1,43 @@
 # -*- coding: utf-8 -*-
 """The glob tool in agentscope."""
-import fnmatch
-import os
-import re
-from typing import Any, List
 
-from .._base import ToolBase, ToolMiddlewareBase
+from __future__ import annotations
+
+import fnmatch
+import json
+import os
+import sys
+from typing import TYPE_CHECKING, Any, List
+
+from ...message import TextBlock, ToolResultState
 from ...permission import (
+    PermissionBehavior,
     PermissionContext,
     PermissionDecision,
-    PermissionBehavior,
     PermissionRule,
 )
+from .._base import ToolBase, ToolMiddlewareBase
 from .._response import ToolChunk
-from ...message import TextBlock
+
+if TYPE_CHECKING:
+    from ._backend import BackendBase
+
+
+def _default_glob_helper_path() -> str:
+    """Resolve the on-disk path of the bundled ``_glob_helper.py`` script.
+
+    Used by :class:`Glob` when no explicit ``glob_helper_path`` is
+    provided (i.e. the local-workspace case). The path is obtained via
+    :mod:`importlib.resources` so it works for both editable and
+    installed packages.
+    """
+    import importlib.resources as _res
+
+    ref = _res.files("agentscope.tool._builtin._scripts").joinpath(
+        "_glob_helper.py",
+    )
+    # as_posix() on a MultiplexedPath / PosixPath gives a str path
+    return str(ref)
 
 
 class Glob(ToolBase):
@@ -57,6 +81,8 @@ codebase."""  # ignore: E501
 
     def __init__(
         self,
+        backend: BackendBase | None = None,
+        glob_helper_path: str | None = None,
         middlewares: List[ToolMiddlewareBase] | None = None,
     ) -> None:
         """Initialize the glob tool.
@@ -64,8 +90,30 @@ codebase."""  # ignore: E501
         Args:
             middlewares (`List[ToolMiddlewareBase] | None`, optional):
                 Tool middlewares wrapping the tool execution.
+            backend (`BackendBase | None`, optional):
+                The sandbox backend to use. When ``None``, a
+                :class:`LocalBackend` is created automatically.
+            glob_helper_path (`str | None`, optional):
+                Filesystem path (inside the backend's environment) to
+                the ``_glob_helper.py`` script. When ``None``, the
+                path is resolved from the installed package resources
+                (suitable for :class:`LocalBackend`). Remote backends
+                (Docker, E2B) should pass the path where the script
+                was deployed during workspace initialization.
         """
+        from ._backend import LocalBackend
+
         super().__init__(middlewares=middlewares)
+        self._backend = backend or LocalBackend()
+        # When running against the host, invoke the helper with the
+        # current interpreter (``sys.executable``) rather than assuming
+        # ``python3`` is on PATH.
+        self._is_local = isinstance(self._backend, LocalBackend)
+        self._glob_helper_path = (
+            glob_helper_path
+            if glob_helper_path is not None
+            else _default_glob_helper_path()
+        )
 
     async def check_permissions(
         self,
@@ -155,123 +203,6 @@ codebase."""  # ignore: E501
             ),
         ]
 
-    def glob_part_to_regex(self, part: str) -> re.Pattern:
-        """Convert a glob pattern part to a regex pattern.
-
-        Args:
-            part: A single part of a glob pattern (e.g., '*.py', 'test_??.py')
-
-        Returns:
-            A compiled regex pattern
-        """
-        regex_str = ""
-        i = 0
-        while i < len(part):
-            c = part[i]
-            if c == "*":
-                regex_str += ".*"
-            elif c == "?":
-                regex_str += "."
-            elif c in ".^$+{}[]|()\\":
-                regex_str += "\\" + c
-            else:
-                regex_str += c
-            i += 1
-        return re.compile(f"^{regex_str}$")
-
-    def collect_all(self, current_dir: str, results: list[str]) -> None:
-        """Recursively collect all files in a directory.
-
-        Args:
-            current_dir: The directory to collect files from
-            results: The list to append matched file paths to
-        """
-        try:
-            for root, _dirs, files in os.walk(current_dir):
-                for file in files:
-                    results.append(os.path.join(root, file))
-        except (PermissionError, OSError):
-            # Skip unreadable directories silently
-            pass
-
-    def match_parts(
-        self,
-        parts: list[str],
-        part_index: int,
-        current_dir: str,
-        results: list[str],
-    ) -> None:
-        """Recursively match path parts against directory entries.
-
-        Args:
-            parts: The split glob pattern parts
-            part_index: The current index in the parts array
-            current_dir: The current directory being traversed
-            results: The list to append matched file paths to
-        """
-        if part_index >= len(parts):
-            return
-
-        part = parts[part_index]
-        is_last = part_index == len(parts) - 1
-
-        if part == "**":
-            if is_last:
-                self.collect_all(current_dir, results)
-            else:
-                # Match in current directory
-                self.match_parts(parts, part_index + 1, current_dir, results)
-                # Recursively match in subdirectories
-                try:
-                    with os.scandir(current_dir) as entries:
-                        for entry in entries:
-                            if entry.is_dir(follow_symlinks=False):
-                                self.match_parts(
-                                    parts,
-                                    part_index,
-                                    entry.path,
-                                    results,
-                                )
-                except (PermissionError, OSError):
-                    # Skip unreadable directories silently
-                    pass
-        else:
-            regex = self.glob_part_to_regex(part)
-            try:
-                with os.scandir(current_dir) as entries:
-                    for entry in entries:
-                        if regex.match(entry.name):
-                            full_path = entry.path
-                            if is_last:
-                                if entry.is_file(follow_symlinks=False):
-                                    results.append(full_path)
-                            elif entry.is_dir(follow_symlinks=False):
-                                self.match_parts(
-                                    parts,
-                                    part_index + 1,
-                                    full_path,
-                                    results,
-                                )
-            except (PermissionError, OSError):
-                # Skip unreadable directories silently
-                pass
-
-    def glob_match(self, pattern: str, base_dir: str) -> list[str]:
-        """Match files against a glob pattern starting from the given
-        base directory.
-
-        Args:
-            pattern: The glob pattern to match against
-            base_dir: The base directory to search from
-
-        Returns:
-            A list of matched file paths
-        """
-        results: list[str] = []
-        parts = [p for p in re.split(r"[\\/]+", pattern) if p]
-        self.match_parts(parts, 0, base_dir, results)
-        return results
-
     async def call(  # type: ignore[override]
         self,
         pattern: str,
@@ -279,33 +210,82 @@ codebase."""  # ignore: E501
     ) -> ToolChunk:
         """Execute the glob pattern matching and return the results.
 
+        Invokes the standalone ``_glob_helper.py`` script via
+        ``exec_shell``. The script performs high-performance
+        ``os.walk`` + ``os.scandir`` matching and returns results
+        sorted by modification time (newest first) as JSON.
+
+        This unified path works identically across Local, Docker,
+        and E2B backends.
+
         Args:
-            pattern: The glob pattern to match against
-            path: Optional base directory to search from (defaults to cwd)
+            pattern (`str`):
+                The glob pattern to match against (e.g. ``**/*.py``).
+            path (`str | None`, optional):
+                Base directory to search from. Defaults to the current
+                working directory when ``None``.
 
         Returns:
             `ToolChunk`:
-                The content contains the matched file paths joined by
-                newlines, or an error message if the directory is not found or
-                no files match the pattern.
+                On success, the matched file paths joined by newlines
+                (or a "no files found" message). If the base directory
+                is missing or the helper fails, an error chunk with
+                ``ToolResultState.ERROR``.
         """
         base_dir = path if path else os.getcwd()
 
-        if not os.path.exists(base_dir):
+        # The base must be an existing directory; a regular file would
+        # otherwise be accepted here and fail later with a confusing
+        # error from the helper.
+        if not await self._backend.is_dir(base_dir):
             return ToolChunk(
-                content=[TextBlock(text=f"Directory not found: {base_dir}")],
-                state="error",
+                content=[
+                    TextBlock(text=f"Directory not found: {base_dir}"),
+                ],
+                state=ToolResultState.ERROR,
                 is_last=True,
             )
 
-        matches = self.glob_match(pattern, base_dir)
+        # Invoke the glob helper script via exec_shell as an argv list
+        # (run directly, without a shell, so no platform-specific
+        # quoting is needed). Use the current interpreter locally
+        # (``python3`` may be absent, e.g. on Windows or venvs exposing
+        # only ``python``); remote backends run inside Linux images
+        # where ``python3`` is the safe choice.
+        python = sys.executable if self._is_local else "python3"
+        command = [
+            python,
+            self._glob_helper_path,
+            "--pattern",
+            pattern,
+            "--base-dir",
+            base_dir,
+        ]
+        result = await self._backend.exec_shell(command, timeout=30.0)
 
-        # Sort by modification time (newest first)
+        # A non-zero exit means the helper itself failed (missing
+        # interpreter/script, permission error, …) — surface it rather
+        # than masking it as an empty match.
+        if not result.ok():
+            stderr = result.stderr.decode("utf-8", errors="replace").strip()
+            return ToolChunk(
+                content=[
+                    TextBlock(
+                        text=f"Glob helper failed: {stderr}"
+                        if stderr
+                        else "Glob helper failed with no error output.",
+                    ),
+                ],
+                state=ToolResultState.ERROR,
+                is_last=True,
+            )
+
         try:
-            matches.sort(key=lambda p: os.stat(p).st_mtime, reverse=True)
-        except (OSError, FileNotFoundError):
-            # If we can't stat some files, just keep the unsorted order
-            pass
+            matches = json.loads(
+                result.stdout.decode("utf-8", errors="replace"),
+            )
+        except (json.JSONDecodeError, ValueError):
+            matches = []
 
         if len(matches) == 0:
             return ToolChunk(
@@ -314,12 +294,12 @@ codebase."""  # ignore: E501
                         text=f"No files found matching pattern: {pattern}",
                     ),
                 ],
-                state="running",
+                state=ToolResultState.RUNNING,
                 is_last=True,
             )
 
         return ToolChunk(
             content=[TextBlock(text="\n".join(matches))],
-            state="running",
+            state=ToolResultState.RUNNING,
             is_last=True,
         )

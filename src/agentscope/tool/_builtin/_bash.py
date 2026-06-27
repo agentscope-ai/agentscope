@@ -3,7 +3,6 @@
 import os
 from typing import AsyncGenerator, Any, List
 import re
-import asyncio
 
 from ._bash_parser import BashCommandParser
 from .._base import ToolBase, ToolMiddlewareBase
@@ -18,24 +17,9 @@ from ...permission import (
     PermissionMode,
     PermissionRule,
 )
-from ...message import TextBlock
+from ...message import TextBlock, ToolResultState
 from .._response import ToolChunk
-
-
-def _subprocess_creation_kwargs() -> dict[str, Any]:
-    """Return platform-specific subprocess creation options."""
-    if os.name != "nt":
-        return {}
-
-    import subprocess
-
-    return {
-        "creationflags": getattr(
-            subprocess,
-            "CREATE_NO_WINDOW",
-            0x08000000,
-        ),
-    }
+from ._backend import BackendBase
 
 
 class Bash(ToolBase):
@@ -156,6 +140,7 @@ easier to review tool calls and give permission.
         dangerous_directories: list[str] = DEFAULT_DANGEROUS_DIRECTORIES,
         cwd: str | os.PathLike[str] | None = None,
         middlewares: List[ToolMiddlewareBase] | None = None,
+        backend: BackendBase | None = None,
     ) -> None:
         """Initialize the bash tool.
 
@@ -177,7 +162,11 @@ easier to review tool calls and give permission.
                 The working directory used when executing bash commands.
             middlewares (`List[ToolMiddlewareBase] | None`, optional):
                 Tool middlewares wrapping the tool execution.
+            backend (`BackendBase | None`, optional):
+                The sandbox backend to use for shell execution. When
+                ``None``, a :class:`LocalBackend` is created.
         """
+        from ._backend import LocalBackend
 
         super().__init__(middlewares=middlewares)
         self._bash_parser = BashCommandParser()
@@ -185,6 +174,7 @@ easier to review tool calls and give permission.
         self.dangerous_files = list(dangerous_files)
         self.dangerous_directories = list(dangerous_directories)
         self._cwd = os.fspath(cwd) if cwd is not None else None
+        self._backend = backend or LocalBackend()
 
     async def check_read_only(
         self,
@@ -689,32 +679,44 @@ easier to review tool calls and give permission.
         timeout_sec = timeout_ms / 1000.0
 
         try:
-            # Create subprocess
-            subprocess_kwargs = _subprocess_creation_kwargs()
-            if self._cwd is not None:
-                subprocess_kwargs["cwd"] = self._cwd
-            process = await asyncio.create_subprocess_shell(
-                command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                **subprocess_kwargs,
-            )
-
-            # Wait for completion with timeout
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                process.communicate(),
+            # ``command`` is a full shell command line (it may contain
+            # pipes, redirects, ``&&``, …), so wrap it in a shell — the
+            # backend primitive runs the argv directly without one. Pick
+            # the platform's native shell so the Windows experience that
+            # ``main`` had (commands interpreted by ``cmd.exe``) is
+            # preserved; POSIX hosts use ``/bin/sh``.
+            if os.name == "nt":
+                shell_command = ["cmd", "/c", command]
+            else:
+                shell_command = ["/bin/sh", "-c", command]
+            result = await self._backend.exec_shell(
+                shell_command,
+                cwd=self._cwd,
                 timeout=timeout_sec,
             )
 
             # Decode and normalize line endings
-            stdout = stdout_bytes.decode("utf-8", errors="replace").replace(
-                "\r\n",
-                "\n",
-            )
-            stderr = stderr_bytes.decode("utf-8", errors="replace").replace(
-                "\r\n",
-                "\n",
-            )
+            stdout = result.stdout.decode(
+                "utf-8",
+                errors="replace",
+            ).replace("\r\n", "\n")
+            stderr = result.stderr.decode(
+                "utf-8",
+                errors="replace",
+            ).replace("\r\n", "\n")
+
+            # Check for timeout (backend returns exit_code=-1,
+            # stderr=b"timed out")
+            if result.exit_code == -1 and result.stderr == b"timed out":
+                error_msg = (
+                    f"Command timed out after {timeout_ms}ms: {command}"
+                )
+                yield ToolChunk(
+                    content=[TextBlock(text=error_msg)],
+                    state=ToolResultState.ERROR,
+                    is_last=True,
+                )
+                return
 
             # Combine output
             output = stdout
@@ -728,21 +730,23 @@ easier to review tool calls and give permission.
                 output = output[:30000] + "\n... (output truncated)"
 
             # Check exit code
-            if process.returncode != 0:
+            if not result.ok():
                 # Command failed
-                result = f"Command failed: {command}\n"
+                error_result = f"Command failed: {command}\n"
                 if stdout:
-                    result += f"\nStdout:\n{stdout}"
+                    error_result += f"\nStdout:\n{stdout}"
                 if stderr:
-                    result += f"\nStderr:\n{stderr}"
+                    error_result += f"\nStderr:\n{stderr}"
 
                 # Truncate error message if needed
-                if len(result) > 30000:
-                    result = result[:30000] + "\n... (output truncated)"
+                if len(error_result) > 30000:
+                    error_result = (
+                        error_result[:30000] + "\n... (output truncated)"
+                    )
 
                 yield ToolChunk(
-                    content=[TextBlock(text=result)],
-                    state="error",
+                    content=[TextBlock(text=error_result)],
+                    state=ToolResultState.ERROR,
                     is_last=True,
                 )
             else:
@@ -750,24 +754,15 @@ easier to review tool calls and give permission.
                 # which will be converted to "finished" in ToolResponse
                 yield ToolChunk(
                     content=[TextBlock(text=output)],
-                    state="running",
+                    state=ToolResultState.RUNNING,
                     is_last=True,
                 )
-
-        except asyncio.TimeoutError:
-            # Timeout occurred
-            error_msg = f"Command timed out after {timeout_ms}ms: {command}"
-            yield ToolChunk(
-                content=[TextBlock(text=error_msg)],
-                state="error",
-                is_last=True,
-            )
 
         except Exception as e:
             # Other errors
             error_msg = f"Command failed: {command}\nError: {str(e)}"
             yield ToolChunk(
                 content=[TextBlock(text=error_msg)],
-                state="error",
+                state=ToolResultState.ERROR,
                 is_last=True,
             )

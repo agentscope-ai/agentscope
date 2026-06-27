@@ -11,7 +11,7 @@ from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 from pydantic import BaseModel, Field
 
 from ..._utils._audio import _build_streaming_wav_header
-from ..._utils._common import _generate_id
+from ..._utils._common import _generate_id, _flatten_json_schema
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse, StructuredResponse
 from .._model_usage import ChatUsage
@@ -657,6 +657,10 @@ class OpenAIChatModel(ChatModelBase):
         (str) the model is forced to call exactly that tool without needing to
         filter the list, preserving prompt-cache efficiency.
 
+        Tool parameter schemas are flattened (``$ref`` / ``$defs`` resolved
+        inline) so that providers which do not support JSON Schema references
+        (e.g. GLM-5.x via OpenCode Go) receive a self-contained schema.
+
         Args:
             tools (`list[dict] | None`, optional):
                 The raw tool schemas.
@@ -673,6 +677,9 @@ class OpenAIChatModel(ChatModelBase):
                 allowed = set(tool_choice.tools)
                 tools = [t for t in tools if t["function"]["name"] in allowed]
 
+        if tools:
+            tools = self._flatten_tool_schemas(tools)
+
         if not tool_choice:
             return tools, None
 
@@ -682,3 +689,38 @@ class OpenAIChatModel(ChatModelBase):
             return tools, {"type": "function", "function": {"name": mode}}
 
         return tools, mode
+
+    @staticmethod
+    def _flatten_tool_schemas(
+        tools: list[dict],
+    ) -> list[dict]:
+        """Inline ``$ref`` / ``$defs`` in each tool's parameter schema.
+
+        Args:
+            tools (`list[dict]`):
+                The list of tool dicts, each with a ``"function"`` key
+                containing the tool name, description and ``"parameters"``
+                JSON schema.
+
+        Returns:
+            `list[dict]`:
+                A new list where each tool's ``parameters`` schema has all
+                local ``$ref`` / ``$defs`` resolved inline.  Tools whose
+                schema contained no references are returned unchanged (same
+                object identity).
+        """
+        result = []
+        for tool in tools:
+            func = tool.get("function")
+            if not isinstance(func, dict):
+                result.append(tool)
+                continue
+            params = func.get("parameters")
+            if not isinstance(params, dict):
+                result.append(tool)
+                continue
+            flat = _flatten_json_schema(params)
+            if flat is not params:
+                tool = {**tool, "function": {**func, "parameters": flat}}
+            result.append(tool)
+        return result

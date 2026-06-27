@@ -70,6 +70,7 @@ from ..message import (
     ToolCallState,
     ToolResultState,
     Usage,
+    HintBlock,
 )
 from ..tool import (
     Toolkit,
@@ -103,9 +104,9 @@ class Agent:
         state: AgentState | None = None,
         offloader: Offloader | None = None,
         # The agent configurations
-        model_config: ModelConfig = ModelConfig(),
-        context_config: ContextConfig = ContextConfig(),
-        react_config: ReActConfig = ReActConfig(),
+        model_config: ModelConfig | None = None,
+        context_config: ContextConfig | None = None,
+        react_config: ReActConfig | None = None,
     ) -> None:
         """Initialize the agent class in AgentScope.
 
@@ -144,9 +145,9 @@ class Agent:
         self.model = model
         self.state = state or AgentState()
 
-        self.model_config = model_config
-        self.context_config = context_config
-        self.react_config = react_config
+        self.model_config = model_config or ModelConfig()
+        self.context_config = context_config or ContextConfig()
+        self.react_config = react_config or ReActConfig()
 
         # The permission engine
         self._engine = PermissionEngine(self.state.permission_context)
@@ -258,6 +259,7 @@ class Agent:
     async def compress_context(
         self,
         context_config: ContextConfig | None = None,
+        instructions: HintBlock | None = None,
     ) -> None:
         """Compress the agent's context if the token count exceeds the
         threshold.
@@ -267,23 +269,34 @@ class Agent:
                 If provided, compress the context with the given context
                 config. Otherwise, use the default context config in the
                 agent.
+            instructions (`HintBlock | None`, optional):
+                Optional hints or instructions injected into the compression
+                context to guide the summarization behavior.
         """
         if not self._compress_context_middlewares:
-            await self._compress_context_impl(context_config=context_config)
+            await self._compress_context_impl(
+                context_config=context_config,
+                instructions=instructions,
+            )
         else:
 
             async def execute_chain(
                 index: int = 0,
                 context_config: ContextConfig | None = context_config,
+                instructions: HintBlock | None = instructions,
             ) -> None:
                 """Execute the compress_context middleware chain."""
                 if index >= len(self._compress_context_middlewares):
                     await self._compress_context_impl(
                         context_config=context_config,
+                        instructions=instructions,
                     )
                 else:
                     mw = self._compress_context_middlewares[index]
-                    input_kwargs = {"context_config": context_config}
+                    input_kwargs = {
+                        "context_config": context_config,
+                        "instructions": instructions,
+                    }
 
                     async def next_handler(**kwargs: Any) -> None:
                         await execute_chain(index + 1, **kwargs)
@@ -299,6 +312,7 @@ class Agent:
     async def _compress_context_impl(
         self,
         context_config: ContextConfig | None = None,
+        instructions: HintBlock | None = None,
     ) -> None:
         """Compress the agent's context if the token count exceeds the
         threshold.
@@ -308,6 +322,9 @@ class Agent:
                 If provided, compress the context with the given context
                 config. Otherwise, use the default context config in the
                 agent.
+            instructions (`HintBlock | None`, optional):
+                Optional hints or instructions injected into the compression
+                context to guide the summarization behavior.
         """
         cfg: ContextConfig = context_config or self.context_config
 
@@ -382,9 +399,19 @@ class Agent:
         if self.state.summary:
             msgs_system.append(UserMsg("user", self.state.summary))
 
+        instruction_msgs: list[Msg] = []
+        if instructions is not None:
+            instruction_msgs.append(
+                AssistantMsg(
+                    name=self.name,
+                    content=[instructions],
+                ),
+            )
+
         messages = (
             msgs_system
             + msgs_to_compress
+            + instruction_msgs
             + [
                 UserMsg(name="user", content=cfg.compression_prompt),
             ]
@@ -436,6 +463,7 @@ class Agent:
                     messages = (
                         msgs_system
                         + msgs_to_compress[i:]
+                        + instruction_msgs
                         + [
                             UserMsg(
                                 name="user",
@@ -1057,6 +1085,7 @@ class Agent:
                     reply_id=self.state.reply_id,
                     tool_call_id=tool_result.id,
                     state=tool_result.state,
+                    metadata=tool_result.metadata,
                 )
 
                 self._save_to_context([tool_result])
@@ -1456,6 +1485,7 @@ class Agent:
                         if isinstance(chunk.content, str)
                         else chunk.content,
                         state=chunk.state,
+                        metadata=chunk.metadata,
                     )
 
                     # ========================================================
@@ -1524,6 +1554,7 @@ class Agent:
                         reply_id=self.state.reply_id,
                         tool_call_id=tool_call.id,
                         state=chunk.state,
+                        metadata=chunk.metadata,
                     )
 
                 else:
