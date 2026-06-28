@@ -7,6 +7,7 @@ from ._local_workspace import LocalWorkspace
 from ._offload_protocol import Offloader
 from ._docker import DockerBackend, DockerWorkspace
 from ._e2b import E2BWorkspace, E2BBackend
+from ._opensandbox import OpenSandboxBackend, OpenSandboxWorkspace
 
 
 __all__ = [
@@ -17,4 +18,6 @@ __all__ = [
     "E2BBackend",
     "E2BWorkspace",
     "Offloader",
+    "OpenSandboxBackend",
+    "OpenSandboxWorkspace",
 ]

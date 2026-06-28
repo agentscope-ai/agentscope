@@ -62,7 +62,7 @@ AgentScope 2.0 is a production-ready, easy-to-use agent framework with essential
 - [**Event System** →](https://docs.agentscope.io/latest/en/building-blocks/message-and-event) A unified event bus to the frontend and human-in-the-loop support.
 - [**Permission System** →](https://docs.agentscope.io/latest/en/building-blocks/permission-system) Fine-grained, configurable control over tools and resources.
 - [**Multi-tenancy & Multi-session Service** →](https://docs.agentscope.io/latest/en/deploy/agent-service) Production-grade serving with isolation across tenants and sessions.
-- [**Workspace / Sandbox Support** →](https://docs.agentscope.io/latest/en/building-blocks/workspace) Run tools and code in isolated environments, with built-in backends for local, Docker, and E2B.
+- [**Workspace / Sandbox Support** →](https://docs.agentscope.io/latest/en/building-blocks/workspace) Run tools and code in isolated environments, with built-in backends for local, Docker, E2B, and OpenSandbox.
 - [**Extensible Middleware System** →](https://docs.agentscope.io/latest/en/building-blocks/middleware) Composable hooks to customize and extend the agent's reasoning-acting loop.
 
 We design for increasingly agentic LLMs.
