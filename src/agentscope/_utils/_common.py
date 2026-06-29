@@ -237,3 +237,9 @@ def _map_text_to_uuid(text: str) -> str:
             A deterministic UUID string derived from the input text.
     """
     return str(uuid.uuid3(uuid.NAMESPACE_DNS, text))
+
+
+def _estimate_tokens(text: str) -> int:
+    """Estimate the number of tokens in a given text, using the number of"""
+
+    return int(len(text.encode("utf-8")) / 4 + 0.5)

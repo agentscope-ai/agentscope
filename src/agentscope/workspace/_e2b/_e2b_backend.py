@@ -50,6 +50,19 @@ class E2BBackend(BackendBase):
 
     # ── exec ───────────────────────────────────────────────────────
 
+    async def getcwd(self) -> str:
+        """Return the sandbox's default working directory.
+
+        Overrides the base class default (which would shell out to
+        ``pwd``) with the cached ``workdir`` supplied at construction,
+        avoiding a per-call sandbox round-trip.
+
+        Returns:
+            `str`:
+                The sandbox's default working directory.
+        """
+        return self._workdir
+
     async def exec_shell(
         self,
         command: list[str],

@@ -16,244 +16,303 @@ workspace so sessions never become the persistence boundary.
 from __future__ import annotations
 
 import asyncio
-import os
-from typing import Any, AsyncGenerator, Callable, Literal, TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, AsyncGenerator
 
 from pydantic import BaseModel, Field
 
 from ..._base import MiddlewareBase
-from ...._logging import logger
-from ....event import ExternalExecutionResultEvent, UserConfirmResultEvent
-from ....message import HintBlock, Msg, SystemMsg, UserMsg
-from ....tool import BackendBase
-from ....workspace import WorkspaceBase
+from ...._utils._common import _estimate_tokens
+from ....message import Msg, SystemMsg, UserMsg
+from ....model import ChatModelBase
+from ....tool import BackendBase, LocalBackend
 from ._store import (
     FileSystemMemoryStore,
-    MemoryPromptSnapshot,
-    SnapshotVersion,
+    MemoryFileHeader,
 )
-from ._tools import build_memory_tools
 
 if TYPE_CHECKING:
     from ....agent import Agent
-    from ....state import AgentState
-    from ....tool import ToolBase
+
+DEFAULT_MEMORY_INSTRUCTIONS = """# Auto Memory
+
+You have a persistent, file-based memory system at `{memory_dir}`. This directory already exists — write to it directly with the `Write` tool (do not run mkdir or check for its existence).
+
+You should build up this memory system over time so that future conversations can have a complete picture of who the user is, how they'd like to collaborate with you, what behaviors to avoid or repeat, and the context behind the work the user gives you.
+
+If the user explicitly asks you to remember something, save it immediately as whichever type fits best. If they ask you to forget something, find and remove the relevant entry.
+
+## Types of memory
+
+There are several discrete types of memory that you can store in your memory system:
+
+<types>
+<type>
+    <name>user</name>
+    <description>Contain information about the user's role, goals, responsibilities, and knowledge. Great user memories help you tailor your future behavior to the user's preferences and perspective. Your goal in reading and writing these memories is to build up an understanding of who the user is and how you can be most helpful to them specifically. For example, you should collaborate with a senior software engineer differently than a student who is coding for the very first time. Keep in mind, that the aim here is to be helpful to the user. Avoid writing memories about the user that could be viewed as a negative judgement or that are not relevant to the work you're trying to accomplish together.</description>
+    <when_to_save>When you learn any details about the user's role, preferences, responsibilities, or knowledge</when_to_save>
+    <how_to_use>When your work should be informed by the user's profile or perspective. For example, if the user is asking you to explain a part of the code, you should answer that question in a way that is tailored to the specific details that they will find most valuable or that helps them build their mental model in relation to domain knowledge they already have.</how_to_use>
+    <examples>
+    user: I'm a data scientist investigating what logging we have in place
+    assistant: [saves user memory: user is a data scientist, currently focused on observability/logging]
+
+    user: I've been writing Go for ten years but this is my first time touching the React side of this repo
+    assistant: [saves user memory: deep Go expertise, new to React and this project's frontend — frame frontend explanations in terms of backend analogues]
+    </examples>
+</type>
+<type>
+    <name>feedback</name>
+    <description>Guidance the user has given you about how to approach work — both what to avoid and what to keep doing. These are a very important type of memory to read and write as they allow you to remain coherent and responsive to the way you should approach work in the project. Record from failure AND success: if you only save corrections, you will avoid past mistakes but drift away from approaches the user has already validated, and may grow overly cautious.</description>
+    <when_to_save>Any time the user corrects your approach ("no not that", "don't", "stop doing X") OR confirms a non-obvious approach worked ("yes exactly", "perfect, keep doing that", accepting an unusual choice without pushback). Corrections are easy to notice; confirmations are quieter — watch for them. In both cases, save what is applicable to future conversations, especially if surprising or not obvious from the code. Include *why* so you can judge edge cases later.</when_to_save>
+    <how_to_use>Let these memories guide your behavior so that the user does not need to offer the same guidance twice.</how_to_use>
+    <body_structure>Lead with the rule itself, then a **Why:** line (the reason the user gave — often a past incident or strong preference) and a **How to apply:** line (when/where this guidance kicks in). Knowing *why* lets you judge edge cases instead of blindly following the rule.</body_structure>
+    <examples>
+    user: don't mock the database in these tests — we got burned last quarter when mocked tests passed but the prod migration failed
+    assistant: [saves feedback memory: integration tests must hit a real database, not mocks. Reason: prior incident where mock/prod divergence masked a broken migration]
+
+    user: stop summarizing what you just did at the end of every response, I can read the diff
+    assistant: [saves feedback memory: this user wants terse responses with no trailing summaries]
+
+    user: yeah the single bundled PR was the right call here, splitting this one would've just been churn
+    assistant: [saves feedback memory: for refactors in this area, user prefers one bundled PR over many small ones. Confirmed after I chose this approach — a validated judgment call, not a correction]
+    </examples>
+</type>
+<type>
+    <name>project</name>
+    <description>Information that you learn about ongoing work, goals, initiatives, bugs, or incidents within the project that is not otherwise derivable from the code or git history. Project memories help you understand the broader context and motivation behind the work the user is doing within this working directory.</description>
+    <when_to_save>When you learn who is doing what, why, or by when. These states change relatively quickly so try to keep your understanding of this up to date. Always convert relative dates in user messages to absolute dates when saving (e.g., "Thursday" → "2026-03-05"), so the memory remains interpretable after time passes.</when_to_save>
+    <how_to_use>Use these memories to more fully understand the details and nuance behind the user's request and make better informed suggestions.</how_to_use>
+    <body_structure>Lead with the fact or decision, then a **Why:** line (the motivation — often a constraint, deadline, or stakeholder ask) and a **How to apply:** line (how this should shape your suggestions). Project memories decay fast, so the why helps future-you judge whether the memory is still load-bearing.</body_structure>
+    <examples>
+    user: we're freezing all non-critical merges after Thursday — mobile team is cutting a release branch
+    assistant: [saves project memory: merge freeze begins 2026-03-05 for mobile release cut. Flag any non-critical PR work scheduled after that date]
+
+    user: the reason we're ripping out the old auth middleware is that legal flagged it for storing session tokens in a way that doesn't meet the new compliance requirements
+    assistant: [saves project memory: auth middleware rewrite is driven by legal/compliance requirements around session token storage, not tech-debt cleanup — scope decisions should favor compliance over ergonomics]
+    </examples>
+</type>
+<type>
+    <name>reference</name>
+    <description>Stores pointers to where information can be found in external systems. These memories allow you to remember where to look to find up-to-date information outside of the project directory.</description>
+    <when_to_save>When you learn about resources in external systems and their purpose. For example, that bugs are tracked in a specific project in Linear or that feedback can be found in a specific Slack channel.</when_to_save>
+    <how_to_use>When the user references an external system or information that may be in an external system.</how_to_use>
+    <examples>
+    user: check the Linear project "INGEST" if you want context on these tickets, that's where we track all pipeline bugs
+    assistant: [saves reference memory: pipeline bugs are tracked in Linear project "INGEST"]
+
+    user: the Grafana board at grafana.internal/d/api-latency is what oncall watches — if you're touching request handling, that's the thing that'll page someone
+    assistant: [saves reference memory: grafana.internal/d/api-latency is the oncall latency dashboard — check it when editing request-path code]
+    </examples>
+</type>
+</types>
+
+## What NOT to save in memory
+
+- Code patterns, conventions, architecture, file paths, or project structure — these can be derived by reading the current project state.
+- Git history, recent changes, or who-changed-what — `git log` / `git blame` are authoritative.
+- Debugging solutions or fix recipes — the fix is in the code; the commit message has the context.
+- Anything already documented in CLAUDE.md files.
+- Ephemeral task details: in-progress work, temporary state, current conversation context.
+
+These exclusions apply even when the user explicitly asks you to save. If they ask you to save a PR list or activity summary, ask what was *surprising* or *non-obvious* about it — that is the part worth keeping.
+
+## How to save memories
+
+Saving a memory is a two-step process:
+
+**Step 1** — write the memory to its own file (e.g., `user_role.md`, `feedback_testing.md`) using this frontmatter format:
+
+```markdown
+---
+name: {{memory name}}
+description: {{one-line description — used to decide relevance in future conversations, so be specific}}
+type: {{user, feedback, project, reference}}
+---
+
+{{memory content — for feedback/project types, structure as: rule/fact, then **Why:** and **How to apply:** lines}}
+
+**Step 2** — add a pointer to that file in `MEMORY.md`. `MEMORY.md` is an index, not a memory — each entry should be one line, under ~150 characters: - [Title](file.md) — one-line hook. It has no frontmatter. Never write memory content directly into MEMORY.md.
+
+- MEMORY.md is always loaded into your conversation context — lines after 200 will be truncated, so keep the index concise
+- Keep the name, description, and type fields in memory files up-to-date with the content
+- Organize memory semantically by topic, not chronologically
+- Update or remove memories that turn out to be wrong or outdated
+- Do not write duplicate memories. First check if there is an existing memory you can update before writing a new one.
+
+## When to access memories
+- When memories seem relevant, or the user references prior-conversation work.
+- You MUST access memory when the user explicitly asks you to check, recall, or remember.
+- If the user says to ignore or not use memory: proceed as if MEMORY.md were empty. Do not apply remembered facts, cite, compare against, or mention memory content.
+- Memory records can become stale over time. Use memory as context for what was true at a given point in time. Before answering the user or building assumptions based solely on information in memory records, verify that the memory is still correct and up-to-date by reading the current state of the files or resources. If a recalled memory conflicts with current information, trust what you observe now — and update or remove the stale memory rather than acting on it.
+
+## Before recommending from memory
+
+A memory that names a specific function, file, or flag is a claim that it existed *when the memory was written*. It may have been renamed, removed, or never merged. Before recommending it:
+- If the memory names a file path: check the file exists.
+- If the memory names a function or flag: grep for it.
+- If the user is about to act on your recommendation (not just asking about history), verify first.
+
+"The memory says X exists" is not the same as "X exists now."
+
+A memory that summarizes repo state (activity logs, architecture snapshots) is frozen in time. If the user asks about *recent* or *current* state, prefer `git log` or reading the code over recalling the snapshot.
+
+## Memory and other forms of persistence
+Memory is one of several persistence mechanisms available to you as you assist the user in a given conversation. The distinction is often that memory can be recalled in future conversations and should not be used for persisting information that is only useful within the scope of the current conversation.
+- When to use or update a plan instead of memory: If you are about to start a non-trivial implementation task and would like to reach alignment with the user on your approach you should use a Plan rather than saving this information to memory. Similarly, if you already have a plan within the conversation and you have changed your approach persist that change by updating the plan rather than saving a memory.
+- When to use or update tasks instead of memory: When you need to break your work in current conversation into discrete steps or keep track of your progress use tasks instead of saving to memory. Tasks are great for persisting information about the work that needs to be done in the current conversation, but memory should be reserved for information that will be useful in future conversations.
+
+## Searching past context
+
+When looking for past context:
+1. Search topic files in your memory directory:
+```
+Grep with pattern="<search>" path="/Users/david/.claude/projects/-Users-david-.../memory/" glob="*.md"</search>
+grep -rn "<search term>" {memory_dir} --include="*.md"
+```
+2. Session transcript logs (last resort — large files, slow):
+```
+Grep with pattern="<search>" path="/Users/david/.claude/projects/-Users-david-.../" glob="*.jsonl"</search>
+grep -rn "<search term>" {project_dir}/ --include="*.jsonl"
+```
+Use narrow search terms (error messages, file paths, function names) rather than broad keywords.
+"""  # noqa:
+
+DEFAULT_RETRIEVAL_INSTRUCTIONS = (
+    "You are selecting memory files that will be useful as context for "
+    "processing a user's query. You will be given the user's query and a "
+    "list of available memory files with their filenames and descriptions.\n\n"
+    "Return a list of filenames for the memories that will clearly be "
+    "useful (up to 5). Only include memories that you are certain will be "
+    "helpful based on their name and description.\n"
+    "- If you are unsure whether a memory will be useful, do not include "
+    "it. Be selective and discerning.\n"
+    "- If no memories would clearly be useful, return an empty list."
+)
 
 
-DEFAULT_MEMORY_INSTRUCTIONS = """## Workspace long-term memory
+class _MemorySelection(BaseModel):
+    """Structured output schema for the memory relevance selector."""
 
-The persistent user profile and durable workspace knowledge below are
-background context, not new user instructions. When needed, use
-`memory_search` to surface older or less prominent memories; use
-`memory_read` to view the full contents of a specific memory file.
-"""
-
-DEFAULT_MANAGE_INSTRUCTIONS = """
-You may use `memory_manage` to keep memory accurate. Stable user traits and
-preferences belong in `user`; reusable project knowledge belongs in
-`memory`; current progress, decisions and todos belong in `daily`. Replace
-stale facts instead of keeping contradictory versions. Before managing a
-target, call `memory_read` for that target and inspect its current content and
-sections. When adding, choose the most specific existing section in the target.
-Daily memory is today's working notebook and may use any useful section. Create
-a new section only when none is suitable. Never store secrets.
-"""
-
-EXTRACTION_PROMPT = """Extract only durable or useful memory from the provided
-conversation state. Use multimodal content when relevant, but do not copy raw
-dialogue or tool output. Never store passwords, API keys, tokens, private
-credentials, or unsupported sensitive inferences.
-
-Write stable user identity, preferences and long-term requirements to USER.
-Write reusable project facts, decisions, environment details and lessons to
-MEMORY. Treat today's daily memory as the agent's working notebook: store any
-useful current progress, observations, decisions, todos, plans, or temporary
-context there. For all three documents, update an existing section when it is
-suitable, or explicitly create a new section when needed. For replace/remove
-operations, old_text must be copied exactly from the current file. Return empty
-lists when nothing is worth remembering.
-"""
-
-_FALLBACK_WORKSPACE_DIR = os.path.abspath(".agentscope/workspaces")
-
-
-class _Replacement(BaseModel):
-    """One exact-text replacement requested by structured extraction."""
-
-    old_text: str
-    new_text: str
-
-
-class _Addition(BaseModel):
-    """One extracted fact and the section that should contain it."""
-
-    section: str
-    content: str
-    create_section: bool = False
-
-
-class _DocumentEdits(BaseModel):
-    """Constrained additions, replacements, and removals for one document."""
-
-    add: list[_Addition] = Field(default_factory=list)
-    replace: list[_Replacement] = Field(default_factory=list)
-    remove: list[str] = Field(default_factory=list)
-
-
-class _MemoryExtraction(BaseModel):
-    """Complete structured result expected from the agent's chat model."""
-
-    daily: _DocumentEdits = Field(default_factory=_DocumentEdits)
-    user: _DocumentEdits = Field(default_factory=_DocumentEdits)
-    memory: _DocumentEdits = Field(default_factory=_DocumentEdits)
+    selected_files: list[str] = Field(
+        description=(
+            "Filenames of the memory files to surface, relative to the "
+            "memory directory (e.g. 'user_role.md'). Up to 5 entries."
+        ),
+    )
 
 
 class FileSystemMemoryMiddleware(MiddlewareBase):
-    """Maintain human-readable long-term memory inside Agent workspaces.
+    """Maintain human-readable long-term memory inside Agent workspaces,
+    backed by a filesystem."""
 
-    ``USER.md`` and ``MEMORY.md`` are appended to the normal Agent system
-    prompt. Daily notes live under ``Memory/memory/YYYY-MM-DD.md`` and are
-    retrieved on demand. Static extraction separately reads today's daily file
-    as an update baseline without exposing it to the normal reply context.
+    class Parameters(BaseModel):
+        """The user-tunable filesystem parameters."""
 
-    ``mode="static_control"`` periodically extracts memory from completed
-    turns. ``mode="agent_control"`` exposes ``memory_manage`` for
-    agent-controlled updates. ``mode="both"`` enables both write paths. Read
-    and search tools remain available in every mode.
+        memory_max_tokens: int = Field(
+            default=4_000,
+            title="MEMORY.md Max Length",
+            description=(
+                "The maximum tokens of the MEMORY.md inserted into the system "
+                "prompt."
+            ),
+        )
 
-    The middleware resolves a workspace dynamically from ``Agent.offloader``.
-    When no workspace is supplied, it lazily creates and owns a LocalWorkspace
-    at an internal hidden path. Backend details are not part of the public
-    middleware configuration.
-    """
+        memory_instructions: str = Field(
+            default=DEFAULT_MEMORY_INSTRUCTIONS,
+            title="Memory Instructions",
+            description=(
+                "The default instructions appended to the system prompt "
+                "before the MEMORY.md snapshots."
+            ),
+        )
+
+        retrieval_async: bool = Field(
+            default=True,
+            title="Async Retrieval",
+            description=(
+                "Whether to retrieve relevant memory files asynchronously "
+                "during the agent reply. If `True`, an async retrieval task "
+                "will be started."
+            ),
+        )
+
+        retrieval_max_tokens_per_md: int = Field(
+            default=2_000,
+            title="Retrieval Max Tokens Per File",
+            description=(
+                "Maximum tokens read from each memory file that is surfaced "
+                "by the relevance retrieval step. Keeps individual files from "
+                "flooding the context window."
+            ),
+        )
+
+        retrieval_instructions: str = Field(
+            default=DEFAULT_RETRIEVAL_INSTRUCTIONS,
+            title="Retrieval Instructions",
+            description=(
+                "The instructions used to select relevant memory files for a "
+                "given user query in the asynchronous retrieval task."
+            ),
+        )
 
     def __init__(
         self,
         *,
-        mode: Literal["static_control", "agent_control", "both"] = "both",
-        extraction_interval: int = 8,
-        extract_on_compaction: bool = True,
+        workdir: str,
         memory_dir: str = "Memory",
-        user_max_chars: int = 2_000,
-        memory_max_chars: int = 4_000,
-        daily_max_chars: int = 8_000,
-        memory_instructions: str = "",
+        parameters: Parameters | None = None,
+        chat_model: ChatModelBase | None = None,
+        backend: BackendBase | None = None,
     ) -> None:
         """Initialize filesystem-backed long-term memory behavior.
 
         Args:
-            mode:
-                ``"static_control"`` for periodic extraction,
-                ``"agent_control"`` for agent-managed writes, or ``"both"``
-                for both paths.
-            extraction_interval:
-                Number of completed user/assistant turns between static
-                extraction calls.
-            extract_on_compaction:
-                Flush pending static memory before context compression removes
-                old messages.
-            memory_dir:
-                Workspace-relative root containing all memory files.
-            user_max_chars, memory_max_chars, daily_max_chars:
-                Per-document character caps enforced after every mutation.
-            memory_instructions:
-                Optional extra prompt text appended after the default
-                USER/MEMORY snapshot instructions.
+            workdir (`str`):
+                The working directory of this agent, used to store the agentic
+                searchable memory files.
+            memory_dir (`str`, defaults to ``"Memory"``):
+                The directory to store the long-term memory files, including
+                USER.md, MEMORY.md.
+            parameters (`FileSystemMemoryMiddleware.Parameters | None`, \
+            defaults to ``None``):
+                User-tunable parameters.  When ``None``, defaults are used.
+            backend (`BackendBase | None`, optional):
+                The backend to switch between local and remote storage.
+                When ``None``, a local filesystem is used.
         """
-        if mode not in ("static_control", "agent_control", "both"):
-            raise ValueError(
-                "mode must be 'static_control', 'agent_control', or 'both'.",
-            )
-        if extraction_interval < 1:
-            raise ValueError("extraction_interval must be at least 1.")
-
-        self._mode = mode
-        self._extraction_interval = extraction_interval
-        self._extract_on_compaction = extract_on_compaction
+        self._workdir = workdir
         self._memory_dir = memory_dir
-        self._user_max_chars = user_max_chars
-        self._memory_max_chars = memory_max_chars
-        self._daily_max_chars = daily_max_chars
-        self._fallback_workspace_dir = _FALLBACK_WORKSPACE_DIR
-        extra_instructions = memory_instructions.strip()
-        self._memory_instructions = DEFAULT_MEMORY_INSTRUCTIONS
-        if extra_instructions:
-            self._memory_instructions = (
-                f"{self._memory_instructions.rstrip()}\n\n"
-                f"{extra_instructions}\n"
-            )
+        self._parameters = parameters or self.Parameters()
+        self._backend = backend or LocalBackend()
 
-        # Registries are keyed by workspace ID. Session IDs are only routing
-        # keys used by state-injected tools to find the active store.
-        self._stores: dict[str, FileSystemMemoryStore] = {}
-        self._backends_by_workspace: dict[str, BackendBase] = {}
-        self._locks: dict[str, asyncio.Lock] = {}
-        self._snapshots: dict[
-            str,
-            tuple[SnapshotVersion, MemoryPromptSnapshot],
-        ] = {}
-        self._workspace_keys_by_session: dict[str, str] = {}
-        self._owned_local_workspace: WorkspaceBase | None = None
-        self._workspace_resolution_lock = asyncio.Lock()
+        self.chat_model = chat_model
 
-    async def on_reply(
-        self,
-        agent: "Agent",
-        input_kwargs: dict,
-        next_handler: Callable[..., AsyncGenerator],
-    ) -> AsyncGenerator:
-        """Resolve storage, stream the reply, then run static extraction.
+        self._store = FileSystemMemoryStore(
+            self._backend,
+            self._workdir,
+            memory_dir=self._memory_dir,
+            user_max_length=self._parameters.user_max_length,
+            memory_max_length=self._parameters.memory_max_tokens,
+            daily_max_length=self._parameters.daily_max_length,
+        )
 
-        The generator yields every downstream event unchanged. Extraction is
-        placed in ``finally`` so a normally completed streamed reply is counted
-        even when its consumer closes immediately after the final event.
-        """
-        store = await self._resolve_store(agent)
-        try:
-            await store.ensure_layout()
-        except Exception as error:  # noqa: BLE001
-            logger.warning(
-                "FileSystemMemory initialization failed for session_id=%s: %s",
-                agent.state.session_id,
-                error,
-            )
-        # HITL resumption events are not new user turns and must not advance
-        # the persistent extraction counter.
-        query = self._extract_user_text(input_kwargs.get("inputs"))
-        final_message: Msg | None = None
+        self._cached_input: str | None = None
+        # The in-flight asynchronous retrieval task started in ``on_reply``
+        # and consumed in ``on_reasoning``. Kept on the instance so the
+        # reasoning hook can poll for completion across iterations.
+        self._retrieval_task: asyncio.Task | None = None
 
-        try:
-            async for item in next_handler(**input_kwargs):
-                if isinstance(item, Msg) and item.role == "assistant":
-                    final_message = item
-                yield item
-        finally:
-            if (
-                self._mode in ("static_control", "both")
-                and query
-                and final_message is not None
-            ):
-                try:
-                    async with self._lock_for_state(agent.state):
-                        # Counting is persisted in .ltm.meta.json so static
-                        # cadence survives Agent and process restarts.
-                        turn_count, last_update = await store.increment_turn()
-                        if (
-                            turn_count - last_update
-                            >= self._extraction_interval
-                        ):
-                            await self._extract_and_store(
-                                agent,
-                                store,
-                                turn_count=turn_count,
-                            )
-                except Exception as error:  # noqa: BLE001
-                    logger.warning(
-                        "FileSystemMemory post-reply update failed for "
-                        "session_id=%s: %s",
-                        agent.state.session_id,
-                        error,
-                    )
+    @staticmethod
+    def _truncate_if_needed(content: str, max_length: int) -> str:
+        """Truncate the given content by the max length argument if needed."""
+        n_tokens = _estimate_tokens(content)
+        if n_tokens <= max_length:
+            return content
+
+        index = int((max_length / n_tokens) * len(content))
+        while _estimate_tokens(content[index:]) > max_length:
+            index = max(0, index - 10)
+
+        return content[index:]
 
     async def on_system_prompt(
         self,
@@ -261,300 +320,222 @@ class FileSystemMemoryMiddleware(MiddlewareBase):
         current_prompt: str,
     ) -> str:
         """Append a modification-time-aware USER and MEMORY snapshot."""
-        store = await self._resolve_store(agent)
-        cache_key = self._snapshot_key(agent.state)
-        cached = self._snapshots.get(cache_key)
-        try:
-            version = await store.get_snapshot_version()
-            if version is None or cached is None or cached[0] != version:
-                snapshot = await store.read_snapshot()
-                # On first use the files may have been created by
-                # read_snapshot(), so obtain their now-available mtimes.
-                if version is None:
-                    version = await store.get_snapshot_version()
-                if version is None:
-                    self._snapshots.pop(cache_key, None)
-                else:
-                    self._snapshots[cache_key] = (version, snapshot)
-            else:
-                snapshot = cached[1]
-        except Exception as error:  # noqa: BLE001
-            logger.warning(
-                "FileSystemMemory prompt load failed for session_id=%s: %s",
-                agent.state.session_id,
-                error,
-            )
-            return current_prompt
+        memory_md_content = await self._store.get_memory_md_content() or ""
 
-        # Daily files are deliberately excluded; they remain retrievable via
-        # memory_search/read instead of growing every model request.
-        content = (
-            f"{self._memory_instructions}\n"
-            f"### USER.md\n{snapshot.user.strip()}\n\n"
-            f"### MEMORY.md\n{snapshot.memory.strip()}"
+        # Truncated by config
+        memory_md_truncated = self._truncate_if_needed(
+            memory_md_content,
+            self._parameters.memory_max_tokens,
         )
-        if self._mode in ("agent_control", "both"):
-            content += DEFAULT_MANAGE_INSTRUCTIONS
+
+        if len(memory_md_truncated) != len(memory_md_content):
+            memory_md_path = self._store.get_memory_md_path()
+            remain_lines = len(memory_md_truncated.split("\n"))
+            omitted_lines = len(memory_md_content.split("\n")) - remain_lines
+            memory_md_truncated += (
+                "\n<<<TRUNCATED>>>\n<system-reminder>The remaining "
+                f"{omitted_lines} lines have been omitted due to context "
+                "length limits. Use the `Read` tool with offset "
+                f"`{remain_lines}` to access the rest of '{memory_md_path}'."
+                f"</system-reminder>"
+            )
+
+        if not memory_md_truncated:
+            memory_md_truncated = (
+                "Your MEMORY.md is currently empty. When you save new "
+                "memories, they will appear here."
+            )
+
+        content = (
+            f"{self._parameters.memory_instructions}\n"
+            f"## MEMORY.md\n{memory_md_truncated}"
+        )
+
         return f"{current_prompt}\n\n{content}"
 
-    async def on_compress_context(
+    async def on_reply(
         self,
         agent: "Agent",
         input_kwargs: dict,
-        next_handler: Callable[..., Any],
-    ) -> None:
-        """Flush pending static memory before old context is compressed.
+        next_handler: Callable[..., AsyncGenerator],
+    ) -> AsyncGenerator:
+        """Cache the user input and kick off an asynchronous retrieval task
+        that runs concurrently with the agent reply."""
+        inputs = input_kwargs.get("inputs")
 
-        The hook mirrors Agent's token-threshold check and only extracts when
-        turns exist beyond the last successful static update.
-        """
-        if (
-            self._mode in ("static_control", "both")
-            and self._extract_on_compaction
-            and await self._will_compress(agent, input_kwargs)
+        msgs = None
+        if isinstance(inputs, list) and all(
+            isinstance(_, Msg) for _ in inputs
         ):
-            store = await self._resolve_store(agent)
-            async with self._lock_for_state(agent.state):
-                turn_count, last_update = await store.get_turn_state()
-                if turn_count > last_update:
-                    await self._extract_and_store(
-                        agent,
-                        store,
-                        turn_count=turn_count,
-                    )
-        await next_handler(**input_kwargs)
+            msgs = inputs
+        elif isinstance(inputs, Msg):
+            msgs = [inputs]
+
+        if msgs is not None:
+            self._cached_input = "\n".join(
+                [
+                    f"{_.name}: " + _.get_text_content()
+                    for _ in msgs
+                    if _.get_text_content() is not None
+                ],
+            )
+
+        # Start an asynchronous retrieval task that uses an LLM to decide
+        # which memory files are relevant to the current user input. The
+        # result is consumed by ``on_reasoning``.
+        if self._cached_input:
+            self._retrieval_task = asyncio.create_task(
+                self._retrieve_relevant_files(agent, self._cached_input),
+            )
+
+        try:
+            async for _ in next_handler(**input_kwargs):
+                yield _
+        finally:
+            # Ensure the retrieval task does not outlive the reply.
+            if (
+                self._retrieval_task is not None
+                and not self._retrieval_task.done()
+            ):
+                self._retrieval_task.cancel()
+                try:
+                    await self._retrieval_task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                    pass
+            self._retrieval_task = None
+            self._cached_input = None
 
     @staticmethod
-    async def _will_compress(agent: "Agent", input_kwargs: dict) -> bool:
-        """Check the same token threshold used by Agent compression."""
-        config = input_kwargs.get("context_config") or agent.context_config
-        # pylint: disable-next=protected-access
-        model_input = await agent._prepare_model_input()
-        estimated = await agent.model.count_tokens(**model_input)
-        return estimated >= config.trigger_ratio * agent.model.context_size
+    def _format_manifest(headers: list[MemoryFileHeader]) -> str:
+        """Format a list of memory file headers into a one-line-per-file
+        manifest string suitable for the selector prompt."""
+        lines = []
+        for h in headers:
+            tag = f"[{h.type}] " if h.type else ""
+            if h.mtime is not None:
+                from datetime import datetime
 
-    async def list_tools(self) -> list["ToolBase"]:
-        """Return read/search tools, plus manage in agent-control modes.
+                ts = datetime.fromtimestamp(h.mtime).strftime("%Y-%m-%d")
+            else:
+                ts = "unknown"
+            desc = f": {h.description}" if h.description else ""
+            lines.append(f"- {tag}{h.filename} ({ts}){desc}")
+        return "\n".join(lines)
 
-        Callers must add the returned tools to a Toolkit explicitly; middleware
-        construction never mutates an Agent's toolkit.
-        """
-        return build_memory_tools(
-            self,
-            writable=self._mode in ("agent_control", "both"),
-        )
-
-    async def _resolve_store(self, agent: "Agent") -> FileSystemMemoryStore:
-        """Resolve and register the workspace-scoped store for ``agent``."""
-        workspace = await self._resolve_workspace(agent)
-        backend = workspace.get_backend()
-        key = workspace.workspace_id
-        self._workspace_keys_by_session[agent.state.session_id] = key
-        existing = self._stores.get(key)
-        if (
-            existing is not None
-            and self._backends_by_workspace.get(key) is backend
-        ):
-            return existing
-        # Docker/E2B may replace their backend when reconnecting. Rebuild the
-        # store and discard any snapshot read through the previous backend.
-        if existing is not None:
-            self._invalidate_snapshot(agent.state)
-        store = FileSystemMemoryStore(
-            backend,
-            workspace.workdir,
-            memory_dir=self._memory_dir,
-            user_max_chars=self._user_max_chars,
-            memory_max_chars=self._memory_max_chars,
-            daily_max_chars=self._daily_max_chars,
-        )
-        self._stores[key] = store
-        self._backends_by_workspace[key] = backend
-        return store
-
-    async def _resolve_workspace(self, agent: "Agent") -> WorkspaceBase:
-        """Resolve an offloader workspace or create a local fallback.
-
-        A shared app middleware may receive concurrent first requests, so
-        fallback initialization is protected by a lock.
-        """
-        if isinstance(agent.offloader, WorkspaceBase):
-            return agent.offloader
-
-        from ....workspace import LocalWorkspace
-
-        workspace = self._owned_local_workspace
-        if workspace is not None:
-            return workspace
-
-        async with self._workspace_resolution_lock:
-            workspace = self._owned_local_workspace
-            if workspace is None:
-                workspace = LocalWorkspace(
-                    workdir=self._fallback_workspace_dir,
-                )
-                await workspace.initialize()
-                self._owned_local_workspace = workspace
-        return workspace
-
-    def _store_for_state(self, state: "AgentState") -> FileSystemMemoryStore:
-        """Resolve a previously registered store for a tool's AgentState.
-
-        In normal Agent execution ``on_system_prompt`` / ``on_reply`` registers
-        the session before a tool can run.
-        """
-        key = self._workspace_keys_by_session.get(state.session_id)
-        store = self._stores.get(key) if key is not None else None
-        if store is not None:
-            return store
-        raise RuntimeError(
-            "The FileSystemMemory workspace has not been resolved yet. Run "
-            "an Agent reply before calling a dynamically-bound memory tool.",
-        )
-
-    def _lock_for_state(self, state: "AgentState") -> asyncio.Lock:
-        """Return the write lock shared by sessions in one workspace."""
-        key = self._workspace_keys_by_session.get(state.session_id)
-        if key is None:
-            raise RuntimeError(
-                "The FileSystemMemory workspace has not been resolved yet.",
-            )
-        return self._locks.setdefault(key, asyncio.Lock())
-
-    def _snapshot_key(self, state: "AgentState") -> str:
-        """Return the workspace key shared by its prompt snapshots."""
-        return self._workspace_keys_by_session.get(state.session_id, "")
-
-    def _invalidate_snapshot(self, state: "AgentState") -> None:
-        """Discard the cached prompt snapshot for ``state``'s workspace."""
-        self._snapshots.pop(self._snapshot_key(state), None)
-
-    async def close(self) -> None:
-        """Close the LocalWorkspace owned by this middleware, if any.
-
-        Offloader workspaces belong to their callers.
-        """
-        if self._owned_local_workspace is not None:
-            await self._owned_local_workspace.close()
-            self._owned_local_workspace = None
-
-    async def _extract_and_store(
+    async def _retrieve_relevant_files(
         self,
         agent: "Agent",
-        store: FileSystemMemoryStore,
-        *,
-        turn_count: int,
-    ) -> None:
-        """Extract structured memory from Agent state and persist it.
+        query: str,
+    ) -> str | None:
+        """Use an LLM to identify memory files relevant to ``query`` and
+        return their content as an injectable string.
 
-        The internal call reuses the Agent's compressed summary and complete
-        live context, preserving multimodal blocks. A final HintBlock supplies
-        the current USER, MEMORY, and daily text so replacements can quote
-        exact old content. These temporary messages are never written back to
-        AgentState. The turn watermark advances only after all documents are
-        updated.
+        Args:
+            agent (`Agent`):
+                The agent whose model / memory store should be consulted.
+            query (`str`):
+                The cached user input used as the retrieval query.
+
+        Returns:
+            `str | None`:
+                The formatted retrieval result ready to be injected into the
+                context, or ``None`` when nothing relevant was found.
         """
-        if not agent.state.summary and not agent.state.context:
-            return
-        snapshot = await store.read_snapshot()
-        current_daily = await store.read_target("daily")
-        messages = [
-            SystemMsg(name="system", content=EXTRACTION_PROMPT),
-        ]
-        if agent.state.summary:
-            messages.append(
+        # 1. Scan available memory files (frontmatter only, cheap).
+        headers = await self._store.list_md_files()
+        if not headers:
+            return None
+
+        valid_filenames = {h.filename for h in headers}
+        manifest = self._format_manifest(headers)
+
+        # 2. Ask the model to select relevant files.
+        model = self.chat_model or agent.model
+        res = await model.generate_structured_output(
+            [
+                SystemMsg(
+                    name="system",
+                    content=self._parameters.retrieval_instructions,
+                ),
                 UserMsg(
-                    name="conversation_summary",
+                    name="user",
                     content=(
-                        "<conversation-summary>\n"
-                        f"{agent.state.summary}\n"
-                        "</conversation-summary>"
+                        f"Query: {query}\n\n"
+                        f"Available memories:\n{manifest}"
                     ),
                 ),
-            )
-        messages.extend(agent.state.context)
-        messages.append(
-            Msg(
-                name="memory_extraction",
-                role="assistant",
-                content=[
-                    HintBlock(
-                        source="file_ltm",
-                        hint=(
-                            "Review the conversation state above and update "
-                            "the memory documents below. Prefer information "
-                            "not already captured accurately.\n\n"
-                            f"Current USER.md:\n{snapshot.user}\n\n"
-                            f"Current MEMORY.md:\n{snapshot.memory}\n\n"
-                            "Today's daily memory:\n"
-                            f"{current_daily or '(empty)'}"
-                        ),
-                    ),
-                ],
-            ),
-        )
-        # Structured output keeps model prose away from the mutation layer and
-        # gives every addition an explicit target section.
-        try:
-            response = await agent.model.generate_structured_output(
-                messages=messages,
-                structured_model=_MemoryExtraction,
-            )
-            extraction = _MemoryExtraction.model_validate(response.content)
-            await self._apply_extracted_edits(
-                store,
-                "daily",
-                extraction.daily,
-            )
-            await self._apply_extracted_edits(
-                store,
-                "user",
-                extraction.user,
-            )
-            await self._apply_extracted_edits(
-                store,
-                "memory",
-                extraction.memory,
-            )
-            await store.mark_static_update(turn_count)
-            self._invalidate_snapshot(agent.state)
-        except Exception as error:  # noqa: BLE001
-            logger.warning(
-                "FileSystemMemory extraction failed for session_id=%s: %s",
-                agent.state.session_id,
-                error,
-            )
-
-    @staticmethod
-    async def _apply_extracted_edits(
-        store: FileSystemMemoryStore,
-        target: Literal["user", "memory", "daily"],
-        edits: _DocumentEdits,
-    ) -> None:
-        """Translate one structured document edit into store arguments."""
-        await store.apply_edits(
-            target,
-            add=[
-                (item.section, item.content, item.create_section)
-                for item in edits.add
             ],
-            replace=[(item.old_text, item.new_text) for item in edits.replace],
-            remove=edits.remove,
+            structured_model=_MemorySelection,
         )
 
-    @staticmethod
-    def _extract_user_text(inputs: Any) -> str | None:
-        """Return new user text, excluding HITL continuation events."""
-        if inputs is None or isinstance(
-            inputs,
-            (ExternalExecutionResultEvent, UserConfirmResultEvent),
-        ):
+        # 3. Validate: discard hallucinated filenames.
+        raw_selected: list[str] = res.content.get("selected_files", [])
+        selected = [f for f in raw_selected if f in valid_filenames][:5]
+        if not selected:
             return None
-        messages = inputs if isinstance(inputs, list) else [inputs]
-        texts = []
-        for message in messages:
-            if isinstance(message, Msg) and message.role == "user":
-                text = message.get_text_content()
-                if text:
-                    texts.append(text)
-        return "\n".join(texts) if texts else None
+
+        # 4. Read each selected file and format as an injectable string.
+        # Cap each file to avoid flooding the context window.
+        header_by_filename = {h.filename: h for h in headers}
+        parts: list[str] = []
+        for filename in selected:
+            h = header_by_filename[filename]
+            try:
+                content = (await self._backend.read_file(h.path)).decode(
+                    "utf-8",
+                    errors="replace",
+                )
+            except Exception:
+                continue
+
+            # Truncate large files to avoid flooding the context window.
+            content = self._truncate_if_needed(
+                content,
+                self._parameters.retrieval_max_tokens_per_md,
+            )
+            if h.mtime is not None:
+                import time
+
+                days = max(0, int((time.time() - h.mtime) / 86_400))
+                if days == 0:
+                    age = "today"
+                elif days == 1:
+                    age = "yesterday"
+                else:
+                    age = f"{days} days ago"
+                header = f"Memory (saved {age}): {h.path}:"
+            else:
+                header = f"Memory: {h.path}:"
+
+            parts.append(f"{header}\n\n{content}")
+
+        if not parts:
+            return None
+
+        return "\n\n---\n\n".join(parts)
+
+    async def on_reasoning(
+        self,
+        agent: "Agent",
+        input_kwargs: dict,
+        next_handler: Callable[..., AsyncGenerator],
+    ) -> AsyncGenerator:
+        """Check if the retrieval finished and if yes, insert a hint block to
+        the content."""
+        # Poll the in-flight retrieval task; if it has finished, consume its
+        # result and inject it into the agent context exactly once.
+        if self._retrieval_task is not None and self._retrieval_task.done():
+            task = self._retrieval_task
+            self._retrieval_task = None
+            try:
+                retrieval_result = task.result()
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                retrieval_result = None
+
+            if retrieval_result:
+                # TODO: 将 retrieval_result 以合适的消息 / HintBlock 形式
+                #  追加到 agent.state.context 中。
+                agent.state
+
+        async for event in next_handler(**input_kwargs):
+            yield event
