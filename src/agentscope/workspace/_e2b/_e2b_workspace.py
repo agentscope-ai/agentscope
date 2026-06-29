@@ -23,8 +23,10 @@ Docker engine for the E2B SDK (``e2b.AsyncSandbox``):
   ``files.exists(GATEWAY_SCRIPT)`` probe so the cost is paid exactly
   once per sandbox lifetime.
 * **MCP gateway.** Identical to Docker: a FastAPI process inside the
-  sandbox, host-side talks to it over HTTPS via E2B's proxy
-  (``sandbox.get_host(port)`` + ``X-Access-Token`` header).
+  sandbox, host-side talks to it via E2B's proxy. Default E2B routing
+  uses ``sandbox.get_host(port)`` plus ``X-Access-Token``; self-hosted
+  ``E2B_SANDBOX_URL`` routing uses the shared proxy URL plus
+  ``E2b-Sandbox-Id`` / ``E2b-Sandbox-Port`` headers.
 * **Service-layer index.** The host stores only ``workspace_id``;
   the sandbox carries ``METADATA_WORKSPACE_ID_KEY = workspace_id`` in
   its E2B metadata. Manager code calls ``AsyncSandbox.list(query=...)``
@@ -130,6 +132,8 @@ class E2BWorkspace(WorkspaceBase):
         workspace_id: str | None = None,
         template: str = DEFAULT_TEMPLATE,
         api_key: str = "",
+        api_url: str = "",
+        sandbox_url: str = "",
         domain: str = "",
         timeout_seconds: int = DEFAULT_TIMEOUT,
         gateway_port: int = DEFAULT_GATEWAY_PORT,
@@ -157,6 +161,12 @@ class E2BWorkspace(WorkspaceBase):
             api_key (`str`, defaults to `""`):
                 E2B API key. ``""`` falls back to the ``E2B_API_KEY``
                 env var.
+            api_url (`str`, defaults to `""`):
+                Optional E2B API URL. ``""`` falls back to the
+                ``E2B_API_URL`` env var.
+            sandbox_url (`str`, defaults to `""`):
+                Optional E2B sandbox proxy URL. ``""`` falls back to
+                the ``E2B_SANDBOX_URL`` env var.
             domain (`str`, defaults to `""`):
                 Optional custom E2B domain (self-hosted etc.).
             timeout_seconds (`int`, defaults to `DEFAULT_TIMEOUT`):
@@ -191,6 +201,8 @@ class E2BWorkspace(WorkspaceBase):
         self.workdir = SANDBOX_WORKDIR
         self.template = template
         self.api_key = api_key
+        self.api_url = api_url
+        self.sandbox_url = sandbox_url
         self.domain = domain
         self.timeout_seconds = timeout_seconds
         self.gateway_port = gateway_port
@@ -285,9 +297,8 @@ class E2BWorkspace(WorkspaceBase):
         await self._write_gateway_config()
         await self._start_gateway_process()
 
-        host = self._sandbox.get_host(self.gateway_port)
         self._gateway = GatewayClient(
-            base_url=f"https://{host}",
+            base_url=self._gateway_base_url(),
             token=self._gateway_token,
             timeout=30.0,
             extra_headers=self._sandbox_proxy_headers(),
@@ -782,23 +793,55 @@ class E2BWorkspace(WorkspaceBase):
         return candidates[0]
 
     def _api_opts(self) -> dict[str, Any]:
-        """Common ``api_key`` / ``domain`` opts forwarded to E2B SDK calls."""
+        """Common connection opts forwarded to E2B SDK calls."""
         opts: dict[str, Any] = {}
         if self.api_key:
             opts["api_key"] = self.api_key
+        if self.api_url:
+            opts["api_url"] = self.api_url
+        if self.sandbox_url:
+            opts["sandbox_url"] = self.sandbox_url
         if self.domain:
             opts["domain"] = self.domain
         return opts
 
+    def _gateway_base_url(self) -> str:
+        """Host-visible URL for the AgentScope MCP gateway."""
+        if self._sandbox is None:
+            return ""
+        sandbox_url = self._sandbox_url()
+        if sandbox_url:
+            return sandbox_url.rstrip("/")
+        host = self._sandbox.get_host(self.gateway_port)
+        return f"https://{host}"
+
+    def _sandbox_url(self) -> str | None:
+        """Configured E2B sandbox proxy URL, if provided."""
+        if self.sandbox_url:
+            return self.sandbox_url
+        if self._sandbox is None:
+            return None
+        connection_config = getattr(self._sandbox, "connection_config", None)
+        if connection_config is None:
+            return None
+        return getattr(connection_config, "_sandbox_url", None)
+
     def _sandbox_proxy_headers(self) -> dict[str, str]:
         """Headers required by the E2B proxy to reach the gateway port.
 
-        E2B's edge proxy gates non-default ports behind the
-        ``X-Access-Token`` header tied to the sandbox. The token is
-        exposed on the sandbox object as ``traffic_access_token``.
+        Default E2B routing gates non-default ports behind the
+        ``X-Access-Token`` header tied to the sandbox. Self-hosted
+        sandbox URL routing uses the shared proxy endpoint and sends
+        the sandbox id / target port as routing headers.
         """
         if self._sandbox is None:
             return {}
+        sandbox_url = self._sandbox_url()
+        if sandbox_url:
+            return {
+                "E2b-Sandbox-Id": self._sandbox.sandbox_id,
+                "E2b-Sandbox-Port": str(self.gateway_port),
+            }
         token = getattr(self._sandbox, "traffic_access_token", None)
         if not token:
             return {}
