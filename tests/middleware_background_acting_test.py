@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=abstract-method
+# pylint: disable=abstract-method,unused-argument,missing-function-docstring
 """Tests for on_acting middleware patterns: short-circuit, chaining, and
 background-task execution.
 
@@ -16,7 +16,7 @@ covering the structural properties of the on_acting hook:
 """
 import asyncio
 import json
-from typing import Any, AsyncGenerator, Callable
+from typing import Any, AsyncGenerator, Callable, TypeAlias
 from unittest import IsolatedAsyncioTestCase
 
 from pydantic import BaseModel
@@ -36,13 +36,14 @@ from agentscope.tool import ToolBase, ToolChunk, ToolResponse, Toolkit
 
 # Local alias used for the background-drain queue so the type parameter
 # is explicit and no type: ignore comments are needed on queue operations.
-ToolItem = ToolChunk | ToolResponse
+ToolItem: TypeAlias = ToolChunk | ToolResponse
 
 
 # ---------------------------------------------------------------------------
 # Sentinel type — gives the background queue a clean union type instead of
 # relying on a bare `object()`, eliminating Queue[object] and type: ignore.
 # ---------------------------------------------------------------------------
+
 
 class _Sentinel:
     """End-of-stream marker enqueued by _drain() when next_handler is done."""
@@ -86,7 +87,10 @@ class EchoTool(ToolBase):
             message="allowed",
         )
 
-    async def __call__(self, value: str) -> ToolChunk:  # type: ignore[override]
+    async def __call__(  # type: ignore[override]
+        self,
+        value: str,
+    ) -> ToolChunk:
         self._call_log.append(value)
         return ToolChunk(
             content=[TextBlock(text=f"echo:{value}")],
@@ -162,8 +166,9 @@ async def _run_tool_call(
     test reads only against public event types.  If the internal API
     is ever renamed this helper is the only place that needs updating.
     """
+    # pylint: disable=protected-access
     events = []
-    async for event in agent._execute_tool_call(tool_call):  # pylint: disable=protected-access
+    async for event in agent._execute_tool_call(tool_call):
         events.append(event)
     return events
 
@@ -235,6 +240,8 @@ class BackgroundActingMiddlewareTest(IsolatedAsyncioTestCase):
         order_log: list[str] = []
 
         class OuterActing(MiddlewareBase):
+            """Records before/after order around next_handler (outer)."""
+
             async def on_acting(
                 self,
                 agent: Agent,
@@ -247,6 +254,8 @@ class BackgroundActingMiddlewareTest(IsolatedAsyncioTestCase):
                 order_log.append("outer_after")
 
         class InnerActing(MiddlewareBase):
+            """Records before/after order around next_handler (inner)."""
+
             async def on_acting(
                 self,
                 agent: Agent,
@@ -381,9 +390,7 @@ class BackgroundActingMiddlewareTest(IsolatedAsyncioTestCase):
 
         # The background ToolResponse carries the echoed text
         all_text = " ".join(
-            b.text
-            for b in bg_responses[0].content
-            if isinstance(b, TextBlock)
+            b.text for b in bg_responses[0].content if isinstance(b, TextBlock)
         )
         self.assertIn("echo:bg_test", all_text)
 
@@ -398,6 +405,8 @@ class BackgroundActingMiddlewareTest(IsolatedAsyncioTestCase):
         intercepted: list[str] = []
 
         class RecordingMiddleware(MiddlewareBase):
+            """Records the value of each intercepted tool call."""
+
             async def on_acting(
                 self,
                 agent: Agent,
@@ -446,7 +455,7 @@ class BackgroundActingMiddlewareTest(IsolatedAsyncioTestCase):
         toolkit = Toolkit(tools=[isolation_tool])
 
         self.mock_model.set_responses(
-            [ChatResponse(content=[TextBlock(text="ok")], is_last=True)]
+            [ChatResponse(content=[TextBlock(text="ok")], is_last=True)],
         )
         agent = Agent(
             name="agent",
@@ -470,5 +479,6 @@ class BackgroundActingMiddlewareTest(IsolatedAsyncioTestCase):
         self.assertNotIn(
             "_agent_state",
             extra_kwargs_log[0],
-            "Toolkit must not inject _agent_state when is_state_injected=False",
+            "Toolkit must not inject _agent_state when "
+            "is_state_injected=False",
         )
