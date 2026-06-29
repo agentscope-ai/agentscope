@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The agent config classes."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ..model import ChatModelBase
 
@@ -194,6 +194,19 @@ class ContextConfig(BaseModel):
         json_schema_extra={"format": "textarea"},
     )
     """Prompt used to ask the model whether context should be compacted."""
+
+    @model_validator(mode="after")
+    def _validate_self_compact_trigger_ratio(self) -> "ContextConfig":
+        """Ensure self-compaction runs before threshold compression."""
+        if (
+            self.self_compact_enabled
+            and self.self_compact_trigger_ratio >= self.trigger_ratio
+        ):
+            raise ValueError(
+                "self_compact_trigger_ratio must be smaller than "
+                "trigger_ratio.",
+            )
+        return self
 
 
 class ReActConfig(BaseModel):
