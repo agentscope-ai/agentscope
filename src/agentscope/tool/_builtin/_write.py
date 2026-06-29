@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """The write tool in agentscope."""
+import difflib
 import fnmatch
+from pathlib import Path
 from typing import Any, List
 
 from .._base import ToolBase, ToolMiddlewareBase
@@ -258,6 +260,30 @@ Usage:
                     is_last=True,
                 )
 
+        # Capture the pre-write content (if any) so we can compute a unified
+        # diff for the web UI. For brand-new files this stays as an empty
+        # string, which produces a clean "new file" diff (``--- /dev/null``).
+        # Track ``file_existed`` separately from ``previous_content`` because
+        # an *existing* empty file overwrite is not the same as creating a
+        # new file — the diff header must reflect that.
+        file_existed = await self._backend.file_exists(file_path)
+        previous_content = ""
+        if file_existed:
+            try:
+                previous_content = (
+                    await self._backend.read_file(file_path)
+                ).decode("utf-8")
+            except Exception:  # pylint: disable=broad-except
+                # Binary or unreadable file — fall back to empty so we still
+                # render a best-effort "add" diff in the UI.
+                previous_content = ""
+
+        # Create parent directories if they don't exist
+        parent_dir = Path(file_path).parent
+        await self._backend.exec_shell(
+            ["mkdir", "-p", str(parent_dir)],
+        )
+
         # Write content to file (backend handles parent dir creation)
         await self._backend.write_file(
             file_path,
@@ -266,6 +292,21 @@ Usage:
 
         # Count lines in content
         line_count = len(content.split("\n"))
+
+        # Build the unified diff between previous and new content. When the
+        # file is brand new, ``unified_diff`` over an empty old side naturally
+        # produces a single "all add" hunk starting at line 1.
+        diff_text = "".join(
+            difflib.unified_diff(
+                previous_content.splitlines(keepends=True),
+                content.splitlines(keepends=True),
+                fromfile=(
+                    "/dev/null" if not file_existed else f"a/{file_path}"
+                ),
+                tofile=f"b/{file_path}",
+                n=3,
+            ),
+        )
 
         # Return success message
         return ToolChunk(
@@ -277,4 +318,9 @@ Usage:
             ],
             state=ToolResultState.RUNNING,
             is_last=True,
+            metadata={
+                "diff": diff_text,
+                "file_path": file_path,
+                "occurrences": 1,
+            },
         )

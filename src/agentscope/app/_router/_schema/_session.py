@@ -6,6 +6,7 @@ from ....permission import PermissionMode
 from ...storage import (
     AgentRecord,
     ChatModelConfig,
+    SessionKnowledgeConfig,
     TTSModelConfig,
     SessionRecord,
     TeamRecord,
@@ -78,6 +79,14 @@ class CreateSessionRequest(BaseModel):
         default=None,
         description="TTS model configuration. Can be set later via PATCH.",
     )
+    knowledge_config: SessionKnowledgeConfig | None = Field(
+        default=None,
+        description=(
+            "Knowledge bases attached to this session plus the "
+            "`RAGMiddleware` parameters. Can be set later "
+            "via PATCH."
+        ),
+    )
 
 
 class CreateSessionResponse(BaseModel):
@@ -111,6 +120,13 @@ class UpdateSessionRequest(BaseModel):
         default=None,
         description="New TTS model configuration. "
         "Pass null to clear; omit to leave unchanged.",
+    )
+    knowledge_config: SessionKnowledgeConfig | None = Field(
+        default=None,
+        description=(
+            "New knowledge base attachment + middleware parameters. "
+            "Pass null to clear; omit to leave unchanged."
+        ),
     )
     permission_mode: PermissionMode | None = Field(
         default=None,

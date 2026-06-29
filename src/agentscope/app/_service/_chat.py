@@ -13,8 +13,10 @@ that wants them subscribes through the
 """
 from fastapi import HTTPException
 
-from ..message_bus import MessageBus
-from ..storage import StorageBase
+from ..message_bus import MessageBus, MessageBusKeys
+from .._bus_ops import publish_session_event
+from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
+from ..storage import StorageBase, AgentRecord, SessionRecord
 from .._manager import BackgroundTaskManager, SchedulerManager
 from ..workspace_manager import WorkspaceManagerBase
 from ..middleware import (
@@ -22,19 +24,24 @@ from ..middleware import (
     StateChangeMiddleware,
     ToolOffloadMiddleware,
 )
-from ...middleware import TTSMiddleware
+from ...middleware import TTSMiddleware, RAGMiddleware
+from ...rag import KnowledgeBase
 from .._types import (
     AgentMiddlewareFactory,
     AgentToolFactory,
+    EventProjector,
     SubAgentTemplate,
 )
 from ._model import get_model
 from ._tts_model import get_tts_model
 from ._toolkit import get_toolkit
+from ._session_projection import SessionProjection
+from ._projectors import SubagentHitlProjector
 
 from ..._logging import logger
 from ...agent import Agent, ModelConfig
 from ...event import (
+    AgentEvent,
     ReplyStartEvent,
     UserConfirmResultEvent,
     ExternalExecutionResultEvent,
@@ -65,10 +72,12 @@ class ChatService:
         scheduler_manager: SchedulerManager,
         background_task_manager: BackgroundTaskManager,
         message_bus: MessageBus,
+        knowledge_base_manager: KnowledgeBaseManagerBase | None = None,
         extra_agent_middlewares: AgentMiddlewareFactory | None = None,
         extra_agent_tools: AgentToolFactory | None = None,
         custom_subagent_templates: dict[str, SubAgentTemplate] | None = None,
         custom_agent_cls: type[Agent] | None = None,
+        extra_projectors: list[EventProjector] | None = None,
     ) -> None:
         """Initialize chat service.
 
@@ -91,6 +100,15 @@ class ChatService:
                 distributed locking (via :meth:`session_run`), event
                 replay + live fan-out (via :meth:`session_publish_event`),
                 and inbox delivery (via :class:`InboxMiddleware`).
+            knowledge_base_manager (`KnowledgeBaseManagerBase | None`, \
+             optional):
+                The application's knowledge base manager.  When
+                provided and the session config carries a
+                ``knowledge_config``, a
+                :class:`~agentscope.middleware.RAGMiddleware`
+                is attached to the agent at run time.  ``None``
+                disables knowledge-base wiring even for sessions that
+                have one configured.
             extra_agent_middlewares (`AgentMiddlewareFactory | None`, \
              optional):
                 Async factory invoked at every chat turn to produce
@@ -107,16 +125,28 @@ class ChatService:
             custom_agent_cls (`type[Agent] | None`, optional):
                 Custom :class:`Agent` subclass for assembling agents.
                 Falls back to :class:`Agent` when ``None``.
+            extra_projectors (`list[EventProjector] | None`, optional):
+                Additional cross-session event projectors to run after
+                the built-in ones (mirrors the ``extra_agent_*``
+                injection style). Each is invoked once per produced
+                event to mirror a UI feed onto another session; see
+                :class:`~agentscope.app._types.EventProjector`.
         """
         self._storage = storage
         self._workspace_manager = workspace_manager
         self._scheduler_manager = scheduler_manager
         self._background_task_manager = background_task_manager
         self._message_bus = message_bus
+        self._knowledge_base_manager = knowledge_base_manager
         self._extra_agent_middlewares = extra_agent_middlewares
         self._extra_agent_tools = extra_agent_tools
         self._sub_agent_templates = custom_subagent_templates
         self._agent_cls = custom_agent_cls or Agent
+        self._projection = SessionProjection(message_bus)
+        self._projectors: list[EventProjector] = [
+            SubagentHitlProjector(storage),
+            *(extra_projectors or []),
+        ]
 
     async def run(
         self,
@@ -234,24 +264,7 @@ class ChatService:
             )
 
         # ----------------------------------------------------------------
-        # 2. Toolkit (workspace tools + planning + ToolStop + schedule +
-        # team + extras + skills + mcps).
-        # ----------------------------------------------------------------
-        toolkit = await get_toolkit(
-            storage=self._storage,
-            workspace=workspace,
-            scheduler_manager=self._scheduler_manager,
-            background_task_manager=self._background_task_manager,
-            message_bus=self._message_bus,
-            user_id=user_id,
-            agent_record=agent_record,
-            session_record=session_record,
-            extra_factory=self._extra_agent_tools,
-            sub_agent_templates=self._sub_agent_templates,
-        )
-
-        # ----------------------------------------------------------------
-        # 3. Middlewares — framework-supplied first, then caller extras.
+        # 2. Middlewares — framework-supplied first, then caller extras.
         # Background-tool completions deliver their results via
         # ``message_bus.inbox_push + enqueue_wakeup``, so the dispatcher
         # (any process) wakes an idle session — no in-process retrigger
@@ -280,7 +293,7 @@ class ChatService:
             )
 
         # ----------------------------------------------------------------
-        # 3b. TTS middleware — inject when the session has a TTS config.
+        # 2b. TTS middleware — inject when the session has a TTS config.
         # ----------------------------------------------------------------
         tts_cfg = session_record.config.tts_model_config
         if tts_cfg is not None:
@@ -290,6 +303,67 @@ class ChatService:
                 self._storage,
             )
             middlewares.append(TTSMiddleware(tts_model))
+
+        # ----------------------------------------------------------------
+        # 2c. Knowledge-base middleware — inject when the session has KBs
+        # attached.  Each KB resolves to its own :class:`KnowledgeBase` handle
+        # (own embedding model + vector store), so the middleware can
+        # retrieve across heterogeneous KBs in one fan-out.
+        # ----------------------------------------------------------------
+        kb_cfg = session_record.config.knowledge_config
+        if (
+            kb_cfg is not None
+            and kb_cfg.knowledge_base_ids
+            and self._knowledge_base_manager is not None
+        ):
+            knowledges: list[KnowledgeBase] = []
+            for kb_id in kb_cfg.knowledge_base_ids:
+                try:
+                    knowledge = (
+                        await self._knowledge_base_manager.get_knowledge(
+                            user_id,
+                            kb_id,
+                        )
+                    )
+                except Exception:  # pylint: disable=broad-except
+                    # A KB the session referenced was deleted (or its
+                    # credential revoked) — log and skip so the chat
+                    # turn can still run with the remaining KBs.
+                    logger.exception(
+                        "Skipping knowledge base %r for session %r: "
+                        "failed to resolve runtime handle.",
+                        kb_id,
+                        session_id,
+                    )
+                    continue
+                knowledges.append(knowledge)
+            if knowledges:
+                middlewares.append(
+                    RAGMiddleware(
+                        knowledge_bases=knowledges,
+                        parameters=RAGMiddleware.Parameters(
+                            **(kb_cfg.parameters or {}),
+                        ),
+                    ),
+                )
+
+        # ----------------------------------------------------------------
+        # 3. Toolkit (workspace tools + planning + ToolStop + schedule +
+        # team + extras + skills + mcps).
+        # ----------------------------------------------------------------
+        toolkit = await get_toolkit(
+            storage=self._storage,
+            workspace=workspace,
+            scheduler_manager=self._scheduler_manager,
+            background_task_manager=self._background_task_manager,
+            message_bus=self._message_bus,
+            middlewares=middlewares,
+            user_id=user_id,
+            agent_record=agent_record,
+            session_record=session_record,
+            extra_factory=self._extra_agent_tools,
+            sub_agent_templates=self._sub_agent_templates,
+        )
 
         # ----------------------------------------------------------------
         # 4. Model + fallback (resolved from session's config).
@@ -363,87 +437,152 @@ class ChatService:
                     return
 
         # ----------------------------------------------------------------
-        # 7. Run the agent inside the bus's distributed session lock
+        # 7. Run the agent inside the distributed session lock
         # ----------------------------------------------------------------
-        async with self._message_bus.session_run(session_id):
-            reply_msg: Msg | None = None
+        lock_key = MessageBusKeys.session_lock(session_id)
+        events_key = MessageBusKeys.session_events(session_id)
+        async with self._message_bus.acquire_lock(
+            lock_key,
+            ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
+        ):
+            try:
+                reply_msg: Msg | None = None
 
-            if input_msg is None or isinstance(input_msg, (Msg, list)):
-                # Case A: new reply (user message(s), or retrigger with
-                # empty input)
-                if isinstance(input_msg, (Msg, list)):
-                    input_msgs = (
-                        [input_msg]
-                        if isinstance(input_msg, Msg)
-                        else input_msg
-                    )
-                    for msg in input_msgs:
-                        await self._storage.upsert_message(
-                            user_id,
+                if input_msg is None or isinstance(input_msg, (Msg, list)):
+                    # Case A: new reply (user message(s), or retrigger with
+                    # empty input)
+                    if isinstance(input_msg, (Msg, list)):
+                        input_msgs = (
+                            [input_msg]
+                            if isinstance(input_msg, Msg)
+                            else input_msg
+                        )
+                        for msg in input_msgs:
+                            await self._storage.upsert_message(
+                                user_id,
+                                session_id,
+                                msg,
+                            )
+
+                    async for event in agent.reply_stream(inputs=input_msg):
+                        await publish_session_event(
+                            self._message_bus,
                             session_id,
-                            msg,
+                            event.model_dump(mode="json"),
                         )
+                        await self._project_event(
+                            user_id,
+                            session_record,
+                            agent_record,
+                            event,
+                        )
+                        if isinstance(event, ReplyStartEvent):
+                            reply_msg = AssistantMsg(
+                                id=event.reply_id,
+                                name=event.name,
+                                content=[],
+                            )
+                        elif reply_msg is not None:
+                            reply_msg.append_event(event)
 
-                async for event in agent.reply_stream(inputs=input_msg):
-                    await self._message_bus.session_publish_event(
+                else:
+                    # Case B: continuation (UserConfirmResult
+                    #  / ExternalExecResult)
+                    reply_msg = await self._storage.get_message(
+                        user_id,
                         session_id,
-                        event.model_dump(mode="json"),
-                    )
-                    if isinstance(event, ReplyStartEvent):
-                        reply_msg = AssistantMsg(
-                            id=event.reply_id,
-                            name=event.name,
-                            content=[],
-                        )
-                    elif reply_msg is not None:
-                        reply_msg.append_event(event)
-
-            else:
-                # Case B: continuation (UserConfirmResult / ExternalExecResult)
-                reply_msg = await self._storage.get_message(
-                    user_id,
-                    session_id,
-                    agent.state.reply_id,
-                )
-
-                if reply_msg is None:
-                    logger.warning(
-                        "Reply message %r not found in storage for session "
-                        "%r; tool-call state changes from the incoming event "
-                        "will not be persisted.",
                         agent.state.reply_id,
-                        session_id,
                     )
-                elif input_msg:
-                    reply_msg.append_event(input_msg)
 
-                async for event in agent.reply_stream(inputs=input_msg):
-                    await self._message_bus.session_publish_event(
+                    if reply_msg is None:
+                        logger.warning(
+                            "Reply message %r not found in storage for "
+                            "session %r; tool-call state changes from the "
+                            "incoming event will not be persisted.",
+                            agent.state.reply_id,
+                            session_id,
+                        )
+                    elif input_msg:
+                        reply_msg.append_event(input_msg)
+
+                    async for event in agent.reply_stream(inputs=input_msg):
+                        await publish_session_event(
+                            self._message_bus,
+                            session_id,
+                            event.model_dump(mode="json"),
+                        )
+                        await self._project_event(
+                            user_id,
+                            session_record,
+                            agent_record,
+                            event,
+                        )
+                        if reply_msg is not None:
+                            reply_msg.append_event(event)
+
+                # Persist the reply Msg (upsert: overwrite if same id,
+                # append if new).
+                if reply_msg is not None:
+                    await self._storage.upsert_message(
+                        user_id,
                         session_id,
-                        event.model_dump(mode="json"),
+                        reply_msg,
                     )
-                    if reply_msg is not None:
-                        reply_msg.append_event(event)
 
-            # Persist the reply Msg (upsert: overwrite if same id, append
-            # if new).
-            if reply_msg is not None:
-                await self._storage.upsert_message(
-                    user_id,
-                    session_id,
-                    reply_msg,
+                # Persist the updated agent state. MUST happen inside
+                # the session lock: if we released the lock first,
+                # another process could acquire it and load a stale
+                # state from storage before this write lands.
+                await self._storage.update_session_state(
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    session_id=session_id,
+                    state=agent.state,
                 )
+            finally:
+                await self._message_bus.log_trim(events_key)
 
-            # Persist the updated agent state. MUST happen inside the
-            # session lock: if we released the lock first, another
-            # process could acquire it and load a stale state from
-            # storage before this write lands.
-            await self._storage.update_session_state(
-                user_id=user_id,
-                agent_id=agent_id,
-                session_id=session_id,
-                state=agent.state,
-            )
+    async def _project_event(
+        self,
+        user_id: str,
+        session_record: SessionRecord,
+        agent_record: AgentRecord,
+        event: AgentEvent,
+    ) -> None:
+        """Run every registered projector against one produced event.
 
-        # ``session_run.__aexit__`` trims the replay log before
-        # releasing the lock — see :meth:`MessageBus.session_run`.
+        Each :class:`~agentscope.app._types.EventProjector` decides
+        whether the event is relevant to its cross-session UI feed and,
+        if so, mirrors it onto the owning session via the shared
+        :class:`SessionProjection`. Projectors are independent: one
+        failing must neither tear down the producing run nor block the
+        others, so each call is guarded individually and its error
+        logged. Adding a feed means adding a projector — no change here.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            session_record (`SessionRecord`):
+                The currently-running session's record.
+            agent_record (`AgentRecord`):
+                The currently-running agent's record.
+            event (`AgentEvent`):
+                The event just published to this session's channel.
+        """
+        for projector in self._projectors:
+            try:
+                await projector.maybe_project(
+                    user_id,
+                    session_record,
+                    agent_record,
+                    event,
+                    self._projection,
+                )
+            except Exception as e:  # pylint: disable=broad-except
+                logger.warning(
+                    "Projector %s failed on event %s from session %s: %s",
+                    type(projector).__name__,
+                    type(event).__name__,
+                    session_record.id,
+                    str(e),
+                )

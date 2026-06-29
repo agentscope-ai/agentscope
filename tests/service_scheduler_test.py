@@ -177,6 +177,8 @@ class TestSchedulerFireDelivery(_SchedulerFireTestBase):
                 "session_id": session.id,
                 "agent_id": record.agent_id,
                 "user_id": record.user_id,
+                "kind": "wake",
+                "input": None,
             },
         )
 
@@ -231,11 +233,15 @@ class TestSchedulerFireStatefulMode(_SchedulerFireTestBase):
                     "session_id": sessions[0].id,
                     "agent_id": record.agent_id,
                     "user_id": record.user_id,
+                    "kind": "wake",
+                    "input": None,
                 },
                 {
                     "session_id": sessions[0].id,
                     "agent_id": record.agent_id,
                     "user_id": record.user_id,
+                    "kind": "wake",
+                    "input": None,
                 },
             ],
         )

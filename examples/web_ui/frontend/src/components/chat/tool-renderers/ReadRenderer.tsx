@@ -1,24 +1,13 @@
 /* eslint-disable react-refresh/only-export-components -- renderer constant is co-located with its inline component by design */
 import type { ToolResultBlock } from '@agentscope-ai/agentscope/message';
+import { ChevronRight } from 'lucide-react';
 import { useState } from 'react';
 
-import { CornerLine, ToolStateIcon } from './_shared';
+import { CornerLine, getFilePath, ToolStateIcon } from './_shared';
 import type { TFunction, ToolCallWithResult, ToolRenderer } from './types';
+import { Button } from '@/components/ui/button.tsx';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { formatNumber } from '@/utils/common';
-
-function parseInput(input: string): Record<string, unknown> {
-	try {
-		return JSON.parse(input);
-	} catch {
-		return {};
-	}
-}
-
-function getFilePath(input: string): string {
-	const { file_path } = parseInput(input) as { file_path?: string };
-	return file_path || input;
-}
 
 /** Count lines in a tool result's output string, including text content from
  * non-text blocks. Returns 0 when the result is missing or empty. */
@@ -60,16 +49,18 @@ function ReadGroup({ calls, t }: { calls: ToolCallWithResult[]; t: TFunction }) 
 
 	return (
 		<Collapsible open={open} onOpenChange={setOpen} className="flex flex-col w-full ">
-			<CollapsibleTrigger className="flex flex-row gap-x-2 w-full max-w-full items-center cursor-pointer text-left">
-				<ToolStateIcon states={calls.map((c) => c.result?.state)} />
-				<span className="text-sm flex-1 min-w-0 truncate">
-					<strong className="text-primary">{name} </strong>
-					{t('tool.read.fileCount', { count: calls.length })}
-					{!open && <span className="text-muted-foreground"> ...</span>}
-				</span>
-				{/*<ChevronRight*/}
-				{/*	className={`size-4 shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}*/}
-				{/*/>*/}
+			<CollapsibleTrigger asChild>
+				<Button
+					variant={'ghost'}
+					className="group hover:bg-transparent data-[state=open]:bg-transparent justify-start px-0 gap-2 active:!translate-y-0"
+				>
+					<ToolStateIcon states={calls.map((c) => c.result?.state)} />
+					<span className="flex items-center text-sm truncate gap-1">
+						<strong className="text-primary">{name}</strong>
+						{t('tool.read.fileCount', { count: calls.length })}
+					</span>
+					<ChevronRight className="size-3 group-data-[state=open]:rotate-90" />
+				</Button>
 			</CollapsibleTrigger>
 			<CollapsibleContent className="pl-6 pt-2 flex flex-col gap-y-2 text-sm">
 				{groupByConsecutivePath(calls).map((group, gIdx) => (

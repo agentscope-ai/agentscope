@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
 """The Google Gemini chat model implementation."""
 import base64
-import copy
 import json
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 
 from pydantic import BaseModel, Field
 
-from ..._utils._common import _generate_id
+from ..._utils._common import _generate_id, _flatten_json_schema
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
@@ -16,64 +15,11 @@ from ...credential import GeminiCredential
 from ...formatter import FormatterBase, GeminiChatFormatter
 from ...message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
 from ...tool import ToolChoice
-from ..._logging import logger
 
 if TYPE_CHECKING:
     from google.genai.types import GenerateContentResponse
 else:
     GenerateContentResponse = Any
-
-
-def _flatten_json_schema(schema: dict) -> dict:
-    """Flatten a JSON schema by resolving all $ref references.
-
-    Gemini API does not support ``$defs`` and ``$ref`` in JSON schemas.
-
-    Args:
-        schema (`dict`):
-            The JSON schema that may contain ``$defs`` and ``$ref`` references.
-
-    Returns:
-        `dict`:
-            A flattened JSON schema with all references resolved inline.
-    """
-    schema = copy.deepcopy(schema)
-    defs = schema.pop("$defs", {})
-
-    def _resolve_ref(obj: Any, visited: set | None = None) -> Any:
-        if visited is None:
-            visited = set()
-        if not isinstance(obj, dict):
-            if isinstance(obj, list):
-                return [_resolve_ref(item, visited.copy()) for item in obj]
-            return obj
-        if "$ref" in obj:
-            ref_path = obj["$ref"]
-            if ref_path.startswith("#/$defs/"):
-                def_name = ref_path[len("#/$defs/") :]
-                if def_name in visited:
-                    logger.warning(
-                        "Circular reference detected for '%s' in tool schema",
-                        def_name,
-                    )
-                    return {
-                        "type": "object",
-                        "description": f"(circular: {def_name})",
-                    }
-                visited.add(def_name)
-                if def_name in defs:
-                    resolved = _resolve_ref(defs[def_name], visited.copy())
-                    for key, value in obj.items():
-                        if key != "$ref":
-                            resolved[key] = _resolve_ref(value, visited.copy())
-                    return resolved
-            return obj
-        result = {}
-        for key, value in obj.items():
-            result[key] = _resolve_ref(value, visited.copy())
-        return result
-
-    return _resolve_ref(schema)
 
 
 def _sanitize_schema_for_gemini(schema: Any) -> Any:

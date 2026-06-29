@@ -3,11 +3,14 @@
 from typing import Type, TYPE_CHECKING, Any
 
 from ._lifespan import lifespan
+from .rag.blob_store import BlobStoreBase, LocalBlobStore
+from .rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from .workspace_manager import WorkspaceManagerBase
 from ._router import (
     agent_router,
     chat_router,
     credential_router,
+    knowledge_base_router,
     model_router,
     tts_model_router,
     schedule_router,
@@ -19,6 +22,12 @@ from .message_bus import MessageBus
 from .storage import StorageBase
 from ..agent import Agent
 from ..credential import CredentialFactory, CredentialBase
+from ..rag import (
+    ApproxTokenChunker,
+    ChunkerBase,
+    ParserBase,
+    TextParser,
+)
 from .._version import __version__
 
 
@@ -34,6 +43,11 @@ def create_app(
     storage: StorageBase,
     message_bus: MessageBus,
     workspace_manager: WorkspaceManagerBase,
+    knowledge_base_manager: KnowledgeBaseManagerBase | None = None,
+    knowledge_parsers: list[ParserBase] | dict[str, ParserBase] | None = None,
+    knowledge_chunker: ChunkerBase | None = None,
+    blob_store: BlobStoreBase | None = None,
+    enable_index_worker: bool = True,
     *,
     extra_credentials: list[Type[CredentialBase]] | None = None,
     extra_middlewares: list[FastAPIMiddleware] | None = None,
@@ -85,6 +99,48 @@ def create_app(
             ``__aenter__`` / ``__aexit__``) is managed by the app
             lifespan. Pass a :class:`~agentscope.app._manager.
             LocalWorkspaceManager` for local-directory workspaces.
+        knowledge_base_manager (`KnowledgeBaseManagerBase | None`, \
+         optional):
+            The knowledge base manager that owns knowledge base
+            lifecycle and serves
+            :class:`~agentscope.rag.KnowledgeBase`
+            runtime handles to both HTTP service and agent code.
+            The manager carries its own vector store instance — its
+            ``__aenter__`` / ``__aexit__`` enter and release that
+            vector store, so the caller does not pass the vector
+            store separately.  ``None`` disables knowledge base
+            endpoints entirely.
+        knowledge_parsers (`list[ParserBase] | dict[str, ParserBase] | \
+         None`, optional):
+            Parsers registered for knowledge base document uploads.
+            Pass a **list** to have the service route by each parser's
+            ``supported_media_types`` (later entries override earlier
+            ones for overlapping types, with a warning); pass a
+            **dict** ``media_type → parser`` for explicit routing
+            (one parser bound to multiple types, type aliases, ...).
+            Defaults to ``[TextParser()]`` when
+            ``knowledge_base_manager`` is set.
+        knowledge_chunker (`ChunkerBase | None`, optional):
+            The chunker shared across every knowledge base.  Defaults
+            to :class:`~agentscope.rag.ApproxTokenChunker()` when
+            ``knowledge_base_manager`` is set.
+        blob_store (`BlobStoreBase | None`, optional):
+            Backend storing uploaded document bytes between the
+            upload endpoint and the indexing worker.  Required when
+            ``knowledge_base_manager`` is set; defaults to
+            :class:`~agentscope.app.rag.blob_store.LocalBlobStore`
+            rooted at ``./blobs``.  Its lifecycle (``__aenter__`` /
+            ``__aexit__``) is managed by the app lifespan.
+        enable_index_worker (`bool`, defaults to ``True``):
+            When ``True`` (embedded deployment) the API process starts
+            an :class:`~agentscope.app._service.IndexWorker` and an
+            :class:`~agentscope.app._service.IndexSweeper` in its
+            lifespan, and dispatches indexing tasks via an
+            in-process queue.  When ``False`` (dedicated deployment)
+            the API process performs no indexing — a separate worker
+            process is expected to consume tasks from the message
+            bus.  No effect when ``knowledge_base_manager`` is
+            ``None``.
         extra_credentials (`list[Type[CredentialBase]] | None`, optional):
             Additional :class:`~agentscope.credential.CredentialBase`
             subclasses to register before the app starts.  Equivalent to
@@ -142,9 +198,34 @@ def create_app(
     app.state.storage = storage
     app.state.message_bus = message_bus
     app.state.workspace_manager = workspace_manager
+    app.state.knowledge_base_manager = knowledge_base_manager
     app.state.extra_agent_middlewares = extra_agent_middlewares
     app.state.extra_agent_tools = extra_agent_tools
     app.state.custom_agent_cls = custom_agent_cls
+
+    # Parser / chunker / blob-store defaults only make sense when the
+    # KB feature is actually enabled.  When ``knowledge_base_manager`` is
+    # ``None`` every KB endpoint is disabled, so leaving these as ``None``
+    # avoids unused imports being eagerly constructed at app startup.
+    if knowledge_base_manager is not None:
+        app.state.knowledge_parsers = (
+            knowledge_parsers
+            if knowledge_parsers is not None
+            else [TextParser()]
+        )
+        app.state.knowledge_chunker = knowledge_chunker or ApproxTokenChunker()
+        app.state.blob_store = (
+            blob_store
+            if blob_store is not None
+            else LocalBlobStore(root_dir="./blobs")
+        )
+    else:
+        app.state.knowledge_parsers = knowledge_parsers
+        app.state.knowledge_chunker = knowledge_chunker
+        app.state.blob_store = blob_store
+    app.state.enable_index_worker = (
+        enable_index_worker and knowledge_base_manager is not None
+    )
 
     # Validate custom sub-agent templates for duplicate types and store in
     #  app.state
@@ -166,6 +247,7 @@ def create_app(
         agent_router,
         chat_router,
         credential_router,
+        knowledge_base_router,
         schedule_router,
         session_router,
         workspace_router,

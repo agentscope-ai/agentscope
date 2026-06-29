@@ -45,6 +45,10 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any, Callable, Self
 
+from typing_extensions import deprecated
+
+from ._keys import MessageBusKeys
+
 
 class MessageBus(ABC):  # pylint: disable=too-many-public-methods
     """Abstract base class for live message transport.
@@ -452,52 +456,39 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         """
 
     # ==================================================================
-    # Domain helpers — concrete on the base class so all backends
-    # share the same key conventions and serialisation rules.
+    # Deprecated domain helpers
+    #
+    # These thin shells delegate to the generic primitives above. They
+    # exist so that code written against the old API keeps working for
+    # one release cycle; new code should use the primitives + MessageBusKeys
+    # (or the standalone functions in agentscope.app._service) directly.
+    #
+    # The _XXX_KEY class-level constants are kept as well — some tests
+    # reference them — but new code should use MessageBusKeys instead.
     # ==================================================================
+
+    # Key constants (kept for backward compat) -------------------------
+
+    _SESSION_LOCK_KEY = "agentscope:session:lock:{sid}"
+    _SESSION_EVENTS_KEY = "agentscope:session:events:{sid}"
+    _SESSION_CANCEL_KEY = "agentscope:session:cancel"
+    _SESSION_RUN_TTL_SECS = 600
+    _SESSION_REPLAY_MAX_LEN = 1000
+    _INBOX_KEY = "agentscope:inbox:{sid}"
+    _WAKEUP_QUEUE_KEY = "agentscope:wakeups"
+    _WAKEUP_SIGNAL_KEY = "agentscope:wakeup_signal"
+    _BG_TASKS_KEY = "agentscope:bg_tasks:{sid}"
+    _BG_TASKS_TTL_SECS = 86400
+    _TASK_CANCEL_KEY = "agentscope:task:cancel"
 
     # Session run coordination -----------------------------------------
 
-    _SESSION_LOCK_KEY = "agentscope:session:lock:{sid}"
-    """Per-session distributed-lock key template."""
-
-    _SESSION_EVENTS_KEY = "agentscope:session:events:{sid}"
-    """Per-session replay log + live pub/sub channel key template."""
-
-    _SESSION_CANCEL_KEY = "agentscope:session:cancel"
-    """Global cancel-broadcast channel. Used by
-    :meth:`session_publish_cancel` to ask whichever process is currently
-    running a given session to abort its run; the payload carries the
-    target ``session_id`` and only the worker actually holding that
-    session's task reacts."""
-
-    _SESSION_RUN_TTL_SECS = 600
-    """Default lock lease for a chat run (10 minutes)."""
-
-    _SESSION_REPLAY_MAX_LEN = 1000
-    """Replay log length cap; older events are trimmed on append."""
-
+    @deprecated(
+        "Use acquire_lock(MessageBusKeys.session_lock(sid), ...) directly.",
+    )
     @asynccontextmanager
     async def session_run(self, session_id: str) -> AsyncGenerator[None, None]:
-        """Block until exclusive control of ``session_id`` is held.
-
-        Two processes calling this for the same session_id queue up;
-        the second only enters after the first releases (or its
-        lease expires after a crash).
-
-        On exit, the session's replay log is trimmed *before* the
-        lock is released. This guarantees that any process which
-        acquires the lock next sees a clean log (and any SSE
-        subscriber that connects between this run and the next sees
-        a clean slate, not stale events from this run).
-
-        Args:
-            session_id (`str`):
-                The session to lock.
-
-        Yields:
-            `None`: while the session lock is held.
-        """
+        """Acquire the session lock, yield, then trim the replay log."""
         async with self.acquire_lock(
             self._SESSION_LOCK_KEY.format(sid=session_id),
             ttl_secs=self._SESSION_RUN_TTL_SECS,
@@ -505,55 +496,29 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
             try:
                 yield
             finally:
-                # Replay log was the in-flight buffer for this run;
-                # the chat run is responsible for persisting the
-                # complete Msg to storage before releasing the lock,
-                # so the log is no longer needed by any subscriber.
                 await self.log_trim(
                     self._SESSION_EVENTS_KEY.format(sid=session_id),
                 )
 
+    @deprecated(
+        "Use is_locked(MessageBusKeys.session_lock(sid)) directly.",
+    )
     async def session_is_running(self, session_id: str) -> bool:
-        """Return whether some process is currently running this session.
-
-        Args:
-            session_id (`str`):
-                The session to check.
-
-        Returns:
-            `bool`:
-                ``True`` if a chat run holds the session lock right now.
-        """
+        """Check whether some process holds the session lock."""
         return await self.is_locked(
             self._SESSION_LOCK_KEY.format(sid=session_id),
         )
 
+    @deprecated(
+        "Use publish_session_event(bus, sid, event) from "
+        "agentscope.app._bus_ops directly.",
+    )
     async def session_publish_event(
         self,
         session_id: str,
         event: dict,
     ) -> str:
-        """Append a session event to the replay log + fan it out live.
-
-        The single event is persisted to a Redis Stream (so late-joining
-        subscribers can replay it) and simultaneously
-        published on a Pub/Sub channel of the same key (so already-connected
-        subscribers see it immediately). The persisted
-        log entry id is included in the live payload as
-        ``_entry_id`` so subscribers can deduplicate replay vs live
-        delivery.
-
-        Args:
-            session_id (`str`):
-                The session this event belongs to.
-            event (`dict`):
-                JSON-serializable event payload (typically
-                ``AgentEvent.model_dump(mode='json')``).
-
-        Returns:
-            `str`:
-                The replay-log entry id assigned by the backend.
-        """
+        """Append + fan-out a session event."""
         key = self._SESSION_EVENTS_KEY.format(sid=session_id)
         entry_id = await self.log_append(
             key,
@@ -563,103 +528,60 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         await self.publish(key, {**event, "_entry_id": entry_id})
         return entry_id
 
+    @deprecated(
+        "Use log_read(MessageBusKeys.session_events(sid), ...) directly.",
+    )
     async def session_read_events(
         self,
         session_id: str,
         since: str | None = None,
         max_count: int = 1000,
     ) -> list[tuple[str, dict]]:
-        """Read events from the session's replay log.
-
-        Args:
-            session_id (`str`):
-                The session whose events to read.
-            since (`str | None`, optional):
-                Cursor — return entries strictly newer than this
-                replay-log id. ``None`` reads from the beginning.
-            max_count (`int`, defaults to ``1000``):
-                Maximum events to return.
-
-        Returns:
-            `list[tuple[str, dict]]`:
-                ``(entry_id, event_payload)`` pairs in append order.
-        """
+        """Read events from the session's replay log."""
         return await self.log_read(
             self._SESSION_EVENTS_KEY.format(sid=session_id),
             since=since,
             max_count=max_count,
         )
 
+    @deprecated(
+        "Use subscribe(MessageBusKeys.session_events(sid), ...) directly, "
+        "stripping _entry_id from each payload.",
+    )
     async def session_subscribe_events(
         self,
         session_id: str,
         *,
         on_ready: Callable[[], None] | None = None,
     ) -> AsyncGenerator[dict, None]:
-        """Live-subscribe to a session's published events.
-
-        Yields only payloads delivered after the subscription is
-        established. To replay history first, call
-        :meth:`session_read_events` separately.
-
-        Args:
-            session_id (`str`):
-                The session to subscribe to.
-            on_ready (`Callable[[], None] | None`, optional):
-                Forwarded to the underlying :meth:`subscribe`.
-
-        Yields:
-            `dict`:
-                Event payloads, with the internal ``_entry_id``
-                field stripped (callers don't need to see it).
-        """
+        """Live-subscribe to session events, stripping _entry_id."""
         key = self._SESSION_EVENTS_KEY.format(sid=session_id)
         async for payload in self.subscribe(key, on_ready=on_ready):
             yield {k: v for k, v in payload.items() if k != "_entry_id"}
 
     # Cross-process cancel ---------------------------------------------
 
+    @deprecated(
+        "Use publish(MessageBusKeys.session_cancel_channel(), "
+        "{'session_id': sid}) directly.",
+    )
     async def session_publish_cancel(self, session_id: str) -> None:
-        """Broadcast a cancel request for ``session_id``.
-
-        Sent on a transient pub/sub channel: only processes that have
-        an active :meth:`session_subscribe_cancel` subscription at
-        publish time will see it. The process actually running the
-        session is expected to be such a subscriber (its
-        :class:`~agentscope.app._manager.CancelDispatcher` subscribes
-        for the lifetime of the app). Other processes ignore the
-        message because they hold no asyncio task for that session.
-
-        Args:
-            session_id (`str`):
-                The session whose run should be cancelled.
-        """
+        """Broadcast a session cancel request."""
         await self.publish(
             self._SESSION_CANCEL_KEY,
             {"session_id": session_id},
         )
 
+    @deprecated(
+        "Use subscribe(MessageBusKeys.session_cancel_channel(), ...) "
+        "directly, extracting session_id from the payload.",
+    )
     async def session_subscribe_cancel(
         self,
         *,
         on_ready: Callable[[], None] | None = None,
     ) -> AsyncGenerator[str, None]:
-        """Subscribe to the cancel-broadcast channel.
-
-        Yields session ids as cancel requests arrive. A single
-        subscriber per process is enough — the
-        :class:`~agentscope.app._manager.CancelDispatcher` filters
-        locally by checking whether the incoming ``session_id`` is in
-        its own :class:`ChatRunRegistry`.
-
-        Args:
-            on_ready (`Callable[[], None] | None`, optional):
-                Forwarded to the underlying :meth:`subscribe`.
-
-        Yields:
-            `str`:
-                The session id from each incoming cancel payload.
-        """
+        """Subscribe to session cancel broadcasts, yielding session ids."""
         async for payload in self.subscribe(
             self._SESSION_CANCEL_KEY,
             on_ready=on_ready,
@@ -670,32 +592,21 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
 
     # Purge -------------------------------------------------------------
 
+    @deprecated(
+        "Call log_trim / queue_delete / registry_drop with "
+        "MessageBusKeys directly.",
+    )
     async def session_purge(self, session_id: str) -> None:
-        """Delete all per-session bus state.
-
-        Drops the events log, the inbox queue, and the BG task
-        registry. The distributed run-lock is intentionally not
-        touched: callers must ensure no run is in flight (e.g. by
-        publishing cancel via :meth:`session_publish_cancel` and
-        polling :meth:`is_locked` until it clears) before calling
-        this. Any residual lock key expires on its own after at most
-        :attr:`_SESSION_RUN_TTL_SECS`.
-
-        Idempotent: a no-op when the keys are already absent.
-
-        Args:
-            session_id (`str`):
-                The session whose bus state should be removed.
-        """
+        """Delete all per-session bus state."""
         await self.log_trim(self._SESSION_EVENTS_KEY.format(sid=session_id))
         await self.queue_delete(self._INBOX_KEY.format(sid=session_id))
-        await self.bg_task_purge(session_id)
+        await self.registry_drop(self._BG_TASKS_KEY.format(sid=session_id))
 
     # Inbox -----------------------------------------------------------
 
-    _INBOX_KEY = "agentscope:inbox:{sid}"
-    """Per-session inbox queue key template."""
-
+    @deprecated(
+        "Use queue_push(MessageBusKeys.inbox(sid), ...) directly.",
+    )
     async def inbox_push(
         self,
         session_id: str,
@@ -703,45 +614,22 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         *,
         ttl_secs: int | None = None,
     ) -> str:
-        """Append an inbound message to a session's inbox.
-
-        Args:
-            session_id (`str`):
-                The recipient session id.
-            msg (`dict`):
-                JSON-serializable :class:`Msg` payload (use
-                ``Msg.model_dump(mode='json')``).
-            ttl_secs (`int | None`, optional):
-                Inbox key lifetime; ``None`` means no expiry.
-
-        Returns:
-            `str`:
-                The transport-level entry id from
-                :meth:`queue_push`.
-        """
+        """Push a message to a session's inbox."""
         return await self.queue_push(
             self._INBOX_KEY.format(sid=session_id),
             msg,
             ttl_secs=ttl_secs,
         )
 
+    @deprecated(
+        "Use queue_drain(MessageBusKeys.inbox(sid), ...) directly.",
+    )
     async def inbox_drain(
         self,
         session_id: str,
         max_count: int = 100,
     ) -> list[tuple[str, dict]]:
-        """Drain pending inbox messages for a session.
-
-        Args:
-            session_id (`str`):
-                The session whose inbox to drain.
-            max_count (`int`, defaults to ``100``):
-                Maximum entries to drain in one call.
-
-        Returns:
-            `list[tuple[str, dict]]`:
-                ``(entry_id, msg_payload)`` pairs in arrival order.
-        """
+        """Drain pending inbox messages for a session."""
         return await self.queue_drain(
             self._INBOX_KEY.format(sid=session_id),
             max_count=max_count,
@@ -749,85 +637,78 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
 
     # Wakeup ----------------------------------------------------------
 
-    _WAKEUP_QUEUE_KEY = "agentscope:wakeups"
-    """Shared wake-up queue (durable Redis Stream)."""
-
-    _WAKEUP_SIGNAL_KEY = "agentscope:wakeup_signal"
-    """Shared Pub/Sub channel that nudges dispatchers to drain the
-    wake-up queue."""
-
+    @deprecated(
+        "Use enqueue_run_trigger(bus, ...) from "
+        "agentscope.app._bus_ops directly.",
+    )
     async def enqueue_wakeup(
         self,
         user_id: str,
         session_id: str,
         agent_id: str,
     ) -> None:
-        """Enqueue a wake-up request and signal dispatchers.
-
-        Producers (e.g. ``TeamSay``, ``AgentCreate``, the scheduler
-        trigger, or the BG-tool completion watcher) call this after
-        depositing a message in the recipient's inbox. The shared
-        :class:`WakeupDispatcher` (one per process) drains the queue
-        on each signal and starts a chat run for any session that
-        is not currently active.
-
-        Args:
-            user_id (`str`):
-                The owning user id.
-            session_id (`str`):
-                The session to wake.
-            agent_id (`str`):
-                The agent id that owns the session.
-        """
+        """Enqueue an idle-session wake-up."""
         await self.queue_push(
             self._WAKEUP_QUEUE_KEY,
             {
                 "user_id": user_id,
                 "session_id": session_id,
                 "agent_id": agent_id,
+                "kind": MessageBusKeys.WAKEUP_KIND_WAKE,
+                "input": None,
             },
         )
         await self.publish(self._WAKEUP_SIGNAL_KEY, {})
 
+    @deprecated(
+        "Use enqueue_run_trigger(bus, ...) from "
+        "agentscope.app._bus_ops directly.",
+    )
+    async def enqueue_input(
+        self,
+        user_id: str,
+        session_id: str,
+        agent_id: str,
+        *,
+        kind: str,
+        inputs: dict | None = None,
+    ) -> None:
+        """Enqueue a typed run trigger."""
+        await self.queue_push(
+            self._WAKEUP_QUEUE_KEY,
+            {
+                "user_id": user_id,
+                "session_id": session_id,
+                "agent_id": agent_id,
+                "kind": kind,
+                "input": inputs,
+            },
+        )
+        await self.publish(self._WAKEUP_SIGNAL_KEY, {})
+
+    @deprecated(
+        "Use queue_drain(MessageBusKeys.wakeup_queue(), ...) directly.",
+    )
     async def dequeue_wakeups(
         self,
         max_count: int = 64,
     ) -> list[dict]:
-        """Drain pending wake-up entries.
-
-        Args:
-            max_count (`int`, defaults to ``64``):
-                Maximum entries to drain per call.
-
-        Returns:
-            `list[dict]`:
-                Entries shaped ``{"user_id", "session_id",
-                "agent_id"}`` in enqueue order.
-        """
+        """Drain pending run-trigger entries."""
         entries = await self.queue_drain(
             self._WAKEUP_QUEUE_KEY,
             max_count=max_count,
         )
         return [payload for _entry_id, payload in entries]
 
+    @deprecated(
+        "Use subscribe(MessageBusKeys.wakeup_signal(), ...) directly.",
+    )
     async def subscribe_wakeup_signal(
         self,
         *,
         on_ready: Callable[[], None] | None = None,
     ) -> AsyncGenerator[dict, None]:
-        """Subscribe to the shared wake-up signal channel.
-
-        Each yielded item indicates "drain the queue now"; the
-        payload itself carries no business data.
-
-        Args:
-            on_ready (`Callable[[], None] | None`, optional):
-                Forwarded to the underlying :meth:`subscribe`.
-
-        Yields:
-            `dict`:
-                The empty / opaque signal payload.
-        """
+        """Subscribe to the shared wake-up signal channel."""
         async for payload in self.subscribe(
             self._WAKEUP_SIGNAL_KEY,
             on_ready=on_ready,
@@ -836,41 +717,16 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
 
     # Background task registry -------------------------------------------
 
-    _BG_TASKS_KEY = "agentscope:bg_tasks:{sid}"
-    """Per-session registry of in-flight background tasks."""
-
-    _BG_TASKS_TTL_SECS = 86400
-    """Fallback TTL for the per-session BG task registry (24 h).
-
-    This TTL is *not* the primary cleanup path — finished tasks remove
-    themselves via :meth:`bg_task_unregister` and session deletion
-    triggers :meth:`bg_task_purge`. It is only a safety net for
-    abandoned entries left behind by a crashed worker whose session is
-    also never explicitly purged. Sized so that virtually every
-    realistic long-running tool finishes (and unregisters) before the
-    fallback kicks in, while still bounding orphan growth in Redis.
-    """
-
-    _TASK_CANCEL_KEY = "agentscope:task:cancel"
-    """Pub/Sub channel for single-task cancel broadcasts."""
-
+    @deprecated(
+        "Use registry_set(MessageBusKeys.bg_tasks(sid), ...) directly.",
+    )
     async def bg_task_register(
         self,
         session_id: str,
         task_id: str,
         metadata: str,
     ) -> None:
-        """Register a background task in the global registry.
-
-        Args:
-            session_id (`str`):
-                The session that owns this task.
-            task_id (`str`):
-                Unique task identifier.
-            metadata (`str`):
-                JSON-serialized task metadata (e.g. ``tool_name``,
-                ``agent_id``, ``started_at``).
-        """
+        """Register a background task."""
         await self.registry_set(
             self._BG_TASKS_KEY.format(sid=session_id),
             task_id,
@@ -878,108 +734,73 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
             ttl_secs=self._BG_TASKS_TTL_SECS,
         )
 
+    @deprecated(
+        "Use registry_del(MessageBusKeys.bg_tasks(sid), tid) directly.",
+    )
     async def bg_task_unregister(
         self,
         session_id: str,
         task_id: str,
     ) -> None:
-        """Remove a background task from the global registry.
-
-        Args:
-            session_id (`str`):
-                The session that owns this task.
-            task_id (`str`):
-                Task identifier to remove.
-        """
+        """Unregister a background task."""
         await self.registry_del(
             self._BG_TASKS_KEY.format(sid=session_id),
             task_id,
         )
 
+    @deprecated(
+        "Use registry_exists(MessageBusKeys.bg_tasks(sid), tid) directly.",
+    )
     async def bg_task_exists(
         self,
         session_id: str,
         task_id: str,
     ) -> bool:
-        """Check whether a background task is registered.
-
-        Args:
-            session_id (`str`):
-                The session that owns this task.
-            task_id (`str`):
-                Task identifier to check.
-
-        Returns:
-            `bool`:
-                ``True`` if the task is in the registry.
-        """
+        """Check whether a background task is registered."""
         return await self.registry_exists(
             self._BG_TASKS_KEY.format(sid=session_id),
             task_id,
         )
 
+    @deprecated(
+        "Use registry_getall(MessageBusKeys.bg_tasks(sid)) directly.",
+    )
     async def bg_task_list(
         self,
         session_id: str,
     ) -> dict[str, str]:
-        """List all background tasks for a session.
-
-        Args:
-            session_id (`str`):
-                The session whose tasks to list.
-
-        Returns:
-            `dict[str, str]`:
-                ``{task_id: metadata_json}`` for all registered tasks.
-        """
+        """List all background tasks for a session."""
         return await self.registry_getall(
             self._BG_TASKS_KEY.format(sid=session_id),
         )
 
+    @deprecated(
+        "Use registry_drop(MessageBusKeys.bg_tasks(sid)) directly.",
+    )
     async def bg_task_purge(self, session_id: str) -> None:
-        """Delete all background task entries for a session.
-
-        Used during session deletion to clean up the registry in one
-        shot. Actual task cancellation is handled separately by
-        :class:`CancelDispatcher`.
-
-        Args:
-            session_id (`str`):
-                The session whose registry to delete.
-        """
+        """Delete all background task entries for a session."""
         await self.registry_drop(
             self._BG_TASKS_KEY.format(sid=session_id),
         )
 
+    @deprecated(
+        "Use publish(MessageBusKeys.task_cancel_channel(), "
+        "{'task_id': tid}) directly.",
+    )
     async def task_publish_cancel(self, task_id: str) -> None:
-        """Broadcast a cancel request for a single background task.
-
-        Sent on a transient Pub/Sub channel; only processes that hold
-        the target task react. Others ignore the message.
-
-        Args:
-            task_id (`str`):
-                The task to cancel.
-        """
+        """Broadcast a cancel request for a single background task."""
         await self.publish(self._TASK_CANCEL_KEY, {"task_id": task_id})
 
+    @deprecated(
+        "Use subscribe(MessageBusKeys.task_cancel_channel(), ...) "
+        "directly, extracting task_id from the payload.",
+    )
     async def task_subscribe_cancel(
         self,
         *,
         on_ready: Callable[[], None] | None = None,
     ) -> AsyncGenerator[str, None]:
-        """Subscribe to the task-level cancel channel.
-
-        Yields task ids as cancel requests arrive.
-
-        Args:
-            on_ready (`Callable[[], None] | None`, optional):
-                Forwarded to the underlying :meth:`subscribe`.
-
-        Yields:
-            `str`:
-                The task id from each incoming cancel payload.
-        """
+        """Subscribe to task cancel broadcasts, yielding task ids."""
         async for payload in self.subscribe(
             self._TASK_CANCEL_KEY,
             on_ready=on_ready,

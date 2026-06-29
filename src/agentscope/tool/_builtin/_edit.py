@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The edit tool in agentscope."""
+import difflib
 import fnmatch
 from typing import Any, List
 
@@ -381,6 +382,21 @@ Usage:
         replacement_msg = (
             f"all {occurrences} occurrences" if replace_all else "1 occurrence"
         )
+
+        # Build a unified diff of the change with absolute line numbers so the
+        # web UI can render it with real line numbers and proper inter-hunk
+        # gaps. The diff is kept in ``metadata`` only (not in the textual
+        # output) so it does not bloat the LLM context.
+        diff_text = "".join(
+            difflib.unified_diff(
+                content.splitlines(keepends=True),
+                updated_content.splitlines(keepends=True),
+                fromfile=f"a/{file_path}",
+                tofile=f"b/{file_path}",
+                n=3,
+            ),
+        )
+
         return ToolChunk(
             content=[
                 TextBlock(
@@ -390,4 +406,9 @@ Usage:
             ],
             state=ToolResultState.RUNNING,
             is_last=True,
+            metadata={
+                "diff": diff_text,
+                "file_path": file_path,
+                "occurrences": occurrences if replace_all else 1,
+            },
         )

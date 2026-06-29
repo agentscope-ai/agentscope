@@ -1,7 +1,8 @@
 import type { Task, TaskContext } from '@agentscope-ai/agentscope/state';
-import { Ellipsis, Loader2, Square, SquareCheck } from 'lucide-react';
+import { Ellipsis, ListX, Loader2, Square, SquareCheck } from 'lucide-react';
 import { useState } from 'react';
 
+import { PanelEmpty } from '@/components/panel/PanelEmpty';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/i18n/useI18n';
@@ -87,7 +88,13 @@ export function TaskPanel({ tasksContext, className }: TaskPanelProps) {
 	const [expanded, setExpanded] = useState(false);
 
 	if (!tasksContext || tasksContext.tasks.length === 0) {
-		return null;
+		return (
+			<PanelEmpty
+				icon={ListX}
+				title={t('panel.plan.emptyTitle')}
+				description={t('panel.plan.emptyDescription')}
+			/>
+		);
 	}
 
 	const { tasks } = tasksContext;
@@ -97,15 +104,17 @@ export function TaskPanel({ tasksContext, className }: TaskPanelProps) {
 	const displayedTasks = expanded ? tasks : visibleTasks;
 
 	return (
-		<div className={cn('hidden md:flex flex-col text-sm py-2 px-0', className)}>
-			<div className="flex flex-row justify-between">
-				<span className="font-bold text-muted-foreground">{t('task-panel.heading')}</span>
+		<div className={cn('flex flex-col flex-1 min-h-0 text-sm', className)}>
+			<div className="flex flex-row items-center gap-x-2 shrink-0 pb-2">
 				<Badge variant={'secondary'} className="tracking-wide">
-					{completed}/{tasks.length}
+					{t('panel.plan.completed', { count: completed })}
+				</Badge>
+				<Badge variant={'secondary'} className="tracking-wide">
+					{t('panel.plan.total', { count: tasks.length })}
 				</Badge>
 			</div>
 
-			<ul className="flex flex-col gap-y-0.5 text-xs overflow-y-auto h-full">
+			<ul className="flex flex-col flex-1 min-h-0 gap-y-0.5 text-xs overflow-y-auto">
 				{showEllipsis && !expanded && (
 					<Button
 						size={'xs'}

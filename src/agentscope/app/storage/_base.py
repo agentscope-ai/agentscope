@@ -2,12 +2,16 @@
 # pylint: disable=too-many-public-methods
 """The storage base class."""
 from abc import ABC, abstractmethod
+from datetime import datetime, timedelta
 from typing import Any, Self
 
 
 from ._model import (
     AgentRecord,
     CredentialRecord,
+    KnowledgeBaseRecord,
+    KnowledgeDocumentRecord,
+    KnowledgeDocumentStatus,
     ScheduleRecord,
     SessionRecord,
     SessionConfig,
@@ -524,4 +528,381 @@ class StorageBase(ABC):
             `bool`:
                 ``True`` if the team record existed and was deleted,
                 ``False`` if not found.
+        """
+
+    # ------------------------------------------------------------------
+    # Knowledge base persistence
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    async def upsert_knowledge_base(
+        self,
+        user_id: str,
+        record: KnowledgeBaseRecord,
+    ) -> KnowledgeBaseRecord:
+        """Create or update a knowledge base record.
+
+        The caller is responsible for constructing the full
+        :class:`KnowledgeBaseRecord` (including ``id`` and
+        ``collection_name``).  If a record with the same id already
+        exists it is overwritten and ``updated_at`` refreshed.
+
+        Args:
+            user_id (`str`):
+                The owner user id. Must match ``record.user_id``.
+            record (`KnowledgeBaseRecord`):
+                The fully-populated record to persist.
+
+        Returns:
+            `KnowledgeBaseRecord`:
+                The stored record (with ``updated_at`` refreshed).
+        """
+
+    @abstractmethod
+    async def get_knowledge_base(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+    ) -> KnowledgeBaseRecord | None:
+        """Fetch a single knowledge base record by id.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            knowledge_base_id (`str`):
+                The knowledge base id.
+
+        Returns:
+            `KnowledgeBaseRecord | None`:
+                The record, or ``None`` if not found or not owned by
+                the given user.
+        """
+
+    @abstractmethod
+    async def list_knowledge_bases(
+        self,
+        user_id: str,
+    ) -> list[KnowledgeBaseRecord]:
+        """List all knowledge base records owned by the given user.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+
+        Returns:
+            `list[KnowledgeBaseRecord]`:
+                All knowledge base records belonging to the user.
+        """
+
+    @abstractmethod
+    async def delete_knowledge_base(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+    ) -> bool:
+        """Delete a knowledge base record and remove it from the user index.
+
+        Note: this only removes the metadata record; deletion of the
+        underlying vector store collection is the caller's
+        responsibility (typically the knowledge base manager).
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            knowledge_base_id (`str`):
+                The id of the record to delete.
+
+        Returns:
+            `bool`:
+                ``True`` if the record existed and was deleted,
+                ``False`` if not found.
+        """
+
+    # ------------------------------------------------------------------
+    # Knowledge document persistence
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    async def upsert_knowledge_document(
+        self,
+        user_id: str,
+        record: KnowledgeDocumentRecord,
+    ) -> KnowledgeDocumentRecord:
+        """Create or update a knowledge document record.
+
+        Used by the upload endpoint to register a freshly arrived
+        document (``status='pending'``) and by other code paths that
+        need to overwrite the full record.  Phase transitions during
+        indexing should go through :meth:`update_knowledge_document_status`
+        instead, which is cheaper and atomic w.r.t. the lease fields.
+
+        Args:
+            user_id (`str`):
+                The owner user id.  Must match ``record.user_id``.
+            record (`KnowledgeDocumentRecord`):
+                The fully-populated record to persist.
+
+        Returns:
+            `KnowledgeDocumentRecord`:
+                The stored record (with ``updated_at`` refreshed).
+        """
+
+    @abstractmethod
+    async def get_knowledge_document(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+    ) -> KnowledgeDocumentRecord | None:
+        """Fetch a single knowledge document record by id.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            knowledge_base_id (`str`):
+                The parent knowledge base id.
+            document_id (`str`):
+                The document id.
+
+        Returns:
+            `KnowledgeDocumentRecord | None`:
+                The record, or ``None`` if not found.
+        """
+
+    @abstractmethod
+    async def list_knowledge_documents(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+    ) -> list[KnowledgeDocumentRecord]:
+        """List all documents in a knowledge base.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            knowledge_base_id (`str`):
+                The parent knowledge base id.
+
+        Returns:
+            `list[KnowledgeDocumentRecord]`:
+                All document records belonging to the knowledge base,
+                in arbitrary order.
+        """
+
+    @abstractmethod
+    async def delete_knowledge_document(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+    ) -> bool:
+        """Delete a knowledge document record.
+
+        Only removes the metadata record; cleanup of the underlying
+        blob and vector store records is the caller's responsibility.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            knowledge_base_id (`str`):
+                The parent knowledge base id.
+            document_id (`str`):
+                The id of the record to delete.
+
+        Returns:
+            `bool`:
+                ``True`` if the record existed and was deleted,
+                ``False`` if not found.
+        """
+
+    @abstractmethod
+    async def update_knowledge_document_status(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+        status: KnowledgeDocumentStatus,
+        error: str | None = None,
+        chunk_count: int | None = None,
+    ) -> None:
+        """Update only the status-related fields of a document record.
+
+        Used by the indexing worker as it walks the lifecycle
+        transitions (``parsing`` → ``chunking`` → ``indexing`` →
+        ``ready`` / ``error``).  Cheaper than a full upsert and avoids
+        races with concurrent lease writes by touching only the status
+        / error / chunk_count fields.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            knowledge_base_id (`str`):
+                The parent knowledge base id.
+            document_id (`str`):
+                The document being updated.
+            status (`KnowledgeDocumentStatus`):
+                The new lifecycle state.
+            error (`str | None`, optional):
+                Failure reason, set when ``status == 'error'``.
+                Ignored otherwise.  ``None`` leaves the existing
+                value unchanged.
+            chunk_count (`int | None`, optional):
+                The final chunk count, set when ``status == 'ready'``.
+                ``None`` leaves the existing value unchanged.
+        """
+
+    @abstractmethod
+    async def acquire_knowledge_document_lease(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+        processing_node: str,
+        lease_ttl: timedelta,
+        now: datetime | None = None,
+    ) -> bool:
+        """Compare-and-swap acquisition of the document processing lease.
+
+        Succeeds only if no other worker currently holds a live lease —
+        i.e. ``processing_node`` is unset or ``lease_expires_at`` is in
+        the past relative to ``now``.  On success the record's
+        ``processing_node`` and ``data.lease_expires_at`` fields are
+        updated.  The CAS is what makes the sweeper safe to run on
+        multiple nodes at once: even if two sweepers redispatch the
+        same document, only one worker can acquire its lease.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            knowledge_base_id (`str`):
+                The parent knowledge base id.
+            document_id (`str`):
+                The document whose lease is being acquired.
+            processing_node (`str`):
+                Stable identifier of the calling worker (e.g.
+                ``hostname:pid:uuid``).  Persisted as
+                ``processing_node`` on success.
+            lease_ttl (`timedelta`):
+                How long the lease should live from ``now``.
+            now (`datetime | None`, optional):
+                Reference time for the comparison.  Defaults to
+                ``datetime.now()``.  Injectable for testing.
+
+        Returns:
+            `bool`:
+                ``True`` when the lease was acquired by this caller,
+                ``False`` when another worker already holds it.
+        """
+
+    @abstractmethod
+    async def renew_knowledge_document_lease(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+        processing_node: str,
+        lease_ttl: timedelta,
+        now: datetime | None = None,
+    ) -> bool:
+        """Extend an existing lease this worker already holds.
+
+        Required for long-running parses that exceed ``lease_ttl`` —
+        the worker calls this periodically so the sweeper does not
+        mistake it for a crash.  Updates ``lease_expires_at`` to
+        ``now + lease_ttl`` only when ``processing_node`` matches the
+        caller; otherwise returns ``False`` so the worker can abandon
+        cleanly (its lease was stolen).
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            knowledge_base_id (`str`):
+                The parent knowledge base id.
+            document_id (`str`):
+                The document being renewed.
+            processing_node (`str`):
+                The caller's processing node id; must match the
+                record's current ``processing_node`` for renewal to
+                succeed.
+            lease_ttl (`timedelta`):
+                The new lease duration relative to ``now``.
+            now (`datetime | None`, optional):
+                Reference time.  Defaults to ``datetime.now()``.
+
+        Returns:
+            `bool`:
+                ``True`` when the renewal succeeded, ``False`` when
+                the lease no longer belongs to the caller.
+        """
+
+    @abstractmethod
+    async def release_knowledge_document_lease(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+        processing_node: str,
+    ) -> None:
+        """Release the processing lease this worker holds.
+
+        Clears ``processing_node`` and ``data.lease_expires_at`` only
+        if the current holder matches ``processing_node`` — a stolen
+        lease (e.g. after sweep) is left untouched.  Idempotent: a
+        no-op when the document is missing or already free.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            knowledge_base_id (`str`):
+                The parent knowledge base id.
+            document_id (`str`):
+                The document whose lease is being released.
+            processing_node (`str`):
+                The caller's processing node id; must match the
+                record's current holder.
+        """
+
+    @abstractmethod
+    async def list_knowledge_documents_with_expired_lease(
+        self,
+        now: datetime | None = None,
+    ) -> list[KnowledgeDocumentRecord]:
+        """Return non-terminal documents whose lease has expired.
+
+        Scans every user / knowledge base — used by the sweeper, not
+        by user-facing endpoints.  A document is "expired" when
+        ``data.status`` is not terminal (``ready`` / ``error``),
+        ``processing_node`` is set, and ``data.lease_expires_at`` is
+        in the past.  Implementations are free to skip records that
+        match no work and return an unspecified order.
+
+        Args:
+            now (`datetime | None`, optional):
+                Reference time.  Defaults to ``datetime.now()``.
+
+        Returns:
+            `list[KnowledgeDocumentRecord]`:
+                Documents to redispatch.
+        """
+
+    @abstractmethod
+    async def list_knowledge_documents_pending_since(
+        self,
+        threshold: datetime,
+    ) -> list[KnowledgeDocumentRecord]:
+        """Return documents stuck in ``pending`` older than ``threshold``.
+
+        Catches the corner case where the upload endpoint persisted a
+        record but the dispatcher (or the process holding it) died
+        before any worker picked the document up — a crashed lease
+        sweep would miss it because no lease was ever written.
+
+        Args:
+            threshold (`datetime`):
+                Cut-off creation time; only ``pending`` records
+                ``created_at < threshold`` are returned.
+
+        Returns:
+            `list[KnowledgeDocumentRecord]`:
+                Orphan ``pending`` documents to redispatch.
         """

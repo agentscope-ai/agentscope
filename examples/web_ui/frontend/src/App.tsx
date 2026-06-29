@@ -7,9 +7,11 @@ import { RouteError } from '@/components/error/RouteError';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { buildChatTour } from '@/components/tour/chatTourSteps';
 import { TourCard } from '@/components/tour/TourCard';
+import { UploadProvider } from '@/context/UploadContext';
 import { useTranslation } from '@/i18n/useI18n';
 import { ChatPage } from '@/pages/chat';
 import { CredentialPage } from '@/pages/credential';
+import { KnowledgePage } from '@/pages/knowledge';
 import { SchedulePage } from '@/pages/schedule';
 import { SetupPage } from '@/pages/setup';
 
@@ -44,6 +46,8 @@ const router = createBrowserRouter([
 					},
 					{ path: '/schedule', element: <SchedulePage /> },
 					{ path: '/credential', element: <CredentialPage /> },
+					{ path: '/knowledge', element: <KnowledgePage /> },
+					{ path: '/knowledge/:kbId', element: <KnowledgePage /> },
 				],
 			},
 		],
@@ -68,7 +72,9 @@ function App() {
 				shadowOpacity="0.6"
 				cardTransition={{ type: 'spring', duration: 0.4 }}
 			>
-				<RouterProvider router={router} />
+				<UploadProvider>
+					<RouterProvider router={router} />
+				</UploadProvider>
 				<Toaster richColors position="top-right" />
 			</Onborda>
 		</OnbordaProvider>

@@ -1,22 +1,45 @@
+import type { PermissionContext } from '@agentscope-ai/agentscope/permission';
 import type { TaskContext } from '@agentscope-ai/agentscope/state';
-import { Toolbox } from 'lucide-react';
+import { BookText, ChevronDown, Database, ListTodo, PanelRight, ShieldCheck } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import type { ChatModelConfig, TTSModelConfig } from '@/api';
+import type { ChatModelConfig, SessionKnowledgeConfig, TTSModelConfig } from '@/api';
 import { sessionApi } from '@/api';
+import MCPSvg from '@/assets/images/mcp.svg?react';
 import { ChatContent } from '@/components/chat/ChatContent.tsx';
-import { TaskPanel } from '@/components/chat/TaskPanel';
+import { SubagentHitlCard } from '@/components/chat/SubagentHitlCard';
 import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDialog';
-import { WorkspaceDrawer } from '@/components/drawer/WorkspaceDrawer.tsx';
+import { KnowledgeBasePanel } from '@/components/panel/KnowledgeBasePanel';
+import { McpPanel } from '@/components/panel/McpPanel';
+import { PanelDock, type PanelDescriptor, type PanelKey } from '@/components/panel/PanelDock.tsx';
+import { PermissionPanel } from '@/components/panel/PermissionPanel';
+import { SkillPanel } from '@/components/panel/SkillPanel';
+import { TaskPanel } from '@/components/panel/TaskPanel';
+import { KnowledgeBaseParametersPopover } from '@/components/popover/KnowledgeBaseParametersPopover';
 import { ModelParametersPopover } from '@/components/popover/ModelParametersPopover';
 import { LlmSelect } from '@/components/select/LlmSelect';
 import { PermissionModeSelect } from '@/components/select/PermissionModeSelect.tsx';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+	DropdownMenu,
+	DropdownMenuCheckboxItem,
+	DropdownMenuContent,
+	DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+	ResizableHandle,
+	ResizablePanel,
+	ResizablePanelGroup,
+} from '@/components/ui/resizable.tsx';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
+import { useKnowledgeBaseMiddlewareSchema } from '@/hooks/useKnowledgeBaseMiddlewareSchema';
+import { useKnowledgeBases } from '@/hooks/useKnowledgeBases';
 import { useMessages } from '@/hooks/useMessages';
 import { useSessions } from '@/hooks/useSessions';
 import { useWorkspace } from '@/hooks/useWorkspace.ts';
+import { useTranslation } from '@/i18n/useI18n';
 
 interface ChatViewportProps {
 	/**
@@ -37,6 +60,40 @@ interface ChatViewportProps {
 	 * passing this callback wires that signal up.
 	 */
 	onTeamUpdated?: () => void;
+}
+
+/** Maximum number of panels stacked in a single dock column. */
+const MAX_PANELS_PER_COLUMN = 2;
+
+/**
+ * Insert a panel into the dock layout. Scans columns left to right and
+ * appends to the first one with spare room; if every column is full a
+ * new rightmost column is created. No-op when the panel is already
+ * open.
+ *
+ * @param layout - The current column/panel arrangement.
+ * @param key - The panel to open.
+ * @returns A new layout array (the input is never mutated).
+ */
+function openPanelInLayout(layout: PanelKey[][], key: PanelKey): PanelKey[][] {
+	if (layout.some((column) => column.includes(key))) return layout;
+	const targetIndex = layout.findIndex((column) => column.length < MAX_PANELS_PER_COLUMN);
+	if (targetIndex === -1) return [...layout, [key]];
+	return layout.map((column, index) => (index === targetIndex ? [...column, key] : column));
+}
+
+/**
+ * Remove a panel from the dock layout, dropping its column entirely if
+ * it becomes empty.
+ *
+ * @param layout - The current column/panel arrangement.
+ * @param key - The panel to close.
+ * @returns A new layout array (the input is never mutated).
+ */
+function closePanelInLayout(layout: PanelKey[][], key: PanelKey): PanelKey[][] {
+	return layout
+		.map((column) => column.filter((panelKey) => panelKey !== key))
+		.filter((column) => column.length > 0);
 }
 
 /**
@@ -60,6 +117,7 @@ interface ChatViewportProps {
  * @returns The right-side main JSX of the chat page.
  */
 export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewportProps) {
+	const { t } = useTranslation();
 	const { sessions, refetch: refetchSessions } = useSessions(agentId);
 	const { groups } = useAvailableModels();
 
@@ -78,22 +136,34 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		null,
 	);
 	const [selectedTTSModel, setSelectedTTSModel] = useState<TTSModelConfig | null>(null);
+	const [selectedKnowledgeConfig, setSelectedKnowledgeConfig] =
+		useState<SessionKnowledgeConfig | null>(null);
 	const [selectedPermissionMode, setSelectedPermissionMode] = useState<string>('default');
 	const [credentialOpen, setCredentialOpen] = useState(false);
 	const [credentialRefetchTrigger, setCredentialRefetchTrigger] = useState(0);
 	const [tasksContext, setTasksContext] = useState<TaskContext | null>(null);
+	const [permissionContext, setPermissionContext] = useState<PermissionContext | null>(null);
+	// Dock layout: columns laid out left→right, each holding up to 2
+	// panels stacked top→bottom. Open order determines placement.
+	const [panelLayout, setPanelLayout] = useState<PanelKey[][]>([]);
 
 	const handleStateUpdated = useCallback((value: Record<string, unknown>) => {
 		if (value.tasks_context) {
 			setTasksContext(value.tasks_context as TaskContext);
 		}
-		// TODO: handle permission_context updates when permission UI is built
+		if (value.permission_context) {
+			setPermissionContext(value.permission_context as PermissionContext);
+		}
 	}, []);
 
-	const { msgs, streaming, send, onUserConfirm } = useMessages(agentId, sessionId, {
-		onTeamUpdated: handleTeamUpdated,
-		onStateUpdated: handleStateUpdated,
-	});
+	const { msgs, streaming, send, onUserConfirm, onSubagentConfirm, subagentHitl } = useMessages(
+		agentId,
+		sessionId,
+		{
+			onTeamUpdated: handleTeamUpdated,
+			onStateUpdated: handleStateUpdated,
+		},
+	);
 	const {
 		mcps,
 		loading: mcpsLoading,
@@ -104,6 +174,149 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		addSkill,
 		removeSkill,
 	} = useWorkspace(agentId, sessionId);
+	const { knowledgeBases, loading: knowledgeBasesLoading } = useKnowledgeBases();
+	const { schema: kbMiddlewareSchema } = useKnowledgeBaseMiddlewareSchema();
+
+	// Toggle a panel open/closed from the top-bar buttons.
+	const togglePanel = useCallback((key: PanelKey) => {
+		setPanelLayout((layout) =>
+			layout.some((column) => column.includes(key))
+				? closePanelInLayout(layout, key)
+				: openPanelInLayout(layout, key),
+		);
+	}, []);
+
+	// Close a panel (driven by the panel's own close button).
+	const closePanel = useCallback((key: PanelKey) => {
+		setPanelLayout((layout) => closePanelInLayout(layout, key));
+	}, []);
+
+	const isPanelOpen = useCallback(
+		(key: PanelKey) => panelLayout.some((column) => column.includes(key)),
+		[panelLayout],
+	);
+
+	/**
+	 * Persist a knowledge-base attachment change. `null` detaches every
+	 * knowledge base from this session, removing the `RAGMiddleware`.
+	 *
+	 * Declared above `panels` (rather than alongside the other model
+	 * handlers below) because `panels` is built inside `useMemo` and
+	 * references this handler eagerly — a later `const` would still be
+	 * in the temporal dead zone when the memo factory runs on first
+	 * render.
+	 *
+	 * @param config - New attachment, or `null` to detach all.
+	 */
+	const handleKnowledgeConfigChange = useCallback(
+		async (config: SessionKnowledgeConfig | null) => {
+			if (!sessionId || !agentId) return;
+			setSelectedKnowledgeConfig(config);
+			await sessionApi.update(sessionId, agentId, { knowledge_config: config });
+			await refetchSessions();
+		},
+		[sessionId, agentId, refetchSessions],
+	);
+
+	// Build the panel descriptors with live data. Rebuilt on every
+	// data change so the dock always renders the latest state — the
+	// dock itself stays free of any data dependency.
+	const panels = useMemo<Record<PanelKey, PanelDescriptor>>(
+		() => ({
+			plan: {
+				title: t('panel.plan.title'),
+				icon: <ListTodo className="size-4" />,
+				content: <TaskPanel tasksContext={tasksContext} />,
+			},
+			mcp: {
+				title: 'MCP',
+				icon: <MCPSvg className="size-4" />,
+				content: (
+					<McpPanel
+						mcps={mcps}
+						loading={mcpsLoading}
+						onAdd={addMcps}
+						onRemove={removeMcp}
+					/>
+				),
+			},
+			skill: {
+				title: t('panel.skill.title'),
+				icon: <BookText className="size-4" />,
+				content: (
+					<SkillPanel
+						skills={skills}
+						loading={skillsLoading}
+						onAdd={addSkill}
+						onRemove={removeSkill}
+					/>
+				),
+			},
+			permission: {
+				title: (
+					<span className="flex items-center gap-x-2">
+						{t('panel.permission.title')}
+						{permissionContext?.mode ? (
+							<Badge variant="outline" className="capitalize">
+								{t('panel.permission.mode', { mode: permissionContext.mode })}
+							</Badge>
+						) : null}
+					</span>
+				),
+				icon: <ShieldCheck className="size-4" />,
+				content: <PermissionPanel permissionContext={permissionContext} />,
+			},
+			knowledge: {
+				title: (
+					<span className="flex items-center gap-x-2">
+						{t('panel.knowledge.title')}
+						{selectedKnowledgeConfig?.knowledge_base_ids.length ? (
+							<Badge variant="outline">
+								{selectedKnowledgeConfig.knowledge_base_ids.length}
+							</Badge>
+						) : null}
+					</span>
+				),
+				icon: <Database className="size-4" />,
+				actions: (
+					<KnowledgeBaseParametersPopover
+						value={selectedKnowledgeConfig}
+						schema={kbMiddlewareSchema}
+						onChange={handleKnowledgeConfigChange}
+						disabled={!sessionId}
+					/>
+				),
+				content: (
+					<KnowledgeBasePanel
+						knowledgeBases={knowledgeBases}
+						loading={knowledgeBasesLoading}
+						value={selectedKnowledgeConfig}
+						onChange={handleKnowledgeConfigChange}
+						disabled={!sessionId}
+					/>
+				),
+			},
+		}),
+		[
+			t,
+			tasksContext,
+			mcps,
+			mcpsLoading,
+			addMcps,
+			removeMcp,
+			skills,
+			skillsLoading,
+			addSkill,
+			removeSkill,
+			permissionContext,
+			knowledgeBases,
+			knowledgeBasesLoading,
+			selectedKnowledgeConfig,
+			kbMiddlewareSchema,
+			handleKnowledgeConfigChange,
+			sessionId,
+		],
+	);
 
 	const view = sessions.find((v) => v.session.id === sessionId) ?? null;
 
@@ -130,6 +343,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		setSelectedModel(null);
 		setSelectedFallbackModel(null);
 		setSelectedTTSModel(null);
+		setSelectedKnowledgeConfig(null);
 	}, [sessionId]);
 
 	const selectedModelCard = useMemo(() => {
@@ -186,6 +400,21 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		setTasksContext(tc ?? null);
 	}, [view]);
 
+	// Sync permissionContext from the session snapshot, mirroring the
+	// tasksContext approach above. Real-time updates arrive via the
+	// state_updated event → handleStateUpdated. Clearing to null when
+	// the session is gone avoids leaking stale rules across sessions.
+	useEffect(() => {
+		if (!view) {
+			setPermissionContext(null);
+			return;
+		}
+		const pc = (view.session.state as Record<string, unknown>)?.permission_context as
+			| PermissionContext
+			| undefined;
+		setPermissionContext(pc ?? null);
+	}, [view]);
+
 	// Sync selectedModel + selectedFallbackModel from the session
 	// record. If the session has no model configured yet, auto-pick
 	// the first available one and persist it back so subsequent
@@ -219,6 +448,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 
 		setSelectedFallbackModel(view.session.config.fallback_chat_model_config ?? null);
 		setSelectedTTSModel(view.session.config.tts_model_config ?? null);
+		setSelectedKnowledgeConfig(view.session.config.knowledge_config ?? null);
 	}, [view, groups, sessionId, agentId]);
 
 	// Sync selectedPermissionMode when the session changes. Same
@@ -297,113 +527,181 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	return (
 		<>
 			<main className="flex size-full">
-				<div className="flex flex-col flex-1 min-h-0 p-2">
-					<div className="flex flex-row gap-x-2 justify-between">
-						<div id="tour-llm-select" className="flex flex-row items-center gap-x-1">
-							<SidebarTrigger className="md:hidden" />
-							<LlmSelect
-								value={selectedModel}
-								onChange={handleLlmChange}
-								onAddCredential={() => setCredentialOpen(true)}
-								refetchTrigger={credentialRefetchTrigger}
-							/>
-							<ModelParametersPopover
-								selectedModel={selectedModel}
-								modelCard={selectedModelCard}
-								onChange={handleParametersChange}
-								selectedFallbackModel={selectedFallbackModel}
-								onFallbackChange={handleFallbackChange}
-								selectedTTSModel={selectedTTSModel}
-								onTTSChange={handleTTSChange}
-							/>
+				<ResizablePanelGroup orientation="horizontal">
+					<ResizablePanel className="flex flex-1" minSize="24rem">
+						<div className="flex flex-col flex-1 min-h-0 min-w-0 overflow-x-hidden p-2">
+							<div className="flex flex-row gap-x-2 justify-between">
+								<div
+									id="tour-llm-select"
+									className="flex flex-row items-center gap-x-1"
+								>
+									<SidebarTrigger className="md:hidden" />
+									<LlmSelect
+										value={selectedModel}
+										onChange={handleLlmChange}
+										onAddCredential={() => setCredentialOpen(true)}
+										refetchTrigger={credentialRefetchTrigger}
+									/>
+									<ModelParametersPopover
+										selectedModel={selectedModel}
+										modelCard={selectedModelCard}
+										onChange={handleParametersChange}
+										selectedFallbackModel={selectedFallbackModel}
+										onFallbackChange={handleFallbackChange}
+										selectedTTSModel={selectedTTSModel}
+										onTTSChange={handleTTSChange}
+									/>
+								</div>
+								<div id="tour-permission-mode" className="flex flex-row gap-x-1">
+									<PermissionModeSelect
+										value={selectedPermissionMode}
+										disabled={!sessionId}
+										onChange={handlePermissionModeChange}
+									/>
+									<DropdownMenu>
+										<DropdownMenuTrigger asChild>
+											<Button
+												variant="ghost"
+												size="sm"
+												className="gap-1 px-2"
+											>
+												<PanelRight />
+												<ChevronDown className="size-3 text-muted-foreground" />
+											</Button>
+										</DropdownMenuTrigger>
+										<DropdownMenuContent align="end" className="w-auto">
+											<DropdownMenuCheckboxItem
+												checked={isPanelOpen('plan')}
+												onCheckedChange={() => togglePanel('plan')}
+												onSelect={(e) => e.preventDefault()}
+											>
+												<ListTodo />
+												{t('panel.plan.title')}
+											</DropdownMenuCheckboxItem>
+											<DropdownMenuCheckboxItem
+												checked={isPanelOpen('mcp')}
+												onCheckedChange={() => togglePanel('mcp')}
+												onSelect={(e) => e.preventDefault()}
+											>
+												<MCPSvg className="size-4" />
+												MCP
+											</DropdownMenuCheckboxItem>
+											<DropdownMenuCheckboxItem
+												checked={isPanelOpen('skill')}
+												onCheckedChange={() => togglePanel('skill')}
+												onSelect={(e) => e.preventDefault()}
+											>
+												<BookText />
+												{t('panel.skill.title')}
+											</DropdownMenuCheckboxItem>
+											<DropdownMenuCheckboxItem
+												checked={isPanelOpen('permission')}
+												onCheckedChange={() => togglePanel('permission')}
+												onSelect={(e) => e.preventDefault()}
+											>
+												<ShieldCheck />
+												{t('panel.permission.title')}
+											</DropdownMenuCheckboxItem>
+											<DropdownMenuCheckboxItem
+												checked={isPanelOpen('knowledge')}
+												onCheckedChange={() => togglePanel('knowledge')}
+												onSelect={(e) => e.preventDefault()}
+											>
+												<Database />
+												{t('panel.knowledge.title')}
+											</DropdownMenuCheckboxItem>
+										</DropdownMenuContent>
+									</DropdownMenu>
+								</div>
+							</div>
+							<div className="flex flex-1 justify-center min-h-0 overflow-hidden relative [--chat-content-w:48rem]">
+								<ChatContent
+									className={'max-w-[var(--chat-content-w)] w-full'}
+									msgs={msgs}
+									sending={streaming}
+									disabled={selectedModel === null}
+									onSend={send}
+									onUserConfirm={onUserConfirm}
+									footerSlot={
+										subagentHitl.length > 0 ? (
+											<div className="space-y-2 pb-2">
+												{subagentHitl.map((entry) => (
+													<SubagentHitlCard
+														key={`${entry.worker_session_id}:${entry.reply_id}`}
+														entry={entry}
+														onConfirm={(toolCall, confirm, rules) =>
+															onSubagentConfirm(
+																entry,
+																toolCall,
+																confirm,
+																rules,
+															)
+														}
+													/>
+												))}
+											</div>
+										) : null
+									}
+									allowedInputTypes={(
+										selectedModelCard?.input_types ?? []
+									).filter(
+										(t) =>
+											/^(image|video|audio|text)\/.+/.test(t) ||
+											t === 'application/pdf' ||
+											t.startsWith('application/vnd.') ||
+											t.startsWith('application/msword') ||
+											t.startsWith('application/vnd.openxmlformats'),
+									)}
+									fileProcessor={async (file) => {
+										const filePath = (file as File & { path?: string }).path;
+										if (filePath) {
+											return {
+												id: crypto.randomUUID(),
+												type: 'data' as const,
+												source: {
+													type: 'url' as const,
+													url: `file://${filePath}`,
+													media_type:
+														file.type || 'application/octet-stream',
+												},
+												name: file.name,
+											};
+										}
+										if (file.type === 'text/plain') {
+											const text = await file.text();
+											return {
+												id: crypto.randomUUID(),
+												type: 'text' as const,
+												text: `[File: ${file.name}]\n${text}`,
+											};
+										}
+										const buffer = await file.arrayBuffer();
+										const bytes = new Uint8Array(buffer);
+										let binary = '';
+										for (let i = 0; i < bytes.byteLength; i++) {
+											binary += String.fromCharCode(bytes[i]);
+										}
+										const base64 = btoa(binary);
+										return {
+											id: crypto.randomUUID(),
+											type: 'data' as const,
+											source: {
+												type: 'base64' as const,
+												media_type: file.type || 'application/octet-stream',
+												data: base64,
+											},
+											name: file.name,
+										};
+									}}
+								/>
+							</div>
 						</div>
-						<div id="tour-permission-mode" className="flex flex-row gap-x-2">
-							<PermissionModeSelect
-								value={selectedPermissionMode}
-								disabled={!sessionId}
-								onChange={handlePermissionModeChange}
-							/>
-						</div>
-					</div>
-					<div className="flex flex-1 justify-center min-h-0 overflow-hidden relative [--chat-content-w:36rem]">
-						<TaskPanel
-							className="absolute left-0 top-0 h-full max-w-[calc(50%-var(--chat-content-w)/2)]"
-							tasksContext={tasksContext}
-						/>
-						<ChatContent
-							className={'max-w-[var(--chat-content-w)] w-full'}
-							msgs={msgs}
-							sending={streaming}
-							disabled={selectedModel === null}
-							onSend={send}
-							onUserConfirm={onUserConfirm}
-							allowedInputTypes={(selectedModelCard?.input_types ?? []).filter(
-								(t) =>
-									/^(image|video|audio|text)\/.+/.test(t) ||
-									t === 'application/pdf' ||
-									t.startsWith('application/vnd.') ||
-									t.startsWith('application/msword') ||
-									t.startsWith('application/vnd.openxmlformats'),
-							)}
-							fileProcessor={async (file) => {
-								const filePath = (file as File & { path?: string }).path;
-								if (filePath) {
-									return {
-										id: crypto.randomUUID(),
-										type: 'data' as const,
-										source: {
-											type: 'url' as const,
-											url: `file://${filePath}`,
-											media_type: file.type || 'application/octet-stream',
-										},
-										name: file.name,
-									};
-								}
-								if (file.type === 'text/plain') {
-									const text = await file.text();
-									return {
-										id: crypto.randomUUID(),
-										type: 'text' as const,
-										text: `[File: ${file.name}]\n${text}`,
-									};
-								}
-								const buffer = await file.arrayBuffer();
-								const bytes = new Uint8Array(buffer);
-								let binary = '';
-								for (let i = 0; i < bytes.byteLength; i++) {
-									binary += String.fromCharCode(bytes[i]);
-								}
-								const base64 = btoa(binary);
-								return {
-									id: crypto.randomUUID(),
-									type: 'data' as const,
-									source: {
-										type: 'base64' as const,
-										media_type: file.type || 'application/octet-stream',
-										data: base64,
-									},
-									name: file.name,
-								};
-							}}
-						/>
-					</div>
-				</div>
-				<div className="flex flex-col h-full gap-2 p-2">
-					<WorkspaceDrawer
-						mcps={mcps}
-						loading={mcpsLoading}
-						onAdd={addMcps}
-						onRemove={removeMcp}
-						skills={skills}
-						skillsLoading={skillsLoading}
-						onAddSkill={addSkill}
-						onRemoveSkill={removeSkill}
-					>
-						<Button size="icon-sm" variant="ghost">
-							<Toolbox />
-						</Button>
-					</WorkspaceDrawer>
-				</div>
+					</ResizablePanel>
+					{panelLayout.length > 0 && (
+						<ResizableHandle withHandle className="bg-transparent" />
+					)}
+					<PanelDock layout={panelLayout} panels={panels} onClosePanel={closePanel} />
+				</ResizablePanelGroup>
 			</main>
 			<CreateCredentialDialog
 				open={credentialOpen}
