@@ -53,12 +53,14 @@ class ToolContext(BaseModel):
         """
 
         # Find the cache entry
-        for entry in self.read_file_cache:
+        for idx, entry in enumerate(self.read_file_cache):
             if entry.file_path == file_path:
                 # Check if cache is still valid
                 try:
                     updated_at = await aiofiles.os.path.getmtime(file_path)
                     if updated_at == entry.updated_at:
+                        self.read_file_cache.pop(idx)
+                        self.read_file_cache.append(entry)
                         return entry
                     else:
                         # Cache is outdated, remove it
