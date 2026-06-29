@@ -47,8 +47,6 @@ class DashScopeCosyVoiceTTSModel(TTSModelBase):
     type: Literal["dashscope_cosyvoice_tts"] = "dashscope_cosyvoice_tts"
     """The type of the TTS model."""
 
-    realtime: bool = False
-
     _MODELS_DIR = os.path.join(os.path.dirname(__file__), "_cosyvoice_models")
 
     def __init__(

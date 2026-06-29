@@ -290,7 +290,7 @@ function DetailPanel({ credential, schema, onEdit, onDelete }: DetailPanelProps)
 						</h3>
 						<div className="grid grid-cols-2 xl:grid-cols-3 gap-3">
 							{ttsModels.map((m) => (
-								<TTSModelCardItem key={`${m.name}-${m.realtime}`} model={m} />
+								<TTSModelCardItem key={m.name} model={m} />
 							))}
 						</div>
 					</div>

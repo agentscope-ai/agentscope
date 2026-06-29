@@ -44,9 +44,6 @@ class TTSModelConfig(BaseModel):
     model: str
     """The TTS model name."""
 
-    realtime: bool | None = None
-    """Whether the selected TTS model uses streaming input."""
-
     parameters: dict
     """TTS parameters (voice, language, etc.)."""
 

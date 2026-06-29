@@ -469,32 +469,6 @@ class TestDashScopeCosyVoiceTTSModel(IsolatedAsyncioTestCase):
         self.assertIn("cosyvoice-v3-flash", credential_names)
         self.assertIn("cosyvoice-v3-plus", credential_names)
 
-        resolved_non_realtime = _resolve_tts_class(
-            credential_classes,
-            "cosyvoice-v3-plus",
-            realtime=False,
-        )
-        resolved_realtime = _resolve_tts_class(
-            credential_classes,
-            "cosyvoice-v3-plus",
-            realtime=True,
-        )
-        self.assertIs(resolved_non_realtime, DashScopeCosyVoiceTTSModel)
-        self.assertIs(resolved_realtime, DashScopeCosyVoiceTTSModel)
-
-        resolved_realtime_fallback = _resolve_tts_class(
-            credential_classes,
-            "qwen3-tts-flash",
-            realtime=True,
-        )
-        resolved_non_realtime_fallback = _resolve_tts_class(
-            credential_classes,
-            "qwen3-tts-flash-realtime",
-            realtime=False,
-        )
-        self.assertTrue(resolved_realtime_fallback.realtime)
-        self.assertFalse(resolved_non_realtime_fallback.realtime)
-
         resolved_without_realtime = _resolve_tts_class(
             credential_classes,
             "cosyvoice-v3-plus",
