@@ -6,6 +6,41 @@ from pydantic import BaseModel, Field
 from ..model import ChatModelBase
 
 
+DEFAULT_SELF_COMPACT_RUBRIC_PROMPT = (
+    "<system-hint>You are deciding whether the current agent trajectory "
+    "should be compacted before the next reply. The current context usage is "
+    "{context_usage_percent}% of the model context window. Self-compaction is "
+    "being considered between {self_compact_trigger_percent}% and "
+    "{trigger_percent}%; at {trigger_percent}%, normal threshold compression "
+    "will be forced. Compress when the older conversation contains enough "
+    "completed work, tool results, or intermediate reasoning that a concise "
+    "continuation summary would preserve progress while reducing distraction "
+    "or context cost. Continue when recent details are still directly needed "
+    "verbatim, when there is too little history to summarize, or when "
+    "compaction would likely remove information needed for the next action. "
+    "Return COMPRESS or CONTINUE."
+    "</system-hint>"
+)
+
+
+SELF_COMPACT_DECISION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "decision": {
+            "type": "string",
+            "enum": ["COMPRESS", "CONTINUE"],
+            "description": "Whether to compact the current context.",
+        },
+        "reason": {
+            "type": "string",
+            "description": "A concise reason for the decision.",
+        },
+    },
+    "required": ["decision", "reason"],
+    "additionalProperties": False,
+}
+
+
 class SummarySchema(BaseModel):
     """The compressed memory model, used to generate summary of old memories"""
 
@@ -118,6 +153,47 @@ class ContextConfig(BaseModel):
         ),
     )
     """The tool result limit to avoid tool result bursting."""
+
+    self_compact_enabled: bool = Field(
+        default=False,
+        description=(
+            "Whether to enable model-driven self-compaction. When disabled, "
+            "AgentScope keeps the existing token-threshold compression "
+            "behavior."
+        ),
+    )
+    """Whether to enable model-driven self-compaction."""
+
+    self_compact_trigger_ratio: float = Field(default=0.5, gt=0, lt=0.9)
+    """When self-compaction is enabled, run the rubric only after this ratio
+    of the model context window is used and before ``trigger_ratio`` is
+    reached."""
+
+    self_compact_probe_interval: int = Field(
+        default=1,
+        ge=1,
+        description=(
+            "Run the self-compaction rubric every N completed reply "
+            "iterations when self-compaction is enabled."
+        ),
+    )
+    """How often to run the self-compaction rubric."""
+
+    self_compact_min_iters: int = Field(
+        default=1,
+        ge=0,
+        description=(
+            "Skip self-compaction rubric checks until the current reply has "
+            "reached this reasoning-acting iteration."
+        ),
+    )
+    """Minimum current reply iteration before probing self-compaction."""
+
+    self_compact_rubric_prompt: str = Field(
+        default=DEFAULT_SELF_COMPACT_RUBRIC_PROMPT,
+        json_schema_extra={"format": "textarea"},
+    )
+    """Prompt used to ask the model whether context should be compacted."""
 
 
 class ReActConfig(BaseModel):

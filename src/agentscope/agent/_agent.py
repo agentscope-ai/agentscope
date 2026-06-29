@@ -16,7 +16,12 @@ from typing import (
 
 import jsonschema
 
-from ._config import ContextConfig, ReActConfig, ModelConfig
+from ._config import (
+    ContextConfig,
+    ReActConfig,
+    ModelConfig,
+    SELF_COMPACT_DECISION_SCHEMA,
+)
 from ..state import AgentState
 from ._utils import _ToolCallBatch
 from .._logging import logger
@@ -309,6 +314,69 @@ class Agent:
 
             await execute_chain()
 
+    async def self_compact_context(
+        self,
+        context_config: ContextConfig | None = None,
+    ) -> None:
+        """Run optional rubric-gated self-compaction
+        below the hard threshold."""
+        cfg: ContextConfig = context_config or self.context_config
+        if not cfg.self_compact_enabled or not self.state.context:
+            return
+
+        kwargs = await self._prepare_model_input()
+        estimated_tokens = await self.model.count_tokens(**kwargs)
+
+        context_size = self.model.context_size
+        hard_threshold = cfg.trigger_ratio * context_size
+        early_threshold = cfg.self_compact_trigger_ratio * context_size
+        if (
+            estimated_tokens < early_threshold
+            or estimated_tokens >= hard_threshold
+        ):
+            return
+
+        try:
+            should_compact = await self._should_self_compact(
+                cfg,
+                kwargs["messages"],
+                estimated_tokens,
+            )
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.warning(
+                "[AGENT %s]: Self-compaction rubric failed, skipping "
+                "optional early compression: %s",
+                self.name,
+                e,
+            )
+            return
+
+        if not should_compact:
+            return
+
+        logger.info(
+            "[AGENT %s]: Self-compaction rubric requested compression "
+            "at token count %d below threshold %d.",
+            self.name,
+            int(estimated_tokens),
+            int(hard_threshold),
+        )
+
+        forced_cfg = cfg.model_copy(
+            update={
+                "trigger_ratio": estimated_tokens / context_size,
+            },
+        )
+        try:
+            await self.compress_context(context_config=forced_cfg)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.warning(
+                "[AGENT %s]: Optional self-compaction failed below the "
+                "token threshold, keeping the original context: %s",
+                self.name,
+                e,
+            )
+
     async def _compress_context_impl(
         self,
         context_config: ContextConfig | None = None,
@@ -517,6 +585,81 @@ class Agent:
             self.name,
         )
 
+    async def _should_self_compact(
+        self,
+        context_config: ContextConfig,
+        messages: list[Msg],
+        estimated_tokens: int,
+    ) -> bool:
+        """Decide whether to compact context using the SELFCOMPACT rubric."""
+        cur_iter = self.state.cur_iter or 0
+        if cur_iter < context_config.self_compact_min_iters:
+            return False
+
+        probe_interval = context_config.self_compact_probe_interval
+        if probe_interval > 1 and cur_iter % probe_interval != 0:
+            return False
+
+        prompt = self._render_self_compact_rubric_prompt(
+            context_config,
+            estimated_tokens,
+        )
+        if not prompt:
+            return False
+
+        # SELFCOMPACT (https://arxiv.org/pdf/2606.23525) uses a lightweight
+        # model verdict to choose compaction timing, instead of relying only on
+        # a fixed token threshold.
+        rubric_messages = messages + [
+            UserMsg(
+                name="user",
+                content=prompt,
+            ),
+        ]
+        res = await self.model.generate_structured_output(
+            messages=rubric_messages,
+            structured_model=SELF_COMPACT_DECISION_SCHEMA,
+        )
+        decision = str(res.content.get("decision", "")).upper()
+        return decision == "COMPRESS"
+
+    def _render_self_compact_rubric_prompt(
+        self,
+        context_config: ContextConfig,
+        estimated_tokens: int,
+    ) -> str:
+        """Render the self-compaction prompt with current context usage."""
+        prompt = context_config.self_compact_rubric_prompt
+        if not prompt:
+            return ""
+
+        usage_percent = (
+            100 * estimated_tokens / self.model.context_size
+            if self.model.context_size
+            else 0
+        )
+        usage_text = f"{usage_percent:.1f}"
+        self_compact_trigger_percent = (
+            100 * context_config.self_compact_trigger_ratio
+        )
+        trigger_percent = 100 * context_config.trigger_ratio
+        return (
+            prompt.replace("{context_usage_percent}", usage_text)
+            .replace(
+                "{self_compact_trigger_percent}",
+                f"{self_compact_trigger_percent:.1f}",
+            )
+            .replace("{trigger_percent}", f"{trigger_percent:.1f}")
+            .replace("{context_usage_ratio}", f"{usage_percent / 100:.3f}")
+            .replace(
+                "{self_compact_trigger_ratio}",
+                f"{context_config.self_compact_trigger_ratio:.3f}",
+            )
+            .replace("{trigger_ratio}", f"{context_config.trigger_ratio:.3f}")
+            .replace("{estimated_tokens}", str(int(estimated_tokens)))
+            .replace("{context_size}", str(int(self.model.context_size)))
+        )
+
     # ======================================================================
     # Agent core methods, including _reply, _reasoning, _acting, etc.
     # ======================================================================
@@ -565,6 +708,9 @@ class Agent:
 
             async for item in execute_chain():
                 yield item
+
+        if self.context_config.self_compact_enabled:
+            await self.self_compact_context()
 
     async def _reply_impl(
         self,
