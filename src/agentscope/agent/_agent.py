@@ -848,6 +848,18 @@ class Agent:
             ):
                 yield evt
 
+        # The streaming response may yield no chunk, or be cut off before a
+        # chunk with ``is_last=True`` arrives, leaving ``completed_response``
+        # as ``None``. Raise a clear error here instead of letting the later
+        # ``completed_response.usage``/``.content`` accesses fail with an
+        # opaque ``AttributeError: 'NoneType' object has no attribute ...``.
+        if completed_response is None:
+            raise RuntimeError(
+                "Failed to get a completed response from the model: the "
+                "streaming response ended without a final chunk "
+                "(`is_last=True`) or yielded no chunks.",
+            )
+
         # Send the ended events for the remaining active blocks
         if block_ids["text"] is not None:
             yield TextBlockEndEvent(

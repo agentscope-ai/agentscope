@@ -128,6 +128,19 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             "usage": None,
         }
 
+    async def test_reasoning_raises_clear_error_on_empty_stream(self) -> None:
+        """A streaming response that yields no final chunk should raise a
+        clear ``RuntimeError`` instead of an opaque ``AttributeError`` from
+        dereferencing ``None`` (see issue #1860)."""
+        # A streaming response that yields zero chunks leaves
+        # ``completed_response`` as ``None`` in ``_reasoning_impl``.
+        self.model.set_responses([[]])
+
+        with self.assertRaises(RuntimeError) as ctx:
+            await self.agent.reply(UserMsg(name="user", content="Hi"))
+
+        self.assertIn("completed response", str(ctx.exception).lower())
+
     async def test_default_configs_are_not_shared_between_agents(
         self,
     ) -> None:
