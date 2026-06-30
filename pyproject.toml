@@ -82,6 +82,10 @@ rag = [
     "pypdf",
     "python-pptx",
 ]
+milvuslite = [
+    "pymilvus[milvus-lite]>=2.4.0",
+    "milvus-lite>=3.0; sys_platform == 'win32'",
+]
 
 # ------------ S3-compatible blob store ------------
 s3 = [
@@ -105,6 +109,7 @@ full = [
     "agentscope[workspace]",
     "agentscope[tools]",
     "agentscope[rag]",
+    "agentscope[milvuslite]",
     "agentscope[s3]",
     "agentscope[mem0]",
 ]

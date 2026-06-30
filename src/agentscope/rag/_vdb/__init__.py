@@ -7,10 +7,12 @@ from ._vector_store import (
     VectorSearchResult,
     VectorStoreBase,
 )
+from ._milvus_lite import MilvusLiteStore
 from ._qdrant import QdrantStore
 
 __all__ = [
     "DocumentSummary",
+    "MilvusLiteStore",
     "VectorStoreBase",
     "VectorRecord",
     "VectorSearchResult",
