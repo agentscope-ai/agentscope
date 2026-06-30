@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 """Schema models for the agent service."""
 
+from ._background_task import (
+    BackgroundTaskInfo,
+    ListBackgroundTasksResponse,
+    to_info,
+)
 from ._chat import ChatRequest, ChatTriggerResponse
 from ._model import ListModelsResponse, ListModelsRequest
 from ._tts_model import ListTTSModelsResponse, ListTTSModelsRequest
@@ -61,6 +66,10 @@ __all__ = [
     "CreateAgentResponse",
     "UpdateAgentRequest",
     "ListSchedulesResponse",
+    # Background Task
+    "BackgroundTaskInfo",
+    "ListBackgroundTasksResponse",
+    "to_info",
     # Chat
     "ChatRequest",
     "ChatTriggerResponse",
