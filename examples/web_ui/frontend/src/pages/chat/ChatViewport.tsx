@@ -1,9 +1,17 @@
 import type { PermissionContext } from '@agentscope-ai/agentscope/permission';
 import type { TaskContext } from '@agentscope-ai/agentscope/state';
-import { BookText, ChevronDown, Database, ListTodo, PanelRight, ShieldCheck } from 'lucide-react';
+import {
+	BookText,
+	ChevronDown,
+	Database,
+	Gauge,
+	ListTodo,
+	PanelRight,
+	ShieldCheck,
+} from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import type { ChatModelConfig, SessionKnowledgeConfig, TTSModelConfig } from '@/api';
+import type { ChatModelConfig, ContextUsage, SessionKnowledgeConfig, TTSModelConfig } from '@/api';
 import { sessionApi } from '@/api';
 import MCPSvg from '@/assets/images/mcp.svg?react';
 import { ChatContent } from '@/components/chat/ChatContent.tsx';
@@ -33,6 +41,7 @@ import {
 	ResizablePanelGroup,
 } from '@/components/ui/resizable.tsx';
 import { SidebarTrigger } from '@/components/ui/sidebar';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useKnowledgeBaseMiddlewareSchema } from '@/hooks/useKnowledgeBaseMiddlewareSchema';
 import { useKnowledgeBases } from '@/hooks/useKnowledgeBases';
@@ -40,6 +49,7 @@ import { useMessages } from '@/hooks/useMessages';
 import { useSessions } from '@/hooks/useSessions';
 import { useWorkspace } from '@/hooks/useWorkspace.ts';
 import { useTranslation } from '@/i18n/useI18n';
+import { formatNumber } from '@/utils/common';
 
 interface ChatViewportProps {
 	/**
@@ -60,6 +70,53 @@ interface ChatViewportProps {
 	 * passing this callback wires that signal up.
 	 */
 	onTeamUpdated?: () => void;
+}
+
+function ContextUsageIndicator({ usage }: { usage: ContextUsage | null }) {
+	const { t } = useTranslation();
+	if (!usage || usage.compression_threshold_tokens <= 0) return null;
+
+	const current = Math.max(0, usage.current_tokens);
+	const threshold = Math.max(1, usage.compression_threshold_tokens);
+	const percent = Math.min(100, Math.round((current / threshold) * 100));
+
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<div
+					className="hidden h-8 min-w-32 items-center gap-2 rounded-md border bg-background px-2 text-xs text-muted-foreground sm:flex"
+					aria-label={t('chat.contextUsage.ariaLabel', {
+						current: formatNumber(current),
+						threshold: formatNumber(threshold),
+					})}
+				>
+					<Gauge className="size-4 shrink-0" />
+					<div className="min-w-0 flex-1">
+						<div className="flex justify-between gap-2 leading-none">
+							<span className="font-medium text-foreground">
+								{formatNumber(current)}
+							</span>
+							<span>{formatNumber(threshold)}</span>
+						</div>
+						<div className="mt-1 h-1 overflow-hidden rounded-full bg-muted">
+							<div
+								className="h-full bg-primary transition-[width]"
+								style={{ width: `${percent}%` }}
+							/>
+						</div>
+					</div>
+				</div>
+			</TooltipTrigger>
+			<TooltipContent>
+				{t('chat.contextUsage.tooltip', {
+					current: formatNumber(current),
+					threshold: formatNumber(threshold),
+					window: formatNumber(Math.max(0, usage.context_window_tokens)),
+					ratio: Math.round(usage.trigger_ratio * 100),
+				})}
+			</TooltipContent>
+		</Tooltip>
+	);
 }
 
 /** Maximum number of panels stacked in a single dock column. */
@@ -143,6 +200,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	const [credentialRefetchTrigger, setCredentialRefetchTrigger] = useState(0);
 	const [tasksContext, setTasksContext] = useState<TaskContext | null>(null);
 	const [permissionContext, setPermissionContext] = useState<PermissionContext | null>(null);
+	const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
 	// Dock layout: columns laid out left→right, each holding up to 2
 	// panels stacked top→bottom. Open order determines placement.
 	const [panelLayout, setPanelLayout] = useState<PanelKey[][]>([]);
@@ -154,6 +212,13 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		if (value.permission_context) {
 			setPermissionContext(value.permission_context as PermissionContext);
 		}
+		if (value.context_usage) {
+			setContextUsage(value.context_usage as ContextUsage);
+		}
+	}, []);
+
+	const handleContextUsageUpdated = useCallback((usage: Partial<ContextUsage>) => {
+		setContextUsage((current) => (current ? { ...current, ...usage } : null));
 	}, []);
 
 	const { msgs, streaming, send, onUserConfirm, onSubagentConfirm, subagentHitl } = useMessages(
@@ -162,6 +227,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		{
 			onTeamUpdated: handleTeamUpdated,
 			onStateUpdated: handleStateUpdated,
+			onContextUsageUpdated: handleContextUsageUpdated,
 		},
 	);
 	const {
@@ -392,12 +458,14 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	useEffect(() => {
 		if (!view) {
 			setTasksContext(null);
+			setContextUsage(null);
 			return;
 		}
 		const tc = (view.session.state as Record<string, unknown>)?.tasks_context as
 			| TaskContext
 			| undefined;
 		setTasksContext(tc ?? null);
+		setContextUsage(view.session.state.context_usage ?? null);
 	}, [view]);
 
 	// Sync permissionContext from the session snapshot, mirroring the
@@ -553,6 +621,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 									/>
 								</div>
 								<div id="tour-permission-mode" className="flex flex-row gap-x-1">
+									<ContextUsageIndicator usage={contextUsage} />
 									<PermissionModeSelect
 										value={selectedPermissionMode}
 										disabled={!sessionId}

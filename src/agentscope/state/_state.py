@@ -145,6 +145,22 @@ class TaskContext(BaseModel):
     """The task context."""
 
 
+class ContextUsage(BaseModel):
+    """Current context-window usage for a session."""
+
+    current_tokens: int = 0
+    """Estimated tokens currently occupying the model context."""
+
+    compression_threshold_tokens: int = 0
+    """Token count at which context compression will be triggered."""
+
+    context_window_tokens: int = 0
+    """The active model's maximum context window."""
+
+    trigger_ratio: float = 0.0
+    """Configured compression trigger ratio."""
+
+
 class AgentState(BaseModel):
     """The agent state that should be saved and loaded from storage."""
 
@@ -157,6 +173,8 @@ class AgentState(BaseModel):
     context when feed into the LLM."""
     context: list[Msg] = Field(default_factory=list)
     """The uncompressed conversation context, that will be feed into the LLM"""
+    context_usage: ContextUsage = Field(default_factory=ContextUsage)
+    """Current context-window token usage and compression threshold."""
     reply_id: str = Field(default_factory=_generate_id)
     """The id of the current reply, which is also used as the id of the
     final message of the reply."""

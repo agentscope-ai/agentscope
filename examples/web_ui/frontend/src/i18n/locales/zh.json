@@ -112,6 +112,10 @@
 			"emptyTitle": "暂无会话",
 			"emptyNoAgent": "请先选择一个 Agent。",
 			"emptyHasAgent": "创建会话开始对话。"
+		},
+		"contextUsage": {
+			"ariaLabel": "上下文用量 {{current}} / {{threshold}} tokens",
+			"tooltip": "{{current}} / {{threshold}} tokens。达到 {{window}} token 上下文窗口的 {{ratio}}% 时触发压缩。"
 		}
 	},
 	"dialog-agent-create": {
