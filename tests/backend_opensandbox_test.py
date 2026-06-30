@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=protected-access
+# pylint: disable=protected-access,missing-class-docstring
+# pylint: disable=missing-function-docstring,wrong-import-position
+# pylint: disable=redefined-outer-name,reimported
 """Test cases for :class:`OpenSandboxBackend`.
 
 Most tests run against mocked SDK objects so CI does not need a live
@@ -30,7 +32,7 @@ def _install_workspace_public_exports(
     agentscope_workspace: types.ModuleType,
     src_root: Path,
 ) -> None:
-    """Expose public workspace names without importing optional deps eagerly."""
+    """Expose public workspace names without eager optional deps."""
 
     agentscope_workspace.__all__ = [
         "WorkspaceBase",
@@ -46,7 +48,7 @@ def _install_workspace_public_exports(
             e2b_pkg.__path__ = [str(src_root / "workspace" / "_e2b")]
             sys.modules["agentscope.workspace._e2b"] = e2b_pkg
 
-    def __getattr__(name: str):
+    def __getattr__(name: str) -> object:
         if name == "E2BBackend":
             _ensure_e2b_package()
             from agentscope.workspace._e2b._e2b_backend import E2BBackend
@@ -56,23 +58,27 @@ def _install_workspace_public_exports(
         if name == "E2BWorkspace":
             _ensure_e2b_package()
             try:
-                from agentscope.workspace._e2b._e2b_workspace import E2BWorkspace
+                from agentscope.workspace._e2b._e2b_workspace import (
+                    E2BWorkspace,
+                )
             except ImportError:
                 E2BWorkspace = type("E2BWorkspace", (), {})
 
             agentscope_workspace.E2BWorkspace = E2BWorkspace
             return E2BWorkspace
         if name == "OpenSandboxBackend":
-            from agentscope.workspace._opensandbox._opensandbox_backend import (
-                OpenSandboxBackend,
+            module = importlib.import_module(
+                "agentscope.workspace._opensandbox._opensandbox_backend",
             )
+            OpenSandboxBackend = module.OpenSandboxBackend
 
             agentscope_workspace.OpenSandboxBackend = OpenSandboxBackend
             return OpenSandboxBackend
         if name == "OpenSandboxWorkspace":
-            from agentscope.workspace._opensandbox._opensandbox_workspace import (
-                OpenSandboxWorkspace,
+            module = importlib.import_module(
+                "agentscope.workspace._opensandbox._opensandbox_workspace",
             )
+            OpenSandboxWorkspace = module.OpenSandboxWorkspace
 
             agentscope_workspace.OpenSandboxWorkspace = OpenSandboxWorkspace
             return OpenSandboxWorkspace
@@ -136,7 +142,10 @@ def _install_import_stubs() -> None:
                     return None
                 try:
                     return float(
-                        result.stdout.decode("utf-8", errors="replace").strip(),
+                        result.stdout.decode(
+                            "utf-8",
+                            errors="replace",
+                        ).strip(),
                     )
                 except ValueError:
                     return None
@@ -145,7 +154,12 @@ def _install_import_stubs() -> None:
                 await self.exec_shell(["rm", "-rf", path])
 
         class _ExecResult:
-            def __init__(self, exit_code: int, stdout: bytes, stderr: bytes) -> None:
+            def __init__(
+                self,
+                exit_code: int,
+                stdout: bytes,
+                stderr: bytes,
+            ) -> None:
                 self.exit_code = exit_code
                 self.stdout = stdout
                 self.stderr = stderr
@@ -162,6 +176,7 @@ def _install_import_stubs() -> None:
     if "agentscope.workspace" not in sys.modules:
         agentscope_workspace = types.ModuleType("agentscope.workspace")
         agentscope_workspace.__path__ = [str(src_root / "workspace")]
+
         class _WorkspaceBase:
             def __init__(self, workspace_id: str | None = None) -> None:
                 self.workspace_id = workspace_id
@@ -172,15 +187,22 @@ def _install_import_stubs() -> None:
 
     if "agentscope.workspace._opensandbox" not in sys.modules:
         opensandbox_pkg = types.ModuleType("agentscope.workspace._opensandbox")
-        opensandbox_pkg.__path__ = [str(src_root / "workspace" / "_opensandbox")]
+        opensandbox_pkg.__path__ = [
+            str(src_root / "workspace" / "_opensandbox"),
+        ]
         sys.modules["agentscope.workspace._opensandbox"] = opensandbox_pkg
 
 
 _install_import_stubs()
 
-from agentscope.tool import ExecResult
-from agentscope.workspace._opensandbox._opensandbox_backend import OpenSandboxBackend
-from tests.workspace_remote_contract_test import RemoteBackendContractMixin
+from agentscope.tool import ExecResult  # noqa: E402
+from tests.workspace_remote_contract_test import (  # noqa: E402
+    RemoteBackendContractMixin,
+)
+
+OpenSandboxBackend = importlib.import_module(
+    "agentscope.workspace._opensandbox._opensandbox_backend",
+).OpenSandboxBackend
 
 _OPEN_SANDBOX_API_KEY = os.getenv("OPEN_SANDBOX_API_KEY", "")
 _OPEN_SANDBOX_DOMAIN = os.getenv("OPEN_SANDBOX_DOMAIN", "")
@@ -246,7 +268,9 @@ class TestOpenSandboxBackend(IsolatedAsyncioTestCase):
         self.assertEqual(result.stdout, b"hello world\n")
         self.assertEqual(result.stderr, b"oops\n")
 
-    async def test_exec_restores_line_separators_between_log_entries(self) -> None:
+    async def test_exec_restores_line_separators_between_log_entries(
+        self,
+    ) -> None:
         self.sandbox.commands.run.return_value = SimpleNamespace(
             exit_code=0,
             logs=SimpleNamespace(
@@ -258,7 +282,9 @@ class TestOpenSandboxBackend(IsolatedAsyncioTestCase):
             ),
         )
 
-        result = await self.backend.exec_shell(["sh", "-c", "pwd && python -V"])
+        result = await self.backend.exec_shell(
+            ["sh", "-c", "pwd && python -V"],
+        )
 
         self.assertEqual(result.stdout, b"/workspace\nPython 3.11.15")
 
@@ -292,7 +318,10 @@ class TestOpenSandboxBackend(IsolatedAsyncioTestCase):
 
     async def test_read_file_returns_bytes_from_bytes(self) -> None:
         self.sandbox.files.read_bytes.return_value = b"abc"
-        self.assertEqual(await self.backend.read_file("/workspace/a.txt"), b"abc")
+        self.assertEqual(
+            await self.backend.read_file("/workspace/a.txt"),
+            b"abc",
+        )
 
     async def test_read_file_maps_http_404_to_file_not_found(self) -> None:
         error = RuntimeError("client error")
@@ -330,7 +359,9 @@ class TestOpenSandboxBackend(IsolatedAsyncioTestCase):
         with self.assertRaises(FileNotFoundError):
             await self.backend.read_file("/workspace/missing.txt")
 
-    async def test_write_file_creates_parent_and_writes_binary_entry(self) -> None:
+    async def test_write_file_creates_parent_and_writes_binary_entry(
+        self,
+    ) -> None:
         self.sandbox.commands.run.return_value = SimpleNamespace(
             exit_code=0,
             stdout="",
@@ -375,7 +406,9 @@ class TestOpenSandboxBackend(IsolatedAsyncioTestCase):
         command_line = self.sandbox.commands.run.await_args.args[0]
         self.assertEqual(command_line, "test -d /workspace/dir")
 
-    async def test_inherited_list_dir_uses_exec_and_parses_entries(self) -> None:
+    async def test_inherited_list_dir_uses_exec_and_parses_entries(
+        self,
+    ) -> None:
         self.sandbox.commands.run.return_value = SimpleNamespace(
             exit_code=0,
             stdout="a.txt\0b.txt\0",
@@ -436,7 +469,9 @@ class TestOpenSandboxBackendLive(
     IsolatedAsyncioTestCase,
 ):
     async def asyncSetUp(self) -> None:
-        from agentscope.workspace._opensandbox._bootstrap import SANDBOX_WORKDIR
+        from agentscope.workspace._opensandbox._bootstrap import (
+            SANDBOX_WORKDIR,
+        )
         from agentscope.workspace._opensandbox._opensandbox_workspace import (
             OpenSandboxWorkspace,
         )

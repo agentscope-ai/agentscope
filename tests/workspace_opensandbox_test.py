@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=protected-access
+# pylint: disable=protected-access,missing-class-docstring
+# pylint: disable=missing-function-docstring,wrong-import-position
+# pylint: disable=redefined-outer-name,reimported,unused-argument
+# pylint: disable=too-many-statements,too-many-public-methods
 """Test cases for :class:`OpenSandboxWorkspace`.
 
 The suite mirrors the E2B workspace tests at two levels:
@@ -26,6 +29,7 @@ import unittest
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 from types import SimpleNamespace
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
@@ -35,7 +39,7 @@ def _install_workspace_public_exports(
     agentscope_workspace: types.ModuleType,
     src_root: Path,
 ) -> None:
-    """Expose public workspace names without importing optional deps eagerly."""
+    """Expose public workspace names without eager optional deps."""
 
     agentscope_workspace.__all__ = [
         "WorkspaceBase",
@@ -51,7 +55,7 @@ def _install_workspace_public_exports(
             e2b_pkg.__path__ = [str(src_root / "workspace" / "_e2b")]
             sys.modules["agentscope.workspace._e2b"] = e2b_pkg
 
-    def __getattr__(name: str):
+    def __getattr__(name: str) -> object:
         if name == "E2BBackend":
             _ensure_e2b_package()
             from agentscope.workspace._e2b._e2b_backend import E2BBackend
@@ -61,23 +65,27 @@ def _install_workspace_public_exports(
         if name == "E2BWorkspace":
             _ensure_e2b_package()
             try:
-                from agentscope.workspace._e2b._e2b_workspace import E2BWorkspace
+                from agentscope.workspace._e2b._e2b_workspace import (
+                    E2BWorkspace,
+                )
             except ImportError:
                 E2BWorkspace = type("E2BWorkspace", (), {})
 
             agentscope_workspace.E2BWorkspace = E2BWorkspace
             return E2BWorkspace
         if name == "OpenSandboxBackend":
-            from agentscope.workspace._opensandbox._opensandbox_backend import (
-                OpenSandboxBackend,
+            module = importlib.import_module(
+                "agentscope.workspace._opensandbox._opensandbox_backend",
             )
+            OpenSandboxBackend = module.OpenSandboxBackend
 
             agentscope_workspace.OpenSandboxBackend = OpenSandboxBackend
             return OpenSandboxBackend
         if name == "OpenSandboxWorkspace":
-            from agentscope.workspace._opensandbox._opensandbox_workspace import (
-                OpenSandboxWorkspace,
+            module = importlib.import_module(
+                "agentscope.workspace._opensandbox._opensandbox_workspace",
             )
+            OpenSandboxWorkspace = module.OpenSandboxWorkspace
 
             agentscope_workspace.OpenSandboxWorkspace = OpenSandboxWorkspace
             return OpenSandboxWorkspace
@@ -97,21 +105,25 @@ def _install_workspace_manager_public_exports(
         "OpenSandboxWorkspaceManager",
     ]
 
-    def __getattr__(name: str):
+    def __getattr__(name: str) -> object:
         if name == "E2BWorkspaceManager":
             try:
-                from agentscope.app.workspace_manager._e2b_workspace_manager import (
-                    E2BWorkspaceManager,
+                module = importlib.import_module(
+                    "agentscope.app.workspace_manager."
+                    "_e2b_workspace_manager",
                 )
+                E2BWorkspaceManager = module.E2BWorkspaceManager
             except ImportError:
                 E2BWorkspaceManager = type("E2BWorkspaceManager", (), {})
 
             workspace_manager_pkg.E2BWorkspaceManager = E2BWorkspaceManager
             return E2BWorkspaceManager
         if name == "OpenSandboxWorkspaceManager":
-            from agentscope.app.workspace_manager._opensandbox_workspace_manager import (
-                OpenSandboxWorkspaceManager,
+            module = importlib.import_module(
+                "agentscope.app.workspace_manager."
+                "_opensandbox_workspace_manager",
             )
+            OpenSandboxWorkspaceManager = module.OpenSandboxWorkspaceManager
 
             workspace_manager_pkg.OpenSandboxWorkspaceManager = (
                 OpenSandboxWorkspaceManager
@@ -126,18 +138,26 @@ def _install_import_stubs() -> None:
     """Stub optional deps needed to import the workspace package in tests."""
     src_root = Path(__file__).resolve().parents[1] / "src" / "agentscope"
 
-    if "httpx" not in sys.modules and importlib.util.find_spec("httpx") is None:
+    if (
+        "httpx" not in sys.modules
+        and importlib.util.find_spec("httpx") is None
+    ):
         httpx = types.ModuleType("httpx")
 
         class _AsyncClient:
-            def __init__(self, *args, **kwargs) -> None:
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
                 self.args = args
                 self.kwargs = kwargs
 
-            async def __aenter__(self):
+            async def __aenter__(self) -> "_AsyncClient":
                 return self
 
-            async def __aexit__(self, exc_type, exc, tb) -> None:
+            async def __aexit__(
+                self,
+                exc_type: Any,
+                exc: Any,
+                tb: Any,
+            ) -> None:
                 return None
 
             async def aclose(self) -> None:
@@ -147,7 +167,7 @@ def _install_import_stubs() -> None:
             status_code = 200
             text = ""
 
-            def json(self):
+            def json(self) -> dict[str, Any]:
                 return {}
 
             def raise_for_status(self) -> None:
@@ -194,7 +214,7 @@ def _install_import_stubs() -> None:
                 self.annotations = annotations
 
             @classmethod
-            def model_validate(cls, data):
+            def model_validate(cls, data: Any) -> Any:
                 if isinstance(data, cls):
                     return data
                 return cls(**data)
@@ -222,16 +242,18 @@ def _install_import_stubs() -> None:
         @dataclass
         class _MCPClient:
             name: str
+            is_stateful: bool
             mcp_config: _StdioMCPConfig
 
             def model_dump(self, mode: str = "json") -> dict:
                 return {
                     "name": self.name,
+                    "is_stateful": self.is_stateful,
                     "mcp_config": self.mcp_config.model_dump(mode=mode),
                 }
 
             @classmethod
-            def model_validate(cls, data):
+            def model_validate(cls, data: Any) -> Any:
                 if isinstance(data, cls):
                     return data
                 cfg = data["mcp_config"]
@@ -242,7 +264,11 @@ def _install_import_stubs() -> None:
                         command=cfg["command"],
                         args=list(cfg.get("args", [])),
                     )
-                return cls(name=data["name"], mcp_config=mcp_config)
+                return cls(
+                    name=data["name"],
+                    is_stateful=data.get("is_stateful", True),
+                    mcp_config=mcp_config,
+                )
 
         agentscope_mcp.MCPClient = _MCPClient
         agentscope_mcp.StdioMCPConfig = _StdioMCPConfig
@@ -287,7 +313,7 @@ def _install_import_stubs() -> None:
             id: str = "text-1"
 
         class _Msg:
-            def __init__(self, name: str, role: str, content) -> None:
+            def __init__(self, name: str, role: str, content: Any) -> None:
                 self.name = name
                 self.role = role
                 self.content = content
@@ -296,18 +322,18 @@ def _install_import_stubs() -> None:
                 if isinstance(self.content, str):
                     content = self.content
                 else:
-                    content = [getattr(block, "__dict__", block) for block in self.content]
-                return (
-                    '{"name":"%s","role":"%s","content":%s}'
-                    % (
-                        self.name,
-                        self.role,
-                        (
-                            f'"{content}"'
-                            if isinstance(content, str)
-                            else str(content).replace("'", '"')
-                        ),
-                    )
+                    content = [
+                        getattr(block, "__dict__", block)
+                        for block in self.content
+                    ]
+                return '{"name":"%s","role":"%s","content":%s}' % (
+                    self.name,
+                    self.role,
+                    (
+                        f'"{content}"'
+                        if isinstance(content, str)
+                        else str(content).replace("'", '"')
+                    ),
                 )
 
         @dataclass
@@ -333,7 +359,11 @@ def _install_import_stubs() -> None:
             ASK = "ask"
 
         class _PermissionDecision:
-            def __init__(self, behavior=None, message: str = "") -> None:
+            def __init__(
+                self,
+                behavior: Any = None,
+                message: str = "",
+            ) -> None:
                 self.behavior = behavior
                 self.message = message
 
@@ -393,7 +423,10 @@ def _install_import_stubs() -> None:
                     return None
                 try:
                     return float(
-                        result.stdout.decode("utf-8", errors="replace").strip(),
+                        result.stdout.decode(
+                            "utf-8",
+                            errors="replace",
+                        ).strip(),
                     )
                 except ValueError:
                     return None
@@ -402,7 +435,12 @@ def _install_import_stubs() -> None:
                 await self.exec_shell(["rm", "-rf", path])
 
         class _ExecResult:
-            def __init__(self, exit_code: int, stdout: bytes, stderr: bytes) -> None:
+            def __init__(
+                self,
+                exit_code: int,
+                stdout: bytes,
+                stderr: bytes,
+            ) -> None:
                 self.exit_code = exit_code
                 self.stdout = stdout
                 self.stderr = stderr
@@ -421,7 +459,7 @@ def _install_import_stubs() -> None:
         builtin_tools.__path__ = [str(src_root / "tool" / "_builtin")]
 
         class _BuiltinTool:
-            def __init__(self, *args, **kwargs) -> None:
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
                 self.kwargs = kwargs
 
         class Bash(_BuiltinTool):
@@ -467,7 +505,7 @@ def _install_import_stubs() -> None:
             for line in header.strip().splitlines():
                 key, value = line.split(":", 1)
                 data[key.strip()] = value.strip().strip('"')
-            return _Doc(data, content.lstrip())
+            return _Doc(data, content.strip())
 
         frontmatter.loads = _loads
         sys.modules["frontmatter"] = frontmatter
@@ -475,6 +513,7 @@ def _install_import_stubs() -> None:
     if "agentscope.workspace" not in sys.modules:
         agentscope_workspace = types.ModuleType("agentscope.workspace")
         agentscope_workspace.__path__ = [str(src_root / "workspace")]
+
         class _WorkspaceBase:
             def __init__(self, workspace_id: str | None = None) -> None:
                 self.workspace_id = workspace_id
@@ -485,7 +524,9 @@ def _install_import_stubs() -> None:
 
     if "agentscope.workspace._opensandbox" not in sys.modules:
         opensandbox_pkg = types.ModuleType("agentscope.workspace._opensandbox")
-        opensandbox_pkg.__path__ = [str(src_root / "workspace" / "_opensandbox")]
+        opensandbox_pkg.__path__ = [
+            str(src_root / "workspace" / "_opensandbox"),
+        ]
         sys.modules["agentscope.workspace._opensandbox"] = opensandbox_pkg
 
     if "agentscope.app" not in sys.modules:
@@ -513,13 +554,26 @@ from agentscope.workspace._opensandbox._bootstrap import (  # noqa: E402
     GATEWAY_SCRIPT,
     METADATA_WORKSPACE_ID_KEY,
 )
-from agentscope.workspace._opensandbox._opensandbox_workspace import (  # noqa: E402
-    OpenSandboxWorkspace,
-)
-from tests.workspace_remote_contract_test import (
+from tests.workspace_remote_contract_test import (  # noqa: E402
     RemoteWorkspaceContractMixin,
     RemoteWorkspaceManagerContractMixin,
 )
+
+OpenSandboxWorkspace = importlib.import_module(
+    "agentscope.workspace._opensandbox._opensandbox_workspace",
+).OpenSandboxWorkspace
+
+GATEWAY_CLIENT_PATH = (
+    "agentscope.workspace._opensandbox._opensandbox_workspace.GatewayClient"
+)
+
+
+def _opensandbox_manager_cls() -> Any:
+    """Return the OpenSandbox workspace manager class after stubs load."""
+    return importlib.import_module(
+        "agentscope.app.workspace_manager._opensandbox_workspace_manager",
+    ).OpenSandboxWorkspaceManager
+
 
 _OPEN_SANDBOX_API_KEY = os.getenv("OPEN_SANDBOX_API_KEY", "")
 _OPEN_SANDBOX_DOMAIN = os.getenv("OPEN_SANDBOX_DOMAIN", "")
@@ -543,7 +597,12 @@ class _FakeCommands:
         self.marker_exists = marker_exists
         self.run = AsyncMock(side_effect=self._run)
 
-    async def _run(self, command: str, *args, **kwargs):
+    async def _run(
+        self,
+        command: str,
+        *args: Any,
+        **kwargs: Any,
+    ) -> SimpleNamespace:
         if command == f"test -e {GATEWAY_SCRIPT}":
             return SimpleNamespace(
                 exit_code=0 if self.marker_exists else 1,
@@ -556,7 +615,11 @@ class _FakeCommands:
 
 
 class _FakeSandbox:
-    def __init__(self, sandbox_id: str = "sbx_1", marker_exists: bool = True) -> None:
+    def __init__(
+        self,
+        sandbox_id: str = "sbx_1",
+        marker_exists: bool = True,
+    ) -> None:
         self.id = sandbox_id
         self.files = _FakeFiles(marker_exists)
         self.commands = _FakeCommands(marker_exists)
@@ -572,7 +635,7 @@ class _FakeSandbox:
 
 
 class _FakeConnectionConfig:
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
 
 
@@ -587,7 +650,7 @@ class _FakeSandboxManager:
 
 
 class _FakeSandboxFilter:
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
 
 
@@ -614,7 +677,9 @@ def _fake_opensandbox_modules() -> dict[str, types.ModuleType]:
 
 
 class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
-    async def test_attach_or_create_sandbox_passes_create_contract(self) -> None:
+    async def test_attach_or_create_sandbox_passes_create_contract(
+        self,
+    ) -> None:
         sandbox = _FakeSandbox("sbx_created")
         _FakeSandboxClass.create = AsyncMock(return_value=sandbox)
         _FakeSandboxClass.resume = AsyncMock()
@@ -669,7 +734,9 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
             timedelta(seconds=12.5),
         )
 
-    async def test_attach_or_create_sandbox_passes_resume_contract(self) -> None:
+    async def test_attach_or_create_sandbox_passes_resume_contract(
+        self,
+    ) -> None:
         sandbox = _FakeSandbox("sbx_existing")
         _FakeSandboxClass.create = AsyncMock()
         _FakeSandboxClass.resume = AsyncMock(return_value=sandbox)
@@ -713,7 +780,9 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
             timedelta(seconds=7.0),
         )
 
-    async def test_attach_or_create_sandbox_connects_running_sandbox(self) -> None:
+    async def test_attach_or_create_sandbox_connects_running_sandbox(
+        self,
+    ) -> None:
         sandbox = _FakeSandbox("sbx_running")
         _FakeSandboxClass.create = AsyncMock()
         _FakeSandboxClass.resume = AsyncMock()
@@ -757,7 +826,9 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
             timedelta(seconds=7.0),
         )
 
-    async def test_find_existing_sandbox_filters_resumable_paged_infos(self) -> None:
+    async def test_find_existing_sandbox_filters_resumable_paged_infos(
+        self,
+    ) -> None:
         fake_opensandbox = _fake_opensandbox_modules()
         manager = SimpleNamespace(
             list_sandbox_infos=AsyncMock(),
@@ -794,7 +865,9 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
         )
         manager.close.assert_awaited_once()
 
-    async def test_find_existing_sandbox_ignores_manager_close_failure(self) -> None:
+    async def test_find_existing_sandbox_ignores_manager_close_failure(
+        self,
+    ) -> None:
         fake_opensandbox = _fake_opensandbox_modules()
         manager = SimpleNamespace(
             list_sandbox_infos=AsyncMock(
@@ -828,7 +901,9 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
 
         sandbox.is_healthy.assert_awaited_once()
 
-    async def test_wait_until_running_rejects_unhealthy_sdk_sandbox(self) -> None:
+    async def test_wait_until_running_rejects_unhealthy_sdk_sandbox(
+        self,
+    ) -> None:
         sandbox = SimpleNamespace(is_healthy=AsyncMock(return_value=False))
         ws = OpenSandboxWorkspace(workspace_id="wid")
         ws._sandbox = sandbox
@@ -840,17 +915,20 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
 
     async def test_initialize_uses_attach_or_create_helper(self) -> None:
         sandbox = _FakeSandbox("sbx_init")
+        ws = OpenSandboxWorkspace(workspace_id="wid")
+
+        async def _attach() -> None:
+            ws._sandbox = sandbox
 
         with patch.object(
             OpenSandboxWorkspace,
             "_attach_or_create_sandbox",
-            AsyncMock(side_effect=lambda: setattr(ws, "_sandbox", sandbox)),
+            AsyncMock(side_effect=_attach),
         ) as attach_or_create, patch.object(
             OpenSandboxWorkspace,
             "_start_gateway_stack",
             AsyncMock(),
         ):
-            ws = OpenSandboxWorkspace(workspace_id="wid")
             await ws.initialize()
 
         attach_or_create.assert_awaited_once()
@@ -876,7 +954,7 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
             "_wait_for_gateway",
             AsyncMock(),
         ), patch(
-            "agentscope.workspace._opensandbox._opensandbox_workspace.GatewayClient",
+            GATEWAY_CLIENT_PATH,
         ) as gateway_client:
             gateway_client.return_value.list_mcps = AsyncMock(return_value=[])
             ws = OpenSandboxWorkspace(workspace_id="wid")
@@ -902,7 +980,7 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
             "_wait_for_gateway",
             AsyncMock(),
         ), patch(
-            "agentscope.workspace._opensandbox._opensandbox_workspace.GatewayClient",
+            GATEWAY_CLIENT_PATH,
         ) as gateway_client:
             gateway_client.return_value.list_mcps = AsyncMock(return_value=[])
             ws = OpenSandboxWorkspace(workspace_id="wid")
@@ -939,7 +1017,9 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
         ws = OpenSandboxWorkspace(workspace_id="wid")
         ws._gateway = AsyncMock()
         ws._gateway.health = AsyncMock(return_value=True)
-        ws._gateway.list_mcps = AsyncMock(side_effect=[RuntimeError("old"), []])
+        ws._gateway.list_mcps = AsyncMock(
+            side_effect=[RuntimeError("old"), []],
+        )
 
         await ws._wait_for_gateway(timeout=1.0)
 
@@ -971,12 +1051,19 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
 
         real_import_module = importlib.import_module
 
-        def _import_module(name: str, package: str | None = None):
+        def _import_module(
+            name: str,
+            package: str | None = None,
+        ) -> types.ModuleType:
             if name.startswith("opensandbox"):
                 raise ModuleNotFoundError(name=name)
             return real_import_module(name, package)
 
-        with patch.object(importlib, "import_module", side_effect=_import_module):
+        with patch.object(
+            importlib,
+            "import_module",
+            side_effect=_import_module,
+        ):
             with self.assertRaises((ImportError, RuntimeError)) as ctx:
                 ws._connection_config()
 
@@ -992,7 +1079,10 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
             ws = OpenSandboxWorkspace(workspace_id="wid")
             cfg = ws._connection_config()
 
-        self.assertEqual(cfg.kwargs["request_timeout"], timedelta(seconds=600.0))
+        self.assertEqual(
+            cfg.kwargs["request_timeout"],
+            timedelta(seconds=600.0),
+        )
 
     async def test_close_pauses_sandbox(self) -> None:
         sandbox = _FakeSandbox()
@@ -1030,6 +1120,7 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
         ws._gateway_clients = {"browser": object()}
         mcp = MCPClient(
             name="browser",
+            is_stateful=True,
             mcp_config=StdioMCPConfig(command="python", args=["server.py"]),
         )
 
@@ -1046,6 +1137,7 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
         ws._save_mcp_file = AsyncMock()
         mcp = MCPClient(
             name="browser",
+            is_stateful=True,
             mcp_config=StdioMCPConfig(command="python", args=["server.py"]),
         )
 
@@ -1074,7 +1166,9 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
 
     async def test_list_skills_reads_frontmatter(self) -> None:
         from agentscope.skill import Skill
-        from agentscope.workspace._opensandbox._bootstrap import SANDBOX_SKILLS_DIR
+        from agentscope.workspace._opensandbox._bootstrap import (
+            SANDBOX_SKILLS_DIR,
+        )
 
         ws = OpenSandboxWorkspace(workspace_id="wid")
         ws._backend = AsyncMock()
@@ -1086,7 +1180,7 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
         )
         ws._backend.read_file = AsyncMock(
             return_value=(
-                b'---\nname: demo\ndescription: demo skill\n---\nbody text\n'
+                b"---\nname: demo\ndescription: demo skill\n---\nbody text\n"
             ),
         )
 
@@ -1099,7 +1193,7 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
                     name="demo",
                     description="demo skill",
                     dir=f"{SANDBOX_SKILLS_DIR}/demo",
-                    markdown="body text\n",
+                    markdown="body text",
                     updated_at=0.0,
                 ),
             ],
@@ -1130,7 +1224,9 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
 
         await ws.remove_skill("demo")
 
-        ws._backend.delete_path.assert_awaited_once_with("/workspace/skills/demo")
+        ws._backend.delete_path.assert_awaited_once_with(
+            "/workspace/skills/demo",
+        )
 
     async def test_offload_tool_result_writes_text(self) -> None:
         from agentscope.message import ToolResultBlock
@@ -1143,7 +1239,10 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
 
         path = await ws.offload_tool_result("session-1", block)
 
-        self.assertEqual(path, "/workspace/sessions/session-1/tool_result-tool-1.txt")
+        self.assertEqual(
+            path,
+            "/workspace/sessions/session-1/tool_result-tool-1.txt",
+        )
         ws._backend.write_file.assert_awaited_once_with(path, b"hello")
 
     async def test_offload_context_appends_jsonl(self) -> None:
@@ -1233,17 +1332,11 @@ class TestOpenSandboxWorkspaceManager(
     IsolatedAsyncioTestCase,
 ):
     async def asyncSetUp(self) -> None:
-        from agentscope.app.workspace_manager._opensandbox_workspace_manager import (
-            OpenSandboxWorkspaceManager,
-        )
-
+        OpenSandboxWorkspaceManager = _opensandbox_manager_cls()
         self.manager = OpenSandboxWorkspaceManager()
 
     async def test_get_workspace_cache_miss_builds_and_caches(self) -> None:
-        from agentscope.app.workspace_manager._opensandbox_workspace_manager import (
-            OpenSandboxWorkspaceManager,
-        )
-
+        OpenSandboxWorkspaceManager = _opensandbox_manager_cls()
         with patch(
             "agentscope.app.workspace_manager._opensandbox_workspace_manager."
             "OpenSandboxWorkspace",
@@ -1259,12 +1352,12 @@ class TestOpenSandboxWorkspaceManager(
         self.assertIs(manager._cache["requested-id"][0], ws)
         ws.initialize.assert_awaited_once()
 
-    async def test_get_workspace_builds_with_expected_args_and_metadata(self) -> None:
-        from agentscope.app.workspace_manager._opensandbox_workspace_manager import (
-            OpenSandboxWorkspaceManager,
-        )
+    async def test_get_workspace_builds_with_expected_args_and_metadata(
+        self,
+    ) -> None:
         from agentscope.mcp import MCPClient, StdioMCPConfig
 
+        OpenSandboxWorkspaceManager = _opensandbox_manager_cls()
         with patch(
             "agentscope.app.workspace_manager._opensandbox_workspace_manager."
             "OpenSandboxWorkspace",
@@ -1275,6 +1368,7 @@ class TestOpenSandboxWorkspaceManager(
             net = object()
             extra_mcp = MCPClient(
                 name="browser",
+                is_stateful=True,
                 mcp_config=StdioMCPConfig(command="python", args=["mcp.py"]),
             )
             manager = OpenSandboxWorkspaceManager(
@@ -1323,10 +1417,7 @@ class TestOpenSandboxWorkspaceManager(
         self.assertEqual(kwargs["skill_paths"], ["/tmp/skills"])
 
     async def test_close_pops_cached_workspace_and_closes(self) -> None:
-        from agentscope.app.workspace_manager._opensandbox_workspace_manager import (
-            OpenSandboxWorkspaceManager,
-        )
-
+        OpenSandboxWorkspaceManager = _opensandbox_manager_cls()
         manager = OpenSandboxWorkspaceManager()
         ws = AsyncMock()
         ws.workspace_id = "w1"
@@ -1336,10 +1427,7 @@ class TestOpenSandboxWorkspaceManager(
         self.assertEqual(manager._cache, {})
 
     async def test_close_missing_id_is_noop(self) -> None:
-        from agentscope.app.workspace_manager._opensandbox_workspace_manager import (
-            OpenSandboxWorkspaceManager,
-        )
-
+        OpenSandboxWorkspaceManager = _opensandbox_manager_cls()
         manager = OpenSandboxWorkspaceManager()
         ws = AsyncMock()
         ws.close = AsyncMock()
@@ -1349,10 +1437,7 @@ class TestOpenSandboxWorkspaceManager(
         self.assertEqual(list(manager._cache.keys()), ["w1"])
 
     async def test_cache_hit_reuses_workspace(self) -> None:
-        from agentscope.app.workspace_manager._opensandbox_workspace_manager import (
-            OpenSandboxWorkspaceManager,
-        )
-
+        OpenSandboxWorkspaceManager = _opensandbox_manager_cls()
         manager = OpenSandboxWorkspaceManager()
         ws = AsyncMock()
         ws.workspace_id = "wid"
@@ -1361,11 +1446,9 @@ class TestOpenSandboxWorkspaceManager(
         self.assertIs(got, ws)
 
     async def test_sweep_once_evicts_expired_only(self) -> None:
-        from agentscope.app.workspace_manager._opensandbox_workspace_manager import (
-            OpenSandboxWorkspaceManager,
-        )
         import time
 
+        OpenSandboxWorkspaceManager = _opensandbox_manager_cls()
         now = time.monotonic()
         expired = AsyncMock()
         expired.workspace_id = "w1"
@@ -1382,29 +1465,18 @@ class TestOpenSandboxWorkspaceManager(
         self.assertNotIn("w1", manager._cache)
 
     async def test_aenter_aexit_starts_and_stops_sweep_task(self) -> None:
-        from agentscope.app.workspace_manager._opensandbox_workspace_manager import (
-            OpenSandboxWorkspaceManager,
-        )
-
+        OpenSandboxWorkspaceManager = _opensandbox_manager_cls()
         manager = OpenSandboxWorkspaceManager(sweep_interval=99999)
-        await manager.__aenter__()
-        self.assertIsNotNone(manager._sweep_task)
-
-        with patch.object(
-            manager,
-            "close_all",
-            AsyncMock(),
-        ) as close_all:
-            await manager.__aexit__(None, None, None)
+        async with manager:
+            self.assertIsNotNone(manager._sweep_task)
+            close_all = AsyncMock()
+            manager.close_all = close_all
 
         self.assertIsNone(manager._sweep_task)
         close_all.assert_awaited_once()
 
     async def test_create_workspace_initializes_and_caches(self) -> None:
-        from agentscope.app.workspace_manager._opensandbox_workspace_manager import (
-            OpenSandboxWorkspaceManager,
-        )
-
+        OpenSandboxWorkspaceManager = _opensandbox_manager_cls()
         with patch(
             "agentscope.app.workspace_manager._opensandbox_workspace_manager."
             "OpenSandboxWorkspace",
@@ -1419,10 +1491,7 @@ class TestOpenSandboxWorkspaceManager(
         ws.initialize.assert_awaited_once()
 
     async def test_close_all_closes_cached_workspaces(self) -> None:
-        from agentscope.app.workspace_manager._opensandbox_workspace_manager import (
-            OpenSandboxWorkspaceManager,
-        )
-
+        OpenSandboxWorkspaceManager = _opensandbox_manager_cls()
         manager = OpenSandboxWorkspaceManager()
         ws1 = AsyncMock()
         ws1.workspace_id = "w1"

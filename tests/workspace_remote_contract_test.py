@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=protected-access,missing-function-docstring
 """Shared live contracts for remote workspace backends.
 
 E2B and OpenSandbox both implement the same remote workspace shape:
@@ -12,6 +13,8 @@ coverage.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
+from typing import Any
 from unittest.mock import AsyncMock
 
 from agentscope.tool import ExecResult
@@ -20,7 +23,7 @@ from agentscope.tool import ExecResult
 class RemoteBackendContractMixin:
     """Backend primitives every remote sandbox backend must satisfy."""
 
-    backend = None
+    backend: Any = None
     workdir = ""
 
     async def test_contract_exec_returns_stdout(self) -> None:
@@ -54,8 +57,14 @@ class RemoteBackendContractMixin:
         await self.backend.write_file(f"{base}/b.txt", b"y")
         self.assertTrue(await self.backend.file_exists(f"{base}/a.txt"))
         self.assertTrue(await self.backend.is_dir(base))
-        self.assertEqual(sorted(await self.backend.list_dir(base)), ["a.txt", "b.txt"])
-        self.assertIsInstance(await self.backend.stat_mtime(f"{base}/a.txt"), float)
+        self.assertEqual(
+            sorted(await self.backend.list_dir(base)),
+            ["a.txt", "b.txt"],
+        )
+        self.assertIsInstance(
+            await self.backend.stat_mtime(f"{base}/a.txt"),
+            float,
+        )
         await self.backend.delete_path(base)
         self.assertFalse(await self.backend.file_exists(base))
 
@@ -63,9 +72,9 @@ class RemoteBackendContractMixin:
 class RemoteWorkspaceContractMixin:
     """Workspace-level contracts shared by remote sandbox workspaces."""
 
-    workspace = None
-    workspace_cls = None
-    workspace_reopen_kwargs = None
+    workspace: Any = None
+    workspace_cls: Callable[..., Any] | None = None
+    workspace_reopen_kwargs: dict[str, Any] | None = None
 
     async def test_contract_list_tools(self) -> None:
         tools = await self.workspace.list_tools()
@@ -80,13 +89,18 @@ class RemoteWorkspaceContractMixin:
         await backend.write_file(path, b"persisted")
         workspace_id = self.workspace.workspace_id
         await self.workspace.close()
-        resumed = self.workspace_cls(
+        workspace_cls = self.workspace_cls
+        assert workspace_cls is not None
+        resumed = workspace_cls(  # pylint: disable=not-callable
             workspace_id=workspace_id,
             **(self.workspace_reopen_kwargs or {}),
         )
         await resumed.initialize()
         try:
-            self.assertEqual(await resumed._backend.read_file(path), b"persisted")
+            self.assertEqual(
+                await resumed._backend.read_file(path),
+                b"persisted",
+            )
         finally:
             await resumed.close()
 
@@ -94,9 +108,11 @@ class RemoteWorkspaceContractMixin:
 class RemoteWorkspaceManagerContractMixin:
     """Manager-level cache and shutdown contracts for remote backends."""
 
-    manager = None
+    manager: Any = None
 
-    async def test_contract_create_workspace_initializes_and_caches(self) -> None:
+    async def test_contract_create_workspace_initializes_and_caches(
+        self,
+    ) -> None:
         created = AsyncMock()
         created.workspace_id = "created-id"
         self.manager._build_and_start = AsyncMock(return_value=created)
@@ -112,13 +128,20 @@ class RemoteWorkspaceManagerContractMixin:
         self.assertIn("created-id", self.manager._cache)
         self.assertIs(self.manager._cache["created-id"][0], created)
 
-    async def test_contract_get_workspace_reattaches_once_and_caches(self) -> None:
+    async def test_contract_get_workspace_reattaches_once_and_caches(
+        self,
+    ) -> None:
         resumed = AsyncMock()
         resumed.workspace_id = "requested-id"
         self.manager._build_and_start = AsyncMock(return_value=resumed)
 
         first = await self.manager.get_workspace("u", "a", "s", "requested-id")
-        second = await self.manager.get_workspace("u", "a", "s", "requested-id")
+        second = await self.manager.get_workspace(
+            "u",
+            "a",
+            "s",
+            "requested-id",
+        )
 
         self.assertIs(first, resumed)
         self.assertIs(second, resumed)

@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=missing-class-docstring,missing-function-docstring
 """Suite-safe public export checks for OpenSandbox workspace modules."""
 
 from __future__ import annotations
@@ -212,7 +213,9 @@ _CHILD_IMPORT_PREAMBLE = textwrap.dedent(
             agentscope_message.TextBlock = _TextBlock
             agentscope_message.Msg = _Msg
             agentscope_message.ToolResultBlock = _ToolResultBlock
-            agentscope_message.ToolResultState = types.SimpleNamespace(ERROR="error")
+            agentscope_message.ToolResultState = types.SimpleNamespace(
+                ERROR="error",
+            )
             sys.modules["agentscope.message"] = agentscope_message
 
         if "agentscope.permission" not in sys.modules:
@@ -280,7 +283,9 @@ _CHILD_IMPORT_PREAMBLE = textwrap.dedent(
             sys.modules["agentscope.tool"] = agentscope_tool
 
         if "agentscope.tool._builtin._backend" not in sys.modules:
-            builtin_backend = types.ModuleType("agentscope.tool._builtin._backend")
+            builtin_backend = types.ModuleType(
+                "agentscope.tool._builtin._backend",
+            )
 
             class _LocalBackend:
                 def __init__(self, *args, **kwargs):
@@ -379,7 +384,7 @@ _CHILD_IMPORT_PREAMBLE = textwrap.dedent(
         sys.modules["agentscope.app"] = app_pkg
 
     install_stubs()
-    """
+    """,
 ).format(src_root=str(_SRC_ROOT))
 
 
@@ -426,12 +431,16 @@ class TestOpenSandboxPublicExports(TestCase):
             """
             import importlib
 
-            module = importlib.import_module("agentscope.app.workspace_manager")
+            module = importlib.import_module(
+                "agentscope.app.workspace_manager",
+            )
             manager_all = getattr(module, "__all__", [])
 
             assert "OpenSandboxWorkspaceManager" in manager_all
 
-            from agentscope.app.workspace_manager import OpenSandboxWorkspaceManager
+            from agentscope.app.workspace_manager import (
+                OpenSandboxWorkspaceManager,
+            )
 
             assert OpenSandboxWorkspaceManager is not None
             """,

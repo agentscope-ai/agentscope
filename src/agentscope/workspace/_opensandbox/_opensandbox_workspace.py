@@ -290,7 +290,7 @@ class OpenSandboxWorkspace(WorkspaceBase):
             await self._save_mcp_file()
 
     async def add_skill(self, skill_path: str) -> None:
-        """Upload a local skill directory into ``skills/`` inside the sandbox."""
+        """Upload a local skill directory into ``skills/``."""
         skill_md = os.path.join(skill_path, "SKILL.md")
         if not os.path.isfile(skill_md):
             raise ValueError(
@@ -638,8 +638,7 @@ class OpenSandboxWorkspace(WorkspaceBase):
                     return
             except Exception as exc:  # noqa: BLE001
                 logger.debug(
-                    "OpenSandboxWorkspace: %s probe error "
-                    "(will retry): %s",
+                    "OpenSandboxWorkspace: %s probe error (will retry): %s",
                     probe_name,
                     exc,
                 )
@@ -799,19 +798,19 @@ class OpenSandboxWorkspace(WorkspaceBase):
         cmd = (
             f"if [ -f {shlex.quote(GATEWAY_PID)} ]; then "
             f"pid=$(cat {shlex.quote(GATEWAY_PID)} 2>/dev/null || true); "
-            "if [ -n \"$pid\" ]; then "
-            "kill -TERM \"$pid\" 2>/dev/null || true; "
+            'if [ -n "$pid" ]; then '
+            'kill -TERM "$pid" 2>/dev/null || true; '
             "i=0; "
             "while [ $i -lt 50 ]; do "
-            "kill -0 \"$pid\" 2>/dev/null || break; "
+            'kill -0 "$pid" 2>/dev/null || break; '
             "sleep 0.1; "
             "i=$((i + 1)); "
             "done; "
-            "kill -0 \"$pid\" 2>/dev/null && "
-            "kill -KILL \"$pid\" 2>/dev/null || true; "
+            'kill -0 "$pid" 2>/dev/null && '
+            'kill -KILL "$pid" 2>/dev/null || true; '
             "i=0; "
             "while [ $i -lt 50 ]; do "
-            "kill -0 \"$pid\" 2>/dev/null || break; "
+            'kill -0 "$pid" 2>/dev/null || break; '
             "sleep 0.1; "
             "i=$((i + 1)); "
             "done; "
@@ -921,7 +920,8 @@ def _import_opensandbox() -> Any:
             raise
         raise ImportError(
             "OpenSandbox SDK is required for OpenSandboxWorkspace. "
-            "Install the workspace extras with `pip install \"agentscope[workspace]\"`.",
+            "Install the workspace extras with "
+            '`pip install "agentscope[workspace]"`.',
         ) from exc
 
 
@@ -935,6 +935,6 @@ def _import_sdk_attr(module_name: str, attr: str) -> Any:
             raise ImportError(
                 "OpenSandbox SDK is required for OpenSandboxWorkspace. "
                 "Install the workspace extras with "
-                "`pip install \"agentscope[workspace]\"`.",
+                '`pip install "agentscope[workspace]"`.',
             ) from exc
         raise

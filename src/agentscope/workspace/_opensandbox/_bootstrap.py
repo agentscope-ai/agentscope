@@ -157,9 +157,9 @@ def bootstrap_commands(
         "&& rm -rf /var/lib/apt/lists/*",
         # 3. Astral uv. INSTALLER_NO_MODIFY_PATH=1 suppresses shell rc
         # edits; AgentScope always invokes uv by full path.
-        f"curl -LsSf https://astral.sh/uv/install.sh "
-        f"| env UV_INSTALL_DIR=/root/.local/bin "
-        f"INSTALLER_NO_MODIFY_PATH=1 sh",
+        "curl -LsSf https://astral.sh/uv/install.sh "
+        "| env UV_INSTALL_DIR=/root/.local/bin "
+        "INSTALLER_NO_MODIFY_PATH=1 sh",
         # 4. Gateway venv and base requirements.
         f"{UV_BIN} venv {GATEWAY_VENV}",
         f"{UV_BIN} pip install --python {GATEWAY_VENV_PY} {pip_args}",

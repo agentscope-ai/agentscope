@@ -191,9 +191,7 @@ class OpenSandboxBackend(BackendBase):
             return RunCommandOpts(
                 working_directory=cwd,
                 timeout=(
-                    timedelta(seconds=timeout)
-                    if timeout is not None
-                    else None
+                    timedelta(seconds=timeout) if timeout is not None else None
                 ),
             )
         except Exception:  # noqa: BLE001
@@ -230,6 +228,8 @@ class OpenSandboxBackend(BackendBase):
         status_code = getattr(response, "status_code", None)
         if status_code is None:
             status_code = getattr(exc, "status_code", None)
+        if status_code is None:
+            return None
         try:
             return int(status_code)
         except (TypeError, ValueError):
@@ -255,14 +255,20 @@ class OpenSandboxBackend(BackendBase):
         parts = [str(getattr(msg, "text", msg) or "") for msg in messages]
         text = ""
         for part in parts:
-            if (
-                text
-                and part
-                and not text.endswith(("\n", "\r"))
-                and not part.startswith(("\n", "\r"))
-                and not text[-1].isspace()
-                and not part[0].isspace()
-            ):
-                text += "\n"
+            if text and part:
+                previous_is_tight = (
+                    not text.endswith(
+                        ("\n", "\r"),
+                    )
+                    and not text[-1].isspace()
+                )
+                next_is_tight = (
+                    not part.startswith(
+                        ("\n", "\r"),
+                    )
+                    and not part[0].isspace()
+                )
+                if previous_is_tight and next_is_tight:
+                    text += "\n"
             text += part
         return text.encode("utf-8")
