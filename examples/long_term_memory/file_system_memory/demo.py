@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""FileSystemMemory end-to-end demo.
+"""AgenticMemoryMiddleware end-to-end demo.
 
 The demo uses a normal Agent with the filesystem-backed long-term memory
 middleware and the built-in ``Read`` / ``Write`` tools:
@@ -32,7 +32,7 @@ from agentscope.event import (
     ToolResultTextDeltaEvent,
 )
 from agentscope.message import UserMsg
-from agentscope.middleware import FileSystemMemoryMiddleware
+from agentscope.middleware import AgenticMemoryMiddleware
 from agentscope.model import DashScopeChatModel
 from agentscope.permission import AdditionalWorkingDirectory, PermissionMode
 from agentscope.tool import Read, Toolkit, Write
@@ -95,7 +95,7 @@ def _build_agent(model: DashScopeChatModel, workspace_root: Path) -> Agent:
         `Agent`:
             A newly initialized Agent instance.
     """
-    memory = FileSystemMemoryMiddleware(workdir=str(workspace_root))
+    memory = AgenticMemoryMiddleware(workdir=str(workspace_root))
     agent = Agent(
         name="memory_assistant",
         system_prompt=(
@@ -203,7 +203,7 @@ def _print_soft_verification(workspace_root: Path) -> None:
 
 
 async def main() -> None:
-    """Run the FileSystemMemory demo."""
+    """Run the agentic memory demo."""
     api_key = os.environ["DASHSCOPE_API_KEY"]
 
     if RESET_DEMO_WORKSPACE:

@@ -209,8 +209,14 @@ class _MemorySelection(BaseModel):
     )
 
 
-class FileSystemMemoryMiddleware(MiddlewareBase):
-    """Maintain human-readable long-term memory in a filesystem directory."""
+class AgenticMemoryMiddleware(MiddlewareBase):
+    """The agentic memory, where the LLM decides when and what to save,
+    together with an asyncio retrieval task in each reply. The memory is
+    stored and retrieval based on the Markdown files.
+
+    The `AgenticMemoryMiddleware` supports different backends via the
+    `backend` argument in its constructor.
+    """
 
     FILENAME_MEMORY_MD: str = "MEMORY.md"
 
@@ -311,7 +317,7 @@ class FileSystemMemoryMiddleware(MiddlewareBase):
             memory_dir (`str`, defaults to ``"Memory"``):
                 The directory to store the long-term memory files, including
                 ``MEMORY.md``.
-            parameters (`FileSystemMemoryMiddleware.Parameters | None`, \
+            parameters (`AgenticMemoryMiddleware.Parameters | None`, \
             defaults to ``None``):
                 User-tunable parameters.  When ``None``, defaults are used.
             backend (`BackendBase | None`, optional):

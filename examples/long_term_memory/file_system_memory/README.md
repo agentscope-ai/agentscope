@@ -1,13 +1,6 @@
-# FileSystemMemory middleware
+# Agentic Memory Middleware
 
-This example demonstrates `FileSystemMemoryMiddleware`, a lightweight long-term memory middleware backed by human-readable Markdown files.
-
-The current implementation is intentionally simple:
-
-- the middleware creates a memory directory under the configured `workdir`;
-- it injects memory instructions and a bounded `MEMORY.md` index into the Agent system prompt;
-- the Agent writes durable memories as Markdown files by using normal filesystem tools such as `Write`;
-- on later turns, the middleware can use the Agent model's structured-output API to select relevant Markdown files and inject their content as context.
+This example demonstrates `AgenticMemoryMiddleware`, a long-term memory middleware backed by human-readable Markdown files.
 
 No vector database or embedding model is required.
 
@@ -43,7 +36,7 @@ PowerShell:
 $env:DASHSCOPE_API_KEY = "sk-..."
 ```
 
-DashScope is only used as the chat model provider in this demo. `FileSystemMemoryMiddleware` itself is not tied to DashScope.
+DashScope is only used as the chat model provider in this demo. `AgenticMemoryMiddleware` itself is not tied to DashScope.
 
 ## Run
 
@@ -65,18 +58,18 @@ By default, `RESET_DEMO_WORKSPACE = True` in `demo.py`, so every run starts from
 
 ```python
 from agentscope.agent import Agent
-from agentscope.middleware import FileSystemMemoryMiddleware
+from agentscope.middleware import AgenticMemoryMiddleware
 from agentscope.tool import Read, Toolkit, Write
 
 workdir = "./my_agent_workspace"
-memory = FileSystemMemoryMiddleware(workdir=workdir)
+memory = AgenticMemoryMiddleware(workdir=workdir)
 
 agent = Agent(
-    name="assistant",
-    system_prompt="You are a helpful assistant.",
-    model=model,
-    toolkit=Toolkit(tools=[Read(), Write()]),
-    middlewares=[memory],
+   name="assistant",
+   system_prompt="You are a helpful assistant.",
+   model=model,
+   toolkit=Toolkit(tools=[Read(), Write()]),
+   middlewares=[memory],
 )
 ```
 
@@ -87,12 +80,11 @@ For unattended local demos, configure permissions so `Write` can update the memo
 ## Constructor
 
 ```python
-FileSystemMemoryMiddleware(
+AgenticMemoryMiddleware(
     *,
     workdir: str,
     memory_dir: str = "Memory",
-    parameters: FileSystemMemoryMiddleware.Parameters | None = None,
-    chat_model: ChatModelBase | None = None,
+    parameters: AgenticMemoryMiddleware.Parameters | None = None,
     backend: BackendBase | None = None,
 )
 ```
@@ -107,7 +99,6 @@ Important parameters:
 | `parameters.retrieval_async` | Whether to start asynchronous relevance retrieval during `Agent.reply`. |
 | `parameters.retrieval_max_files` | Maximum number of topic Markdown files considered for relevance selection. |
 | `parameters.retrieval_max_tokens_per_md` | Maximum estimated tokens read from each selected memory file. |
-| `chat_model` | Optional model used for memory-file relevance selection. When omitted, the active `agent.model` is used. |
 | `backend` | Optional filesystem backend. When omitted, local filesystem storage is used. |
 
 ## Markdown layout

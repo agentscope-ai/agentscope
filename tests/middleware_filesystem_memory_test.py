@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for FileSystemMemoryMiddleware with real Agent execution."""
+"""Unit tests for AgenticMemoryMiddleware with real Agent execution."""
 import os
 import shutil
 import tempfile
@@ -17,7 +17,7 @@ from agentscope.message import (
     ToolCallBlock,
     UserMsg,
 )
-from agentscope.middleware import FileSystemMemoryMiddleware
+from agentscope.middleware import AgenticMemoryMiddleware
 from agentscope.model import ChatResponse, StructuredResponse
 from agentscope.permission import (
     PermissionBehavior,
@@ -298,8 +298,8 @@ def _write_memory_file(
         )
 
 
-class FileSystemMemoryMiddlewareTest(IsolatedAsyncioTestCase):
-    """Agent-level tests for :class:`FileSystemMemoryMiddleware`."""
+class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
+    """Agent-level tests for :class:`AgenticMemoryMiddleware`."""
 
     async def asyncSetUp(self) -> None:
         """Create a temporary workspace for each test."""
@@ -312,7 +312,7 @@ class FileSystemMemoryMiddlewareTest(IsolatedAsyncioTestCase):
     def _make_agent(
         self,
         model: _RecordingMockModel,
-        middleware: FileSystemMemoryMiddleware,
+        middleware: AgenticMemoryMiddleware,
         toolkit: Toolkit | None = None,
     ) -> Agent:
         """Build an Agent with the filesystem memory middleware attached.
@@ -320,7 +320,7 @@ class FileSystemMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         Args:
             model (`_RecordingMockModel`):
                 The mock model used by the agent.
-            middleware (`FileSystemMemoryMiddleware`):
+            middleware (`AgenticMemoryMiddleware`):
                 The middleware under test.
             toolkit (`Toolkit | None`, optional):
                 The toolkit for the agent. Defaults to an empty toolkit.
@@ -343,7 +343,7 @@ class FileSystemMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         """Agent reply should create layout and inject memory instructions."""
         model = _RecordingMockModel()
         model.set_responses([_text_response("done")])
-        middleware = FileSystemMemoryMiddleware(workdir=self.temp_dir)
+        middleware = AgenticMemoryMiddleware(workdir=self.temp_dir)
         agent = self._make_agent(model, middleware)
 
         reply = await agent.reply(UserMsg("user", "hello"))
@@ -417,7 +417,7 @@ class FileSystemMemoryMiddlewareTest(IsolatedAsyncioTestCase):
             _structured_response(["user_profile.md"]),
         )
         model.set_responses([_tool_response(), _text_response("final answer")])
-        middleware = FileSystemMemoryMiddleware(workdir=self.temp_dir)
+        middleware = AgenticMemoryMiddleware(workdir=self.temp_dir)
         agent = self._make_agent(
             model,
             middleware,
@@ -534,7 +534,7 @@ class FileSystemMemoryMiddlewareTest(IsolatedAsyncioTestCase):
             _structured_response(["user_profile.md", "missing.md"]),
         )
         model.set_responses([_tool_response(), _text_response("filtered")])
-        middleware = FileSystemMemoryMiddleware(workdir=self.temp_dir)
+        middleware = AgenticMemoryMiddleware(workdir=self.temp_dir)
         agent = self._make_agent(
             model,
             middleware,
@@ -585,7 +585,7 @@ class FileSystemMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         model = _RecordingMockModel()
         model.set_structured_response(_structured_response([]))
         model.set_responses([_tool_response(), _text_response("no hint")])
-        middleware = FileSystemMemoryMiddleware(workdir=self.temp_dir)
+        middleware = AgenticMemoryMiddleware(workdir=self.temp_dir)
         agent = self._make_agent(
             model,
             middleware,
@@ -627,7 +627,7 @@ class FileSystemMemoryMiddlewareTest(IsolatedAsyncioTestCase):
         model = _RecordingMockModel()
         model.set_structured_response(_structured_response(["missing.md"]))
         model.set_responses([_tool_response(), _text_response("index only")])
-        middleware = FileSystemMemoryMiddleware(workdir=self.temp_dir)
+        middleware = AgenticMemoryMiddleware(workdir=self.temp_dir)
         agent = self._make_agent(
             model,
             middleware,
@@ -680,9 +680,9 @@ class FileSystemMemoryMiddlewareTest(IsolatedAsyncioTestCase):
 
         model = _RecordingMockModel()
         model.set_responses([_text_response("truncated")])
-        middleware = FileSystemMemoryMiddleware(
+        middleware = AgenticMemoryMiddleware(
             workdir=self.temp_dir,
-            parameters=FileSystemMemoryMiddleware.Parameters(
+            parameters=AgenticMemoryMiddleware.Parameters(
                 memory_max_tokens=10,
                 retrieval_async=False,
             ),
@@ -732,9 +732,9 @@ class FileSystemMemoryMiddlewareTest(IsolatedAsyncioTestCase):
             _structured_response(["user_profile.md"]),
         )
         model.set_responses([_tool_response(), _text_response("disabled")])
-        middleware = FileSystemMemoryMiddleware(
+        middleware = AgenticMemoryMiddleware(
             workdir=self.temp_dir,
-            parameters=FileSystemMemoryMiddleware.Parameters(
+            parameters=AgenticMemoryMiddleware.Parameters(
                 retrieval_async=False,
             ),
         )

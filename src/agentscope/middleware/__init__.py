@@ -4,13 +4,13 @@
 from ._base import MiddlewareBase
 from ._rag import RAGMiddleware
 from ._budget import ReplyBudgetControlMiddleware
-from ._longterm_memory import FileSystemMemoryMiddleware, Mem0Middleware
+from ._longterm_memory import AgenticMemoryMiddleware, Mem0Middleware
 from ._tracing import TracingMiddleware
 from ._tts_middleware import TTSMiddleware
 
 __all__ = [
     "MiddlewareBase",
-    "FileSystemMemoryMiddleware",
+    "AgenticMemoryMiddleware",
     "Mem0Middleware",
     "RAGMiddleware",
     "TracingMiddleware",
