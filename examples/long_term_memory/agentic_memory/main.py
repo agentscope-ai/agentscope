@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 """AgenticMemoryMiddleware end-to-end demo.
 
-The demo uses a normal Agent with the filesystem-backed long-term memory
-middleware and the built-in ``Read`` / ``Write`` tools:
+The demo uses a single Agent with the filesystem-backed long-term memory
+middleware and the built-in ``Read`` / ``Write`` tools across two turns:
 
-1. The first Agent receives mock user input that explicitly asks it to remember
+1. The Agent receives mock user input that explicitly asks it to remember
    durable user information. The middleware injects memory instructions and the
    Agent writes Markdown files under ``demo_workspace/Memory``.
-2. A second, freshly initialized Agent uses the same ``workdir`` and answers a
-   question about the earlier user information. This demonstrates that the
-   memory comes from Markdown files, not from the first Agent instance state.
+2. The same Agent is then asked to recall the earlier user information. The
+   answer is grounded by the Markdown files persisted on disk by the
+   middleware.
 
 Requires:
     pip install agentscope
@@ -219,19 +219,18 @@ async def main() -> None:
         stream=False,
     )
 
-    print("\n=== Turn 1: ask the first Agent to persist user memory ===")
-    first_agent = _build_agent(model, DEMO_ROOT)
+    print("\n=== Turn 1: ask the Agent to persist user memory ===")
+    agent = _build_agent(model, DEMO_ROOT)
     print(f"[user]\n{FIRST_USER_MESSAGE}\n")
-    first_reply = await _run_turn(first_agent, FIRST_USER_MESSAGE)
+    first_reply = await _run_turn(agent, FIRST_USER_MESSAGE)
     print(f"\n[assistant]\n{first_reply}")
 
     _print_memory_files(DEMO_ROOT)
     _print_soft_verification(DEMO_ROOT)
 
-    print("\n=== Turn 2: create a fresh Agent and ask it to recall memory ===")
-    second_agent = _build_agent(model, DEMO_ROOT)
+    print("\n=== Turn 2: ask the same Agent to recall memory ===")
     print(f"[user]\n{SECOND_USER_MESSAGE}\n")
-    second_reply = await _run_turn(second_agent, SECOND_USER_MESSAGE)
+    second_reply = await _run_turn(agent, SECOND_USER_MESSAGE)
     print(f"\n[assistant]\n{second_reply}")
 
 
