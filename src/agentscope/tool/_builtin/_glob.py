@@ -188,9 +188,11 @@ codebase."""  # ignore: E501
         backend_cwd = await self._backend.getcwd()
         path = tool_input.get("path") or backend_cwd
 
-        # Normalize path and create pattern (backend-aware separators).
+        # Normalize path and build a glob pattern. Glob patterns are
+        # POSIX-style strings (matched by fnmatch), not real filesystem
+        # paths — do NOT use backend.join_path here.
         abs_path = self._backend.abspath(path, cwd=backend_cwd)
-        pattern = self._backend.join_path(abs_path, "**")
+        pattern = abs_path.rstrip("/\\") + "/**"
 
         return [
             PermissionRule(

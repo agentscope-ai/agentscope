@@ -164,7 +164,9 @@ Usage:
             return []
 
         parent = self._backend.dirname(file_path)
-        pattern = self._backend.join_path(parent, "**") if parent else "**"
+        # Glob patterns are POSIX-style strings (matched by fnmatch),
+        # not real filesystem paths — do NOT use backend.join_path here.
+        pattern = (parent.rstrip("/\\") + "/**") if parent else "**"
 
         return [
             PermissionRule(

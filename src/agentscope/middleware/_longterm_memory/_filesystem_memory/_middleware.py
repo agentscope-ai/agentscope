@@ -174,13 +174,9 @@ Memory is one of several persistence mechanisms available to you as you assist t
 When looking for past context:
 1. Search topic files in your memory directory:
 ```
-Grep with pattern="<search>" path="/Users/david/.claude/projects/-Users-david-.../memory/" glob="*.md"</search>
+Grep with pattern="<search>" path="{memory_dir}" glob="*.md"</search>
+# or Bash command:
 grep -rn "<search term>" {memory_dir} --include="*.md"
-```
-2. Session transcript logs (last resort — large files, slow):
-```
-Grep with pattern="<search>" path="/Users/david/.claude/projects/-Users-david-.../" glob="*.jsonl"</search>
-grep -rn "<search term>" {project_dir}/ --include="*.jsonl"
 ```
 Use narrow search terms (error messages, file paths, function names) rather than broad keywords.
 """  # noqa:

@@ -241,7 +241,9 @@ class Grep(ToolBase):
         path = tool_input.get("path") or backend_cwd
 
         abs_path = self._backend.abspath(path, cwd=backend_cwd)
-        pattern = self._backend.join_path(abs_path, "**")
+        # Glob patterns are POSIX-style strings (matched by fnmatch),
+        # not real filesystem paths — do NOT use backend.join_path here.
+        pattern = abs_path.rstrip("/\\") + "/**"
 
         return [
             PermissionRule(
