@@ -330,6 +330,12 @@ def _flatten_json_schema(schema: dict) -> dict:
 
 
 def _estimate_tokens(text: str) -> int:
-    """Estimate the number of tokens in a given text, using the number of"""
+    """Estimate the number of tokens in a given text."""
 
     return int(len(text.encode("utf-8")) / 4 + 0.5)
+
+
+def _estimate_bytes(tokens: int) -> int:
+    """Estimate the number of bytes with given tokens."""
+
+    return int(tokens * 4)

@@ -1,37 +1,45 @@
 # -*- coding: utf-8 -*-
-"""Workspace-scoped, filesystem-backed long-term memory middleware.
+"""Filesystem-backed long-term memory middleware.
 
-The middleware combines three responsibilities around a Markdown store:
-
-- inject bounded ``USER.md`` and ``MEMORY.md`` snapshots into the system
-  prompt;
-- expose state-injected read, search, and optional management tools; and
-- periodically extract durable facts from Agent state in static-control mode.
-
-Workspace resolution is deferred until an Agent hook runs. This allows one
-middleware instance to serve app-mode agents whose workspaces are supplied by
-``Agent.offloader``. Store, lock, and snapshot registries are keyed by
-workspace so sessions never become the persistence boundary.
+The middleware keeps a workspace-local Markdown memory store, injects a
+bounded ``MEMORY.md`` index into the system prompt, and can asynchronously
+surface relevant topic files as hint blocks during the reasoning loop.
 """
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Callable, AsyncGenerator
+import re
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, AsyncGenerator, Callable
 
 from pydantic import BaseModel, Field
 
 from ..._base import MiddlewareBase
-from ...._utils._common import _estimate_tokens
-from ....message import Msg, SystemMsg, UserMsg
+from ...._logging import logger
+from ...._utils._common import _estimate_tokens, _estimate_bytes
+from ....message import Msg, SystemMsg, UserMsg, HintBlock
 from ....model import ChatModelBase
 from ....tool import BackendBase, LocalBackend
-from ._store import (
-    FileSystemMemoryStore,
-    MemoryFileHeader,
-)
 
 if TYPE_CHECKING:
     from ....agent import Agent
+
+
+@dataclass(slots=True)
+class _MemoryFileHeader:
+    """Lightweight header for one memory file, read from frontmatter only."""
+
+    filename: str
+    """Relative path under the memory directory (e.g. ``user_role.md``)."""
+    path: str
+    """Absolute path inside the backend."""
+    description: str | None
+    """One-line description from frontmatter; ``None`` when absent."""
+    type: str | None
+    """Memory type tag from frontmatter (user/feedback/project/reference)."""
+    mtime: float | None
+    """Modification time as a Unix timestamp; ``None`` when unavailable."""
+
 
 DEFAULT_MEMORY_INSTRUCTIONS = """# Auto Memory
 
@@ -129,6 +137,7 @@ type: {{user, feedback, project, reference}}
 ---
 
 {{memory content — for feedback/project types, structure as: rule/fact, then **Why:** and **How to apply:** lines}}
+```
 
 **Step 2** — add a pointer to that file in `MEMORY.md`. `MEMORY.md` is an index, not a memory — each entry should be one line, under ~150 characters: - [Title](file.md) — one-line hook. It has no frontmatter. Never write memory content directly into MEMORY.md.
 
@@ -201,11 +210,14 @@ class _MemorySelection(BaseModel):
 
 
 class FileSystemMemoryMiddleware(MiddlewareBase):
-    """Maintain human-readable long-term memory inside Agent workspaces,
-    backed by a filesystem."""
+    """Maintain human-readable long-term memory in a filesystem directory."""
+
+    FILENAME_MEMORY_MD: str = "MEMORY.md"
 
     class Parameters(BaseModel):
         """The user-tunable filesystem parameters."""
+
+        model_config = {"arbitrary_types_allowed": True}
 
         memory_max_tokens: int = Field(
             default=4_000,
@@ -235,6 +247,16 @@ class FileSystemMemoryMiddleware(MiddlewareBase):
             ),
         )
 
+        retrieval_model: ChatModelBase | None = Field(
+            default=None,
+            title="Retrieval Model",
+            description=(
+                "The LLM used to retrieve relevant memory files "
+                "asynchronously during the agent reply. If `None`, the "
+                "agent's model will be used."
+            ),
+        )
+
         retrieval_max_tokens_per_md: int = Field(
             default=2_000,
             title="Retrieval Max Tokens Per File",
@@ -242,6 +264,24 @@ class FileSystemMemoryMiddleware(MiddlewareBase):
                 "Maximum tokens read from each memory file that is surfaced "
                 "by the relevance retrieval step. Keeps individual files from "
                 "flooding the context window."
+            ),
+        )
+
+        retrieval_max_files: int = Field(
+            default=200,
+            title="Retrieval Max Files",
+            description=(
+                "The maximum number of Markdown memory files to consider "
+                "during relevance selection."
+            ),
+        )
+
+        retrieval_max_tokens_per_frontmatter: int = Field(
+            default=256,
+            title="Retrieval Max Tokens per Frontmatter",
+            description=(
+                "The maximum number of tokens to read from the beginning of "
+                "each Markdown file when parsing frontmatter."
             ),
         )
 
@@ -260,7 +300,6 @@ class FileSystemMemoryMiddleware(MiddlewareBase):
         workdir: str,
         memory_dir: str = "Memory",
         parameters: Parameters | None = None,
-        chat_model: ChatModelBase | None = None,
         backend: BackendBase | None = None,
     ) -> None:
         """Initialize filesystem-backed long-term memory behavior.
@@ -271,7 +310,7 @@ class FileSystemMemoryMiddleware(MiddlewareBase):
                 searchable memory files.
             memory_dir (`str`, defaults to ``"Memory"``):
                 The directory to store the long-term memory files, including
-                USER.md, MEMORY.md.
+                ``MEMORY.md``.
             parameters (`FileSystemMemoryMiddleware.Parameters | None`, \
             defaults to ``None``):
                 User-tunable parameters.  When ``None``, defaults are used.
@@ -284,17 +323,6 @@ class FileSystemMemoryMiddleware(MiddlewareBase):
         self._parameters = parameters or self.Parameters()
         self._backend = backend or LocalBackend()
 
-        self.chat_model = chat_model
-
-        self._store = FileSystemMemoryStore(
-            self._backend,
-            self._workdir,
-            memory_dir=self._memory_dir,
-            user_max_length=self._parameters.user_max_length,
-            memory_max_length=self._parameters.memory_max_tokens,
-            daily_max_length=self._parameters.daily_max_length,
-        )
-
         self._cached_input: str | None = None
         # The in-flight asynchronous retrieval task started in ``on_reply``
         # and consumed in ``on_reasoning``. Kept on the instance so the
@@ -303,24 +331,52 @@ class FileSystemMemoryMiddleware(MiddlewareBase):
 
     @staticmethod
     def _truncate_if_needed(content: str, max_length: int) -> str:
-        """Truncate the given content by the max length argument if needed."""
+        """Return ``content`` truncated to at most ``max_length`` tokens.
+
+        Args:
+            content (`str`):
+                The content to truncate.
+            max_length (`int`):
+                The maximum estimated token count to keep.
+
+        Returns:
+            `str`:
+                The original content when it already fits; otherwise a prefix
+                that fits within the requested token budget.
+        """
+        if max_length <= 0:
+            return ""
+
         n_tokens = _estimate_tokens(content)
         if n_tokens <= max_length:
             return content
 
         index = int((max_length / n_tokens) * len(content))
-        while _estimate_tokens(content[index:]) > max_length:
+        while index > 0 and _estimate_tokens(content[:index]) > max_length:
             index = max(0, index - 10)
 
-        return content[index:]
+        return content[:index]
 
     async def on_system_prompt(
         self,
         agent: "Agent",
         current_prompt: str,
     ) -> str:
-        """Append a modification-time-aware USER and MEMORY snapshot."""
-        memory_md_content = await self._store.get_memory_md_content() or ""
+        """Append memory instructions and a bounded ``MEMORY.md`` snapshot.
+
+        Args:
+            agent (`Agent`):
+                The executing agent. Unused, but part of the middleware
+                contract.
+            current_prompt (`str`):
+                The system prompt produced by previous middleware.
+
+        Returns:
+            `str`:
+                The prompt with filesystem memory instructions appended.
+        """
+        await self._ensure_layout()
+        memory_md_content = await self._get_memory_md_content() or ""
 
         # Truncated by config
         memory_md_truncated = self._truncate_if_needed(
@@ -329,7 +385,7 @@ class FileSystemMemoryMiddleware(MiddlewareBase):
         )
 
         if len(memory_md_truncated) != len(memory_md_content):
-            memory_md_path = self._store.get_memory_md_path()
+            memory_md_path = self._get_memory_md_path()
             remain_lines = len(memory_md_truncated.split("\n"))
             omitted_lines = len(memory_md_content.split("\n")) - remain_lines
             memory_md_truncated += (
@@ -346,9 +402,12 @@ class FileSystemMemoryMiddleware(MiddlewareBase):
                 "memories, they will appear here."
             )
 
+        memory_instructions = self._parameters.memory_instructions.replace(
+            "{memory_dir}",
+            self._get_memory_dir(),
+        )
         content = (
-            f"{self._parameters.memory_instructions}\n"
-            f"## MEMORY.md\n{memory_md_truncated}"
+            f"{memory_instructions}\n" f"## MEMORY.md\n{memory_md_truncated}"
         )
 
         return f"{current_prompt}\n\n{content}"
@@ -360,33 +419,48 @@ class FileSystemMemoryMiddleware(MiddlewareBase):
         next_handler: Callable[..., AsyncGenerator],
     ) -> AsyncGenerator:
         """Cache the user input and kick off an asynchronous retrieval task
-        that runs concurrently with the agent reply."""
-        inputs = input_kwargs.get("inputs")
+        that runs concurrently with the agent reply.
 
-        msgs = None
-        if isinstance(inputs, list) and all(
-            isinstance(_, Msg) for _ in inputs
-        ):
-            msgs = inputs
-        elif isinstance(inputs, Msg):
-            msgs = [inputs]
+        Args:
+            agent (`Agent`):
+                The executing agent whose model may be used for retrieval.
+            input_kwargs (`dict`):
+                Reply input kwargs forwarded unchanged.
+            next_handler (`Callable[..., AsyncGenerator]`):
+                The downstream middleware or core reply logic.
 
-        if msgs is not None:
-            self._cached_input = "\n".join(
-                [
-                    f"{_.name}: " + _.get_text_content()
-                    for _ in msgs
-                    if _.get_text_content() is not None
-                ],
-            )
+        Yields:
+            `Any`:
+                Items yielded by ``next_handler``.
+        """
 
-        # Start an asynchronous retrieval task that uses an LLM to decide
-        # which memory files are relevant to the current user input. The
-        # result is consumed by ``on_reasoning``.
-        if self._cached_input:
-            self._retrieval_task = asyncio.create_task(
-                self._retrieve_relevant_files(agent, self._cached_input),
-            )
+        if self._parameters.retrieval_async:
+            inputs = input_kwargs.get("inputs")
+
+            msgs = None
+            if isinstance(inputs, list) and all(
+                isinstance(_, Msg) for _ in inputs
+            ):
+                msgs = inputs
+            elif isinstance(inputs, Msg):
+                msgs = [inputs]
+
+            if msgs is not None:
+                self._cached_input = "\n".join(
+                    [
+                        f"{_.name}: " + _.get_text_content()
+                        for _ in msgs
+                        if _.get_text_content() is not None
+                    ],
+                )
+
+            # Start an asynchronous retrieval task that uses an LLM to decide
+            # which memory files are relevant to the current user input. The
+            # result is consumed by ``on_reasoning``.
+            if self._cached_input:
+                self._retrieval_task = asyncio.create_task(
+                    self._retrieve_relevant_files(agent, self._cached_input),
+                )
 
         try:
             async for _ in next_handler(**input_kwargs):
@@ -405,10 +479,67 @@ class FileSystemMemoryMiddleware(MiddlewareBase):
             self._retrieval_task = None
             self._cached_input = None
 
+    async def on_reasoning(
+        self,
+        agent: "Agent",
+        input_kwargs: dict,
+        next_handler: Callable[..., AsyncGenerator],
+    ) -> AsyncGenerator:
+        """Check if the retrieval finished and if yes, insert a hint block to
+        the content.
+
+        Args:
+            agent (`Agent`):
+                The executing agent whose context may receive a hint block.
+            input_kwargs (`dict`):
+                Reasoning input kwargs forwarded unchanged.
+            next_handler (`Callable[..., AsyncGenerator]`):
+                The downstream middleware or core reasoning logic.
+
+        Yields:
+            `Any`:
+                Items yielded by ``next_handler``.
+        """
+        # Poll the in-flight retrieval task; if it has finished, consume its
+        # result and inject it into the agent context exactly once.
+        if self._retrieval_task is not None and self._retrieval_task.done():
+            task = self._retrieval_task
+            self._retrieval_task = None
+            try:
+                retrieval_result = task.result()
+            except (asyncio.CancelledError, Exception):
+                retrieval_result = None
+
+            if retrieval_result:
+                agent.state.append_context(
+                    agent.name,
+                    [
+                        HintBlock(
+                            hint=retrieval_result,
+                        ),
+                    ],
+                )
+
+        async for event in next_handler(**input_kwargs):
+            yield event
+
+    # ========================================================================
+    # Helper functions
+    # ========================================================================
+
     @staticmethod
-    def _format_manifest(headers: list[MemoryFileHeader]) -> str:
+    def _format_manifest(headers: list[_MemoryFileHeader]) -> str:
         """Format a list of memory file headers into a one-line-per-file
-        manifest string suitable for the selector prompt."""
+        manifest string suitable for the selector prompt.
+
+        Args:
+            headers (`list[_MemoryFileHeader]`):
+                The memory file headers to format.
+
+        Returns:
+            `str`:
+                The formatted manifest.
+        """
         lines = []
         for h in headers:
             tag = f"[{h.type}] " if h.type else ""
@@ -441,8 +572,10 @@ class FileSystemMemoryMiddleware(MiddlewareBase):
                 The formatted retrieval result ready to be injected into the
                 context, or ``None`` when nothing relevant was found.
         """
+        await self._ensure_layout()
+
         # 1. Scan available memory files (frontmatter only, cheap).
-        headers = await self._store.list_md_files()
+        headers = await self._list_md_files()
         if not headers:
             return None
 
@@ -450,7 +583,7 @@ class FileSystemMemoryMiddleware(MiddlewareBase):
         manifest = self._format_manifest(headers)
 
         # 2. Ask the model to select relevant files.
-        model = self.chat_model or agent.model
+        model = self._parameters.retrieval_model or agent.model
         res = await model.generate_structured_output(
             [
                 SystemMsg(
@@ -514,28 +647,155 @@ class FileSystemMemoryMiddleware(MiddlewareBase):
 
         return "\n\n---\n\n".join(parts)
 
-    async def on_reasoning(
-        self,
-        agent: "Agent",
-        input_kwargs: dict,
-        next_handler: Callable[..., AsyncGenerator],
-    ) -> AsyncGenerator:
-        """Check if the retrieval finished and if yes, insert a hint block to
-        the content."""
-        # Poll the in-flight retrieval task; if it has finished, consume its
-        # result and inject it into the agent context exactly once.
-        if self._retrieval_task is not None and self._retrieval_task.done():
-            task = self._retrieval_task
-            self._retrieval_task = None
+    async def _ensure_layout(self) -> None:
+        """Create the memory directory and initial files idempotently.
+
+        Existing human-edited documents are never replaced. The index file is
+        created only when absent so manual edits survive restarts.
+        """
+        if not await self._backend.is_dir(self._get_memory_dir()):
+            await self._backend.exec_shell(
+                command=["mkdir", "-p", self._get_memory_dir()],
+            )
+
+        if not await self._backend.file_exists(self._get_memory_md_path()):
+            logger.info(
+                "Creating 'MEMORY.md' file in '%s'",
+                self._workdir,
+            )
+            await self._backend.write_file(
+                self._get_memory_md_path(),
+                "".encode("utf-8"),
+            )
+
+    def _get_memory_dir(self) -> str:
+        """Get the memory directory.
+
+        Returns:
+            `str`:
+                The backend path of the memory directory.
+        """
+        return self._backend.join_path(self._workdir, self._memory_dir)
+
+    def _get_memory_md_path(self) -> str:
+        """Get the ``MEMORY.md`` path.
+
+        Returns:
+            `str`:
+                The backend path of the ``MEMORY.md`` index file.
+        """
+        return self._backend.join_path(
+            self._get_memory_dir(),
+            self.FILENAME_MEMORY_MD,
+        )
+
+    async def _get_memory_md_content(self) -> str | None:
+        """Get the content of the ``MEMORY.md`` file.
+
+        Returns:
+            `str | None`:
+                The decoded index file content, or ``None`` when the file does
+                not exist.
+        """
+        if not await self._backend.file_exists(self._get_memory_md_path()):
+            return None
+
+        return (
+            await self._backend.read_file(self._get_memory_md_path())
+        ).decode(
+            "utf-8",
+            errors="replace",
+        )
+
+    _FRONTMATTER_RE = re.compile(
+        r"^\s*---\s*\n(?P<body>.*?)\n---\s*\n",
+        re.DOTALL,
+    )
+    _FIELD_RE = re.compile(r"^(?P<key>\w+)\s*:\s*(?P<value>.+)$", re.MULTILINE)
+
+    @classmethod
+    def _parse_frontmatter_fields(cls, content: str) -> dict[str, str]:
+        """Return a dict of YAML-like key/value pairs from the first
+        frontmatter block.  Only scalar ``key: value`` lines are parsed;
+        nested structures are intentionally ignored.
+
+        Args:
+            content (`str`):
+                The Markdown content prefix to inspect.
+
+        Returns:
+            `dict[str, str]`:
+                Parsed frontmatter fields, or an empty dict when no leading
+                frontmatter block is present.
+        """
+        m = cls._FRONTMATTER_RE.match(content)
+        if not m:
+            return {}
+        return {
+            fm.group("key"): fm.group("value").strip()
+            for fm in cls._FIELD_RE.finditer(m.group("body"))
+        }
+
+    async def _list_md_files(self) -> list[_MemoryFileHeader]:
+        """Scan the memory directory for individual memory files.
+
+        Returns:
+            `list[_MemoryFileHeader]`:
+                Memory file headers sorted newest-first and capped by
+                ``retrieval_max_files``. The system index file
+                (``MEMORY.md``) is excluded so only topic files are returned.
+        """
+        memory_dir = self._get_memory_dir()
+        system_files = {self.FILENAME_MEMORY_MD}
+
+        try:
+            all_entries = await self._backend.list_dir(
+                memory_dir,
+                recursive=True,
+            )
+        except Exception:
+            return []
+
+        headers: list[_MemoryFileHeader] = []
+        memory_dir_norm = self._backend.normpath(memory_dir)
+        memory_dir_prefix = self._backend.join_path(memory_dir_norm, "")
+        for entry in all_entries:
+            entry_path = self._backend.normpath(entry)
+            if self._backend.isabs(entry_path):
+                if not entry_path.startswith(memory_dir_prefix):
+                    continue
+                filename = entry_path[len(memory_dir_prefix) :]
+                full_path = entry_path
+            else:
+                filename = entry_path
+                full_path = self._backend.join_path(memory_dir, filename)
+
+            if not filename.endswith(".md") or filename in system_files:
+                continue
+
             try:
-                retrieval_result = task.result()
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                retrieval_result = None
+                raw = await self._backend.read_file(full_path)
+                # Only parse the leading bytes to keep this cheap.
+                max_frontmatter_bytes = _estimate_bytes(
+                    self._parameters.retrieval_max_tokens_per_frontmatter,
+                )
+                snippet = raw[:max_frontmatter_bytes].decode(
+                    "utf-8",
+                    errors="replace",
+                )
+                fields = self._parse_frontmatter_fields(snippet)
+                mtime = await self._backend.stat_mtime(full_path)
+                headers.append(
+                    _MemoryFileHeader(
+                        filename=filename,
+                        path=full_path,
+                        description=fields.get("description") or None,
+                        type=fields.get("type") or None,
+                        mtime=mtime,
+                    ),
+                )
+            except Exception:
+                continue
 
-            if retrieval_result:
-                # TODO: 将 retrieval_result 以合适的消息 / HintBlock 形式
-                #  追加到 agent.state.context 中。
-                agent.state
-
-        async for event in next_handler(**input_kwargs):
-            yield event
+        headers.sort(key=lambda h: h.mtime or 0.0, reverse=True)
+        return headers[: self._parameters.retrieval_max_files]
