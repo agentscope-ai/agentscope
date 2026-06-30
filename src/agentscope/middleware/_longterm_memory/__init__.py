@@ -1,16 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Long-term memory middlewares for AgentScope agents.
+"""Long-term memory middlewares for AgentScope agents."""
 
-Import the public middleware classes from the middleware package::
-
-    from agentscope.middleware import AgenticMemoryMiddleware
-    from agentscope.middleware import Mem0Middleware
-
-Additional backends can sit alongside ``_filesystem_memory/`` and ``_mem0/``
-under this package and be re-exported here.
-"""
-
-from ._filesystem_memory import AgenticMemoryMiddleware
+from ._agentic_memory import AgenticMemoryMiddleware
 from ._mem0 import Mem0Middleware
 
 __all__ = ["AgenticMemoryMiddleware", "Mem0Middleware"]
