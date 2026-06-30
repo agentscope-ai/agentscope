@@ -9,6 +9,7 @@ from ._anthropic import AnthropicChatModel
 from ._dashscope import DashScopeChatModel
 from ._deepseek import DeepSeekChatModel
 from ._gemini import GeminiChatModel
+from ._minimax import MiniMaxChatModel
 from ._ollama import OllamaChatModel
 from ._openai_chat import OpenAIChatModel
 from ._xai import XAIChatModel
@@ -25,6 +26,7 @@ __all__ = [
     "DashScopeChatModel",
     "DeepSeekChatModel",
     "GeminiChatModel",
+    "MiniMaxChatModel",
     "OllamaChatModel",
     "OpenAIChatModel",
     "XAIChatModel",
