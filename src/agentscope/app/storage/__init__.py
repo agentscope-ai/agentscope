@@ -2,6 +2,7 @@
 """The storage module in agentscope."""
 
 from ._base import StorageBase
+from ._mem_storage import MemStorage
 from ._redis_storage import RedisStorage
 from ._model import (
     AgentData,
@@ -28,6 +29,7 @@ from ._model import (
 
 __all__ = [
     "StorageBase",
+    "MemStorage",
     "RedisStorage",
     # The ORM models
     "AgentData",
