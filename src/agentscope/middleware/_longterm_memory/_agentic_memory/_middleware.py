@@ -653,13 +653,12 @@ class AgenticMemoryMiddleware(MiddlewareBase):
         """Create the memory directory and initial files idempotently.
 
         Existing human-edited documents are never replaced. The index file is
-        created only when absent so manual edits survive restarts.
+        created only when absent so manual edits survive restarts. The memory
+        directory itself is materialized as a side effect of writing
+        ``MEMORY.md`` — :meth:`BackendBase.write_file` creates parent
+        directories — which avoids a platform-specific ``mkdir -p`` shell
+        invocation that is not portable on Windows.
         """
-        if not await self._backend.is_dir(self._get_memory_dir()):
-            await self._backend.exec_shell(
-                command=["mkdir", "-p", self._get_memory_dir()],
-            )
-
         if not await self._backend.file_exists(self._get_memory_md_path()):
             logger.info(
                 "Creating 'MEMORY.md' file in '%s'",
@@ -667,7 +666,7 @@ class AgenticMemoryMiddleware(MiddlewareBase):
             )
             await self._backend.write_file(
                 self._get_memory_md_path(),
-                "".encode("utf-8"),
+                b"",
             )
 
     def _get_memory_dir(self) -> str:
