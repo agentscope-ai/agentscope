@@ -31,7 +31,6 @@ from agentscope.workspace._k8s._k8s_bootstrap import (
     render_install_agentscope_cmd_released,
 )
 
-
 # ── _k8s_safe_name tests ──────────────────────────────────────────
 
 
@@ -187,12 +186,15 @@ class TestK8sBackendExecShell(IsolatedAsyncioTestCase):
 
         mock_core_v1 = MagicMock(return_value=mock_v1)
 
-        with patch(
-            "kubernetes_asyncio.stream.WsApiClient",
-            return_value=mock_ws_api,
-        ), patch(
-            "kubernetes_asyncio.client.CoreV1Api",
-            mock_core_v1,
+        with (
+            patch(
+                "kubernetes_asyncio.stream.WsApiClient",
+                return_value=mock_ws_api,
+            ),
+            patch(
+                "kubernetes_asyncio.client.CoreV1Api",
+                mock_core_v1,
+            ),
         ):
             await backend.exec_shell(
                 ["ls", "-la"],
@@ -238,12 +240,15 @@ class TestK8sBackendExecShell(IsolatedAsyncioTestCase):
         mock_ws_api.__aenter__ = AsyncMock(return_value=mock_ws_api)
         mock_ws_api.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "kubernetes_asyncio.stream.WsApiClient",
-            return_value=mock_ws_api,
-        ), patch(
-            "kubernetes_asyncio.client.CoreV1Api",
-            return_value=mock_v1,
+        with (
+            patch(
+                "kubernetes_asyncio.stream.WsApiClient",
+                return_value=mock_ws_api,
+            ),
+            patch(
+                "kubernetes_asyncio.client.CoreV1Api",
+                return_value=mock_v1,
+            ),
         ):
             result = await backend.exec_shell(
                 ["sleep", "100"],
@@ -373,16 +378,20 @@ class TestK8sBackendWriteFile(IsolatedAsyncioTestCase):
             ),
         )
 
-        with patch.object(
-            backend,
-            "exec_shell",
-            new=mock_exec,
-        ), patch(
-            "kubernetes_asyncio.stream.WsApiClient",
-            return_value=mock_ws_api,
-        ), patch(
-            "kubernetes_asyncio.client.CoreV1Api",
-            return_value=mock_v1,
+        with (
+            patch.object(
+                backend,
+                "exec_shell",
+                new=mock_exec,
+            ),
+            patch(
+                "kubernetes_asyncio.stream.WsApiClient",
+                return_value=mock_ws_api,
+            ),
+            patch(
+                "kubernetes_asyncio.client.CoreV1Api",
+                return_value=mock_v1,
+            ),
         ):
             await backend.write_file(
                 "/workspace/out.txt",
@@ -593,13 +602,16 @@ class TestEnsurePvcLifecycle(IsolatedAsyncioTestCase):
             side_effect=_FakeApiException(404),
         )
 
-        with patch(
-            "agentscope.workspace._k8s._k8s_workspace.K8sWorkspace"
-            "._create_pvc",
-            new=AsyncMock(),
-        ) as mock_create, patch(
-            "kubernetes_asyncio.client.rest.ApiException",
-            _FakeApiException,
+        with (
+            patch(
+                "agentscope.workspace._k8s._k8s_workspace.K8sWorkspace"
+                "._create_pvc",
+                new=AsyncMock(),
+            ) as mock_create,
+            patch(
+                "kubernetes_asyncio.client.rest.ApiException",
+                _FakeApiException,
+            ),
         ):
             await ws._ensure_pvc()
 
@@ -617,17 +629,21 @@ class TestEnsurePvcLifecycle(IsolatedAsyncioTestCase):
             return_value=_mock_pvc("Terminating"),
         )
 
-        with patch(
-            "agentscope.workspace._k8s._k8s_workspace.K8sWorkspace"
-            "._wait_pvc_deleted",
-            new=AsyncMock(),
-        ) as mock_wait, patch(
-            "agentscope.workspace._k8s._k8s_workspace.K8sWorkspace"
-            "._create_pvc",
-            new=AsyncMock(),
-        ) as mock_create, patch(
-            "kubernetes_asyncio.client.rest.ApiException",
-            _FakeApiException,
+        with (
+            patch(
+                "agentscope.workspace._k8s._k8s_workspace.K8sWorkspace"
+                "._wait_pvc_deleted",
+                new=AsyncMock(),
+            ) as mock_wait,
+            patch(
+                "agentscope.workspace._k8s._k8s_workspace.K8sWorkspace"
+                "._create_pvc",
+                new=AsyncMock(),
+            ) as mock_create,
+            patch(
+                "kubernetes_asyncio.client.rest.ApiException",
+                _FakeApiException,
+            ),
         ):
             await ws._ensure_pvc()
 
@@ -650,13 +666,16 @@ class TestEnsurePodLifecycle(IsolatedAsyncioTestCase):
             return_value=_mock_pod("Running"),
         )
 
-        with patch(
-            "agentscope.workspace._k8s._k8s_workspace.K8sWorkspace"
-            "._create_pod",
-            new=AsyncMock(),
-        ) as mock_create, patch(
-            "kubernetes_asyncio.client.rest.ApiException",
-            _FakeApiException,
+        with (
+            patch(
+                "agentscope.workspace._k8s._k8s_workspace.K8sWorkspace"
+                "._create_pod",
+                new=AsyncMock(),
+            ) as mock_create,
+            patch(
+                "kubernetes_asyncio.client.rest.ApiException",
+                _FakeApiException,
+            ),
         ):
             await ws._ensure_pod()
 
@@ -675,17 +694,21 @@ class TestEnsurePodLifecycle(IsolatedAsyncioTestCase):
         )
         ws._v1.delete_namespaced_pod = AsyncMock()
 
-        with patch(
-            "agentscope.workspace._k8s._k8s_workspace.K8sWorkspace"
-            "._wait_pod_deleted",
-            new=AsyncMock(),
-        ), patch(
-            "agentscope.workspace._k8s._k8s_workspace.K8sWorkspace"
-            "._create_pod",
-            new=AsyncMock(),
-        ) as mock_create, patch(
-            "kubernetes_asyncio.client.rest.ApiException",
-            _FakeApiException,
+        with (
+            patch(
+                "agentscope.workspace._k8s._k8s_workspace.K8sWorkspace"
+                "._wait_pod_deleted",
+                new=AsyncMock(),
+            ),
+            patch(
+                "agentscope.workspace._k8s._k8s_workspace.K8sWorkspace"
+                "._create_pod",
+                new=AsyncMock(),
+            ) as mock_create,
+            patch(
+                "kubernetes_asyncio.client.rest.ApiException",
+                _FakeApiException,
+            ),
         ):
             await ws._ensure_pod()
 
@@ -704,13 +727,16 @@ class TestEnsurePodLifecycle(IsolatedAsyncioTestCase):
             side_effect=_FakeApiException(404),
         )
 
-        with patch(
-            "agentscope.workspace._k8s._k8s_workspace.K8sWorkspace"
-            "._create_pod",
-            new=AsyncMock(),
-        ) as mock_create, patch(
-            "kubernetes_asyncio.client.rest.ApiException",
-            _FakeApiException,
+        with (
+            patch(
+                "agentscope.workspace._k8s._k8s_workspace.K8sWorkspace"
+                "._create_pod",
+                new=AsyncMock(),
+            ) as mock_create,
+            patch(
+                "kubernetes_asyncio.client.rest.ApiException",
+                _FakeApiException,
+            ),
         ):
             await ws._ensure_pod()
 
@@ -765,6 +791,60 @@ class TestWaitPodPendingDetection(IsolatedAsyncioTestCase):
             await ws._wait_pod_running(timeout=5.0)
 
         self.assertIn("unschedulable", str(ctx.exception).lower())
+
+
+class TestDeletePvcOnClose(IsolatedAsyncioTestCase):
+    """Test the _delete_pvc_on_close constructor parameter."""
+
+    async def test_default_is_false(self) -> None:
+        """_delete_pvc_on_close defaults to False."""
+        from agentscope.workspace._k8s._k8s_workspace import K8sWorkspace
+
+        ws = K8sWorkspace(workspace_id="test-default")
+        self.assertFalse(ws._delete_pvc_on_close)
+
+    async def test_constructor_sets_true(self) -> None:
+        """delete_pvc_on_close=True is stored as private attribute."""
+        from agentscope.workspace._k8s._k8s_workspace import K8sWorkspace
+
+        ws = K8sWorkspace(
+            workspace_id="test-ctor",
+            delete_pvc_on_close=True,
+        )
+        self.assertTrue(ws._delete_pvc_on_close)
+
+
+class TestK8sWorkspaceInheritance(unittest.TestCase):
+    """Verify K8sWorkspace correctly inherits SandboxedWorkspaceBase."""
+
+    def test_inherits_sandboxed_base(self) -> None:
+        """K8sWorkspace is a subclass of SandboxedWorkspaceBase."""
+        from agentscope.workspace._k8s._k8s_workspace import K8sWorkspace
+        from agentscope.workspace._sandboxed_base import (
+            SandboxedWorkspaceBase,
+        )
+
+        self.assertTrue(issubclass(K8sWorkspace, SandboxedWorkspaceBase))
+
+    def test_class_attributes_set(self) -> None:
+        """K8sWorkspace sets all required class attributes."""
+        from agentscope.workspace._k8s._k8s_workspace import K8sWorkspace
+
+        for attr in (
+            "_glob_helper_path",
+            "_gateway_home",
+            "_gateway_config",
+            "_gateway_log",
+            "_gateway_script",
+            "_gateway_python",
+        ):
+            self.assertTrue(
+                hasattr(K8sWorkspace, attr),
+                f"Missing class attribute {attr}",
+            )
+            val = getattr(K8sWorkspace, attr)
+            self.assertIsInstance(val, str)
+            self.assertTrue(len(val) > 0)
 
 
 if __name__ == "__main__":

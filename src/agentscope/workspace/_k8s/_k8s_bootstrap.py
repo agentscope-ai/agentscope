@@ -22,10 +22,16 @@ Two install modes mirror Docker and E2B:
 ``--no-deps`` is mandatory: see :mod:`_e2b._bootstrap` for rationale.
 """
 
+import io
 import re
+import tarfile
 
 from ..._logging import logger
-from .._utils import _GATEWAY_BASE_REQUIREMENTS
+from .._utils import (
+    _GATEWAY_BASE_REQUIREMENTS,
+    _agentscope_source_root,
+    _is_source_ignored,
+)
 
 # ── shared constants ───────────────────────────────────────────────
 
@@ -97,6 +103,34 @@ def _k8s_safe_name(workspace_id: str, prefix: str = "as-ws-") -> str:
     """
     name = prefix + _K8S_UNSAFE_RE.sub("-", workspace_id.lower())
     return name[:63].rstrip("-")
+
+
+# ── source tarball (dev-mode only) ─────────────────────────────────
+
+
+def _tar_filter(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
+    """Exclude caches, hidden files and heavy dirs from the tarball."""
+    if info.name == ".":
+        return info
+    name = info.name.split("/")[-1]
+    if _is_source_ignored(name):
+        return None
+    return info
+
+
+def build_source_tarball() -> bytes:
+    """Tar up the agentscope source tree for dev-mode upload.
+
+    Returns:
+        `bytes`:
+            Uncompressed tar bytes; the Pod untars with
+            ``tar -xf`` (no ``-z``).
+    """
+    root = _agentscope_source_root()
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tf:
+        tf.add(str(root), arcname=".", filter=_tar_filter)
+    return buf.getvalue()
 
 
 # ── bootstrap command sequence ─────────────────────────────────────

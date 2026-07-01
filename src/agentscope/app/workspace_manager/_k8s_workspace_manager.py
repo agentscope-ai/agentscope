@@ -12,8 +12,8 @@ Differences from the E2B manager:
   :meth:`K8sWorkspace.initialize` handles rediscovery.
 * ``user_id`` / ``agent_id`` are stored as K8s labels
   (``agentscope.user.id`` / ``agentscope.agent.id``).
-* ``close()`` deletes the Pod but keeps the PVC (via
-  :meth:`K8sWorkspace.close`).
+* ``close()`` deletes the Pod; PVC deletion is governed by the
+  workspace's ``delete_pvc_on_close`` attribute.
 * Idle workspaces are evicted by a dedicated background sweeper task.
 """
 
@@ -21,10 +21,10 @@ import asyncio
 import time
 from typing import Any, Self
 
-from agentscope._logging import logger
-from agentscope.mcp import MCPClient
-from agentscope.workspace import K8sWorkspace
-from agentscope.workspace._k8s._k8s_bootstrap import (
+from ..._logging import logger
+from ...mcp import MCPClient
+from ...workspace import K8sWorkspace
+from ...workspace._k8s._k8s_bootstrap import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_IMAGE,
 )
@@ -53,7 +53,6 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
         tolerations: list[dict[str, Any]] | None = None,
         service_account: str | None = None,
         gateway_port: int = DEFAULT_GATEWAY_PORT,
-        network_mode: str = "pod-ip",
         extra_pip: list[str] | None = None,
         storage_class: str | None = None,
         storage_size: str = "1Gi",
@@ -88,9 +87,6 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
                 K8s serviceAccountName.
             gateway_port (`int`, defaults to `5600`):
                 Port the gateway listens on inside the Pod.
-            network_mode (`str`, defaults to ``"pod-ip"``):
-                Gateway network mode (``"pod-ip"`` or
-                ``"port-forward"``).
             extra_pip (`list[str] | None`, optional):
                 Extra packages for the gateway venv.
             storage_class (`str | None`, optional):
@@ -108,10 +104,8 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
             sweep_interval (`float`, defaults to `300.0`):
                 How often the sweeper runs.
             delete_pvc_on_close (`bool`, defaults to ``False``):
-                When ``True``, :meth:`close` and :meth:`close_all`
-                also delete the PVC, reclaiming storage.  When
-                ``False`` (default), PVCs survive workspace closure
-                so data can be reattached later.
+                Default ``delete_pvc_on_close`` value for newly
+                created workspaces.
         """
         self._namespace = namespace
         self._kubeconfig = kubeconfig
@@ -123,7 +117,6 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
         self._tolerations = tolerations
         self._service_account = service_account
         self._gateway_port = gateway_port
-        self._network_mode = network_mode
         self._extra_pip = list(extra_pip or [])
         self._storage_class = storage_class
         self._storage_size = storage_size
@@ -159,10 +152,10 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
             tolerations=self._tolerations,
             service_account=self._service_account,
             gateway_port=self._gateway_port,
-            network_mode=self._network_mode,
             extra_pip=self._extra_pip,
             storage_class=self._storage_class,
             storage_size=self._storage_size,
+            delete_pvc_on_close=self._delete_pvc_on_close,
             env=self._env,
             default_mcps=self._default_mcps,
             skill_paths=self._skill_paths,
@@ -244,31 +237,19 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
             self._cache[ws.workspace_id] = (ws, time.monotonic())
         return ws
 
-    async def close(
-        self,
-        workspace_id: str,
-        *,
-        delete_pvc: bool | None = None,
-    ) -> None:
+    async def close(self, workspace_id: str) -> None:
         """Close and evict a single workspace.
 
         Args:
             workspace_id (`str`):
                 The workspace to close.
-            delete_pvc (`bool | None`, optional):
-                If ``True``, also delete the PVC. If ``None``
-                (default), the manager's ``delete_pvc_on_close``
-                policy is used.
         """
         async with self._lock:
             entry = self._cache.pop(workspace_id, None)
         if entry is None:
             return
         ws, _ = entry
-        pvc = (
-            delete_pvc if delete_pvc is not None else self._delete_pvc_on_close
-        )
-        await self._safe_close(ws, delete_pvc=pvc)
+        await self._safe_close(ws)
 
     async def close_all(self) -> None:
         """Close every cached workspace in parallel."""
@@ -278,13 +259,7 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
         if not entries:
             return
         await asyncio.gather(
-            *(
-                self._safe_close(
-                    ws,
-                    delete_pvc=self._delete_pvc_on_close,
-                )
-                for ws, _ in entries
-            ),
+            *(self._safe_close(ws) for ws, _ in entries),
             return_exceptions=True,
         )
 
@@ -334,32 +309,20 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
         if not evicted:
             return
         await asyncio.gather(
-            *(
-                self._safe_close(
-                    ws,
-                    delete_pvc=self._delete_pvc_on_close,
-                )
-                for ws in evicted
-            ),
+            *(self._safe_close(ws) for ws in evicted),
             return_exceptions=True,
         )
 
     @staticmethod
-    async def _safe_close(
-        ws: K8sWorkspace,
-        *,
-        delete_pvc: bool = False,
-    ) -> None:
+    async def _safe_close(ws: K8sWorkspace) -> None:
         """Close a workspace, logging any failure instead of raising.
 
         Args:
             ws (`K8sWorkspace`):
                 The workspace to close.
-            delete_pvc (`bool`, defaults to ``False``):
-                Forwarded to :meth:`K8sWorkspace.close`.
         """
         try:
-            await ws.close(delete_pvc=delete_pvc)
+            await ws.close()
         except Exception:
             logger.exception(
                 "Failed to close K8sWorkspace %s",
