@@ -52,6 +52,7 @@ from agentscope.permission import PermissionMode
 from agentscope.state import AgentState
 from agentscope.tool import ExecResult, ToolResponse
 from agentscope.workspace import DaytonaBackend, DaytonaWorkspace
+from agentscope.workspace import _sandboxed_base as sandboxed_mod
 from agentscope.workspace._daytona import _daytona_workspace as daytona_mod
 from agentscope.workspace._daytona._bootstrap import (
     DEFAULT_GATEWAY_PORT,
@@ -127,16 +128,15 @@ class _FakeSandbox:
         self.workdir = workdir
         self.user_home = user_home
         self.labels: dict[str, str] = {}
+        self.created_at = f"2026-01-01T00:00:00Z-{sandbox_id}"
+        self.updated_at: str | None = None
+        self.last_activity_at: str | None = None
         self.process = _FakeProcess()
         self.fs = _FakeFS()
         self.started = False
         self.recovered = False
         self.stopped: list[dict[str, object]] = []
         self.waited_for_stop = False
-        self.preview = SimpleNamespace(
-            url="https://preview.example",
-            token="ptok",
-        )
 
     async def get_work_dir(self) -> str:
         """Return SDK-derived workdir."""
@@ -185,11 +185,6 @@ class _FakeSandbox:
 
     async def refresh_data(self) -> None:
         """No-op refresh hook."""
-
-    async def get_preview_link(self, port: int) -> object:
-        """Return preview URL/token."""
-        self.preview.port = port
-        return self.preview
 
 
 class _MappedProcess:
@@ -386,6 +381,7 @@ class _FakeSandboxState(str, Enum):
     STARTING = "starting"
     STOPPING = "stopping"
     ERROR = "error"
+    PAUSING = "pausing"
     PAUSED = "paused"
     RESUMING = "resuming"
 
@@ -398,15 +394,15 @@ class _FakeGateway:
     def __init__(
         self,
         *,
-        base_url: str,
+        backend: DaytonaBackend,
+        gateway_port: int,
         token: str,
         timeout: float,
-        extra_headers: dict[str, str] | None = None,
     ) -> None:
-        self.base_url = base_url
+        self.backend = backend
+        self.gateway_port = gateway_port
         self.token = token
         self.timeout = timeout
-        self.extra_headers = dict(extra_headers or {})
         self.closed = False
         _FakeGateway.instances.append(self)
 
@@ -596,7 +592,7 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
         _FakeGateway.instances.clear()
         self.fake_daytona_mod = _install_fake_daytona_module()
         self.gateway_patch = patch.object(
-            daytona_mod,
+            sandboxed_mod,
             "GatewayClient",
             _FakeGateway,
         )
@@ -652,6 +648,18 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_create_passes_os_user_only_when_configured(self) -> None:
+        """Explicit ``os_user`` is forwarded to Daytona create params."""
+        workspace = DaytonaWorkspace(
+            workspace_id="wid-os-user",
+            os_user="daytona",
+        )
+
+        await workspace.initialize()
+
+        params = _FakeDaytona.created_params[0]
+        self.assertEqual(params.kwargs["os_user"], "daytona")
+
     async def test_initialize_is_idempotent(self) -> None:
         """Repeated ``initialize`` calls do not create new runtime state."""
         workspace = DaytonaWorkspace(workspace_id="wid-idempotent")
@@ -686,6 +694,24 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
         self.assertTrue(candidate.started)
         self.assertEqual(_FakeDaytona.created_params, [])
 
+    async def test_initialize_chooses_newest_duplicate_candidate(self) -> None:
+        """Duplicate usable candidates choose newest and log a warning."""
+        older = _FakeSandbox("sandbox-older", state="started")
+        older.labels = {METADATA_WORKSPACE_ID_KEY: "wid-duplicates"}
+        older.last_activity_at = "2026-01-01T00:00:00Z"
+        newer = _FakeSandbox("sandbox-newer", state="started")
+        newer.labels = {METADATA_WORKSPACE_ID_KEY: "wid-duplicates"}
+        newer.last_activity_at = "2026-01-02T00:00:00Z"
+        _FakeDaytona.list_result[:] = [older, newer]
+
+        workspace = DaytonaWorkspace(workspace_id="wid-duplicates")
+        with self.assertLogs("as", level="WARNING") as logs:
+            await workspace.initialize()
+
+        self.assertIs(workspace._sandbox, newer)
+        self.assertEqual(_FakeDaytona.created_params, [])
+        self.assertIn("2 sandboxes match", "\n".join(logs.output))
+
     async def test_initialize_waits_for_stopping_candidate_then_starts_it(
         self,
     ) -> None:
@@ -699,6 +725,22 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
 
         self.assertTrue(candidate.waited_for_stop)
         self.assertTrue(candidate.started)
+
+    async def test_initialize_waits_for_pausing_candidate_then_starts_it(
+        self,
+    ) -> None:
+        """Pausing candidates are waited to stopped before start."""
+        candidate = _FakeSandbox("sandbox-pausing", state="pausing")
+        candidate.labels = {METADATA_WORKSPACE_ID_KEY: "wid-pausing"}
+        _FakeDaytona.list_result[:] = [candidate]
+
+        workspace = DaytonaWorkspace(workspace_id="wid-pausing")
+        await workspace.initialize()
+
+        self.assertIs(workspace._sandbox, candidate)
+        self.assertTrue(candidate.waited_for_stop)
+        self.assertTrue(candidate.started)
+        self.assertEqual(_FakeDaytona.created_params, [])
 
     async def test_initialize_derives_all_paths_from_sdk_values(self) -> None:
         """Workspace paths are rooted in SDK workdir and home values."""
@@ -732,7 +774,7 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
             "/users/daytona/.agentscope/_mcp_gateway_app.py",
         )
         self.assertEqual(
-            workspace._glob_helper_script,
+            workspace._glob_helper_path,
             "/users/daytona/.agentscope/_glob_helper.py",
         )
         self.assertEqual(
@@ -789,8 +831,8 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
         self.assertNotEqual(workspace._sandbox.id, "sandbox-error")
         self.assertEqual(len(_FakeDaytona.created_params), 1)
 
-    async def test_gateway_uses_preview_url_and_token_header(self) -> None:
-        """GatewayClient receives Daytona preview URL and preview token."""
+    async def test_gateway_uses_shared_backend_shim(self) -> None:
+        """GatewayClient receives the Daytona backend, not a preview URL."""
         workspace = DaytonaWorkspace(
             workspace_id="wid-6",
             gateway_port=DEFAULT_GATEWAY_PORT,
@@ -799,30 +841,9 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
         await workspace.initialize()
 
         gateway = _FakeGateway.instances[0]
-        self.assertEqual(gateway.base_url, "https://preview.example")
-        self.assertEqual(
-            gateway.extra_headers,
-            {"x-daytona-preview-token": "ptok"},
-        )
-
-    async def test_gateway_preview_without_token_fails(
-        self,
-    ) -> None:
-        """Private Daytona preview responses must include a token."""
-        candidate = _FakeSandbox("sandbox-no-preview-token")
-        candidate.preview = SimpleNamespace(
-            url="https://preview.example",
-            token=None,
-        )
-        candidate.labels = {METADATA_WORKSPACE_ID_KEY: "wid-no-preview-token"}
-        _FakeDaytona.list_result[:] = [candidate]
-
-        workspace = DaytonaWorkspace(workspace_id="wid-no-preview-token")
-        with self.assertRaisesRegex(
-            RuntimeError,
-            "preview response did not contain an access token",
-        ):
-            await workspace.initialize()
+        self.assertIs(gateway.backend, workspace._backend)
+        self.assertEqual(gateway.gateway_port, DEFAULT_GATEWAY_PORT)
+        self.assertEqual(gateway.timeout, 30.0)
 
     async def test_list_tools_requires_initialized_backend(self) -> None:
         """Builtin tools cannot silently fall back to local backend."""
@@ -912,13 +933,10 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
         try:
             workspace = DaytonaWorkspace(workspace_id="wid-bootstrap-error")
             workspace.workdir = "/work"
-            workspace._data_dir = "/work/data"
-            workspace._skills_dir = "/work/skills"
-            workspace._sessions_dir = "/work/sessions"
             workspace._user_home = "/home/daytona"
             workspace._gateway_home = "/home/daytona/.agentscope"
             workspace._gateway_venv = "/home/daytona/.agentscope/.venv"
-            workspace._gateway_venv_py = (
+            workspace._gateway_python = (
                 "/home/daytona/.agentscope/.venv/bin/python"
             )
             workspace._uv_bin = "/home/daytona/.local/bin/uv"
@@ -926,18 +944,17 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
                 "/home/daytona/.agentscope/agentscope_src.tar"
             )
             workspace._dev_src_dir = "/home/daytona/.agentscope/agentscope_src"
-            workspace._glob_helper_script = "/home/daytona/.agentscope/glob.py"
+            workspace._glob_helper_path = "/home/daytona/.agentscope/glob.py"
             workspace._gateway_script = "/home/daytona/.agentscope/gateway.py"
-            backend = SimpleNamespace(
-                exec_shell=AsyncMock(
-                    return_value=ExecResult(
-                        exit_code=9,
-                        stdout=b"bootstrap stdout",
-                        stderr=b"bootstrap stderr",
-                    ),
+            backend = DaytonaBackend(_FakeSandbox(), workdir="/work")
+            backend.exec_shell = AsyncMock(  # type: ignore[method-assign]
+                return_value=ExecResult(
+                    exit_code=9,
+                    stdout=b"bootstrap stdout",
+                    stderr=b"bootstrap stderr",
                 ),
-                write_file=AsyncMock(),
             )
+            backend.write_file = AsyncMock()  # type: ignore[method-assign]
             workspace._backend = backend
 
             with (
@@ -1022,7 +1039,7 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
         _FakeDaytona.list_result[:] = [sandbox]
 
         self.gateway_patch = patch.object(
-            daytona_mod,
+            sandboxed_mod,
             "GatewayClient",
             _FakeGateway,
         )
@@ -1037,7 +1054,7 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
         self.workspace = DaytonaWorkspace(workspace_id="wid-tools")
         await self.workspace.initialize()
         await self.workspace._backend.write_file(
-            self.workspace._glob_helper_script,
+            self.workspace._glob_helper_path,
             _read_glob_helper_bytes(),
         )
         self.tools = {
@@ -1590,7 +1607,7 @@ class TestDaytonaWorkspaceLive(IsolatedAsyncioTestCase):
                     name=mcp_name,
                     is_stateful=True,
                     mcp_config=StdioMCPConfig(
-                        command=workspace._gateway_venv_py,
+                        command=workspace._gateway_python,
                         args=[mcp_script],
                     ),
                 ),
@@ -1664,6 +1681,7 @@ class TestDaytonaWorkspaceLive(IsolatedAsyncioTestCase):
                     message_bus=_NullBus(),  # type: ignore[arg-type]
                 ),
                 message_bus=_NullBus(),  # type: ignore[arg-type]
+                middlewares=[],
                 user_id="daytona-live-user",
                 agent_record=agent,
                 session_record=session,

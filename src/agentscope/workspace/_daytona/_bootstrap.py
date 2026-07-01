@@ -53,13 +53,6 @@ DEFAULT_SWEEP_INTERVAL = 300.0
 #: Sandbox label key used to map workspace_id -> Daytona sandbox.
 METADATA_WORKSPACE_ID_KEY = "agentscope.workspace.id"
 
-# Workspace-side persistent layout names. The actual absolute paths are
-# derived from Daytona SDK path APIs at runtime.
-DATA_DIR_NAME = "data"
-SKILLS_DIR_NAME = "skills"
-SESSIONS_DIR_NAME = "sessions"
-MCP_FILE_NAME = ".mcp"
-
 # Gateway runtime names under the SDK-reported user home.
 GATEWAY_HOME_NAME = ".agentscope"
 GATEWAY_VENV_NAME = ".venv"
@@ -71,11 +64,6 @@ GATEWAY_LOG_NAME = "gateway.log"
 # Dev-mode source upload names under the gateway home.
 DEV_SRC_TAR_NAME = "agentscope_src.tar"
 DEV_SRC_DIR_NAME = "agentscope_src"
-
-# Daytona preview proxy header. This is separate from AgentScope's
-# gateway bearer token.
-DAYTONA_PREVIEW_TOKEN_HEADER = "x-daytona-preview-token"
-
 
 # ── source tarball (dev mode only) ─────────────────────────────────
 

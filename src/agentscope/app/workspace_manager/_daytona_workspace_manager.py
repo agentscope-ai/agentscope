@@ -59,6 +59,7 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
         extra_pip: list[str] | None = None,
         default_mcps: list[MCPClient] | None = None,
         skill_paths: list[str] | None = None,
+        os_user: str | None = None,
         ttl: float = 3600.0,
         sweep_interval: float = DEFAULT_SWEEP_INTERVAL,
     ) -> None:
@@ -93,6 +94,9 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
                 ``.mcp`` state wins on reattach.
             skill_paths (`list[str] | None`, optional):
                 Skill directories seeded into brand-new workspaces.
+            os_user (`str | None`, optional):
+                Optional Daytona OS user forwarded to workspace create
+                params. ``None`` leaves user selection to Daytona.
             ttl (`float`, defaults to `3600.0`):
                 Seconds before an idle cached workspace is evicted and
                 its sandbox stopped.
@@ -110,6 +114,7 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
         self._extra_pip = list(extra_pip or [])
         self._default_mcps = list(default_mcps or [])
         self._skill_paths = list(skill_paths or [])
+        self._os_user = os_user
         self._ttl = ttl
         self._sweep_interval = sweep_interval
 
@@ -161,6 +166,7 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
             extra_pip=self._extra_pip,
             default_mcps=self._default_mcps,
             skill_paths=self._skill_paths,
+            os_user=self._os_user,
         )
         await ws.initialize()
         return ws

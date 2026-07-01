@@ -59,6 +59,7 @@ class TestDaytonaWorkspaceManager(IsolatedAsyncioTestCase):
             env={"A": "B"},
             sandbox_metadata={"team": "agents"},
             extra_pip=["x"],
+            os_user="daytona",
             ttl=10,
             sweep_interval=1,
         )
@@ -85,6 +86,7 @@ class TestDaytonaWorkspaceManager(IsolatedAsyncioTestCase):
                 "extra_pip": ["x"],
                 "default_mcps": [],
                 "skill_paths": [],
+                "os_user": "daytona",
             },
         )
         self.assertIn(workspace.workspace_id, manager._cache)
