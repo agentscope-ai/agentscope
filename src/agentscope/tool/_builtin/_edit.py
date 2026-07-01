@@ -2,7 +2,6 @@
 """The edit tool in agentscope."""
 import difflib
 import fnmatch
-import os
 from typing import Any, List
 
 from .._base import ToolBase, ToolMiddlewareBase
@@ -179,7 +178,7 @@ Usage:
             message="",
         )
 
-    def match_rule(
+    async def match_rule(
         self,
         rule_content: str | None,
         tool_input: dict[str, Any],
@@ -209,7 +208,7 @@ Usage:
             return False
         return fnmatch.fnmatch(file_path, rule_content)
 
-    def generate_suggestions(
+    async def generate_suggestions(
         self,
         tool_input: dict[str, Any],
     ) -> List[PermissionRule]:
@@ -231,8 +230,10 @@ Usage:
         if not file_path:
             return []
 
-        parent = os.path.dirname(file_path)
-        pattern = (parent.rstrip("/") + "/**") if parent else "**"
+        parent = self._backend.dirname(file_path)
+        # Glob patterns are POSIX-style strings (matched by fnmatch),
+        # not real filesystem paths — do NOT use backend.join_path here.
+        pattern = (parent.rstrip("/\\") + "/**") if parent else "**"
 
         return [
             PermissionRule(
@@ -253,7 +254,7 @@ Usage:
     ) -> ToolChunk:
         """Execute the edit and return the result."""
         # Validate file_path is absolute
-        if not os.path.isabs(file_path):
+        if not self._backend.isabs(file_path):
             return ToolChunk(
                 content=[
                     TextBlock(

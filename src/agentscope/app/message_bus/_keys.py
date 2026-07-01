@@ -191,3 +191,38 @@ class MessageBusKeys:
     def bg_tasks(cls, session_id: str) -> str:
         """Per-session background task registry key."""
         return cls._BG_TASKS.format(sid=session_id)
+
+    # ------------------------------------------------------------------
+    # Knowledge-base indexing pipeline
+    # ------------------------------------------------------------------
+
+    _INDEX_TASKS_QUEUE = "agentscope:index:tasks"
+    _INDEX_TASKS_SIGNAL = "agentscope:index:tasks:wake"
+
+    @classmethod
+    def index_tasks_queue(cls) -> str:
+        """Shared, durable index-task queue.
+
+        The producer-side
+        :class:`~agentscope.app._service.KnowledgeBaseService`
+        ``queue_push``\\ es here through
+        :func:`~agentscope.app._bus_ops.enqueue_index_task`; the
+        consumer-side
+        :class:`~agentscope.app._service.IndexTaskConsumer`
+        ``queue_drain``\\ s it on each signal — plus once eagerly on
+        consumer start-up so tasks queued while every worker was down
+        are picked up immediately.
+        """
+        return cls._INDEX_TASKS_QUEUE
+
+    @classmethod
+    def index_tasks_signal(cls) -> str:
+        """Shared pub/sub channel that nudges every running index-task
+        consumer to drain the queue.
+
+        Payload is opaque — only its arrival matters. Redis pub/sub is
+        fire-and-forget, so a published signal does not guarantee
+        delivery; the durable queue keeps work safe in case every
+        subscriber happens to be offline.
+        """
+        return cls._INDEX_TASKS_SIGNAL

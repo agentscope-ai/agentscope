@@ -77,6 +77,17 @@ workspace = [
 tools = [
     "ripgrep",
 ]
+# ------------ RAG ------------
+rag = [
+    "qdrant-client",
+    "pypdf",
+    "python-pptx",
+]
+
+# ------------ S3-compatible blob store ------------
+s3 = [
+    "aioboto3",
+]
 
 # ------------ Long-term memory ------------
 # Required by `agentscope.middleware._longterm_memory.Mem0Middleware`.
@@ -94,6 +105,8 @@ full = [
     "agentscope[storage]",
     "agentscope[workspace]",
     "agentscope[tools]",
+    "agentscope[rag]",
+    "agentscope[s3]",
     "agentscope[mem0]",
 ]
 
@@ -108,6 +121,14 @@ dev = [
     "myst_parser",
     "matplotlib",
     "fakeredis",
+    # S3-backend testing — moto[server] spins up an in-process S3, the
+    # store-under-test (`S3BlobStore`) uses aioboto3, and boto3 is the
+    # sync client the test fixtures use to seed/verify buckets.
+    "moto[server,s3]",
+    "aioboto3",
+    "boto3",
+    # RAG parser tests — used to generate PDF fixtures in-memory
+    "reportlab",
 ]
 
 [project.urls]
@@ -126,7 +147,11 @@ include-package-data = true
 #   subdirs that ship with each model provider (they have no
 #   ``__init__.py`` and are not packages, but the files still
 #   live alongside the parent package's source on disk).
-"*" = ["py.typed", "_models/*.yaml", "_cosyvoice_models/*.yaml"]
+"*" = [
+    "py.typed",
+    "_models/*.yaml",
+    "_cosyvoice_models/*.yaml",
+]
 "agentscope.workspace._docker" = ["Dockerfile*.template"]
 
 [build-system]

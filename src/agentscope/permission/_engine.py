@@ -6,6 +6,7 @@ from ._context import PermissionContext
 from ._rule import PermissionRule
 from ._decision import PermissionDecision, PermissionBehavior
 from ._types import PermissionMode
+from .._utils._common import _execute_async_or_sync_func
 
 if TYPE_CHECKING:
     from ..tool import ToolBase
@@ -146,14 +147,17 @@ class PermissionEngine:
                 The final decision.
         """
         # step 1: deny rules — highest priority
-        deny = self._check_deny_rules(tool, tool_input)
+        deny = await self._check_deny_rules(tool, tool_input)
         if deny:
             return deny
 
         # step 2: ask rules
-        ask = self._check_ask_rules(tool, tool_input)
+        ask = await self._check_ask_rules(tool, tool_input)
         if ask:
-            ask.suggested_rules = self._generate_suggestions(tool, tool_input)
+            ask.suggested_rules = await self._generate_suggestions(
+                tool,
+                tool_input,
+            )
             return ask
 
         # step 3: tool's own check_permissions
@@ -166,14 +170,14 @@ class PermissionEngine:
             return tool_decision
         # step 3b: safety ASK is bypass-immune — allow rules can't override
         if self._is_safety_ask(tool_decision):
-            tool_decision.suggested_rules = self._generate_suggestions(
+            tool_decision.suggested_rules = await self._generate_suggestions(
                 tool,
                 tool_input,
             )
             return tool_decision
 
         # step 4: allow rules
-        allow = self._check_allow_rules(tool, tool_input)
+        allow = await self._check_allow_rules(tool, tool_input)
         if allow:
             return allow
 
@@ -183,7 +187,10 @@ class PermissionEngine:
             message=f"Permission required for {tool.name}",
             decision_reason=f"Mode: {self.context.mode.value}",
         )
-        default.suggested_rules = self._generate_suggestions(tool, tool_input)
+        default.suggested_rules = await self._generate_suggestions(
+            tool,
+            tool_input,
+        )
         return default
 
     async def _check_explore(
@@ -219,14 +226,17 @@ class PermissionEngine:
                 ALLOW for read-only invocations, DENY otherwise.
         """
         # step 1: deny rules
-        deny = self._check_deny_rules(tool, tool_input)
+        deny = await self._check_deny_rules(tool, tool_input)
         if deny:
             return deny
 
         # step 2: ask rules
-        ask = self._check_ask_rules(tool, tool_input)
+        ask = await self._check_ask_rules(tool, tool_input)
         if ask:
-            ask.suggested_rules = self._generate_suggestions(tool, tool_input)
+            ask.suggested_rules = await self._generate_suggestions(
+                tool,
+                tool_input,
+            )
             return ask
 
         # step 3: read-only verdict decides everything (ALLOW or DENY)
@@ -281,14 +291,17 @@ class PermissionEngine:
                 The final decision.
         """
         # step 1: deny rules
-        deny = self._check_deny_rules(tool, tool_input)
+        deny = await self._check_deny_rules(tool, tool_input)
         if deny:
             return deny
 
         # step 2: ask rules
-        ask = self._check_ask_rules(tool, tool_input)
+        ask = await self._check_ask_rules(tool, tool_input)
         if ask:
-            ask.suggested_rules = self._generate_suggestions(tool, tool_input)
+            ask.suggested_rules = await self._generate_suggestions(
+                tool,
+                tool_input,
+            )
             return ask
 
         # step 3: read-only fast path — ALLOW without invoking the tool
@@ -314,14 +327,14 @@ class PermissionEngine:
             return tool_decision
         # step 4b: safety ASK is bypass-immune
         if self._is_safety_ask(tool_decision):
-            tool_decision.suggested_rules = self._generate_suggestions(
+            tool_decision.suggested_rules = await self._generate_suggestions(
                 tool,
                 tool_input,
             )
             return tool_decision
 
         # step 5: allow rules
-        allow = self._check_allow_rules(tool, tool_input)
+        allow = await self._check_allow_rules(tool, tool_input)
         if allow:
             return allow
 
@@ -331,7 +344,10 @@ class PermissionEngine:
             message=f"Permission required for {tool.name}",
             decision_reason=f"Mode: {self.context.mode.value}",
         )
-        default.suggested_rules = self._generate_suggestions(tool, tool_input)
+        default.suggested_rules = await self._generate_suggestions(
+            tool,
+            tool_input,
+        )
         return default
 
     async def _check_bypass(
@@ -377,14 +393,17 @@ class PermissionEngine:
                 The final decision.
         """
         # step 1: deny rules
-        deny = self._check_deny_rules(tool, tool_input)
+        deny = await self._check_deny_rules(tool, tool_input)
         if deny:
             return deny
 
         # step 2: ask rules (honor explicit user intent to be prompted)
-        ask = self._check_ask_rules(tool, tool_input)
+        ask = await self._check_ask_rules(tool, tool_input)
         if ask:
-            ask.suggested_rules = self._generate_suggestions(tool, tool_input)
+            ask.suggested_rules = await self._generate_suggestions(
+                tool,
+                tool_input,
+            )
             return ask
 
         # step 3: tool's own check_permissions — ALLOW / DENY returned;
@@ -398,7 +417,7 @@ class PermissionEngine:
             return tool_decision
 
         # step 4: allow rules
-        allow = self._check_allow_rules(tool, tool_input)
+        allow = await self._check_allow_rules(tool, tool_input)
         if allow:
             return allow
 
@@ -442,14 +461,17 @@ class PermissionEngine:
                 The final decision (never ASK).
         """
         # step 1: deny rules
-        deny = self._check_deny_rules(tool, tool_input)
+        deny = await self._check_deny_rules(tool, tool_input)
         if deny:
             return deny
 
         # step 2: ask rules — converted to DENY (no user available)
-        ask = self._check_ask_rules(tool, tool_input)
+        ask = await self._check_ask_rules(tool, tool_input)
         if ask:
-            ask.suggested_rules = self._generate_suggestions(tool, tool_input)
+            ask.suggested_rules = await self._generate_suggestions(
+                tool,
+                tool_input,
+            )
             return self._convert_ask_to_deny(tool, ask)
 
         # step 3: tool's own check_permissions
@@ -462,14 +484,14 @@ class PermissionEngine:
             return tool_decision
         # step 3b: safety ASK converted to DENY (no user available)
         if self._is_safety_ask(tool_decision):
-            tool_decision.suggested_rules = self._generate_suggestions(
+            tool_decision.suggested_rules = await self._generate_suggestions(
                 tool,
                 tool_input,
             )
             return self._convert_ask_to_deny(tool, tool_decision)
 
         # step 4: allow rules
-        allow = self._check_allow_rules(tool, tool_input)
+        allow = await self._check_allow_rules(tool, tool_input)
         if allow:
             return allow
 
@@ -550,7 +572,7 @@ class PermissionEngine:
             and decision.bypass_immune
         )
 
-    def _check_deny_rules(
+    async def _check_deny_rules(
         self,
         tool: ToolBase,
         input_data: dict[str, Any],
@@ -569,7 +591,7 @@ class PermissionEngine:
         """
         rules = self.context.deny_rules.get(tool.name, [])
         for rule in rules:
-            if self._rule_matches(tool, rule, input_data):
+            if await self._rule_matches(tool, rule, input_data):
                 return PermissionDecision(
                     behavior=PermissionBehavior.DENY,
                     message=f"Permission to use {tool.name} has been denied",
@@ -577,7 +599,7 @@ class PermissionEngine:
                 )
         return None
 
-    def _check_ask_rules(
+    async def _check_ask_rules(
         self,
         tool: ToolBase,
         input_data: dict[str, Any],
@@ -596,7 +618,7 @@ class PermissionEngine:
         """
         rules = self.context.ask_rules.get(tool.name, [])
         for rule in rules:
-            if self._rule_matches(tool, rule, input_data):
+            if await self._rule_matches(tool, rule, input_data):
                 return PermissionDecision(
                     behavior=PermissionBehavior.ASK,
                     message=f"Permission required for {tool.name}",
@@ -604,7 +626,7 @@ class PermissionEngine:
                 )
         return None
 
-    def _check_allow_rules(
+    async def _check_allow_rules(
         self,
         tool: ToolBase,
         input_data: dict[str, Any],
@@ -623,7 +645,7 @@ class PermissionEngine:
         """
         rules = self.context.allow_rules.get(tool.name, [])
         for rule in rules:
-            if self._rule_matches(tool, rule, input_data):
+            if await self._rule_matches(tool, rule, input_data):
                 return PermissionDecision(
                     behavior=PermissionBehavior.ALLOW,
                     message=f"Permission granted for {tool.name}",
@@ -631,7 +653,7 @@ class PermissionEngine:
                 )
         return None
 
-    def _rule_matches(
+    async def _rule_matches(
         self,
         tool: ToolBase,
         rule: PermissionRule,
@@ -658,10 +680,17 @@ class PermissionEngine:
         if not rule.rule_content:
             return True
 
-        # Try to use tool's match_rule method if available
-        return tool.match_rule(rule.rule_content, input_data)
+        # Try to use tool's match_rule method if available.
+        # ``_execute_async_or_sync_func`` keeps backward compatibility
+        # with third-party tools that still override match_rule with a
+        # sync ``def`` (the framework's signature is now ``async def``).
+        return await _execute_async_or_sync_func(
+            tool.match_rule,
+            rule.rule_content,
+            input_data,
+        )
 
-    def _generate_suggestions(
+    async def _generate_suggestions(
         self,
         tool: ToolBase,
         tool_input: dict[str, Any],
@@ -690,5 +719,11 @@ class PermissionEngine:
                 compound commands)
         """
 
-        # Try to use tool's generate_suggestions method if available
-        return tool.generate_suggestions(tool_input)
+        # Try to use tool's generate_suggestions method if available.
+        # ``_execute_async_or_sync_func`` keeps backward compatibility
+        # with third-party tools that still override this method with
+        # a sync ``def`` (the framework's signature is now ``async def``).
+        return await _execute_async_or_sync_func(
+            tool.generate_suggestions,
+            tool_input,
+        )

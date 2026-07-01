@@ -8,10 +8,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from agentscope.app import create_app, SubAgentTemplate
 from agentscope.app.message_bus import InMemoryMessageBus
+from agentscope.app.rag.knowledge_base_manager import CollectionPerKbManager
 from agentscope.app.storage import RedisStorage
 from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.mcp import MCPClient, StdioMCPConfig, HttpMCPConfig
 from agentscope.permission import PermissionContext, PermissionMode
+from agentscope.rag import QdrantStore
 
 default_mcps = [
     MCPClient(
@@ -36,11 +38,15 @@ if os.getenv("AMAP_API_KEY"):
         ),
     )
 
+storage = RedisStorage(
+    host="localhost",
+    port=6379,
+)
+
+vector_store = QdrantStore(location=":memory:")
+
 app = create_app(
-    storage=RedisStorage(
-        host="localhost",
-        port=6379,
-    ),
+    storage=storage,
     message_bus=InMemoryMessageBus(),
     # -- To use a Redis-backed message bus instead (recommended for
     # -- multi-process / production deployments), uncomment the lines
@@ -58,6 +64,13 @@ app = create_app(
         ),
         # The default MCP servers that will be added into the workspace
         default_mcps=default_mcps,
+    ),
+    # Knowledge base feature — backed by an in-memory Qdrant store. The
+    # CollectionPerKbManager allocates one collection per knowledge base,
+    # so any embedding dimension is allowed.
+    knowledge_base_manager=CollectionPerKbManager(
+        storage=storage,
+        vector_store=vector_store,
     ),
     # Customize your own subagent templates
     custom_subagent_templates=[

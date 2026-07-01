@@ -362,7 +362,7 @@ export const CredentialPage = () => {
 	return (
 		<div className="flex h-full w-full">
 			{/* Left sidebar */}
-			<Sidebar collapsible="none" className="w-72 border-r">
+			<Sidebar collapsible="none" className="border-r">
 				<SidebarHeader className={'flex flex-col mt-5 gap-y-1'}>
 					<div className="text-lg font-semibold">{t('common.credential')}</div>
 					<div className="text-muted-foreground text-xs">{t('credential.subtitle')}</div>

@@ -15,10 +15,8 @@ from utils import AnyString
 
 from agentscope.message import TextBlock, ToolCallBlock, ThinkingBlock
 from agentscope.model import GeminiChatModel
-from agentscope.model._gemini._model import (
-    _flatten_json_schema,
-    _sanitize_schema_for_gemini,
-)
+from agentscope.model._gemini._model import _sanitize_schema_for_gemini
+from agentscope._utils._common import _flatten_json_schema
 from agentscope.credential import GeminiCredential
 from agentscope.tool import ToolChoice
 
@@ -651,3 +649,27 @@ class TestGeminiSchemaUtils(unittest.TestCase):
                 },
             },
         )
+
+    def test_flatten_legacy_definitions_ref(self) -> None:
+        """Legacy 'definitions' keyword is resolved like '$defs'."""
+        self.assertEqual(
+            _flatten_json_schema(
+                {
+                    "definitions": {"Address": {"type": "string"}},
+                    "properties": {
+                        "addr": {"$ref": "#/definitions/Address"},
+                    },
+                },
+            ),
+            {
+                "properties": {
+                    "addr": {"type": "string"},
+                },
+            },
+        )
+
+    def test_flatten_no_defs_returns_same_object(self) -> None:
+        """Schema with no $defs/definitions is returned unchanged (
+        identity)."""
+        schema = {"type": "object", "properties": {"x": {"type": "integer"}}}
+        self.assertIs(_flatten_json_schema(schema), schema)
