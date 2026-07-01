@@ -2473,6 +2473,31 @@ class Agent:
             elif isinstance(block, DataBlock):
                 data_blocks.append(block)
 
+        # Handle thinking blocks first so that ThinkingBlockEnd is
+        # emitted *before* TextBlockStart when thinking→text transitions
+        # happen (the old block should close before the new one opens).
+        if thinking_blocks:
+            # Generate a new thinking block id and start event
+            if not block_ids.get("thinking"):
+                block_ids["thinking"] = _generate_id()
+                yield ThinkingBlockStartEvent(
+                    reply_id=self.state.reply_id,
+                    block_id=block_ids["thinking"],
+                )
+            # Generate the thinking delta event with the existing id
+            yield ThinkingBlockDeltaEvent(
+                reply_id=self.state.reply_id,
+                block_id=block_ids["thinking"],
+                delta="".join([_.thinking for _ in thinking_blocks]),
+            )
+
+        elif block_ids.get("thinking") and not data_blocks:
+            yield ThinkingBlockEndEvent(
+                reply_id=self.state.reply_id,
+                block_id=block_ids["thinking"],
+            )
+            block_ids["thinking"] = None
+
         # Handle the text blocks. We only auto-close the open text block
         # when the current chunk has neither text NOR data — a chunk that
         # carries only data (e.g. an omni-style audio PCM delta arriving
@@ -2503,30 +2528,6 @@ class Agent:
                 block_id=block_ids["text"],
             )
             block_ids["text"] = None
-
-        # Same reasoning as the text block above — keep the thinking
-        # stream open across data-only chunks.
-        if thinking_blocks:
-            # Generate a new thinking block id and start event
-            if not block_ids.get("thinking"):
-                block_ids["thinking"] = _generate_id()
-                yield ThinkingBlockStartEvent(
-                    reply_id=self.state.reply_id,
-                    block_id=block_ids["thinking"],
-                )
-            # Generate the thinking delta event with the existing id
-            yield ThinkingBlockDeltaEvent(
-                reply_id=self.state.reply_id,
-                block_id=block_ids["thinking"],
-                delta="".join([_.thinking for _ in thinking_blocks]),
-            )
-
-        elif block_ids.get("thinking") and not data_blocks:
-            yield ThinkingBlockEndEvent(
-                reply_id=self.state.reply_id,
-                block_id=block_ids["thinking"],
-            )
-            block_ids["thinking"] = None
 
         # Handle the tool calls that exist in the current chunk
         for tool_call in tool_call_blocks:
