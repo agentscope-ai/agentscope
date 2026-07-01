@@ -842,13 +842,14 @@ class Agent:
                 reply_id=self.state.reply_id,
                 block_id=data_block_id,
             )
-        
+
         # Guard against empty or interrupted streaming responses.
         if completed_response is None:
             raise RuntimeError(
-                "Model returned an empty streaming response: no is_last=True "
-                "chunk was received.  The model call may have been interrupted "
-                "mid-stream (network dropout, timeout, or model bug).",
+                "Model returned an empty streaming response: no is_last=True"
+                " chunk was received.  The model call may have been "
+                "interrupted mid-stream (network dropout, timeout, or model "
+                "bug).",
             )
 
         # Send the model call ended event with usage if available
