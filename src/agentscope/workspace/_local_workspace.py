@@ -2,40 +2,18 @@
 """The local workspace class."""
 
 import asyncio
-import base64
 import hashlib
 import json
-import mimetypes
 import os
 import re
 import shutil
-from copy import deepcopy
-from pathlib import Path
 from typing import TypedDict
 
 import frontmatter
-from pydantic import AnyUrl
 
 from .._logging import logger
 from ..mcp import MCPClient
-from ..message import (
-    Base64Source,
-    DataBlock,
-    Msg,
-    TextBlock,
-    ToolResultBlock,
-    URLSource,
-)
 from ..skill import Skill
-from ..tool import (
-    Bash,
-    Edit,
-    Glob,
-    Grep,
-    Read,
-    ToolBase,
-    Write,
-)
 from ..tool._builtin._backend import LocalBackend
 from ._base import WorkspaceBase
 
@@ -116,7 +94,6 @@ You are responsible for keeping it clean, structured, and easy to navigate over 
 
 
 class LocalWorkspace(WorkspaceBase):
-    # pylint: disable=line-too-long
     """Local-directory workspace.
 
     Layout::
@@ -126,7 +103,7 @@ class LocalWorkspace(WorkspaceBase):
         ├── data/         # offloaded multimodal files
         ├── skills/       # skill subdirectories
         └── sessions/     # per-session context and tool-result files
-    """  # noqa: E501
+    """
 
     def __init__(
         self,
@@ -171,10 +148,7 @@ class LocalWorkspace(WorkspaceBase):
 
         # ── runtime state ───────────────────────────────────────
         self._backend = LocalBackend()
-        self._mcps: dict[str, list[MCPClient]] = {}
-        """Per-agent MCP clients, keyed by ``agent_id``. Each agent
-        gets independent client instances so stateful MCP sessions
-        (e.g. browser-user) do not interfere across agents."""
+        self._mcps: list[MCPClient] = []
 
         self._skill_lock = asyncio.Lock()
         self._mcp_lock = asyncio.Lock()
@@ -195,73 +169,36 @@ class LocalWorkspace(WorkspaceBase):
 
         # Restore or seed MCPs
         mcp_file = os.path.join(self.workdir, ".mcp")
-        # Restore or seed MCPs
-        mcp_file = os.path.join(self.workdir, ".mcp")
         if await self._backend.file_exists(mcp_file):
             raw = await self._backend.read_file(mcp_file)
-            data = json.loads(raw.decode("utf-8"))
-            if isinstance(data, list):
-                # ── old format: flat list → auto-migrate ─────────
-                logger.info(
-                    "Migrating .mcp from flat list to per-agent format "
-                    "under agent '_default'.",
-                )
-                self._mcps = {}
-                for m in data:
-                    try:
-                        self._mcps.setdefault("_default", []).append(
-                            MCPClient.model_validate(m),
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            "Skipping invalid MCP entry '%s': %s",
-                            m.get("name", "?"),
-                            e,
-                        )
-                await self._save_mcp_file()
-            elif isinstance(data, dict):
-                # ── new format: {"agent_id": [configs], ...} ─────
-                for agent_id, cfg_list in data.items():
-                    parsed = []
-                    for m in cfg_list:
-                        try:
-                            parsed.append(MCPClient.model_validate(m))
-                        except Exception as e:
-                            logger.warning(
-                                "Skipping invalid MCP entry '%s' for "
-                                "agent %r: %s",
-                                m.get("name", "?"),
-                                agent_id,
-                                e,
-                            )
-                    if parsed:
-                        self._mcps[agent_id] = parsed
-            else:
-                logger.warning(
-                    "Unexpected .mcp format, starting with empty MCPs.",
-                )
-                self._mcps = {}
+            raw_list = json.loads(raw.decode("utf-8"))
+            for m in raw_list:
+                try:
+                    self._mcps.append(MCPClient.model_validate(m))
+                except Exception as e:
+                    logger.warning(
+                        "Skipping invalid MCP entry '%s': %s",
+                        m.get("name", "?"),
+                        e,
+                    )
+        else:
+            self._mcps = list(self.default_mcps)
+            await self._save_mcp_file()
 
-        # ── Eagerly connect any restored stateful clients so they
-        #    are ready when agents ask for them.  Restored clients
-        #    are already per-agent; each gets its own connect().
-        failed: list[tuple[str, MCPClient]] = []
-        for agent_id, mcps in list(self._mcps.items()):
-            for mcp in mcps:
-                if mcp.is_stateful and not mcp.is_connected:
-                    try:
-                        await mcp.connect()
-                    except Exception as e:
-                        logger.warning(
-                            "Failed to connect stateful MCP '%s' "
-                            "for agent %r: %s, removing.",
-                            mcp.name,
-                            agent_id,
-                            e,
-                        )
-                        failed.append((agent_id, mcp))
-        for agent_id, mcp in failed:
-            self._mcps.get(agent_id, []).remove(mcp)
+        failed: list[MCPClient] = []
+        for mcp in self._mcps:
+            if mcp.is_stateful and not mcp.is_connected:
+                try:
+                    await mcp.connect()
+                except Exception as e:
+                    logger.warning(
+                        "Failed to connect stateful MCP '%s': %s, removing.",
+                        mcp.name,
+                        e,
+                    )
+                    failed.append(mcp)
+        for mcp in failed:
+            self._mcps.remove(mcp)
 
         # Seed skills
         skills_dir = os.path.join(self.workdir, "skills")
@@ -491,156 +428,6 @@ class LocalWorkspace(WorkspaceBase):
 
         return skill_path, skill_name, skill_hash
 
-    async def _offload_data_block(self, data_block: DataBlock) -> DataBlock:
-        """Offload the data block by persisting it as local files.
-
-        Uses the backend to write the decoded binary data, avoiding
-        embedding large base64-encoded data directly in the offload files,
-        keeping them lightweight and readable.
-
-        Args:
-            data_block (`DataBlock`):
-                The data block with base64 source.
-
-        Returns:
-            `DataBlock`:
-                A new data block with the same metadata but with the source
-                replaced by the local file path where the data is stored.
-        """
-        if isinstance(data_block.source, URLSource):
-            return data_block
-
-        # Use the full SHA-256 hex digest (256-bit) as the filename stem.
-        # A full hash collision is computationally infeasible, so an existing
-        # file with the same name is guaranteed to have identical content —
-        # no need to read and compare bytes.
-        hash_str = hashlib.sha256(data_block.source.data.encode()).hexdigest()
-        ext = mimetypes.guess_extension(data_block.source.media_type) or ".bin"
-        data_dir = os.path.join(self.workdir, "data")
-        path = os.path.join(data_dir, f"{hash_str}{ext}")
-
-        # Reuse the existing file directly — same hash ⟹ same content.
-        if not await self._backend.file_exists(path):
-            await self._backend.write_file(
-                path,
-                base64.b64decode(data_block.source.data),
-            )
-
-        return DataBlock(
-            id=data_block.id,
-            name=data_block.name,
-            source=URLSource(
-                url=AnyUrl(Path(path).as_uri()),
-                media_type=data_block.source.media_type,
-            ),
-        )
-
-    async def offload_context(
-        self,
-        session_id: str,
-        msgs: list[Msg],
-    ) -> str:
-        """Offload the compressed messages into the local directory for
-        further processing.
-
-        Args:
-            session_id (`str`):
-                The session id.
-            msgs (`list[Msg]`):
-                The messages to offload.
-
-        Returns:
-            `str`:
-                The file path to the offloaded message.
-        """
-        base = os.path.join(self.workdir, "sessions", session_id)
-        path = os.path.join(base, "context.jsonl")
-
-        copied_msgs = deepcopy(msgs)
-        lines: list[str] = []
-        for msg in copied_msgs:
-            if not isinstance(msg.content, str):
-                content = []
-                for block in msg.content:
-                    if isinstance(block, DataBlock) and isinstance(
-                        block.source,
-                        Base64Source,
-                    ):
-                        content.append(await self._offload_data_block(block))
-                    else:
-                        content.append(block)
-                msg.content = content
-            lines.append(msg.model_dump_json())
-
-        payload = "\n".join(lines) + "\n"
-
-        # Read existing content if any, then append. ``write_file``
-        # creates parent directories, so no explicit mkdir is needed.
-        existing = b""
-        try:
-            existing = await self._backend.read_file(path)
-        except (FileNotFoundError, OSError):
-            pass
-        await self._backend.write_file(
-            path,
-            existing + payload.encode("utf-8"),
-        )
-        return path
-
-    async def offload_tool_result(
-        self,
-        session_id: str,
-        tool_result: ToolResultBlock,
-    ) -> str:
-        """Offload the tool results into the local directory for agentic
-        retrieval.
-
-        Args:
-            session_id (`str`):
-                The session id.
-            tool_result (`ToolResultBlock`):
-                The tool result.
-
-        Returns:
-            `str`:
-                The file path to the offloaded tool results.
-        """
-        base = os.path.join(self.workdir, "sessions", session_id)
-        path = os.path.join(base, f"tool_result-{tool_result.id}.txt")
-
-        # Avoid filename conflict
-        index = 1
-        while await self._backend.file_exists(path):
-            path = os.path.join(
-                base,
-                f"tool_result-{tool_result.id}({index}).txt",
-            )
-            index += 1
-
-        parts: list[str] = []
-        if isinstance(tool_result.output, str):
-            parts.append(tool_result.output)
-        else:
-            for block in tool_result.output:
-                if isinstance(block, TextBlock):
-                    parts.append(block.text)
-                elif isinstance(block, DataBlock):
-                    if isinstance(block.source, Base64Source):
-                        data_block = await self._offload_data_block(block)
-                        url = data_block.source.url
-                    else:
-                        url = block.source.url
-                    parts.append(
-                        f"<data url='{url}' name='{block.name}' "
-                        f"media_type='{block.source.media_type}'/>",
-                    )
-
-        await self._backend.write_file(
-            path,
-            "".join(parts).encode("utf-8"),
-        )
-        return path
-
     async def close(self) -> None:
         """Close every stateful MCP attached to this workspace.
 
@@ -651,18 +438,19 @@ class LocalWorkspace(WorkspaceBase):
         spin up an ad-hoc session per call and have nothing to close.
         """
         async with self._mcp_lock:
-            for agent_mcps in self._mcps.values():
-                for mcp in agent_mcps:
-                    if mcp.is_stateful and mcp.is_connected:
-                        try:
-                            await mcp.close()
-                        except Exception as e:
-                            logger.warning(
+            for mcp in self._mcps:
+                if mcp.is_stateful and mcp.is_connected:
+                    try:
+                        await mcp.close()
+                    except Exception as e:
+                        logger.warning(
+                            (
                                 "Failed to close MCP %r "
-                                "when closing local workspace: %s",
-                                mcp.name,
-                                e,
-                            )
+                                "when closing local workspace: %s"
+                            ),
+                            mcp.name,
+                            e,
+                        )
         self.is_alive = False
 
     async def reset(self) -> None:
@@ -673,18 +461,17 @@ class LocalWorkspace(WorkspaceBase):
         ``default_mcps`` and ``skill_paths`` are not re-seeded.
         """
         async with self._mcp_lock:
-            for agent_mcps in self._mcps.values():
-                for mcp in agent_mcps:
-                    if mcp.is_stateful and mcp.is_connected:
-                        try:
-                            await mcp.close()
-                        except Exception as e:
-                            logger.warning(
-                                "MCP %r close failed during reset: %s",
-                                mcp.name,
-                                e,
-                            )
-            self._mcps = {}
+            for mcp in self._mcps:
+                if mcp.is_stateful and mcp.is_connected:
+                    try:
+                        await mcp.close()
+                    except Exception as e:
+                        logger.warning(
+                            "MCP %r close failed during reset: %s",
+                            mcp.name,
+                            e,
+                        )
+            self._mcps = []
 
             mcp_file = os.path.join(self.workdir, ".mcp")
             await self._backend.delete_path(mcp_file)
@@ -696,21 +483,6 @@ class LocalWorkspace(WorkspaceBase):
         for sub in ("sessions", "data"):
             path = os.path.join(self.workdir, sub)
             await self._backend.delete_path(path)
-
-    async def list_tools(self) -> list[ToolBase]:
-        """List all tools available in the workspace.
-
-        Returns the six builtin tools (Bash, Read, Write, Edit, Grep,
-        Glob), each backed by the workspace's :class:`LocalBackend`.
-        """
-        return [
-            Bash(cwd=self.workdir, backend=self._backend),
-            Edit(backend=self._backend),
-            Glob(backend=self._backend),
-            Grep(backend=self._backend),
-            Read(backend=self._backend),
-            Write(backend=self._backend),
-        ]
 
     async def list_skills(self) -> list[Skill]:
         """List all skills available in the workspace.
@@ -916,100 +688,35 @@ class LocalWorkspace(WorkspaceBase):
             )
             return None
 
-    async def list_mcps(self, agent_id: str) -> list[MCPClient]:
-        """Return all MCP clients for the given agent.
-
-        On first access for an ``agent_id`` that has no cached clients
-        (e.g. a freshly spawned worker), new :class:`MCPClient`
-        instances are built from :attr:`default_mcps` (deep-copied
-        via ``model_dump`` / ``model_validate``) and connected, so
-        each agent gets its own isolated session.
-        """
-        if agent_id not in self._mcps:
-            async with self._mcp_lock:
-                if agent_id not in self._mcps:
-                    clones: list[MCPClient] = []
-                    for seed in self.default_mcps:
-                        try:
-                            clone = MCPClient.model_validate(
-                                seed.model_dump(),
-                            )
-                            if clone.is_stateful:
-                                await clone.connect()
-                            clones.append(clone)
-                        except Exception as e:
-                            logger.warning(
-                                "Failed to clone MCP '%s' for agent %r: %s",
-                                seed.name,
-                                agent_id,
-                                e,
-                            )
-                    self._mcps[agent_id] = clones
-                    await self._save_mcp_file()
-        return self._mcps.get(agent_id, [])
-
-    async def _save_mcp_file(self) -> None:
-        """Persist the current MCP client dict to ``.mcp`` in workdir.
-
-        Format: ``{"agent_id": [MCPClient.model_dump(), ...], ...}``.
-        """
-        mcp_file = os.path.join(self.workdir, ".mcp")
-        try:
-            await self._backend.write_file(
-                mcp_file,
-                json.dumps(
-                    {
-                        agent_id: [m.model_dump() for m in mcps]
-                        for agent_id, mcps in self._mcps.items()
-                    },
-                    indent=2,
-                    ensure_ascii=False,
-                ).encode("utf-8"),
-            )
-        except Exception as e:
-            logger.warning("Failed to save .mcp to %s: %s", mcp_file, str(e))
-
-    async def add_mcp(self, agent_id: str, mcp_client: MCPClient) -> None:
-        """Add an MCP client for an agent, connect if stateful, and persist.
+    async def add_mcp(self, mcp_client: MCPClient) -> None:
+        """Add an MCP client, connect it if stateful, and persist.
 
         Args:
-            agent_id: The agent this MCP client belongs to.
-            mcp_client: The MCP client to add.
+            mcp_client (`MCPClient`):
+                The MCP client to add.
         """
         async with self._mcp_lock:
-            agent_mcps = self._mcps.setdefault(agent_id, [])
-            if any(m.name == mcp_client.name for m in agent_mcps):
-                raise ValueError(
-                    f"MCP {mcp_client.name!r} already exists for "
-                    f"agent {agent_id!r}.",
-                )
             if mcp_client.is_stateful and not mcp_client.is_connected:
                 await mcp_client.connect()
-            agent_mcps.append(mcp_client)
+            self._mcps.append(mcp_client)
             await self._save_mcp_file()
 
-    async def remove_mcp(self, agent_id: str, name: str) -> None:
-        """Remove an MCP client by name for an agent, disconnecting if
-        stateful.
+    async def remove_mcp(self, name: str) -> None:
+        """Remove an MCP client by name, disconnecting it if stateful.
 
         Args:
-            agent_id: The agent whose MCP client to remove.
-            name: The ``name`` field of the client to remove.
+            name (`str`):
+                The ``name`` field of the client to remove.
         """
         async with self._mcp_lock:
-            agent_mcps = self._mcps.get(agent_id, [])
-            for i, mcp in enumerate(agent_mcps):
+            for i, mcp in enumerate(self._mcps):
                 if mcp.name == name:
                     if mcp.is_stateful and mcp.is_connected:
                         await mcp.close()
-                    agent_mcps.pop(i)
+                    self._mcps.pop(i)
                     await self._save_mcp_file()
                     return
-        logger.warning(
-            "MCP client %r not found for agent %r in workspace",
-            name,
-            agent_id,
-        )
+        logger.warning("MCP client %r not found in workspace", name)
 
     async def add_skill(self, skill_path: str) -> None:
         """Add a skill to the workspace by copying from the given path.

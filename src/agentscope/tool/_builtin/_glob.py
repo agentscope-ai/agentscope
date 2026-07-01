@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import fnmatch
 import json
-import os
 import sys
 from typing import TYPE_CHECKING, Any, List
 
@@ -130,7 +129,7 @@ codebase."""  # ignore: E501
             message="Glob pattern matching is read-only.",
         )
 
-    def match_rule(
+    async def match_rule(
         self,
         rule_content: str | None,
         tool_input: dict[str, Any],
@@ -169,7 +168,7 @@ codebase."""  # ignore: E501
 
         return False
 
-    def generate_suggestions(
+    async def generate_suggestions(
         self,
         tool_input: dict[str, Any],
     ) -> List[PermissionRule]:
@@ -186,13 +185,14 @@ codebase."""  # ignore: E501
             `List[PermissionRule]`:
                 A single suggested rule covering the search directory
         """
-        path = tool_input.get("path", "")
-        if not path:
-            path = os.getcwd()
+        backend_cwd = await self._backend.getcwd()
+        path = tool_input.get("path") or backend_cwd
 
-        # Normalize path and create pattern
-        abs_path = os.path.abspath(path)
-        pattern = abs_path.rstrip("/") + "/**"
+        # Normalize path and build a glob pattern. Glob patterns are
+        # POSIX-style strings (matched by fnmatch), not real filesystem
+        # paths — do NOT use backend.join_path here.
+        abs_path = self._backend.abspath(path, cwd=backend_cwd)
+        pattern = abs_path.rstrip("/\\") + "/**"
 
         return [
             PermissionRule(
@@ -232,7 +232,7 @@ codebase."""  # ignore: E501
                 is missing or the helper fails, an error chunk with
                 ``ToolResultState.ERROR``.
         """
-        base_dir = path if path else os.getcwd()
+        base_dir = path if path else await self._backend.getcwd()
 
         # The base must be an existing directory; a regular file would
         # otherwise be accepted here and fail later with a confusing

@@ -279,7 +279,7 @@ class ToolBase(ABC):
         """
         return self.is_read_only
 
-    def match_rule(
+    async def match_rule(
         self,
         rule_content: str | None,
         tool_input: dict[str, Any],
@@ -312,7 +312,7 @@ class ToolBase(ABC):
         # None rule_content = tool-name-level rule, matches everything
         return rule_content is None
 
-    def generate_suggestions(
+    async def generate_suggestions(
         self,
         tool_input: dict[str, Any],
     ) -> List[PermissionRule]:

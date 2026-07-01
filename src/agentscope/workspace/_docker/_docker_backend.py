@@ -52,6 +52,19 @@ class DockerBackend(BackendBase):
 
     # ── exec ───────────────────────────────────────────────────────
 
+    async def getcwd(self) -> str:
+        """Return the container's default working directory.
+
+        Overrides the base class default (which would shell out to
+        ``pwd``) with the cached ``workdir`` supplied at construction,
+        avoiding a per-call container ``exec`` round-trip.
+
+        Returns:
+            `str`:
+                The container's default working directory.
+        """
+        return self._workdir
+
     async def exec_shell(
         self,
         command: list[str],

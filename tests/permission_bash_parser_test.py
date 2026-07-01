@@ -975,7 +975,7 @@ class BashWildcardMatchingTest(IsolatedAsyncioTestCase):
         ]
         for pattern, command, expected in test_cases:
             with self.subTest(pattern=pattern, command=command):
-                result = self.bash_tool.match_rule(
+                result = await self.bash_tool.match_rule(
                     pattern,
                     {"command": command},
                 )
@@ -990,7 +990,7 @@ class BashWildcardMatchingTest(IsolatedAsyncioTestCase):
         ]
         for pattern, command, expected in test_cases:
             with self.subTest(pattern=pattern, command=command):
-                result = self.bash_tool.match_rule(
+                result = await self.bash_tool.match_rule(
                     pattern,
                     {"command": command},
                 )
@@ -1006,7 +1006,7 @@ class BashWildcardMatchingTest(IsolatedAsyncioTestCase):
         ]
         for pattern, command, expected in test_cases:
             with self.subTest(pattern=pattern, command=command):
-                result = self.bash_tool.match_rule(
+                result = await self.bash_tool.match_rule(
                     pattern,
                     {"command": command},
                 )
@@ -1023,7 +1023,7 @@ class BashWildcardMatchingTest(IsolatedAsyncioTestCase):
         ]
         for pattern, command, expected in test_cases:
             with self.subTest(pattern=pattern, command=command):
-                result = self.bash_tool.match_rule(
+                result = await self.bash_tool.match_rule(
                     pattern,
                     {"command": command},
                 )
@@ -1039,7 +1039,7 @@ class BashWildcardMatchingTest(IsolatedAsyncioTestCase):
         ]
         for pattern, command, expected in test_cases:
             with self.subTest(pattern=pattern, command=command):
-                result = self.bash_tool.match_rule(
+                result = await self.bash_tool.match_rule(
                     pattern,
                     {"command": command},
                 )

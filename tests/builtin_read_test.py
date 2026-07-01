@@ -127,7 +127,7 @@ class ReadToolTest(IsolatedAsyncioTestCase):
         """Test match_rule with glob patterns."""
         # Test exact match
         self.assertTrue(
-            self.read_tool.match_rule(
+            await self.read_tool.match_rule(
                 "test.py",
                 {"file_path": "test.py"},
             ),
@@ -135,7 +135,7 @@ class ReadToolTest(IsolatedAsyncioTestCase):
 
         # Test wildcard pattern
         self.assertTrue(
-            self.read_tool.match_rule(
+            await self.read_tool.match_rule(
                 "*.py",
                 {"file_path": "test.py"},
             ),
@@ -143,7 +143,7 @@ class ReadToolTest(IsolatedAsyncioTestCase):
 
         # Test directory pattern
         self.assertTrue(
-            self.read_tool.match_rule(
+            await self.read_tool.match_rule(
                 "/tmp/**",
                 {"file_path": "/tmp/test.py"},
             ),
@@ -151,7 +151,7 @@ class ReadToolTest(IsolatedAsyncioTestCase):
 
         # Test non-matching pattern
         self.assertFalse(
-            self.read_tool.match_rule(
+            await self.read_tool.match_rule(
                 "*.txt",
                 {"file_path": "test.py"},
             ),
@@ -159,7 +159,7 @@ class ReadToolTest(IsolatedAsyncioTestCase):
 
         # Test empty file_path
         self.assertFalse(
-            self.read_tool.match_rule(
+            await self.read_tool.match_rule(
                 "*.py",
                 {"file_path": ""},
             ),
@@ -169,7 +169,7 @@ class ReadToolTest(IsolatedAsyncioTestCase):
         """Test generate_suggestions for file operations."""
 
         # Test suggestion for file in subdirectory
-        suggestions = self.read_tool.generate_suggestions(
+        suggestions = await self.read_tool.generate_suggestions(
             {"file_path": "/tmp/project/src/main.py"},
         )
 
@@ -182,7 +182,7 @@ class ReadToolTest(IsolatedAsyncioTestCase):
         self.assertIn("/tmp/project/src/**", suggestion_contents)
 
         # Test suggestion for file in root
-        suggestions = self.read_tool.generate_suggestions(
+        suggestions = await self.read_tool.generate_suggestions(
             {"file_path": "/test.py"},
         )
         self.assertGreater(len(suggestions), 0)
