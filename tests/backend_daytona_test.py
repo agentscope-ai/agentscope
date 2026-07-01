@@ -129,7 +129,7 @@ class TestDaytonaBackendMock(IsolatedAsyncioTestCase):
         result = await self.backend.exec_shell(
             ["sh", "-c", "exit 7"],
             cwd="/tmp",
-            timeout=3,
+            timeout=3.2,
         )
 
         self.assertEqual(result.exit_code, 7)
@@ -137,7 +137,7 @@ class TestDaytonaBackendMock(IsolatedAsyncioTestCase):
         self.assertEqual(result.stderr, b"")
         self.assertEqual(
             self.sandbox.process.calls[-1],
-            ("sh -c 'exit 7'", {"cwd": "/tmp", "timeout": 3}),
+            ("sh -c 'exit 7'", {"cwd": "/tmp", "timeout": 4}),
         )
 
     async def test_exec_transport_error_returns_minus_one(self) -> None:

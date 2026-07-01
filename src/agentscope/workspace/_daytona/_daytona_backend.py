@@ -12,6 +12,7 @@ implements them via ``exec_shell``.
 
 from __future__ import annotations
 
+import math
 import posixpath
 import shlex
 from typing import Any
@@ -85,7 +86,8 @@ class DaytonaBackend(BackendBase):
                 backend's default ``workdir`` is used.
             timeout (`float | None`, optional):
                 Maximum number of seconds to wait. Daytona expects an
-                integer timeout, so provided values are cast to ``int``.
+                integer timeout, so provided values are rounded up to
+                the next integer second.
 
         Returns:
             `ExecResult`:
@@ -95,7 +97,7 @@ class DaytonaBackend(BackendBase):
         command_line = " ".join(shlex.quote(arg) for arg in command)
         kwargs: dict[str, Any] = {"cwd": cwd or self._workdir}
         if timeout is not None:
-            kwargs["timeout"] = int(timeout)
+            kwargs["timeout"] = math.ceil(timeout)
 
         try:
             res = await self._sandbox.process.exec(command_line, **kwargs)
