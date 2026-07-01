@@ -929,6 +929,33 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
         )
         self.assertEqual(fake.search_calls[0]["limit"], 3)
 
+    async def test_memory_search_default_limit_is_top_k(self) -> None:
+        """Omitting ``limit`` should fall back to the middleware's top_k.
+
+        The tool advertises ``top_k`` as the schema default and resolves an
+        omitted ``limit`` through it, so configuring ``top_k`` governs the
+        agent-facing tool, not just static-control retrieval.
+        """
+        fake = _FakeReMeApp(search_return=["fact"])
+        mw = _mw(
+            app=fake,
+            mode="agent_control",
+            top_k=11,
+        )
+        agent = await self._agent(mw)
+        await agent.reply(UserMsg("user", "hi"))
+
+        search_tool = _find_tool(self.toolkit, "memory_search")
+        # Schema advertises top_k as the default.
+        self.assertEqual(
+            search_tool.input_schema["properties"]["limit"]["default"],
+            11,
+        )
+
+        # Calling without a limit uses top_k.
+        await search_tool(query="what does alice like?")
+        self.assertEqual(fake.search_calls[-1]["limit"], 11)
+
     async def test_memory_search_no_results(self) -> None:
         """An empty workspace yields a friendly no-results message."""
         fake = _FakeReMeApp(search_return=[])

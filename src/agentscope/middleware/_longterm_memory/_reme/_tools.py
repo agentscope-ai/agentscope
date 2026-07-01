@@ -55,37 +55,51 @@ class _ReMeMemoryToolBase(ToolBase):
 
 
 class _MemorySearchTool(_ReMeMemoryToolBase):
-    """Agent-callable ReMe search tool."""
+    """Agent-callable ReMe search tool.
+
+    The advertised ``limit`` default is the middleware's ``top_k`` (set
+    per instance in :meth:`__init__`), so configuring ``top_k`` on the
+    middleware also governs how many memories this tool retrieves when the
+    agent omits ``limit``.
+    """
 
     name: str = "memory_search"
     description: str = (
         "Retrieve memories from past conversations relevant to a query."
     )
-    input_schema: dict[str, Any] = {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": (
-                    "What to retrieve from memory — for example a "
-                    "person's name, a preference, or a past decision."
-                ),
-            },
-            "limit": {
-                "type": "integer",
-                "description": "Maximum number of memories to retrieve.",
-                "default": 5,
-            },
-        },
-        "required": ["query"],
-    }
     is_concurrency_safe: bool = True
     is_read_only: bool = True
+
+    def __init__(
+        self,
+        mw: "ReMeMiddleware",
+    ) -> None:
+        super().__init__(mw)
+        # Per-instance schema so the default ``limit`` reflects this
+        # middleware's ``top_k`` rather than a hardcoded constant.
+        self.input_schema: dict[str, Any] = {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "What to retrieve from memory — for example a "
+                        "person's name, a preference, or a past decision."
+                    ),
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of memories to retrieve.",
+                    "default": mw._top_k,
+                },
+            },
+            "required": ["query"],
+        }
 
     async def __call__(
         self,
         query: str,
-        limit: int = 5,
+        limit: int | None = None,
     ) -> ToolChunk:
         """Retrieve memory relevant to ``query``.
 
@@ -93,8 +107,9 @@ class _MemorySearchTool(_ReMeMemoryToolBase):
             query (str):
                 What to retrieve from the ReMe workspace (for example a
                 person's name, a preference, or a past decision).
-            limit (int):
-                The maximum number of memories to retrieve. Defaults to 5.
+            limit (int | None):
+                The maximum number of memories to retrieve. When omitted,
+                falls back to the middleware's ``top_k``.
         """
         if not query:
             return _text_chunk("(no query supplied — nothing to search)")
