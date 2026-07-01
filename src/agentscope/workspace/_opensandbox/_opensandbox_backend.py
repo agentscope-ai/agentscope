@@ -14,9 +14,12 @@ from __future__ import annotations
 import posixpath
 import shlex
 from datetime import timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ...tool import BackendBase, ExecResult
+
+if TYPE_CHECKING:
+    from opensandbox.sandbox import Sandbox
 
 
 class _WriteEntry:
@@ -36,20 +39,20 @@ class OpenSandboxBackend(BackendBase):
     helpers are inherited from :class:`BackendBase`.
 
     Args:
-        sandbox (`Any`):
-            A ``opensandbox`` sandbox object (must already be started /
-            connected).
+        sandbox (`Sandbox`):
+            A started / connected ``opensandbox.sandbox.Sandbox`` object.
         workdir (`str`):
             Default working directory for ``exec_shell`` calls inside the
             sandbox.
     """
 
-    def __init__(self, sandbox: Any, workdir: str) -> None:
+    def __init__(self, sandbox: "Sandbox", workdir: str) -> None:
         """Initialize the OpenSandbox backend.
 
         Args:
-            sandbox (`Any`):
-                A started / connected ``opensandbox`` sandbox object.
+            sandbox (`Sandbox`):
+                A started / connected ``opensandbox.sandbox.Sandbox``
+                object.
             workdir (`str`):
                 Default working directory for ``exec_shell`` calls inside
                 the sandbox.

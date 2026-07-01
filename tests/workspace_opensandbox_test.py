@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import posixpath
 import shlex
 import sys
 import types
@@ -376,6 +377,15 @@ def _install_import_stubs() -> None:
         agentscope_tool.__path__ = [str(src_root / "tool")]
 
         class _BackendBase:
+            def join_path(self, path: str, *paths: str) -> str:
+                return posixpath.join(path, *paths)
+
+            def dirname(self, path: str) -> str:
+                return posixpath.dirname(path)
+
+            def basename(self, path: str) -> str:
+                return posixpath.basename(path)
+
             async def file_exists(self, path: str) -> bool:
                 result = await self.exec_shell(["test", "-e", path])
                 return result.ok()
@@ -448,16 +458,6 @@ def _install_import_stubs() -> None:
             def ok(self) -> bool:
                 return self.exit_code == 0
 
-        agentscope_tool.BackendBase = _BackendBase
-        agentscope_tool.ExecResult = _ExecResult
-        agentscope_tool.ToolBase = object
-        agentscope_tool.ToolChunk = object
-        sys.modules["agentscope.tool"] = agentscope_tool
-
-    if "agentscope.tool._builtin" not in sys.modules:
-        builtin_tools = types.ModuleType("agentscope.tool._builtin")
-        builtin_tools.__path__ = [str(src_root / "tool" / "_builtin")]
-
         class _BuiltinTool:
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 self.kwargs = kwargs
@@ -480,12 +480,50 @@ def _install_import_stubs() -> None:
         class Write(_BuiltinTool):
             name = "Write"
 
-        builtin_tools.Bash = Bash
-        builtin_tools.Edit = Edit
-        builtin_tools.Glob = Glob
-        builtin_tools.Grep = Grep
-        builtin_tools.Read = Read
-        builtin_tools.Write = Write
+        agentscope_tool.BackendBase = _BackendBase
+        agentscope_tool.ExecResult = _ExecResult
+        agentscope_tool.ToolBase = object
+        agentscope_tool.ToolChunk = object
+        agentscope_tool.Bash = Bash
+        agentscope_tool.Edit = Edit
+        agentscope_tool.Glob = Glob
+        agentscope_tool.Grep = Grep
+        agentscope_tool.Read = Read
+        agentscope_tool.Write = Write
+        sys.modules["agentscope.tool"] = agentscope_tool
+
+    if "agentscope.tool._builtin" not in sys.modules:
+        builtin_tools = types.ModuleType("agentscope.tool._builtin")
+        builtin_tools.__path__ = [str(src_root / "tool" / "_builtin")]
+
+        class _BuiltinPackageTool:
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                self.kwargs = kwargs
+
+        class _BuiltinBash(_BuiltinPackageTool):
+            name = "Bash"
+
+        class _BuiltinEdit(_BuiltinPackageTool):
+            name = "Edit"
+
+        class _BuiltinGlob(_BuiltinPackageTool):
+            name = "Glob"
+
+        class _BuiltinGrep(_BuiltinPackageTool):
+            name = "Grep"
+
+        class _BuiltinRead(_BuiltinPackageTool):
+            name = "Read"
+
+        class _BuiltinWrite(_BuiltinPackageTool):
+            name = "Write"
+
+        builtin_tools.Bash = _BuiltinBash
+        builtin_tools.Edit = _BuiltinEdit
+        builtin_tools.Glob = _BuiltinGlob
+        builtin_tools.Grep = _BuiltinGrep
+        builtin_tools.Read = _BuiltinRead
+        builtin_tools.Write = _BuiltinWrite
         sys.modules["agentscope.tool._builtin"] = builtin_tools
 
     if "frontmatter" not in sys.modules:
@@ -554,6 +592,9 @@ from agentscope.workspace._opensandbox._bootstrap import (  # noqa: E402
     GATEWAY_SCRIPT,
     METADATA_WORKSPACE_ID_KEY,
 )
+from agentscope.workspace._sandboxed_base import (  # noqa: E402
+    SandboxedWorkspaceBase,
+)
 from tests.workspace_remote_contract_test import (  # noqa: E402
     RemoteWorkspaceContractMixin,
     RemoteWorkspaceManagerContractMixin,
@@ -563,9 +604,34 @@ OpenSandboxWorkspace = importlib.import_module(
     "agentscope.workspace._opensandbox._opensandbox_workspace",
 ).OpenSandboxWorkspace
 
-GATEWAY_CLIENT_PATH = (
-    "agentscope.workspace._opensandbox._opensandbox_workspace.GatewayClient"
-)
+
+class TestOpenSandboxWorkspaceStructure(unittest.TestCase):
+    def test_uses_shared_sandboxed_workspace_base(self) -> None:
+        self.assertTrue(
+            issubclass(OpenSandboxWorkspace, SandboxedWorkspaceBase),
+        )
+        for name in (
+            "initialize",
+            "close",
+            "reset",
+            "list_tools",
+            "list_mcps",
+            "add_mcp",
+            "remove_mcp",
+            "list_skills",
+            "add_skill",
+            "remove_skill",
+            "offload_context",
+            "offload_tool_result",
+            "_write_gateway_config",
+            "_start_gateway_process",
+            "_wait_for_gateway",
+        ):
+            self.assertIs(
+                getattr(OpenSandboxWorkspace, name),
+                getattr(SandboxedWorkspaceBase, name),
+                name,
+            )
 
 
 def _opensandbox_manager_cls() -> Any:
@@ -632,6 +698,77 @@ class _FakeSandbox:
                 headers={},
             ),
         )
+
+
+class _BackendDouble:
+    def __init__(self, files: dict[str, bytes] | None = None) -> None:
+        self.files = dict(files or {})
+        self.deleted: list[str] = []
+        self.exec_calls: list[list[str]] = []
+
+    def join_path(self, path: str, *paths: str) -> str:
+        return posixpath.join(path, *paths)
+
+    def dirname(self, path: str) -> str:
+        return posixpath.dirname(path)
+
+    def basename(self, path: str) -> str:
+        return posixpath.basename(path)
+
+    async def exec_shell(
+        self,
+        command: list[str],
+        **_kwargs: Any,
+    ) -> SimpleNamespace:
+        self.exec_calls.append(command)
+        return SimpleNamespace(
+            exit_code=0,
+            stdout=b"",
+            stderr=b"",
+            ok=lambda: True,
+        )
+
+    async def is_dir(self, path: str) -> bool:
+        prefix = path.rstrip("/") + "/"
+        return any(item.startswith(prefix) for item in self.files)
+
+    async def list_dir(
+        self,
+        path: str,
+        *,
+        recursive: bool = False,
+    ) -> list[str]:
+        prefix = path.rstrip("/") + "/"
+        matches = [
+            item
+            for item in self.files
+            if item.startswith(prefix) and item != path
+        ]
+        if recursive:
+            return matches
+        children = {item[len(prefix) :].split("/", 1)[0] for item in matches}
+        return sorted(children)
+
+    async def read_file(self, path: str) -> bytes:
+        if path not in self.files:
+            raise FileNotFoundError(path)
+        return self.files[path]
+
+    async def write_file(self, path: str, data: bytes) -> None:
+        self.files[path] = data
+
+    async def file_exists(self, path: str) -> bool:
+        if path in self.files:
+            return True
+        prefix = path.rstrip("/") + "/"
+        return any(item.startswith(prefix) for item in self.files)
+
+    async def delete_path(self, path: str) -> None:
+        self.deleted.append(path)
+        prefix = path.rstrip("/") + "/"
+        for item in list(self.files):
+            if item == path or item.startswith(prefix):
+                del self.files[item]
 
 
 class _FakeConnectionConfig:
@@ -913,7 +1050,9 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
 
         self.assertGreaterEqual(sandbox.is_healthy.await_count, 1)
 
-    async def test_initialize_uses_attach_or_create_helper(self) -> None:
+    async def test_provision_backend_uses_attach_or_create_helper(
+        self,
+    ) -> None:
         sandbox = _FakeSandbox("sbx_init")
         ws = OpenSandboxWorkspace(workspace_id="wid")
 
@@ -926,14 +1065,14 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
             AsyncMock(side_effect=_attach),
         ) as attach_or_create, patch.object(
             OpenSandboxWorkspace,
-            "_start_gateway_stack",
+            "_run_bootstrap",
             AsyncMock(),
         ):
-            await ws.initialize()
+            await ws._provision_backend()
 
         attach_or_create.assert_awaited_once()
         self.assertEqual(ws.sandbox_id, "sbx_init")
-        self.assertTrue(ws.is_alive)
+        self.assertIsNotNone(ws._backend)
 
     async def test_bootstrap_runs_when_marker_missing(self) -> None:
         sandbox = _FakeSandbox(marker_exists=False)
@@ -949,16 +1088,9 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
             OpenSandboxWorkspace,
             "_run_bootstrap",
             AsyncMock(),
-        ) as bootstrap, patch.object(
-            OpenSandboxWorkspace,
-            "_wait_for_gateway",
-            AsyncMock(),
-        ), patch(
-            GATEWAY_CLIENT_PATH,
-        ) as gateway_client:
-            gateway_client.return_value.list_mcps = AsyncMock(return_value=[])
+        ) as bootstrap:
             ws = OpenSandboxWorkspace(workspace_id="wid")
-            await ws.initialize()
+            await ws._provision_backend()
         bootstrap.assert_awaited_once()
 
     async def test_bootstrap_skips_when_marker_exists(self) -> None:
@@ -975,16 +1107,9 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
             OpenSandboxWorkspace,
             "_run_bootstrap",
             AsyncMock(),
-        ) as bootstrap, patch.object(
-            OpenSandboxWorkspace,
-            "_wait_for_gateway",
-            AsyncMock(),
-        ), patch(
-            GATEWAY_CLIENT_PATH,
-        ) as gateway_client:
-            gateway_client.return_value.list_mcps = AsyncMock(return_value=[])
+        ) as bootstrap:
             ws = OpenSandboxWorkspace(workspace_id="wid")
-            await ws.initialize()
+            await ws._provision_backend()
         bootstrap.assert_not_awaited()
 
     async def test_create_metadata_contains_workspace_id(self) -> None:
@@ -995,56 +1120,6 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
         metadata = ws._merged_metadata()
         self.assertEqual(metadata[METADATA_WORKSPACE_ID_KEY], "wid")
         self.assertEqual(metadata["x"], "y")
-
-    async def test_endpoint_url_adds_configured_protocol(self) -> None:
-        ws = OpenSandboxWorkspace(workspace_id="wid", protocol="http")
-        endpoint = SimpleNamespace(endpoint="127.0.0.1:45865/proxy/5600")
-
-        self.assertEqual(
-            ws._endpoint_url(endpoint),
-            "http://127.0.0.1:45865/proxy/5600",
-        )
-
-    async def test_endpoint_headers_returns_sdk_headers(self) -> None:
-        endpoint = SimpleNamespace(headers={"x-sandbox": "abc"})
-
-        self.assertEqual(
-            OpenSandboxWorkspace._endpoint_headers(endpoint),
-            {"x-sandbox": "abc"},
-        )
-
-    async def test_wait_for_gateway_requires_authenticated_probe(self) -> None:
-        ws = OpenSandboxWorkspace(workspace_id="wid")
-        ws._gateway = AsyncMock()
-        ws._gateway.health = AsyncMock(return_value=True)
-        ws._gateway.list_mcps = AsyncMock(
-            side_effect=[RuntimeError("old"), []],
-        )
-
-        await ws._wait_for_gateway(timeout=1.0)
-
-        self.assertEqual(ws._gateway.list_mcps.await_count, 2)
-
-    async def test_start_gateway_process_writes_pid_file(self) -> None:
-        ws = OpenSandboxWorkspace(workspace_id="wid")
-        ws._backend = AsyncMock()
-
-        await ws._start_gateway_process()
-
-        command = ws._backend.exec_shell.await_args.args[0]
-        self.assertIn("echo $!", command[-1])
-        self.assertIn("gateway.pid", command[-1])
-
-    async def test_stop_gateway_process_uses_pid_file(self) -> None:
-        ws = OpenSandboxWorkspace(workspace_id="wid")
-        ws._backend = AsyncMock()
-
-        await ws._stop_gateway_process()
-
-        command = ws._backend.exec_shell.await_args.args[0]
-        self.assertIn("gateway.pid", command[-1])
-        self.assertIn("kill -TERM", command[-1])
-        self.assertNotIn("pkill", command[-1])
 
     async def test_missing_opensandbox_sdk_has_install_hint(self) -> None:
         ws = OpenSandboxWorkspace(workspace_id="wid")
@@ -1153,6 +1228,7 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
         gw_client.name = "browser"
         sentinel = SimpleNamespace(name="browser")
         ws = OpenSandboxWorkspace(workspace_id="wid")
+        ws._gateway = object()
         ws._gateway_clients = {"browser": gw_client}
         ws._mcps = [sentinel]
         ws._save_mcp_file = AsyncMock()
@@ -1171,17 +1247,13 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
         )
 
         ws = OpenSandboxWorkspace(workspace_id="wid")
-        ws._backend = AsyncMock()
-        ws._backend.exec_shell = AsyncMock(
-            return_value=SimpleNamespace(
-                ok=lambda: True,
-                stdout=(f"{SANDBOX_SKILLS_DIR}/demo/SKILL.md\n").encode(),
-            ),
-        )
-        ws._backend.read_file = AsyncMock(
-            return_value=(
-                b"---\nname: demo\ndescription: demo skill\n---\nbody text\n"
-            ),
+        ws._backend = _BackendDouble(
+            {
+                f"{SANDBOX_SKILLS_DIR}/demo/SKILL.md": (
+                    b"---\nname: demo\ndescription: demo skill\n"
+                    b"---\nbody text\n"
+                ),
+            },
         )
 
         skills = await ws.list_skills()
@@ -1232,9 +1304,7 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
         from agentscope.message import ToolResultBlock
 
         ws = OpenSandboxWorkspace(workspace_id="wid")
-        ws._backend = AsyncMock()
-        ws._backend.exec_shell = AsyncMock()
-        ws._backend.write_file = AsyncMock()
+        ws._backend = _BackendDouble()
         block = ToolResultBlock(id="tool-1", name="tool", output="hello")
 
         path = await ws.offload_tool_result("session-1", block)
@@ -1243,16 +1313,13 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
             path,
             "/workspace/sessions/session-1/tool_result-tool-1.txt",
         )
-        ws._backend.write_file.assert_awaited_once_with(path, b"hello")
+        self.assertEqual(ws._backend.files[path], b"hello")
 
     async def test_offload_context_appends_jsonl(self) -> None:
         from agentscope.message import Msg, TextBlock
 
         ws = OpenSandboxWorkspace(workspace_id="wid")
-        ws._backend = AsyncMock()
-        ws._backend.exec_shell = AsyncMock()
-        ws._backend.read_file = AsyncMock(side_effect=FileNotFoundError())
-        ws._backend.write_file = AsyncMock()
+        ws._backend = _BackendDouble()
         try:
             msg = Msg(name="user", role="user", content="hello")
         except Exception:
@@ -1265,8 +1332,7 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
         path = await ws.offload_context("session-1", [msg])
 
         self.assertEqual(path, "/workspace/sessions/session-1/context.jsonl")
-        written = ws._backend.write_file.await_args.args[1]
-        self.assertIn(b"hello", written)
+        self.assertIn(b"hello", ws._backend.files[path])
 
     async def test_reset_clears_mcps_and_workspace_dirs(self) -> None:
         from agentscope.workspace._opensandbox._bootstrap import (
@@ -1278,10 +1344,9 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
         gw_client = AsyncMock()
         gw_client.name = "browser"
         ws = OpenSandboxWorkspace(workspace_id="wid")
-        ws._backend = AsyncMock()
+        ws._backend = _BackendDouble()
         ws._gateway_clients = {"browser": gw_client}
         ws._mcps = [SimpleNamespace(name="browser")]
-        ws._save_mcp_file = AsyncMock()
 
         await ws.reset()
 
@@ -1289,10 +1354,10 @@ class TestOpenSandboxWorkspaceLifecycle(IsolatedAsyncioTestCase):
         self.assertEqual(ws._gateway_clients, {})
         self.assertEqual(ws._mcps, [])
         self.assertEqual(
-            [call.args[0] for call in ws._backend.delete_path.await_args_list],
+            ws._backend.deleted,
             [SANDBOX_SESSIONS_DIR, SANDBOX_DATA_DIR, SANDBOX_SKILLS_DIR],
         )
-        ws._save_mcp_file.assert_awaited_once()
+        self.assertEqual(ws._backend.files["/workspace/.mcp"], b"[]")
 
 
 class TestOpenSandboxImportIsolation(unittest.TestCase):
