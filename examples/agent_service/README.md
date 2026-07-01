@@ -47,17 +47,17 @@ docker run --rm -p 6379:6379 redis:7
 > ```python
 > # Before (requires Redis)
 > from agentscope.app.storage import RedisStorage
-> from agentscope.app.message_bus import RedisMessageBus
+> from agentscope.app.message_bus import RedisMessageBus, InMemoryMessageBus
 >
 > storage = RedisStorage(host="localhost", port=6379)
 > message_bus = RedisMessageBus(host="localhost", port=6379)
 >
 > # After (no Redis required)
 > from agentscope.app.storage import MemStorage
-> from agentscope.app.message_bus import MemMessageBus
+> from agentscope.app.message_bus import InMemoryMessageBus
 >
 > storage = MemStorage()
-> message_bus = MemMessageBus()
+> message_bus = InMemoryMessageBus()
 > ```
 >
 > Note: In-memory storage loses all data when the process exits and cannot coordinate across multiple processes. Use it for development and testing only.
