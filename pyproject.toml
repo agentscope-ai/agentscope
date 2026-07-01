@@ -97,6 +97,12 @@ s3 = [
 # wouldn't crash but the 2-tier add fallback degenerates into a
 # wasted LLM call.
 mem0 = ["mem0ai>=2.0.0"]
+# Required by `agentscope.middleware._longterm_memory.ReMeMiddleware`.
+# ReMe is embedded in-process (built on AgentScope); the middleware
+# instantiates a `reme.ReMe` app and injects the agent's chat model,
+# lazily imported, so this extra is only needed when the ReMe backend is
+# used.
+reme = ["reme-ai>=0.4.0.5"]
 # ------------ Full ------------
 full = [
     "agentscope[models]",
@@ -107,6 +113,7 @@ full = [
     "agentscope[rag]",
     "agentscope[s3]",
     "agentscope[mem0]",
+    "agentscope[reme]",
 ]
 
 # ------------ Development ------------
