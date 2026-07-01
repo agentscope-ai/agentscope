@@ -591,6 +591,7 @@ _install_import_stubs()
 from agentscope.workspace._opensandbox._bootstrap import (  # noqa: E402
     GATEWAY_SCRIPT,
     METADATA_WORKSPACE_ID_KEY,
+    bootstrap_commands,
 )
 from agentscope.workspace._sandboxed_base import (  # noqa: E402
     SandboxedWorkspaceBase,
@@ -632,6 +633,17 @@ class TestOpenSandboxWorkspaceStructure(unittest.TestCase):
                 getattr(SandboxedWorkspaceBase, name),
                 name,
             )
+
+
+class TestOpenSandboxBootstrap(unittest.TestCase):
+    def test_installs_procps_for_gateway_process_cleanup(self) -> None:
+        commands = bootstrap_commands(
+            extra_pip=[],
+            install_agentscope_cmd="true",
+        )
+        apt_cmd = next(cmd for cmd in commands if "apt-get install" in cmd)
+
+        self.assertIn("procps", apt_cmd)
 
 
 def _opensandbox_manager_cls() -> Any:

@@ -41,7 +41,7 @@ from .._utils import (
 
 #: Default OpenSandbox image. The slim Python image is small but still
 #: has enough package-manager support for installing curl, certificates,
-#: and ripgrep during bootstrap.
+#: ripgrep, and procps during bootstrap.
 DEFAULT_IMAGE = "python:3.11-slim"
 
 #: Default keep-alive timeout in seconds for newly-created sandboxes.
@@ -153,7 +153,7 @@ def bootstrap_commands(
         # default image runs as root, so no sudo is needed here.
         "apt-get update -qq "
         "&& apt-get install -y --no-install-recommends curl "
-        "ca-certificates ripgrep "
+        "ca-certificates procps ripgrep "
         "&& rm -rf /var/lib/apt/lists/*",
         # 3. Astral uv. INSTALLER_NO_MODIFY_PATH=1 suppresses shell rc
         # edits; AgentScope always invokes uv by full path.

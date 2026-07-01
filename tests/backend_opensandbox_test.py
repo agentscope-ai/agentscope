@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import posixpath
 import shlex
 import sys
 import types
@@ -95,6 +96,30 @@ def _install_import_stubs() -> None:
         agentscope_tool.__path__ = [str(src_root / "tool")]
 
         class _BackendBase:
+            _path_module = posixpath
+
+            def join_path(self, path: str, *paths: str) -> str:
+                return self._path_module.join(path, *paths)
+
+            def dirname(self, path: str) -> str:
+                return self._path_module.dirname(path)
+
+            def basename(self, path: str) -> str:
+                return self._path_module.basename(path)
+
+            def isabs(self, path: str) -> bool:
+                return self._path_module.isabs(path)
+
+            def normpath(self, path: str) -> str:
+                return self._path_module.normpath(path)
+
+            def abspath(self, path: str, *, cwd: str) -> str:
+                if self._path_module.isabs(path):
+                    return self._path_module.normpath(path)
+                return self._path_module.normpath(
+                    self._path_module.join(cwd, path),
+                )
+
             async def file_exists(self, path: str) -> bool:
                 result = await self.exec_shell(["test", "-e", path])
                 return result.ok()
@@ -167,10 +192,39 @@ def _install_import_stubs() -> None:
             def ok(self) -> bool:
                 return self.exit_code == 0
 
+        class _BuiltinTool:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                self.args = args
+                self.kwargs = kwargs
+
+        class Bash(_BuiltinTool):
+            name = "Bash"
+
+        class Edit(_BuiltinTool):
+            name = "Edit"
+
+        class Glob(_BuiltinTool):
+            name = "Glob"
+
+        class Grep(_BuiltinTool):
+            name = "Grep"
+
+        class Read(_BuiltinTool):
+            name = "Read"
+
+        class Write(_BuiltinTool):
+            name = "Write"
+
         agentscope_tool.BackendBase = _BackendBase
         agentscope_tool.ExecResult = _ExecResult
         agentscope_tool.ToolBase = object
         agentscope_tool.ToolChunk = object
+        agentscope_tool.Bash = Bash
+        agentscope_tool.Edit = Edit
+        agentscope_tool.Glob = Glob
+        agentscope_tool.Grep = Grep
+        agentscope_tool.Read = Read
+        agentscope_tool.Write = Write
         sys.modules["agentscope.tool"] = agentscope_tool
 
     if "agentscope.workspace" not in sys.modules:
@@ -234,6 +288,12 @@ class TestOpenSandboxBackend(IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.sandbox = _FakeSandbox()
         self.backend = OpenSandboxBackend(self.sandbox, workdir="/workspace")
+
+    async def test_path_helpers_use_posix_paths(self) -> None:
+        self.assertEqual(
+            self.backend.join_path("/workspace", "a", "b.txt"),
+            "/workspace/a/b.txt",
+        )
 
     async def test_exec_returns_stdout(self) -> None:
         self.sandbox.commands.run.return_value = SimpleNamespace(
@@ -453,6 +513,14 @@ class TestOpenSandboxBackend(IsolatedAsyncioTestCase):
 
 
 class TestOpenSandboxImportIsolation(unittest.TestCase):
+    def test_tool_stub_exposes_builtins_for_shared_workspace_base(
+        self,
+    ) -> None:
+        import agentscope.tool as agentscope_tool
+
+        for name in ("Bash", "Edit", "Glob", "Grep", "Read", "Write"):
+            self.assertTrue(hasattr(agentscope_tool, name), name)
+
     def test_e2b_backend_test_imports_after_opensandbox_stub(self) -> None:
         sys.modules.pop("tests.backend_e2b_test", None)
 
