@@ -83,15 +83,13 @@ class ReMeMiddleware(MiddlewareBase):
 
     ReMe is embedded **in-process** (no separate service): the middleware
     instantiates a :class:`reme.ReMe` application whose LLM-backed jobs use
-    the ``chat_model`` configured at construction. Two construction paths:
-
-    1. **Config params** — pass ``workspace_dir`` / ``config`` (and
-       optionally ``chat_model``) and the middleware builds the
-       :class:`reme.ReMe` app lazily on first use. When ``chat_model`` is
-       omitted, ReMe uses the LLM from its own config/credentials.
-    2. **Pre-built app** — pass a ready :class:`reme.ReMe` via ``app=`` to
-       share one embedded app (workspace / index) across agents, or to
-       supply advanced configuration the constructor does not expose.
+    the ``chat_model`` configured at construction. The app is built and
+    owned by the middleware — pass ``workspace_dir`` / ``config`` (and
+    optionally ``chat_model`` / ``embedding_model``) and it is created
+    lazily on first use. When ``chat_model`` is omitted, ReMe uses the LLM
+    from its own config/credentials. For advanced settings the dedicated
+    parameters do not expose (e.g. enabling the vector store), pass a
+    deep-merged ``config_overrides`` mapping.
 
     The model is fixed at construction (never taken from an agent), so the
     embedded app's single LLM is well-defined even when one middleware
@@ -101,7 +99,7 @@ class ReMeMiddleware(MiddlewareBase):
 
     AgentScope middleware has no framework-managed lifecycle, so the app
     is built once and started lazily on first use (idempotent). Call
-    :meth:`close` for explicit teardown of a middleware-owned app.
+    :meth:`close` for explicit teardown of the embedded app.
 
     Example::
 
@@ -119,9 +117,9 @@ class ReMeMiddleware(MiddlewareBase):
     def __init__(
         self,
         *,
-        app: Any | None = None,
         workspace_dir: str = ".reme",
         config: str = "default",
+        config_overrides: dict[str, Any] | None = None,
         chat_model: "ChatModelBase | None" = None,
         embedding_model: "EmbeddingModelBase | None" = None,
         mode: Literal["static_control", "agent_control", "both"] = "both",
@@ -136,17 +134,23 @@ class ReMeMiddleware(MiddlewareBase):
         set the id on the agent (``Agent(state=AgentState(session_id=...))``).
 
         Args:
-            app (`reme.ReMe | None`, optional):
-                A pre-built :class:`reme.ReMe` application to embed. When
-                given it takes precedence and ``workspace_dir`` /
-                ``config`` are ignored (with a warning). Use it to share
-                one app across agents or to apply advanced configuration.
             workspace_dir (`str`, optional):
                 ReMe workspace (vault) directory for memory cards and
                 indexes. Defaults to ``".reme"``.
             config (`str`, optional):
                 ReMe config name or path. Defaults to ``"default"``
                 (ReMe's bundled ``default.yaml``).
+            config_overrides (`dict[str, Any] | None`, optional):
+                Extra keyword arguments deep-merged into
+                ``reme.config.resolve_app_config`` when the app is built,
+                for advanced settings the dedicated parameters do not
+                expose. For example, enable the vector store (the bundled
+                ``default`` config ships it off) with
+                ``{"components": {"file_store": {"default": ``
+                ``{"embedding_store": "default"}}}}``. The middleware's own
+                ``workspace_dir`` / ``config`` (and internal ``enable_logo``
+                / ``log_to_console``) always take precedence over keys of
+                the same name here.
             chat_model (`ChatModelBase | None`, optional):
                 AgentScope chat model injected into ReMe's default LLM
                 component, fixed for the lifetime of the embedded app.
@@ -186,32 +190,15 @@ class ReMeMiddleware(MiddlewareBase):
                 f"'static_control', 'agent_control', 'both'.",
             )
 
-        if app is not None:
-            ignored = [
-                name
-                for name, changed in (
-                    ("workspace_dir", workspace_dir != ".reme"),
-                    ("config", config != "default"),
-                )
-                if changed
-            ]
-            if ignored:
-                logger.warning(
-                    "ReMeMiddleware: `app` was provided, so %s "
-                    "%s ignored. Configure them on the app itself "
-                    "(or omit `app` to let the middleware build one).",
-                    ", ".join(ignored),
-                    "is" if len(ignored) == 1 else "are",
-                )
-
         # Embedded ReMe application state. The app is built lazily and
         # started once (idempotent guards), since middleware has no
-        # framework-managed lifecycle.
-        self._app = app
-        self._owns_app = app is None
+        # framework-managed lifecycle. The middleware always owns the app
+        # it builds, so :meth:`close` tears it down.
+        self._app: Any | None = None
         self._started = False
         self._workspace_dir = workspace_dir
         self._config = config
+        self._config_overrides = config_overrides
 
         self._chat_model = chat_model
         self._embedding_model = embedding_model
@@ -238,12 +225,16 @@ class ReMeMiddleware(MiddlewareBase):
                 "`pip install reme-ai`).",
             ) from e
 
-        app_config = resolve_app_config(
+        # Reserved keys always win over config_overrides so a caller
+        # cannot accidentally redirect the workspace or re-enable logging.
+        app_kwargs: dict[str, Any] = dict(self._config_overrides or {})
+        app_kwargs.update(
             config=self._config,
             workspace_dir=self._workspace_dir,
             enable_logo=False,
             log_to_console=False,
         )
+        app_config = resolve_app_config(**app_kwargs)
         return ReMe(**app_config)
 
     async def _ensure_started(self) -> None:
@@ -279,12 +270,12 @@ class ReMeMiddleware(MiddlewareBase):
             self._started = True
 
     async def close(self) -> None:
-        """Close the embedded ReMe app if this middleware owns it.
+        """Close the embedded ReMe app.
 
         AgentScope does not manage middleware lifecycle, so call this
         explicitly for clean teardown (e.g. on application shutdown).
         """
-        if self._app is not None and self._owns_app and self._started:
+        if self._app is not None and self._started:
             await self._app.close()
         self._started = False
 

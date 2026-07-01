@@ -98,11 +98,7 @@ s3 = [
 # wasted LLM call.
 mem0 = ["mem0ai>=2.0.0"]
 # Required by `agentscope.middleware._longterm_memory.ReMeMiddleware`.
-# ReMe is embedded in-process (built on AgentScope); the middleware
-# instantiates a `reme.ReMe` app and injects the agent's chat model,
-# lazily imported, so this extra is only needed when the ReMe backend is
-# used.
-reme = ["reme-ai>=0.4.0.5"]
+reme = ["reme-ai==0.4.0.6"]
 # ------------ Full ------------
 full = [
     "agentscope[models]",

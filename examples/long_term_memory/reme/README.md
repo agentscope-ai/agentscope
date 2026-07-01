@@ -19,9 +19,9 @@ embedding model (vector search), both injected into the embedded app.
 ReMe's bundled `default` config searches with **BM25 (keyword) only** —
 its file store ships with the vector store disabled. A long-term
 *memory* demo wants **semantic** recall ("plot monthly sales" should
-find a "prefers matplotlib" card), so `reme_demo.py` builds the app
-with the vector store switched on and hands it to the middleware via
-`app=`. That path needs an `embedding_model`; see below.
+find a "prefers matplotlib" card), so `reme_demo.py` switches the vector
+store on via `config_overrides` and injects an `embedding_model`; see
+below.
 
 ## Install
 
@@ -42,57 +42,50 @@ from agentscope.middleware import ReMeMiddleware
 from agentscope.tool import Toolkit
 ```
 
-## Two construction paths
+## Construction
+
+The middleware builds and **owns** an embedded `reme.ReMe` app — it is
+created lazily on first use and torn down by `await mw.close()`. You
+configure it with plain parameters; there is no external app to manage.
 
 ```python
-# 1. Config params — the middleware builds and embeds a reme.ReMe app
-#    lazily on first use. `chat_model` is injected into ReMe's default
-#    LLM component and drives the auto_memory write-back;
-#    `embedding_model` is injected into its embedding component and
-#    drives vector search. Both are fixed for the app's lifetime.
 ReMeMiddleware(
     workspace_dir=".reme",
-    chat_model=my_chat_model,
-    embedding_model=my_embedding_model,
-    mode="both",
-)
-
-# 2. Pre-built app — bring your own reme.ReMe to share one embedded
-#    app (workspace / index) across agents, or to apply advanced
-#    config the constructor does not expose (e.g. enabling the vector
-#    store). `workspace_dir` / `config` are then ignored (a WARNING log
-#    says so). This is the path the demo takes.
-from reme import ReMe
-from reme.config import resolve_app_config
-
-app = ReMe(**resolve_app_config(
-    config="default",
-    workspace_dir=".reme",
-    # default.yaml ships the vector store off; switch it on for
-    # semantic recall.
-    components={"file_store": {"default": {"embedding_store": "default"}}},
-))
-ReMeMiddleware(
-    app=app,
-    chat_model=my_chat_model,
-    embedding_model=my_embedding_model,
+    chat_model=my_chat_model,        # injected into ReMe's LLM component,
+                                     #   drives auto_memory write-back
+    embedding_model=my_embedding_model,  # injected into its embedding
+                                         #   component, drives vector search
+    # Advanced settings the dedicated params don't expose are deep-merged
+    # into ReMe's config. default.yaml ships the vector store OFF; switch
+    # it on for semantic recall:
+    config_overrides={
+        "components": {
+            "file_store": {"default": {"embedding_store": "default"}},
+        },
+    },
     mode="both",
 )
 ```
 
-| `app` | `workspace_dir` / `config` | `chat_model` | Behavior |
-|:-:|:-:|:-:|---|
-| ✓ | — | any | Embed `app` as-is; `chat_model` / `embedding_model` still injected into its components at start. |
-| ✓ | changed | any | Embed `app`; `workspace_dir` / `config` ignored with a `WARNING`. |
-| — | any | ✓ | Build a `reme.ReMe` from `config` + `workspace_dir`, inject the models. |
-| — | any | — | Build a `reme.ReMe`; ReMe uses the LLM / embedding from its own config/credentials. |
+Both models are fixed for the app's lifetime (never taken from an
+agent), so the embedded app's single LLM / embedding component is
+well-defined even when one middleware instance is shared across agents.
+
+| `chat_model` / `embedding_model` | Behavior |
+|:-:|---|
+| provided | Injected into ReMe's default LLM / embedding components at start; only a DashScope key is needed. |
+| omitted | ReMe uses the LLM / embedding backend from its own config/credentials. |
+
+The middleware's own `workspace_dir` / `config` always win over any
+same-named keys in `config_overrides`, so overrides can't accidentally
+redirect the workspace.
 
 > **Why inject `embedding_model`?** ReMe starts its embedding
 > component eagerly at `start()` — even under the BM25-only default —
 > and builds it from credentials in its config. Injecting an
 > AgentScope `embedding_model` bypasses that credential path, so the
 > only key you need is a DashScope one. It is also what powers vector
-> search once you enable the store (path 2 above).
+> search once you enable the store via `config_overrides`.
 
 ## How the middleware controls memory
 
@@ -184,21 +177,24 @@ down the embedded app (AgentScope doesn't manage middleware lifecycle).
 `config` selects a ReMe config (defaults to the bundled `"default"`,
 which is auto-memory + **BM25-only** search — its file store ships with
 `embedding_store: ""`). To enable **vector search**, either point
-`config` at your own ReMe config file with the store wired up, or build
-the app yourself and flip it on inline (what the demo does):
+`config` at your own ReMe config file with the store wired up, or pass
+`config_overrides` and flip it on inline (what the demo does):
 
 ```python
-resolve_app_config(
-    config="default",
+ReMeMiddleware(
     workspace_dir=".reme",
-    components={"file_store": {"default": {"embedding_store": "default"}}},
+    config_overrides={
+        "components": {"file_store": {"default": {"embedding_store": "default"}}},
+    },
 )
 ```
 
-ReMe's `as_llm` / `as_embedding` components are otherwise driven by
-environment variables (`LLM_API_KEY`, `EMBEDDING_API_KEY`, ...) from its
-own config; injecting AgentScope `chat_model` / `embedding_model`
-bypasses those. See ReMe's `default.yaml` for the full component set.
+`config_overrides` is deep-merged into ReMe's `resolve_app_config` when
+the middleware builds the app. ReMe's `as_llm` / `as_embedding`
+components are otherwise driven by environment variables (`LLM_API_KEY`,
+`EMBEDDING_API_KEY`, ...) from its own config; injecting AgentScope
+`chat_model` / `embedding_model` bypasses those. See ReMe's
+`default.yaml` for the full component set.
 
 > **Note (indexing):** `auto_memory` write-back returns as soon as the
 > daily card is written to disk; the card only becomes searchable once

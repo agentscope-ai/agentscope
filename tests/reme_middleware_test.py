@@ -11,6 +11,9 @@ AgentScope and ReMe. No real ReMe application is built.
 middleware internals (``mw._app``, ``mw._search``, ``mw._session_id_of``)
 to inspect what the public API just did.
 """
+import sys
+import types
+from unittest import mock
 from unittest.async_case import IsolatedAsyncioTestCase
 from typing import Any
 
@@ -180,6 +183,21 @@ class _FakeReMeApp:
     def last_embedding_model(self) -> Any:
         """The model injected into the ``as_embedding`` component."""
         return self.injected_components.get("as_embedding")
+
+
+def _mw(*, app: Any = None, **kwargs: Any) -> ReMeMiddleware:
+    """Build a ``ReMeMiddleware`` with a fake embedded app injected.
+
+    ``ReMeMiddleware`` owns and builds its own ``reme.ReMe`` app, so tests
+    can't pass one in. Instead we construct the middleware normally and
+    seed ``mw._app`` with a :class:`_FakeReMeApp` before it starts — the
+    lazy ``_ensure_started`` path sees a non-``None`` app and skips the
+    real build, so no ``reme-ai`` install is needed. Any extra kwargs go
+    straight to the constructor.
+    """
+    mw = ReMeMiddleware(**kwargs)
+    mw._app = app if app is not None else _FakeReMeApp()
+    return mw
 
 
 def _single_response(text: str) -> ChatResponse:
@@ -367,7 +385,6 @@ class TestConstructorValidation(IsolatedAsyncioTestCase):
         """Unknown control modes should be rejected."""
         with self.assertRaises(ValueError):
             ReMeMiddleware(
-                app=_FakeReMeApp(),
                 mode="garbage",  # type: ignore[arg-type]
             )
 
@@ -379,7 +396,7 @@ class TestConstructorValidation(IsolatedAsyncioTestCase):
         cannot leak one conversation's session into another's write-back.
         It is read per call from ``agent.state.session_id``.
         """
-        mw = ReMeMiddleware(app=_FakeReMeApp())
+        mw = ReMeMiddleware()
         self.assertFalse(hasattr(mw, "_session_id"))
 
         class _State:
@@ -391,24 +408,43 @@ class TestConstructorValidation(IsolatedAsyncioTestCase):
         self.assertEqual(mw._session_id_of(_Agent()), "sess-xyz")
         self.assertIsNone(mw._session_id_of(object()))
 
-    def test_app_wins_over_connection_kwargs_with_warning(self) -> None:
-        """``app`` takes precedence; config kwargs are ignored + warned."""
-        fake = _FakeReMeApp()
-        with self.assertLogs("as", level="WARNING") as captured:
-            mw = ReMeMiddleware(
-                app=fake,
-                workspace_dir="/tmp/custom_reme",
-                config="custom",
-            )
-        self.assertIs(mw._app, fake)
-        joined = "\n".join(captured.output)
-        self.assertIn("workspace_dir", joined)
-        self.assertIn("config", joined)
+    def test_config_overrides_merged_reserved_keys_win(self) -> None:
+        """``config_overrides`` is merged into ``resolve_app_config``;
+        the middleware's reserved keys always take precedence."""
+        captured: dict = {}
 
-    def test_app_alone_does_not_warn(self) -> None:
-        """Sanity: pure app-only path stays quiet."""
-        with self.assertNoLogs("as", level="WARNING"):
-            ReMeMiddleware(app=_FakeReMeApp())
+        def _fake_resolve(**kwargs: Any) -> dict:
+            captured.update(kwargs)
+            return {"_ok": True}
+
+        fake_reme = types.ModuleType("reme")
+        fake_reme.ReMe = lambda **kw: ("app", kw)  # type: ignore[attr-defined]
+        fake_cfg = types.ModuleType("reme.config")
+        setattr(fake_cfg, "resolve_app_config", _fake_resolve)
+
+        mw = ReMeMiddleware(
+            workspace_dir="/real/ws",
+            config="mycfg",
+            config_overrides={
+                "components": {"file_store": {"default": {}}},
+                # A caller must not be able to hijack reserved keys.
+                "workspace_dir": "/evil",
+                "enable_logo": True,
+            },
+        )
+        with mock.patch.dict(
+            sys.modules,
+            {"reme": fake_reme, "reme.config": fake_cfg},
+        ):
+            mw._build_app()
+
+        self.assertEqual(
+            captured["components"],
+            {"file_store": {"default": {}}},
+        )
+        self.assertEqual(captured["workspace_dir"], "/real/ws")
+        self.assertEqual(captured["config"], "mycfg")
+        self.assertFalse(captured["enable_logo"])
 
 
 # ----------------------------------------------------------------------
@@ -442,7 +478,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
     async def test_retrieve_inject_write(self) -> None:
         """Static control should search, inject, reply, then write."""
         fake = _FakeReMeApp(search_return=["alice loves coffee"])
-        mw = ReMeMiddleware(
+        mw = _mw(
             app=fake,
             mode="static_control",
         )
@@ -509,7 +545,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         step, the tool result, and the final answer — not just the last
         message, and never the injected memory note."""
         fake = _FakeReMeApp(search_return=["remembered fact"])
-        mw = ReMeMiddleware(app=fake, mode="static_control")
+        mw = _mw(app=fake, mode="static_control")
 
         # Turn 1: the model asks for a tool call; turn 2: it answers.
         self.model.set_responses(
@@ -577,7 +613,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         second turn must not re-send the first turn's messages.
         """
         fake = _FakeReMeApp(search_return=[])
-        mw = ReMeMiddleware(app=fake, mode="static_control")
+        mw = _mw(app=fake, mode="static_control")
 
         # Two sequential turns on the SAME agent (shared, growing context).
         self.model.set_responses(
@@ -621,7 +657,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         """The memory note is inserted right AFTER the new user input
         lands in the agent context, not before."""
         fake = _FakeReMeApp(search_return=["saved fact"])
-        mw = ReMeMiddleware(
+        mw = _mw(
             app=fake,
             mode="static_control",
         )
@@ -649,7 +685,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
     async def test_no_memories_no_injection(self) -> None:
         """Empty search results should not add a memory hint message."""
         fake = _FakeReMeApp(search_return=[])
-        mw = ReMeMiddleware(
+        mw = _mw(
             app=fake,
             mode="static_control",
         )
@@ -667,7 +703,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         """Search errors should be logged but not block the reply."""
         fake = _FakeReMeApp()
         fake.search_error = RuntimeError("reme down")
-        mw = ReMeMiddleware(
+        mw = _mw(
             app=fake,
             mode="static_control",
         )
@@ -683,7 +719,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         """One middleware shared by two agents writes each agent's own
         session_id — no leakage from a stored session."""
         fake = _FakeReMeApp()
-        mw = ReMeMiddleware(app=fake, mode="static_control")
+        mw = _mw(app=fake, mode="static_control")
 
         self.model.set_responses(
             [_single_response("r1"), _single_response("r2")],
@@ -715,7 +751,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         """The configured chat_model is injected into ReMe at start."""
         explicit = RecordingMockModel(context_size=100_000)
         fake = _FakeReMeApp()
-        mw = ReMeMiddleware(
+        mw = _mw(
             app=fake,
             mode="static_control",
             chat_model=explicit,
@@ -732,7 +768,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         so ReMe falls back to the LLM in its own config/credentials.
         """
         fake = _FakeReMeApp()
-        mw = ReMeMiddleware(
+        mw = _mw(
             app=fake,
             mode="static_control",
         )
@@ -751,7 +787,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         chat = RecordingMockModel(context_size=100_000)
         embedding = object()  # sentinel — only passed through to ReMe
         fake = _FakeReMeApp()
-        mw = ReMeMiddleware(
+        mw = _mw(
             app=fake,
             mode="static_control",
             chat_model=chat,
@@ -767,7 +803,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
     async def test_no_embedding_model_no_injection(self) -> None:
         """Without an embedding_model, ReMe's embedding stays untouched."""
         fake = _FakeReMeApp()
-        mw = ReMeMiddleware(
+        mw = _mw(
             app=fake,
             mode="static_control",
             chat_model=RecordingMockModel(context_size=100_000),
@@ -815,7 +851,7 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
     async def test_tools_listed_and_hint_in_prompt(self) -> None:
         """Agent-control mode should expose the search tool + prompt nudge."""
         fake = _FakeReMeApp(search_return=["found"])
-        mw = ReMeMiddleware(
+        mw = _mw(
             app=fake,
             mode="agent_control",
         )
@@ -848,7 +884,7 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
     async def test_middleware_does_not_mutate_toolkit(self) -> None:
         """Middleware should not register tools unless caller does so."""
         fake = _FakeReMeApp()
-        mw = ReMeMiddleware(
+        mw = _mw(
             app=fake,
             mode="agent_control",
         )
@@ -869,7 +905,7 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
     async def test_memory_search_tool_invokes_reme(self) -> None:
         """The memory_search tool should query ReMe and return results."""
         fake = _FakeReMeApp(search_return=["first fact", "second fact"])
-        mw = ReMeMiddleware(
+        mw = _mw(
             app=fake,
             mode="agent_control",
         )
@@ -896,7 +932,7 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
     async def test_memory_search_no_results(self) -> None:
         """An empty workspace yields a friendly no-results message."""
         fake = _FakeReMeApp(search_return=[])
-        mw = ReMeMiddleware(
+        mw = _mw(
             app=fake,
             mode="agent_control",
         )
@@ -913,7 +949,7 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
 
         fake = _FakeReMeApp()
         fake.search_error = RuntimeError("reme down")
-        mw = ReMeMiddleware(
+        mw = _mw(
             app=fake,
             mode="agent_control",
         )
@@ -928,7 +964,7 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
 
     async def test_tools_auto_allow_permission(self) -> None:
         """The memory tool should be auto-allowed by permission checks."""
-        mw = ReMeMiddleware(
+        mw = _mw(
             app=_FakeReMeApp(),
             mode="agent_control",
         )
@@ -941,7 +977,7 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
 
     async def test_no_add_memory_tool_exposed(self) -> None:
         """ReMe exposes search only — there is no manual add tool."""
-        mw = ReMeMiddleware(
+        mw = _mw(
             app=_FakeReMeApp(),
             mode="agent_control",
         )
@@ -952,7 +988,7 @@ class TestAgentControlMode(IsolatedAsyncioTestCase):
     async def test_agent_control_writes_back_automatically(self) -> None:
         """Even with no add tool, agent_control writes via the reply hook."""
         fake = _FakeReMeApp()
-        mw = ReMeMiddleware(
+        mw = _mw(
             app=fake,
             mode="agent_control",
         )
@@ -984,7 +1020,7 @@ class TestBothMode(IsolatedAsyncioTestCase):
         """Both mode should inject memory and expose memory tools."""
         model = RecordingMockModel(context_size=100_000)
         fake = _FakeReMeApp(search_return=["auto-injected"])
-        mw = ReMeMiddleware(
+        mw = _mw(
             app=fake,
             mode="both",
         )

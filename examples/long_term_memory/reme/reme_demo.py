@@ -239,41 +239,30 @@ async def main() -> None:
         dimensions=1024,  # matches ReMe's default embedding dimension
     )
 
-    # ReMe's bundled ``default`` config searches keyword-only (its file
-    # store has ``embedding_store: ""``). For a long-term *memory*
-    # demo we want semantic recall — "plot monthly sales" should find a
-    # "prefers matplotlib / dark mode" card even without shared
-    # keywords — so we build the ReMe app from the default config with
-    # the vector store switched on, and hand it to the middleware via
-    # ``app=``. (The plain config path,
-    # ``ReMeMiddleware(workspace_dir=WORKSPACE_DIR, ...)``, works too but
-    # is keyword-only.)
-    from reme import ReMe  # pylint: disable=import-outside-toplevel
-    from reme.config import (  # pylint: disable=import-outside-toplevel
-        resolve_app_config,
-    )
-
-    app_config = resolve_app_config(
-        config="default",
-        workspace_dir=WORKSPACE_DIR,
-        enable_logo=False,
-        log_to_console=False,
-        # Enable vector search: wire the embedding store into the file
-        # store (default.yaml ships it disabled, `embedding_store: ""`).
-        components={"file_store": {"default": {"embedding_store": "default"}}},
-    )
-    app = ReMe(**app_config)
-
     # One middleware, shared across both sessions. ReMe is embedded
-    # in-process; the chat + embedding models are fixed here (they drive
-    # the embedded app's single LLM for auto_memory write-back and its
-    # vector search). Per-conversation state (session_id) is read live
-    # from each agent, never stored on the middleware — so sharing one
-    # instance across agents/sessions is safe.
+    # in-process and the middleware owns its lifecycle — it builds the
+    # reme.ReMe app lazily on first use and closes it on mw.close(). The
+    # chat + embedding models are fixed here (they drive the embedded
+    # app's single LLM for auto_memory write-back and its vector search).
+    # Per-conversation state (session_id) is read live from each agent,
+    # never stored on the middleware — so sharing one instance across
+    # agents/sessions is safe.
+    #
+    # ReMe's bundled ``default`` config searches keyword-only (its file
+    # store ships with ``embedding_store: ""``). For a long-term *memory*
+    # demo we want semantic recall — "plot monthly sales" should find a
+    # "prefers matplotlib / dark mode" card even without shared keywords —
+    # so we switch the vector store on via ``config_overrides``, which the
+    # middleware deep-merges into ReMe's config when it builds the app.
     mw = ReMeMiddleware(
-        app=app,
+        workspace_dir=WORKSPACE_DIR,
         chat_model=chat_model,
         embedding_model=embedding_model,
+        config_overrides={
+            "components": {
+                "file_store": {"default": {"embedding_store": "default"}},
+            },
+        },
         mode=MODE,
         top_k=5,
     )
@@ -320,15 +309,11 @@ async def main() -> None:
         reply_text = await _run_turn(agent, UserMsg("alice", user_msg_2))
         print(f"\n[assistant] {reply_text}")
     finally:
-        # This demo pre-builds the ReMe app (to switch vector search on),
-        # so the middleware does NOT own it — mw.close() only resets the
-        # middleware's own state and will not touch the app. Close the
-        # app we built ourselves so ReMe's background jobs / thread pool
-        # shut down cleanly. (Had we used the config path instead of
-        # app=, the middleware would own the app and mw.close() alone
-        # would suffice.)
+        # The middleware owns the embedded ReMe app it built, so a single
+        # close() tears it down — ReMe's background jobs / thread pool
+        # shut down cleanly. (AgentScope doesn't manage middleware
+        # lifecycle, so this must be explicit.)
         await mw.close()
-        await app.close()
 
 
 if __name__ == "__main__":
