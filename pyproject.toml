@@ -68,9 +68,11 @@ storage = [
     "redis",
 ]
 # ------------ Workspace -----------
+k8s = ["kubernetes-asyncio"]
 workspace = [
     "aiodocker",
     "e2b",
+    "agentscope[k8s]",
 ]
 # ------------ Tools ------------
 tools = [
