@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """Model service: builds a ChatModelBase from stored credential + config."""
+from typing import Type
+
 from fastapi import HTTPException, status
 
 from ..storage import StorageBase, ChatModelConfig
@@ -37,7 +39,8 @@ async def get_model(
         )
 
     credential = CredentialFactory.from_dict(credential_record.data)
-    model_cls = credential.get_chat_model_class()
+    classes = credential.get_chat_model_classes()
+    model_cls = _resolve_chat_class(classes, config.model, config.model_class)
     parameters = (
         model_cls.Parameters(**config.parameters)
         if config.parameters
@@ -48,3 +51,27 @@ async def get_model(
         model=config.model,
         parameters=parameters,
     )
+
+
+def _resolve_chat_class(
+    classes: list[Type[ChatModelBase]],
+    model: str,
+    model_class: str = "",
+) -> Type[ChatModelBase]:
+    """Pick the chat model class that should handle this request.
+
+    Resolution order:
+    1. If ``model_class`` is provided, match by the class ``type`` attribute.
+    2. Otherwise, find the class whose model cards list the given model name.
+    3. Fall back to the first class in the list.
+    """
+    if model_class:
+        for cls in classes:
+            if getattr(cls, "type", "") == model_class:
+                return cls
+
+    for cls in classes:
+        if any(card.name == model for card in cls.list_models()):
+            return cls
+
+    return classes[0]

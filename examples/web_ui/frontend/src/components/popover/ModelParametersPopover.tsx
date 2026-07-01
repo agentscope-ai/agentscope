@@ -242,7 +242,7 @@ export function ModelParametersPopover({
 
 	useEffect(() => {
 		setValues(selectedModel?.parameters ?? {});
-	}, [selectedModel?.model]);
+	}, [selectedModel?.model, selectedModel?.model_class]);
 
 	const handleChange = useCallback(
 		(key: string, value: unknown) => {
@@ -256,11 +256,17 @@ export function ModelParametersPopover({
 		[values, onChange],
 	);
 
-	const handleSelectFallback = (type: string, credentialId: string, model: string) => {
+	const handleSelectFallback = (
+		type: string,
+		credentialId: string,
+		model: string,
+		modelClass: string,
+	) => {
 		onFallbackChange({
 			type,
 			credential_id: credentialId,
 			model,
+			model_class: modelClass,
 			parameters: {},
 		});
 	};
@@ -282,7 +288,23 @@ export function ModelParametersPopover({
 						<span className="truncate">
 							{selectedFallbackModel
 								? t('model-parameters.fallbackLabelWithModel', {
-										model: selectedFallbackModel.model,
+										model: (() => {
+											const items = groups[selectedFallbackModel.type];
+											if (items) {
+												for (const { models } of items) {
+													const card = models.find(
+														(m) =>
+															m.name ===
+																selectedFallbackModel.model &&
+															(!selectedFallbackModel.model_class ||
+																m.model_class ===
+																	selectedFallbackModel.model_class),
+													);
+													if (card) return card.label;
+												}
+											}
+											return selectedFallbackModel.model;
+										})(),
 									})
 								: t('model-parameters.fallbackLabel')}
 						</span>
@@ -304,10 +326,13 @@ export function ModelParametersPopover({
 											const isSelected =
 												selectedFallbackModel?.credential_id ===
 													credential.id &&
-												selectedFallbackModel?.model === m.name;
+												selectedFallbackModel?.model === m.name &&
+												(!selectedFallbackModel?.model_class ||
+													selectedFallbackModel?.model_class ===
+														m.model_class);
 											return (
 												<DropdownMenuCheckboxItem
-													key={`${credential.id}-${m.name}`}
+													key={`${credential.id}-${m.model_class}:${m.name}`}
 													checked={isSelected}
 													onCheckedChange={(checked) => {
 														if (checked) {
@@ -315,6 +340,7 @@ export function ModelParametersPopover({
 																type,
 																credential.id,
 																m.name,
+																m.model_class,
 															);
 														} else {
 															onFallbackChange(null);

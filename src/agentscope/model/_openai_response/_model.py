@@ -79,6 +79,9 @@ class OpenAIResponseModel(ChatModelBase):
     type: Literal["openai_response"] = "openai_response"
     """The type of the chat model."""
 
+    label_suffix: str = "Responses API"
+    """Appended to model card labels to distinguish from Chat Completions."""
+
     def __init__(
         self,
         credential: OpenAICredential,

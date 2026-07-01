@@ -49,6 +49,13 @@ class OpenAICredential(CredentialBase):
         return OpenAIChatModel
 
     @classmethod
+    def get_chat_model_classes(cls) -> list[Type["ChatModelBase"]]:
+        """Return both OpenAI chat model classes."""
+        from ..model import OpenAIChatModel, OpenAIResponseModel
+
+        return [OpenAIChatModel, OpenAIResponseModel]
+
+    @classmethod
     def get_embedding_model_class(cls) -> Type["EmbeddingModelBase"]:
         """Return the OpenAIEmbeddingModel class."""
         from ..embedding import OpenAIEmbeddingModel
