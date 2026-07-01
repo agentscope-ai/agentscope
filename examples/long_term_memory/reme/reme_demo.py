@@ -65,13 +65,15 @@ from agentscope.tool import Toolkit
 
 MODE = "both"  # try "static_control" or "agent_control" too
 
-# ReMe writes its memory cards and indexes here. Defaults to a fresh
-# random temp dir so repeated runs never collide and nothing lands in
-# the repo; override with REME_WORKSPACE_DIR (e.g. ".reme") to keep the
-# cards around for inspection after a run.
-WORKSPACE_DIR = os.environ.get("REME_WORKSPACE_DIR") or tempfile.mkdtemp(
-    prefix="reme_demo_",
-)
+# ReMe writes its memory cards and indexes here. Defaults to a fresh,
+# empty random temp dir (created per run) so runs never collide and
+# nothing lands in the repo. Override with REME_WORKSPACE_DIR (e.g.
+# ".reme") to keep the cards around for inspection; a user-named dir is
+# reused as-is and only wiped when you also set REME_DEMO_RESET=1 — the
+# demo never silently deletes a directory you pointed it at (it could be
+# a real ReMe workspace, a project dir, ~/.reme, ...).
+_ENV_WORKSPACE = os.environ.get("REME_WORKSPACE_DIR")
+WORKSPACE_DIR = _ENV_WORKSPACE or tempfile.mkdtemp(prefix="reme_demo_")
 
 # Quiet ReMe's informational startup logs so the demo output stays
 # focused on the middleware contributions we print ourselves.
@@ -211,11 +213,20 @@ async def main() -> None:
     """Drive two cross-session agent turns and print middleware effects."""
     api_key = os.environ["DASHSCOPE_API_KEY"]
 
-    # Wipe ReMe's workspace so each demo run starts clean and
-    # reproducible (memory cards + indexes live under WORKSPACE_DIR).
-    print("=== resetting ReMe workspace ===")
-    print(f"  rm -rf {WORKSPACE_DIR}")
-    shutil.rmtree(WORKSPACE_DIR, ignore_errors=True)
+    # Start from a clean workspace so the demo is reproducible. The
+    # default temp dir is already fresh (mkdtemp just created it empty),
+    # so there is nothing to wipe. A user-provided REME_WORKSPACE_DIR is
+    # reused as-is and only reset when REME_DEMO_RESET=1 is set — we must
+    # never silently delete a directory the user named.
+    if _ENV_WORKSPACE and os.environ.get("REME_DEMO_RESET") == "1":
+        print("=== resetting ReMe workspace (REME_DEMO_RESET=1) ===")
+        print(f"  rm -rf {WORKSPACE_DIR}")
+        shutil.rmtree(WORKSPACE_DIR, ignore_errors=True)
+    elif _ENV_WORKSPACE:
+        print(f"=== reusing ReMe workspace {WORKSPACE_DIR} ===")
+        print("  (set REME_DEMO_RESET=1 to wipe it before this run)")
+    else:
+        print(f"=== fresh ReMe workspace {WORKSPACE_DIR} ===")
 
     chat_model = DashScopeChatModel(
         credential=DashScopeCredential(api_key=api_key),
@@ -309,9 +320,15 @@ async def main() -> None:
         reply_text = await _run_turn(agent, UserMsg("alice", user_msg_2))
         print(f"\n[assistant] {reply_text}")
     finally:
-        # The middleware owns the embedded ReMe app; close it for a
-        # clean teardown (AgentScope doesn't manage middleware lifecycle).
+        # This demo pre-builds the ReMe app (to switch vector search on),
+        # so the middleware does NOT own it — mw.close() only resets the
+        # middleware's own state and will not touch the app. Close the
+        # app we built ourselves so ReMe's background jobs / thread pool
+        # shut down cleanly. (Had we used the config path instead of
+        # app=, the middleware would own the app and mw.close() alone
+        # would suffice.)
         await mw.close()
+        await app.close()
 
 
 if __name__ == "__main__":
