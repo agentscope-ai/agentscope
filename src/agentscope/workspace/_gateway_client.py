@@ -271,10 +271,10 @@ class GatewayMCPClient(MCPClient):
     async def connect(self) -> None:
         """Register this MCP on the gateway via ``POST /mcps``.
 
-        Stateless MCPs are a no-op (the gateway invokes them on
-        demand). Stateful MCPs are registered and started inside the
-        gateway sandbox; this method blocks until the gateway has
-        confirmed the upstream connection.
+        All MCPs (stateless and stateful) must be registered so that
+        ``/mcps/{name}/tools/{tool}`` can locate the client. For
+        stateful MCPs the gateway additionally opens the upstream
+        session before responding.
 
         Raises:
             `RuntimeError`:
@@ -282,8 +282,6 @@ class GatewayMCPClient(MCPClient):
                 unreachable, or the gateway returns a 4xx/5xx
                 response.
         """
-        if not self.is_stateful:
-            return
         if self._is_connected:
             raise RuntimeError(
                 f"MCP {self.name!r} is already connected. "
@@ -307,8 +305,9 @@ class GatewayMCPClient(MCPClient):
         """Deregister this MCP from the gateway via
         ``DELETE /mcps/{name}``.
 
-        Stateless MCPs are a no-op. For stateful MCPs the gateway
-        closes the upstream session before responding.
+        All MCPs are deregistered from the gateway registry; the
+        gateway additionally closes the upstream session for stateful
+        clients before responding.
 
         Args:
             ignore_errors (`bool`, defaults to `True`):
@@ -319,8 +318,6 @@ class GatewayMCPClient(MCPClient):
                 :meth:`MCPClient.close` so callers can use the same
                 shutdown idiom regardless of transport.
         """
-        if not self.is_stateful:
-            return
         if not self._is_connected:
             if ignore_errors:
                 return
@@ -648,7 +645,7 @@ class GatewayClient:
                 starts with ``/``.
             body (`Any`, optional):
                 JSON-serializable request body. ``None`` (the default)
-                means nobody — typical for ``GET`` / ``DELETE``.
+                means no body — typical for ``GET`` / ``DELETE``.
 
         Returns:
             `tuple[int, bytes]`:

@@ -73,11 +73,22 @@ from ..skill import Skill
 from ..tool import BackendBase, ToolBase
 
 _EXTRACT_TAR_SHIM = (
-    "import tarfile,sys,os;"
-    "src,dst=sys.argv[1],sys.argv[2];"
-    "os.makedirs(dst,exist_ok=True);"
-    "tarfile.open(src).extractall(dst);"
-    "os.unlink(src)"
+    "import tarfile, sys, os\n"
+    "src, dst = sys.argv[1], sys.argv[2]\n"
+    "os.makedirs(dst, exist_ok=True)\n"
+    "dst_real = os.path.realpath(dst)\n"
+    "tf = tarfile.open(src)\n"
+    "try:\n"
+    "    members = tf.getmembers()\n"
+    "    for m in members:\n"
+    "        target = os.path.realpath(os.path.join(dst, m.name))\n"
+    "        if not (target == dst_real"
+    " or target.startswith(dst_real + os.sep)):\n"
+    "            raise Exception('unsafe tar member: ' + m.name)\n"
+    "    tf.extractall(dst, members=members)\n"
+    "finally:\n"
+    "    tf.close()\n"
+    "os.unlink(src)\n"
 )
 
 

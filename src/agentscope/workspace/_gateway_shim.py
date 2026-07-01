@@ -18,8 +18,9 @@ spawns a short Python script there via ``backend.exec_shell`` which
 makes the call against the gateway's loopback port using nothing but
 the standard library (``urllib.request``), serialises the response into
 a self-describing JSON envelope, and prints it to stdout. The host
-reads stdout back as an ``ExecResult`` and reconstructs status code,
-headers, and body bytes.
+reads stdout back as an ``ExecResult`` and reconstructs the status
+code and body bytes (response headers are not transmitted — callers
+consume JSON bodies directly).
 
 Why ``python3 -c`` (and not ``curl``)
 -------------------------------------

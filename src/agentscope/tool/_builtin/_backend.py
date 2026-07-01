@@ -174,6 +174,20 @@ class BackendBase(ABC):
         """
         return self._path_module.dirname(path)
 
+    def basename(self, path: str) -> str:
+        """Return the final component of ``path``.
+
+        Args:
+            path (`str`):
+                A path inside the backend's environment.
+
+        Returns:
+            `str`:
+                Everything after the last path separator. Empty string
+                if ``path`` ends with a separator.
+        """
+        return self._path_module.basename(path)
+
     def isabs(self, path: str) -> bool:
         """Return ``True`` if ``path`` is absolute in the backend.
 
