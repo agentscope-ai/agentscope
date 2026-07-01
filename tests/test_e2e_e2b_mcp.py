@@ -7,7 +7,33 @@ import os
 import unittest
 
 from agentscope.workspace import E2BWorkspace
-from agentscope.mcp import MCPClient, HttpMCPConfig
+from agentscope.mcp import MCPClient, StdioMCPConfig
+
+
+# ── minimal MCP stdio server (runs inside the sandbox) ─────────────
+
+_MINIMAL_MCP_SERVER = """\
+import json, sys
+
+def _send(data):
+    sys.stdout.write(json.dumps(data) + "\\n")
+    sys.stdout.flush()
+
+for line in sys.stdin:
+    req = json.loads(line)
+    mid = req.get("id")
+    method = req.get("method", "")
+    if method == "initialize":
+        _send({"jsonrpc": "2.0", "id": mid, "result": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "serverInfo": {"name": "test-mcp", "version": "0.1.0"},
+        }})
+    elif method == "notifications/initialized":
+        pass
+    elif method == "tools/list":
+        _send({"jsonrpc": "2.0", "id": mid, "result": {"tools": []}})
+"""
 
 _E2B_API_KEY = os.getenv("E2B_API_KEY", "")
 _SKIP_REASON = "E2B_API_KEY environment variable is not set"
@@ -17,11 +43,18 @@ _SKIP_REASON = "E2B_API_KEY environment variable is not set"
 class TestE2BPerAgentMCP(unittest.IsolatedAsyncioTestCase):
     """Per-agent MCP isolation tests for E2BWorkspace."""
 
-    def _make_mcp(self, name: str) -> MCPClient:
+    @staticmethod
+    def _make_mcp(name: str) -> MCPClient:
+        """Build a real MCP client backed by a minimal stdio MCP server
+        that runs inside the sandbox via ``python3 -c``.
+        """
         return MCPClient(
             name=name,
-            is_stateful=False,
-            mcp_config=HttpMCPConfig(url="http://127.0.0.1:1/mcp"),
+            is_stateful=True,
+            mcp_config=StdioMCPConfig(
+                command="python3",
+                args=["-c", _MINIMAL_MCP_SERVER],
+            ),
         )
 
     async def asyncSetUp(self) -> None:

@@ -126,13 +126,18 @@ class WorkspaceBase:
     skill_paths: list[str]
     """Local skill directories to seed on first :meth:`initialize`."""
 
-    _mcps: list[MCPClient]
-    """Currently registered MCP clients (in-memory authoritative copy).
+    _mcps: dict[str, list[MCPClient]]
+    """Per-agent MCP clients keyed by ``agent_id`` (in-memory
+    authoritative copy).
 
-    For sandbox-gateway subclasses this list mirrors the spec the
-    gateway was registered with (live handles hang off
+    Each agent gets independent :class:`MCPClient` instances so that
+    stateful MCP sessions (e.g. browser-user cookies, login state)
+    do not interfere across agents.
+
+    For sandbox-gateway subclasses this dict mirrors the per-agent
+    specs the gateway was started with (live handles hang off
     :class:`SandboxedWorkspaceBase._gateway_clients`); for
-    :class:`LocalWorkspace` it *is* the live handle list.
+    :class:`LocalWorkspace` it *is* the live handle dict.
     """
 
     _mcp_lock: asyncio.Lock
@@ -183,7 +188,7 @@ class WorkspaceBase:
         self.default_mcps = list(default_mcps or [])
         self.skill_paths = list(skill_paths or [])
 
-        self._mcps = []
+        self._mcps = {}
         self._mcp_lock = asyncio.Lock()
         self._skill_lock = asyncio.Lock()
 
@@ -329,30 +334,81 @@ class WorkspaceBase:
             Write(backend=backend),
         ]
 
-    async def list_mcps(self) -> list[MCPClient]:
-        """Return the currently registered MCP clients."""
-        return list(self._mcps)
+    async def list_mcps(self, agent_id: str) -> list[MCPClient]:
+        """Return the MCP clients registered for the given agent.
+
+        On first access for an ``agent_id`` that has no cached clients
+        (e.g. a freshly spawned worker), new :class:`MCPClient`
+        instances are built from the ``"_default"`` config specs
+        (deep-copied via ``model_dump`` / ``model_validate``) and
+        connected, so each agent gets its own isolated session.
+
+        Subclasses that route through a gateway (e.g.
+        :class:`SandboxedWorkspaceBase`) override this to return
+        gateway-wired handles instead.
+
+        Args:
+            agent_id (`str`):
+                The agent whose MCP clients to return. Each agent
+                gets its own client instances so that stateful MCP
+                sessions are isolated.
+        """
+        if agent_id not in self._mcps:
+            async with self._mcp_lock:
+                if agent_id not in self._mcps:
+                    # Deep-copy defaults for this agent so each agent
+                    # gets independent client instances.
+                    new_clients: list[MCPClient] = []
+                    for default_cfg in self._mcps.get(
+                        "_default",
+                        self.default_mcps,
+                    ):
+                        cfg_copy = MCPClient.model_validate(
+                            default_cfg.model_dump(mode="json"),
+                        )
+                        if cfg_copy.is_stateful and not cfg_copy.is_connected:
+                            try:
+                                await cfg_copy.connect()
+                            except Exception as e:
+                                logger.warning(
+                                    "Failed to connect MCP '%s' "
+                                    "for agent %r: %s, skipping.",
+                                    cfg_copy.name,
+                                    agent_id,
+                                    e,
+                                )
+                                continue
+                        new_clients.append(cfg_copy)
+                    self._mcps[agent_id] = new_clients
+                    if new_clients:
+                        await self._save_mcp_file()
+        return list(self._mcps.get(agent_id, []))
 
     # ── for User: dynamic MCP management ───────────────────────────
 
     @abstractmethod
-    async def add_mcp(self, mcp_client: MCPClient) -> None:
-        """Register a new MCP server.
+    async def add_mcp(self, agent_id: str, mcp_client: MCPClient) -> None:
+        """Register a new MCP server for an agent.
 
         Args:
+            agent_id (`str`):
+                The agent this MCP client belongs to.
             mcp_client (`MCPClient`):
                 The MCP to register.
 
         Raises:
             `ValueError`:
-                If an MCP with the same name already exists.
+                If an MCP with the same name already exists for
+                this agent.
         """
 
     @abstractmethod
-    async def remove_mcp(self, name: str) -> None:
-        """Deregister an MCP server by name.
+    async def remove_mcp(self, agent_id: str, name: str) -> None:
+        """Deregister an MCP server by name for an agent.
 
         Args:
+            agent_id (`str`):
+                The agent whose MCP client to remove.
             name (`str`):
                 MCP name to remove. Unknown names log a warning and
                 return silently.
@@ -363,9 +419,10 @@ class WorkspaceBase:
     async def _save_mcp_file(self) -> None:
         """Persist ``self._mcps`` to ``${workdir}/.mcp`` via backend.
 
+        Writes a per-agent JSON object ``{agent_id: [spec, ...], ...}``.
         No-op when :attr:`is_persistent` is ``False`` (e.g. ephemeral
         Docker container without a host bind-mount). Failures are
-        logged but not raised — the in-memory MCP list remains the
+        logged but not raised — the in-memory ``_mcps`` dict remains the
         authoritative copy regardless of whether disk persistence
         succeeded.
 
@@ -377,7 +434,10 @@ class WorkspaceBase:
         if backend is None:
             return
         payload = json.dumps(
-            [m.model_dump(mode="json") for m in self._mcps],
+            {
+                aid: [m.model_dump(mode="json") for m in mcps]
+                for aid, mcps in self._mcps.items()
+            },
             indent=2,
             ensure_ascii=False,
         ).encode("utf-8")
@@ -390,21 +450,27 @@ class WorkspaceBase:
                 e,
             )
 
-    async def _restore_or_seed_mcps(self) -> list[MCPClient]:
-        """Read ``${workdir}/.mcp`` if present, else return ``default_mcps``.
+    async def _restore_or_seed_mcps(
+        self,
+    ) -> dict[str, list[MCPClient]]:
+        """Read ``${workdir}/.mcp`` if present, else seed from defaults.
+
+        Supports both old flat-list and new per-agent dict formats;
+        old-format files are auto-migrated under ``"_default"``.
 
         Decoding / validation failures are downgraded to warnings and
-        treated as a missing file — :attr:`default_mcps` is returned so
-        a corrupted persistence file cannot block startup.
+        treated as a missing file — ``default_mcps`` are returned under
+        ``"_default"`` so a corrupted persistence file cannot block
+        startup.
         """
         if not self.is_persistent:
-            return list(self.default_mcps)
+            return {"_default": list(self.default_mcps)}
         backend = self._backend
         if backend is None:
-            return list(self.default_mcps)
+            return {"_default": list(self.default_mcps)}
         try:
             if not await backend.file_exists(self._mcp_file):
-                return list(self.default_mcps)
+                return {"_default": list(self.default_mcps)}
             raw = await backend.read_file(self._mcp_file)
         except (FileNotFoundError, OSError) as e:
             logger.warning(
@@ -413,7 +479,7 @@ class WorkspaceBase:
                 self._mcp_file,
                 e,
             )
-            return list(self.default_mcps)
+            return {"_default": list(self.default_mcps)}
         try:
             data = json.loads(raw.decode("utf-8"))
         except Exception as e:
@@ -423,19 +489,44 @@ class WorkspaceBase:
                 self._mcp_file,
                 e,
             )
-            return list(self.default_mcps)
-        result: list[MCPClient] = []
-        for m in data:
-            try:
-                result.append(MCPClient.model_validate(m))
-            except Exception as e:
-                name = m.get("name", "?") if isinstance(m, dict) else "?"
-                logger.warning(
-                    "Skipping invalid MCP entry %r: %s",
-                    name,
-                    e,
-                )
-        return result
+            return {"_default": list(self.default_mcps)}
+
+        def _parse_configs(
+            cfgs: list[dict],
+            label: str,
+        ) -> list[MCPClient]:
+            """Parse a list of serialised MCP configs, skip failures."""
+            parsed: list[MCPClient] = []
+            for m in cfgs:
+                try:
+                    parsed.append(MCPClient.model_validate(m))
+                except Exception as e:
+                    name = m.get("name", "?") if isinstance(m, dict) else "?"
+                    logger.warning(
+                        "Skipping invalid MCP entry %r (agent %s): %s",
+                        name,
+                        label,
+                        e,
+                    )
+            return parsed
+
+        if isinstance(data, list):
+            # Old flat format → auto-migrate
+            logger.info(
+                "Migrating .mcp from flat list to per-agent format "
+                "under agent '_default'.",
+            )
+            return {
+                "_default": _parse_configs(data, "_default"),
+            }
+        # New per-agent format: {"agent_id": [configs, ...], ...}
+        result: dict[str, list[MCPClient]] = {}
+        for agent_id, cfgs in data.items():
+            if isinstance(cfgs, list):
+                parsed = _parse_configs(cfgs, agent_id)
+                if parsed:
+                    result[agent_id] = parsed
+        return result if result else {"_default": list(self.default_mcps)}
 
     # ── for Agent: offload (shared) ────────────────────────────────
 

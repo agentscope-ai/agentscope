@@ -89,6 +89,7 @@ class GatewayMCPTool(ToolBase):
         mcp_name: str,
         tool: mcp.types.Tool,
         gateway: "GatewayClient",
+        agent_id: str = "",
     ) -> None:
         """Build a gateway-backed MCP tool.
 
@@ -114,8 +115,12 @@ class GatewayMCPTool(ToolBase):
                 backend handle, gateway port, and bearer token. All
                 tool invocations are dispatched through its
                 :meth:`GatewayClient.exec_request`.
+            agent_id (`str`, defaults to ``""``):
+                The agent this tool belongs to. Appended as a query
+                param on tool-call requests.
         """
         self.mcp_name = mcp_name
+        self._agent_id = agent_id
         self.name = f"mcp__{mcp_name}__{tool.name}"
         self.description = tool.description or ""
 
@@ -180,7 +185,8 @@ class GatewayMCPTool(ToolBase):
         """
         status, body = await self._gateway.exec_request(
             "POST",
-            f"/mcps/{self.mcp_name}/tools/{self._tool.name}",
+            f"/mcps/{self.mcp_name}/tools/{self._tool.name}"
+            f"?agent_id={self._agent_id}",
             body={"arguments": kwargs},
         )
         if status >= 400:
@@ -216,6 +222,7 @@ class GatewayMCPClient(MCPClient):
     """
 
     _gateway: "GatewayClient | None" = PrivateAttr(default=None)
+    _agent_id: str = PrivateAttr(default="")
 
     def model_post_init(self, __context: Any) -> None:
         """Skip the parent's stdio/HTTP client preparation.
@@ -235,6 +242,7 @@ class GatewayMCPClient(MCPClient):
         self,
         gateway: "GatewayClient",
         *,
+        agent_id: str = "",
         connected: bool = False,
     ) -> None:
         """Wire this client to a gateway facade.
@@ -256,6 +264,11 @@ class GatewayMCPClient(MCPClient):
                 sandbox backend handle, gateway port, and bearer
                 token. All subsequent calls are dispatched through its
                 :meth:`GatewayClient.exec_request`.
+            agent_id (`str`, defaults to ``""``):
+                The agent this MCP client belongs to. Appended as a
+                query param on every ``connect`` / ``close`` /
+                tool-call request so the gateway can isolate per-agent
+                state.
             connected (`bool`, defaults to `False`):
                 When ``True``, mark this client as already connected
                 (i.e. the gateway is already maintaining the upstream
@@ -265,6 +278,7 @@ class GatewayMCPClient(MCPClient):
                 :meth:`connect` themselves.
         """
         self._gateway = gateway
+        self._agent_id = agent_id
         if connected:
             self._is_connected = True
 
@@ -291,7 +305,7 @@ class GatewayMCPClient(MCPClient):
         body = self.model_dump(mode="json")
         status, resp_body = await self._gateway.exec_request(
             "POST",
-            "/mcps",
+            f"/mcps?agent_id={self._agent_id}",
             body=body,
         )
         if status >= 400:
@@ -328,7 +342,7 @@ class GatewayMCPClient(MCPClient):
         try:
             status, resp_body = await self._gateway.exec_request(
                 "DELETE",
-                f"/mcps/{self.name}",
+                f"/mcps/{self.name}?agent_id={self._agent_id}",
             )
             if status >= 400 and not ignore_errors:
                 raise RuntimeError(
@@ -365,7 +379,7 @@ class GatewayMCPClient(MCPClient):
         assert self._gateway is not None
         status, body = await self._gateway.exec_request(
             "GET",
-            f"/mcps/{self.name}/tools",
+            f"/mcps/{self.name}/tools?agent_id={self._agent_id}",
         )
         if status >= 400:
             raise RuntimeError(
@@ -445,6 +459,7 @@ class GatewayMCPClient(MCPClient):
             mcp_name=self.name,
             tool=tool,
             gateway=self._gateway,
+            agent_id=self._agent_id,
         )
 
 
@@ -529,8 +544,8 @@ class GatewayClient:
             return False
         return status == 200
 
-    async def list_mcps(self) -> list[GatewayMCPClient]:
-        """Fetch every MCP currently registered on the gateway.
+    async def list_mcps(self, agent_id: str) -> list[GatewayMCPClient]:
+        """Fetch MCPs registered on the gateway for a given agent.
 
         The returned clients are marked as already connected (via
         :meth:`GatewayMCPClient.attach`'s ``connected=True``) because
@@ -538,26 +553,35 @@ class GatewayClient:
         the host should not invoke :meth:`GatewayMCPClient.connect`
         again.
 
+        Args:
+            agent_id (`str`):
+                The agent whose MCP clients to fetch.
+
         Returns:
             `list[GatewayMCPClient]`:
-                One transport-wired client per registered MCP. The
-                workspace's :meth:`list_mcps` implementation surfaces
-                this list straight to its consumer.
+                One transport-wired client per registered MCP for
+                the given agent.
 
         Raises:
             `RuntimeError`:
                 If the gateway returns a non-2xx response.
         """
-        status, body = await self.exec_request("GET", "/mcps")
+        status, body = await self.exec_request(
+            "GET",
+            f"/mcps?agent_id={agent_id}",
+        )
         if status >= 400:
             raise RuntimeError(
                 f"gateway failed to list MCPs: {_safe_detail(status, body)}",
             )
         specs = json.loads(body)
-        return [self.make_client(spec, connected=True) for spec in specs]
+        return [
+            self.make_client(agent_id, spec, connected=True) for spec in specs
+        ]
 
     def make_client(
         self,
+        agent_id: str,
         spec: dict[str, Any],
         *,
         connected: bool = False,
@@ -592,7 +616,7 @@ class GatewayClient:
                 ``await client.connect()`` unless ``connected=True``.
         """
         client = GatewayMCPClient.model_validate(spec)
-        client.attach(self, connected=connected)
+        client.attach(self, agent_id=agent_id, connected=connected)
         return client
 
     async def aclose(self) -> None:
