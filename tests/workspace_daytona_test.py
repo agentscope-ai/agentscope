@@ -1179,13 +1179,19 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
         await self.workspace.remove_skill("demo-skill")
         self.assertEqual(await self.workspace.list_skills(), [])
 
-    async def test_add_skill_rejects_invalid_and_duplicate_skill(self) -> None:
-        """Skill upload validates local input and duplicate remote dirs."""
+    async def test_add_skill_rejects_invalid_skill(self) -> None:
+        """Skill upload validates local input before sandbox work."""
         with self.assertRaisesRegex(ValueError, "SKILL.md not found"):
             await self.workspace.add_skill(
                 os.path.join(self.temp_dir.name, "missing-skill"),
             )
 
+    @unittest.skipIf(
+        os.name == "nt",
+        "host-backed Daytona fake relies on POSIX sandbox commands",
+    )
+    async def test_add_skill_rejects_duplicate_skill(self) -> None:
+        """Skill upload rejects duplicate remote dirs."""
         skill_dir = os.path.join(self.temp_dir.name, "dupe-skill")
         os.makedirs(skill_dir)
         with open(
