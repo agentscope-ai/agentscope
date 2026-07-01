@@ -13,6 +13,8 @@ Three concrete implementations:
 - :class:`agentscope.workspace.LocalWorkspace` — local filesystem.
 - :class:`agentscope.workspace.DockerWorkspace` — Docker container.
 - :class:`agentscope.workspace.E2BWorkspace` — E2B cloud sandbox.
+- :class:`agentscope.workspace.OpenSandboxWorkspace` — OpenSandbox
+  remote sandbox.
 
 Consumers:
 

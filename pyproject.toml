@@ -71,6 +71,7 @@ storage = [
 workspace = [
     "aiodocker",
     "e2b",
+    "opensandbox",
 ]
 # ------------ Tools ------------
 tools = [
