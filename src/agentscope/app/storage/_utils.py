@@ -94,5 +94,14 @@ async def _ensure_team_members(
         )
 
     team.data.members = migrated
+    # Sync the legacy list to match. Dropping entries with no surviving
+    # session from ``members`` without also removing them from
+    # ``member_ids`` would leave the two disagreeing, and would cause
+    # this migration to re-run on every future read whenever the
+    # migrated result is empty (empty ``members`` fails the fast-path
+    # truthiness check, so we would fall through here again). Writing
+    # ``member_ids`` to match ``migrated`` keeps the record consistent
+    # and terminates the migration.
+    team.data.member_ids = [m.agent_id for m in migrated]
     await storage.upsert_team(user_id, team)
     return migrated

@@ -39,7 +39,8 @@ const IDENTITY_I18N = 'identity';
 
 const toKebab = (s: string) => s.replace(/_/g, '-');
 
-/** Split the flat `AgentData` schema into the three sections the form renders. */
+/** Split the flat `AgentData` schema into the sections the form renders
+ * (currently four: `identity` + one per `NESTED_SECTIONS` entry). */
 function sliceSchema(root: JSONSchema): Record<AgentSection, JSONSchema> {
 	const props = root.properties ?? {};
 	const nestedKeys = new Set(NESTED_SECTIONS.map((s) => s.key));

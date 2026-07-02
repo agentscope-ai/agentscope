@@ -8,13 +8,12 @@ redeclare the value.
 """
 
 HANDLE_LEN: int = 8
-"""Length of the ``agent_id`` prefix used to disambiguate invited
-members in the ``"<name>@<handle>"`` display string.
-
-Must be the same value at every producer (``AgentInvite``, which
-builds the enum and the display string) and every consumer
-(``TeamSay``, which parses the display string back into a routing
-key). Widening this in the future is a coordinated change — leaders
-that already routed via the old length would target the wrong member
-otherwise.
-"""
+# Length of the ``agent_id`` prefix used to disambiguate invited
+# members in the ``"<name>@<handle>"`` display string.
+#
+# Must be the same value at every producer (``AgentInvite``, which
+# builds the enum and the display string) and every consumer
+# (``TeamSay``, which parses the display string back into a routing
+# key). Widening this in the future is a coordinated change — leaders
+# that already routed via the old length would target the wrong member
+# otherwise.

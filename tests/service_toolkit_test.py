@@ -31,6 +31,8 @@ from agentscope.app.storage import (
     ChatModelConfig,
     SessionConfig,
     SessionRecord,
+    TeamData,
+    TeamRecord,
 )
 from agentscope.tool import ToolBase
 
@@ -86,6 +88,7 @@ def _make_session(
     user_id: str,
     agent_id: str,
     with_model: bool,
+    team_id: str | None = None,
 ) -> SessionRecord:
     """Build a minimal :class:`SessionRecord`, optionally with a chat
     model config."""
@@ -102,12 +105,47 @@ def _make_session(
             else None
         ),
     )
-    return SessionRecord(user_id=user_id, agent_id=agent_id, config=cfg)
+    return SessionRecord(
+        user_id=user_id,
+        agent_id=agent_id,
+        config=cfg,
+        team_id=team_id,
+    )
 
 
 class _NoOpStorage:
     """Storage placeholder. ``get_toolkit`` itself does not call any
-    storage method — the team tools bind a reference for later use."""
+    storage method — the team tools bind a reference for later use.
+
+    Exceptions: since :class:`AgentInvite` landed, ``get_toolkit`` calls
+    ``list_agents(user_id)`` at assembly time to build the invitable
+    pool. Return an empty list — the toolkit tests care about which
+    team tools are attached, not about the pool contents; the non-empty
+    case is covered by the ``AgentInvite`` tests in
+    ``service_team_tools_test.py``. Additionally, when the session has
+    a ``team_id`` set, ``get_toolkit`` calls ``get_team`` to decide
+    leader-vs-worker; the ``team_id_map`` constructor arg lets a test
+    inject a lookup so the worker branch can be exercised.
+    """
+
+    def __init__(
+        self,
+        team_id_map: dict[str, TeamRecord] | None = None,
+    ) -> None:
+        """Initialize the storage placeholder."""
+        self._teams = team_id_map or {}
+
+    async def list_agents(self, _user_id: str) -> list:
+        """List agents for a team."""
+        return []
+
+    async def get_team(
+        self,
+        _user_id: str,
+        team_id: str,
+    ) -> TeamRecord | None:
+        """Return the team record for ``team_id``."""
+        return self._teams.get(team_id)
 
 
 def _tool_names(toolkit: Any) -> list[str]:
@@ -207,19 +245,33 @@ class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
 
 
 class TestGetToolkitWorkerVariant(IsolatedAsyncioTestCase):
-    """Worker agent (``source="team"``) only gets ``TeamSay``."""
+    """A session whose team role is worker only gets ``TeamSay``.
+
+    The worker/leader distinction is now session-level: a session with
+    ``team_id`` set and ``team.session_id != session.id`` is a worker
+    regardless of the agent record's ``source`` (an ``AgentInvite``
+    borrowed session runs on ``source='user'`` but is still a worker)."""
 
     async def test_worker_only_gets_team_say(self) -> None:
-        """A worker agent (``source="team"``) receives only ``TeamSay``
-        from the team toolset."""
+        """A worker session receives only ``TeamSay`` from the team
+        toolset."""
         agent = _make_agent(source="team", name="worker")
         session = _make_session(
             user_id="u",
             agent_id=agent.id,
             with_model=True,
+            team_id="t1",
+        )
+        # Team exists and its leader session is NOT this one → worker.
+        team = TeamRecord(
+            user_id="u",
+            session_id="leader-sid",
+            data=TeamData(name="team", description="d"),
         )
         toolkit = await get_toolkit(
-            storage=_NoOpStorage(),  # type: ignore[arg-type]
+            storage=_NoOpStorage(
+                team_id_map={"t1": team},
+            ),  # type: ignore[arg-type]
             workspace=_FakeWorkspace(),  # type: ignore[arg-type]
             scheduler_manager=SchedulerManager(
                 storage=_NoOpStorage(),  # type: ignore[arg-type]
@@ -238,7 +290,12 @@ class TestGetToolkitWorkerVariant(IsolatedAsyncioTestCase):
         names = set(_tool_names(toolkit))
         # Only TeamSay from the team toolset.
         self.assertIn("TeamSay", names)
-        for missing in ("TeamCreate", "AgentCreate", "TeamDelete"):
+        for missing in (
+            "TeamCreate",
+            "AgentCreate",
+            "TeamDelete",
+            "AgentInvite",
+        ):
             self.assertNotIn(missing, names)
 
 

@@ -420,7 +420,13 @@ class AgentInvite(_TeamToolBase):
 
             hint = HintBlock(
                 hint=(
-                    f"<system-reminder>You're now invited into a team named '{team.data.name}' led by an agent named '{leader_name}' in this session. All team members can **ONLY** communicate through the `TeamSay` tool. Once you finished the given tasks, or want to communicate with the leader or team members, use `TeamSay`.</system-reminder>"
+                    "<system-reminder>You're now invited into a team named "
+                    f"'{team.data.name}' led by an agent named "
+                    f"'{leader_name}' in this session. All team members "
+                    f"can **ONLY** communicate through the `TeamSay` tool. "
+                    f"Once you finished the given tasks, or want to "
+                    f"communicate with the leader or team members, "
+                    f"use `TeamSay`.</system-reminder>\n"
                     f'<team-message from="{leader_name}">\n'
                     f"{prompt}\n"
                     f"</team-message>"
@@ -467,14 +473,13 @@ def _resolve_target(
 ) -> tuple["AgentRecord | None", str | None]:
     """Parse a ``"<name>@<handle>"`` string and look up the pool entry.
 
-    Combines what used to be a two-step parse + lookup into one call,
-    so ``__call__`` sees a single ``(record, err)`` protocol instead of
-    threading a bare handle through an intermediate variable — that
-    intermediate variable was ``str | None``, which mypy refused to
-    narrow across the error branch. Also collapses the two failure
-    modes (no ``@`` / empty handle / unknown handle) into one return
-    point, keeping ``__call__``'s branch count under the
-    ``too-many-return-statements`` threshold.
+    Matches on **both** the name part and the handle so that two
+    invitable agents sharing an 8-char UUID4 prefix are still
+    disambiguated by the LLM-supplied name. Falls back to a
+    handle-only lookup when exactly one pool entry matches the handle,
+    which keeps the common single-agent case working. If two or more
+    entries share the handle AND the name does not narrow the match,
+    an ``ambiguous`` error is returned so the caller can retry.
 
     Returns ``(record, None)`` on success or ``(None, error_message)``
     on any parse or resolution failure.
@@ -484,15 +489,45 @@ def _resolve_target(
             f"AgentInvite: malformed target {target!r} — expected "
             f'"<name>@<handle>", got no ``@`` separator.'
         )
-    handle = target.rsplit("@", 1)[1].strip()
+    name_part, handle = target.rsplit("@", 1)
+    name_part = name_part.strip()
+    handle = handle.strip()
     if not handle:
         return None, (
             f"AgentInvite: malformed target {target!r} — empty handle "
             f"after ``@``."
         )
-    for agent_id, record in pool_by_id.items():
-        if _display_handle(agent_id) == handle:
-            return record, None
+    handle_matches = [
+        record
+        for agent_id, record in pool_by_id.items()
+        if _display_handle(agent_id) == handle
+    ]
+    # Preferred: unique (name, handle) match. Guards against the rare
+    # 8-char-prefix collision on distinct agents with distinct names.
+    named_matches = [r for r in handle_matches if r.data.name == name_part]
+    if len(named_matches) == 1:
+        return named_matches[0], None
+    if len(named_matches) > 1:
+        # Same name AND same handle prefix on multiple pool entries —
+        # the display strings are indistinguishable, so no client
+        # input could disambiguate. Surface the ids so the caller can
+        # see what collided.
+        ids = sorted(r.id for r in named_matches)
+        return None, (
+            f"AgentInvite: target {target!r} is ambiguous — multiple "
+            f"invitable agents share this display string: {ids}."
+        )
+    # Fallback: no name match, but exactly one handle match — accept it.
+    if len(handle_matches) == 1:
+        return handle_matches[0], None
+    if len(handle_matches) > 1:
+        colliding = sorted(
+            _display_name(r.data.name, r.id) for r in handle_matches
+        )
+        return None, (
+            f"AgentInvite: handle {handle!r} matches multiple invitable "
+            f"agents: {colliding}. Retry with the exact display string."
+        )
     available = sorted(
         _display_name(a.data.name, a.id) for a in pool_by_id.values()
     )

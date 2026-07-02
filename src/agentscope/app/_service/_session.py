@@ -299,12 +299,13 @@ class SessionService:
         such a borrowed session exists would leave a stale
         :class:`TeamMember` entry behind, and — worse — trigger the
         storage cascade in that team's next ``delete_team``, which
-        iterates ``member_ids`` and would try to re-delete this
-        already-gone agent. So before deleting each session, this method
-        extracts the corresponding entry from the borrowing team's
-        roster (matched by ``session_id``, not ``agent_id``, so a leader
-        session that happens to share the agent id — impossible today but
-        cheap to be careful about — is not touched).
+        iterates the team roster (via ``_ensure_team_members``) and
+        would try to re-delete this already-gone agent. So before
+        deleting each session, this method extracts the corresponding
+        entry from the borrowing team's roster (matched by
+        ``session_id``, not ``agent_id``, so a leader session that
+        happens to share the agent id — impossible today but cheap to
+        be careful about — is not touched).
 
         Args:
             user_id (`str`): The owner user id.

@@ -1295,7 +1295,18 @@ class TestAgentInviteSuccess(_AgentInviteTestBase):
         )
         target = f"Monday@{self.monday_agent.id[:8]}"
         chunk = await tool(target=target, prompt="please look up X")
-        self.assertEqual(chunk.state.value, "running")
+        self.assertDictEqual(
+            chunk.model_dump(),
+            {
+                "content": [
+                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                ],
+                "state": "running",
+                "is_last": True,
+                "metadata": {},
+                "id": AnyString(),
+            },
+        )
 
         # No new AgentRecord — the invited agent's id is reused.
         agents = await self.storage.list_agents(self.user_id)
@@ -1350,6 +1361,16 @@ class TestAgentInviteSuccess(_AgentInviteTestBase):
 class TestAgentInviteRejections(_AgentInviteTestBase):
     """``AgentInvite`` rejects the obvious bad inputs / states."""
 
+    _EXPECTED_ERROR_CHUNK = {
+        "content": [
+            {"type": "text", "text": AnyString(), "id": AnyString()},
+        ],
+        "state": "error",
+        "is_last": True,
+        "metadata": {},
+        "id": AnyString(),
+    }
+
     def _tool(self, pool: list | None = None) -> AgentInvite:
         """Build an :class:`AgentInvite` bound to the leader session."""
         return AgentInvite(
@@ -1364,7 +1385,7 @@ class TestAgentInviteRejections(_AgentInviteTestBase):
     async def test_rejects_malformed_target(self) -> None:
         """A ``target`` without an ``@`` separator is rejected."""
         chunk = await self._tool()(target="just-a-name", prompt="hi")
-        self.assertEqual(chunk.state.value, "error")
+        self.assertDictEqual(chunk.model_dump(), self._EXPECTED_ERROR_CHUNK)
 
     async def test_rejects_unknown_handle(self) -> None:
         """A syntactically-valid ``target`` whose handle prefix does
@@ -1373,7 +1394,7 @@ class TestAgentInviteRejections(_AgentInviteTestBase):
             target="Monday@deadbeef",
             prompt="hi",
         )
-        self.assertEqual(chunk.state.value, "error")
+        self.assertDictEqual(chunk.model_dump(), self._EXPECTED_ERROR_CHUNK)
 
     async def test_rejects_when_no_longer_invitable(self) -> None:
         """Snapshot said invitable but fresh read shows the toggle off."""
@@ -1387,7 +1408,7 @@ class TestAgentInviteRejections(_AgentInviteTestBase):
             target=f"Monday@{stale.id[:8]}",
             prompt="hi",
         )
-        self.assertEqual(chunk.state.value, "error")
+        self.assertDictEqual(chunk.model_dump(), self._EXPECTED_ERROR_CHUNK)
 
     async def test_rejects_when_not_leader(self) -> None:
         """A session that has no team can't invite."""
@@ -1408,7 +1429,7 @@ class TestAgentInviteRejections(_AgentInviteTestBase):
             target=f"Monday@{self.monday_agent.id[:8]}",
             prompt="hi",
         )
-        self.assertEqual(chunk.state.value, "error")
+        self.assertDictEqual(chunk.model_dump(), self._EXPECTED_ERROR_CHUNK)
 
     async def test_rejects_duplicate_borrow(self) -> None:
         """One team, one borrow per agent."""
@@ -1421,7 +1442,7 @@ class TestAgentInviteRejections(_AgentInviteTestBase):
             target=f"Monday@{self.monday_agent.id[:8]}",
             prompt="task 2",
         )
-        self.assertEqual(chunk.state.value, "error")
+        self.assertDictEqual(chunk.model_dump(), self._EXPECTED_ERROR_CHUNK)
 
 
 class TestTeamSayInvitedRouting(_AgentInviteTestBase):
