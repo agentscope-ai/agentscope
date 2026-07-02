@@ -4,6 +4,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Protocol
 
 from pydantic import BaseModel, Field
+from pydantic.json_schema import SkipJsonSchema
 
 from ..agent import ContextConfig, ReActConfig
 from ..event import AgentEvent
@@ -94,8 +95,8 @@ class SubAgentTemplate(BaseModel):
     per-instance identifier the leader assigns to each worker (used for
     ``TeamSay(to=name)``).
 
-    All fields are pure data (no callables), so the template is fully
-    serializable for future config-driven startup.
+    ``extra_tools_factory`` is intentionally excluded from serialization;
+    all other fields are pure data for future config-driven startup.
     """
 
     type: str = Field(
@@ -185,5 +186,14 @@ class SubAgentTemplate(BaseModel):
         description=(
             "Pre-defined task context for the sub-agent, allowing "
             "the template to seed an initial workflow."
+        ),
+    )
+
+    extra_tools_factory: SkipJsonSchema[AgentToolFactory | None] = Field(
+        default=None,
+        exclude=True,
+        description=(
+            "Optional async factory for tools that should be attached "
+            "only to workers spawned from this template."
         ),
     )

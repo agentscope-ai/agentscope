@@ -787,6 +787,7 @@ class TestAgentCreateTemplates(_TeamToolsTestBase):
             self.user_id,
             team.data.member_ids[0],
         )
+        self.assertEqual(worker_agent.data.subagent_type, "explorer")
         self.assertIn("an explorer in team", worker_agent.data.system_prompt)
         self.assertNotIn(
             "You communicate with the team leader",
