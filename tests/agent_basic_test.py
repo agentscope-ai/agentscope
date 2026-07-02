@@ -6,6 +6,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from utils import AnyString, MockModel
 
 from agentscope.agent import Agent
+from agentscope.middleware import MiddlewareBase
 from agentscope.model import ChatResponse
 from agentscope.tool import (
     ToolBase,
@@ -17,7 +18,14 @@ from agentscope.permission import (
     PermissionBehavior,
     PermissionContext,
 )
-from agentscope.message import TextBlock, ToolCallBlock, UserMsg
+from agentscope.message import (
+    TextBlock,
+    ToolCallBlock,
+    ToolCallState,
+    ToolResultBlock,
+    ToolResultState,
+    UserMsg,
+)
 
 
 class MockSequentialTool(ToolBase):
@@ -92,6 +100,20 @@ class MockConcurrentTool(ToolBase):
         return ToolChunk(
             content=[TextBlock(text=f"Concurrent result: {input}")],
         )
+
+
+class FailingActingMiddleware(MiddlewareBase):
+    """Middleware that simulates a runtime failure during tool execution."""
+
+    async def on_acting(
+        self,
+        agent: Agent,
+        input_kwargs: dict,
+        next_handler: Any,
+    ) -> Any:
+        """Raise before the underlying tool can return a result."""
+        raise RuntimeError("upstream MCP returned HTTP 401")
+        yield  # pylint: disable=unreachable
 
 
 class AgentBasicTest(IsolatedAsyncioTestCase):
@@ -823,6 +845,75 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
         expected_context = [{**msg_base, **_} for _ in expected_context]
         self.assertListEqual(context_dicts, expected_context)
+
+    async def test_acting_exception_becomes_tool_error_result(self) -> None:
+        """Runtime failures during acting should not crash the agent loop."""
+        self.agent.toolkit = Toolkit(tools=[MockSequentialTool()])
+        self.agent._acting_middlewares = [  # pylint: disable=protected-access
+            FailingActingMiddleware(),
+        ]
+        tool_call_id = "tool_call_failure"
+        self.model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id=tool_call_id,
+                                name="mock_sequential_tool",
+                                input='{"input": "test"}',
+                            ),
+                        ],
+                        is_last=True,
+                    ),
+                ],
+                [
+                    ChatResponse(
+                        content=[TextBlock(text="I will try another path.")],
+                        is_last=True,
+                    ),
+                ],
+            ],
+        )
+
+        events = []
+        async for event in self.agent.reply_stream(
+            UserMsg(name="user", content="Test"),
+        ):
+            events.append(event.model_dump(mode="json"))
+
+        self.assertIn(
+            {
+                **self._get_event_base(self.agent.state.reply_id),
+                "type": "TOOL_RESULT_TEXT_DELTA",
+                "tool_call_id": tool_call_id,
+                "delta": (
+                    "Tool call failed: upstream MCP returned HTTP 401"
+                ),
+            },
+            events,
+        )
+        self.assertIn(
+            {
+                **self._get_event_base(self.agent.state.reply_id),
+                "type": "TOOL_RESULT_END",
+                "tool_call_id": tool_call_id,
+                "state": "error",
+            },
+            events,
+        )
+
+        assistant_blocks = self.agent.state.context[1].content
+        self.assertEqual(
+            assistant_blocks[0].state,
+            ToolCallState.FINISHED,
+        )
+        self.assertIsInstance(assistant_blocks[1], ToolResultBlock)
+        self.assertEqual(assistant_blocks[1].state, ToolResultState.ERROR)
+        self.assertEqual(
+            assistant_blocks[1].output[0].text,
+            "Tool call failed: upstream MCP returned HTTP 401",
+        )
 
     async def test_streaming_concurrent_tool_calls(self) -> None:
         """Test the streaming model inference with tool calls generated.

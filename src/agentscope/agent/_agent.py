@@ -49,7 +49,7 @@ from ..event import (
     DataBlockEndEvent,
     ExceedMaxItersEvent,
 )
-from ..exception import AgentOrientedException
+from ..exception import AgentOrientedException, DeveloperOrientedException
 from ..model import (
     ChatResponse,
     ChatUsage,
@@ -1493,95 +1493,132 @@ class Agent:
             # ================================================================
             # Step 4: Delegate raw execution to _acting (middleware hook point)
             # ================================================================
-            async for chunk in self._acting(tool_call):
-                # The ToolResponse is the last and completed tool result here
-                if isinstance(chunk, ToolResponse):
-                    tool_result_block = ToolResultBlock(
-                        id=tool_call.id,
-                        name=tool_call.name,
-                        output=[TextBlock(text=chunk.content)]
-                        if isinstance(chunk.content, str)
-                        else chunk.content,
-                        state=chunk.state,
-                        metadata=chunk.metadata,
-                    )
-
-                    # ========================================================
-                    # Step 5: Truncate the tool result if exceed
-                    # ========================================================
-                    (
-                        reserved_tool_result_block,
-                        offload_tool_result_block,
-                    ) = await self._split_tool_result_for_compression(
-                        tool_result_block,
-                    )
-
-                    # If offload result is not empty, attach reminder to the
-                    # reserved context
-                    if offload_tool_result_block is not None:
-                        reminder = (
-                            "\n<<<TRUNCATED>>>\n<system-reminder>The "
-                            "remaining content has been omitted for "
-                            "limited context.{offload_reminder}"
-                            "</system-reminder>"
+            try:
+                tool_chunks = self._acting(tool_call)
+                async for chunk in tool_chunks:
+                    # The ToolResponse is the last and completed tool result
+                    # here
+                    if isinstance(chunk, ToolResponse):
+                        tool_result_block = ToolResultBlock(
+                            id=tool_call.id,
+                            name=tool_call.name,
+                            output=[TextBlock(text=chunk.content)]
+                            if isinstance(chunk.content, str)
+                            else chunk.content,
+                            state=chunk.state,
+                            metadata=chunk.metadata,
                         )
 
-                        offload_reminder = ""
-                        if self.offloader:
-                            path = await self.offloader.offload_tool_result(
-                                self.state.session_id,
-                                offload_tool_result_block,
-                            )
-
-                            offload_reminder = (
-                                f" You can refer to the file in '{path}' "
-                                f"for the truncated content if needed."
-                            )
-
-                        reminder = reminder.format(
-                            offload_reminder=offload_reminder,
+                        # ====================================================
+                        # Step 5: Truncate the tool result if exceed
+                        # ====================================================
+                        (
+                            reserved_tool_result_block,
+                            offload_tool_result_block,
+                        ) = await self._split_tool_result_for_compression(
+                            tool_result_block,
                         )
 
-                        # Insert the reminder to the tool result output
-                        if isinstance(reserved_tool_result_block.output, str):
-                            reserved_tool_result_block.output += reminder
+                        # If offload result is not empty, attach reminder to the
+                        # reserved context
+                        if offload_tool_result_block is not None:
+                            reminder = (
+                                "\n<<<TRUNCATED>>>\n<system-reminder>The "
+                                "remaining content has been omitted for "
+                                "limited context.{offload_reminder}"
+                                "</system-reminder>"
+                            )
 
-                        elif len(
-                            reserved_tool_result_block.output,
-                        ) > 0 and isinstance(
-                            reserved_tool_result_block.output[-1],
-                            TextBlock,
+                            offload_reminder = ""
+                            if self.offloader:
+                                path = (
+                                    await self.offloader.offload_tool_result(
+                                        self.state.session_id,
+                                        offload_tool_result_block,
+                                    )
+                                )
+
+                                offload_reminder = (
+                                    f" You can refer to the file in '{path}' "
+                                    f"for the truncated content if needed."
+                                )
+
+                            reminder = reminder.format(
+                                offload_reminder=offload_reminder,
+                            )
+
+                            # Insert the reminder to the tool result output
+                            if isinstance(
+                                reserved_tool_result_block.output,
+                                str,
+                            ):
+                                reserved_tool_result_block.output += reminder
+
+                            elif len(
+                                reserved_tool_result_block.output,
+                            ) > 0 and isinstance(
+                                reserved_tool_result_block.output[-1],
+                                TextBlock,
+                            ):
+                                reserved_tool_result_block.output[
+                                    -1
+                                ].text += reminder
+
+                            else:
+                                reserved_tool_result_block.output += [
+                                    TextBlock(text=reminder),
+                                ]
+
+                        self._save_to_context([reserved_tool_result_block])
+                        # Ends the tool call lifecycle.
+                        self._update_tool_call_state(
+                            tool_call.id,
+                            ToolCallState.FINISHED,
+                        )
+                        # The ended event for the tool result
+                        yield ToolResultEndEvent(
+                            reply_id=self.state.reply_id,
+                            tool_call_id=tool_call.id,
+                            state=chunk.state,
+                            metadata=chunk.metadata,
+                        )
+
+                    else:
+                        # Intermediate ToolChunk — convert to streaming events
+                        async for evt in self._convert_tool_chunk_to_event(
+                            tool_call.id,
+                            chunk.content,
                         ):
-                            reserved_tool_result_block.output[
-                                -1
-                            ].text += reminder
-
-                        else:
-                            reserved_tool_result_block.output += [
-                                TextBlock(text=reminder),
-                            ]
-
-                    self._save_to_context([reserved_tool_result_block])
-                    # Ends the tool call lifecycle.
-                    self._update_tool_call_state(
-                        tool_call.id,
-                        ToolCallState.FINISHED,
-                    )
-                    # The ended event for the tool result
-                    yield ToolResultEndEvent(
-                        reply_id=self.state.reply_id,
-                        tool_call_id=tool_call.id,
-                        state=chunk.state,
-                        metadata=chunk.metadata,
-                    )
-
-                else:
-                    # Intermediate ToolChunk — convert to streaming events
-                    async for evt in self._convert_tool_chunk_to_event(
-                        tool_call.id,
-                        chunk.content,
-                    ):
-                        yield evt
+                            yield evt
+            except DeveloperOrientedException:
+                raise
+            except Exception as e:
+                error_msg = f"Tool call failed: {e}"
+                logger.exception(
+                    "Tool call %r failed during acting.",
+                    tool_call.name,
+                )
+                tool_result_block = ToolResultBlock(
+                    id=tool_call.id,
+                    name=tool_call.name,
+                    output=[TextBlock(text=error_msg)],
+                    state=ToolResultState.ERROR,
+                )
+                self._save_to_context([tool_result_block])
+                self._update_tool_call_state(
+                    tool_call.id,
+                    ToolCallState.FINISHED,
+                )
+                async for evt in self._convert_tool_chunk_to_event(
+                    tool_call.id,
+                    tool_result_block.output,
+                ):
+                    yield evt
+                yield ToolResultEndEvent(
+                    reply_id=self.state.reply_id,
+                    tool_call_id=tool_call.id,
+                    state=ToolResultState.ERROR,
+                )
 
             return
 
