@@ -709,6 +709,14 @@ class ReActAgent(ReActAgentBase):
 
             return None
 
+        except Exception as e:
+            # Tool call failed — record the error as a tool result so the
+            # agent can recover and continue the loop instead of crashing.
+            error_msg = f"Tool call failed: {e}"
+            tool_res_msg.content[0]["output"] = error_msg
+            await self.print(tool_res_msg, True)
+            return None
+
         finally:
             # Record the tool result message in the memory
             await self.memory.add(tool_res_msg)
