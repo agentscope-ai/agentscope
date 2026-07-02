@@ -11,8 +11,10 @@ Each turn streams events from ``agent.reply_stream`` and prints the
 ones that matter:
 
 - ``[reme → context (static)]`` — the memory note the middleware
-  appended to ``state.context`` (fires at ``ReplyStartEvent``, before
-  any tool call, so the output order matches the data flow)
+  appended to ``state.context``. Retrieval runs in the background and the
+  note is injected on a reasoning step once the search finishes, so the
+  demo surfaces it the moment it appears (best-effort: a single-shot reply
+  may finish before it lands)
 - ``[tool call (agent)]`` — each ``memory_search`` invocation the
   agent makes on its own (there is no add tool — writing is automatic)
 - ``[assistant]`` — the assistant's reply, concatenated from the
@@ -49,7 +51,6 @@ from agentscope.agent import Agent
 from agentscope.credential import DashScopeCredential
 from agentscope.embedding import DashScopeEmbeddingModel
 from agentscope.event import (
-    ReplyStartEvent,
     TextBlockDeltaEvent,
     ToolCallDeltaEvent,
     ToolCallStartEvent,
@@ -128,10 +129,11 @@ async def _run_turn(agent: Agent, user_msg: UserMsg) -> str:
     each middleware contribution as it happens, in the order it
     happens:
 
-    1. ``ReplyStartEvent`` fires right after the agent ingests the new
-       user input AND the middleware has appended any retrieved memory
-       note to ``state.context`` (static path) — so this is the right
-       place to surface ``[reme → context]``.
+    1. ``[reme → context]`` — the retrieved memory note. The middleware
+       searches ReMe in the background and injects the note on a reasoning
+       step once the search finishes, so we poll ``state.context`` on every
+       event and surface it the first time it appears (best-effort; a
+       single-shot reply may finish before it lands).
     2. ``ToolCallStartEvent`` / ``ToolResultEndEvent`` bracket each
        ``memory_search`` invocation the agent makes on its own
        (agent path).
@@ -149,17 +151,30 @@ async def _run_turn(agent: Agent, user_msg: UserMsg) -> str:
     text_parts: list[str] = []
     memory_announced = False
 
+    def _announce_memory() -> None:
+        """Print the static-path memory note as soon as it lands in context.
+
+        The middleware retrieves in the background and injects the note in
+        ``on_reasoning`` once the search finishes, so we poll the context on
+        every event and surface it the first time it appears (best-effort:
+        a single-shot reply may never inject one)."""
+        nonlocal memory_announced
+        if memory_announced:
+            return
+        injected = _injected_memory_bullets(agent)
+        if not injected:
+            return
+        print(
+            f"[reme → context (static)] retrieved "
+            f"{len(injected)} memory note(s):",
+        )
+        for b in injected:
+            print(f"  ← {b}")
+        memory_announced = True
+
     async for ev in agent.reply_stream(inputs=user_msg):
-        if isinstance(ev, ReplyStartEvent) and not memory_announced:
-            injected = _injected_memory_bullets(agent)
-            print(
-                f"[reme → context (static)] retrieved "
-                f"{len(injected)} memory note(s):",
-            )
-            for b in injected:
-                print(f"  ← {b}")
-            memory_announced = True
-        elif isinstance(ev, ToolCallStartEvent):
+        _announce_memory()
+        if isinstance(ev, ToolCallStartEvent):
             pending_names[ev.tool_call_id] = ev.tool_call_name
             pending_args[ev.tool_call_id] = ""
             pending_results[ev.tool_call_id] = ""
@@ -177,6 +192,10 @@ async def _run_turn(agent: Agent, user_msg: UserMsg) -> str:
                     print(f"  → {line}")
         elif isinstance(ev, TextBlockDeltaEvent):
             text_parts.append(ev.delta)
+
+    # The note may only land on the final reasoning step, after the last
+    # event we react to above — poll once more before finishing the turn.
+    _announce_memory()
 
     return "".join(text_parts)
 
@@ -252,19 +271,16 @@ async def main() -> None:
     # store ships with ``embedding_store: ""``). For a long-term *memory*
     # demo we want semantic recall — "plot monthly sales" should find a
     # "prefers matplotlib / dark mode" card even without shared keywords —
-    # so we switch the vector store on via ``config_overrides``, which the
-    # middleware deep-merges into ReMe's config when it builds the app.
+    # so we pass an ``embedding_model``, which the middleware uses to turn
+    # ReMe's vector store on automatically when it builds the app.
     mw = ReMeMiddleware(
         workspace_dir=WORKSPACE_DIR,
-        chat_model=chat_model,
-        embedding_model=embedding_model,
-        config_overrides={
-            "components": {
-                "file_store": {"default": {"embedding_store": "default"}},
-            },
-        },
-        mode=MODE,
-        top_k=5,
+        parameters=ReMeMiddleware.Parameters(
+            chat_model=chat_model,
+            embedding_model=embedding_model,
+            mode=MODE,
+            top_k=5,
+        ),
     )
 
     try:

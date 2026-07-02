@@ -66,8 +66,9 @@ def _extract_memory_texts(raw: Any) -> list[str]:
 
     Args:
         raw (`Any`):
-            The raw object returned by :meth:`ReMeClient.search` or the
-            decoded ReMe response envelope.
+            The raw object returned by ReMe's ``search`` job (e.g.
+            ``ReMe.run_job("search", ...)``) or the decoded ReMe response
+            envelope.
 
     Returns:
         `list[str]`:

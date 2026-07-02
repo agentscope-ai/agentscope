@@ -19,9 +19,9 @@ embedding model (vector search), both injected into the embedded app.
 ReMe's bundled `default` config searches with **BM25 (keyword) only** —
 its file store ships with the vector store disabled. A long-term
 *memory* demo wants **semantic** recall ("plot monthly sales" should
-find a "prefers matplotlib" card), so `reme_demo.py` switches the vector
-store on via `config_overrides` and injects an `embedding_model`; see
-below.
+find a "prefers matplotlib" card), so `reme_demo.py` injects an
+`embedding_model` — which turns ReMe's vector store on automatically;
+see below.
 
 ## Install
 
@@ -47,23 +47,21 @@ from agentscope.tool import Toolkit
 The middleware builds and **owns** an embedded `reme.ReMe` app — it is
 created lazily on first use and torn down by `await mw.close()`. You
 configure it with plain parameters; there is no external app to manage.
+User-tunable settings live on a nested `Parameters` model (the agent
+service renders its JSON schema as a form):
 
 ```python
 ReMeMiddleware(
     workspace_dir=".reme",
-    chat_model=my_chat_model,        # injected into ReMe's LLM component,
-                                     #   drives auto_memory write-back
-    embedding_model=my_embedding_model,  # injected into its embedding
-                                         #   component, drives vector search
-    # Advanced settings the dedicated params don't expose are deep-merged
-    # into ReMe's config. default.yaml ships the vector store OFF; switch
-    # it on for semantic recall:
-    config_overrides={
-        "components": {
-            "file_store": {"default": {"embedding_store": "default"}},
-        },
-    },
-    mode="both",
+    parameters=ReMeMiddleware.Parameters(
+        chat_model=my_chat_model,        # injected into ReMe's LLM component,
+                                         #   drives auto_memory write-back
+        embedding_model=my_embedding_model,  # injected into its embedding
+                                             #   component; also turns ReMe's
+                                             #   vector store ON automatically
+        mode="both",
+        top_k=5,
+    ),
 )
 ```
 
@@ -73,19 +71,16 @@ well-defined even when one middleware instance is shared across agents.
 
 | `chat_model` / `embedding_model` | Behavior |
 |:-:|---|
-| provided | Injected into ReMe's default LLM / embedding components at start; only a DashScope key is needed. |
-| omitted | ReMe uses the LLM / embedding backend from its own config/credentials. |
-
-The middleware's own `workspace_dir` / `config` always win over any
-same-named keys in `config_overrides`, so overrides can't accidentally
-redirect the workspace.
+| provided | Injected into ReMe's default LLM / embedding components at start; only a DashScope key is needed. An `embedding_model` also enables the vector store for semantic search. |
+| omitted | ReMe uses the LLM / embedding backend from its own config/credentials; search stays keyword-only. |
 
 > **Why inject `embedding_model`?** ReMe starts its embedding
 > component eagerly at `start()` — even under the BM25-only default —
 > and builds it from credentials in its config. Injecting an
 > AgentScope `embedding_model` bypasses that credential path, so the
 > only key you need is a DashScope one. It is also what powers vector
-> search once you enable the store via `config_overrides`.
+> search: providing it flips ReMe's file store from BM25-only to the
+> vector store automatically.
 
 ## How the middleware controls memory
 
@@ -96,11 +91,16 @@ after each reply, in every mode — `mode` only selects how the agent
 ### `static_control`
 The middleware does the retrieval, the agent is unaware:
 
-1. **`on_reply` (pre)** searches ReMe with the latest user message.
-2. **At `ReplyStartEvent`** — right after the agent ingests the new
-   user input and before the reasoning loop — the middleware appends
-   an `AssistantMsg(name="memory", ...)` `HintBlock` to
-   `state.context`, immediately after the user's message.
+1. **`on_reply` (pre)** starts a background `asyncio` task that searches
+   ReMe with the latest user message, running concurrently with the reply.
+2. **`on_reasoning`** polls that task before each reasoning step; once it
+   has finished, the middleware appends an
+   `AssistantMsg(name="memory", ...)` `HintBlock` to `state.context` so
+   the *next* model call sees it. Injection is **best-effort**: a
+   single-shot reply (one model call) may finish before retrieval does, so
+   the hint lands on a later step or is skipped for that turn — the same
+   trade-off as `AgenticMemoryMiddleware`. Turns with a tool call (two or
+   more reasoning steps) inject reliably.
 3. **`on_reply` (post)** writes the new `(user, assistant)` exchange
    back via `auto_memory`.
 
@@ -176,24 +176,24 @@ down the embedded app (AgentScope doesn't manage middleware lifecycle).
 
 `config` selects a ReMe config (defaults to the bundled `"default"`,
 which is auto-memory + **BM25-only** search — its file store ships with
-`embedding_store: ""`). To enable **vector search**, either point
-`config` at your own ReMe config file with the store wired up, or pass
-`config_overrides` and flip it on inline (what the demo does):
+`embedding_store: ""`). To enable **vector search**, provide an
+`embedding_model` (what the demo does) — the middleware then wires
+ReMe's file store to the default embedding store automatically:
 
 ```python
 ReMeMiddleware(
     workspace_dir=".reme",
-    config_overrides={
-        "components": {"file_store": {"default": {"embedding_store": "default"}}},
-    },
+    parameters=ReMeMiddleware.Parameters(
+        embedding_model=my_embedding_model,  # turns the vector store on
+    ),
 )
 ```
 
-`config_overrides` is deep-merged into ReMe's `resolve_app_config` when
-the middleware builds the app. ReMe's `as_llm` / `as_embedding`
-components are otherwise driven by environment variables (`LLM_API_KEY`,
-`EMBEDDING_API_KEY`, ...) from its own config; injecting AgentScope
-`chat_model` / `embedding_model` bypasses those. See ReMe's
+ReMe's `as_llm` / `as_embedding` components are otherwise driven by
+environment variables (`LLM_API_KEY`, `EMBEDDING_API_KEY`, ...) from its
+own config; injecting AgentScope `chat_model` / `embedding_model`
+bypasses those. If you need a config the dedicated parameters don't
+expose, point `config` at your own ReMe config file. See ReMe's
 `default.yaml` for the full component set.
 
 > **Note (indexing):** `auto_memory` write-back returns as soon as the

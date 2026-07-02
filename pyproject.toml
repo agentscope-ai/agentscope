@@ -98,7 +98,7 @@ s3 = [
 # wasted LLM call.
 mem0 = ["mem0ai>=2.0.0"]
 # Required by `agentscope.middleware._longterm_memory.ReMeMiddleware`.
-reme = ["reme-ai==0.4.0.6"]
+reme = ["reme-ai>=0.4.0.6"]
 # ------------ Full ------------
 full = [
     "agentscope[models]",

@@ -41,6 +41,13 @@ class _ReMeMemoryToolBase(ToolBase):
         self,
         mw: "ReMeMiddleware",
     ) -> None:
+        """Bind the tool to its owning middleware.
+
+        Args:
+            mw (`ReMeMiddleware`):
+                The middleware whose embedded ReMe app and parameters this
+                tool drives.
+        """
         self._mw = mw
 
     async def check_permissions(
@@ -48,6 +55,15 @@ class _ReMeMemoryToolBase(ToolBase):
         *_args: Any,
         **_kwargs: Any,
     ) -> PermissionDecision:
+        """Auto-allow the call without prompting.
+
+        Middleware-provided memory tools are part of the agent's standard
+        capabilities, so they never require user confirmation.
+
+        Returns:
+            `PermissionDecision`:
+                An ``ALLOW`` decision.
+        """
         return PermissionDecision(
             behavior=PermissionBehavior.ALLOW,
             message="auto-allowed: ReMe long-term memory tool",
@@ -74,6 +90,17 @@ class _MemorySearchTool(_ReMeMemoryToolBase):
         self,
         mw: "ReMeMiddleware",
     ) -> None:
+        """Bind the tool to ``mw`` and build its per-instance schema.
+
+        The advertised ``limit`` default is read from the middleware's
+        ``top_k`` here (rather than a hardcoded constant), so configuring
+        ``top_k`` on the middleware also governs the tool's default.
+
+        Args:
+            mw (`ReMeMiddleware`):
+                The middleware whose embedded ReMe app and ``top_k`` this
+                search tool uses.
+        """
         super().__init__(mw)
         # Per-instance schema so the default ``limit`` reflects this
         # middleware's ``top_k`` rather than a hardcoded constant.
@@ -90,7 +117,7 @@ class _MemorySearchTool(_ReMeMemoryToolBase):
                 "limit": {
                     "type": "integer",
                     "description": "Maximum number of memories to retrieve.",
-                    "default": mw._top_k,
+                    "default": mw._parameters.top_k,
                 },
             },
             "required": ["query"],

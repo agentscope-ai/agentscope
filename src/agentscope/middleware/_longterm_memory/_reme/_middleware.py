@@ -12,8 +12,10 @@ via ReMe's ``auto_memory`` job, in *all* modes. The agent never writes
 memory itself; there is no manual add tool. The ``mode`` parameter only
 controls **retrieval**:
 
-- ``"static_control"`` — search ReMe before each reply and inject the
-  retrieved memories into context (plus the automatic write-back).
+- ``"static_control"`` — search ReMe when a reply starts and inject the
+  retrieved memories into context before a later reasoning step (plus the
+  automatic write-back). Retrieval runs concurrently with the reply, so
+  injection is best-effort: a single-shot reply may finish first.
 - ``"agent_control"`` — expose a ``memory_search`` tool the agent calls
   on demand (plus the automatic write-back); no auto-retrieval.
 - ``"both"`` — auto-retrieve/inject *and* expose ``memory_search``.
@@ -25,6 +27,7 @@ over the whole workspace.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import (
     Any,
     AsyncGenerator,
@@ -33,17 +36,18 @@ from typing import (
     TYPE_CHECKING,
 )
 
+from pydantic import BaseModel, Field
+
 from ..._base import MiddlewareBase
 from ...._logging import logger
-from ....event import ReplyStartEvent
+from ....embedding import EmbeddingModelBase
 from ....message import AssistantMsg, HintBlock, Msg
+from ....model import ChatModelBase
 from ._tools import _build_memory_tools
 from ._utils import _extract_memory_texts, _extract_query_text
 
 if TYPE_CHECKING:
     from ....agent import Agent
-    from ....model import ChatModelBase
-    from ....embedding import EmbeddingModelBase
     from ....tool import ToolBase
 
 
@@ -61,6 +65,7 @@ _AS_EMBEDDING_COMPONENT = "as_embedding"
 _AS_DEFAULT = "default"
 
 # Header rendered above retrieved memories injected into context.
+_MEMORY_MSG_NAME = "memory"
 _MEMORY_SECTION_HEADER = "## Relevant memories from past conversations"
 _MEMORY_SECTION_INTRO = (
     "The following memories about the user may be relevant. "
@@ -85,17 +90,20 @@ class ReMeMiddleware(MiddlewareBase):
     instantiates a :class:`reme.ReMe` application whose LLM-backed jobs use
     the ``chat_model`` configured at construction. The app is built and
     owned by the middleware — pass ``workspace_dir`` / ``config`` (and
-    optionally ``chat_model`` / ``embedding_model``) and it is created
-    lazily on first use. When ``chat_model`` is omitted, ReMe uses the LLM
-    from its own config/credentials. For advanced settings the dedicated
-    parameters do not expose (e.g. enabling the vector store), pass a
-    deep-merged ``config_overrides`` mapping.
+    optionally a ``Parameters`` with ``chat_model`` / ``embedding_model``)
+    and it is created lazily on first use. When ``chat_model`` is omitted,
+    ReMe uses the LLM from its own config/credentials. Providing an
+    ``embedding_model`` enables ReMe's vector store; otherwise search stays
+    keyword-only.
 
     The model is fixed at construction (never taken from an agent), so the
     embedded app's single LLM is well-defined even when one middleware
     instance is shared across several agents. Per-conversation state — the
     ReMe ``session_id`` — is instead read live from each agent at hook
-    time and never stored, keeping shared use isolated.
+    time and never stored, keeping shared use isolated. Background
+    retrieval tasks are likewise tracked per ``session_id`` so concurrent
+    replies in different sessions never clobber each other's in-flight
+    search.
 
     AgentScope middleware has no framework-managed lifecycle, so the app
     is built once and started lazily on first use (idempotent). Call
@@ -106,7 +114,10 @@ class ReMeMiddleware(MiddlewareBase):
         from agentscope.middleware import ReMeMiddleware
         from agentscope.tool import Toolkit
 
-        mw = ReMeMiddleware(workspace_dir=".reme", mode="both")
+        mw = ReMeMiddleware(
+            workspace_dir=".reme",
+            parameters=ReMeMiddleware.Parameters(mode="both"),
+        )
         agent = Agent(
             ...,
             toolkit=Toolkit(tools=await mw.list_tools()),
@@ -114,16 +125,68 @@ class ReMeMiddleware(MiddlewareBase):
         )
     """
 
+    class Parameters(BaseModel):
+        """User-tunable ReMe memory parameters.
+
+        The agent service parses this schema to render a configuration
+        form. Structural wiring (``workspace_dir`` / ``config``) stays on
+        the constructor.
+        """
+
+        model_config = {"arbitrary_types_allowed": True}
+
+        chat_model: ChatModelBase | None = Field(
+            default=None,
+            title="Chat Model",
+            description=(
+                "AgentScope chat model injected into ReMe's default LLM "
+                "component, fixed for the lifetime of the embedded app. "
+                "When `None`, ReMe uses the LLM from its own "
+                "config/credentials. Needed for `auto_memory` write-back."
+            ),
+        )
+
+        embedding_model: EmbeddingModelBase | None = Field(
+            default=None,
+            title="Embedding Model",
+            description=(
+                "AgentScope embedding model injected into ReMe's default "
+                "embedding component, fixed for the lifetime of the embedded "
+                "app. ReMe starts this component eagerly (it is wired into "
+                "the file store even when search is keyword-only), so "
+                "injecting a model bypasses ReMe building its own from "
+                "credentials. When `None`, ReMe uses the embedding backend "
+                "from its own config/credentials."
+            ),
+        )
+
+        mode: Literal["static_control", "agent_control", "both"] = Field(
+            default="both",
+            title="Retrieval Mode",
+            description=(
+                "How the agent retrieves from ReMe (write-back runs "
+                "automatically in every mode). `static_control`: search and "
+                "inject before each reply, no tool. `agent_control`: expose "
+                "the `memory_search` tool, no auto-retrieval. `both`: "
+                "auto-retrieve/inject and expose the tool."
+            ),
+        )
+
+        top_k: int = Field(
+            default=5,
+            title="Top K",
+            description=(
+                "Max number of memories retrieved per search, and the "
+                "default `limit` advertised by the `memory_search` tool."
+            ),
+        )
+
     def __init__(
         self,
         *,
         workspace_dir: str = ".reme",
         config: str = "default",
-        config_overrides: dict[str, Any] | None = None,
-        chat_model: "ChatModelBase | None" = None,
-        embedding_model: "EmbeddingModelBase | None" = None,
-        mode: Literal["static_control", "agent_control", "both"] = "both",
-        top_k: int = 5,
+        parameters: Parameters | None = None,
     ) -> None:
         """Initialize the ReMe middleware.
 
@@ -140,56 +203,13 @@ class ReMeMiddleware(MiddlewareBase):
             config (`str`, optional):
                 ReMe config name or path. Defaults to ``"default"``
                 (ReMe's bundled ``default.yaml``).
-            config_overrides (`dict[str, Any] | None`, optional):
-                Extra keyword arguments deep-merged into
-                ``reme.config.resolve_app_config`` when the app is built,
-                for advanced settings the dedicated parameters do not
-                expose. For example, enable the vector store (the bundled
-                ``default`` config ships it off) with
-                ``{"components": {"file_store": {"default": ``
-                ``{"embedding_store": "default"}}}}``. The middleware's own
-                ``workspace_dir`` / ``config`` (and internal ``enable_logo``
-                / ``log_to_console``) always take precedence over keys of
-                the same name here.
-            chat_model (`ChatModelBase | None`, optional):
-                AgentScope chat model injected into ReMe's default LLM
-                component, fixed for the lifetime of the embedded app.
-                When ``None``, ReMe uses the LLM from its own
-                config/credentials. Needed for ``auto_memory`` write-back.
-            embedding_model (`EmbeddingModelBase | None`, optional):
-                AgentScope embedding model injected into ReMe's default
-                embedding component, fixed for the lifetime of the
-                embedded app. ReMe starts this component eagerly (it is
-                wired into the file store even when search is
-                keyword-only), so injecting a model bypasses ReMe
-                building its own from credentials. When ``None``, ReMe
-                uses the embedding backend from its own config/credentials.
-            mode (`Literal["static_control", "agent_control", "both"]`, \
-            optional):
-                How the agent *retrieves* from ReMe. Write-back runs
-                automatically in every mode (ReMe listens to the
-                conversation via the reply hook), so ``mode`` only
-                governs retrieval:
-
-                - ``"static_control"``: search ReMe before each reply and
-                  append the results to ``agent.state.context`` as an
-                  ``AssistantMsg(name="memory")``; no tool is exposed.
-                - ``"agent_control"``: expose a ``memory_search`` tool for
-                  the agent to invoke on demand; no auto-retrieval.
-                - ``"both"``: auto-retrieve/inject *and* expose the tool.
-
-                Defaults to ``"both"``.
-            top_k (`int`, optional):
-                Max number of memories retrieved per search (and the
-                default ``limit`` for the ``memory_search`` tool).
-                Defaults to ``5``.
+            parameters (`ReMeMiddleware.Parameters | None`, optional):
+                User-tunable parameters (``chat_model`` / ``embedding_model``
+                / ``mode`` / ``top_k``) whose schema the agent service
+                renders as a configuration form. When ``None``, defaults are
+                used. Providing an ``embedding_model`` also enables ReMe's
+                vector store (otherwise search is keyword-only).
         """
-        if mode not in ("static_control", "agent_control", "both"):
-            raise ValueError(
-                f"Unknown mode {mode!r}; expected one of "
-                f"'static_control', 'agent_control', 'both'.",
-            )
-
         # Embedded ReMe application state. The app is built lazily and
         # started once (idempotent guards), since middleware has no
         # framework-managed lifecycle. The middleware always owns the app
@@ -198,12 +218,13 @@ class ReMeMiddleware(MiddlewareBase):
         self._started = False
         self._workspace_dir = workspace_dir
         self._config = config
-        self._config_overrides = config_overrides
-
-        self._chat_model = chat_model
-        self._embedding_model = embedding_model
-        self._mode = mode
-        self._top_k = top_k
+        self._parameters = parameters or self.Parameters()
+        # In-flight background retrieval per session (started in ``on_reply``,
+        # consumed/injected in ``on_reasoning``, cleaned up in ``on_reply``'s
+        # finally). Keyed by ``session_id`` so one middleware shared across
+        # agents keeps each session's retrieval isolated — a concurrent reply
+        # in another session never clobbers this one's task.
+        self._retrieval_tasks: dict[Any, asyncio.Task] = {}
 
     # ==================================================================
     # Embedded ReMe application lifecycle
@@ -225,15 +246,20 @@ class ReMeMiddleware(MiddlewareBase):
                 "`pip install reme-ai`).",
             ) from e
 
-        # Reserved keys always win over config_overrides so a caller
-        # cannot accidentally redirect the workspace or re-enable logging.
-        app_kwargs: dict[str, Any] = dict(self._config_overrides or {})
-        app_kwargs.update(
-            config=self._config,
-            workspace_dir=self._workspace_dir,
-            enable_logo=False,
-            log_to_console=False,
-        )
+        app_kwargs: dict[str, Any] = {
+            "config": self._config,
+            "workspace_dir": self._workspace_dir,
+            "enable_logo": False,
+            "log_to_console": False,
+        }
+        # An embedding model turns on ReMe's vector store: the bundled
+        # ``default`` config ships it off (BM25 keyword search only), so we
+        # wire the file store to the default embedding store when — and
+        # only when — a model is available to build the vectors.
+        if self._parameters.embedding_model is not None:
+            app_kwargs["components"] = {
+                "file_store": {"default": {"embedding_store": "default"}},
+            }
         app_config = resolve_app_config(**app_kwargs)
         return ReMe(**app_config)
 
@@ -254,17 +280,17 @@ class ReMeMiddleware(MiddlewareBase):
         if self._app is None:
             self._app = self._build_app()
         if not self._started:
-            if self._chat_model is not None:
+            if self._parameters.chat_model is not None:
                 await self._app.update_component(
                     _AS_LLM_COMPONENT,
                     _AS_DEFAULT,
-                    model=self._chat_model,
+                    model=self._parameters.chat_model,
                 )
-            if self._embedding_model is not None:
+            if self._parameters.embedding_model is not None:
                 await self._app.update_component(
                     _AS_EMBEDDING_COMPONENT,
                     _AS_DEFAULT,
-                    model=self._embedding_model,
+                    model=self._parameters.embedding_model,
                 )
             await self._app.start()
             self._started = True
@@ -303,21 +329,22 @@ class ReMeMiddleware(MiddlewareBase):
     ) -> AsyncGenerator:
         session_id = self._session_id_of(agent)
 
-        # Retrieve (static_control / both only) and inject before the
-        # reply; write the new exchange back afterwards in every mode.
+        # Kick off retrieval (static_control / both only) concurrently with
+        # the reply. It runs in the background while the agent ingests input
+        # and starts reasoning; ``on_reasoning`` injects the result once the
+        # task finishes. Write the new exchange back afterwards in every mode.
         inputs = input_kwargs.get("inputs")
         query_text = _extract_query_text(inputs)
 
-        memories: list[str] = []
-        if self._mode != "agent_control" and query_text:
-            try:
-                memories = await self._search(query_text)
-            except Exception as e:  # noqa: BLE001
-                logger.warning(
-                    "ReMe search failed for session_id=%s: %s",
-                    session_id,
-                    e,
-                )
+        # Discard any stale task left for this session (a previous turn that
+        # never reached its finally is unexpected, but never leak one).
+        stale = self._retrieval_tasks.pop(session_id, None)
+        if stale is not None and not stale.done():
+            stale.cancel()
+        if self._parameters.mode != "agent_control" and query_text:
+            self._retrieval_tasks[session_id] = asyncio.create_task(
+                self._search(query_text),
+            )
 
         # Snapshot the context BEFORE the turn so the write-back persists
         # only this turn's *increment*. ReMe's ``auto_memory`` consumes the
@@ -331,26 +358,30 @@ class ReMeMiddleware(MiddlewareBase):
         # on the stream (only the final answer is yielded).
         pre_ids = {m.id for m in agent.state.context if isinstance(m, Msg)}
 
-        memory_msg: Msg | None = None
         try:
             async for item in next_handler(**input_kwargs):
-                if (
-                    memory_msg is None
-                    and memories
-                    and isinstance(item, ReplyStartEvent)
-                ):
-                    memory_msg = self._build_memory_message(memories)
-                    agent.state.context.append(memory_msg)
                 yield item
         finally:
+            # Retrieval may still be running (or its hint may never have been
+            # injected — e.g. a single-shot reply that finished before the
+            # task did). Consume this session's task so none is orphaned.
+            task = self._retrieval_tasks.pop(session_id, None)
+            if task is not None and not task.done():
+                task.cancel()
+            if task is not None:
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                    pass
             # This turn's new messages only: everything now present that
-            # was not before, minus our own injected hint note.
+            # was not before, minus any memory hint we injected (matched by
+            # its reserved name, since injection happens in ``on_reasoning``).
             increment = [
                 m
                 for m in agent.state.context
                 if isinstance(m, Msg)
                 and m.id not in pre_ids
-                and m is not memory_msg
+                and getattr(m, "name", None) != _MEMORY_MSG_NAME
             ]
             # Only persist a real exchange: a genuine user turn plus at
             # least one non-empty assistant message produced this turn.
@@ -359,6 +390,42 @@ class ReMeMiddleware(MiddlewareBase):
                 for m in increment
             ):
                 await self._write_back(increment, session_id)
+
+    # ------------------------------------------------------------------
+    # Hook: on_reasoning (inject retrieved memories once ready)
+    # ------------------------------------------------------------------
+    async def on_reasoning(
+        self,
+        agent: "Agent",
+        input_kwargs: dict,
+        next_handler: Callable[..., AsyncGenerator],
+    ) -> AsyncGenerator:
+        """Inject background-retrieved memories before a reasoning step.
+
+        The search started in :meth:`on_reply` runs concurrently; this hook
+        polls it before each reasoning step and, once it is finished, appends
+        the retrieved memories to the agent's context so the *next* model
+        call sees them. This is best-effort: a single-shot reply (one model
+        call) may finish before retrieval does, in which case the hint is
+        skipped for that turn — the same trade-off as
+        :class:`AgenticMemoryMiddleware`.
+        """
+        session_id = self._session_id_of(agent)
+        task = self._retrieval_tasks.get(session_id)
+        if task is not None and task.done():
+            self._retrieval_tasks.pop(session_id, None)
+            try:
+                memories = task.result()
+            except (asyncio.CancelledError, Exception) as e:  # noqa: BLE001
+                memories = []
+                logger.warning("ReMe search failed: %s", e)
+            if memories:
+                agent.state.context.append(
+                    self._build_memory_message(memories),
+                )
+
+        async for event in next_handler(**input_kwargs):
+            yield event
 
     # ------------------------------------------------------------------
     # Hook: on_system_prompt (advertise the search tool to the LLM)
@@ -381,7 +448,7 @@ class ReMeMiddleware(MiddlewareBase):
                 The unchanged prompt in static-control mode, otherwise the
                 prompt with the ``memory_search`` nudge appended.
         """
-        if self._mode == "static_control":
+        if self._parameters.mode == "static_control":
             return current_prompt
         return f"{current_prompt}\n\n{_TOOL_INSTRUCTIONS}"
 
@@ -394,7 +461,7 @@ class ReMeMiddleware(MiddlewareBase):
                 (``"agent_control"`` / ``"both"``), otherwise an empty
                 list. There is no add tool — writing is automatic.
         """
-        if self._mode == "static_control":
+        if self._parameters.mode == "static_control":
             return []
         return _build_memory_tools(self)
 
@@ -427,7 +494,7 @@ class ReMeMiddleware(MiddlewareBase):
         response = await self._run_job(
             _SEARCH_JOB,
             query=query,
-            limit=self._top_k if limit is None else limit,
+            limit=self._parameters.top_k if limit is None else limit,
         )
         return _extract_memory_texts(getattr(response, "metadata", {}))
 
@@ -477,6 +544,13 @@ class ReMeMiddleware(MiddlewareBase):
         The context entry uses an assistant-role ``Msg`` container because
         user messages cannot carry ``HintBlock`` content. Formatters convert
         the ``HintBlock`` itself into a user message before the model call.
+
+        Args:
+            memories (`list[str]`):
+                Retrieved memory texts to expose to the model.
+        Returns:
+            `Msg`:
+                An assistant-role message containing one ``HintBlock``.
         """
         bullets = "\n".join(f"- {m}" for m in memories)
         content = (
@@ -485,6 +559,6 @@ class ReMeMiddleware(MiddlewareBase):
             f"{bullets}"
         )
         return AssistantMsg(
-            name="memory",
+            name=_MEMORY_MSG_NAME,
             content=[HintBlock(hint=content)],
         )

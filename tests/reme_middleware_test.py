@@ -13,6 +13,7 @@ to inspect what the public API just did.
 """
 import sys
 import types
+import asyncio
 from unittest import mock
 from unittest.async_case import IsolatedAsyncioTestCase
 from typing import Any
@@ -31,6 +32,7 @@ from agentscope.message import (
     ToolCallBlock,
     UserMsg,
 )
+from agentscope.embedding import EmbeddingModelBase
 from agentscope.middleware import ReMeMiddleware
 from agentscope.middleware._longterm_memory._reme._utils import (
     _extract_memory_texts,
@@ -74,6 +76,27 @@ class RecordingMockModel(MockModel):
     def last_call_messages(self) -> list[Msg]:
         """Return the most recent model-call messages."""
         return self.calls[-1]
+
+
+class _FakeEmbedding(EmbeddingModelBase):
+    """Minimal ``EmbeddingModelBase`` instance for tests.
+
+    ``ReMeMiddleware.Parameters.embedding_model`` is validated by pydantic
+    (``arbitrary_types_allowed`` still isinstance-checks), so tests need a
+    real subclass rather than a bare sentinel. Its API is never called —
+    the middleware only checks presence and passes it through to ReMe.
+    """
+
+    def __init__(self) -> None:
+        """Skip the heavy base init; nothing here is exercised."""
+
+    async def _call_api(  # pragma: no cover - never invoked in tests
+        self,
+        inputs: list[Any],
+        **kwargs: Any,
+    ) -> Any:
+        """Unused: no test drives an actual embedding call."""
+        raise NotImplementedError
 
 
 class _FakeResponse:
@@ -192,9 +215,16 @@ def _mw(*, app: Any = None, **kwargs: Any) -> ReMeMiddleware:
     can't pass one in. Instead we construct the middleware normally and
     seed ``mw._app`` with a :class:`_FakeReMeApp` before it starts — the
     lazy ``_ensure_started`` path sees a non-``None`` app and skips the
-    real build, so no ``reme-ai`` install is needed. Any extra kwargs go
-    straight to the constructor.
+    real build, so no ``reme-ai`` install is needed.
+
+    User-tunable kwargs (``chat_model`` / ``embedding_model`` / ``mode`` /
+    ``top_k``) are collected into a ``ReMeMiddleware.Parameters`` so tests
+    can keep passing them flat; the rest go straight to the constructor.
     """
+    param_keys = ("chat_model", "embedding_model", "mode", "top_k")
+    param_kwargs = {k: kwargs.pop(k) for k in param_keys if k in kwargs}
+    if param_kwargs:
+        kwargs["parameters"] = ReMeMiddleware.Parameters(**param_kwargs)
     mw = ReMeMiddleware(**kwargs)
     mw._app = app if app is not None else _FakeReMeApp()
     return mw
@@ -206,6 +236,38 @@ def _single_response(text: str) -> ChatResponse:
         content=[TextBlock(type="text", text=text)],
         is_last=True,
     )
+
+
+def _echo_then_text(final_text: str, echo: str = "ping") -> list:
+    """Two-step response sequence: an ``echo`` tool call, then a text answer.
+
+    Auto-retrieval now runs as a background task started in ``on_reply`` and
+    injected in ``on_reasoning`` once it finishes. A single-shot reply may
+    complete before retrieval does, so tests that need to observe the
+    injected memory drive a tool call first (two reasoning steps): the task
+    finishes during step 1, so the hint is present before step 2's model
+    call — the same pattern the AgenticMemory middleware tests use.
+    """
+    return [
+        [
+            ChatResponse(
+                content=[
+                    ToolCallBlock(
+                        id="call-1",
+                        name="echo",
+                        input=f'{{"text": "{echo}"}}',
+                    ),
+                ],
+                is_last=True,
+            ),
+        ],
+        [
+            ChatResponse(
+                content=[TextBlock(text=final_text)],
+                is_last=True,
+            ),
+        ],
+    ]
 
 
 class _EchoTool(ToolBase):
@@ -382,9 +444,11 @@ class TestConstructorValidation(IsolatedAsyncioTestCase):
     """Tests for ReMeMiddleware constructor validation."""
 
     def test_unknown_mode_raises(self) -> None:
-        """Unknown control modes should be rejected."""
-        with self.assertRaises(ValueError):
-            ReMeMiddleware(
+        """Unknown control modes should be rejected by the Parameters model."""
+        from pydantic import ValidationError
+
+        with self.assertRaises(ValidationError):
+            ReMeMiddleware.Parameters(
                 mode="garbage",  # type: ignore[arg-type]
             )
 
@@ -408,9 +472,8 @@ class TestConstructorValidation(IsolatedAsyncioTestCase):
         self.assertEqual(mw._session_id_of(_Agent()), "sess-xyz")
         self.assertIsNone(mw._session_id_of(object()))
 
-    def test_config_overrides_merged_reserved_keys_win(self) -> None:
-        """``config_overrides`` is merged into ``resolve_app_config``;
-        the middleware's reserved keys always take precedence."""
+    def test_embedding_model_enables_vector_store(self) -> None:
+        """An ``embedding_model`` turns ReMe's vector store on at build."""
         captured: dict = {}
 
         def _fake_resolve(**kwargs: Any) -> dict:
@@ -425,12 +488,9 @@ class TestConstructorValidation(IsolatedAsyncioTestCase):
         mw = ReMeMiddleware(
             workspace_dir="/real/ws",
             config="mycfg",
-            config_overrides={
-                "components": {"file_store": {"default": {}}},
-                # A caller must not be able to hijack reserved keys.
-                "workspace_dir": "/evil",
-                "enable_logo": True,
-            },
+            parameters=ReMeMiddleware.Parameters(
+                embedding_model=_FakeEmbedding(),
+            ),
         )
         with mock.patch.dict(
             sys.modules,
@@ -440,11 +500,33 @@ class TestConstructorValidation(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             captured["components"],
-            {"file_store": {"default": {}}},
+            {"file_store": {"default": {"embedding_store": "default"}}},
         )
         self.assertEqual(captured["workspace_dir"], "/real/ws")
         self.assertEqual(captured["config"], "mycfg")
         self.assertFalse(captured["enable_logo"])
+
+    def test_no_embedding_model_keeps_keyword_only(self) -> None:
+        """Without an ``embedding_model`` the vector store stays off."""
+        captured: dict = {}
+
+        def _fake_resolve(**kwargs: Any) -> dict:
+            captured.update(kwargs)
+            return {"_ok": True}
+
+        fake_reme = types.ModuleType("reme")
+        fake_reme.ReMe = lambda **kw: ("app", kw)  # type: ignore[attr-defined]
+        fake_cfg = types.ModuleType("reme.config")
+        setattr(fake_cfg, "resolve_app_config", _fake_resolve)
+
+        mw = ReMeMiddleware(workspace_dir="/real/ws")
+        with mock.patch.dict(
+            sys.modules,
+            {"reme": fake_reme, "reme.config": fake_cfg},
+        ):
+            mw._build_app()
+
+        self.assertNotIn("components", captured)
 
 
 # ----------------------------------------------------------------------
@@ -483,7 +565,17 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
             mode="static_control",
         )
 
-        agent = self._agent(mw, response_text="hi alice")
+        # A tool call gives two reasoning steps, so the background retrieval
+        # finishes and its hint injects before the final model call.
+        self.model.set_responses(_echo_then_text("hi alice"))
+        toolkit = Toolkit(tools=[_EchoTool()])
+        agent = Agent(
+            name="agent_under_test",
+            system_prompt="base system prompt",
+            model=self.model,
+            toolkit=toolkit,
+            middlewares=[mw],
+        )
         # session_id is sourced from the agent, not the middleware.
         agent.state.session_id = "alice-001"
         reply = await agent.reply(UserMsg("user", "remind me what I like"))
@@ -525,7 +617,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         memory_text = memory_hints[0].hint
         self.assertIn("Relevant memories", memory_text)
         self.assertIn("alice loves coffee", memory_text)
-        # The model saw it on its first call as well.
+        # The model saw it on the final call (injected before step 2).
         delivered = [
             m
             for m in self.model.last_call_messages
@@ -534,7 +626,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         self.assertEqual(len(delivered), 1)
 
         # 5. no agent-control tools registered (in any group)
-        all_names = _all_tool_names(self.toolkit)
+        all_names = _all_tool_names(toolkit)
         self.assertNotIn("memory_search", all_names)
         self.assertNotIn("add_memory", all_names)
 
@@ -654,14 +746,21 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         self.assertNotIn("first answer", second_texts)
 
     async def test_memory_message_lands_after_user_message(self) -> None:
-        """The memory note is inserted right AFTER the new user input
-        lands in the agent context, not before."""
+        """The memory note is inserted AFTER the new user input lands in the
+        agent context (injected on a later reasoning step, not before)."""
         fake = _FakeReMeApp(search_return=["saved fact"])
         mw = _mw(
             app=fake,
             mode="static_control",
         )
-        agent = self._agent(mw, response_text="answer")
+        self.model.set_responses(_echo_then_text("answer"))
+        agent = Agent(
+            name="agent_under_test",
+            system_prompt="base system prompt",
+            model=self.model,
+            toolkit=Toolkit(tools=[_EchoTool()]),
+            middlewares=[mw],
+        )
         await agent.reply(UserMsg("user", "tell me what you know"))
 
         roles_and_names = [
@@ -690,12 +789,23 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
             mode="static_control",
         )
 
-        agent = self._agent(mw)
+        # Tool call → two reasoning steps, so retrieval completes and the
+        # injection path is exercised; with empty results it must add nothing.
+        self.model.set_responses(_echo_then_text("ok"))
+        agent = Agent(
+            name="agent_under_test",
+            system_prompt="base system prompt",
+            model=self.model,
+            toolkit=Toolkit(tools=[_EchoTool()]),
+            middlewares=[mw],
+        )
         await agent.reply(UserMsg("user", "hi"))
 
         msgs = self.model.last_call_messages
         self.assertEqual(msgs[0].get_text_content(), "base system prompt")
         for m in msgs:
+            self.assertNotEqual(getattr(m, "name", None), "memory")
+        for m in agent.state.context:
             self.assertNotEqual(getattr(m, "name", None), "memory")
         self.assertEqual(len(fake.search_calls), 1)
 
@@ -747,6 +857,49 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         sessions = [c["session_id"] for c in fake.auto_memory_calls]
         self.assertEqual(sessions, ["sess-a", "sess-b"])
 
+    async def test_concurrent_sessions_isolate_retrieval_tasks(self) -> None:
+        """Retrieval tasks are keyed by session_id, so two replies running
+        concurrently on a shared middleware never clobber each other's
+        in-flight search — each session injects its own note and no task is
+        left behind."""
+        fake = _FakeReMeApp(search_return=["shared fact"])
+        mw = _mw(app=fake, mode="static_control")
+
+        def _make_agent(sid: str) -> Agent:
+            # Distinct model per agent: a shared response queue would be
+            # consumed racily by concurrent turns.
+            model = RecordingMockModel(context_size=100_000)
+            model.set_responses(_echo_then_text(f"done-{sid}"))
+            agent = Agent(
+                name=sid,
+                system_prompt="base",
+                model=model,
+                toolkit=Toolkit(tools=[_EchoTool()]),
+                middlewares=[mw],
+            )
+            agent.state.session_id = sid
+            return agent
+
+        agent_a = _make_agent("sess-a")
+        agent_b = _make_agent("sess-b")
+
+        await asyncio.gather(
+            agent_a.reply(UserMsg("user", "a asks")),
+            agent_b.reply(UserMsg("user", "b asks")),
+        )
+
+        # Each session injected its own memory note exactly once.
+        for agent in (agent_a, agent_b):
+            notes = [
+                m
+                for m in agent.state.context
+                if getattr(m, "name", None) == "memory"
+            ]
+            self.assertEqual(len(notes), 1, f"{agent.name} missing its note")
+
+        # No task left behind for either session after both turns finish.
+        self.assertEqual(mw._retrieval_tasks, {})
+
     async def test_chat_model_injected_at_start(self) -> None:
         """The configured chat_model is injected into ReMe at start."""
         explicit = RecordingMockModel(context_size=100_000)
@@ -758,7 +911,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         )
         agent = self._agent(mw)
         await agent.reply(UserMsg("user", "hi"))
-        self.assertIs(mw._chat_model, explicit)
+        self.assertIs(mw._parameters.chat_model, explicit)
         self.assertIs(fake.last_chat_model, explicit)
 
     async def test_no_chat_model_no_injection(self) -> None:
@@ -774,7 +927,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         )
         agent = self._agent(mw)
         await agent.reply(UserMsg("user", "hi"))
-        self.assertIsNone(mw._chat_model)
+        self.assertIsNone(mw._parameters.chat_model)
         self.assertEqual(fake.injected_models, [])
 
     async def test_embedding_model_injected_at_start(self) -> None:
@@ -785,7 +938,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         the chat-model injection into ``as_llm``.
         """
         chat = RecordingMockModel(context_size=100_000)
-        embedding = object()  # sentinel — only passed through to ReMe
+        embedding = _FakeEmbedding()  # only passed through to ReMe
         fake = _FakeReMeApp()
         mw = _mw(
             app=fake,
@@ -795,7 +948,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         )
         agent = self._agent(mw)
         await agent.reply(UserMsg("user", "hi"))
-        self.assertIs(mw._embedding_model, embedding)
+        self.assertIs(mw._parameters.embedding_model, embedding)
         self.assertIs(fake.last_embedding_model, embedding)
         # Both components are configured independently at start.
         self.assertIs(fake.last_chat_model, chat)
@@ -810,7 +963,7 @@ class TestStaticControlMode(IsolatedAsyncioTestCase):
         )
         agent = self._agent(mw)
         await agent.reply(UserMsg("user", "hi"))
-        self.assertIsNone(mw._embedding_model)
+        self.assertIsNone(mw._parameters.embedding_model)
         self.assertIsNone(fake.last_embedding_model)
 
 
@@ -1051,8 +1204,10 @@ class TestBothMode(IsolatedAsyncioTestCase):
             app=fake,
             mode="both",
         )
-        toolkit = Toolkit(tools=await mw.list_tools())
-        model.set_responses([_single_response("ok")])
+        # Echo tool forces a second reasoning step so the background
+        # auto-retrieval injects before the final model call.
+        toolkit = Toolkit(tools=[*await mw.list_tools(), _EchoTool()])
+        model.set_responses(_echo_then_text("ok"))
         agent = Agent(
             name="a",
             system_prompt="base",
@@ -1062,7 +1217,8 @@ class TestBothMode(IsolatedAsyncioTestCase):
         )
         await agent.reply(UserMsg("user", "hi"))
 
-        # Static hooks ran.
+        # Static hooks ran — one background search (the echo tool call does
+        # not search), one write-back.
         self.assertEqual(len(fake.search_calls), 1)
         self.assertEqual(len(fake.auto_memory_calls), 1)
 
