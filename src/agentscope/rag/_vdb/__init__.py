@@ -9,10 +9,12 @@ from ._vector_store import (
 )
 from ._milvus_lite import MilvusLiteStore
 from ._qdrant import QdrantStore
+from ._valkey import ValkeyStore
 
 __all__ = [
     "DocumentSummary",
     "MilvusLiteStore",
+    "ValkeyStore",
     "VectorStoreBase",
     "VectorRecord",
     "VectorSearchResult",

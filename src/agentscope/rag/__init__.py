@@ -10,6 +10,7 @@ from ._parser import ImageParser, ParserBase, PDFParser, PPTParser, TextParser
 from ._vdb import (
     DocumentSummary,
     MilvusLiteStore,
+    ValkeyStore,
     VectorStoreBase,
     VectorRecord,
     VectorSearchResult,
@@ -29,6 +30,7 @@ __all__ = [
     "PPTParser",
     "TextParser",
     "Section",
+    "ValkeyStore",
     "VectorStoreBase",
     "VectorRecord",
     "VectorSearchResult",

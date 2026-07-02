@@ -86,6 +86,9 @@ milvuslite = [
     "pymilvus[milvus-lite]>=2.4.0",
     "milvus-lite>=3.0; sys_platform == 'win32'",
 ]
+valkey = [
+    "valkey-glide>=2.4.0,<3.0.0",
+]
 
 # ------------ S3-compatible blob store ------------
 s3 = [
