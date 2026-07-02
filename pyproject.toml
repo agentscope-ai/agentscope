@@ -74,7 +74,9 @@ workspace = [
 ]
 # ------------ Tools ------------
 tools = [
-    "ripgrep",
+    # 15.x can require a Rust bootstrap in restricted Linux
+    # environments, which breaks installation behind some mirrors.
+    "ripgrep==14.1.0",
 ]
 # ------------ RAG ------------
 rag = [
