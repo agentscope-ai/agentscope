@@ -219,17 +219,19 @@ class AGUIProtocolLifecycleTest(IsolatedAsyncioTestCase):
         self.assertEqual(result["threadId"], "sess_1")
         self.assertEqual(result["runId"], "reply_1")
 
-    async def test_exceed_max_iters_to_run_error(self) -> None:
-        """Test ExceedMaxItersEvent -> RUN_ERROR."""
+    async def test_exceed_max_iters_to_custom_event(self) -> None:
+        """Test ExceedMaxItersEvent -> CUSTOM."""
         event = ExceedMaxItersEvent(
             reply_id="reply_1",
             name="my_agent",
         )
         result = self.mw._convert_to_protocol(event)
 
-        self.assertEqual(result["type"], "RUN_ERROR")
-        self.assertIn("my_agent", result["message"])
-        self.assertEqual(result["code"], "exceed_max_iters")
+        self.assertEqual(result["type"], "CUSTOM")
+        self.assertEqual(result["name"], "exceed_max_iters")
+        self.assertEqual(result["value"]["type"], "EXCEED_MAX_ITERS")
+        self.assertEqual(result["value"]["reply_id"], "reply_1")
+        self.assertEqual(result["value"]["name"], "my_agent")
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""

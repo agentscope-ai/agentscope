@@ -65,6 +65,7 @@ from ..message import (
     ToolCallBlock,
     ToolResultBlock,
     DataBlock,
+    HintBlock,
     Base64Source,
     URLSource,
     ToolCallState,
@@ -711,25 +712,22 @@ class Agent:
         )
         logger.warning(
             "Agent %s exceeds the max iteration numbers %d. "
-            "Stop the react loop.",
+            "Finalize the reply without tools.",
             self.name,
             self.react_config.max_iters,
         )
 
-        # Mirror the normal-exit path so subscribers (e.g. SSE clients
-        # waiting on a terminal event) don't hang when the loop bails
-        # out on max_iters.
-        yield ReplyEndEvent(
-            session_id=self.state.session_id,
-            reply_id=self.state.reply_id,
-        )
+        self._save_to_context([self._build_max_iters_finalization_hint()])
 
-        yield AssistantMsg(
-            id=self.state.reply_id,
-            name=self.name,
-            content="Executed maximum iterations of reasoning-acting loop"
-            "without finishing the task.",
-        )
+        async for evt in self._reasoning(tool_choice=ToolChoice(mode="none")):
+            if isinstance(evt, Msg):
+                yield ReplyEndEvent(
+                    session_id=self.state.session_id,
+                    reply_id=self.state.reply_id,
+                )
+                yield evt
+                return
+            yield evt
 
     async def _reasoning(
         self,
@@ -2240,6 +2238,7 @@ class Agent:
             | ToolCallBlock
             | ToolResultBlock
             | DataBlock
+            | HintBlock
         ],
         usage: ChatUsage | None = None,
     ) -> None:
@@ -2305,6 +2304,20 @@ class Agent:
                         usage=msg_usage,
                     ),
                 )
+
+    def _build_max_iters_finalization_hint(self) -> HintBlock:
+        """Build the runtime hint used to finalize a max-iteration reply."""
+        return HintBlock(
+            source="max_iters",
+            hint=(
+                "<system-reminder>The maximum number of reasoning-acting "
+                "iterations allowed for this reply has been reached. "
+                "Respond with text only. Do not make any tool calls. "
+                "Summarize what has been accomplished so far, list any "
+                "remaining tasks that were not completed, and recommend what "
+                "should be done next.</system-reminder>"
+            ),
+        )
 
     def _get_last_msg(self) -> Msg | None:
         """Get the last message in the context that belongs to this agent."""
