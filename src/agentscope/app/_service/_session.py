@@ -46,12 +46,51 @@ component that touches both in the same call. Storage code never
 imports the bus; bus code never imports storage.
 """
 import asyncio
+from enum import StrEnum
 
 from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import StorageBase
 from ._session_projection import SessionProjection
 from ._projectors import SubagentHitlProjector
 from ..._logging import logger
+from ...message import ToolCallState
+
+
+class SessionStatus(StrEnum):
+    """The high-level status of a session, unifying cluster liveness
+    (from the message bus) with the durable tool-call parking state
+    (from the persisted :class:`~agentscope.state.AgentState.context`).
+
+    Exactly one value applies at any moment — the frontend renders a
+    single indicator without having to reconcile multiple boolean
+    flags.
+
+    Precedence: ``RUNNING`` is decided first from the distributed
+    session-run lock; only when the session is not held by any worker
+    do the ``AWAITING_*`` / ``IDLE`` values (derived from the stored
+    context tail) apply. This ordering reflects the ground-truth
+    hierarchy — while a worker owns the run, the live in-memory state
+    supersedes the persisted snapshot, which is by definition stale
+    until the run yields.
+
+    Values:
+        - ``RUNNING``: a worker somewhere in the cluster currently
+          holds the session's run lease on the message bus.
+        - ``IDLE``: no worker is running the session, and its
+          persisted context is not parked on any pending tool call.
+        - ``AWAITING_PERMISSION``: no worker is running the session,
+          and the persisted context tail has at least one tool call
+          waiting for user permission confirmation (HITL).
+        - ``AWAITING_EXTERNAL_RESULT``: no worker is running the
+          session, and the persisted context tail has at least one
+          tool call dispatched to an external executor and awaiting
+          its result (with no peer awaiting permission).
+    """
+
+    RUNNING = "running"
+    IDLE = "idle"
+    AWAITING_PERMISSION = "awaiting_permission"
+    AWAITING_EXTERNAL_RESULT = "awaiting_external_result"
 
 
 class SessionService:
@@ -91,6 +130,116 @@ class SessionService:
         self._storage = storage
         self._bus = message_bus
         self._projection = SessionProjection(message_bus)
+
+    # ------------------------------------------------------------------
+    # Status
+    # ------------------------------------------------------------------
+
+    async def get_session_status(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+    ) -> SessionStatus | None:
+        """Return the unified :class:`SessionStatus` for a session.
+
+        The status collapses two orthogonal signals into a single
+        four-valued enum:
+
+        - cluster liveness comes from the distributed session-run lock
+          on the shared message bus (Redis in production) — the answer
+          is cluster-wide, so any worker in the deployment holding the
+          lease yields ``RUNNING`` regardless of which API replica
+          serves the caller;
+        - the parked state (``AWAITING_PERMISSION`` /
+          ``AWAITING_EXTERNAL_RESULT`` / ``IDLE``) is derived from the
+          persisted ``AgentState.context`` tail, and only applies when
+          no worker owns the run.
+
+        The ``RUNNING`` check is performed **before** loading the
+        persisted context: while a worker owns the run, the live
+        in-memory state supersedes the stored snapshot, and the parked
+        derivation would be stale. This also saves a storage round-trip
+        in the hot ``RUNNING`` case.
+
+        .. note::
+            The run lease auto-expires after
+            ``MessageBusKeys.SESSION_RUN_TTL_SECS`` and is refreshed by
+            the owning worker while it is actively producing events, so
+            a crashed worker's session flips out of ``RUNNING`` on
+            lease expiry.
+
+        Args:
+            user_id (`str`):
+                The authenticated user id (ownership check).
+            agent_id (`str`):
+                The agent that owns the session (ownership check).
+            session_id (`str`):
+                The session to probe.
+
+        Returns:
+            `SessionStatus | None`:
+                The unified status, or ``None`` if the session does
+                not exist or is not owned by the user.
+        """
+        # RUNNING is checked first: while a worker owns the lease, the
+        # persisted context is by definition a stale snapshot, and we
+        # save a storage round-trip.
+        if await self._bus.is_locked(
+            MessageBusKeys.session_lock(session_id),
+        ):
+            return SessionStatus.RUNNING
+
+        session = await self._storage.get_session(
+            user_id,
+            agent_id,
+            session_id,
+        )
+        if session is None:
+            return None
+
+        return self._derive_parked_status(session.state.context)
+
+    @staticmethod
+    def _derive_parked_status(context: list) -> SessionStatus:
+        """Derive the parked :class:`SessionStatus` from a persisted
+        ``AgentState.context``.
+
+        Only the tail assistant message is inspected — a paused reply
+        can only park pending tool calls at the very end of the
+        context. ``AWAITING_PERMISSION`` wins over
+        ``AWAITING_EXTERNAL_RESULT`` when both appear on the tail: no
+        submitted call can complete while a peer is still awaiting user
+        confirmation, so the caller-visible status is dominated by the
+        blocker.
+
+        Callers must first ensure the session is not currently held by
+        any worker (see :attr:`SessionStatus.RUNNING`) — while a worker
+        owns the run, the live in-memory state supersedes the persisted
+        snapshot and this function's answer is by definition stale.
+
+        Args:
+            context (`list[Msg]`):
+                The persisted ``AgentState.context`` list.
+
+        Returns:
+            `SessionStatus`:
+                One of ``AWAITING_PERMISSION``,
+                ``AWAITING_EXTERNAL_RESULT``, or ``IDLE``.
+        """
+        if not context:
+            return SessionStatus.IDLE
+        last_msg = context[-1]
+        if last_msg.role != "assistant":
+            return SessionStatus.IDLE
+        tool_calls = last_msg.get_content_blocks("tool_call")
+        if not tool_calls:
+            return SessionStatus.IDLE
+        if any(tc.state == ToolCallState.ASKING for tc in tool_calls):
+            return SessionStatus.AWAITING_PERMISSION
+        if any(tc.state == ToolCallState.SUBMITTED for tc in tool_calls):
+            return SessionStatus.AWAITING_EXTERNAL_RESULT
+        return SessionStatus.IDLE
 
     # ------------------------------------------------------------------
     # Cancel

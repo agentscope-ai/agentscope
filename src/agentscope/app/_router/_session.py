@@ -19,6 +19,7 @@ from ._schema import (
     CreateSessionResponse,
     ListMessagesResponse,
     ListSessionsResponse,
+    SessionStatusResponse,
     SessionView,
     TeamDetailResponse,
     TeamMemberView,
@@ -460,6 +461,67 @@ async def list_messages(
         is_running=await message_bus.is_locked(
             MessageBusKeys.session_lock(session_id),
         ),
+    )
+
+
+# ----------------------------------------------------------------------
+# Status probe: unified session status (cluster liveness + parking state)
+# ----------------------------------------------------------------------
+
+
+@session_router.get(
+    "/{session_id}/status",
+    response_model=SessionStatusResponse,
+    summary="Probe the session's high-level status",
+)
+async def get_session_status(
+    session_id: str,
+    agent_id: str = Query(description="Agent the session belongs to."),
+    user_id: str = Depends(get_current_user_id),
+    session_service: SessionService = Depends(get_session_service),
+) -> SessionStatusResponse:
+    """Return the unified :class:`SessionStatus` for a session.
+
+    Ownership validation, cluster-liveness probing, and parked-state
+    derivation are all delegated to
+    :meth:`SessionService.get_session_status` — see that method for
+    the precedence rules that collapse the two orthogonal signals
+    (message-bus run lock + persisted context tail) into a single
+    four-valued enum.
+
+    Args:
+        session_id (`str`):
+            The session to probe.
+        agent_id (`str`):
+            The agent that owns the session (ownership validation).
+        user_id (`str`):
+            Injected authenticated user ID.
+        session_service (`SessionService`):
+            Injected session service. Owns both storage and message
+            bus dependencies so the composed answer is derived in a
+            single layer.
+
+    Returns:
+        `SessionStatusResponse`:
+            The probed session id and its unified status.
+
+    Raises:
+        `HTTPException`: 404 if the session does not exist or does not
+            belong to the authenticated user.
+    """
+    session_status = await session_service.get_session_status(
+        user_id,
+        agent_id,
+        session_id,
+    )
+    if session_status is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session '{session_id}' not found.",
+        )
+    return SessionStatusResponse(
+        session_id=session_id,
+        status=session_status,
     )
 
 
