@@ -492,14 +492,17 @@ class RedisStorage(StorageBase):
            a team — the team).
         2. **Schedules** — every schedule whose ``data.agent_id`` matches
            is deleted via :meth:`delete_schedule`.
-        3. **Team back-references (defensive)** — if the agent is a team
-           worker (``source='team'``) but the caller chose to delete it
-           directly instead of going through :meth:`delete_team`, scan
-           the user's teams and remove the agent id from every
-           :attr:`TeamData.member_ids` list it appears in. The normal
-           path (``delete_team`` iterates ``member_ids`` and calls
-           ``delete_agent`` for each) does not need this scan, but it
-           keeps the team record consistent if a caller bypasses it.
+        3. **Team back-references (defensive)** — if the caller chose to
+           delete the agent directly instead of going through
+           :meth:`delete_team`, scan the user's teams and remove the
+           agent id from both the legacy :attr:`TeamData.member_ids`
+           list *and* the current :attr:`TeamData.members` list. The
+           normal path (``delete_team`` iterates members and calls
+           ``delete_agent`` / ``delete_session`` for each) does not
+           need this scan, but it keeps team records consistent if a
+           caller bypasses it. Applies to invited members too — a stale
+           entry pointing at a removed agent would otherwise poison
+           ``TeamSay`` routing.
         4. **Agent record + index** — finally delete the agent key and
            remove from the per-user agent index.
 
@@ -525,16 +528,26 @@ class RedisStorage(StorageBase):
             if schedule.agent_id == agent_id:
                 await self.delete_schedule(user_id, schedule.id)
 
-        # Defensive: scrub agent_id from any team's member_ids list.
-        # The common path (delete_team -> delete_agent) is unaffected
-        # because the team is being torn down anyway and removed from
-        # the index in step 4 of delete_team.
+        # Defensive: scrub agent_id from any team's member roster.
+        # Covers both the legacy ``member_ids`` field and the current
+        # ``members`` list (which additionally holds invited entries).
+        # The common path (delete_team -> delete_agent / delete_session)
+        # is unaffected because the team is being torn down anyway.
         teams = await self.list_teams(user_id)
         for team in teams:
+            dirty = False
             if agent_id in team.data.member_ids:
                 team.data.member_ids = [
                     mid for mid in team.data.member_ids if mid != agent_id
                 ]
+                dirty = True
+            filtered_members = [
+                m for m in team.data.members if m.agent_id != agent_id
+            ]
+            if len(filtered_members) != len(team.data.members):
+                team.data.members = filtered_members
+                dirty = True
+            if dirty:
                 await self.upsert_team(user_id, team)
 
         key = self._key(
@@ -1122,14 +1135,26 @@ class RedisStorage(StorageBase):
         await self._set_with_ttl(key, record.model_dump_json())
 
     async def delete_team(self, user_id: str, team_id: str) -> bool:
-        """Delete a team record and cascade-delete all of its workers.
+        """Delete a team record and cascade-clean its members by role.
 
         Cascade order (mirrors what SQL's ``ON DELETE CASCADE`` would do
-        for the same set of foreign keys):
+        for the same set of foreign keys, but role-aware to honour the
+        ``AgentInvite`` semantics — see :class:`TeamMember`):
 
-        1. For each ``member_id`` in :attr:`TeamData.member_ids`, call
-           :meth:`delete_agent`. Each call cascades the worker's single
-           session via the existing agent-cascade logic.
+        1. Materialise the member roster via
+           :func:`ensure_team_members` (which migrates legacy
+           ``member_ids``-only records on first read). For each entry:
+
+           - ``role == "created"`` — the member was spawned by
+             ``AgentCreate`` and lives only for this team. Delete it in
+             full via :meth:`delete_agent`, which cascades that
+             worker's session.
+           - ``role == "invited"`` — the member is a pre-existing
+             user-owned agent that was borrowed via ``AgentInvite``.
+             Only remove the team-scoped session via
+             :meth:`delete_session`; the underlying
+             :class:`AgentRecord` and its other sessions must survive.
+
         2. Clear ``team_id`` on the leader session (referenced by
            :attr:`TeamRecord.session_id`) — semantically equivalent to
            ``ON DELETE SET NULL`` for that direction of the relationship.
@@ -1153,6 +1178,11 @@ class RedisStorage(StorageBase):
                 ``False`` if no record was found at the
                 ``(user_id, team_id)`` key.
         """
+        # Local import to avoid a top-level cycle between _utils (which
+        # imports TeamMember from _model) and _base (which imports the
+        # abstract StorageBase from this module hierarchy).
+        from ._utils import _ensure_team_members
+
         team = await self.get_team(user_id, team_id)
         if team is None:
             # Make sure the index is also clean if the record vanished
@@ -1161,9 +1191,17 @@ class RedisStorage(StorageBase):
             await self._client.srem(index_key, team_id)
             return False
 
-        # Cascade: delete each worker agent (which cascades its session)
-        for member_id in team.data.member_ids:
-            await self.delete_agent(user_id, member_id)
+        # Role-aware member cleanup — see docstring above.
+        members = await _ensure_team_members(self, user_id, team)
+        for member in members:
+            if member.role == "created":
+                await self.delete_agent(member.owner_id, member.agent_id)
+            else:  # invited
+                await self.delete_session(
+                    member.owner_id,
+                    member.agent_id,
+                    member.session_id,
+                )
 
         # Clear team_id on the leader session (idempotent)
         await self.set_session_team_id(user_id, team.session_id, None)

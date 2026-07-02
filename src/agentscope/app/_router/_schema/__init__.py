@@ -13,6 +13,7 @@ from ._schedule import (
 )
 from ._agent import (
     AgentSchemaResponse,
+    AgentSchemaV2Response,
     ListAgentsResponse,
     CreateAgentRequest,
     CreateAgentResponse,
@@ -56,6 +57,7 @@ from ._session import (
 __all__ = [
     # Agent
     "AgentSchemaResponse",
+    "AgentSchemaV2Response",
     "ListAgentsResponse",
     "CreateAgentRequest",
     "CreateAgentResponse",

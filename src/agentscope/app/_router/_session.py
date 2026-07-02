@@ -37,6 +37,7 @@ from ..storage import (
     TeamRecord,
 )
 from ...message import ToolCallState
+from ..storage._utils import _ensure_team_members
 from ...event import CustomEvent
 
 
@@ -71,13 +72,16 @@ async def _build_team_detail(
         )
 
     members: list[TeamMemberView] = []
-    for member_id in team.data.member_ids:
-        agent = await storage.get_agent(user_id, member_id)
+    for member in await _ensure_team_members(storage, user_id, team):
+        agent = await storage.get_agent(member.owner_id, member.agent_id)
         if agent is None:
             continue
-        sessions = await storage.list_sessions(user_id, member_id)
-        session_id = sessions[0].id if sessions else None
-        members.append(TeamMemberView(agent=agent, session_id=session_id))
+        # Use the member's team-scoped session id directly; an invited
+        # agent has multiple sessions and only ``member.session_id``
+        # belongs to this team.
+        members.append(
+            TeamMemberView(agent=agent, session_id=member.session_id),
+        )
 
     return TeamDetailResponse(
         team=team,

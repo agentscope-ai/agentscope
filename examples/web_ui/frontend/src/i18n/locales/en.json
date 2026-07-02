@@ -140,6 +140,15 @@
 			"description": "Controls the reasoning and action loop behaviour.",
 			"max-iters": { "label": "Max iterations" },
 			"stop-on-reject": { "label": "Stop on reject" }
+		},
+		"invite-config": {
+			"legend": "Invite Config",
+			"description": "Controls whether other agents can borrow this one via AgentInvite.",
+			"invitable": { "label": "Invitable" },
+			"invite-description": {
+				"label": "Invite description",
+				"placeholder": "Briefly describe this agent's expertise; required when invitable is on."
+			}
 		}
 	},
 	"dialog-agent-edit": {
