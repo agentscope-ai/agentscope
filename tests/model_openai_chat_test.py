@@ -10,6 +10,7 @@ Tests cover both non-streaming and streaming modes, verifying that:
 import base64
 import io
 import wave
+from types import SimpleNamespace
 from typing import Any
 import unittest
 from unittest import IsolatedAsyncioTestCase
@@ -51,6 +52,8 @@ def _mock_completion(
     reasoning: Any = None,
     response_id: str = "resp-1",
     audio: dict | None = None,
+    finish_reason: str | None = None,
+    function_call: Any = None,
 ) -> MagicMock:
     """Build a mock non-streaming ChatCompletion response."""
     msg = MagicMock()
@@ -59,19 +62,25 @@ def _mock_completion(
     msg.reasoning = None
     msg.audio = audio
     msg.tool_calls = None
+    msg.function_call = function_call
 
     if tool_calls:
         tc_mocks = []
         for tc in tool_calls:
-            m = MagicMock()
-            m.id = tc["id"]
-            m.function.name = tc["name"]
-            m.function.arguments = tc["arguments"]
-            tc_mocks.append(m)
+            tc_mocks.append(
+                SimpleNamespace(
+                    id=tc["id"],
+                    function=SimpleNamespace(
+                        name=tc["name"],
+                        arguments=tc["arguments"],
+                    ),
+                ),
+            )
         msg.tool_calls = tc_mocks
 
     choice = MagicMock()
     choice.message = msg
+    choice.finish_reason = finish_reason
 
     resp = MagicMock()
     resp.id = response_id
@@ -90,6 +99,7 @@ def _make_stream_chunk(
     usage: dict | None = None,
     has_choices: bool = True,
     delta_audio: dict | None = None,
+    finish_reason: str | None = None,
 ) -> MagicMock:
     """Build a single mock streaming chunk."""
     chunk = MagicMock()
@@ -112,6 +122,7 @@ def _make_stream_chunk(
         delta.tool_calls = tool_calls
         choice = MagicMock()
         choice.delta = delta
+        choice.finish_reason = finish_reason
         chunk.choices = [choice]
     else:
         chunk.choices = []
@@ -283,6 +294,48 @@ class TestOpenAIChatNonStream(IsolatedAsyncioTestCase):
                     ),
                 ],
             ),
+        )
+
+    @patch("openai.AsyncClient")
+    async def test_choice_metadata_response(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Non-stream responses preserve selected OpenAI choice metadata."""
+        mock_create = AsyncMock(
+            return_value=_mock_completion(
+                text="Hello",
+                finish_reason="stop",
+                function_call={"name": "legacy_func", "arguments": "{}"},
+                tool_calls=[
+                    {
+                        "id": "call-1",
+                        "name": "get_weather",
+                        "arguments": '{"city":"Beijing"}',
+                    },
+                ],
+            ),
+        )
+        mock_client_cls.return_value.chat.completions.create = mock_create
+
+        result = await self.model([])
+
+        self.assertEqual(result.metadata["finish_reason"], "stop")
+        self.assertEqual(
+            result.metadata["function_call"],
+            {"name": "legacy_func", "arguments": "{}"},
+        )
+        self.assertEqual(
+            result.metadata["tool_calls"],
+            [
+                {
+                    "id": "call-1",
+                    "function": {
+                        "name": "get_weather",
+                        "arguments": '{"city":"Beijing"}',
+                    },
+                },
+            ],
         )
 
     @patch("openai.AsyncClient")
@@ -463,6 +516,7 @@ class TestOpenAIChatStream(IsolatedAsyncioTestCase):
                 tool_calls=[
                     _make_tool_call_delta(0, None, None, 'ty":"BJ"}'),
                 ],
+                finish_reason="tool_calls",
             ),
             _make_stream_chunk(
                 has_choices=False,
@@ -509,6 +563,19 @@ class TestOpenAIChatStream(IsolatedAsyncioTestCase):
                     ],
                 ),
             ],
+        )
+        self.assertEqual(
+            responses[-1].metadata,
+            {
+                "finish_reason": "tool_calls",
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "name": "get_weather",
+                        "input": '{"city":"BJ"}',
+                    },
+                ],
+            },
         )
 
     @patch("openai.AsyncClient")
