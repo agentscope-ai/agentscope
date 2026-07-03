@@ -1,13 +1,19 @@
 # -*- coding: utf-8 -*-
-"""MongoDB Atlas / self-hosted vector store backend.
+"""MongoDB implementation of the vector store backend.
+
 Built on ``pymongo.AsyncMongoClient`` and MongoDB Vector Search
-(``$vectorSearch``).  One :class:`MongoDBStore` instance is shared
-across the application; each knowledge base maps to one MongoDB
-collection inside a single database.
+(``$vectorSearch``), so all operations are non-blocking and safe to
+call from the application's event loop.
+
+The same class supports MongoDB Atlas and self-hosted deployments
+through the constructor arguments:
+
+- ``uri="mongodb+srv://..."`` — MongoDB Atlas cluster
+- ``uri="mongodb://localhost:27017"`` — self-hosted replica set
+  (MongoDB 7.0+ with Vector Search enabled)
 """
 import asyncio
 import time
-import uuid
 from typing import TYPE_CHECKING, Any, Literal
 
 from ._vector_store import (
@@ -21,36 +27,83 @@ from .._document import Chunk
 if TYPE_CHECKING:
     from pymongo import AsyncMongoClient
 
+
 class MongoDBStore(VectorStoreBase):
-    """Vector store backed by MongoDB Vector Search.
-    .. note:: Requires ``pymongo`` with ``AsyncMongoClient`` support.
-        Install with ``pip install agentscope[mongodb]``.
+    """Vector store backend backed by `MongoDB Vector Search \
+<https://www.mongodb.com/docs/atlas/atlas-vector-search/vector-search-overview/>`_.
+
+    Each knowledge base maps to one MongoDB collection inside a single
+    database.  Every document stores the owning ``document_id`` plus
+    the serialized :class:`~agentscope.rag.Chunk`, which is
+    reconstructed on retrieval.
+
+    .. note:: Requires ``pymongo`` with ``AsyncMongoClient`` support
+        (``pymongo>=4.7``).  Install with
+        ``pip install agentscope[mongodb]``.
+
+    .. note:: Fields used in :meth:`search` ``metadata_filter`` must be
+        declared in ``filter_fields`` at construction time so they are
+        included in the vector search index definition.
+
+    .. code-block:: python
+
+        # MongoDB Atlas
+        store = MongoDBStore(
+            uri="mongodb+srv://user:pass@cluster.mongodb.net",
+            database="agentscope_rag",
+            filter_fields=[
+                "document_id",
+                "chunk.metadata.tenant_id",
+            ],
+        )
+
+        async with store:
+            await store.create_collection("kb-1", dimensions=768)
+
     """
+
     def __init__(
         self,
         uri: str,
         database: str,
         distance: Literal["cosine", "euclidean", "dotProduct"] = "cosine",
-        index_name: str = "vector_index",          # 每个 collection 共用同名 index
-        filter_fields: list[str] | None = None,    # 预声明可过滤字段路径
+        index_name: str = "vector_index",
+        filter_fields: list[str] | None = None,
         client_kwargs: dict[str, Any] | None = None,
     ) -> None:
+        """Initialize the MongoDB vector store.
+
+        Args:
+            uri (`str`):
+                The MongoDB connection URI, e.g.
+                ``"mongodb+srv://..."`` for Atlas or
+                ``"mongodb://localhost:27017"`` for a self-hosted
+                replica set.
+            database (`str`):
+                The database name.  Each knowledge base maps to one
+                collection inside this database.
+            distance (`Literal["cosine", "euclidean", "dotProduct"]`, \
+             defaults to ``"cosine"``):
+                The similarity metric used when creating vector search
+                indexes.
+            index_name (`str`, defaults to ``"vector_index"``):
+                The name of the vector search index created on each
+                collection.  All collections share this index name.
+            filter_fields (`list[str] | None`, optional):
+                Field paths declared as filter fields in the vector
+                search index.  Required for ``metadata_filter`` in
+                :meth:`search`.  Defaults to ``["document_id"]``.
+            client_kwargs (`dict[str, Any] | None`, optional):
+                Extra keyword arguments forwarded to
+                :class:`~pymongo.AsyncMongoClient`.
+        """
         self._uri = uri
         self._database_name = database
         self._distance = distance
         self._index_name = index_name
-        self._filter_fields = filter_fields or [
-            "document_id",
-            # metadata_filter 常用路径，按需扩展：
-            # "chunk.metadata.tenant_id",
-            # "chunk.metadata.kb_scope",
-        ]
+        self._filter_fields = filter_fields or ["document_id"]
         self._client_kwargs = client_kwargs or {}
         self._client: "AsyncMongoClient | None" = None
-        # 缓存：collection_name -> dimensions
-        # create_collection 写入，search/insert 可校验
-        self._collection_dimensions: dict[str, int] = {}
-
 
     def get_client(self) -> "AsyncMongoClient":
         """Lazily create and cache the async MongoDB client.
@@ -82,6 +135,7 @@ class MongoDBStore(VectorStoreBase):
     # ------------------------------------------------------------------
     # Collection management
     # ------------------------------------------------------------------
+
     def _db(self) -> Any:
         """Return the configured database handle."""
         return self.get_client()[self._database_name]
@@ -89,8 +143,6 @@ class MongoDBStore(VectorStoreBase):
     def _col(self, collection: str) -> Any:
         """Return a collection handle inside the configured database."""
         return self._db()[collection]
-
-
 
     async def create_collection(self, name: str, dimensions: int) -> None:
         """Create a new MongoDB collection with a vector search index.
@@ -131,7 +183,6 @@ class MongoDBStore(VectorStoreBase):
         )
         await col.create_search_index(model)
         await self._wait_for_index_ready(col, name)
-        self._collection_dimensions[name] = dimensions
 
     async def delete_collection(self, name: str) -> None:
         """Delete a collection and all its data.
@@ -141,7 +192,6 @@ class MongoDBStore(VectorStoreBase):
                 The collection name to delete.
         """
         await self._col(name).drop()
-        self._collection_dimensions.pop(name, None)
 
     async def has_collection(self, name: str) -> bool:
         """Check whether a collection exists.
@@ -195,7 +245,9 @@ class MongoDBStore(VectorStoreBase):
         """Ensure the vector search index is queryable before reads."""
         await self._wait_for_index_ready(self._col(collection), collection)
 
-
+    # ------------------------------------------------------------------
+    # Data operations
+    # ------------------------------------------------------------------
 
     async def insert(
         self,
@@ -256,6 +308,10 @@ class MongoDBStore(VectorStoreBase):
         """
         await self._col(collection).delete_many({"document_id": document_id})
 
+    # ------------------------------------------------------------------
+    # Search
+    # ------------------------------------------------------------------
+
     async def search(
         self,
         collection: str,
@@ -276,7 +332,8 @@ class MongoDBStore(VectorStoreBase):
                 If provided, restrict the search to records whose
                 ``chunk.metadata`` matches every ``key == value`` pair
                 in this dict (translated into a MongoDB filter against
-                ``chunk.metadata.<key>``).
+                ``chunk.metadata.<key>``).  Each key must correspond to
+                a path declared in ``filter_fields``.
 
         Returns:
             `list[VectorSearchResult]`:
@@ -346,6 +403,10 @@ class MongoDBStore(VectorStoreBase):
                 for key, value in metadata_filter.items()
             ],
         }
+
+    # ------------------------------------------------------------------
+    # Document listing
+    # ------------------------------------------------------------------
 
     async def list_documents(
         self,
