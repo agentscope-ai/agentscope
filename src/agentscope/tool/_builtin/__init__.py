@@ -8,11 +8,12 @@ from ._glob import Glob
 from ._grep import Grep
 from ._meta import ResetTools
 from ._read import Read
-from ._skill import SkillViewer
+from ._skill import SkillMarkdownReader, SkillViewer
 from ._write import Write
 
 __all__ = [
     "ResetTools",
+    "SkillMarkdownReader",
     "SkillViewer",
     "Bash",
     "Edit",

@@ -129,6 +129,51 @@ This is the subdir2 skill content.
         self.assertIsInstance(skills[0].updated_at, float)
         self.assertGreater(skills[0].updated_at, 0)
 
+    async def test_loader_expands_user_directory(self) -> None:
+        """Test that user-relative skill paths are stored as absolute paths."""
+        home_dir = tempfile.mkdtemp()
+        old_home = os.environ.get("HOME")
+        old_userprofile = os.environ.get("USERPROFILE")
+        try:
+            os.environ["HOME"] = home_dir
+            os.environ["USERPROFILE"] = home_dir
+
+            skill_dir = os.path.join(home_dir, "home_skill")
+            os.makedirs(skill_dir)
+            with open(
+                os.path.join(skill_dir, "SKILL.md"),
+                "w",
+                encoding="utf-8",
+            ) as f:
+                f.write(
+                    "---\n"
+                    "name: home_skill\n"
+                    "description: A skill in the home directory\n"
+                    "---\n\n"
+                    "# Home Skill\n",
+                )
+
+            loader = LocalSkillLoader(
+                os.path.join("~", "home_skill"),
+                scan_subdir=False,
+            )
+            skills = await loader.list_skills()
+
+            self.assertEqual(len(skills), 1)
+            self.assertEqual(skills[0].dir, os.path.abspath(skill_dir))
+        finally:
+            if old_home is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = old_home
+
+            if old_userprofile is None:
+                os.environ.pop("USERPROFILE", None)
+            else:
+                os.environ["USERPROFILE"] = old_userprofile
+
+            shutil.rmtree(home_dir)
+
     async def test_load_skill_with_scan_subdir(self) -> None:
         """Test loading skills from subdirectories (scan_subdir=True)."""
         loader = LocalSkillLoader(self.test_dir, scan_subdir=True)

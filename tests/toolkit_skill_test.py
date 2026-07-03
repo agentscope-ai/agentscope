@@ -246,8 +246,99 @@ class ToolkitSkillViewerTest(IsolatedAsyncioTestCase):
                         },
                     },
                 },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "read_skill_md",
+                        "description": (
+                            "Read the SKILL.md file for a registered skill."
+                        ),
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "skill": {
+                                    "type": "string",
+                                    "description": (
+                                        "The exact name of the skill whose "
+                                        "SKILL.md should be read."
+                                    ),
+                                },
+                            },
+                            "required": ["skill"],
+                        },
+                    },
+                },
             ],
         )
+
+    async def test_builtin_read_skill_md_tool(self) -> None:
+        """Test that read_skill_md returns the raw SKILL.md content."""
+        skill_md = (
+            "---\n"
+            "name: path_skill\n"
+            "description: A skill loaded from a path\n"
+            "---\n\n"
+            "# Path Skill\n"
+            "Use the path skill.\n"
+        )
+        with tempfile.TemporaryDirectory() as skill_dir:
+            with open(
+                os.path.join(skill_dir, "SKILL.md"),
+                "w",
+                encoding="utf-8",
+            ) as f:
+                f.write(skill_md)
+
+            toolkit = Toolkit(skills_or_loaders=[skill_dir])
+            tool_call = ToolCallBlock(
+                id="test_call_read_skill_md",
+                name="read_skill_md",
+                input=json.dumps({"skill": "path_skill"}),
+            )
+            state = AgentState()
+
+            chunks = []
+            response = None
+            async for result in toolkit.call_tool(tool_call, state):
+                if isinstance(result, ToolChunk):
+                    chunks.append(result)
+                elif isinstance(result, ToolResponse):
+                    response = result
+
+            self.assertEqual(len(chunks), 1)
+            self.assertEqual(chunks[0].content[0].text, skill_md)
+
+            self.assertIsNotNone(response)
+            self.assertEqual(response.state, "success")
+            self.assertEqual(response.content[0].text, skill_md)
+
+    async def test_builtin_read_skill_md_tool_unknown_skill(self) -> None:
+        """Test that read_skill_md reports an unknown skill."""
+        loader = MockSkillLoader([_make_skill("existing_skill")])
+        toolkit = Toolkit(skills_or_loaders=[loader])
+
+        tool_call = ToolCallBlock(
+            id="test_call_read_skill_md_missing",
+            name="read_skill_md",
+            input=json.dumps({"skill": "missing_skill"}),
+        )
+        state = AgentState()
+
+        chunks = []
+        response = None
+        async for result in toolkit.call_tool(tool_call, state):
+            if isinstance(result, ToolChunk):
+                chunks.append(result)
+            elif isinstance(result, ToolResponse):
+                response = result
+
+        expected = "SkillNotFoundError: Skill 'missing_skill' not found."
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0].content[0].text, expected)
+
+        self.assertIsNotNone(response)
+        self.assertEqual(response.state, "error")
+        self.assertEqual(response.content[0].text, expected)
 
     async def test_call_skill_viewer_success(self) -> None:
         """Test calling SkillViewer with an existing skill."""

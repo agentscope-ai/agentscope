@@ -18,7 +18,7 @@ from pydantic import (
     create_model,
 )
 
-from ._builtin import ResetTools, SkillViewer
+from ._builtin import ResetTools, SkillMarkdownReader, SkillViewer
 from ._base import ToolBase
 from ._response import ToolResponse, ToolChunk
 from ..skill import SkillLoaderBase, Skill
@@ -164,6 +164,11 @@ class Toolkit:
 
         self.builtin_skill_viewer = RegisteredTool(
             tool=SkillViewer(
+                get_skills_method=self._get_available_skills,
+            ),
+        )
+        self.builtin_skill_md_reader = RegisteredTool(
+            tool=SkillMarkdownReader(
                 get_skills_method=self._get_available_skills,
             ),
         )
@@ -492,6 +497,9 @@ class Toolkit:
             available_tools[
                 self.builtin_skill_viewer.tool.name
             ] = self.builtin_skill_viewer
+            available_tools[
+                self.builtin_skill_md_reader.tool.name
+            ] = self.builtin_skill_md_reader
 
         # Builtin meta tool is only included when there is at least one tool
         # group
