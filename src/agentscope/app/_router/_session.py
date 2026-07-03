@@ -29,13 +29,13 @@ from ._schema import (
 )
 from ..message_bus import MessageBus, MessageBusKeys
 from .._service import (
+    AgentView,
     ResourceAccessService,
     SessionService,
     SessionProjection,
     SubagentHitlProjector,
 )
 from ..storage import (
-    AgentRecord,
     ChatModelConfig,
     SessionKnowledgeConfig,
     TTSModelConfig,
@@ -71,13 +71,20 @@ async def _build_team_detail(
             The team plus its resolved leader and member agents (each
             member paired with its session id when available).
     """
-    leader_agent: AgentRecord | None = None
+    leader_agent: AgentView | None = None
     leader_session = await storage.get_session(user_id, "", team.session_id)
     if leader_session is not None:
-        leader_agent = await storage.get_agent(
+        leader_record = await storage.get_agent(
             user_id,
             leader_session.agent_id,
         )
+        if leader_record is not None:
+            leader_agent = AgentView.model_validate(
+                {
+                    **leader_record.model_dump(),
+                    "editable": leader_record.user_id == user_id,
+                },
+            )
 
     members: list[TeamMemberView] = []
     for member in await _ensure_team_members(storage, user_id, team):
@@ -86,9 +93,18 @@ async def _build_team_detail(
             continue
         # Use the member's team-scoped session id directly; an invited
         # agent has multiple sessions and only ``member.session_id``
-        # belongs to this team.
+        # belongs to this team. A member whose owner is not the current
+        # user was invited from another user's pool — read-only here.
         members.append(
-            TeamMemberView(agent=agent, session_id=member.session_id),
+            TeamMemberView(
+                agent=AgentView.model_validate(
+                    {
+                        **agent.model_dump(),
+                        "editable": member.owner_id == user_id,
+                    },
+                ),
+                session_id=member.session_id,
+            ),
         )
 
     return TeamDetailResponse(

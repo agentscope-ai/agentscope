@@ -4,25 +4,24 @@ from pydantic import BaseModel, Field
 
 from ....permission import PermissionMode
 from ...storage import (
-    AgentRecord,
     ChatModelConfig,
     SessionKnowledgeConfig,
     TTSModelConfig,
     SessionRecord,
     TeamRecord,
 )
-from ..._service import SessionStatus
+from ..._service import AgentView, SessionStatus
 
 
 class TeamMemberView(BaseModel):
     """One row in :attr:`TeamDetailResponse.members`.
 
-    Pairs each member's :class:`AgentRecord` with its single
+    Pairs each member's :class:`AgentView` with its single
     ``session_id`` so the UI can subscribe to the worker's chat
     stream without a separate lookup.
     """
 
-    agent: AgentRecord = Field(
+    agent: AgentView = Field(
         description="The worker agent record.",
     )
     session_id: str | None = Field(
@@ -38,7 +37,7 @@ class TeamDetailResponse(BaseModel):
     """Resolved team detail embedded inside :class:`SessionView.team`."""
 
     team: TeamRecord = Field(description="The team record.")
-    leader_agent: AgentRecord | None = Field(
+    leader_agent: AgentView | None = Field(
         default=None,
         description=(
             "Leader's agent record (resolved from the team's "

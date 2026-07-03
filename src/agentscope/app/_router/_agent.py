@@ -22,7 +22,7 @@ from ._schema import (
     CreateAgentResponse,
     UpdateAgentRequest,
 )
-from .._service import ResourceAccessService, SessionService
+from .._service import AgentView, ResourceAccessService, SessionService
 from ..storage import StorageBase, AgentData, AgentRecord
 
 agent_router = APIRouter(
@@ -215,7 +215,7 @@ async def create_agent(
 
 @agent_router.patch(
     "/{agent_id}",
-    response_model=AgentRecord,
+    response_model=AgentView,
     summary="Update an agent",
 )
 async def update_agent(
@@ -224,7 +224,7 @@ async def update_agent(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     access: ResourceAccessService = Depends(get_resource_access_service),
-) -> AgentRecord:
+) -> AgentView:
     """Partially update an existing agent configuration.
 
     Only the fields present in the request body are updated; all other fields
@@ -238,7 +238,7 @@ async def update_agent(
         access (`ResourceAccessService`): Injected access service.
 
     Returns:
-        `AgentRecord`: The full agent record after the update.
+        `AgentView`: The full agent record after the update.
 
     Raises:
         `HTTPException`: 404 if the agent is not visible to the caller;
@@ -269,7 +269,11 @@ async def update_agent(
         update={"data": updated_data, "updated_at": datetime.now()},
     )
     await storage.upsert_agent(owner_id, updated_agent)
-    return updated_agent
+    # Only reachable via ``resolve_for_edit``, so the caller has edit
+    # permission by construction.
+    return AgentView.model_validate(
+        {**updated_agent.model_dump(), "editable": True},
+    )
 
 
 @agent_router.delete(

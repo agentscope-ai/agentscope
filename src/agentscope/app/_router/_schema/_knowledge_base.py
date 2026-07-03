@@ -5,12 +5,11 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from ...storage import (
-    CredentialRecord,
     EmbeddingModelConfig,
     KnowledgeDocumentRecord,
     KnowledgeDocumentStatus,
 )
-from ..._service import KnowledgeBaseView
+from ..._service import CredentialView, KnowledgeBaseView
 from ....embedding import EmbeddingModelCard
 from ....rag import VectorSearchResult
 from ...rag.knowledge_base_manager._dimension_policy import DimensionPolicy
@@ -195,7 +194,7 @@ class KbEmbeddingProvider(BaseModel):
     cards are narrowed to the locked dimension when applicable.
     """
 
-    credential: CredentialRecord = Field(
+    credential: CredentialView = Field(
         description="The credential record exposing these models.",
     )
     models: list[EmbeddingModelCard] = Field(

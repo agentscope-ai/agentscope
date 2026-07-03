@@ -15,8 +15,8 @@ from ._schema import (
     ListCredentialSchemasResponse,
     UpdateCredentialRequest,
 )
-from .._service import ResourceAccessService
-from ..storage import StorageBase, CredentialRecord
+from .._service import CredentialView, ResourceAccessService
+from ..storage import StorageBase
 from ...credential import CredentialFactory
 
 credential_router = APIRouter(
@@ -107,7 +107,7 @@ async def create_credential(
 
 @credential_router.patch(
     "/{credential_id}",
-    response_model=CredentialRecord,
+    response_model=CredentialView,
     summary="Update a credential",
 )
 async def update_credential(
@@ -116,7 +116,7 @@ async def update_credential(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     access: ResourceAccessService = Depends(get_resource_access_service),
-) -> CredentialRecord:
+) -> CredentialView:
     """Replace the payload of an existing credential.
 
     Args:
@@ -129,7 +129,7 @@ async def update_credential(
             when a shared editor updates the credential.
 
     Returns:
-        `CredentialRecord`: The updated credential record.
+        `CredentialView`: The updated credential record.
 
     Raises:
         `HTTPException`: 404 if the credential is not visible to the
@@ -149,7 +149,11 @@ async def update_credential(
     # is a value refresh, not an existence check.
     updated = await storage.get_credential(owner_id, credential_id)
     assert updated is not None
-    return updated
+    # Only reachable via ``resolve_for_edit``, so the caller has edit
+    # permission by construction.
+    return CredentialView.model_validate(
+        {**updated.model_dump(), "editable": True},
+    )
 
 
 @credential_router.delete(
