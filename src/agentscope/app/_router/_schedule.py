@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from .._manager import SchedulerManager
 from ..deps import (
     get_current_user_id,
+    get_resource_access_service,
     get_scheduler_manager,
     get_session_service,
     get_storage,
@@ -18,7 +19,7 @@ from ._schema import (
     ScheduleSessionsResponse,
     UpdateScheduleRequest,
 )
-from .._service import SessionService
+from .._service import ResourceAccessService, SessionService
 from ..storage import (
     StorageBase,
     ScheduleData,
@@ -66,14 +67,20 @@ async def create_schedule(
     body: CreateScheduleRequest,
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
+    access: ResourceAccessService = Depends(get_resource_access_service),
     scheduler: SchedulerManager = Depends(get_scheduler_manager),
 ) -> CreateScheduleResponse:
     """Create a new schedule and register it with the scheduler.
+
+    The referenced agent may be either the viewer's own or one shared
+    to them through :class:`ResourceAccessPolicyBase`; the schedule
+    record itself is always owned by the caller.
 
     Args:
         body (`CreateScheduleRequest`): Schedule configuration.
         user_id (`str`): Authenticated user ID.
         storage (`StorageBase`): Storage instance.
+        access (`ResourceAccessService`): Access service.
         scheduler (`SchedulerManager`): Scheduler manager.
 
     Returns:
@@ -81,14 +88,11 @@ async def create_schedule(
             The ID of the newly created schedule.
 
     Raises:
-        `HTTPException`: 404 if the specified agent does not exist.
+        `HTTPException`: 404 if the specified agent is not visible to
+            the caller.
     """
-    agent = await storage.get_agent(user_id, body.agent_id)
-    if agent is None or agent.user_id != user_id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Agent '{body.agent_id}' not found.",
-        )
+    # Visibility check — raises 404 when neither owned nor shared.
+    await access.resolve_agent(user_id, body.agent_id)
 
     record = ScheduleRecord(
         user_id=user_id,

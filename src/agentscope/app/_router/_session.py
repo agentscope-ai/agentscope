@@ -8,9 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
 from ..._utils._common import _generate_id
+from ..access import ResourceKind
 from ..deps import (
     get_current_user_id,
     get_message_bus,
+    get_resource_access_service,
     get_session_service,
     get_storage,
 )
@@ -26,7 +28,12 @@ from ._schema import (
     UpdateSessionRequest,
 )
 from ..message_bus import MessageBus, MessageBusKeys
-from .._service import SessionService, SessionProjection, SubagentHitlProjector
+from .._service import (
+    ResourceAccessService,
+    SessionService,
+    SessionProjection,
+    SubagentHitlProjector,
+)
 from ..storage import (
     AgentRecord,
     ChatModelConfig,
@@ -99,62 +106,61 @@ session_router = APIRouter(
 
 
 async def _ensure_credential_exists(
-    storage: StorageBase,
+    access: ResourceAccessService,
     user_id: str,
     config: ChatModelConfig | TTSModelConfig | None,
 ) -> None:
-    """Validate that the credential referenced by ``config`` belongs to the
-    given user. No-op when ``config`` is ``None``.
+    """Validate that the credential referenced by ``config`` is visible to
+    the given user (own or shared). No-op when ``config`` is ``None``.
 
     Args:
-        storage (`StorageBase`): Injected storage backend.
+        access (`ResourceAccessService`): Injected access service.
         user_id (`str`): The authenticated user ID.
         config (`ChatModelConfig | TTSModelConfig | None`): Model config to
             validate. Pass ``None`` to skip the check.
 
     Raises:
-        `HTTPException`: 404 if the credential does not exist or does not
-            belong to the user.
+        `HTTPException`: 404 if the credential does not exist or is not
+            visible to the user.
     """
     if config is None:
         return
-    credentials = await storage.list_credentials(user_id)
-    if not any(c.id == config.credential_id for c in credentials):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Credential '{config.credential_id}' not found.",
-        )
+    # ``get_resource`` raises 404 when the credential is neither owned
+    # nor shared to the viewer — exactly the semantics we want.
+    await access.get_resource(
+        user_id,
+        ResourceKind.CREDENTIAL,
+        config.credential_id,
+    )
 
 
 async def _ensure_knowledge_bases_exist(
-    storage: StorageBase,
+    access: ResourceAccessService,
     user_id: str,
     config: SessionKnowledgeConfig | None,
 ) -> None:
-    """Validate every KB id in ``config`` belongs to the given user.
+    """Validate every KB id in ``config`` is visible to the given user.
 
     No-op when ``config`` is ``None`` or its ``knowledge_base_ids``
     list is empty.
 
     Args:
-        storage (`StorageBase`): Injected storage backend.
+        access (`ResourceAccessService`): Injected access service.
         user_id (`str`): The authenticated user ID.
         config (`SessionKnowledgeConfig | None`):
             Knowledge config to validate.  Pass ``None`` to skip.
 
     Raises:
-        `HTTPException`: 404 if any KB id does not exist or is not
-            owned by the user.
+        `HTTPException`: 404 if any KB id is not visible to the user.
     """
     if config is None or not config.knowledge_base_ids:
         return
     for kb_id in config.knowledge_base_ids:
-        kb = await storage.get_knowledge_base(user_id, kb_id)
-        if kb is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Knowledge base '{kb_id}' not found.",
-            )
+        await access.get_resource(
+            user_id,
+            ResourceKind.KNOWLEDGE_BASE,
+            kb_id,
+        )
 
 
 @session_router.get(
@@ -166,6 +172,7 @@ async def list_sessions(
     agent_id: str = Query(description="Filter sessions by agent ID."),
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
+    access: ResourceAccessService = Depends(get_resource_access_service),
     message_bus: MessageBus = Depends(get_message_bus),
 ) -> ListSessionsResponse:
     """Return all sessions for an agent as enriched
@@ -179,11 +186,16 @@ async def list_sessions(
 
     Args:
         agent_id (`str`):
-            Agent whose sessions to list.
+            Agent whose sessions to list. May be an agent shared to
+            the viewer through :class:`ResourceAccessPolicyBase`;
+            the returned sessions are still the viewer's own.
         user_id (`str`):
             Injected authenticated user ID.
         storage (`StorageBase`):
             Injected storage backend.
+        access (`ResourceAccessService`):
+            Injected resource access service; used to validate that
+            the target agent is visible to the viewer.
         message_bus (`MessageBus`):
             Injected message bus (used for ``session_is_running``).
 
@@ -192,19 +204,12 @@ async def list_sessions(
             Enriched session views and their count.
 
     Raises:
-        `HTTPException`: 404 if the agent does not exist or does not
-            belong to the authenticated user.
+        `HTTPException`: 404 if the agent is not visible to the caller.
     """
-    # Direct ownership check via get_agent — handles both source=user
-    # and source=team agents (the latter aren't returned by
-    # storage.list_agents but are still owned by the user; reachable
-    # via team navigation).
-    agent = await storage.get_agent(user_id, agent_id)
-    if agent is None or agent.user_id != user_id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Agent '{agent_id}' not found.",
-        )
+    # Verify visibility (own or shared) — raises 404 otherwise. Sessions
+    # themselves are always looked up under ``user_id``, so a viewer
+    # only ever sees their own runs of a shared agent.
+    await access.resolve_agent(user_id, agent_id)
 
     sessions = await storage.list_sessions(user_id, agent_id)
     views: list[SessionView] = []
@@ -240,6 +245,7 @@ async def create_session(
     body: CreateSessionRequest,
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
+    access: ResourceAccessService = Depends(get_resource_access_service),
 ) -> CreateSessionResponse:
     """Create (or resume) a session for a given agent and workspace.
 
@@ -251,30 +257,27 @@ async def create_session(
         body (`CreateSessionRequest`): Agent, workspace, and model config.
         user_id (`str`): Injected authenticated user ID.
         storage (`StorageBase`): Injected storage backend.
+        access (`ResourceAccessService`): Injected access service.
 
     Returns:
         `CreateSessionResponse`: The session identifier.
 
     Raises:
-        `HTTPException`: 404 if the agent or credential does not exist or
-            does not belong to the authenticated user.
+        `HTTPException`: 404 if the agent / credential / knowledge base
+            is not visible to the caller.
     """
-    agent = await storage.get_agent(user_id, body.agent_id)
-    if agent is None or agent.user_id != user_id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Agent '{body.agent_id}' not found.",
-        )
+    # Agent must be visible to the caller (own or shared).
+    await access.resolve_agent(user_id, body.agent_id)
 
-    await _ensure_credential_exists(storage, user_id, body.chat_model_config)
+    await _ensure_credential_exists(access, user_id, body.chat_model_config)
     await _ensure_credential_exists(
-        storage,
+        access,
         user_id,
         body.fallback_chat_model_config,
     )
-    await _ensure_credential_exists(storage, user_id, body.tts_model_config)
+    await _ensure_credential_exists(access, user_id, body.tts_model_config)
     await _ensure_knowledge_bases_exist(
-        storage,
+        access,
         user_id,
         body.knowledge_config,
     )
@@ -346,6 +349,7 @@ async def update_session(
     agent_id: str = Query(description="Agent the session belongs to."),
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
+    access: ResourceAccessService = Depends(get_resource_access_service),
 ) -> SessionRecord:
     """Update the model configuration of an existing session.
 
@@ -354,13 +358,14 @@ async def update_session(
         body (`UpdateSessionRequest`): Fields to update.
         user_id (`str`): Injected authenticated user ID.
         storage (`StorageBase`): Injected storage backend.
+        access (`ResourceAccessService`): Injected access service.
 
     Returns:
         `SessionRecord`: The full session record after the update.
 
     Raises:
-        `HTTPException`: 404 if the session, agent, or credential does not
-            exist or does not belong to the authenticated user.
+        `HTTPException`: 404 if the session does not exist, or if the
+            referenced credential / KB is not visible to the caller.
     """
     existing = await storage.get_session(user_id, agent_id, session_id)
     if existing is None:
@@ -369,15 +374,15 @@ async def update_session(
             detail=f"Session '{session_id}' not found.",
         )
 
-    await _ensure_credential_exists(storage, user_id, body.chat_model_config)
+    await _ensure_credential_exists(access, user_id, body.chat_model_config)
     await _ensure_credential_exists(
-        storage,
+        access,
         user_id,
         body.fallback_chat_model_config,
     )
-    await _ensure_credential_exists(storage, user_id, body.tts_model_config)
+    await _ensure_credential_exists(access, user_id, body.tts_model_config)
     await _ensure_knowledge_bases_exist(
-        storage,
+        access,
         user_id,
         body.knowledge_config,
     )

@@ -21,7 +21,7 @@ from ._dimension_policy import DimensionPolicy, DimensionPolicyKind
 from ._errors import KnowledgeBaseNotFoundError
 from ...._logging import logger
 from ....rag import KnowledgeBase
-from ..._service._embedding import get_embedding_model
+from ..._service._embedding import build_embedding_model
 from ...storage import KnowledgeBaseRecord
 
 if TYPE_CHECKING:
@@ -173,10 +173,24 @@ class CollectionPerKbManager(KnowledgeBaseManagerBase):
                 f"Knowledge base {knowledge_base_id!r} not found.",
             )
 
-        embedding_model = await get_embedding_model(
-            user_id=user_id,
+        # KB manager is an owner-internal path: the credential lives
+        # under the same owner as the knowledge base, so we read it
+        # directly from storage rather than routing through the access
+        # service (which is only relevant when the viewer differs from
+        # the owner).
+        credential_record = await self._storage.get_credential(
+            record.user_id,
+            record.embedding_model_config.credential_id,
+        )
+        if credential_record is None:
+            raise KnowledgeBaseNotFoundError(
+                f"Credential "
+                f"{record.embedding_model_config.credential_id!r} for "
+                f"knowledge base {knowledge_base_id!r} not found.",
+            )
+        embedding_model = build_embedding_model(
+            credential_record=credential_record,
             config=record.embedding_model_config,
-            storage=self._storage,
         )
         return KnowledgeBase(
             name=record.name,
