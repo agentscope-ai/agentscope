@@ -156,6 +156,34 @@ class GrepToolTest(IsolatedAsyncioTestCase):
         # ripgrep returns its own error message for regex parse errors
         self.assertIn("regex parse error", chunk.content[0].text)
 
+    async def test_negative_head_limit_rejected(self) -> None:
+        """Test grep rejects negative head_limit values."""
+        chunk = await self.grep_tool(
+            pattern="Hello",
+            path=self.temp_dir,
+            head_limit=-1,
+        )
+
+        self.assertEqual(chunk.state, ToolResultState.ERROR)
+        self.assertEqual(
+            chunk.content[0].text,
+            "Error: head_limit must be non-negative.",
+        )
+
+    async def test_negative_offset_rejected(self) -> None:
+        """Test grep rejects negative offset values."""
+        chunk = await self.grep_tool(
+            pattern="Hello",
+            path=self.temp_dir,
+            offset=-1,
+        )
+
+        self.assertEqual(chunk.state, ToolResultState.ERROR)
+        self.assertEqual(
+            chunk.content[0].text,
+            "Error: offset must be non-negative.",
+        )
+
     async def test_glob_pattern_with_subdirs(self) -> None:
         """Test glob pattern matching with subdirectories like **/*.py."""
         chunk = await self.grep_tool(
