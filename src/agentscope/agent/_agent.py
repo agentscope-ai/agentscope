@@ -121,23 +121,23 @@ class Agent:
             toolkit (`Toolkit | None`, optional):
                 The toolkit used for registering tools, MCPs and skills as the
                 sole source.
-            middlewares (`list[MiddlewareBase] | None`):
+            middlewares (`list[MiddlewareBase] | None`, optional):
                 Middlewares applied to the agent to modify its behavior
                 without altering its source code. Supported hook points
                 include: reply, reasoning, acting, model call, and system
                 prompt retrieval.
-            state (`AgentState`):
+            state (`AgentState | None`, optional):
                 The agent state. A new state will be created if not provided.
             offloader (`Offloader | None`, optional):
                 The context offloader. If provided, the compressed context and
                 tool result will be offloaded.
-            model_config (`ModelConfig`):
+            model_config (`ModelConfig | None`, optional):
                 The additional chat model configuration including fallback
                 model and retries.
-            context_config (`CompressionConfig`):
+            context_config (`ContextConfig | None`, optional):
                 The context config for context compression and tool result
                 compression.
-            react_config (`ReActConfig`):
+            react_config (`ReActConfig | None`, optional):
                 The config for the reasoning-acting loop.
         """
         self.name = name
@@ -1327,7 +1327,7 @@ class Agent:
         """Execute a single tool call and forward every event into *queue*.
 
         Args:
-            tool_call (`ToolBlockCall`):
+            tool_call (`ToolCallBlock`):
                 The tool call to execute.
             queue (`Queue`):
                 The shared async queue that collects events from all
@@ -1694,7 +1694,7 @@ class Agent:
             message (`str`):
                 The error message to be returned for the tool call.
             state (`ToolResultState`):
-                The state of the tool result, which can be "error", "denied",
+                The state of the tool result, such as "error" or "denied".
 
         Yields:
             `ToolResultStartEvent \

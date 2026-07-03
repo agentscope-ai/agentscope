@@ -44,8 +44,8 @@ class SummarySchema(BaseModel):
             "Any promises made to the user"
         ),
     )
-    """Whether to execute multiple tool calls in parallel within one
-    reasoning step."""
+    """The important context to preserve across compression, e.g. user
+    preferences, domain-specific details and promises made to the user."""
 
 
 class ContextConfig(BaseModel):
@@ -101,7 +101,7 @@ class ContextConfig(BaseModel):
     )
     """The string template to present the compressed summary to the agent,
     which will be formatted with the fields from the
-    `compression_summary_model`."""
+    `summary_schema`."""
 
     summary_schema: dict = Field(
         default_factory=SummarySchema.model_json_schema,
