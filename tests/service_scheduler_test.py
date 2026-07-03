@@ -122,6 +122,37 @@ class _SchedulerFireTestBase(IsolatedAsyncioTestCase):
         await self.fr.aclose()
 
 
+class TestSchedulerManagerDisabled(_SchedulerFireTestBase):
+    """Disabled scheduler managers do not register local jobs."""
+
+    async def test_disabled_context_does_not_restore_jobs(self) -> None:
+        """Disabled manager leaves persisted schedules out of APScheduler."""
+        record = _make_record()
+        await self.storage.upsert_schedule(record.user_id, record)
+
+        async with SchedulerManager(
+            storage=self.storage,
+            message_bus=self.bus,
+            enabled=False,
+        ) as manager:
+            self.assertEqual(await manager.list_tasks(), [])
+
+    async def test_disabled_register_returns_record_id_without_job(
+        self,
+    ) -> None:
+        """Disabled manager accepts registration without adding a local job."""
+        record = _make_record()
+
+        async with SchedulerManager(
+            storage=self.storage,
+            message_bus=self.bus,
+            enabled=False,
+        ) as manager:
+            job_id = await manager.register_schedule(record)
+            self.assertEqual(job_id, record.id)
+            self.assertEqual(await manager.list_tasks(), [])
+
+
 class TestSchedulerFireDelivery(_SchedulerFireTestBase):
     """A fire delivers the prompt as a HintBlock + wakeup."""
 

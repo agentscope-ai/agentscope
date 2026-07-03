@@ -49,6 +49,7 @@ def create_app(
     knowledge_chunker: ChunkerBase | None = None,
     blob_store: BlobStoreBase | None = None,
     enable_index_worker: bool = True,
+    enable_scheduler: bool = True,
     *,
     extra_credentials: list[Type[CredentialBase]] | None = None,
     extra_middlewares: list[FastAPIMiddleware] | None = None,
@@ -143,6 +144,13 @@ def create_app(
             process is expected to consume tasks from the message
             bus.  No effect when ``knowledge_base_manager`` is
             ``None``.
+        enable_scheduler (`bool`, defaults to ``True``):
+            When ``True`` the API process starts the embedded APScheduler
+            and restores persisted schedules into local jobs.  When
+            ``False`` schedule records can still be created, listed, and
+            stored, but this process does not fire scheduled tasks.  Use this
+            for multi-process deployments that run a single dedicated
+            scheduler process.
         extra_credentials (`list[Type[CredentialBase]] | None`, optional):
             Additional :class:`~agentscope.credential.CredentialBase`
             subclasses to register before the app starts.  Equivalent to
@@ -237,6 +245,7 @@ def create_app(
     app.state.enable_index_worker = (
         enable_index_worker and knowledge_base_manager is not None
     )
+    app.state.enable_scheduler = enable_scheduler
 
     # Validate custom sub-agent templates for duplicate types and store in
     #  app.state
