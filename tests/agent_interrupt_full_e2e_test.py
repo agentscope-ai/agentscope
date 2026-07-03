@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Full end-to-end test for the agent interruption mechanism.
+"""
+# mypy: disable-error-code="no-untyped-def"Full end-to-end test for the agent interruption mechanism.
 
 Covers the complete chain: API endpoint publishes signal → CancelDispatcher
 cancels the local task → Agent exits gracefully → next round works.
@@ -98,7 +99,7 @@ class InterruptFullE2ETest(IsolatedAsyncioTestCase):
         # ---- Start agent in background, register in ChatRunRegistry ----
         finished_reason_1 = None
 
-        async def _chat_run():
+        async def _chat_run() -> None:
             nonlocal finished_reason_1
             async for evt in agent.reply_stream(
                 UserMsg(name="user", content="Hello"),

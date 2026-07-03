@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""End-to-end tests for the agent interruption mechanism.
+"""
+# mypy: disable-error-code="no-untyped-def"End-to-end tests for the agent interruption mechanism.
 
 Covers the full path: task.cancel() → CancelledError/GeneratorExit
 at the Model/Tool layer → is_interrupted → Agent graceful exit.
@@ -83,7 +84,7 @@ class InterruptE2ETest(IsolatedAsyncioTestCase):
         class SlowCancelModel(MockModel):
             """Model whose streaming generator has real await points."""
 
-            async def _call_api(self, *args, **kwargs):
+            async def _call_api(self, *args, **kwargs) -> None:
                 mock_responses = self.mock_chat_responses[self.cnt]
                 self.cnt += 1
                 if isinstance(mock_responses, list):
@@ -130,7 +131,7 @@ class InterruptE2ETest(IsolatedAsyncioTestCase):
         events: list = []
         collected_finished = None
 
-        async def _collect_events():
+        async def _collect_events() -> None:
             nonlocal collected_finished
             async for evt in agent.reply_stream(
                 UserMsg(name="user", content="Hi"),
@@ -170,7 +171,7 @@ class InterruptE2ETest(IsolatedAsyncioTestCase):
         class SlowCancelModel(MockModel):
             """Model whose streaming generator has real await points."""
 
-            async def _call_api(self, *args, **kwargs):
+            async def _call_api(self, *args, **kwargs) -> None:
                 mock_responses = self.mock_chat_responses[self.cnt]
                 self.cnt += 1
                 if isinstance(mock_responses, list):
@@ -214,7 +215,7 @@ class InterruptE2ETest(IsolatedAsyncioTestCase):
         events: list = []
         collected_finished = None
 
-        async def _collect_events():
+        async def _collect_events() -> None:
             nonlocal collected_finished
             async for evt in agent.reply_stream(
                 UserMsg(name="user", content="Hi"),
@@ -256,7 +257,7 @@ class InterruptE2ETest(IsolatedAsyncioTestCase):
         class SlowCancelModel(MockModel):
             """Model whose streaming generator has real await points."""
 
-            async def _call_api(self, *args, **kwargs):
+            async def _call_api(self, *args, **kwargs) -> None:
                 mock_responses = self.mock_chat_responses[self.cnt]
                 self.cnt += 1
                 if isinstance(mock_responses, list):
@@ -294,7 +295,7 @@ class InterruptE2ETest(IsolatedAsyncioTestCase):
 
         collected_finished = None
 
-        async def _collect_events():
+        async def _collect_events() -> None:
             nonlocal collected_finished
             async for evt in agent.reply_stream(
                 UserMsg(name="user", content="Hi"),
