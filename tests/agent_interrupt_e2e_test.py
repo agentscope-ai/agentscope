@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""
-# mypy: disable-error-code="no-untyped-def"End-to-end tests for the agent interruption mechanism.
+# pylint: disable=missing-class-docstring,missing-function-docstring
+"""End-to-end tests for the agent interruption mechanism.
 
 Covers the full path: task.cancel() → CancelledError/GeneratorExit
 at the Model/Tool layer → is_interrupted → Agent graceful exit.
@@ -84,12 +84,16 @@ class InterruptE2ETest(IsolatedAsyncioTestCase):
         class SlowCancelModel(MockModel):
             """Model whose streaming generator has real await points."""
 
-            async def _call_api(self, *args, **kwargs) -> None:
+            async def _call_api(
+                self,
+                *args: Any,
+                **kwargs: Any,
+            ) -> None:
                 mock_responses = self.mock_chat_responses[self.cnt]
                 self.cnt += 1
                 if isinstance(mock_responses, list):
 
-                    async def _stream():
+                    async def _stream() -> Any:
                         for response in mock_responses:
                             await asyncio.sleep(0.05)
                             yield response
@@ -171,12 +175,16 @@ class InterruptE2ETest(IsolatedAsyncioTestCase):
         class SlowCancelModel(MockModel):
             """Model whose streaming generator has real await points."""
 
-            async def _call_api(self, *args, **kwargs) -> None:
+            async def _call_api(
+                self,
+                *args: Any,
+                **kwargs: Any,
+            ) -> None:
                 mock_responses = self.mock_chat_responses[self.cnt]
                 self.cnt += 1
                 if isinstance(mock_responses, list):
 
-                    async def _stream():
+                    async def _stream() -> Any:
                         for response in mock_responses:
                             await asyncio.sleep(0.05)
                             yield response
@@ -257,12 +265,16 @@ class InterruptE2ETest(IsolatedAsyncioTestCase):
         class SlowCancelModel(MockModel):
             """Model whose streaming generator has real await points."""
 
-            async def _call_api(self, *args, **kwargs) -> None:
+            async def _call_api(
+                self,
+                *args: Any,
+                **kwargs: Any,
+            ) -> None:
                 mock_responses = self.mock_chat_responses[self.cnt]
                 self.cnt += 1
                 if isinstance(mock_responses, list):
 
-                    async def _stream():
+                    async def _stream() -> Any:
                         for response in mock_responses:
                             await asyncio.sleep(0.05)
                             yield response

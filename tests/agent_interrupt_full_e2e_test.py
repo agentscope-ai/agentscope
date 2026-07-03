@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
-"""
-# mypy: disable-error-code="no-untyped-def"Full end-to-end test for the agent interruption mechanism.
+# pylint: disable=missing-class-docstring,missing-function-docstring
+"""Full end-to-end test for the agent interruption mechanism.
 
 Covers the complete chain: API endpoint publishes signal → CancelDispatcher
 cancels the local task → Agent exits gracefully → next round works.
 Uses InMemoryMessageBus (no Redis needed).
 """
 import asyncio
+from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from agentscope.agent import Agent
@@ -31,13 +32,21 @@ from agentscope.tool import Toolkit
 class FakeStorage(StorageBase):
     """Minimal storage for e2e test — only supports get_session."""
 
-    def __init__(self, session: SessionRecord | None = None):
+    def __init__(
+        self,
+        session: SessionRecord | None = None,
+    ) -> None:
         self._session = session
 
-    async def get_session(self, _user_id, _agent_id, _session_id):
+    async def get_session(
+        self,
+        _user_id: str,
+        _agent_id: str,
+        _session_id: str,
+    ) -> SessionRecord | None:
         return self._session
 
-    async def is_locked(self, _key):
+    async def is_locked(self, _key: str) -> bool:
         return False
 
 
@@ -59,14 +68,18 @@ class InterruptFullE2ETest(IsolatedAsyncioTestCase):
         class SlowModel:
             """Streaming model with await points for testing."""
 
-            def __init__(self):
+            def __init__(self) -> None:
                 self.model = "slow-e2e"
                 self.stream = True
                 self.max_retries = 0
                 self.context_size = 1000
 
-            async def __call__(self, *_args, **_kwargs):
-                async def _stream():
+            async def __call__(
+                self,
+                *_args: Any,
+                **_kwargs: Any,
+            ) -> Any:
+                async def _stream() -> Any:
                     await asyncio.sleep(0.03)
                     yield ChatResponse(
                         content=[TextBlock(text="part1 ")],
@@ -85,7 +98,11 @@ class InterruptFullE2ETest(IsolatedAsyncioTestCase):
 
                 return _stream()
 
-            async def count_tokens(self, *_args, **_kwargs):
+            async def count_tokens(
+                self,
+                *_args: Any,
+                **_kwargs: Any,
+            ) -> int:
                 return 100
 
         # ---- Agent ----
@@ -189,14 +206,19 @@ class InterruptFullE2ETest(IsolatedAsyncioTestCase):
         class LockedStorage:
             """Storage always reporting session as locked."""
 
-            async def get_session(self, _user_id, _agent_id, _session_id):
+            async def get_session(
+                self,
+                _user_id: str,
+                _agent_id: str,
+                _session_id: str,
+            ) -> SessionRecord:
                 return record
 
         # Bus that reports the session as locked
         class LockedBus(InMemoryMessageBus):
             """Bus always reporting session as locked."""
 
-            async def is_locked(self, _key):
+            async def is_locked(self, _key: str) -> bool:
                 return True
 
         storage = LockedStorage()
@@ -232,13 +254,18 @@ class InterruptFullE2ETest(IsolatedAsyncioTestCase):
         class IdleStorage:
             """Storage always reporting session as idle."""
 
-            async def get_session(self, _user_id, _agent_id, _session_id):
+            async def get_session(
+                self,
+                _user_id: str,
+                _agent_id: str,
+                _session_id: str,
+            ) -> SessionRecord:
                 return record
 
         class IdleBus(InMemoryMessageBus):
             """Bus always reporting session as idle."""
 
-            async def is_locked(self, _key):
+            async def is_locked(self, _key: str) -> bool:
                 return False
 
         storage = IdleStorage()
