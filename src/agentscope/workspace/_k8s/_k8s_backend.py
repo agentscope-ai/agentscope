@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import io
 import posixpath
+import shlex
 import tarfile
 from typing import Any
 
@@ -112,7 +113,7 @@ class K8sBackend(BackendBase):
         wrapped = [
             "sh",
             "-c",
-            f'cd {effective_cwd} && exec "$@"',
+            f'cd {shlex.quote(effective_cwd)} && exec "$@"',
             "--",
             *command,
         ]
@@ -265,11 +266,19 @@ class K8sBackend(BackendBase):
         DockerBackend's ``put_archive`` approach and the mechanism
         ``kubectl cp`` uses internally.
 
+        After sending the tar data, this method reads back the exec
+        stream to capture any ``tar`` stderr and exit status.  A
+        non-zero exit raises ``RuntimeError``.
+
         Args:
             path (`str`):
                 Destination path inside the Pod.
             data (`bytes`):
                 The raw bytes to write.
+
+        Raises:
+            `RuntimeError`:
+                If ``tar xf`` exits non-zero inside the Pod.
         """
         parent = posixpath.dirname(path) or "/"
         name = posixpath.basename(path)
@@ -301,13 +310,49 @@ class K8sBackend(BackendBase):
                 tty=False,
                 _preload_content=False,
             )
+            stderr_parts: list[bytes] = []
+            exit_code = 0
+
             async with ws as sock:
-                # stdin is channel 0
                 await sock.send_bytes(
                     bytes([0]) + tar_bytes,
                 )
-                # Signal EOF on stdin channel (empty channel-0 msg).
-                # Do not sock.close() here — that terminates the
-                # entire WebSocket abruptly and may SIGPIPE tar.
-                # The async-with exit handles graceful shutdown.
                 await sock.send_bytes(bytes([0]))
+
+                async for msg in sock:
+                    if msg.type not in (1, 2):
+                        break
+                    raw = (
+                        msg.data
+                        if isinstance(msg.data, bytes)
+                        else msg.data.encode("utf-8")
+                    )
+                    if not raw:
+                        continue
+                    channel = raw[0]
+                    payload = raw[1:]
+                    if channel == 2:
+                        stderr_parts.append(payload)
+                    elif channel == 3:
+                        import json
+
+                        try:
+                            status = json.loads(
+                                payload.decode("utf-8"),
+                            )
+                            if status.get("status") != "Success":
+                                exit_code = 1
+                        except (
+                            json.JSONDecodeError,
+                            ValueError,
+                        ):
+                            exit_code = 1
+
+            if exit_code != 0:
+                stderr_text = b"".join(stderr_parts).decode(
+                    errors="replace",
+                )
+                raise RuntimeError(
+                    f"write_file to {path!r} failed: "
+                    f"tar xf exited {exit_code}: {stderr_text}",
+                )

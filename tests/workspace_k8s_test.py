@@ -535,11 +535,23 @@ class TestConstants(unittest.TestCase):
 # ── K8sWorkspace lifecycle tests (mocked K8s API) ────────────────
 
 
-def _mock_pvc(phase: str = "Bound") -> MagicMock:
-    """Build a mock PVC object with the given phase."""
+def _mock_pvc(
+    phase: str = "Bound",
+    deletion_timestamp: object = None,
+) -> MagicMock:
+    """Build a mock PVC object with the given phase.
+
+    Args:
+        phase: PVC status phase (``Bound``, ``Pending``, ``Lost``).
+        deletion_timestamp: When set, simulates a PVC that K8s has
+            accepted for deletion but whose finalizers have not yet
+            completed.
+    """
     pvc = MagicMock()
     pvc.status = MagicMock()
     pvc.status.phase = phase
+    pvc.metadata = MagicMock()
+    pvc.metadata.deletion_timestamp = deletion_timestamp
     return pvc
 
 
@@ -617,8 +629,8 @@ class TestEnsurePvcLifecycle(IsolatedAsyncioTestCase):
 
         mock_create.assert_called_once_with("as-ws-test-pvc-new")
 
-    async def test_pvc_terminating_waits_then_recreates(self) -> None:
-        """Terminating PVC is waited on, then recreated."""
+    async def test_pvc_deleting_waits_then_recreates(self) -> None:
+        """PVC with deletion_timestamp is waited on, then recreated."""
         from agentscope.workspace._k8s._k8s_workspace import K8sWorkspace
 
         ws = K8sWorkspace(workspace_id="test-pvc-term")
@@ -626,7 +638,10 @@ class TestEnsurePvcLifecycle(IsolatedAsyncioTestCase):
         ws._namespace = "agentscope"
         ws._v1 = AsyncMock()
         ws._v1.read_namespaced_persistent_volume_claim = AsyncMock(
-            return_value=_mock_pvc("Terminating"),
+            return_value=_mock_pvc(
+                "Bound",
+                deletion_timestamp="2026-07-02T00:00:00Z",
+            ),
         )
 
         with (
@@ -680,6 +695,34 @@ class TestEnsurePodLifecycle(IsolatedAsyncioTestCase):
             await ws._ensure_pod()
 
         mock_create.assert_not_called()
+
+    async def test_pod_pending_not_rebuilt(self) -> None:
+        """Pending Pod is NOT rebuilt — left for _wait_pod_running."""
+        from agentscope.workspace._k8s._k8s_workspace import K8sWorkspace
+
+        ws = K8sWorkspace(workspace_id="test-pod-pend")
+        ws._pod_name = "as-ws-test-pod-pend"
+        ws._namespace = "agentscope"
+        ws._v1 = AsyncMock()
+        ws._v1.read_namespaced_pod = AsyncMock(
+            return_value=_mock_pod("Pending"),
+        )
+
+        with (
+            patch(
+                "agentscope.workspace._k8s._k8s_workspace.K8sWorkspace"
+                "._create_pod",
+                new=AsyncMock(),
+            ) as mock_create,
+            patch(
+                "kubernetes_asyncio.client.rest.ApiException",
+                _FakeApiException,
+            ),
+        ):
+            await ws._ensure_pod()
+
+        mock_create.assert_not_called()
+        ws._v1.delete_namespaced_pod.assert_not_called()
 
     async def test_pod_failed_rebuilds(self) -> None:
         """Failed Pod is deleted and recreated."""

@@ -310,7 +310,14 @@ class K8sWorkspace(SandboxedWorkspaceBase):
                 raise
 
     async def _ensure_pvc(self) -> None:
-        """Create or reuse the PVC for workspace persistence."""
+        """Create or reuse the PVC for workspace persistence.
+
+        Deletion-in-progress is detected via
+        ``metadata.deletion_timestamp`` (K8s sets this field when a
+        ``DELETE`` has been accepted but finalizers have not yet
+        completed).  ``status.phase`` does not have a
+        ``"Terminating"`` value in upstream Kubernetes.
+        """
         from kubernetes_asyncio.client.rest import ApiException
 
         pvc_name = self._pod_name
@@ -319,10 +326,9 @@ class K8sWorkspace(SandboxedWorkspaceBase):
                 pvc_name,
                 self._namespace,
             )
-            phase = pvc.status.phase if pvc.status else None
-            if phase == "Terminating":
+            if pvc.metadata and pvc.metadata.deletion_timestamp is not None:
                 logger.info(
-                    "K8sWorkspace: PVC %r is Terminating, waiting...",
+                    "K8sWorkspace: PVC %r is being deleted, waiting...",
                     pvc_name,
                 )
                 await self._wait_pvc_deleted(pvc_name)
@@ -387,8 +393,16 @@ class K8sWorkspace(SandboxedWorkspaceBase):
         )
 
     async def _ensure_pod(self) -> None:
-        """Create or reuse the workspace Pod."""
+        """Create or reuse the workspace Pod.
+
+        Only terminal phases (``Failed``, ``Unknown``, ``Succeeded``)
+        trigger a delete-and-recreate cycle.  ``Pending`` Pods are left
+        for :meth:`_wait_pod_running` which inspects container statuses
+        for early failure detection.
+        """
         from kubernetes_asyncio.client.rest import ApiException
+
+        _REBUILD_PHASES = frozenset({"Failed", "Unknown", "Succeeded"})
 
         try:
             pod = await self._v1.read_namespaced_pod(
@@ -396,22 +410,39 @@ class K8sWorkspace(SandboxedWorkspaceBase):
                 self._namespace,
             )
             phase = pod.status.phase if pod.status else None
-            if phase == "Running":
+            if phase in {"Running", "Pending"}:
                 return
-            logger.info(
-                "K8sWorkspace: Pod %r is %s, deleting and recreating",
-                self._pod_name,
-                phase,
-            )
-            try:
-                await self._v1.delete_namespaced_pod(
+            if phase in _REBUILD_PHASES:
+                logger.info(
+                    "K8sWorkspace: Pod %r is %s, deleting and recreating",
                     self._pod_name,
-                    self._namespace,
+                    phase,
                 )
-            except ApiException:
-                pass
-            await self._wait_pod_deleted()
-            await self._create_pod()
+                try:
+                    await self._v1.delete_namespaced_pod(
+                        self._pod_name,
+                        self._namespace,
+                    )
+                except ApiException:
+                    pass
+                await self._wait_pod_deleted()
+                await self._create_pod()
+            else:
+                logger.warning(
+                    "K8sWorkspace: Pod %r has unexpected phase %r, "
+                    "deleting and recreating",
+                    self._pod_name,
+                    phase,
+                )
+                try:
+                    await self._v1.delete_namespaced_pod(
+                        self._pod_name,
+                        self._namespace,
+                    )
+                except ApiException:
+                    pass
+                await self._wait_pod_deleted()
+                await self._create_pod()
         except ApiException as e:
             if e.status == 404:
                 await self._create_pod()

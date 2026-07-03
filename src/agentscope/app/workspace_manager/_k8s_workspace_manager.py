@@ -7,13 +7,11 @@ so callers do not branch on backend.
 
 Differences from the E2B manager:
 
-* Reattachment uses K8s labels instead of E2B metadata. The
-  ``workspace_id`` is applied as a Pod/PVC label at create time;
+* Reattachment uses a deterministic Pod/PVC name derived from
+  ``workspace_id`` (via ``_k8s_safe_name``).
   :meth:`K8sWorkspace.initialize` handles rediscovery.
-* ``user_id`` / ``agent_id`` are stored as K8s labels
-  (``agentscope.user.id`` / ``agentscope.agent.id``).
 * ``close()`` deletes the Pod; PVC deletion is governed by the
-  workspace's ``delete_pvc_on_close`` attribute.
+  workspace's ``_delete_pvc_on_close`` attribute.
 * Idle workspaces are evicted by a dedicated background sweeper task.
 """
 
