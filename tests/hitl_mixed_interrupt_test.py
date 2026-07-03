@@ -150,6 +150,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
         ]
         self.final_mock_responses = [
@@ -170,6 +171,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         return {
             "id": AnyString(),
             "created_at": AnyString(),
+            "metadata": {},
             "reply_id": reply_id,
         }
 
@@ -178,9 +180,11 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         return {
             "id": AnyString(),
             "created_at": AnyString(),
+            "finished_at": None,
             "metadata": {},
             "name": "Friday",
             "role": "assistant",
+            "usage": None,
         }
 
     def _get_tool_call_events(
@@ -245,6 +249,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                     "name": name,
                     "input": tool_input,
                     "state": "asking",
+                    "suggested_rules": [
+                        {
+                            "tool_name": name,
+                            "rule_content": None,
+                            "behavior": PermissionBehavior.ALLOW,
+                            "source": "suggested",
+                        },
+                    ],
                 },
             ],
         }
@@ -273,6 +285,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                         "name": name,
                         "input": tool_input,
                         "state": "submitted",
+                        "suggested_rules": [
+                            {
+                                "tool_name": name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                 ],
             },
@@ -353,7 +373,9 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         """Test one tool call that needs confirmation and external
         execution."""
         mixed_tool = MockMixedSequentialTool()
-        self.agent.toolkit = Toolkit(tools=[mixed_tool])
+        self.agent.toolkit = Toolkit(
+            tools=[mixed_tool],
+        )
 
         self._set_model_tool_call_responses(
             [
@@ -393,6 +415,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
             self._get_require_user_confirm_event(
                 reply_id,
@@ -410,7 +433,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": self.user_input_text,
+                    },
+                ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -420,6 +450,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_1,
                         "state": "asking",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.sequential_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                 ],
             },
@@ -458,7 +496,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": self.user_input_text,
+                    },
+                ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -468,6 +513,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_1,
                         "state": "submitted",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.sequential_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                 ],
             },
@@ -499,7 +552,11 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                 self.sequential_result_1,
             ),
             *self.final_text_events,
-            {"type": "REPLY_END", "session_id": session_id},
+            {
+                "type": "REPLY_END",
+                "session_id": session_id,
+                "finished_reason": "completed",
+            },
         ]
         self.assertListEqual(
             events,
@@ -510,7 +567,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": self.user_input_text,
+                    },
+                ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -520,6 +584,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_1,
                         "state": "finished",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.sequential_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                     {
                         "type": "tool_result",
@@ -533,6 +605,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                             },
                         ],
                         "state": "success",
+                        "metadata": {},
                     },
                     {
                         "type": "text",
@@ -554,7 +627,9 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         """Test sequential tool calls that need confirmation and external
         execution."""
         mixed_tool = MockMixedSequentialTool()
-        self.agent.toolkit = Toolkit(tools=[mixed_tool])
+        self.agent.toolkit = Toolkit(
+            tools=[mixed_tool],
+        )
 
         self._set_model_tool_call_responses(
             [
@@ -608,6 +683,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
             self._get_require_user_confirm_event(
                 reply_id,
@@ -625,7 +701,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": self.user_input_text,
+                    },
+                ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -635,6 +718,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_1,
                         "state": "asking",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.sequential_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                     {
                         "type": "tool_call",
@@ -642,6 +733,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_2,
                         "state": "pending",
+                        "suggested_rules": [],
                     },
                 ],
             },
@@ -680,7 +772,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": self.user_input_text,
+                    },
+                ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -690,6 +789,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_1,
                         "state": "submitted",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.sequential_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                     {
                         "type": "tool_call",
@@ -697,6 +804,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_2,
                         "state": "pending",
+                        "suggested_rules": [],
                     },
                 ],
             },
@@ -743,7 +851,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": self.user_input_text,
+                    },
+                ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -753,6 +868,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_1,
                         "state": "finished",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.sequential_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                     {
                         "type": "tool_call",
@@ -760,6 +883,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_2,
                         "state": "asking",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.sequential_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                     {
                         "type": "tool_result",
@@ -773,6 +904,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                             },
                         ],
                         "state": "success",
+                        "metadata": {},
                     },
                 ],
             },
@@ -835,7 +967,11 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                 self.sequential_result_2,
             ),
             *self.final_text_events,
-            {"type": "REPLY_END", "session_id": session_id},
+            {
+                "type": "REPLY_END",
+                "session_id": session_id,
+                "finished_reason": "completed",
+            },
         ]
         self.assertListEqual(
             events,
@@ -846,7 +982,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": self.user_input_text,
+                    },
+                ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -856,6 +999,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_1,
                         "state": "finished",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.sequential_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                     {
                         "type": "tool_call",
@@ -863,6 +1014,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_2,
                         "state": "finished",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.sequential_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                     {
                         "type": "tool_result",
@@ -876,6 +1035,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                             },
                         ],
                         "state": "success",
+                        "metadata": {},
                     },
                     {
                         "type": "tool_result",
@@ -889,6 +1049,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                             },
                         ],
                         "state": "success",
+                        "metadata": {},
                     },
                     {
                         "type": "text",
@@ -910,7 +1071,9 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         """Test concurrent tool calls that need confirmation and external
         execution."""
         mixed_tool = MockMixedConcurrentTool()
-        self.agent.toolkit = Toolkit(tools=[mixed_tool])
+        self.agent.toolkit = Toolkit(
+            tools=[mixed_tool],
+        )
 
         self._set_model_tool_call_responses(
             [
@@ -964,6 +1127,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
             self._get_require_user_confirm_event(
                 reply_id,
@@ -987,7 +1151,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": self.user_input_text,
+                    },
+                ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -997,6 +1168,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_1,
                         "state": "asking",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.concurrent_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                     {
                         "type": "tool_call",
@@ -1004,6 +1183,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_2,
                         "state": "asking",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.concurrent_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                 ],
             },
@@ -1071,7 +1258,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": self.user_input_text,
+                    },
+                ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -1081,6 +1275,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_1,
                         "state": "submitted",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.concurrent_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                     {
                         "type": "tool_call",
@@ -1088,6 +1290,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_2,
                         "state": "submitted",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.concurrent_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                 ],
             },
@@ -1128,7 +1338,11 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                 self.concurrent_result_2,
             ),
             *self.final_text_events,
-            {"type": "REPLY_END", "session_id": session_id},
+            {
+                "type": "REPLY_END",
+                "session_id": session_id,
+                "finished_reason": "completed",
+            },
         ]
         self.assertListEqual(
             events,
@@ -1139,7 +1353,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": self.user_input_text,
+                    },
+                ],
+                "finished_at": AnyString(),
             },
             {
                 "content": [
@@ -1149,6 +1370,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_1,
                         "state": "finished",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.concurrent_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                     {
                         "type": "tool_call",
@@ -1156,6 +1385,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_2,
                         "state": "finished",
+                        "suggested_rules": [
+                            {
+                                "tool_name": self.concurrent_tool_name,
+                                "rule_content": None,
+                                "behavior": PermissionBehavior.ALLOW,
+                                "source": "suggested",
+                            },
+                        ],
                     },
                     {
                         "type": "tool_result",
@@ -1169,6 +1406,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                             },
                         ],
                         "state": "success",
+                        "metadata": {},
                     },
                     {
                         "type": "tool_result",
@@ -1182,6 +1420,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                             },
                         ],
                         "state": "success",
+                        "metadata": {},
                     },
                     {
                         "type": "text",

@@ -20,8 +20,8 @@ the alternative shown inline (look for the
 
 ```bash
 # mem0 is an optional AgentScope dependency — pull it via the extra:
-pip install "agentscope[mem0]"      # resolves to mem0ai>=2.0.0,<3.0.0
-# (equivalent to `pip install agentscope mem0ai>=2.0.0,<3.0.0`)
+pip install "agentscope[mem0]"      # resolves to mem0ai>=2.0.0
+# (equivalent to `pip install agentscope mem0ai>=2.0.0`)
 
 export DASHSCOPE_API_KEY=sk-...     # OSS path
 # Platform path (only if you switch):
@@ -383,5 +383,5 @@ internally:
 
 Your embedding model's `dimensions` must match the vector store's
 expected dim — mem0's default Qdrant expects 1536, which matches
-DashScope's `text-embedding-v2` at `dimensions=1536` (the value used
+DashScope's `text-embedding-v4` at `dimensions=1536` (the value used
 in `oss_demo.py`).

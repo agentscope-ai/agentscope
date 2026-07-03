@@ -20,9 +20,9 @@ Details about the agent service please refer to the [tutorial](https://docs.agen
 Install AgentScope from PyPI or source:
 
 ```bash
-uv pip install agentscope[full]
+uv pip install "agentscope[full]"
 # or
-# uv pip install -e [full]
+# uv pip install -e ".[full]"
 ```
 
 Install Redis and start it as backend storage:
