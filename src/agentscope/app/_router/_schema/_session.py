@@ -208,3 +208,13 @@ class SessionStatusResponse(BaseModel):
             "on external executor)."
         ),
     )
+
+
+class InterruptSessionResponse(BaseModel):
+    """Response returned by ``POST /sessions/{sid}/interrupt``."""
+
+    session_id: str = Field(description="Echo of the session id.")
+    status: str = Field(
+        description="``interrupted`` when a signal was published, "
+        "``not_running`` when the session was idle.",
+    )

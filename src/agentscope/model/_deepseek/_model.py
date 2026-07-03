@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The DeepSeek chat model implementation."""
+import asyncio
 from collections import OrderedDict
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
@@ -248,84 +249,90 @@ class DeepSeekChatModel(ChatModelBase):
         acc_thinking = ThinkingBlock(thinking="")
         acc_tool_calls: OrderedDict = OrderedDict()
 
+        was_interrupted = False
         async with response as stream:
-            async for chunk in stream:
-                if chunk.usage:
-                    u = chunk.usage
-                    usage = ChatUsage(
-                        input_tokens=u.prompt_tokens,
-                        output_tokens=u.completion_tokens,
-                        time=(datetime.now() - start_datetime).total_seconds(),
-                        cache_input_tokens=getattr(
-                            u,
-                            "prompt_cache_hit_tokens",
-                            0,
-                        ),
+            try:
+                async for chunk in stream:
+                    if chunk.usage:
+                        u = chunk.usage
+                        usage = ChatUsage(
+                            input_tokens=u.prompt_tokens,
+                            output_tokens=u.completion_tokens,
+                            time=(
+                                datetime.now() - start_datetime
+                            ).total_seconds(),
+                            cache_input_tokens=getattr(
+                                u,
+                                "prompt_cache_hit_tokens",
+                                0,
+                            ),
+                        )
+
+                    # Capture response_id from the first chunk that carries it
+                    response_id = response_id or getattr(chunk, "id", None)
+
+                    if not chunk.choices:
+                        continue
+
+                    choice = chunk.choices[0]
+                    delta = choice.delta
+
+                    delta_thinking = (
+                        getattr(delta, "reasoning_content", None) or ""
                     )
+                    delta_text = getattr(delta, "content", None) or ""
 
-                # Capture response_id from the first chunk that carries it
-                response_id = response_id or getattr(chunk, "id", None)
+                    acc_thinking.thinking += delta_thinking
+                    acc_text.text += delta_text
 
-                if not chunk.choices:
-                    continue
+                    delta_tool_call_blocks: List[ToolCallBlock] = []
+                    for tool_call in getattr(delta, "tool_calls", None) or []:
+                        idx = tool_call.index
+                        args = tool_call.function.arguments or ""
+                        if idx in acc_tool_calls:
+                            acc_tool_calls[idx]["input"] += args
+                        else:
+                            acc_tool_calls[idx] = {
+                                "id": tool_call.id,
+                                "name": tool_call.function.name,
+                                "input": args,
+                            }
+                        tc = acc_tool_calls[idx]
+                        delta_tool_call_blocks.append(
+                            ToolCallBlock(
+                                id=tc["id"],
+                                name=tc["name"],
+                                input=args,
+                            ),
+                        )
 
-                choice = chunk.choices[0]
-                delta = choice.delta
+                    delta_contents: List[
+                        TextBlock | ToolCallBlock | ThinkingBlock
+                    ] = []
+                    if delta_thinking:
+                        delta_contents.append(
+                            ThinkingBlock(
+                                id=acc_thinking.id,
+                                thinking=delta_thinking,
+                            ),
+                        )
+                    if delta_text:
+                        delta_contents.append(
+                            TextBlock(id=acc_text.id, text=delta_text),
+                        )
+                    delta_contents.extend(delta_tool_call_blocks)
 
-                delta_thinking = (
-                    getattr(delta, "reasoning_content", None) or ""
-                )
-                delta_text = getattr(delta, "content", None) or ""
-
-                acc_thinking.thinking += delta_thinking
-                acc_text.text += delta_text
-
-                delta_tool_call_blocks: List[ToolCallBlock] = []
-                for tool_call in getattr(delta, "tool_calls", None) or []:
-                    idx = tool_call.index
-                    args = tool_call.function.arguments or ""
-                    if idx in acc_tool_calls:
-                        acc_tool_calls[idx]["input"] += args
-                    else:
-                        acc_tool_calls[idx] = {
-                            "id": tool_call.id,
-                            "name": tool_call.function.name,
-                            "input": args,
+                    if delta_contents:
+                        _kwargs: dict[str, Any] = {
+                            "content": delta_contents,
+                            "usage": usage,
+                            "is_last": False,
                         }
-                    tc = acc_tool_calls[idx]
-                    delta_tool_call_blocks.append(
-                        ToolCallBlock(
-                            id=tc["id"],
-                            name=tc["name"],
-                            input=args,
-                        ),
-                    )
-
-                delta_contents: List[
-                    TextBlock | ToolCallBlock | ThinkingBlock
-                ] = []
-                if delta_thinking:
-                    delta_contents.append(
-                        ThinkingBlock(
-                            id=acc_thinking.id,
-                            thinking=delta_thinking,
-                        ),
-                    )
-                if delta_text:
-                    delta_contents.append(
-                        TextBlock(id=acc_text.id, text=delta_text),
-                    )
-                delta_contents.extend(delta_tool_call_blocks)
-
-                if delta_contents:
-                    _kwargs: dict[str, Any] = {
-                        "content": delta_contents,
-                        "usage": usage,
-                        "is_last": False,
-                    }
-                    if response_id:
-                        _kwargs["id"] = response_id
-                    yield ChatResponse(**_kwargs)
+                        if response_id:
+                            _kwargs["id"] = response_id
+                        yield ChatResponse(**_kwargs)
+            except (asyncio.CancelledError, GeneratorExit):
+                was_interrupted = True
 
         final_contents: List[TextBlock | ToolCallBlock | ThinkingBlock] = []
         if acc_thinking.thinking:
@@ -345,6 +352,7 @@ class DeepSeekChatModel(ChatModelBase):
             "content": final_contents,
             "usage": usage,
             "is_last": True,
+            "is_interrupted": was_interrupted,
         }
         if response_id:
             _final_kwargs["id"] = response_id

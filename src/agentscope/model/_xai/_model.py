@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The xAI chat model implementation using the official xai_sdk."""
+import asyncio
 from datetime import datetime
 from typing import Any, AsyncGenerator, List, Literal, TYPE_CHECKING, Type
 
@@ -316,6 +317,7 @@ class XAIChatModel(ChatModelBase):
         acc_thinking = ThinkingBlock(thinking="")
         last_response = None
         response_id: str | None = None
+        was_interrupted = False
 
         try:
             async for response, chunk in chat.stream():
@@ -352,6 +354,8 @@ class XAIChatModel(ChatModelBase):
 
                 last_response = response
 
+        except (asyncio.CancelledError, GeneratorExit):
+            was_interrupted = True
         finally:
             await client.close()
 
@@ -389,6 +393,7 @@ class XAIChatModel(ChatModelBase):
             "content": final_contents,
             "usage": usage,
             "is_last": True,
+            "is_interrupted": was_interrupted,
         }
         if response_id:
             final_kwargs["id"] = response_id

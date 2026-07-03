@@ -244,6 +244,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             {
                 "type": "REPLY_END",
                 "session_id": session_id,
+                "finished_reason": "completed",
             },
         ]
 
@@ -426,6 +427,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             {
                 "type": "REPLY_END",
                 "session_id": session_id,
+                "finished_reason": "completed",
             },
         ]
 
@@ -736,7 +738,11 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "input_tokens": 0,
                 "output_tokens": 0,
             },
-            {"type": "REPLY_END", "session_id": session_id},
+            {
+                "type": "REPLY_END",
+                "session_id": session_id,
+                "finished_reason": "completed",
+            },
         ]
 
         basic_dict = self._get_event_base(reply_id)
@@ -961,7 +967,11 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "input_tokens": 0,
                 "output_tokens": 0,
             },
-            {"type": "REPLY_END", "session_id": session_id},
+            {
+                "type": "REPLY_END",
+                "session_id": session_id,
+                "finished_reason": "completed",
+            },
         ]
 
         # Assert prefix events (fixed order)
@@ -1228,7 +1238,11 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "input_tokens": 0,
                 "output_tokens": 0,
             },
-            {"type": "REPLY_END", "session_id": session_id},
+            {
+                "type": "REPLY_END",
+                "session_id": session_id,
+                "finished_reason": "completed",
+            },
         ]
 
         # Assert prefix events (fixed order)

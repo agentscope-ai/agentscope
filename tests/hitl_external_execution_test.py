@@ -410,7 +410,11 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 self.sequential_result_1,
             ),
             *self.final_text_events,
-            {"type": "REPLY_END", "session_id": session_id},
+            {
+                "type": "REPLY_END",
+                "session_id": session_id,
+                "finished_reason": "completed",
+            },
         ]
         self.assertListEqual(
             events,
@@ -687,7 +691,11 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 state="error",
             ),
             *self.final_text_events,
-            {"type": "REPLY_END", "session_id": session_id},
+            {
+                "type": "REPLY_END",
+                "session_id": session_id,
+                "finished_reason": "completed",
+            },
         ]
 
         self.assertListEqual(
@@ -988,6 +996,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             {
                 "type": "REPLY_END",
                 "session_id": session_id,
+                "finished_reason": "completed",
             },
         ]
 
@@ -1260,6 +1269,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             {
                 "type": "REPLY_END",
                 "session_id": session_id,
+                "finished_reason": "completed",
             },
         ]
         self.assertListEqual(

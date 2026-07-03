@@ -74,8 +74,8 @@
 		"newLine": "换行",
 		"attach": "添加附件",
 		"attachNotSupported": "当前模型不支持文件附件",
-		"send": "发送"
-	},
+		"send": "发送",
+		"stop": "停止生成"		},
 	"confirmCard": {
 		"toConfirm": "确认",
 		"yesWithRule": "是，且该次对话中都允许 {{toolName}} 执行 {{ruleContent}}"
@@ -96,7 +96,6 @@
 		"inputPlaceholder": "输入消息...",
 		"placeholder": "输入消息...",
 		"send": "发送",
-		"confirmToolCall": "允许此操作？",
 		"subagentConfirmTitle": "{{name}} 请求确认",
 		"newSession": "新会话",
 		"noSessions": "暂无会话",

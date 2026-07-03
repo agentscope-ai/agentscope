@@ -156,7 +156,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		}
 	}, []);
 
-	const { msgs, streaming, send, onUserConfirm, onSubagentConfirm, subagentHitl } = useMessages(
+	const { msgs, streaming, send, onUserConfirm, onSubagentConfirm, subagentHitl, interrupt } = useMessages(
 		agentId,
 		sessionId,
 		{
@@ -622,7 +622,8 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 									disabled={selectedModel === null}
 									onSend={send}
 									onUserConfirm={onUserConfirm}
-									footerSlot={
+								onInterrupt={interrupt}
+							footerSlot={
 										subagentHitl.length > 0 ? (
 											<div className="space-y-2 pb-2">
 												{subagentHitl.map((entry) => (

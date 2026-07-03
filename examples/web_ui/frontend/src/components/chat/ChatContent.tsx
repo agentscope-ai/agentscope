@@ -20,6 +20,8 @@ interface ChatContentProps {
 	) => void;
 	autoComplete?: (input: string) => string | null;
 	className?: string;
+	/** Called when the user clicks the stop button. */
+	onInterrupt?: () => void;
 	/**
 	 * Optional content pinned at the bottom of the chat — between the
 	 * message scroll area and the text input (e.g. pending subagent HITL
@@ -42,6 +44,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	onUserConfirm,
 	autoComplete,
 	className,
+	onInterrupt,
 	footerSlot,
 	allowedInputTypes,
 	fileProcessor,
@@ -117,6 +120,8 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 				autoComplete={autoComplete}
 				allowedInputTypes={allowedInputTypes}
 				fileProcessor={fileProcessor}
+				streaming={sending}
+				onInterrupt={onInterrupt}
 			/>
 		</div>
 	);

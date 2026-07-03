@@ -46,6 +46,7 @@ from ._knowledge_base import (
 from ._session import (
     CreateSessionRequest,
     CreateSessionResponse,
+    InterruptSessionResponse,
     UpdateSessionRequest,
     ListSessionsResponse,
     ListMessagesResponse,
@@ -105,6 +106,7 @@ __all__ = [
     # Session
     "CreateSessionRequest",
     "CreateSessionResponse",
+    "InterruptSessionResponse",
     "UpdateSessionRequest",
     "ListSessionsResponse",
     "ListMessagesResponse",

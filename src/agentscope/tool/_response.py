@@ -66,6 +66,11 @@ class ToolResponse(BaseModel):
     """The metadata to be accessed within the agent, so that we don't need to
     parse the tool result block."""
 
+    is_interrupted: bool = False
+    """Whether this response was truncated by an interruption signal.
+    When True, ``content`` carries whatever was produced before the
+    interruption occurred."""
+
     id: str = Field(default_factory=_generate_id)
     """The identity of the tool response."""
 

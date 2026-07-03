@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The Anthropic chat model implementation."""
+import asyncio
 from collections import OrderedDict
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
@@ -330,88 +331,94 @@ class AnthropicChatModel(ChatModelBase):
         thinking_signature = ""
         # index -> {id, name, input}
         acc_tool_calls: OrderedDict = OrderedDict()
+        was_interrupted = False
 
-        async for event in response:
-            delta_content: list = []
+        try:
+            async for event in response:
+                delta_content: list = []
 
-            if event.type == "message_start":
-                message = event.message
-                if response_id is None:
-                    response_id = getattr(message, "id", None)
-                if message.usage:
-                    u = message.usage
-                    usage = ChatUsage(
-                        input_tokens=u.input_tokens,
-                        output_tokens=getattr(u, "output_tokens", 0),
-                        time=(datetime.now() - start_datetime).total_seconds(),
-                        cache_creation_input_tokens=getattr(
-                            u,
-                            "cache_creation_input_tokens",
-                            0,
-                        ),
-                        cache_input_tokens=getattr(
-                            u,
-                            "cache_read_input_tokens",
-                            0,
-                        ),
-                    )
+                if event.type == "message_start":
+                    message = event.message
+                    if response_id is None:
+                        response_id = getattr(message, "id", None)
+                    if message.usage:
+                        u = message.usage
+                        usage = ChatUsage(
+                            input_tokens=u.input_tokens,
+                            output_tokens=getattr(u, "output_tokens", 0),
+                            time=(
+                                datetime.now() - start_datetime
+                            ).total_seconds(),
+                            cache_creation_input_tokens=getattr(
+                                u,
+                                "cache_creation_input_tokens",
+                                0,
+                            ),
+                            cache_input_tokens=getattr(
+                                u,
+                                "cache_read_input_tokens",
+                                0,
+                            ),
+                        )
 
-            elif event.type == "content_block_start":
-                if event.content_block.type == "tool_use":
+                elif event.type == "content_block_start":
+                    if event.content_block.type == "tool_use":
+                        block_index = event.index
+                        tool_block = event.content_block
+                        acc_tool_calls[block_index] = {
+                            "id": tool_block.id,
+                            "name": tool_block.name,
+                            "input": "",
+                        }
+
+                elif event.type == "content_block_delta":
                     block_index = event.index
-                    tool_block = event.content_block
-                    acc_tool_calls[block_index] = {
-                        "id": tool_block.id,
-                        "name": tool_block.name,
-                        "input": "",
+                    delta = event.delta
+                    if delta.type == "text_delta":
+                        acc_text.text += delta.text
+                        delta_content.append(
+                            TextBlock(id=acc_text.id, text=delta.text),
+                        )
+                    elif delta.type == "thinking_delta":
+                        acc_thinking.thinking += delta.thinking
+                        delta_content.append(
+                            ThinkingBlock(
+                                id=acc_thinking.id,
+                                thinking=delta.thinking,
+                            ),
+                        )
+                    elif delta.type == "signature_delta":
+                        thinking_signature = delta.signature
+                    elif (
+                        delta.type == "input_json_delta"
+                        and block_index in acc_tool_calls
+                    ):
+                        fragment = delta.partial_json or ""
+                        acc_tool_calls[block_index]["input"] += fragment
+                        tc = acc_tool_calls[block_index]
+                        delta_content.append(
+                            ToolCallBlock(
+                                id=tc["id"],
+                                name=tc["name"],
+                                input=fragment,
+                            ),
+                        )
+
+                elif event.type == "message_delta":
+                    if event.usage and usage:
+                        usage.output_tokens = event.usage.output_tokens
+
+                if delta_content:
+                    _kwargs: dict[str, Any] = {
+                        "content": delta_content,
+                        "is_last": False,
+                        "usage": usage,
                     }
-
-            elif event.type == "content_block_delta":
-                block_index = event.index
-                delta = event.delta
-                if delta.type == "text_delta":
-                    acc_text.text += delta.text
-                    delta_content.append(
-                        TextBlock(id=acc_text.id, text=delta.text),
-                    )
-                elif delta.type == "thinking_delta":
-                    acc_thinking.thinking += delta.thinking
-                    delta_content.append(
-                        ThinkingBlock(
-                            id=acc_thinking.id,
-                            thinking=delta.thinking,
-                        ),
-                    )
-                elif delta.type == "signature_delta":
-                    thinking_signature = delta.signature
-                elif (
-                    delta.type == "input_json_delta"
-                    and block_index in acc_tool_calls
-                ):
-                    fragment = delta.partial_json or ""
-                    acc_tool_calls[block_index]["input"] += fragment
-                    tc = acc_tool_calls[block_index]
-                    delta_content.append(
-                        ToolCallBlock(
-                            id=tc["id"],
-                            name=tc["name"],
-                            input=fragment,
-                        ),
-                    )
-
-            elif event.type == "message_delta":
-                if event.usage and usage:
-                    usage.output_tokens = event.usage.output_tokens
-
-            if delta_content:
-                _kwargs: dict[str, Any] = {
-                    "content": delta_content,
-                    "is_last": False,
-                    "usage": usage,
-                }
-                if response_id:
-                    _kwargs["id"] = response_id
-                yield ChatResponse(**_kwargs)
+                    if response_id:
+                        _kwargs["id"] = response_id
+                    yield ChatResponse(**_kwargs)
+        except (asyncio.CancelledError, GeneratorExit):
+            was_interrupted = True
 
         # Build final accumulated content
         final_content: list = []
@@ -434,6 +441,7 @@ class AnthropicChatModel(ChatModelBase):
             "content": final_content,
             "is_last": True,
             "usage": usage,
+            "is_interrupted": was_interrupted,
         }
         if response_id:
             _final_kwargs["id"] = response_id

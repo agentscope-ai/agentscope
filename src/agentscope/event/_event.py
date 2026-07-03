@@ -97,6 +97,13 @@ class ReplyEndEvent(EventBase):
     """ID of the session this reply belongs to."""
     reply_id: str
     """ID of the reply message produced by this reply."""
+    finished_reason: Literal[
+        "completed",
+        "interrupted",
+        "max_iters",
+    ] = "completed"
+    """Why the reply ended: completed normally, interrupted by user,
+    or exceeded max iterations."""
 
 
 class ModelCallStartEvent(EventBase):

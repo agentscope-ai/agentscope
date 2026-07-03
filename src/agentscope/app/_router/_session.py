@@ -17,6 +17,7 @@ from ..deps import (
 from ._schema import (
     CreateSessionRequest,
     CreateSessionResponse,
+    InterruptSessionResponse,
     ListMessagesResponse,
     ListSessionsResponse,
     SessionStatusResponse,
@@ -333,6 +334,64 @@ async def delete_session(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Session '{session_id}' not found.",
         )
+
+
+@session_router.post(
+    "/{session_id}/interrupt",
+    summary="Interrupt a running chat run for a session",
+)
+async def interrupt_session(
+    session_id: str,
+    agent_id: str = Query(description="Agent the session belongs to."),
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+    message_bus: MessageBus = Depends(get_message_bus),
+) -> InterruptSessionResponse:
+    """Request interruption of the currently running agent for a session.
+
+    Publishes an interrupt signal on the message bus.  Every process's
+    :class:`~agentscope.app._manager.CancelDispatcher` is subscribed to
+    this channel — the one that owns the session will cancel the local
+    chat-run task, triggering graceful ``CancelledError`` handling
+    inside the agent.
+
+    Args:
+        session_id: The session whose agent should be interrupted.
+        agent_id: The agent that owns the session.
+        user_id: Injected authenticated user id.
+        storage: Injected storage backend.
+        message_bus: Injected message bus.
+
+    Returns:
+        ``interrupted`` when an agent was running, ``not_running`` when
+        the session was idle.
+
+    Raises:
+        HTTPException: 404 if the session does not exist.
+    """
+    existing = await storage.get_session(user_id, agent_id, session_id)
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session '{session_id}' not found.",
+        )
+
+    if not await message_bus.is_locked(
+        MessageBusKeys.session_lock(session_id),
+    ):
+        return InterruptSessionResponse(
+            status="not_running",
+            session_id=session_id,
+        )
+
+    await message_bus.publish(
+        MessageBusKeys.session_interrupt_channel(),
+        {"session_id": session_id},
+    )
+    return InterruptSessionResponse(
+        status="interrupted",
+        session_id=session_id,
+    )
 
 
 @session_router.patch(
@@ -735,6 +794,20 @@ async def stream_session_events(
                 await feeder_task
             except asyncio.CancelledError:
                 pass
+            # If the client disconnected while the agent was still
+            # running, publish an interrupt signal so the agent task
+            # is cancelled — no point wasting resources when nobody
+            # is listening.
+            try:
+                if await message_bus.is_locked(
+                    MessageBusKeys.session_lock(session_id),
+                ):
+                    await message_bus.publish(
+                        MessageBusKeys.session_interrupt_channel(),
+                        {"session_id": session_id},
+                    )
+            except Exception:
+                pass  # best-effort; don't break cleanup on Redis errors
 
     return StreamingResponse(
         _sse_generator(),

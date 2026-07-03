@@ -1,5 +1,5 @@
 import type { ContentBlock, TextBlock } from '@agentscope-ai/agentscope/message';
-import { Paperclip, Send, Loader2, X } from 'lucide-react';
+import { Paperclip, Send, Loader2, Square, X } from 'lucide-react';
 import React, {
 	useState,
 	useRef,
@@ -55,7 +55,9 @@ interface TextInputProps {
 	 * Runs concurrently for all selected files; the UI shows a loading state per file while processing.
 	 */
 	fileProcessor: (file: File) => Promise<ContentBlock | null>;
-}
+		streaming?: boolean;
+		onInterrupt?: () => void;
+	}
 
 export interface TextInputRef {
 	focus: () => void;
@@ -82,6 +84,8 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			className,
 			allowedInputTypes,
 			fileProcessor,
+			streaming,
+			onInterrupt,
 		},
 		ref,
 	) => {
@@ -330,21 +334,37 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 								</TooltipContent>
 							</Tooltip>
 
-							{/* Send button */}
-							<Tooltip>
-								<TooltipTrigger asChild>
-									<Button
-										type="button"
-										onClick={handleSend}
-										disabled={disabled || !value.trim() || hasProcessing}
-										size="icon"
-										className="shrink-0 rounded-full"
-									>
-										<Send className="h-4 w-4" />
-									</Button>
-								</TooltipTrigger>
-								<TooltipContent>{t('textInput.send')}</TooltipContent>
-							</Tooltip>
+							{/* Send / Stop button */}
+							{streaming ? (
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<Button
+											type="button"
+											onClick={onInterrupt}
+											size="icon"
+											className="shrink-0 rounded-full"
+										>
+											<Square className="h-4 w-4" />
+										</Button>
+									</TooltipTrigger>
+									<TooltipContent>{t('textInput.stop')}</TooltipContent>
+								</Tooltip>
+							) : (
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<Button
+											type="button"
+											onClick={handleSend}
+											disabled={disabled || !value.trim() || hasProcessing}
+											size="icon"
+											className="shrink-0 rounded-full"
+										>
+											<Send className="h-4 w-4" />
+										</Button>
+									</TooltipTrigger>
+									<TooltipContent>{t('textInput.send')}</TooltipContent>
+								</Tooltip>
+							)}
 
 							{/* Hidden file input */}
 							<input

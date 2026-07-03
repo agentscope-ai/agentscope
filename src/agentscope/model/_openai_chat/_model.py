@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The OpenAI Chat Completions model implementation."""
+import asyncio
 import warnings
 import base64
 import io
@@ -334,132 +335,145 @@ class OpenAIChatModel(ChatModelBase):
         # streaming WAV header and yielded.
         audio_header_sent: bool = False
 
+        was_interrupted = False
         async with response as stream:
-            async for chunk in stream:
-                if chunk.usage:
-                    u = chunk.usage
-                    details = getattr(u, "prompt_tokens_details", None)
-                    usage = ChatUsage(
-                        input_tokens=u.prompt_tokens,
-                        output_tokens=u.completion_tokens,
-                        time=(datetime.now() - start_datetime).total_seconds(),
-                        cache_input_tokens=getattr(
-                            details,
-                            "cached_tokens",
-                            0,
+            try:
+                async for chunk in stream:
+                    if chunk.usage:
+                        u = chunk.usage
+                        details = getattr(u, "prompt_tokens_details", None)
+                        usage = ChatUsage(
+                            input_tokens=u.prompt_tokens,
+                            output_tokens=u.completion_tokens,
+                            time=(
+                                datetime.now() - start_datetime
+                            ).total_seconds(),
+                            cache_input_tokens=getattr(
+                                details,
+                                "cached_tokens",
+                                0,
+                            )
+                            if details
+                            else 0,
                         )
-                        if details
-                        else 0,
-                    )
 
-                # Capture response_id from the first chunk that carries it
-                response_id = response_id or getattr(chunk, "id", None)
+                    # Capture response_id from the first chunk that carries it
+                    response_id = response_id or getattr(chunk, "id", None)
 
-                if not chunk.choices:
-                    continue
+                    if not chunk.choices:
+                        continue
 
-                choice = chunk.choices[0]
-                delta = choice.delta
+                    choice = chunk.choices[0]
+                    delta = choice.delta
 
-                delta_thinking = getattr(delta, "reasoning_content", None)
-                if not isinstance(delta_thinking, str):
-                    delta_thinking = getattr(delta, "reasoning", None)
-                if not isinstance(delta_thinking, str):
-                    delta_thinking = ""
+                    delta_thinking = getattr(delta, "reasoning_content", None)
+                    if not isinstance(delta_thinking, str):
+                        delta_thinking = getattr(delta, "reasoning", None)
+                    if not isinstance(delta_thinking, str):
+                        delta_thinking = ""
 
-                delta_text = getattr(delta, "content", None) or ""
+                    delta_text = getattr(delta, "content", None) or ""
 
-                # Collect audio output (delta.audio.data /
-                # delta.audio.transcript)
-                delta_audio_block: DataBlock | None = None
-                transcript_chunk: str = ""
-                delta_audio = getattr(delta, "audio", None)
-                if delta_audio is not None:
-                    if isinstance(delta_audio, dict):
-                        audio_chunk = delta_audio.get("data", "")
-                        transcript_chunk = delta_audio.get("transcript", "")
-                    else:
-                        audio_chunk = getattr(delta_audio, "data", "") or ""
-                        transcript_chunk = (
-                            getattr(delta_audio, "transcript", "") or ""
-                        )
-                    if audio_chunk:
-                        if audio_block_id is None:
-                            audio_block_id = _generate_id()
-                        pcm_bytes = base64.b64decode(audio_chunk)
-                        acc_audio_data += pcm_bytes
-                        if not audio_header_sent:
-                            payload = _build_streaming_wav_header() + pcm_bytes
-                            audio_header_sent = True
+                    # Collect audio output (delta.audio.data /
+                    # delta.audio.transcript)
+                    delta_audio_block: DataBlock | None = None
+                    transcript_chunk: str = ""
+                    delta_audio = getattr(delta, "audio", None)
+                    if delta_audio is not None:
+                        if isinstance(delta_audio, dict):
+                            audio_chunk = delta_audio.get("data", "")
+                            transcript_chunk = delta_audio.get(
+                                "transcript",
+                                "",
+                            )
                         else:
-                            payload = pcm_bytes
-                        delta_audio_block = DataBlock(
-                            id=audio_block_id,
-                            source=Base64Source(
-                                data=base64.b64encode(payload).decode(
-                                    "ascii",
+                            audio_chunk = (
+                                getattr(delta_audio, "data", "") or ""
+                            )
+                            transcript_chunk = (
+                                getattr(delta_audio, "transcript", "") or ""
+                            )
+                        if audio_chunk:
+                            if audio_block_id is None:
+                                audio_block_id = _generate_id()
+                            pcm_bytes = base64.b64decode(audio_chunk)
+                            acc_audio_data += pcm_bytes
+                            if not audio_header_sent:
+                                payload = (
+                                    _build_streaming_wav_header() + pcm_bytes
+                                )
+                                audio_header_sent = True
+                            else:
+                                payload = pcm_bytes
+                            delta_audio_block = DataBlock(
+                                id=audio_block_id,
+                                source=Base64Source(
+                                    data=base64.b64encode(payload).decode(
+                                        "ascii",
+                                    ),
+                                    media_type="audio/wav",
                                 ),
-                                media_type="audio/wav",
+                            )
+                    # Omni models deliver text via ``delta.audio.transcript``
+                    # (not ``delta.content``); fold it into ``delta_text`` so
+                    # the agent's streaming pipeline emits ``TextBlockDelta``
+                    # events alongside the audio chunks.
+                    if transcript_chunk:
+                        delta_text += transcript_chunk
+
+                    acc_thinking.thinking += delta_thinking
+                    acc_text.text += delta_text
+
+                    delta_tool_call_blocks: List[ToolCallBlock] = []
+                    for tool_call in getattr(delta, "tool_calls", None) or []:
+                        idx = tool_call.index
+                        args = tool_call.function.arguments or ""
+                        if idx in acc_tool_calls:
+                            acc_tool_calls[idx]["input"] += args
+                        else:
+                            acc_tool_calls[idx] = {
+                                "id": tool_call.id,
+                                "name": tool_call.function.name,
+                                "input": args,
+                            }
+                        tc = acc_tool_calls[idx]
+                        delta_tool_call_blocks.append(
+                            ToolCallBlock(
+                                id=tc["id"],
+                                name=tc["name"],
+                                input=args,
                             ),
                         )
-                # Omni models deliver text via ``delta.audio.transcript``
-                # (not ``delta.content``); fold it into ``delta_text`` so
-                # the agent's streaming pipeline emits ``TextBlockDelta``
-                # events alongside the audio chunks.
-                if transcript_chunk:
-                    delta_text += transcript_chunk
 
-                acc_thinking.thinking += delta_thinking
-                acc_text.text += delta_text
+                    delta_contents: List[
+                        TextBlock | ToolCallBlock | ThinkingBlock | DataBlock
+                    ] = []
+                    if delta_thinking:
+                        delta_contents.append(
+                            ThinkingBlock(
+                                id=acc_thinking.id,
+                                thinking=delta_thinking,
+                            ),
+                        )
+                    if delta_text:
+                        delta_contents.append(
+                            TextBlock(id=acc_text.id, text=delta_text),
+                        )
+                    delta_contents.extend(delta_tool_call_blocks)
+                    if delta_audio_block is not None:
+                        delta_contents.append(delta_audio_block)
 
-                delta_tool_call_blocks: List[ToolCallBlock] = []
-                for tool_call in getattr(delta, "tool_calls", None) or []:
-                    idx = tool_call.index
-                    args = tool_call.function.arguments or ""
-                    if idx in acc_tool_calls:
-                        acc_tool_calls[idx]["input"] += args
-                    else:
-                        acc_tool_calls[idx] = {
-                            "id": tool_call.id,
-                            "name": tool_call.function.name,
-                            "input": args,
+                    if delta_contents:
+                        _kwargs: dict[str, Any] = {
+                            "content": delta_contents,
+                            "usage": usage,
+                            "is_last": False,
                         }
-                    tc = acc_tool_calls[idx]
-                    delta_tool_call_blocks.append(
-                        ToolCallBlock(
-                            id=tc["id"],
-                            name=tc["name"],
-                            input=args,
-                        ),
-                    )
-
-                delta_contents: List[
-                    TextBlock | ToolCallBlock | ThinkingBlock | DataBlock
-                ] = []
-                if delta_thinking:
-                    delta_contents.append(
-                        ThinkingBlock(
-                            id=acc_thinking.id,
-                            thinking=delta_thinking,
-                        ),
-                    )
-                if delta_text:
-                    delta_contents.append(
-                        TextBlock(id=acc_text.id, text=delta_text),
-                    )
-                delta_contents.extend(delta_tool_call_blocks)
-                if delta_audio_block is not None:
-                    delta_contents.append(delta_audio_block)
-
-                if delta_contents:
-                    _kwargs: dict[str, Any] = {
-                        "content": delta_contents,
-                        "usage": usage,
-                        "is_last": False,
-                    }
-                    if response_id:
-                        _kwargs["id"] = response_id
-                    yield ChatResponse(**_kwargs)
+                        if response_id:
+                            _kwargs["id"] = response_id
+                        yield ChatResponse(**_kwargs)
+            except (asyncio.CancelledError, GeneratorExit):
+                was_interrupted = True
 
         final_contents: List[
             TextBlock | ToolCallBlock | ThinkingBlock | DataBlock
@@ -500,6 +514,7 @@ class OpenAIChatModel(ChatModelBase):
             "content": final_contents,
             "usage": usage,
             "is_last": True,
+            "is_interrupted": was_interrupted,
         }
         if response_id:
             _final_kwargs["id"] = response_id

@@ -317,6 +317,16 @@ export function useMessages(
 		abortRef.current?.abort();
 	}, []);
 
+	/** Request interruption of the running agent. */
+	const interrupt = useCallback(async () => {
+		if (!agentId || !sessionId) return;
+		try {
+			await sessionApi.interrupt(sessionId, agentId);
+		} catch (e) {
+			setError(e as Error);
+		}
+	}, [agentId, sessionId]);
+
 	/**
 	 * Confirm or deny a tool call that a *team member* is awaiting,
 	 * from this leader view (design §3.6 — backend routing).
@@ -380,5 +390,6 @@ export function useMessages(
 		onSubagentConfirm,
 		subagentHitl,
 		abort,
+		interrupt,
 	};
 }

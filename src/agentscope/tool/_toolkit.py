@@ -336,6 +336,18 @@ class Toolkit:
                     f"but got {type(res)}.",
                 )
 
+        except asyncio.CancelledError:
+            tool_response.state = ToolResultState.ERROR
+            tool_response.is_interrupted = True
+            tool_response.content.append(
+                TextBlock(
+                    type="text",
+                    text="<system-reminder>The tool call is interrupted "
+                    "by the user.</system-reminder>",
+                ),
+            )
+            yield tool_response
+
         except mcp.shared.exceptions.McpError as e:
             chunk = ToolChunk(
                 content=[
@@ -363,22 +375,6 @@ class Toolkit:
                     ),
                 ],
                 state=ToolResultState.ERROR,
-            )
-            yield chunk
-            tool_response.append_chunk(chunk)
-
-        except asyncio.CancelledError:
-            chunk = ToolChunk(
-                content=[
-                    TextBlock(
-                        type="text",
-                        text="<system-reminder>"
-                        "The tool call has been interrupted "
-                        "by the user."
-                        "</system-reminder>",
-                    ),
-                ],
-                state=ToolResultState.INTERRUPTED,
             )
             yield chunk
             tool_response.append_chunk(chunk)

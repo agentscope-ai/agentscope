@@ -11,6 +11,8 @@ Events produced by the agent are not exposed back through this method
 that wants them subscribes through the
 ``GET /sessions/{sid}/stream`` SSE endpoint.
 """
+import asyncio
+
 from fastapi import HTTPException
 
 from ..message_bus import MessageBus, MessageBusKeys
@@ -523,24 +525,30 @@ class ChatService:
                 # Persist the reply Msg (upsert: overwrite if same id,
                 # append if new).
                 if reply_msg is not None:
-                    await self._storage.upsert_message(
-                        user_id,
-                        session_id,
-                        reply_msg,
+                    await asyncio.shield(
+                        self._storage.upsert_message(
+                            user_id,
+                            session_id,
+                            reply_msg,
+                        ),
                     )
 
                 # Persist the updated agent state. MUST happen inside
                 # the session lock: if we released the lock first,
                 # another process could acquire it and load a stale
                 # state from storage before this write lands.
-                await self._storage.update_session_state(
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    session_id=session_id,
-                    state=agent.state,
+                await asyncio.shield(
+                    self._storage.update_session_state(
+                        user_id=user_id,
+                        agent_id=agent_id,
+                        session_id=session_id,
+                        state=agent.state,
+                    ),
                 )
             finally:
-                await self._message_bus.log_trim(events_key)
+                await asyncio.shield(
+                    self._message_bus.log_trim(events_key),
+                )
 
     async def _project_event(
         self,

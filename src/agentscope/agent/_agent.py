@@ -155,6 +155,11 @@ class Agent:
         # The offloader/workspace
         self.offloader = offloader
 
+        # Tracks whether the current reasoning-acting cycle was interrupted
+        # by a CancelledError handled in the Model or Tool layer.  Checked
+        # by ``_reply_impl`` after each cycle to decide whether to exit.
+        self._interrupted_in_cycle: bool = False
+
         # ====================================================================
         # The Tool-related logics
         # ====================================================================
@@ -210,6 +215,14 @@ class Agent:
             async for chunk in self._reply(inputs=inputs):
                 if not isinstance(chunk, Msg):
                     yield chunk
+        except (asyncio.CancelledError, GeneratorExit):
+            # CancelledError from middleware or other non-Model/Tool
+            # async operations — patch the context and emit a terminal
+            # event before re-raising.
+            async for evt in self._handle_interruption():
+                if not isinstance(evt, Msg):
+                    yield evt
+            raise
         finally:
             pass
 
@@ -248,6 +261,12 @@ class Agent:
             if final_msg is None:
                 raise RuntimeError("Agent did not produce a final message.")
             return final_msg
+        except (asyncio.CancelledError, GeneratorExit):
+            # Patch context on interruption (same rationale as
+            # reply_stream).
+            async for _ in self._handle_interruption():
+                pass
+            raise
         finally:
             pass
 
@@ -653,6 +672,14 @@ class Agent:
                         return
                     yield evt
 
+                # Reasoning was interrupted mid-generation — the Model
+                # layer caught CancelledError and returned partial output.
+                # Exit before executing any tool calls.
+                if self._interrupted_in_cycle:
+                    async for evt in self._handle_interruption():
+                        yield evt
+                    return
+
             # ===============================================================
             # Step 3.3: Getting batches of tool calls to be executed
             #  - If not, finish the loop by yielding RunFinishedEvent and exit
@@ -699,6 +726,14 @@ class Agent:
 
                     return
 
+                # A tool in this batch was interrupted mid-execution.
+                # Exit before starting the next batch or the next
+                # reasoning iteration.
+                if self._interrupted_in_cycle:
+                    async for evt in self._handle_interruption():
+                        yield evt
+                    return
+
             # Update the iteration count after each round of reasoning-acting
             self.state.cur_iter += 1
 
@@ -722,6 +757,7 @@ class Agent:
         yield ReplyEndEvent(
             session_id=self.state.session_id,
             reply_id=self.state.reply_id,
+            finished_reason="max_iters",
         )
 
         yield AssistantMsg(
@@ -903,6 +939,13 @@ class Agent:
             list(completed_response.content),
             completed_response.usage,
         )
+
+        # Interrupted mid-generation — the Model layer caught CancelledError
+        # and returned partial output.  Don't produce a final AssistantMsg;
+        # let _reply_impl handle the exit via _handle_interruption.
+        if completed_response.get("is_interrupted", False):
+            self._interrupted_in_cycle = True
+            return
 
         # If no tool call is generated, return the final message directly
         if not any(
@@ -1575,6 +1618,11 @@ class Agent:
                         metadata=chunk.metadata,
                     )
 
+                    # Tool was interrupted mid-execution — signal the
+                    # outer loop to exit after this batch.
+                    if chunk.is_interrupted:
+                        self._interrupted_in_cycle = True
+
                 else:
                     # Intermediate ToolChunk — convert to streaming events
                     async for evt in self._convert_tool_chunk_to_event(
@@ -1742,6 +1790,46 @@ class Agent:
         self._update_tool_call_state(
             tool_call.id,
             ToolCallState.FINISHED,
+        )
+
+    # =======================================================================
+    # Interruption handling
+    # =======================================================================
+
+    async def _handle_interruption(
+        self,
+    ) -> AsyncGenerator[ReplyEndEvent, None]:
+        """Gracefully terminate the current reply after an interruption.
+
+        Patches every tool_call in the last AssistantMsg that has no
+        matching tool_result so the context stays valid for subsequent
+        LLM calls, then yields a ``ReplyEndEvent`` with
+        ``finished_reason="interrupted"``.
+        """
+        self._interrupted_in_cycle = False
+
+        last_msg = self._get_last_msg()
+        if last_msg:
+            result_ids = {
+                b.id for b in last_msg.get_content_blocks("tool_result")
+            }
+            for tc in last_msg.get_content_blocks("tool_call"):
+                if tc.id not in result_ids:
+                    tc.state = ToolCallState.FINISHED
+                    last_msg.content.append(
+                        ToolResultBlock(
+                            id=tc.id,
+                            name=tc.name,
+                            output="<system-reminder>Interrupted by user."
+                            "</system-reminder>",
+                            state=ToolResultState.ERROR,
+                        ),
+                    )
+
+        yield ReplyEndEvent(
+            session_id=self.state.session_id,
+            reply_id=self.state.reply_id,
+            finished_reason="interrupted",
         )
 
     # =======================================================================

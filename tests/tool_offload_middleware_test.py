@@ -254,6 +254,7 @@ class ToolOffloadMiddlewareTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "state": "success",
+                "is_interrupted": False,
                 "metadata": {},
                 "id": "call_slow",
             },

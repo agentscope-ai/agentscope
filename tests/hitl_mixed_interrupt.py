@@ -503,7 +503,11 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                 self.sequential_result_1,
             ),
             *self.final_text_events,
-            {"type": "REPLY_END", "session_id": session_id},
+            {
+                "type": "REPLY_END",
+                "session_id": session_id,
+                "finished_reason": "completed",
+            },
         ]
         self.assertListEqual(
             events,
@@ -842,7 +846,11 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                 self.sequential_result_2,
             ),
             *self.final_text_events,
-            {"type": "REPLY_END", "session_id": session_id},
+            {
+                "type": "REPLY_END",
+                "session_id": session_id,
+                "finished_reason": "completed",
+            },
         ]
         self.assertListEqual(
             events,
@@ -1138,7 +1146,11 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                 self.concurrent_result_2,
             ),
             *self.final_text_events,
-            {"type": "REPLY_END", "session_id": session_id},
+            {
+                "type": "REPLY_END",
+                "session_id": session_id,
+                "finished_reason": "completed",
+            },
         ]
         self.assertListEqual(
             events,
