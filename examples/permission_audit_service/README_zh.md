@@ -59,8 +59,8 @@ pnpm dev
   "tool_name": "PermissionAuditDemoTool",
   "mode": "bypass",
   "resolution": "bypass_ask_suppressed",
-  "effective": {"behavior": "allow", "bypass_immune": false},
-  "candidate": {"behavior": "ask", "bypass_immune": true}
+  "effective": {"behavior": "allow", "reason": "...", "bypass_immune": false},
+  "candidate": {"behavior": "ask", "reason": "...", "bypass_immune": true}
 }
 ```
 
@@ -90,8 +90,8 @@ pnpm dev
 
 1. **DEFAULT ASK** —— 在 DEFAULT 模式下用 `risk=ordinary` 调用。演示工具返回
    普通 ASK;审计记录显示 `effective=ASK`、`candidate=null`、
-   `resolution=DIRECT`。这是基线:即使没有任何模式转换,最终的 ASK
-   现在对中间件也可见。
+   `resolution=DIRECT`。这是基线:即使没有任何模式转换,最终的 ASK 及其
+   原因现在对中间件也可见。
 
    ![DEFAULT ASK —— Web UI 确认](img/scenario-1-default-ask-ui.png)
    ![DEFAULT ASK —— 控制台审计记录](img/scenario-1-default-ask-console.png)
@@ -142,10 +142,16 @@ pnpm dev
 
 ## 隐私
 
-记录刻意排除原始 `tool_input`、原始模型输入(`tool_call.input`)、自由文本
-决策原因、原始权限规则内容、文件内容、shell 命令文本和凭证。生产环境
-消费者可增加 schema 感知的脱敏或字段白名单;本示例展示的是安全的默认
-行为。
+记录刻意排除原始 `tool_input`、原始模型输入(`tool_call.input`)、原始
+权限规则内容、文件内容、shell 命令文本和凭证。生产环境消费者可增加
+schema 感知的脱敏或字段白名单;本示例展示的是安全的默认行为。
+
+> **警告 —— `reason` 字段。** `effective.reason` / `candidate.reason`
+> 字段原样携带 `PermissionDecision.decision_reason`。当决策由规则匹配
+> 产生时,引擎会设置 `decision_reason=f"Rule: {rule_content}"`,因此
+> `reason` 可能包含所匹配规则的内容——对 Bash 是命令子串模式,对
+> Write/Read 是文件路径 glob。如果你的规则匹配敏感路径或命令,请在 sink
+> 持久化审计记录前对 `reason` 字段脱敏或丢弃。
 
 ## 失败语义
 

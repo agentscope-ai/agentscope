@@ -13,15 +13,12 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from agentscope.message import TextBlock, ToolCallBlock
 from agentscope.permission import (
     PermissionBehavior,
-    PermissionContext,
     PermissionDecision,
-    PermissionEngine,
     PermissionEvaluation,
     PermissionMode,
     PermissionResolution,
     PermissionRule,
 )
-from agentscope.tool import Bash
 
 _EXAMPLE_DIR = (
     Path(__file__).resolve().parent.parent
@@ -156,40 +153,6 @@ class PermissionAuditDecisionRecordTest(IsolatedAsyncioTestCase):
         # tool_input and the raw model input (tool_call.input) are absent.
         assert "tool_input" not in rec
         assert "input" not in rec
-
-    async def test_decision_reason_never_leaks_rule_content(self) -> None:
-        """Audit summaries omit free-form reasons that may contain secrets."""
-        secret_rule = "curl -H Authorization:Bearer-SECRET"
-        engine = PermissionEngine(
-            PermissionContext(mode=PermissionMode.DEFAULT),
-        )
-        engine.add_rule(
-            PermissionRule(
-                tool_name="Bash",
-                rule_content=secret_rule,
-                behavior=PermissionBehavior.ASK,
-                source="user",
-            ),
-        )
-        evaluation = await engine.evaluate_permission(
-            Bash(),
-            {"command": secret_rule},
-        )
-        sink = _CollectSink()
-        middleware = PermissionAuditMiddleware("u", "a", "s", sink)
-
-        await middleware.on_permission_decision(
-            agent=_agent(),
-            tool_call=_tool_call(tool_name="Bash"),
-            tool=Bash(),
-            tool_input={"command": secret_rule},
-            evaluation=evaluation,
-        )
-
-        record = sink.records[0]
-        assert secret_rule not in json_module_dumps(record)
-        assert "reason" not in record["effective"]
-        assert record["candidate"] is None
 
     async def test_factory_binds_identifiers(self) -> None:
         # 4. factory binds user, agent, and session identifiers correctly

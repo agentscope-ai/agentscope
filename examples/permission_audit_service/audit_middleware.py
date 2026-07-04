@@ -45,6 +45,7 @@ def _now_iso() -> str:
 def _decision_summary(decision: PermissionDecision) -> dict[str, Any]:
     return {
         "behavior": decision.behavior.value,
+        "reason": decision.decision_reason,
         "bypass_immune": decision.bypass_immune,
     }
 
