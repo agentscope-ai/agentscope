@@ -240,7 +240,9 @@ class BashToolInjectionCheckTest(IsolatedAsyncioTestCase):
                     {"command": cmd},
                     self.context,
                 )
-                self.assertNotEqual(decision.behavior, PermissionBehavior.ALLOW)
+                self.assertNotEqual(
+                    decision.behavior, PermissionBehavior.ALLOW
+                )
 
     async def test_safe_commands_pass(self) -> None:
         """Test that safe commands pass injection check."""
