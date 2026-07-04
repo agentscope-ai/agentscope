@@ -64,8 +64,8 @@ Decision record:
   "tool_name": "PermissionAuditDemoTool",
   "mode": "bypass",
   "resolution": "bypass_ask_suppressed",
-  "effective": {"behavior": "allow", "reason": "...", "bypass_immune": false},
-  "candidate": {"behavior": "ask", "reason": "...", "bypass_immune": true}
+  "effective": {"behavior": "allow", "bypass_immune": false},
+  "candidate": {"behavior": "ask", "bypass_immune": true}
 }
 ```
 
@@ -98,11 +98,11 @@ mode.
 1. **DEFAULT ASK** — In DEFAULT mode, invoke with `risk=ordinary`. The
    demo tool returns a plain ASK; the audit record shows
    `effective=ASK`, `candidate=null`, `resolution=DIRECT`. This is the
-   baseline: a final ASK and its reason are now visible to middleware
-   even without any mode conversion.
+   baseline: a final ASK is now visible to middleware even without any
+   mode conversion.
 
-   ![DEFAULT ASK — Web UI confirmation](img/img.png)
-   ![DEFAULT ASK — console audit record](img/img_1.png)
+   ![DEFAULT ASK — Web UI confirmation](img/scenario-1-default-ask-ui.png)
+   ![DEFAULT ASK — console audit record](img/scenario-1-default-ask-console.png)
 
 2. **User confirmation reuse** — Approve the pending call from scenario
    1 (optionally "remember" the rule). The console first receives a
@@ -113,17 +113,17 @@ mode.
    decision explains why the resumed call executes without re-evaluating
    the engine.
 
-   ![User confirmation reuse — Web UI](img/img_2.png)
-   ![User confirmation reuse — console records](img/img_4.png)
+   ![User confirmation reuse — Web UI](img/scenario-2-user-confirmed-ui.png)
+   ![User confirmation reuse — console records](img/scenario-2-user-confirmed-console.png)
 
 3. **User rejection** — Reject a pending call. The console receives a
    `permission_confirmation` record with `confirmed=false`; no later
    `USER_CONFIRMED` or tool-execution record appears. Rejection is
    distinguishable from an unanswered or interrupted ASK.
 
-   ![User rejection — Web UI](img/img_3.png)
-   ![User rejection — console record](img/img_6.png)
-   ![User rejection — detail](img/img_5.png)
+   ![User rejection — prompt](img/scenario-3-user-rejection-prompt.png)
+   ![User rejection — Web UI](img/scenario-3-user-rejection-ui.png)
+   ![User rejection — console record](img/scenario-3-user-rejection-console.png)
 
 4. **BYPASS safety suppression** — Switch the session to BYPASS and
    invoke with `risk=safety`. The demo tool's bypass-immune safety ASK
@@ -132,8 +132,8 @@ mode.
    `resolution=BYPASS_ASK_SUPPRESSED`. Without this hook the final
    ALLOW could be misread as a clean safety approval.
 
-   ![BYPASS safety suppression — Web UI](img/img_7.png)
-   ![BYPASS safety suppression — console record](img/img_8.png)
+   ![BYPASS safety suppression — Web UI](img/scenario-4-bypass-suppression-ui.png)
+   ![BYPASS safety suppression — console record](img/scenario-4-bypass-suppression-console.png)
 
 5. **DONT_ASK conversion** — Run unattended (DONT_ASK mode) with
    `risk=ordinary`. With no user available, the ASK is converted to
@@ -141,8 +141,8 @@ mode.
    `resolution=ASK_CONVERTED_TO_DENY` — distinguishable from an
    explicit deny rule.
 
-   ![DONT_ASK conversion — Web UI](img/img_9.png)
-   ![DONT_ASK conversion — console record](img/img_10.png)
+   ![DONT_ASK conversion — Web UI](img/scenario-5-dont-ask-ui.png)
+   ![DONT_ASK conversion — console record](img/scenario-5-dont-ask-console.png)
 
 6. **Allow-rule override** — In DEFAULT mode, first approve a pending
    call with "remember rule" to add a tool-name-level allow rule, then
@@ -153,25 +153,16 @@ mode.
    `USER_CONFIRMED`: here a *new* call is preauthorized by a rule,
    rather than the same call resuming after confirmation.
 
-   ![Allow-rule override — Web UI](img/img_11.png)
-   ![Allow-rule override — console record](img/img_12.png)
+   ![Allow-rule override — Web UI](img/scenario-6-allow-rule-ui.png)
+   ![Allow-rule override — console record](img/scenario-6-allow-rule-console.png)
 
 ## Privacy
 
 Records deliberately exclude raw `tool_input`, raw model input
-(`tool_call.input`), raw permission-rule content, file contents, shell
-command text, and credentials. Production consumers may add
-schema-aware redaction or allowlisted fields; this example teaches the
-safe default.
-
-> **Warning — `reason` field.** The `effective.reason` / `candidate.reason`
-> field carries `PermissionDecision.decision_reason` verbatim. When a
-> decision is produced by a rule match, the engine sets
-> `decision_reason=f"Rule: {rule_content}"`, so `reason` may contain the
-> matched rule's content — which for Bash is a command substring pattern
-> and for Write/Read is a file-path glob. If your rules match sensitive
-> paths or commands, redact or drop the `reason` field in your sink
-> before persisting audit records.
+(`tool_call.input`), free-form decision reasons, raw permission-rule
+content, file contents, shell command text, and credentials. Production
+consumers may add schema-aware redaction or allowlisted fields; this
+example teaches the safe default.
 
 ## Failure semantics
 

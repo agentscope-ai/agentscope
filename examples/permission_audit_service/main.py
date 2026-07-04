@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=wrong-import-position,wrong-import-order
 """Start the permission audit example agent service.
 
 Follows ``examples/agent_service/main.py`` but omits RAG/MCP and adds a
@@ -40,7 +41,7 @@ async def permission_audit_factory(user_id, agent_id, session_id):
     ]
 
 
-async def permission_audit_demo_tools(user_id, agent_id, session_id):
+async def permission_audit_demo_tools(_user_id, _agent_id, _session_id):
     """Per-assembly demo tool so every session can exercise audit scenarios."""
     return [PermissionAuditDemoTool()]
 

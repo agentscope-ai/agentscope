@@ -4,8 +4,9 @@
 Separates the *effective* decision (what the agent will execute) from any
 *candidate* decision that a permission mode transformed or suppressed —
 e.g. a bypass-immune safety ASK silenced by BYPASS, or an ASK converted to
-DENY by DONT_ASK. This lets an observer middleware audit the full decision
-lifecycle, not just the final (potentially information-stripped) decision.
+DENY by DONT_ASK. This lets an observer middleware audit behavior-changing
+permission transitions and final decisions, rather than only the final
+(potentially information-stripped) decision.
 """
 from dataclasses import dataclass
 from enum import Enum
