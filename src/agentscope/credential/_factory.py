@@ -15,6 +15,50 @@ from ._xai import XAICredential
 from ._base import CredentialBase
 
 
+def _get_literal_values(credential_cls: Type[CredentialBase]) -> set[str]:
+    """Return the allowed ``type`` discriminator values for a credential class.
+
+    Reads the ``Literal`` annotation on the ``type`` field.  Returns an empty
+    set when the class does not declare a ``type`` field at all.
+
+    Args:
+        credential_cls (`Type[CredentialBase]`):
+            The credential subclass to inspect.
+
+    Returns:
+        `set[str]`:
+            The set of values permitted by the ``type`` ``Literal`` annotation.
+    """
+    type_hint = get_type_hints(credential_cls).get("type")
+    if type_hint is None:
+        return set()
+    return set(get_args(type_hint))
+
+
+def _get_discriminator_value(
+    credential_cls: Type[CredentialBase],
+) -> str | None:
+    """Return the resolved ``type`` discriminator value for a credential class.
+
+    The discriminator is the field's default value, i.e. the value written into
+    serialized records and the one Pydantic tags the union with.  Returns
+    ``None`` when the class has no ``type`` field.
+
+    Args:
+        credential_cls (`Type[CredentialBase]`):
+            The credential subclass to inspect.
+
+    Returns:
+        `str | None`:
+            The default ``type`` value, or ``None`` if there is no ``type``
+            field.
+    """
+    field = credential_cls.model_fields.get("type")
+    if field is None:
+        return None
+    return field.default
+
+
 class CredentialFactory:
     """Registry and deserializer for :class:`CredentialBase` subclasses.
 
@@ -60,15 +104,73 @@ class CredentialFactory:
         """Register a custom :class:`CredentialBase` subclass.
 
         The class must define a ``type`` field with a unique ``Literal``
-        default so Pydantic can use it as a discriminator.
+        default so Pydantic can use it as a discriminator.  Registration is
+        validated eagerly so that misconfigured credentials fail here, at the
+        call site, rather than producing an opaque ``ValidationError`` from
+        :meth:`from_dict` later (see issue #1961).
 
         Args:
-            credential_cls: The subclass to register.
+            credential_cls (`Type[CredentialBase]`):
+                The subclass to register.
+
+        Raises:
+            `ValueError`:
+                If the class has no ``type`` discriminator field, if its
+                ``type`` default value is not contained in its own ``Literal``
+                annotation, or if its discriminator value is already used by
+                a built-in or previously-registered credential class.
         """
         if credential_cls in cls._classes:
             return
+
+        cls._validate_discriminator(credential_cls)
+
         cls._classes.append(credential_cls)
         cls._adapter = None  # invalidate so it's rebuilt on next use
+
+    @classmethod
+    def _validate_discriminator(
+        cls,
+        credential_cls: Type[CredentialBase],
+    ) -> None:
+        """Validate the ``type`` discriminator of a credential class.
+
+        Ensures the class declares a ``type`` field whose default value is one
+        of its permitted ``Literal`` values, and that the value does not
+        collide with any already-registered credential.  Raises ``ValueError``
+        with an actionable message otherwise.
+
+        Args:
+            credential_cls (`Type[CredentialBase]`):
+                The candidate class about to be registered.
+        """
+        allowed = _get_literal_values(credential_cls)
+        default = _get_discriminator_value(credential_cls)
+
+        if default is None:
+            raise ValueError(
+                f"{credential_cls.__name__} cannot be registered: it must "
+                "declare a `type` field with a Literal default to act as a "
+                "discriminator.",
+            )
+
+        if allowed and default not in allowed:
+            raise ValueError(
+                f"{credential_cls.__name__} cannot be registered: its `type` "
+                f"default {default!r} is not among the permitted Literal "
+                f"values {sorted(allowed)!r}. The default value must appear "
+                "in the Literal annotation, e.g. "
+                "`type: Literal['<value>'] = '<value>'`.",
+            )
+
+        for registered in cls._classes:
+            if _get_discriminator_value(registered) == default:
+                raise ValueError(
+                    f"{credential_cls.__name__} cannot be registered: its "
+                    f"`type` discriminator {default!r} is already used by "
+                    f"{registered.__name__}. Each credential must declare a "
+                    "unique discriminator value.",
+                )
 
     @classmethod
     def from_dict(cls, data: dict) -> CredentialBase:
@@ -97,13 +199,12 @@ class CredentialFactory:
             found.
         """
         for c in cls._classes:
-            hints = get_type_hints(c)
-            type_hint = hints.get("type")
-            if type_hint is None:
+            allowed = _get_literal_values(c)
+            if not allowed:
                 continue
-            args = get_args(type_hint)
-
-            if args and args[0] == provider:
+            # Match against the first declared Literal value to preserve the
+            # historical lookup semantics.
+            if next(iter(allowed)) == provider:
                 return c
         return None
 
