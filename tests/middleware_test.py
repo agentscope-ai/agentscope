@@ -1,13 +1,21 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=abstract-method
 """Unit tests for middleware system."""
+import sys
+import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 from typing import Any, AsyncGenerator, Callable, Union
 
 from utils import MockModel
 from pydantic import BaseModel
-from agentscope.event import AgentEvent
+from agentscope.event import (
+    AgentEvent,
+    RequireExternalExecutionEvent,
+    RequireUserConfirmEvent,
+    UserConfirmResultEvent,
+    ConfirmResult,
+)
 from agentscope.agent import Agent, ContextConfig
 from agentscope.middleware import MiddlewareBase
 from agentscope.model import ChatResponse
@@ -15,15 +23,22 @@ from agentscope.message import (
     TextBlock,
     HintBlock,
     UserMsg,
+    AssistantMsg,
     SystemMsg,
     Msg,
     ToolCallBlock,
+    ToolCallState,
+    ToolResultState,
 )
-from agentscope.tool import Toolkit, ToolBase, ToolChunk
+from agentscope.state import AgentState
+from agentscope.tool import Toolkit, ToolBase, ToolChunk, Bash
 from agentscope.permission import (
     PermissionContext,
     PermissionDecision,
     PermissionBehavior,
+    PermissionMode,
+    PermissionRule,
+    PermissionResolution,
 )
 
 
@@ -35,6 +50,14 @@ class TestMiddleware(IsolatedAsyncioTestCase):
         self.mock_model = MockModel()
         self.toolkit = Toolkit()
         self.execution_log = []
+
+    def test_permission_confirmation_hook_is_optional(self) -> None:
+        """Expose an optional confirmation notification contract."""
+        assert hasattr(MiddlewareBase, "on_permission_confirmation")
+        assert (
+            MiddlewareBase().is_implemented("on_permission_confirmation")
+            is False
+        )
 
     async def test_on_reply_middleware_pre_post_yield(self) -> None:
         """Test on_reply middleware pre, post and yield positions."""
@@ -1293,3 +1316,1266 @@ class TestMiddleware(IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         """Clean up test fixtures."""
         self.execution_log.clear()
+
+
+# ---------------------------------------------------------------------------
+# on_permission_decision integration tests
+# ---------------------------------------------------------------------------
+
+
+def _build_agent_with_bash(
+    middlewares: list,
+    mode: PermissionMode = PermissionMode.DEFAULT,
+    deny_rules: list[PermissionRule] | None = None,
+    allow_rules: list[PermissionRule] | None = None,
+    ask_rules: list[PermissionRule] | None = None,
+    tools: list[ToolBase] | None = None,
+) -> Agent:
+    """Build an Agent with a Bash tool and a configurable permission mode.
+
+    Uses MockModel; the caller sets responses on the returned agent's
+    model via ``agent.model.set_responses(...)``. Pass ``tools`` to
+    register different tools (rule dicts still key on ``"Bash"``).
+    """
+    deny_rules = deny_rules or []
+    allow_rules = allow_rules or []
+    ask_rules = ask_rules or []
+    context = PermissionContext(
+        mode=mode,
+        deny_rules={"Bash": deny_rules} if deny_rules else {},
+        allow_rules={"Bash": allow_rules} if allow_rules else {},
+        ask_rules={"Bash": ask_rules} if ask_rules else {},
+    )
+    state = AgentState(permission_context=context)
+    model = MockModel(context_size=10000)
+    agent = Agent(
+        name="test_agent",
+        system_prompt="test prompt",
+        model=model,
+        toolkit=Toolkit(tools=tools if tools is not None else [Bash()]),
+        middlewares=middlewares,
+        state=state,
+    )
+    return agent
+
+
+class _ExternalAllowTool(ToolBase):
+    """Read-only external tool that always allows execution."""
+
+    name = "external_allow"
+    description = "External tool used by permission observer tests."
+    input_schema = {
+        "type": "object",
+        "properties": {"value": {"type": "string"}},
+        "required": ["value"],
+    }
+    is_concurrency_safe = False
+    is_read_only = True
+    is_external_tool = True
+
+    async def check_permissions(
+        self,
+        tool_input: dict[str, Any],
+        context: PermissionContext,
+    ) -> PermissionDecision:
+        """Allow the external invocation."""
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message="external tool allowed",
+        )
+
+
+class _SafetyAskTool(ToolBase):
+    """External tool that emits a bypass-immune safety ASK.
+
+    Used to exercise BYPASS's ASK suppression without executing a real
+    destructive command (e.g. ``rm -rf /``). Marked external so an ALLOW
+    reaches ``RequireExternalExecutionEvent`` and never local execution,
+    keeping the test side-effect-free across environments.
+    """
+
+    name = "safety_ask_demo"
+    description = "Demo tool emitting a bypass-immune safety ASK."
+    input_schema = {
+        "type": "object",
+        "properties": {"label": {"type": "string"}},
+        "required": ["label"],
+    }
+    is_concurrency_safe = False
+    is_read_only = False
+    is_external_tool = True
+
+    async def check_permissions(
+        self,
+        tool_input: dict[str, Any],
+        context: PermissionContext,
+    ) -> PermissionDecision:
+        """Emit a bypass-immune safety ASK."""
+        return PermissionDecision(
+            behavior=PermissionBehavior.ASK,
+            message="Safety check: destructive operation",
+            decision_reason="Safety check: bypass-immune ASK (demo)",
+            bypass_immune=True,
+        )
+
+
+class _ConfirmationAskTool(ToolBase):
+    """Side-effect-free tool that always requests confirmation."""
+
+    name = "confirmation_ask"
+    description = "Request confirmation without external side effects."
+    input_schema = {
+        "type": "object",
+        "properties": {"value": {"type": "string"}},
+        "required": ["value"],
+    }
+    is_concurrency_safe = False
+    is_read_only = False
+
+    async def check_permissions(
+        self,
+        tool_input: dict[str, Any],
+        context: PermissionContext,
+    ) -> PermissionDecision:
+        """Request user confirmation."""
+        return PermissionDecision(
+            behavior=PermissionBehavior.ASK,
+            message="Confirm the demonstration operation",
+            decision_reason="Demonstration tool requires confirmation",
+        )
+
+    async def __call__(self, value: str) -> ToolChunk:
+        """Return a side-effect-free result."""
+        return ToolChunk(content=[TextBlock(text=f"confirmed: {value}")])
+
+
+class PermissionDecisionObserverTest(IsolatedAsyncioTestCase):
+    """on_permission_decision fires once per tool call, before on_acting."""
+
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "Bash tool is not supported on Windows",
+    )
+    async def test_allow_fires_once_before_acting(self) -> None:
+        """ALLOW is observed exactly once before local execution."""
+        records: list[str] = []
+
+        class Recorder(MiddlewareBase):
+            """Record permission and acting hook order."""
+
+            async def on_permission_decision(
+                self,
+                agent,
+                tool_call,
+                tool,
+                tool_input,
+                evaluation,
+            ) -> None:
+                records.append(
+                    f"decision:{evaluation.effective_decision.behavior.value}",
+                )
+
+            async def on_acting(
+                self,
+                agent,
+                input_kwargs,
+                next_handler,
+            ):
+                records.append("acting:before")
+                async for item in next_handler():
+                    yield item
+                records.append("acting:after")
+
+        agent = _build_agent_with_bash(
+            middlewares=[Recorder()],
+            mode=PermissionMode.DEFAULT,
+            allow_rules=[
+                PermissionRule(
+                    tool_name="Bash",
+                    rule_content="ls",
+                    behavior=PermissionBehavior.ALLOW,
+                    source="test",
+                ),
+            ],
+        )
+        tool_call = ToolCallBlock(
+            id="call_1",
+            name="Bash",
+            input='{"command": "ls"}',
+        )
+        agent.model.set_responses(
+            [
+                ChatResponse(content=[tool_call], is_last=False),
+                ChatResponse(content=[TextBlock(text="done")], is_last=True),
+            ],
+        )
+        async for _ in agent.reply_stream(UserMsg("user", "run ls")):
+            pass
+
+        assert "decision:allow" in records
+        assert records.index("decision:allow") < records.index("acting:before")
+        assert records.count("decision:allow") == 1
+
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "Bash tool is not supported on Windows",
+    )
+    async def test_deny_fires_without_acting(self) -> None:
+        """DENY is observed without invoking the acting hook."""
+        records: list[str] = []
+
+        class Recorder(MiddlewareBase):
+            """Record permission and acting hook calls."""
+
+            async def on_permission_decision(
+                self,
+                agent,
+                tool_call,
+                tool,
+                tool_input,
+                evaluation,
+            ) -> None:
+                records.append(
+                    f"decision:{evaluation.effective_decision.behavior.value}",
+                )
+
+            async def on_acting(self, agent, input_kwargs, next_handler):
+                records.append("acting")
+                async for item in next_handler():
+                    yield item
+
+        agent = _build_agent_with_bash(
+            middlewares=[Recorder()],
+            mode=PermissionMode.DEFAULT,
+            deny_rules=[
+                PermissionRule(
+                    tool_name="Bash",
+                    rule_content="*",
+                    behavior=PermissionBehavior.DENY,
+                    source="test",
+                ),
+            ],
+        )
+        tool_call = ToolCallBlock(
+            id="call_1",
+            name="Bash",
+            input='{"command": "echo hi"}',
+        )
+        agent.model.set_responses(
+            [
+                ChatResponse(content=[tool_call], is_last=False),
+                ChatResponse(content=[TextBlock(text="done")], is_last=True),
+            ],
+        )
+        async for _ in agent.reply_stream(UserMsg("user", "run echo")):
+            pass
+
+        assert "decision:deny" in records
+        assert "acting" not in records
+
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "Bash tool is not supported on Windows",
+    )
+    async def test_observer_cannot_mutate_effective_decision(self) -> None:
+        """A read-only observer cannot alter the consumed permission result.
+
+        Scenario:
+            A deny rule produces DENY. The observer attempts to mutate
+            ``evaluation.effective_decision.behavior`` to ALLOW inside
+            the hook.
+
+        Expected:
+            The agent still treats the call as DENY — ``on_acting`` is
+            never invoked. The observer received a deep copy, so its
+            mutation never reached the agent's decision.
+        """
+        records: list[str] = []
+
+        class MutatingObserver(MiddlewareBase):
+            """Attempt to escalate DENY to ALLOW."""
+
+            async def on_permission_decision(
+                self,
+                agent,
+                tool_call,
+                tool,
+                tool_input,
+                evaluation,
+            ) -> None:
+                evaluation.effective_decision.behavior = (
+                    PermissionBehavior.ALLOW
+                )
+                records.append("observed")
+
+            async def on_acting(self, agent, input_kwargs, next_handler):
+                records.append("acting")
+                async for item in next_handler():
+                    yield item
+
+        agent = _build_agent_with_bash(
+            middlewares=[MutatingObserver()],
+            mode=PermissionMode.DEFAULT,
+            deny_rules=[
+                PermissionRule(
+                    tool_name="Bash",
+                    rule_content="*",
+                    behavior=PermissionBehavior.DENY,
+                    source="test",
+                ),
+            ],
+        )
+        tool_call = ToolCallBlock(
+            id="call_1",
+            name="Bash",
+            input='{"command": "echo hi"}',
+        )
+        agent.model.set_responses(
+            [
+                ChatResponse(content=[tool_call], is_last=False),
+                ChatResponse(content=[TextBlock(text="done")], is_last=True),
+            ],
+        )
+        async for _ in agent.reply_stream(UserMsg("user", "run echo hi")):
+            pass
+
+        assert "observed" in records
+        assert (
+            "acting" not in records
+        )  # DENY held — mutation did not propagate
+
+    async def test_observer_cannot_mutate_tool_call(self) -> None:
+        """A read-only observer cannot alter the executed tool call.
+
+        Scenario:
+            An ALLOW tool call proceeds to execution. The observer
+            attempts to rewrite ``tool_call.input`` to a tampered value
+            inside the hook.
+
+        Expected:
+            The tool receives the original input. The observer received
+            a deep copy of ``tool_call``, so its mutation never reached
+            the agent's execution path.
+        """
+        received: list[str] = []
+
+        class RecordingTool(ToolBase):
+            """Local tool that records the value it executes with."""
+
+            name = "recording"
+            description = "Record the executed input value."
+            input_schema = {
+                "type": "object",
+                "properties": {"value": {"type": "string"}},
+                "required": ["value"],
+            }
+            is_concurrency_safe = True
+            is_read_only = True
+            is_external_tool = False
+
+            async def check_permissions(
+                self,
+                tool_input: dict[str, Any],
+                context: PermissionContext,
+            ) -> PermissionDecision:
+                return PermissionDecision(
+                    behavior=PermissionBehavior.ALLOW,
+                    message="allow",
+                )
+
+            async def __call__(self, value: str) -> ToolChunk:
+                received.append(value)
+                return ToolChunk(content=[TextBlock(text=f"got:{value}")])
+
+        class MutatingObserver(MiddlewareBase):
+            """Attempt to rewrite the tool call input."""
+
+            async def on_permission_decision(
+                self,
+                agent,
+                tool_call,
+                tool,
+                tool_input,
+                evaluation,
+            ) -> None:
+                tool_call.input = '{"value": "TAMPERED"}'
+
+        agent = _build_agent_with_bash(
+            middlewares=[MutatingObserver()],
+            mode=PermissionMode.DEFAULT,
+            tools=[RecordingTool()],
+        )
+        tool_call = ToolCallBlock(
+            id="call_1",
+            name="recording",
+            input='{"value": "ORIGINAL"}',
+        )
+        agent.model.set_responses(
+            [
+                ChatResponse(content=[tool_call], is_last=False),
+                ChatResponse(content=[TextBlock(text="done")], is_last=True),
+            ],
+        )
+        async for _ in agent.reply_stream(UserMsg("user", "run recording")):
+            pass
+
+        assert received == ["ORIGINAL"]  # tool ran with original input
+
+    async def test_ask_fires_without_acting(self) -> None:
+        """ASK is observed once and never reaches tool execution."""
+        records: list[str] = []
+
+        class Recorder(MiddlewareBase):
+            """Record decision and acting hook calls."""
+
+            async def on_permission_decision(
+                self,
+                agent,
+                tool_call,
+                tool,
+                tool_input,
+                evaluation,
+            ) -> None:
+                records.append(
+                    f"decision:{evaluation.effective_decision.behavior.value}",
+                )
+
+            async def on_acting(self, agent, input_kwargs, next_handler):
+                records.append("acting")
+                async for item in next_handler():
+                    yield item
+
+        agent = _build_agent_with_bash(
+            middlewares=[Recorder()],
+            tools=[_SafetyAskTool()],
+        )
+        agent.model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_ask",
+                            name="safety_ask_demo",
+                            input='{"label": "destructive op"}',
+                        ),
+                    ],
+                    is_last=False,
+                ),
+            ],
+        )
+
+        events = [
+            event
+            async for event in agent.reply_stream(
+                UserMsg("user", "run dangerous command"),
+            )
+        ]
+
+        assert records == ["decision:ask"]
+        assert "acting" not in records
+        assert any(
+            isinstance(event, RequireUserConfirmEvent) for event in events
+        )
+
+    async def test_external_allow_fires_once(self) -> None:
+        """An allowed external tool is observed before handoff."""
+        evaluations: list = []
+
+        class Recorder(MiddlewareBase):
+            """Record permission evaluations."""
+
+            async def on_permission_decision(
+                self,
+                agent,
+                tool_call,
+                tool,
+                tool_input,
+                evaluation,
+            ) -> None:
+                evaluations.append(evaluation)
+
+        model = MockModel(context_size=10000)
+        agent = Agent(
+            name="test_agent",
+            system_prompt="test prompt",
+            model=model,
+            toolkit=Toolkit(tools=[_ExternalAllowTool()]),
+            middlewares=[Recorder()],
+            state=AgentState(
+                permission_context=PermissionContext(
+                    mode=PermissionMode.DEFAULT,
+                ),
+            ),
+        )
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_external",
+                            name="external_allow",
+                            input='{"value": "hello"}',
+                        ),
+                    ],
+                    is_last=False,
+                ),
+            ],
+        )
+
+        events = [
+            event
+            async for event in agent.reply_stream(
+                UserMsg("user", "run external"),
+            )
+        ]
+
+        assert len(evaluations) == 1
+        assert (
+            evaluations[0].effective_decision.behavior
+            == PermissionBehavior.ALLOW
+        )
+        assert any(
+            isinstance(event, RequireExternalExecutionEvent)
+            for event in events
+        )
+
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "Bash tool is not supported on Windows",
+    )
+    async def test_multiple_tool_calls_each_fire_once(self) -> None:
+        """Every tool call in one model response gets one notification."""
+        observed_ids: list[str] = []
+
+        class Recorder(MiddlewareBase):
+            """Record observed tool-call identifiers."""
+
+            async def on_permission_decision(
+                self,
+                agent,
+                tool_call,
+                tool,
+                tool_input,
+                evaluation,
+            ) -> None:
+                observed_ids.append(tool_call.id)
+
+        agent = _build_agent_with_bash(middlewares=[Recorder()])
+        agent.model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_ls",
+                            name="Bash",
+                            input='{"command": "ls"}',
+                        ),
+                        ToolCallBlock(
+                            id="call_pwd",
+                            name="Bash",
+                            input='{"command": "pwd"}',
+                        ),
+                    ],
+                    is_last=False,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="done")],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        async for _ in agent.reply_stream(UserMsg("user", "inspect")):
+            pass
+
+        assert sorted(observed_ids) == ["call_ls", "call_pwd"]
+        assert len(observed_ids) == 2
+
+    async def test_bypass_suppressed_ask_recorded(self) -> None:
+        """Deliver a BYPASS-suppressed safety ASK to middleware.
+
+        Scenario:
+            An agent in BYPASS invokes a tool whose ``check_permissions``
+            emits a bypass-immune safety ASK. BYPASS suppresses it into
+            ALLOW. A demo tool is used instead of a real destructive
+            command so the test is side-effect-free on every platform.
+
+        Expected evaluation:
+            The hook receives candidate=ASK(bypass_immune=True),
+            effective=ALLOW, and resolution=BYPASS_ASK_SUPPRESSED.
+
+        Audit significance:
+            An application-level audit sink can record the suppressed warning
+            before the operation reaches tool execution.
+        """
+        records: list = []
+
+        class Recorder(MiddlewareBase):
+            """Record permission evaluations."""
+
+            async def on_permission_decision(
+                self,
+                agent,
+                tool_call,
+                tool,
+                tool_input,
+                evaluation,
+            ) -> None:
+                records.append(evaluation)
+
+        agent = _build_agent_with_bash(
+            middlewares=[Recorder()],
+            mode=PermissionMode.BYPASS,
+            tools=[_SafetyAskTool()],
+        )
+        tool_call = ToolCallBlock(
+            id="call_1",
+            name="safety_ask_demo",
+            input='{"label": "destructive op"}',
+        )
+        agent.model.set_responses(
+            [
+                ChatResponse(content=[tool_call], is_last=False),
+                ChatResponse(content=[TextBlock(text="done")], is_last=True),
+            ],
+        )
+        async for _ in agent.reply_stream(
+            UserMsg("user", "run the destructive demo"),
+        ):
+            pass
+
+        assert len(records) == 1
+        ev = records[0]
+        assert ev.effective_decision.behavior == PermissionBehavior.ALLOW
+        assert ev.resolution == PermissionResolution.BYPASS_ASK_SUPPRESSED
+        assert ev.candidate_decision is not None
+        assert ev.candidate_decision.behavior == PermissionBehavior.ASK
+        assert ev.candidate_decision.bypass_immune is True
+
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "Bash tool is not supported on Windows",
+    )
+    async def test_no_observer_no_behavior_change(self) -> None:
+        """A middleware without the new hook preserves existing behavior."""
+
+        # An agent with a middleware that does NOT implement
+        # on_permission_decision behaves exactly like one with no
+        # middleware for permission purposes.
+        class PlainActingRecorder(MiddlewareBase):
+            """Record whether tool execution occurred."""
+
+            def __init__(self) -> None:
+                self.acted = False
+
+            async def on_acting(self, agent, input_kwargs, next_handler):
+                self.acted = True
+                async for item in next_handler():
+                    yield item
+
+        rec = PlainActingRecorder()
+        agent = _build_agent_with_bash(
+            middlewares=[rec],
+            mode=PermissionMode.DEFAULT,
+            allow_rules=[
+                PermissionRule(
+                    tool_name="Bash",
+                    rule_content="ls",
+                    behavior=PermissionBehavior.ALLOW,
+                    source="test",
+                ),
+            ],
+        )
+        tool_call = ToolCallBlock(
+            id="call_1",
+            name="Bash",
+            input='{"command": "ls"}',
+        )
+        agent.model.set_responses(
+            [
+                ChatResponse(content=[tool_call], is_last=False),
+                ChatResponse(content=[TextBlock(text="done")], is_last=True),
+            ],
+        )
+        async for _ in agent.reply_stream(UserMsg("user", "run ls")):
+            pass
+        assert rec.acted is True
+
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "Bash tool is not supported on Windows",
+    )
+    async def test_observer_exception_aborts_tool_call(self) -> None:
+        """Observer exceptions propagate before tool execution."""
+
+        class FailingObserver(MiddlewareBase):
+            """Raise from the permission notification hook."""
+
+            async def on_permission_decision(
+                self,
+                agent,
+                tool_call,
+                tool,
+                tool_input,
+                evaluation,
+            ) -> None:
+                raise RuntimeError("observer failed")
+
+        agent = _build_agent_with_bash(
+            middlewares=[FailingObserver()],
+            mode=PermissionMode.DEFAULT,
+            allow_rules=[
+                PermissionRule(
+                    tool_name="Bash",
+                    rule_content="ls",
+                    behavior=PermissionBehavior.ALLOW,
+                    source="test",
+                ),
+            ],
+        )
+        tool_call = ToolCallBlock(
+            id="call_1",
+            name="Bash",
+            input='{"command": "ls"}',
+        )
+        agent.model.set_responses(
+            [
+                ChatResponse(content=[tool_call], is_last=False),
+                ChatResponse(content=[TextBlock(text="done")], is_last=True),
+            ],
+        )
+        with self.assertRaises(RuntimeError):
+            _ = [
+                e async for e in agent.reply_stream(UserMsg("user", "run ls"))
+            ]
+
+    async def test_user_confirmed_reuse_recorded(self) -> None:
+        """Deliver reused user authorization as USER_CONFIRMED.
+
+        Scenario:
+            A user confirms a tool call whose ``check_permissions`` emits
+            a bypass-immune safety ASK, and Agent resumes the same call
+            without evaluating it through PermissionEngine again. A demo
+            tool is used instead of a real destructive command so the
+            test is side-effect-free on every platform.
+
+        Expected evaluation:
+            The resumed call emits effective=ALLOW, candidate=None, and
+            resolution=USER_CONFIRMED.
+
+        Audit significance:
+            The execution is attributable to explicit user authorization
+            rather than appearing to have bypassed permission checking.
+        """
+        records: list = []
+
+        class Recorder(MiddlewareBase):
+            """Record permission evaluations."""
+
+            async def on_permission_decision(
+                self,
+                agent,
+                tool_call,
+                tool,
+                tool_input,
+                evaluation,
+            ) -> None:
+                records.append(evaluation)
+
+        # DEFAULT mode. The demo tool emits a bypass-immune safety ASK on
+        # the first reply; accepting the suggested rules lets the second
+        # reply reuse authorization (USER_CONFIRMED resolution).
+        agent = _build_agent_with_bash(
+            middlewares=[Recorder()],
+            mode=PermissionMode.DEFAULT,
+            tools=[_SafetyAskTool()],
+        )
+        tool_call = ToolCallBlock(
+            id="call_1",
+            name="safety_ask_demo",
+            input='{"label": "destructive op"}',
+        )
+        agent.model.set_responses(
+            [
+                ChatResponse(content=[tool_call], is_last=False),
+                ChatResponse(content=[TextBlock(text="done")], is_last=True),
+            ],
+        )
+        first_events = [
+            e
+            async for e in agent.reply_stream(
+                UserMsg("user", "run the destructive demo"),
+            )
+        ]
+
+        # First reply: safety ASK observed, recorded as ASK (DIRECT).
+        assert len(records) == 1
+        assert records[0].effective_decision.behavior == PermissionBehavior.ASK
+        assert records[0].resolution == PermissionResolution.DIRECT
+
+        # Locate the RequireUserConfirmEvent and accept its suggested rules.
+        confirm_event = next(
+            e for e in first_events if isinstance(e, RequireUserConfirmEvent)
+        )
+        confirmed_tool_call = confirm_event.tool_calls[0]
+        accepted_rules = list(confirmed_tool_call.suggested_rules or [])
+
+        # Second reply: feed the UserConfirmResultEvent accepting the rules.
+        agent.model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="all done")], is_last=True
+                ),
+            ],
+        )
+        async for _ in agent.reply_stream(
+            UserConfirmResultEvent(
+                reply_id=agent.state.reply_id,
+                confirm_results=[
+                    ConfirmResult(
+                        confirmed=True,
+                        tool_call=confirmed_tool_call,
+                        rules=accepted_rules,
+                    ),
+                ],
+            ),
+        ):
+            pass
+
+        # Second reply recorded the reused authorization as USER_CONFIRMED.
+        assert any(
+            r.resolution == PermissionResolution.USER_CONFIRMED
+            for r in records
+        ), f"expected USER_CONFIRMED in {records}"
+        user_confirmed = next(
+            r
+            for r in records
+            if r.resolution == PermissionResolution.USER_CONFIRMED
+        )
+        assert (
+            user_confirmed.effective_decision.behavior
+            == PermissionBehavior.ALLOW
+        )
+        assert user_confirmed.candidate_decision is None
+
+
+class PermissionConfirmationObserverTest(IsolatedAsyncioTestCase):
+    """Observe user approval and rejection of pending permission requests."""
+
+    @staticmethod
+    def _build_agent(middlewares: list[MiddlewareBase]) -> Agent:
+        """Build an agent with the deterministic confirmation tool."""
+        return Agent(
+            name="test_agent",
+            system_prompt="test prompt",
+            model=MockModel(context_size=10000),
+            toolkit=Toolkit(tools=[_ConfirmationAskTool()]),
+            middlewares=middlewares,
+            state=AgentState(
+                permission_context=PermissionContext(
+                    mode=PermissionMode.DEFAULT,
+                ),
+            ),
+        )
+
+    @staticmethod
+    async def _request_confirmation(agent: Agent) -> ToolCallBlock:
+        """Run the first turn and return its pending tool call."""
+        agent.model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="confirm_call",
+                            name=_ConfirmationAskTool.name,
+                            input='{"value": "demo"}',
+                        ),
+                    ],
+                    is_last=False,
+                ),
+            ],
+        )
+        events = [
+            event
+            async for event in agent.reply_stream(
+                UserMsg("user", "run confirmation demo"),
+            )
+        ]
+        confirmation_event = next(
+            event
+            for event in events
+            if isinstance(event, RequireUserConfirmEvent)
+        )
+        return confirmation_event.tool_calls[0]
+
+    async def test_approval_notifies_before_rules_and_execution(self) -> None:
+        """Observe approval before Agent applies it.
+
+        Scenario:
+            A user approves a pending tool call and submits a reusable allow
+            rule for the same tool.
+
+        Expected observation:
+            The hook receives confirmed=True, the submitted rule, and the
+            tool call before the rule is present in PermissionContext. The
+            resumed call later emits USER_CONFIRMED and executes.
+
+        Audit significance:
+            Audit consumers can attribute both the immediate execution and
+            the new reusable authorization to the user's explicit choice.
+        """
+        confirmations: list[tuple[bool, list[PermissionRule], bool]] = []
+        decisions: list[PermissionResolution] = []
+        acting: list[str] = []
+
+        class Recorder(MiddlewareBase):
+            """Record confirmation ordering and resumed execution."""
+
+            async def on_permission_confirmation(
+                self,
+                agent,
+                tool_call,
+                confirmed,
+                rules,
+            ) -> None:
+                rule_already_applied = bool(
+                    agent.state.permission_context.allow_rules.get(
+                        tool_call.name,
+                    ),
+                )
+                confirmations.append(
+                    (confirmed, list(rules), rule_already_applied),
+                )
+
+            async def on_permission_decision(
+                self,
+                agent,
+                tool_call,
+                tool,
+                tool_input,
+                evaluation,
+            ) -> None:
+                decisions.append(evaluation.resolution)
+
+            async def on_acting(self, agent, input_kwargs, next_handler):
+                acting.append(input_kwargs["tool_call"].id)
+                async for item in next_handler():
+                    yield item
+
+        agent = self._build_agent([Recorder()])
+        pending_call = await self._request_confirmation(agent)
+        accepted_rule = PermissionRule(
+            tool_name=_ConfirmationAskTool.name,
+            rule_content=None,
+            behavior=PermissionBehavior.ALLOW,
+            source="user",
+        )
+        agent.model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="done")],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        async for _ in agent.reply_stream(
+            UserConfirmResultEvent(
+                reply_id=agent.state.reply_id,
+                confirm_results=[
+                    ConfirmResult(
+                        confirmed=True,
+                        tool_call=pending_call,
+                        rules=[accepted_rule],
+                    ),
+                ],
+            ),
+        ):
+            pass
+
+        assert confirmations == [(True, [accepted_rule], False)]
+        assert (
+            accepted_rule
+            in agent.state.permission_context.allow_rules[
+                _ConfirmationAskTool.name
+            ]
+        )
+        assert PermissionResolution.USER_CONFIRMED in decisions
+        assert acting == ["confirm_call"]
+
+    async def test_observer_cannot_mutate_confirmation_rules(self) -> None:
+        """A read-only observer cannot alter the confirmed rules/tool call.
+
+        Scenario:
+            A user approves a pending tool call and submits a reusable
+            allow rule. The observer attempts to clear the rules list
+            and rewrite ``tool_call.input`` inside the hook.
+
+        Expected:
+            The agent still applies the original rule via ``add_rule``.
+            The observer received deep copies, so its mutations never
+            reached the agent's confirmation consumption.
+        """
+
+        class MutatingObserver(MiddlewareBase):
+            """Attempt to strip rules and rewrite the tool call."""
+
+            async def on_permission_confirmation(
+                self,
+                agent,
+                tool_call,
+                confirmed,
+                rules,
+            ) -> None:
+                rules.clear()
+                tool_call.input = '{"value": "TAMPERED"}'
+
+        agent = self._build_agent([MutatingObserver()])
+        pending_call = await self._request_confirmation(agent)
+        accepted_rule = PermissionRule(
+            tool_name=_ConfirmationAskTool.name,
+            rule_content=None,
+            behavior=PermissionBehavior.ALLOW,
+            source="user",
+        )
+        agent.model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="done")],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        async for _ in agent.reply_stream(
+            UserConfirmResultEvent(
+                reply_id=agent.state.reply_id,
+                confirm_results=[
+                    ConfirmResult(
+                        confirmed=True,
+                        tool_call=pending_call,
+                        rules=[accepted_rule],
+                    ),
+                ],
+            ),
+        ):
+            pass
+
+        assert (
+            accepted_rule
+            in agent.state.permission_context.allow_rules[
+                _ConfirmationAskTool.name
+            ]
+        )
+
+    async def test_rejection_notifies_without_execution(self) -> None:
+        """Observe explicit rejection without executing the tool.
+
+        Scenario:
+            A user rejects a pending confirmation request.
+
+        Expected observation:
+            The hook receives confirmed=False exactly once and Agent emits a
+            denied tool result without entering ``on_acting``.
+
+        Audit significance:
+            Consumers can distinguish explicit rejection from an unanswered,
+            interrupted, timed-out, or automatically denied ASK.
+        """
+        confirmations: list[tuple[str, bool]] = []
+        acting: list[str] = []
+
+        class Recorder(MiddlewareBase):
+            """Record rejection and any attempted execution."""
+
+            async def on_permission_confirmation(
+                self,
+                agent,
+                tool_call,
+                confirmed,
+                rules,
+            ) -> None:
+                confirmations.append((tool_call.id, confirmed))
+
+            async def on_acting(self, agent, input_kwargs, next_handler):
+                acting.append(input_kwargs["tool_call"].id)
+                async for item in next_handler():
+                    yield item
+
+        agent = self._build_agent([Recorder()])
+        pending_call = await self._request_confirmation(agent)
+        agent.model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="denial acknowledged")],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        events = [
+            event
+            async for event in agent.reply_stream(
+                UserConfirmResultEvent(
+                    reply_id=agent.state.reply_id,
+                    confirm_results=[
+                        ConfirmResult(
+                            confirmed=False,
+                            tool_call=pending_call,
+                            rules=[],
+                        ),
+                    ],
+                ),
+            )
+        ]
+
+        assert confirmations == [("confirm_call", False)]
+        assert not acting
+        assert any(
+            getattr(event, "state", None) == ToolResultState.DENIED
+            for event in events
+        )
+
+    async def test_observer_exception_prevents_approval_consumption(
+        self,
+    ) -> None:
+        """Fail closed before an approval changes state.
+
+        Scenario:
+            A required audit sink fails while processing user approval.
+
+        Expected observation:
+            The exception propagates while the pending call remains ASKING;
+            no rule is applied and the tool is not executed.
+
+        Audit significance:
+            Required-audit deployments never execute an approved operation
+            whose confirmation record could not be persisted.
+        """
+        acting: list[str] = []
+
+        class FailingObserver(MiddlewareBase):
+            """Fail confirmation recording and detect attempted execution."""
+
+            async def on_permission_confirmation(
+                self,
+                agent,
+                tool_call,
+                confirmed,
+                rules,
+            ) -> None:
+                raise RuntimeError("confirmation audit failed")
+
+            async def on_acting(self, agent, input_kwargs, next_handler):
+                acting.append(input_kwargs["tool_call"].id)
+                async for item in next_handler():
+                    yield item
+
+        agent = self._build_agent([FailingObserver()])
+        pending_call = await self._request_confirmation(agent)
+        accepted_rule = PermissionRule(
+            tool_name=_ConfirmationAskTool.name,
+            rule_content=None,
+            behavior=PermissionBehavior.ALLOW,
+            source="user",
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "confirmation audit failed",
+        ):
+            async for _ in agent.reply_stream(
+                UserConfirmResultEvent(
+                    reply_id=agent.state.reply_id,
+                    confirm_results=[
+                        ConfirmResult(
+                            confirmed=True,
+                            tool_call=pending_call,
+                            rules=[accepted_rule],
+                        ),
+                    ],
+                ),
+            ):
+                pass
+
+        assert pending_call.state == ToolCallState.ASKING
+        assert (
+            _ConfirmationAskTool.name
+            not in agent.state.permission_context.allow_rules
+        )
+        assert not acting
+
+    async def test_multiple_results_each_notify_once(self) -> None:
+        """Notify once for every confirmation result in one event.
+
+        Scenario:
+            A user rejects two pending tool calls in a single confirmation
+            response.
+
+        Expected observation:
+            The hook receives each tool-call ID exactly once with
+            confirmed=False.
+
+        Audit significance:
+            Batched UI responses cannot silently omit or duplicate audit
+            records for individual permission requests.
+        """
+        observed: list[tuple[str, bool]] = []
+
+        class Recorder(MiddlewareBase):
+            """Record each consumed confirmation result."""
+
+            async def on_permission_confirmation(
+                self,
+                agent,
+                tool_call,
+                confirmed,
+                rules,
+            ) -> None:
+                observed.append((tool_call.id, confirmed))
+
+        first = ToolCallBlock(
+            id="confirm_1",
+            name=_ConfirmationAskTool.name,
+            input='{"value": "one"}',
+            state=ToolCallState.ASKING,
+        )
+        second = ToolCallBlock(
+            id="confirm_2",
+            name=_ConfirmationAskTool.name,
+            input='{"value": "two"}',
+            state=ToolCallState.ASKING,
+        )
+        agent = self._build_agent([Recorder()])
+        agent.state.context = [
+            AssistantMsg(
+                name=agent.name,
+                content=[first, second],
+            ),
+        ]
+
+        # Exercise the confirmation-consumption boundary directly.
+        # pylint: disable-next=protected-access
+        async for _ in agent._handle_incoming_event(
+            UserConfirmResultEvent(
+                reply_id=agent.state.reply_id,
+                confirm_results=[
+                    ConfirmResult(
+                        confirmed=False,
+                        tool_call=first,
+                        rules=[],
+                    ),
+                    ConfirmResult(
+                        confirmed=False,
+                        tool_call=second,
+                        rules=[],
+                    ),
+                ],
+            ),
+        ):
+            pass
+
+        assert sorted(observed) == [
+            ("confirm_1", False),
+            ("confirm_2", False),
+        ]
