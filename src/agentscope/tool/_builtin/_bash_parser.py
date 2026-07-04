@@ -132,6 +132,54 @@ READ_ONLY_COMMANDS = {
     "pip show",
 }
 
+FIND_MUTATING_PREDICATES = {
+    "-delete",
+    "-exec",
+    "-execdir",
+    "-fls",
+    "-fprint",
+    "-fprint0",
+    "-fprintf",
+    "-ok",
+    "-okdir",
+}
+
+FIND_PREDICATES_WITH_ARGUMENTS = {
+    "-amin",
+    "-anewer",
+    "-atime",
+    "-cmin",
+    "-cnewer",
+    "-context",
+    "-ctime",
+    "-fstype",
+    "-gid",
+    "-group",
+    "-ilname",
+    "-iname",
+    "-inum",
+    "-iwholename",
+    "-links",
+    "-lname",
+    "-maxdepth",
+    "-mindepth",
+    "-mmin",
+    "-mtime",
+    "-name",
+    "-newer",
+    "-path",
+    "-perm",
+    "-regex",
+    "-samefile",
+    "-size",
+    "-type",
+    "-uid",
+    "-used",
+    "-user",
+    "-wholename",
+    "-xtype",
+}
+
 
 class BashCommandParser:
     """Parse Bash commands using tree-sitter for accurate syntax analysis."""
@@ -199,6 +247,9 @@ class BashCommandParser:
         if cmd in READ_ONLY_COMMANDS:
             return True
 
+        if self._is_mutating_find_command(cmd):
+            return False
+
         # Check if it starts with a read-only prefix
         for readonly_cmd in READ_ONLY_COMMANDS:
             if cmd == readonly_cmd or cmd.startswith(readonly_cmd + " "):
@@ -218,6 +269,32 @@ class BashCommandParser:
             # Check if base command is in safe commands
             if base_cmd in SAFE_COMMANDS:
                 return True
+
+        return False
+
+    def _is_mutating_find_command(self, cmd: str) -> bool:
+        """Check if a find command contains mutating predicates."""
+        try:
+            tokens = shlex.split(cmd)
+        except ValueError:
+            tokens = cmd.split()
+
+        i = 0
+        while i < len(tokens) and "=" in tokens[i]:
+            i += 1
+
+        if i >= len(tokens) or tokens[i] != "find":
+            return False
+
+        i += 1
+        while i < len(tokens):
+            token = tokens[i]
+            if token in FIND_MUTATING_PREDICATES:
+                return True
+            if token in FIND_PREDICATES_WITH_ARGUMENTS:
+                i += 2
+            else:
+                i += 1
 
         return False
 
