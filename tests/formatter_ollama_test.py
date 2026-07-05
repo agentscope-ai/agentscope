@@ -112,7 +112,11 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
                     },
                 ],
             },
-            {"role": "tool", "content": "The capital of Japan is Tokyo."},
+            {
+                "role": "tool",
+                "tool_name": "get_capital",
+                "content": "The capital of Japan is Tokyo.",
+            },
             {"role": "assistant", "content": "The capital of Japan is Tokyo."},
         ]
 
@@ -146,6 +150,7 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
         }
         self._gt_tool_result = {
             "role": "tool",
+            "tool_name": "get_capital",
             "content": "The capital of Japan is Tokyo.",
         }
 
@@ -312,6 +317,7 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
                 },
                 {
                     "role": "tool",
+                    "tool_name": "get_map",
                     "content": expected_tool_content,
                 },
                 {
@@ -476,8 +482,8 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
                         },
                     ],
                 },
-                {"role": "tool", "content": "result_1"},
-                {"role": "tool", "content": "result_2"},
+                {"role": "tool", "tool_name": "func_1", "content": "result_1"},
+                {"role": "tool", "tool_name": "func_2", "content": "result_2"},
                 {
                     "role": "assistant",
                     "content": "text_2",
@@ -490,7 +496,7 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
                         },
                     ],
                 },
-                {"role": "tool", "content": "result_3"},
+                {"role": "tool", "tool_name": "func_3", "content": "result_3"},
                 {
                     "role": "assistant",
                     "content": "",
@@ -503,7 +509,7 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
                         },
                     ],
                 },
-                {"role": "tool", "content": "result_4"},
+                {"role": "tool", "tool_name": "func_4", "content": "result_4"},
                 {"role": "assistant", "content": "text_3"},
             ],
             res,
@@ -603,3 +609,39 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
 
         args = res[0]["tool_calls"][0]["function"]["arguments"]
         self.assertIsInstance(args, dict)
+
+    async def test_tool_result_message_carries_tool_name(self) -> None:
+        """``role: tool`` messages must carry ``tool_name`` per Ollama spec.
+
+        Ollama's tool-calling API correlates a tool result with its function
+        via the ``tool_name`` field (not OpenAI's ``tool_call_id``). Emitting
+        a ``tool`` message without it breaks multi-turn tool use.  See
+        https://docs.ollama.com/capabilities/tool-calling.
+        """
+        fmt = OllamaChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_1",
+                        name="get_capital",
+                        input='{"country": "Japan"}',
+                    ),
+                    ToolResultBlock(
+                        id="call_1",
+                        name="get_capital",
+                        output=[TextBlock(text="Tokyo")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        tool_messages = [m for m in res if m.get("role") == "tool"]
+        self.assertEqual(len(tool_messages), 1)
+        self.assertEqual(tool_messages[0]["tool_name"], "get_capital")
+        # The OpenAI-style tool_call_id must NOT be emitted for Ollama.
+        self.assertNotIn("tool_call_id", tool_messages[0])
