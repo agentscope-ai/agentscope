@@ -93,21 +93,25 @@ class Grep(ToolBase):
                 "type": "integer",
                 "description": "Number of lines to show after each match. "
                 "Requires output_mode: 'content'.",
+                "minimum": 0,
             },
             "-B": {
                 "type": "integer",
                 "description": "Number of lines to show before each match. "
                 "Requires output_mode: 'content'.",
+                "minimum": 0,
             },
             "-C": {
                 "type": "integer",
                 "description": "Alias for context.",
+                "minimum": 0,
             },
             "context": {
                 "type": "integer",
                 "description": "Number of context lines to show before and "
                 "after matches. Requires output_mode: "
                 "'content'.",
+                "minimum": 0,
             },
             "n": {
                 "type": "boolean",
@@ -408,6 +412,29 @@ class Grep(ToolBase):
             A = kwargs.get("-A")
             B = kwargs.get("-B")
             C = kwargs.get("-C")
+
+            # Reject negative context values up front. Otherwise the value is
+            # stringified and forwarded to ripgrep, which fails with an opaque
+            # "error parsing flag -C: value is not a valid number".
+            for flag_name, flag_value in [
+                ("context", context),
+                ("-A", A),
+                ("-B", B),
+                ("-C", C),
+            ]:
+                if flag_value is not None and flag_value < 0:
+                    return ToolChunk(
+                        content=[
+                            TextBlock(
+                                text=(
+                                    f"Error: {flag_name} must be "
+                                    "non-negative."
+                                ),
+                            ),
+                        ],
+                        state=ToolResultState.ERROR,
+                        is_last=True,
+                    )
 
             if context is not None:
                 args.extend(["-C", str(context)])

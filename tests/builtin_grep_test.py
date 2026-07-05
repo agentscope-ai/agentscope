@@ -252,3 +252,57 @@ class GrepToolTest(IsolatedAsyncioTestCase):
         expected_pattern = os.path.abspath(cwd).rstrip("/") + "/**"
         suggestion_contents = [s.rule_content for s in suggestions]
         self.assertIn(expected_pattern, suggestion_contents)
+
+    async def test_negative_context_returns_clear_error(self) -> None:
+        """Negative ``context`` must error, not reach ripgrep.
+
+        Sibling of the fixed #1936 (negative ``head_limit``/``offset``).
+        """
+        chunk = await self.grep_tool(
+            pattern="hello",
+            path=self.temp_dir,
+            output_mode="content",
+            context=-5,
+        )
+
+        self.assertEqual(chunk.state, ToolResultState.ERROR)
+        self.assertIn("context", chunk.content[0].text)
+        self.assertIn("non-negative", chunk.content[0].text)
+
+    async def test_negative_context_flags_return_clear_error(self) -> None:
+        """Negative ``-A``/``-B``/``-C`` must error, not reach ripgrep."""
+        for flag, value in [("-A", -3), ("-B", -2), ("-C", -1)]:
+            with self.subTest(flag=flag):
+                chunk = await self.grep_tool(
+                    pattern="hello",
+                    path=self.temp_dir,
+                    output_mode="content",
+                    **{flag: value},
+                )
+
+                self.assertEqual(chunk.state, ToolResultState.ERROR)
+                self.assertIn(flag, chunk.content[0].text)
+                self.assertIn("non-negative", chunk.content[0].text)
+
+    async def test_positive_context_works(self) -> None:
+        """A positive ``context`` value still produces normal results."""
+        chunk = await self.grep_tool(
+            pattern="hello",
+            path=self.temp_dir,
+            output_mode="content",
+            context=1,
+            i=True,
+        )
+
+        self.assertEqual(chunk.state, ToolResultState.SUCCESS)
+
+    async def test_context_schema_rejects_negative(self) -> None:
+        """The input schema caps ``-A``/``-B``/``-C``/``context`` at 0."""
+        for flag in ["-A", "-B", "-C", "context"]:
+            with self.subTest(flag=flag):
+                self.assertEqual(
+                    self.grep_tool.input_schema["properties"][flag].get(
+                        "minimum",
+                    ),
+                    0,
+                )
