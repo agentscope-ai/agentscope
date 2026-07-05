@@ -354,7 +354,7 @@ class XAIChatModel(ChatModelBase):
 
                 last_response = response
 
-        except (asyncio.CancelledError, GeneratorExit):
+        except asyncio.CancelledError:
             was_interrupted = True
         finally:
             await client.close()

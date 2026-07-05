@@ -417,7 +417,7 @@ class AnthropicChatModel(ChatModelBase):
                     if response_id:
                         _kwargs["id"] = response_id
                     yield ChatResponse(**_kwargs)
-        except (asyncio.CancelledError, GeneratorExit):
+        except asyncio.CancelledError:
             was_interrupted = True
 
         # Build final accumulated content

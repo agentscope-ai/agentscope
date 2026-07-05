@@ -40,6 +40,11 @@ from .._logging import logger
 from ..state import AgentState
 
 
+TOOL_INTERRUPTED_MESSAGE = (
+    "<system-reminder>The tool call is interrupted "
+    "by the user.</system-reminder>"
+)
+
 # pylint: disable=line-too-long
 DEFAULT_META_TOOL_RESPONSE_TEMPLATE = """{% if groups | length == 0 %}All tool groups are currently deactivated.{% else %}The currently activated tool group(s): {{ groups | map(attribute='name') | join(', ') }}.{% if groups | selectattr('instructions', 'ne', None) | list | length > 0 %}
 <tool-instructions>
@@ -337,16 +342,14 @@ class Toolkit:
                 )
 
         except asyncio.CancelledError:
-            tool_response.state = ToolResultState.ERROR
+            tool_response.state = ToolResultState.INTERRUPTED
             tool_response.is_interrupted = True
             tool_response.content.append(
                 TextBlock(
                     type="text",
-                    text="<system-reminder>The tool call is interrupted "
-                    "by the user.</system-reminder>",
+                    text=TOOL_INTERRUPTED_MESSAGE,
                 ),
             )
-            yield tool_response
 
         except mcp.shared.exceptions.McpError as e:
             chunk = ToolChunk(

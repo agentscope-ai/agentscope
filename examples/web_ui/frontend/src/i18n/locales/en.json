@@ -75,7 +75,8 @@
 		"attach": "Attach file",
 		"attachNotSupported": "This model does not support file attachments",
 		"send": "Send",
-		"stop": "Stop generating"		},
+		"stop": "Stop generating"
+	},
 	"confirmCard": {
 		"toConfirm": "to confirm",
 		"yesWithRule": "Yes, and allow {{toolName}} to execute {{ruleContent}} for this session"

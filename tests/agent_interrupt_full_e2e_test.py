@@ -18,36 +18,19 @@ from agentscope.app._manager import (
 )
 from agentscope.app.message_bus import InMemoryMessageBus, MessageBusKeys
 from agentscope.app._router._session import interrupt_session
-from agentscope.app.storage._base import StorageBase
-from agentscope.app.storage._model._session import SessionRecord
+from agentscope.app.storage import SessionRecord
 from agentscope.event import ReplyEndEvent
 from agentscope.message import (
+    AssistantMsg,
     TextBlock,
+    ToolCallBlock,
+    ToolCallState,
+    ToolResultState,
     UserMsg,
 )
 from agentscope.model import ChatResponse
 from agentscope.tool import Toolkit
-
-
-class FakeStorage(StorageBase):
-    """Minimal storage for e2e test — only supports get_session."""
-
-    def __init__(
-        self,
-        session: SessionRecord | None = None,
-    ) -> None:
-        self._session = session
-
-    async def get_session(
-        self,
-        _user_id: str,
-        _agent_id: str,
-        _session_id: str,
-    ) -> SessionRecord | None:
-        return self._session
-
-    async def is_locked(self, _key: str) -> bool:
-        return False
+from agentscope.tool._toolkit import TOOL_INTERRUPTED_MESSAGE
 
 
 class InterruptFullE2ETest(IsolatedAsyncioTestCase):
@@ -281,3 +264,193 @@ class InterruptFullE2ETest(IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(resp.status, "not_running")
+
+    async def test_patch_asking_tool_calls_updates_message_storage(
+        self,
+    ) -> None:
+        """When interrupt fires while the agent is in ASKING state,
+        _patch_pending_tool_calls should update both session state AND
+        message storage, so that a page refresh shows the patched state."""
+        from agentscope.app.storage._model._session import SessionConfig
+        from agentscope.state._state import AgentState
+
+        session_id = "patch-msg-session"
+        user_id = "test-user"
+        agent_id = "test-agent"
+
+        asking_msg = AssistantMsg(
+            id="reply-asking",
+            name="agent",
+            content=[
+                TextBlock(text="Let me use a tool."),
+                ToolCallBlock(
+                    id="tc-1",
+                    name="some_tool",
+                    input='{"x": 1}',
+                    state=ToolCallState.ASKING,
+                ),
+            ],
+        )
+
+        state = AgentState()
+        state.context = [
+            UserMsg(name="user", content="Do something"),
+            asking_msg,
+        ]
+        record = SessionRecord(
+            id=session_id,
+            user_id=user_id,
+            agent_id=agent_id,
+            config=SessionConfig(workspace_id="ws-1"),
+            state=state,
+        )
+
+        upserted_messages: list = []
+
+        class PatchStorage:
+            async def get_session(self, *_a: Any, **_k: Any) -> SessionRecord:
+                return record
+
+            async def update_session_state(
+                self,
+                *_a: Any,
+                **_k: Any,
+            ) -> None:
+                pass
+
+            async def upsert_message(
+                self,
+                _uid: str,
+                _sid: str,
+                msg: Any,
+            ) -> None:
+                upserted_messages.append(msg)
+
+        from agentscope.app._router._session import _patch_pending_tool_calls
+
+        result = await _patch_pending_tool_calls(
+            PatchStorage(),
+            user_id,
+            agent_id,
+            session_id,
+        )
+
+        self.assertEqual(result, "reply-asking")
+        self.assertEqual(len(upserted_messages), 1)
+
+        patched_msg = upserted_messages[0]
+        tc_blocks = patched_msg.get_content_blocks("tool_call")
+        self.assertEqual(tc_blocks[0].state, ToolCallState.FINISHED)
+        tr_blocks = patched_msg.get_content_blocks("tool_result")
+        self.assertEqual(len(tr_blocks), 1)
+        self.assertEqual(tr_blocks[0].state, ToolResultState.INTERRUPTED)
+        self.assertEqual(tr_blocks[0].output, TOOL_INTERRUPTED_MESSAGE)
+
+    async def test_concurrent_tool_gather_cancel(self) -> None:
+        """When the agent task is cancelled during concurrent tool execution,
+        the gather_task in _execute_concurrent_tool_calls should be cancelled
+        so no resource is leaked."""
+        model_chunks = [
+            ChatResponse(
+                content=[
+                    TextBlock(text="Running tools."),
+                    ToolCallBlock(
+                        id="tc-a",
+                        name="slow_concurrent",
+                        input='{"n": 1}',
+                    ),
+                    ToolCallBlock(
+                        id="tc-b",
+                        name="slow_concurrent",
+                        input='{"n": 2}',
+                    ),
+                ],
+                is_last=True,
+            ),
+        ]
+
+        class ConcurrentModel:
+            def __init__(self) -> None:
+                self.model = "concurrent-test"
+                self.stream = True
+                self.max_retries = 0
+                self.context_size = 1000
+
+            async def __call__(self, *_a: Any, **_k: Any) -> Any:
+                async def _gen() -> Any:
+                    for c in model_chunks:
+                        yield c
+
+                return _gen()
+
+            async def count_tokens(self, *_a: Any, **_k: Any) -> int:
+                return 100
+
+        from agentscope.tool import ToolBase, ToolChunk
+        from agentscope.permission import (
+            PermissionDecision,
+            PermissionBehavior,
+            PermissionContext,
+        )
+
+        class SlowConcTool(ToolBase):
+            name: str = "slow_concurrent"
+            description: str = "Slow"
+            input_schema: dict[str, Any] = {
+                "type": "object",
+                "properties": {"n": {"type": "integer"}},
+                "required": ["n"],
+            }
+            is_concurrency_safe: bool = True
+            is_read_only: bool = True
+            is_external_tool: bool = False
+            is_mcp: bool = False
+
+            async def check_permissions(
+                self,
+                tool_input: dict,
+                context: PermissionContext,
+            ) -> PermissionDecision:
+                return PermissionDecision(
+                    behavior=PermissionBehavior.ALLOW,
+                    message="ok",
+                )
+
+            async def __call__(self, **kwargs: Any) -> Any:
+                await asyncio.sleep(5)
+                yield ToolChunk(
+                    content=[TextBlock(text="done")],
+                    is_last=True,
+                )
+
+        agent = Agent(
+            name="ConcurrentAgent",
+            system_prompt="Test.",
+            model=ConcurrentModel(),
+            toolkit=Toolkit(tools=[SlowConcTool()]),
+        )
+
+        finished_reason = None
+
+        async def _run() -> None:
+            nonlocal finished_reason
+            async for evt in agent.reply_stream(
+                UserMsg(name="user", content="Go"),
+            ):
+                if isinstance(evt, ReplyEndEvent):
+                    finished_reason = evt.finished_reason
+
+        task = asyncio.create_task(_run())
+        await asyncio.sleep(0.3)
+        task.cancel()
+
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        self.assertEqual(
+            finished_reason,
+            "interrupted",
+            "Concurrent tool cancellation should produce interrupted",
+        )

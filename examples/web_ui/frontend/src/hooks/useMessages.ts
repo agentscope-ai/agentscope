@@ -10,7 +10,7 @@ import type {
 } from '@agentscope-ai/agentscope/event';
 import { appendEvent, AssistantMsg, UserMsg } from '@agentscope-ai/agentscope/message';
 import type { Msg, ContentBlock } from '@agentscope-ai/agentscope/message';
-import type { ToolCallBlock } from '@agentscope-ai/agentscope/message';
+import type { ToolCallBlock, ToolResultBlock } from '@agentscope-ai/agentscope/message';
 import { useState, useCallback, useRef, useEffect } from 'react';
 
 import { sessionApi } from '@/api';
@@ -317,15 +317,59 @@ export function useMessages(
 		abortRef.current?.abort();
 	}, []);
 
-	/** Request interruption of the running agent. */
+	/** Request interruption of the running agent.
+	 *
+	 * When the agent is parked in ASKING/SUBMITTED state (not running),
+	 * the backend patches tool calls in storage but the frontend still
+	 * shows the confirmation card.  In that case we update the local
+	 * message state so React removes the card immediately.
+	 */
 	const interrupt = useCallback(async () => {
 		if (!agentId || !sessionId) return;
 		try {
-			await sessionApi.interrupt(sessionId, agentId);
+			const resp = await sessionApi.interrupt(sessionId, agentId);
+			if (resp?.status === 'not_running') {
+				const lastMsg = msgsRef.current[msgsRef.current.length - 1];
+				if (lastMsg?.content) {
+					const hasAsking = lastMsg.content.some(
+						(b) =>
+							b.type === 'tool_call' &&
+							(b.state === 'asking' || b.state === 'submitted'),
+					);
+					if (hasAsking) {
+						const resultBlocks: ToolResultBlock[] = [];
+						const newContent = lastMsg.content.map((b) => {
+							if (
+								b.type === 'tool_call' &&
+								(b.state === 'asking' || b.state === 'submitted')
+							) {
+								resultBlocks.push({
+									type: 'tool_result',
+									id: b.id,
+									name: b.name,
+									output: '<system-reminder>The tool call is interrupted by the user.</system-reminder>',
+									state: 'interrupted',
+								});
+								return { ...b, state: 'finished' as const };
+							}
+							return b;
+						});
+						const newMsg = {
+							...lastMsg,
+							content: [...newContent, ...resultBlocks] as ContentBlock[],
+							finished_at: new Date().toISOString(),
+						};
+						msgsRef.current = [...msgsRef.current.slice(0, -1), newMsg];
+						currentReplyRef.current = null;
+						setStreaming(false);
+						scheduleUpdate();
+					}
+				}
+			}
 		} catch (e) {
 			setError(e as Error);
 		}
-	}, [agentId, sessionId]);
+	}, [agentId, sessionId, scheduleUpdate]);
 
 	/**
 	 * Confirm or deny a tool call that a *team member* is awaiting,

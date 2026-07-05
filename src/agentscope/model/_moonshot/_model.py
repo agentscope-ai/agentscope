@@ -325,7 +325,7 @@ class MoonshotChatModel(ChatModelBase):
                         if response_id:
                             _text_kwargs["id"] = response_id
                         yield ChatResponse(**_text_kwargs)
-            except (asyncio.CancelledError, GeneratorExit):
+            except asyncio.CancelledError:
                 was_interrupted = True
 
         final_contents: List[ThinkingBlock | TextBlock | ToolCallBlock] = []

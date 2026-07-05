@@ -6,7 +6,11 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from utils import MockModel
 
 from agentscope.agent import Agent
-from agentscope.event import ReplyEndEvent
+from agentscope.event import (
+    ConfirmResult,
+    ReplyEndEvent,
+    UserConfirmResultEvent,
+)
 from agentscope.message import (
     AssistantMsg,
     TextBlock,
@@ -70,18 +74,25 @@ class AgentInterruptTest(IsolatedAsyncioTestCase):
         results = last_msg.get_content_blocks("tool_result")
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].id, "tc-1")
-        self.assertIn("Interrupted by user", str(results[0].output))
+        self.assertIn(
+            "The tool call is interrupted by the user",
+            str(results[0].output),
+        )
 
     async def test_handle_interruption_noop_when_all_matched(self) -> None:
         """_handle_interruption should not add results for already-matched
         tool calls."""
-        agent = Agent(
-            name="TestAgent",
-            system_prompt="You are a test agent.",
-            model=ChatResponse(
+        model = MockModel(model="mock", stream=False)
+        model.set_responses(
+            ChatResponse(
                 content=[TextBlock(text="hello")],
                 is_last=True,
             ),
+        )
+        agent = Agent(
+            name="TestAgent",
+            system_prompt="You are a test agent.",
+            model=model,
         )
         tc = ToolCallBlock(
             id="tc-1",
@@ -114,16 +125,22 @@ class AgentInterruptTest(IsolatedAsyncioTestCase):
         results = last_msg.get_content_blocks("tool_result")
         self.assertEqual(len(results), 1)
 
-    async def test_reply_stream_catches_cancelled_error(self) -> None:
-        """reply_stream should catch CancelledError, patch context,
-        and yield ReplyEndEvent."""
-        agent = Agent(
-            name="TestAgent",
-            system_prompt="You are a test agent.",
-            model=ChatResponse(
+    async def test_handle_interruption_patches_asking_tool_calls(
+        self,
+    ) -> None:
+        """_handle_interruption should patch ASKING-state tool calls
+        with interrupted results."""
+        model = MockModel(model="mock", stream=False)
+        model.set_responses(
+            ChatResponse(
                 content=[TextBlock(text="hello")],
                 is_last=True,
             ),
+        )
+        agent = Agent(
+            name="TestAgent",
+            system_prompt="You are a test agent.",
+            model=model,
         )
 
         # Put an unmatched tool call in context
@@ -199,12 +216,15 @@ class AgentInterruptTest(IsolatedAsyncioTestCase):
     async def test_interrupted_in_cycle_triggers_interruption_exit(
         self,
     ) -> None:
-        """When _interrupted_in_cycle is set during a reply cycle,
-        _reply_impl should exit via _handle_interruption."""
+        """When _interrupted_in_cycle becomes True during reasoning
+        (via is_interrupted on ChatResponse), the agent should exit
+        via _handle_interruption with an unmatched tool call patched."""
         # pylint: disable=protected-access
         model = MockModel(model="mock", stream=True)
-        # First turn: model returns a tool call
-        tool_call_resp = ChatResponse(
+        # Model returns a tool call AND is_interrupted=True, simulating
+        # a cancellation that lands during streaming after tool call
+        # content was already produced.
+        interrupted_tool_resp = ChatResponse(
             content=[
                 TextBlock(text="Let me check."),
                 ToolCallBlock(
@@ -214,10 +234,10 @@ class AgentInterruptTest(IsolatedAsyncioTestCase):
                 ),
             ],
             is_last=True,
+            is_interrupted=True,
         )
-        model.set_responses([[tool_call_resp]])
+        model.set_responses([[interrupted_tool_resp]])
 
-        # Register a simple tool that works
         from agent_basic_test import MockSequentialTool
 
         toolkit = Toolkit(tools=[MockSequentialTool()])
@@ -229,20 +249,26 @@ class AgentInterruptTest(IsolatedAsyncioTestCase):
             toolkit=toolkit,
         )
 
-        # Manually trigger _interrupted_in_cycle to simulate
-        # what happens when a tool response has is_interrupted=True
-        agent._interrupted_in_cycle = True
-
-        # This will cause the agent to exit after the current
-        # reasoning-acting cycle with an interrupted ReplyEndEvent
         events = []
+        reply_ended = False
         async for evt in agent.reply_stream(
             UserMsg(name="user", content="Hi"),
         ):
             events.append(evt)
             if isinstance(evt, ReplyEndEvent):
-                self.assertEqual(evt.finished_reason, "interrupted")
-                break
+                reply_ended = evt.finished_reason == "interrupted"
+
+        self.assertTrue(
+            reply_ended,
+            "Interrupted reasoning with tool calls should produce "
+            "finished_reason='interrupted'",
+        )
+
+        # The unmatched tool call should have been patched
+        last_msg = agent._get_last_msg()
+        results = last_msg.get_content_blocks("tool_result")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].id, "tc-interrupt")
 
     async def test_normal_completion_has_completed_reason(self) -> None:
         """Normal agent reply should have finished_reason='completed'."""
@@ -269,3 +295,72 @@ class AgentInterruptTest(IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(reply_ended)
         self.assertEqual(reply_ended.finished_reason, "completed")
+
+    async def test_stale_user_confirm_event_treated_as_noop(self) -> None:
+        """After an interrupt patches ASKING tool calls to FINISHED, a
+        stale UserConfirmResultEvent should be treated as a no-op
+        (return False) instead of raising ValueError."""
+        model = MockModel(model="mock", stream=True)
+        normal_resp = ChatResponse(
+            content=[TextBlock(text="Recovered.")],
+            is_last=True,
+        )
+        model.set_responses([[normal_resp]])
+
+        agent = Agent(
+            name="TestAgent",
+            system_prompt="You are a test agent.",
+            model=model,
+            toolkit=Toolkit(),
+        )
+
+        # Simulate post-interrupt state: tool call is FINISHED with
+        # an interrupted result already patched.
+        tc = ToolCallBlock(
+            id="tc-stale",
+            name="test_tool",
+            input='{"input": "x"}',
+            state=ToolCallState.FINISHED,
+        )
+        tr = ToolResultBlock(
+            id="tc-stale",
+            name="test_tool",
+            output="<system-reminder>The tool call is interrupted "
+            "by the user.</system-reminder>",
+            state=ToolResultState.INTERRUPTED,
+        )
+        agent.state.context.append(
+            AssistantMsg(
+                id="reply-stale",
+                name="TestAgent",
+                content=[TextBlock(text="Let me help."), tc, tr],
+            ),
+        )
+
+        # Build a stale UserConfirmResultEvent referencing the
+        # already-patched tool call.
+        stale_event = UserConfirmResultEvent(
+            reply_id="reply-stale",
+            confirm_results=[
+                ConfirmResult(
+                    confirmed=True,
+                    tool_call=ToolCallBlock(
+                        id="tc-stale",
+                        name="test_tool",
+                        input='{"input": "x"}',
+                        state=ToolCallState.ASKING,
+                    ),
+                ),
+            ],
+        )
+
+        # Should NOT raise ValueError — instead, start a fresh
+        # reasoning cycle.
+        events = []
+        async for evt in agent.reply_stream(inputs=stale_event):
+            events.append(evt)
+
+        # Should produce a normal completed reply (fresh cycle).
+        reply_ends = [e for e in events if isinstance(e, ReplyEndEvent)]
+        self.assertTrue(len(reply_ends) > 0)
+        self.assertEqual(reply_ends[-1].finished_reason, "completed")

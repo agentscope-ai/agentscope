@@ -522,33 +522,30 @@ class ChatService:
                         if reply_msg is not None:
                             reply_msg.append_event(event)
 
-                # Persist the reply Msg (upsert: overwrite if same id,
-                # append if new).
-                if reply_msg is not None:
-                    await asyncio.shield(
-                        self._storage.upsert_message(
+            finally:
+                # All persistence in a single shielded coroutine so that
+                # a CancelledError escaping the async-for loop cannot
+                # skip any of them.  The inner task runs to completion
+                # even if the outer await is cancelled.
+                async def _persist() -> None:
+                    if reply_msg is not None:
+                        await self._storage.upsert_message(
                             user_id,
                             session_id,
                             reply_msg,
-                        ),
-                    )
-
-                # Persist the updated agent state. MUST happen inside
-                # the session lock: if we released the lock first,
-                # another process could acquire it and load a stale
-                # state from storage before this write lands.
-                await asyncio.shield(
-                    self._storage.update_session_state(
+                        )
+                    await self._storage.update_session_state(
                         user_id=user_id,
                         agent_id=agent_id,
                         session_id=session_id,
                         state=agent.state,
-                    ),
-                )
-            finally:
-                await asyncio.shield(
-                    self._message_bus.log_trim(events_key),
-                )
+                    )
+                    await self._message_bus.log_trim(events_key)
+
+                try:
+                    await asyncio.shield(_persist())
+                except asyncio.CancelledError:
+                    pass
 
     async def _project_event(
         self,

@@ -3,6 +3,7 @@ import type {
 	AgentEvent,
 	CreateSessionRequest,
 	CreateSessionResponse,
+	InterruptSessionResponse,
 	SessionListResponse,
 	SessionRecord,
 	UpdateSessionRequest,
@@ -26,9 +27,13 @@ export const sessionApi = {
 		client.delete(`/sessions/${sessionId}`, { agent_id: agentId }),
 
 	interrupt: (sessionId: string, agentId: string) =>
-		client.post(`/sessions/${sessionId}/interrupt`, null, {
-			agent_id: agentId,
-		}),
+		client.post<InterruptSessionResponse>(
+			`/sessions/${sessionId}/interrupt`,
+			null,
+			{
+				agent_id: agentId,
+			},
+		),
 
 	messages: (sessionId: string, agentId: string, offset = 0, limit = 50) =>
 		client.get<MessagesResponse>(`/sessions/${sessionId}/messages`, {

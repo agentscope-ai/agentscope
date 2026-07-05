@@ -55,9 +55,9 @@ interface TextInputProps {
 	 * Runs concurrently for all selected files; the UI shows a loading state per file while processing.
 	 */
 	fileProcessor: (file: File) => Promise<ContentBlock | null>;
-		streaming?: boolean;
-		onInterrupt?: () => void;
-	}
+	streaming?: boolean;
+	onInterrupt?: () => void;
+}
 
 export interface TextInputRef {
 	focus: () => void;

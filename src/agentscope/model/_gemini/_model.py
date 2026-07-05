@@ -399,7 +399,7 @@ class GeminiChatModel(ChatModelBase):
                         is_last=False,
                         usage=usage,
                     )
-        except (asyncio.CancelledError, GeneratorExit):
+        except asyncio.CancelledError:
             was_interrupted = True
 
         final_content: list = []

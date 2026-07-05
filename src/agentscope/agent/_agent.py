@@ -78,6 +78,7 @@ from ..tool import (
     ToolChoice,
     ToolResponse,
 )
+from ..tool._toolkit import TOOL_INTERRUPTED_MESSAGE
 from ..permission import (
     PermissionBehavior,
     PermissionEngine,
@@ -215,7 +216,7 @@ class Agent:
             async for chunk in self._reply(inputs=inputs):
                 if not isinstance(chunk, Msg):
                     yield chunk
-        except (asyncio.CancelledError, GeneratorExit):
+        except asyncio.CancelledError:
             # CancelledError from middleware or other non-Model/Tool
             # async operations — patch the context and emit a terminal
             # event before re-raising.
@@ -223,8 +224,6 @@ class Agent:
                 if not isinstance(evt, Msg):
                     yield evt
             raise
-        finally:
-            pass
 
     async def reply(
         self,
@@ -255,20 +254,27 @@ class Agent:
         """
         try:
             final_msg: Msg | None = None
+            _interrupted = False
             async for evt_or_msg in self._reply(inputs=inputs):
                 if isinstance(evt_or_msg, Msg):
                     final_msg = evt_or_msg
+                elif (
+                    isinstance(evt_or_msg, ReplyEndEvent)
+                    and evt_or_msg.finished_reason == "interrupted"
+                ):
+                    _interrupted = True
             if final_msg is None:
+                if _interrupted:
+                    raise asyncio.CancelledError()
                 raise RuntimeError("Agent did not produce a final message.")
             return final_msg
-        except (asyncio.CancelledError, GeneratorExit):
+        except asyncio.CancelledError:
             # Patch context on interruption (same rationale as
-            # reply_stream).
+            # reply_stream).  Safe to call twice — idempotent when
+            # _handle_interruption was already invoked inside _reply_impl.
             async for _ in self._handle_interruption():
                 pass
             raise
-        finally:
-            pass
 
     async def observe(self, msgs: Msg | list[Msg] | None = None) -> None:
         """Receive external observation message(s) and save them into
@@ -600,6 +606,8 @@ class Agent:
         | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Core reply logic."""
+        self._interrupted_in_cycle = False
+
         # Dispatch the unified inputs by type into the legacy local variables
         event: (UserConfirmResultEvent | ExternalExecutionResultEvent | None)
         msgs: Msg | list[Msg] | None
@@ -1024,10 +1032,14 @@ class Agent:
 
         if isinstance(event, UserConfirmResultEvent):
             if not awaiting_confirmations:
-                raise ValueError(
-                    f"Agent is not waiting for user confirmation, "
-                    f"but received UserConfirmResultEvent: {event}",
+                # Stale confirmation — tool calls were already patched
+                # (e.g. by an interrupt).  Treat as a no-op so the caller
+                # can proceed with a fresh reasoning cycle.
+                logger.warning(
+                    "Received stale UserConfirmResultEvent (no ASKING "
+                    "tool calls in context). Treating as no-op.",
                 )
+                return False
 
             # Given event, required but not match
             extra_ids = set(
@@ -1041,10 +1053,12 @@ class Agent:
 
         if isinstance(event, ExternalExecutionResultEvent):
             if not awaiting_external_executions:
-                raise ValueError(
-                    f"Agent is not waiting for external execution result, "
-                    f"but received ExternalExecutionResultEvent: {event}",
+                # Stale execution result — tool calls were already patched.
+                logger.warning(
+                    "Received stale ExternalExecutionResultEvent (no "
+                    "SUBMITTED tool calls in context). Treating as no-op.",
                 )
+                return False
 
             extra_ids = set(_.id for _ in event.execution_results) - set(
                 awaiting_external_executions,
@@ -1346,21 +1360,29 @@ class Agent:
 
         gather_task = asyncio.create_task(_run_all())
 
-        # Drain the queue until the sentinel is encountered.
-        while True:
-            event = await queue.get()
-            if event is sentinel:
-                break
-            yield event
+        try:
+            # Drain the queue until the sentinel is encountered.
+            while True:
+                event = await queue.get()
+                if event is sentinel:
+                    break
+                yield event
 
-        # All tasks are done at this point; collect and re-raise exceptions.
-        results = await gather_task
-        exceptions = [r for r in results if isinstance(r, Exception)]
-        if exceptions:
-            raise ExceptionGroup(
-                "One or more tool calls raised an exception",
-                exceptions,
-            )
+            # All tasks are done; collect and re-raise exceptions.
+            results = await gather_task
+            exceptions = [r for r in results if isinstance(r, Exception)]
+            if exceptions:
+                raise ExceptionGroup(
+                    "One or more tool calls raised an exception",
+                    exceptions,
+                )
+        finally:
+            if not gather_task.done():
+                gather_task.cancel()
+                try:
+                    await gather_task
+                except (asyncio.CancelledError, ExceptionGroup):
+                    pass
 
     async def _into_queue(
         self,
@@ -1820,9 +1842,8 @@ class Agent:
                         ToolResultBlock(
                             id=tc.id,
                             name=tc.name,
-                            output="<system-reminder>Interrupted by user."
-                            "</system-reminder>",
-                            state=ToolResultState.ERROR,
+                            output=TOOL_INTERRUPTED_MESSAGE,
+                            state=ToolResultState.INTERRUPTED,
                         ),
                     )
 

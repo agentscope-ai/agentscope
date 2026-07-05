@@ -4,7 +4,7 @@
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from utils import AnyString, MockModel
+from utils import AnyString, AnyValue, MockModel
 
 from agentscope.agent import Agent
 from agentscope.model import ChatResponse
@@ -12,7 +12,6 @@ from agentscope.tool import (
     ToolBase,
     Toolkit,
     ToolChunk,
-    RegisteredTool,
 )
 from agentscope.permission import (
     PermissionDecision,
@@ -171,6 +170,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         return {
             "id": AnyString(),
             "created_at": AnyString(),
+            "metadata": {},
             "reply_id": reply_id,
         }
 
@@ -179,9 +179,32 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         return {
             "id": AnyString(),
             "created_at": AnyString(),
+            "finished_at": AnyValue(),
             "metadata": {},
             "name": "Friday",
             "role": "assistant",
+            "usage": AnyValue(),
+        }
+
+    def _user_content(self, text: str) -> list[dict]:
+        """Build expected content blocks for a UserMsg."""
+        return [{"type": "text", "text": text, "id": AnyString()}]
+
+    def _expected_tool_call_dict(
+        self,
+        id: str,
+        name: str,
+        tool_input: str,
+        state: str = "asking",
+    ) -> dict:
+        """Build expected tool_call dict in context with suggested_rules."""
+        return {
+            "type": "tool_call",
+            "id": id,
+            "name": name,
+            "input": tool_input,
+            "state": state,
+            "suggested_rules": AnyValue(),
         }
 
     def _get_tool_call_events(
@@ -246,6 +269,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                     "name": name,
                     "input": tool_input,
                     "state": "asking",
+                    "suggested_rules": [
+                        {
+                            "tool_name": name,
+                            "rule_content": None,
+                            "behavior": PermissionBehavior.ALLOW,
+                            "source": "suggested",
+                        },
+                    ],
                 },
             ],
         }
@@ -268,13 +299,12 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                 "type": "REQUIRE_EXTERNAL_EXECUTION",
                 "reply_id": reply_id,
                 "tool_calls": [
-                    {
-                        "type": "tool_call",
-                        "id": id,
-                        "name": name,
-                        "input": tool_input,
-                        "state": "submitted",
-                    },
+                    self._expected_tool_call_dict(
+                        id,
+                        name,
+                        tool_input,
+                        "submitted",
+                    ),
                 ],
             },
         ]
@@ -354,10 +384,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         """Test one tool call that needs confirmation and external
         execution."""
         mixed_tool = MockMixedSequentialTool()
-        self.agent.toolkit.tools[mixed_tool.name] = RegisteredTool(
-            tool=mixed_tool,
-            group="basic",
-        )
+        self.agent.toolkit.tool_groups[0].tools.append(mixed_tool)
 
         self._set_model_tool_call_responses(
             [
@@ -414,17 +441,16 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": self._user_content(self.user_input_text),
             },
             {
                 "content": [
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_1,
-                        "name": self.sequential_tool_name,
-                        "input": self.tool_input_1,
-                        "state": "asking",
-                    },
+                    self._expected_tool_call_dict(
+                        self.tool_call_id_1,
+                        self.sequential_tool_name,
+                        self.tool_input_1,
+                        "asking",
+                    ),
                 ],
             },
         ]
@@ -462,17 +488,16 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": self._user_content(self.user_input_text),
             },
             {
                 "content": [
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_1,
-                        "name": self.sequential_tool_name,
-                        "input": self.tool_input_1,
-                        "state": "submitted",
-                    },
+                    self._expected_tool_call_dict(
+                        self.tool_call_id_1,
+                        self.sequential_tool_name,
+                        self.tool_input_1,
+                        "submitted",
+                    ),
                 ],
             },
         ]
@@ -518,17 +543,16 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": self._user_content(self.user_input_text),
             },
             {
                 "content": [
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_1,
-                        "name": self.sequential_tool_name,
-                        "input": self.tool_input_1,
-                        "state": "finished",
-                    },
+                    self._expected_tool_call_dict(
+                        self.tool_call_id_1,
+                        self.sequential_tool_name,
+                        self.tool_input_1,
+                        "finished",
+                    ),
                     {
                         "type": "tool_result",
                         "id": AnyString(),
@@ -541,6 +565,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                             },
                         ],
                         "state": "success",
+                        "metadata": {},
                     },
                     {
                         "type": "text",
@@ -562,10 +587,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         """Test sequential tool calls that need confirmation and external
         execution."""
         mixed_tool = MockMixedSequentialTool()
-        self.agent.toolkit.tools[mixed_tool.name] = RegisteredTool(
-            tool=mixed_tool,
-            group="basic",
-        )
+        self.agent.toolkit.tool_groups[0].tools.append(mixed_tool)
 
         self._set_model_tool_call_responses(
             [
@@ -636,24 +658,22 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": self._user_content(self.user_input_text),
             },
             {
                 "content": [
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_1,
-                        "name": self.sequential_tool_name,
-                        "input": self.tool_input_1,
-                        "state": "asking",
-                    },
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_2,
-                        "name": self.sequential_tool_name,
-                        "input": self.tool_input_2,
-                        "state": "pending",
-                    },
+                    self._expected_tool_call_dict(
+                        self.tool_call_id_1,
+                        self.sequential_tool_name,
+                        self.tool_input_1,
+                        "asking",
+                    ),
+                    self._expected_tool_call_dict(
+                        self.tool_call_id_2,
+                        self.sequential_tool_name,
+                        self.tool_input_2,
+                        "pending",
+                    ),
                 ],
             },
         ]
@@ -691,24 +711,22 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": self._user_content(self.user_input_text),
             },
             {
                 "content": [
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_1,
-                        "name": self.sequential_tool_name,
-                        "input": self.tool_input_1,
-                        "state": "submitted",
-                    },
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_2,
-                        "name": self.sequential_tool_name,
-                        "input": self.tool_input_2,
-                        "state": "pending",
-                    },
+                    self._expected_tool_call_dict(
+                        self.tool_call_id_1,
+                        self.sequential_tool_name,
+                        self.tool_input_1,
+                        "submitted",
+                    ),
+                    self._expected_tool_call_dict(
+                        self.tool_call_id_2,
+                        self.sequential_tool_name,
+                        self.tool_input_2,
+                        "pending",
+                    ),
                 ],
             },
         ]
@@ -754,24 +772,22 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": self._user_content(self.user_input_text),
             },
             {
                 "content": [
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_1,
-                        "name": self.sequential_tool_name,
-                        "input": self.tool_input_1,
-                        "state": "finished",
-                    },
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_2,
-                        "name": self.sequential_tool_name,
-                        "input": self.tool_input_2,
-                        "state": "asking",
-                    },
+                    self._expected_tool_call_dict(
+                        self.tool_call_id_1,
+                        self.sequential_tool_name,
+                        self.tool_input_1,
+                        "finished",
+                    ),
+                    self._expected_tool_call_dict(
+                        self.tool_call_id_2,
+                        self.sequential_tool_name,
+                        self.tool_input_2,
+                        "asking",
+                    ),
                     {
                         "type": "tool_result",
                         "id": AnyString(),
@@ -784,6 +800,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                             },
                         ],
                         "state": "success",
+                        "metadata": {},
                     },
                 ],
             },
@@ -861,24 +878,22 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": self._user_content(self.user_input_text),
             },
             {
                 "content": [
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_1,
-                        "name": self.sequential_tool_name,
-                        "input": self.tool_input_1,
-                        "state": "finished",
-                    },
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_2,
-                        "name": self.sequential_tool_name,
-                        "input": self.tool_input_2,
-                        "state": "finished",
-                    },
+                    self._expected_tool_call_dict(
+                        self.tool_call_id_1,
+                        self.sequential_tool_name,
+                        self.tool_input_1,
+                        "finished",
+                    ),
+                    self._expected_tool_call_dict(
+                        self.tool_call_id_2,
+                        self.sequential_tool_name,
+                        self.tool_input_2,
+                        "finished",
+                    ),
                     {
                         "type": "tool_result",
                         "id": AnyString(),
@@ -891,6 +906,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                             },
                         ],
                         "state": "success",
+                        "metadata": {},
                     },
                     {
                         "type": "tool_result",
@@ -904,6 +920,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                             },
                         ],
                         "state": "success",
+                        "metadata": {},
                     },
                     {
                         "type": "text",
@@ -925,10 +942,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         """Test concurrent tool calls that need confirmation and external
         execution."""
         mixed_tool = MockMixedConcurrentTool()
-        self.agent.toolkit.tools[mixed_tool.name] = RegisteredTool(
-            tool=mixed_tool,
-            group="basic",
-        )
+        self.agent.toolkit.tool_groups[0].tools.append(mixed_tool)
 
         self._set_model_tool_call_responses(
             [
@@ -1005,24 +1019,22 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": self._user_content(self.user_input_text),
             },
             {
                 "content": [
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_1,
-                        "name": self.concurrent_tool_name,
-                        "input": self.tool_input_1,
-                        "state": "asking",
-                    },
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_2,
-                        "name": self.concurrent_tool_name,
-                        "input": self.tool_input_2,
-                        "state": "asking",
-                    },
+                    self._expected_tool_call_dict(
+                        self.tool_call_id_1,
+                        self.concurrent_tool_name,
+                        self.tool_input_1,
+                        "asking",
+                    ),
+                    self._expected_tool_call_dict(
+                        self.tool_call_id_2,
+                        self.concurrent_tool_name,
+                        self.tool_input_2,
+                        "asking",
+                    ),
                 ],
             },
         ]
@@ -1089,24 +1101,22 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": self._user_content(self.user_input_text),
             },
             {
                 "content": [
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_1,
-                        "name": self.concurrent_tool_name,
-                        "input": self.tool_input_1,
-                        "state": "submitted",
-                    },
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_2,
-                        "name": self.concurrent_tool_name,
-                        "input": self.tool_input_2,
-                        "state": "submitted",
-                    },
+                    self._expected_tool_call_dict(
+                        self.tool_call_id_1,
+                        self.concurrent_tool_name,
+                        self.tool_input_1,
+                        "submitted",
+                    ),
+                    self._expected_tool_call_dict(
+                        self.tool_call_id_2,
+                        self.concurrent_tool_name,
+                        self.tool_input_2,
+                        "submitted",
+                    ),
                 ],
             },
         ]
@@ -1161,24 +1171,22 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": self.user_input_text,
+                "content": self._user_content(self.user_input_text),
             },
             {
                 "content": [
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_1,
-                        "name": self.concurrent_tool_name,
-                        "input": self.tool_input_1,
-                        "state": "finished",
-                    },
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_2,
-                        "name": self.concurrent_tool_name,
-                        "input": self.tool_input_2,
-                        "state": "finished",
-                    },
+                    self._expected_tool_call_dict(
+                        self.tool_call_id_1,
+                        self.concurrent_tool_name,
+                        self.tool_input_1,
+                        "finished",
+                    ),
+                    self._expected_tool_call_dict(
+                        self.tool_call_id_2,
+                        self.concurrent_tool_name,
+                        self.tool_input_2,
+                        "finished",
+                    ),
                     {
                         "type": "tool_result",
                         "id": AnyString(),
@@ -1191,6 +1199,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                             },
                         ],
                         "state": "success",
+                        "metadata": {},
                     },
                     {
                         "type": "tool_result",
@@ -1204,6 +1213,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                             },
                         ],
                         "state": "success",
+                        "metadata": {},
                     },
                     {
                         "type": "text",

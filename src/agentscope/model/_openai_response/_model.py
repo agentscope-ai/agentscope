@@ -403,7 +403,7 @@ class OpenAIResponseModel(ChatModelBase):
                     if response_id:
                         chat_resp_kwargs["id"] = response_id
                     yield ChatResponse(**chat_resp_kwargs)
-        except (asyncio.CancelledError, GeneratorExit):
+        except asyncio.CancelledError:
             was_interrupted = True
             final_contents = []
             if acc_thinking.thinking:

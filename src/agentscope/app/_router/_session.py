@@ -2,11 +2,13 @@
 """Session router — create, list, update, delete, stream, and get messages."""
 import asyncio
 import json
+from datetime import datetime
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
+from ..._logging import logger
 from ..._utils._common import _generate_id
 from ..deps import (
     get_current_user_id,
@@ -38,9 +40,11 @@ from ..storage import (
     StorageBase,
     TeamRecord,
 )
-from ...message import ToolCallState
+from ...message import ToolCallState, ToolResultBlock, ToolResultState
+from ...tool._toolkit import TOOL_INTERRUPTED_MESSAGE
 from ..storage._utils import _ensure_team_members
-from ...event import CustomEvent
+from ...event import CustomEvent, ReplyEndEvent
+from .._bus_ops import publish_session_event
 
 
 async def _build_team_detail(
@@ -379,6 +383,28 @@ async def interrupt_session(
     if not await message_bus.is_locked(
         MessageBusKeys.session_lock(session_id),
     ):
+        # Agent is not running — but it may be parked in ASKING /
+        # SUBMITTED state.  Patch any such tool calls so the next
+        # message does not raise ValueError.
+        patched = await _patch_pending_tool_calls(
+            storage,
+            user_id,
+            agent_id,
+            session_id,
+        )
+        if patched:
+            # Publish a ReplyEndEvent so the frontend dismisses the
+            # confirmation/execution card and shows the interrupted state.
+            reply_end = ReplyEndEvent(
+                session_id=session_id,
+                reply_id=patched,
+                finished_reason="interrupted",
+            )
+            await publish_session_event(
+                message_bus,
+                session_id,
+                reply_end.model_dump(mode="json"),
+            )
         return InterruptSessionResponse(
             status="not_running",
             session_id=session_id,
@@ -392,6 +418,62 @@ async def interrupt_session(
         status="interrupted",
         session_id=session_id,
     )
+
+
+async def _patch_pending_tool_calls(
+    storage: StorageBase,
+    user_id: str,
+    agent_id: str,
+    session_id: str,
+) -> str | None:
+    """Patch ASKING / SUBMITTED tool calls in the persisted agent state.
+
+    When the agent is parked (waiting for user confirmation or external
+    execution) and the user presses Stop, the session lock is already
+    released, so no ``CancelledError`` can be injected.  This helper
+    patches those tool calls directly in storage so the next
+    ``reply_stream`` call does not raise ``ValueError``.
+
+    Returns:
+        The ``reply_id`` of the patched message, or ``None`` if nothing
+        was patched.
+    """
+    existing = await storage.get_session(user_id, agent_id, session_id)
+    if existing is None or existing.state is None:
+        return None
+    state = existing.state
+    if not state.context:
+        return None
+    last_msg = state.context[-1]
+    result_ids = {b.id for b in last_msg.get_content_blocks("tool_result")}
+    patched = False
+    for tc in last_msg.get_content_blocks("tool_call"):
+        if tc.id not in result_ids and tc.state in (
+            ToolCallState.ASKING,
+            ToolCallState.SUBMITTED,
+        ):
+            tc.state = ToolCallState.FINISHED
+            last_msg.content.append(
+                ToolResultBlock(
+                    id=tc.id,
+                    name=tc.name,
+                    output=TOOL_INTERRUPTED_MESSAGE,
+                    state=ToolResultState.INTERRUPTED,
+                ),
+            )
+            patched = True
+    if patched:
+        if not last_msg.finished_at:
+            last_msg.finished_at = datetime.now().isoformat()
+        await storage.update_session_state(
+            user_id=user_id,
+            agent_id=agent_id,
+            session_id=session_id,
+            state=state,
+        )
+        await storage.upsert_message(user_id, session_id, last_msg)
+        return last_msg.id
+    return None
 
 
 @session_router.patch(
@@ -798,6 +880,9 @@ async def stream_session_events(
             # running, publish an interrupt signal so the agent task
             # is cancelled — no point wasting resources when nobody
             # is listening.
+            # If the agent is parked in ASKING/SUBMITTED state (not
+            # locked), patch the tool calls in storage so the next
+            # message doesn't raise ValueError.
             try:
                 if await message_bus.is_locked(
                     MessageBusKeys.session_lock(session_id),
@@ -806,8 +891,31 @@ async def stream_session_events(
                         MessageBusKeys.session_interrupt_channel(),
                         {"session_id": session_id},
                     )
+                else:
+                    patched = await _patch_pending_tool_calls(
+                        storage,
+                        user_id,
+                        agent_id,
+                        session_id,
+                    )
+                    if patched:
+                        reply_end = ReplyEndEvent(
+                            session_id=session_id,
+                            reply_id=patched,
+                            finished_reason="interrupted",
+                        )
+                        await publish_session_event(
+                            message_bus,
+                            session_id,
+                            reply_end.model_dump(mode="json"),
+                        )
             except Exception:
-                pass  # best-effort; don't break cleanup on Redis errors
+                logger.debug(
+                    "SSE disconnect: failed to publish interrupt for "
+                    "session %s",
+                    session_id,
+                    exc_info=True,
+                )
 
     return StreamingResponse(
         _sse_generator(),
