@@ -19,6 +19,23 @@ uv pip install "agentscope[rag]"
 uv pip install -e ".[rag]"
 ```
 
+To use a local persistent Milvus Lite vector store instead of the
+in-memory Qdrant store, install the optional extra:
+
+```bash
+uv pip install "agentscope[milvuslite]"
+# Or from source (repo root)
+uv pip install -e ".[milvuslite]"
+```
+
+Then replace the vector store construction:
+
+```python
+from agentscope.rag import MilvusLiteStore
+
+store = MilvusLiteStore(uri="./rag_demo.db")
+```
+
 `integrate_with_agent.py` additionally uses `DashScopeChatModel`, which is already in the base `agentscope` dependencies.
 
 ## Run

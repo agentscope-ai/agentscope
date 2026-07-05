@@ -36,10 +36,12 @@ from __future__ import annotations
 
 import asyncio
 import os
+import posixpath
 import shlex
 import shutil
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from types import ModuleType
 from typing import Any
 
 import aiofiles
@@ -110,6 +112,139 @@ class BackendBase(ABC):
     cheaper native path may override them (see :class:`LocalBackend`).
     """
 
+    #: Path-manipulation module whose semantics match the backend's
+    #: environment.  Used by :meth:`join_path`, :meth:`dirname`,
+    #: :meth:`isabs`, :meth:`normpath`, and :meth:`abspath` to ensure
+    #: correct behavior when the host OS and the backend OS differ
+    #: (e.g. a Windows host driving a Linux Docker container).
+    #:
+    #: Defaults to :mod:`posixpath`, which is correct for any backend
+    #: whose environment is Linux/macOS (Docker, E2B, …).  Subclasses
+    #: targeting a different environment override this attribute, e.g.
+    #: :class:`LocalBackend` sets it to :mod:`os.path`, and a future
+    #: Windows-container backend would set it to :mod:`ntpath`.
+    #:
+    #: .. important::
+    #:
+    #:     Only **pure string operations** on this module are safe to
+    #:     call (``join``, ``split``, ``dirname``, ``basename``,
+    #:     ``normpath``, ``isabs``, ``splitext``, ``splitdrive``, …).
+    #:
+    #:     Do **not** call functions that touch the filesystem or
+    #:     environment variables — ``exists``, ``isfile``, ``isdir``,
+    #:     ``getmtime``, ``realpath``, ``expanduser``, ``expandvars``,
+    #:     and parameterless ``abspath`` — because those read the
+    #:     **host** process's filesystem / ``$HOME`` / ``cwd``, which
+    #:     is meaningless (and a silent bug) for remote backends.  Use
+    #:     the async I/O methods on the backend instead
+    #:     (:meth:`file_exists`, :meth:`is_dir`, :meth:`stat_mtime`,
+    #:     …) or the :meth:`abspath` wrapper below, which requires an
+    #:     explicit ``cwd`` argument.
+    _path_module: ModuleType = posixpath
+
+    # ── path manipulation helpers (pure string ops) ────────────────
+
+    def join_path(self, path: str, *paths: str) -> str:
+        """Join one or more path components using the backend's separator.
+
+        Args:
+            path (`str`):
+                The first path component.
+            *paths (`str`):
+                Additional components to join onto ``path``.
+
+        Returns:
+            `str`:
+                The joined path, using the backend environment's path
+                separator.
+        """
+        return self._path_module.join(path, *paths)
+
+    def dirname(self, path: str) -> str:
+        """Return the directory component of ``path``.
+
+        Args:
+            path (`str`):
+                A path inside the backend's environment.
+
+        Returns:
+            `str`:
+                Everything up to (but not including) the last path
+                separator. Empty string if ``path`` has no separator.
+        """
+        return self._path_module.dirname(path)
+
+    def basename(self, path: str) -> str:
+        """Return the final component of ``path``.
+
+        Args:
+            path (`str`):
+                A path inside the backend's environment.
+
+        Returns:
+            `str`:
+                Everything after the last path separator. Empty string
+                if ``path`` ends with a separator.
+        """
+        return self._path_module.basename(path)
+
+    def isabs(self, path: str) -> bool:
+        """Return ``True`` if ``path`` is absolute in the backend.
+
+        Args:
+            path (`str`):
+                A path inside the backend's environment.
+
+        Returns:
+            `bool`:
+                ``True`` iff ``path`` is absolute under the backend
+                environment's path semantics.
+        """
+        return self._path_module.isabs(path)
+
+    def normpath(self, path: str) -> str:
+        """Normalize ``path`` (collapse ``..``, ``.``, duplicate seps).
+
+        Pure string operation — does not touch the filesystem.
+
+        Args:
+            path (`str`):
+                A path inside the backend's environment.
+
+        Returns:
+            `str`:
+                The normalized path.
+        """
+        return self._path_module.normpath(path)
+
+    def abspath(self, path: str, *, cwd: str) -> str:
+        """Return an absolute, normalized version of ``path``.
+
+        Unlike :func:`os.path.abspath`, this helper **never** reads
+        the host process's working directory: when ``path`` is
+        relative it is joined with the explicitly supplied ``cwd``,
+        which must itself be a path that is meaningful inside the
+        backend's environment.  This avoids the silent bug where the
+        host's ``os.getcwd()`` leaks into paths that will actually be
+        used on a remote backend.
+
+        Args:
+            path (`str`):
+                A path inside the backend's environment.
+            cwd (`str`):
+                Directory to resolve a relative ``path`` against.
+                Ignored when ``path`` is already absolute.
+
+        Returns:
+            `str`:
+                An absolute, normalized path.
+        """
+        if self._path_module.isabs(path):
+            return self._path_module.normpath(path)
+        return self._path_module.normpath(
+            self._path_module.join(cwd, path),
+        )
+
     # ── abstract primitives ────────────────────────────────────────
 
     @abstractmethod
@@ -174,6 +309,64 @@ class BackendBase(ABC):
         """
 
     # ── derived filesystem ops (shell-based defaults) ──────────────
+
+    async def getcwd(self) -> str:
+        """Return the backend environment's current working directory.
+
+        This is the directory that bare ``exec_shell`` invocations
+        (those with ``cwd=None``) execute in.  Tools should call this
+        — instead of :func:`os.getcwd` — whenever they need a default
+        path that is meaningful inside the backend, because the host
+        process's cwd is meaningless for remote backends
+        (Docker / E2B).
+
+        The default implementation runs ``pwd`` via :meth:`exec_shell`,
+        which works for any POSIX-like backend.  Backends with cheaper
+        native access (e.g. :class:`LocalBackend`, or remote backends
+        that already track their workdir) should override it.
+
+        Returns:
+            `str`:
+                The backend's current working directory.
+        """
+        result = await self.exec_shell(["pwd"])
+        return result.stdout.decode("utf-8", errors="replace").strip()
+
+    async def expanduser(self, path: str) -> str:
+        """Expand a leading ``~`` / ``~/`` to the backend's home directory.
+
+        Tools should call this — instead of :func:`os.path.expanduser`
+        — whenever they need to expand ``~`` in a path that lives
+        inside the backend's environment, because the host process's
+        ``$HOME`` is meaningless for remote backends.
+
+        The default implementation queries ``$HOME`` via
+        :meth:`exec_shell` (POSIX-only).  Only the leading ``~`` /
+        ``~/foo`` form is expanded; ``~user/...`` is not supported by
+        the default and is returned unchanged.  Backends with cheaper
+        native access should override (e.g. :class:`LocalBackend`).
+
+        Args:
+            path (`str`):
+                A path inside the backend's environment, possibly
+                starting with ``~``.
+
+        Returns:
+            `str`:
+                ``path`` with a leading ``~`` / ``~/`` expanded.  If
+                ``path`` does not start with ``~``, or starts with
+                ``~user`` (unsupported), it is returned unchanged.
+        """
+        if not path or path[0] != "~":
+            return path
+        # ``~user/...`` form — not supported by the default impl.
+        if len(path) > 1 and path[1] not in ("/", self._path_module.sep):
+            return path
+        result = await self.exec_shell(["printenv", "HOME"])
+        home = result.stdout.decode("utf-8", errors="replace").strip()
+        if not home:
+            return path
+        return home + path[1:]
 
     async def file_exists(self, path: str) -> bool:
         """Return ``True`` if ``path`` exists (file or directory).
@@ -339,6 +532,11 @@ class LocalBackend(BackendBase):
     unavailable.
     """
 
+    # Use the host OS's path semantics (Windows or POSIX) instead of
+    # the base class default (``posixpath``), so path helpers behave
+    # correctly when running on a Windows host.
+    _path_module = os.path
+
     async def exec_shell(
         self,
         command: list[str],
@@ -435,6 +633,29 @@ class LocalBackend(BackendBase):
             os.makedirs(parent, exist_ok=True)
         async with aiofiles.open(path, mode="wb") as f:
             await f.write(data)
+
+    async def getcwd(self) -> str:
+        """Return the host process's current working directory.
+
+        Returns:
+            `str`:
+                ``os.getcwd()`` — avoids spawning a ``pwd`` subprocess.
+        """
+        return os.getcwd()
+
+    async def expanduser(self, path: str) -> str:
+        """Expand ``~`` using the host process's ``$HOME``.
+
+        Args:
+            path (`str`):
+                A local path, possibly starting with ``~``.
+
+        Returns:
+            `str`:
+                ``os.path.expanduser(path)`` — avoids spawning a
+                subprocess.
+        """
+        return os.path.expanduser(path)
 
     async def file_exists(self, path: str) -> bool:
         """Check if a local path exists.

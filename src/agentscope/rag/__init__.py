@@ -9,6 +9,7 @@ from ._document import (
 from ._parser import ImageParser, ParserBase, PDFParser, PPTParser, TextParser
 from ._vdb import (
     DocumentSummary,
+    MilvusLiteStore,
     VectorStoreBase,
     VectorRecord,
     VectorSearchResult,
@@ -22,6 +23,7 @@ __all__ = [
     "Chunk",
     "DocumentSummary",
     "ImageParser",
+    "MilvusLiteStore",
     "ParserBase",
     "PDFParser",
     "PPTParser",

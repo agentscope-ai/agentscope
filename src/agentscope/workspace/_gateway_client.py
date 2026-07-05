@@ -1,30 +1,54 @@
 # -*- coding: utf-8 -*-
-"""Host-side client for the in-workspace MCP gateway.
+"""Host-side client for the in-sandbox MCP gateway, driven through
+``backend.exec_shell``.
 
 Three classes live here:
 
 * :class:`GatewayClient` — workspace-side facade over the gateway's
-  ``/health`` and ``/mcps`` endpoints. Used by ``DockerWorkspace`` (and
-  later ``E2BWorkspace``) for top-level operations.
+  ``/health`` and ``/mcps`` endpoints. Used by :class:`DockerWorkspace`
+  and :class:`E2BWorkspace` for top-level operations.
 
 * :class:`GatewayMCPClient` — an :class:`MCPClient` subclass whose
-  protocol behaviour is replaced by HTTP calls to the gateway. The
-  field surface is identical to ``MCPClient`` (instances are built from
+  protocol behaviour is replaced by gateway-relayed calls. The field
+  surface is identical to ``MCPClient`` (instances are built from
   ``MCPClient.model_dump()`` data the gateway returns), so callers
   that ``model_dump()`` it round-trip cleanly. Local stdio/HTTP
   session machinery is bypassed: ``model_post_init`` is a no-op,
-  ``connect`` POSTs to ``/mcps``, ``close`` DELETEs ``/mcps/{name}``,
-  and ``list_tools`` / ``get_tool`` fetch / wrap upstream tools.
+  ``connect`` registers via ``POST /mcps``, ``close`` deregisters via
+  ``DELETE /mcps/{name}``, and ``list_raw_tools`` / ``get_tool`` fetch
+  / wrap upstream tools.
 
 * :class:`GatewayMCPTool` — :class:`ToolBase` subclass whose
-  ``__call__`` posts to ``/mcps/{name}/tools/{tool}`` and reconstructs
-  the returned ``ToolChunk``.
+  ``__call__`` invokes the upstream tool via
+  ``POST /mcps/{name}/tools/{tool}`` and reconstructs the returned
+  ``ToolChunk``.
+
+Transport
+---------
+
+Unlike a normal HTTP client, **every** request runs **inside the
+sandbox**. The host serialises the request body (if any) to a tempfile
+via :meth:`BackendBase.write_file`, then spawns a tiny Python script
+through :meth:`BackendBase.exec_shell` (see
+:mod:`agentscope.workspace._gateway_shim`) which performs the actual
+``urllib.request`` call against the gateway's loopback port, writes a
+JSON envelope to stdout, and exits 0. The host parses the envelope and
+reconstructs status code + response bytes (base64-decoded inline, or
+read back from a sandbox tempfile for large payloads).
+
+This removes the host→sandbox network reachability requirement
+(previously satisfied by Docker port mapping or the E2B HTTPS proxy);
+the gateway listens on a fixed loopback port inside the sandbox and is
+no longer reachable from the host at all.
 """
 
-import contextlib
-from typing import Any, AsyncIterator
+from __future__ import annotations
 
-import httpx
+import base64
+import json
+import uuid
+from typing import TYPE_CHECKING, Any
+
 import mcp.types
 from pydantic import PrivateAttr
 
@@ -35,17 +59,26 @@ from ..permission import (
     PermissionDecision,
 )
 from ..tool import ToolBase, ToolChunk
+from ._gateway_shim import (
+    BODY_INLINE_LIMIT,
+    SANDBOX_TMP_DIR,
+    SHIM_SCRIPT,
+)
+
+if TYPE_CHECKING:
+    from ..tool import BackendBase, ExecResult
 
 
 # ── tool ───────────────────────────────────────────────────────────
 
 
 class GatewayMCPTool(ToolBase):
-    """An MCP tool whose ``__call__`` is a single HTTP POST to the gateway.
+    """An MCP tool whose ``__call__`` is one ``exec_shell``-driven
+    request to the gateway.
 
-    Mirrors :class:`agentscope.tool.MCPTool` field-by-field so the toolkit
-    treats it identically (same ``name`` format, same permission policy)
-    — only the call path changes.
+    Mirrors :class:`agentscope.tool.MCPTool` field-by-field so the
+    toolkit treats it identically (same ``name`` format, same
+    permission policy) — only the call path changes.
     """
 
     is_mcp: bool = True
@@ -55,40 +88,32 @@ class GatewayMCPTool(ToolBase):
         self,
         mcp_name: str,
         tool: mcp.types.Tool,
-        gateway_url: str,
-        token: str,
-        http: httpx.AsyncClient | None = None,
-        timeout: float | None = None,
+        gateway: "GatewayClient",
     ) -> None:
         """Build a gateway-backed MCP tool.
 
         The instance mirrors the field surface of
         :class:`agentscope.tool.MCPTool` (``name``, ``description``,
         ``input_schema``, ``is_read_only``, …) so the host-side toolkit
-        cannot tell the difference between a local MCP tool and one that
-        forwards through the in-container gateway.
+        cannot tell the difference between a local MCP tool and one
+        that forwards through the in-sandbox gateway.
 
         Args:
-            mcp_name: Name of the upstream MCP server this tool belongs
-                to. Used both for the visible ``mcp__{mcp}__{tool}``
-                name and for the gateway URL path.
-            tool: Raw upstream tool descriptor as returned by the
-                gateway. Its ``name`` is the upstream-side identifier
-                (no ``mcp__`` prefix), ``inputSchema`` is forwarded
-                verbatim, and ``annotations.readOnlyHint`` drives the
-                permission policy.
-            gateway_url: Host-visible base URL of the gateway, e.g.
-                ``http://127.0.0.1:<host_port>``. Trailing slash is
-                stripped.
-            token: Bearer token the host injected into the gateway's
-                config; sent as ``Authorization: Bearer …`` on every
-                call.
-            http: Shared :class:`httpx.AsyncClient` to reuse connection
-                pooling across many tool calls. When ``None`` each
-                ``__call__`` creates and disposes a one-shot client.
-            timeout: Per-call HTTP timeout in seconds. Only consulted
-                when ``http`` is ``None`` (the shared client carries
-                its own timeout).
+            mcp_name (`str`):
+                Name of the upstream MCP server this tool belongs to.
+                Used both for the visible ``mcp__{mcp}__{tool}`` name
+                and for the gateway URL path.
+            tool (`mcp.types.Tool`):
+                Raw upstream tool descriptor as returned by the gateway.
+                Its ``name`` is the upstream-side identifier (no
+                ``mcp__`` prefix), ``inputSchema`` is forwarded verbatim,
+                and ``annotations.readOnlyHint`` drives the permission
+                policy.
+            gateway (`GatewayClient`):
+                The workspace-side gateway facade that owns the
+                backend handle, gateway port, and bearer token. All
+                tool invocations are dispatched through its
+                :meth:`GatewayClient.exec_request`.
         """
         self.mcp_name = mcp_name
         self.name = f"mcp__{mcp_name}__{tool.name}"
@@ -108,10 +133,7 @@ class GatewayMCPTool(ToolBase):
             self.is_read_only = tool.annotations.readOnlyHint or False
 
         self._tool = tool
-        self._gateway_url = gateway_url.rstrip("/")
-        self._token = token
-        self._http = http
-        self._timeout = timeout
+        self._gateway = gateway
 
     async def check_permissions(
         self,
@@ -134,11 +156,13 @@ class GatewayMCPTool(ToolBase):
         )
 
     async def __call__(self, **kwargs: Any) -> ToolChunk:
-        """Invoke the upstream tool by POSTing to
-        ``/mcps/{mcp}/tools/{tool}`` on the gateway.
+        """Invoke the upstream tool by relaying
+        ``POST /mcps/{mcp}/tools/{tool}`` to the gateway via the
+        sandbox shim.
 
         Args:
-            **kwargs: Tool arguments forwarded as the JSON body's
+            **kwargs:
+                Tool arguments forwarded as the JSON body's
                 ``arguments`` field; the gateway re-dispatches them to
                 the upstream MCP session.
 
@@ -150,29 +174,21 @@ class GatewayMCPTool(ToolBase):
                 about the failure instead of crashing.
 
         Raises:
-            RuntimeError: If the gateway returns 2xx but no ``chunk``
-                payload (protocol violation on the gateway side).
+            `RuntimeError`:
+                If the gateway returns 2xx but no ``chunk`` payload
+                (protocol violation on the gateway side).
         """
-        url = (
-            f"{self._gateway_url}/mcps/{self.mcp_name}"
-            f"/tools/{self._tool.name}"
+        status, body = await self._gateway.exec_request(
+            "POST",
+            f"/mcps/{self.mcp_name}/tools/{self._tool.name}",
+            body={"arguments": kwargs},
         )
-        headers = _bearer_headers(self._token)
-        async with _http_session(self._http, self._timeout) as http:
-            resp = await http.post(
-                url,
-                json={"arguments": kwargs},
-                headers=headers,
+        if status >= 400:
+            return ToolChunk(
+                content=[{"type": "text", "text": _safe_detail(status, body)}],
+                state=ToolResultState.ERROR,
             )
-            if resp.status_code >= 400:
-                # Surface gateway-side error as a failed ToolChunk so
-                # the agent loop can reason about it instead of crashing.
-                detail = _safe_detail(resp)
-                return ToolChunk(
-                    content=[{"type": "text", "text": detail}],
-                    state=ToolResultState.ERROR,
-                )
-            payload = resp.json()
+        payload = json.loads(body)
         chunk_dict = payload.get("chunk")
         if chunk_dict is None:
             raise RuntimeError(
@@ -185,24 +201,21 @@ class GatewayMCPTool(ToolBase):
 
 
 class GatewayMCPClient(MCPClient):
-    """An :class:`MCPClient` whose protocol logic is replaced by HTTP.
+    """An :class:`MCPClient` whose protocol logic is replaced by
+    gateway-relayed calls.
 
-    Constructed from the dict returned by ``GET /mcps`` (or freshly from
-    user input via :meth:`GatewayClient.make_client`). The local MCP
-    machinery is short-circuited entirely:
+    Constructed from the dict returned by ``GET /mcps`` (or freshly
+    from user input via :meth:`GatewayClient.make_client`). The local
+    MCP machinery is short-circuited entirely:
 
     * ``model_post_init`` does nothing (parent's ``_initialize_client``
       is never called — no stdio context manager is built).
-    * ``connect`` POSTs to ``/mcps`` to register-and-start the upstream
-      server inside the gateway.
-    * ``close`` DELETEs ``/mcps/{name}``.
-    * ``list_tools`` / ``get_tool`` fetch and wrap upstream tools.
+    * ``connect`` registers the MCP on the gateway via ``POST /mcps``.
+    * ``close`` deregisters via ``DELETE /mcps/{name}``.
+    * ``list_raw_tools`` / ``get_tool`` fetch and wrap upstream tools.
     """
 
-    _gateway_url: str = PrivateAttr(default="")
-    _gateway_token: str = PrivateAttr(default="")
-    _http_timeout: float | None = PrivateAttr(default=None)
-    _http: httpx.AsyncClient | None = PrivateAttr(default=None)
+    _gateway: "GatewayClient | None" = PrivateAttr(default=None)
 
     def model_post_init(self, __context: Any) -> None:
         """Skip the parent's stdio/HTTP client preparation.
@@ -211,7 +224,7 @@ class GatewayMCPClient(MCPClient):
         local stdio context manager (or wires up an HTTP client) so
         the in-process session can be opened. For
         :class:`GatewayMCPClient` all MCP-side work happens inside the
-        gateway container; the host-side proxy needs no local session
+        gateway sandbox; the host-side proxy needs no local session
         machinery, so this override is a no-op.
         """
         return
@@ -220,14 +233,11 @@ class GatewayMCPClient(MCPClient):
 
     def attach(
         self,
+        gateway: "GatewayClient",
         *,
-        gateway_url: str,
-        token: str,
-        http: httpx.AsyncClient | None,
-        timeout: float | None,
         connected: bool = False,
     ) -> None:
-        """Wire this client to a gateway transport.
+        """Wire this client to a gateway facade.
 
         :class:`GatewayMCPClient` is normally produced by
         ``model_validate(spec)`` over a dict returned by the gateway's
@@ -241,98 +251,90 @@ class GatewayMCPClient(MCPClient):
         ``protected-access`` warnings.
 
         Args:
-            gateway_url: Host-visible base URL of the gateway (e.g.
-                ``http://127.0.0.1:<host_port>``). Trailing slash is
-                stripped before storage.
-            token: Bearer token the host generated for this gateway.
-                Sent as ``Authorization: Bearer …`` on every request.
-            http: Shared :class:`httpx.AsyncClient` provided by the
-                owning :class:`GatewayClient` so connection pooling is
-                shared across all derived clients and tools. When
-                ``None`` each call creates a one-shot client.
-            timeout: Default per-request timeout in seconds, used only
-                when ``http`` is ``None``.
-            connected: When ``True``, mark this client as already
-                connected (i.e. the gateway is already maintaining the
-                upstream session). Used by
-                :meth:`GatewayClient.list_mcps` for clients that came
-                back from the gateway as registered. Leave ``False``
-                when the caller will call :meth:`connect` themselves.
+            gateway (`GatewayClient`):
+                The workspace-side gateway facade that owns the
+                sandbox backend handle, gateway port, and bearer
+                token. All subsequent calls are dispatched through its
+                :meth:`GatewayClient.exec_request`.
+            connected (`bool`, defaults to `False`):
+                When ``True``, mark this client as already connected
+                (i.e. the gateway is already maintaining the upstream
+                session). Used by :meth:`GatewayClient.list_mcps` for
+                clients that came back from the gateway as registered.
+                Leave ``False`` when the caller will call
+                :meth:`connect` themselves.
         """
-        self._gateway_url = gateway_url.rstrip("/")
-        self._gateway_token = token
-        self._http = http
-        self._http_timeout = timeout
+        self._gateway = gateway
         if connected:
             self._is_connected = True
 
     async def connect(self) -> None:
         """Register this MCP on the gateway via ``POST /mcps``.
 
-        Stateless MCPs are a no-op (the gateway invokes them on
-        demand). Stateful MCPs are registered and started inside the
-        gateway container; this method blocks until the gateway has
-        confirmed the upstream connection.
+        All MCPs (stateless and stateful) must be registered so that
+        ``/mcps/{name}/tools/{tool}`` can locate the client. For
+        stateful MCPs the gateway additionally opens the upstream
+        session before responding.
 
         Raises:
-            RuntimeError: If the client is already connected, or if
-                the gateway returns a 4xx/5xx response.
+            `RuntimeError`:
+                If the client is already connected, the gateway is
+                unreachable, or the gateway returns a 4xx/5xx
+                response.
         """
-        if not self.is_stateful:
-            return
         if self._is_connected:
             raise RuntimeError(
                 f"MCP {self.name!r} is already connected. "
                 "Call close() before reconnecting.",
             )
+        assert self._gateway is not None
         body = self.model_dump(mode="json")
-        async with _http_session(self._http, self._http_timeout) as http:
-            resp = await http.post(
-                f"{self._gateway_url}/mcps",
-                json=body,
-                headers=_bearer_headers(self._gateway_token),
+        status, resp_body = await self._gateway.exec_request(
+            "POST",
+            "/mcps",
+            body=body,
+        )
+        if status >= 400:
+            raise RuntimeError(
+                f"gateway failed to add MCP {self.name!r}: "
+                f"{_safe_detail(status, resp_body)}",
             )
-            if resp.status_code >= 400:
-                raise RuntimeError(
-                    f"gateway failed to add MCP {self.name!r}: "
-                    f"{_safe_detail(resp)}",
-                )
         self._is_connected = True
 
     async def close(self, ignore_errors: bool = True) -> None:
         """Deregister this MCP from the gateway via
         ``DELETE /mcps/{name}``.
 
-        Stateless MCPs are a no-op. For stateful MCPs the gateway
-        closes the upstream session before responding.
+        All MCPs are deregistered from the gateway registry; the
+        gateway additionally closes the upstream session for stateful
+        clients before responding.
 
         Args:
-            ignore_errors: When ``True`` (the default), suppress both
-                "not connected" precondition failures and
-                gateway-side 4xx/5xx responses; when ``False`` such
-                conditions raise :class:`RuntimeError`. Mirrors
+            ignore_errors (`bool`, defaults to `True`):
+                When ``True`` (the default), suppress both "not
+                connected" precondition failures and gateway-side
+                4xx/5xx responses; when ``False`` such conditions
+                raise :class:`RuntimeError`. Mirrors
                 :meth:`MCPClient.close` so callers can use the same
                 shutdown idiom regardless of transport.
         """
-        if not self.is_stateful:
-            return
         if not self._is_connected:
             if ignore_errors:
                 return
             raise RuntimeError(
                 f"MCP {self.name!r} is not connected. Call connect() first.",
             )
+        assert self._gateway is not None
         try:
-            async with _http_session(self._http, self._http_timeout) as http:
-                resp = await http.delete(
-                    f"{self._gateway_url}/mcps/{self.name}",
-                    headers=_bearer_headers(self._gateway_token),
+            status, resp_body = await self._gateway.exec_request(
+                "DELETE",
+                f"/mcps/{self.name}",
+            )
+            if status >= 400 and not ignore_errors:
+                raise RuntimeError(
+                    f"gateway failed to remove MCP {self.name!r}: "
+                    f"{_safe_detail(status, resp_body)}",
                 )
-                if resp.status_code >= 400 and not ignore_errors:
-                    raise RuntimeError(
-                        f"gateway failed to remove MCP {self.name!r}: "
-                        f"{_safe_detail(resp)}",
-                    )
         except Exception:
             if not ignore_errors:
                 raise
@@ -357,22 +359,26 @@ class GatewayMCPClient(MCPClient):
                 The upstream-named, post-filter tool descriptors.
 
         Raises:
-            httpx.HTTPStatusError: If the gateway returns a non-2xx
-                response.
+            `RuntimeError`:
+                If the gateway returns a non-2xx response.
         """
-        async with _http_session(self._http, self._http_timeout) as http:
-            resp = await http.get(
-                f"{self._gateway_url}/mcps/{self.name}/tools",
-                headers=_bearer_headers(self._gateway_token),
+        assert self._gateway is not None
+        status, body = await self._gateway.exec_request(
+            "GET",
+            f"/mcps/{self.name}/tools",
+        )
+        if status >= 400:
+            raise RuntimeError(
+                f"gateway failed to list tools for MCP {self.name!r}: "
+                f"{_safe_detail(status, body)}",
             )
-            resp.raise_for_status()
-            data = resp.json()
+        data = json.loads(body)
 
         raw_tools = [mcp.types.Tool.model_validate(d) for d in data]
         self._cached_tools = raw_tools
 
-        # Honour the same enable/disable filtering MCPClient does locally —
-        # gateway returns the unfiltered upstream view.
+        # Honour the same enable/disable filtering MCPClient does
+        # locally — gateway returns the unfiltered upstream view.
         if self.enable_tools is not None:
             raw_tools = [t for t in raw_tools if t.name in self.enable_tools]
         if self.disable_tools is not None:
@@ -393,17 +399,11 @@ class GatewayMCPClient(MCPClient):
         ``disable_tools`` would have hidden are still resolvable —
         matching :meth:`MCPClient.get_tool`'s behaviour.
 
-        The wrapped tool inherits the gateway-wide HTTP timeout
-        (``_http_timeout``, set via :meth:`attach`). Per-call execution
-        timeout is the upstream MCP server's responsibility — it is
-        carried in :attr:`MCPClient.execution_timeout`, serialised into
-        the spec, and reconstructed on the gateway side; the host has
-        no need to override it.
-
         Args:
-            name: Upstream tool name (no ``mcp__`` prefix). The
-                returned :class:`GatewayMCPTool` exposes the prefixed
-                form via its own ``name`` attribute.
+            name (`str`):
+                Upstream tool name (no ``mcp__`` prefix). The returned
+                :class:`GatewayMCPTool` exposes the prefixed form via
+                its own ``name`` attribute.
 
         Returns:
             `GatewayMCPTool`:
@@ -411,8 +411,9 @@ class GatewayMCPClient(MCPClient):
                 to be ``await``-ed or registered with a toolkit.
 
         Raises:
-            ValueError: If no tool with that upstream name exists on
-                the gateway side.
+            `ValueError`:
+                If no tool with that upstream name exists on the
+                gateway side.
         """
         if self._cached_tools is None:
             await self.list_raw_tools()
@@ -427,20 +428,23 @@ class GatewayMCPClient(MCPClient):
 
     def _wrap_tool(self, tool: mcp.types.Tool) -> GatewayMCPTool:
         """Build a :class:`GatewayMCPTool` bound to this client's
-        gateway transport. Always uses the client-wide
-        ``_http_timeout`` — there is no per-call override path.
+        gateway facade.
 
         Args:
-            tool: Raw upstream tool descriptor (typically pulled out of
+            tool (`mcp.types.Tool`):
+                Raw upstream tool descriptor (typically pulled out of
                 ``_cached_tools``).
+
+        Returns:
+            `GatewayMCPTool`:
+                The host-side wrapper that will relay every call
+                through the gateway facade.
         """
+        assert self._gateway is not None
         return GatewayMCPTool(
             mcp_name=self.name,
             tool=tool,
-            gateway_url=self._gateway_url,
-            token=self._gateway_token,
-            http=self._http,
-            timeout=self._http_timeout,
+            gateway=self._gateway,
         )
 
 
@@ -448,77 +452,82 @@ class GatewayMCPClient(MCPClient):
 
 
 class GatewayClient:
-    """Workspace-side facade over the in-container MCP gateway.
+    """Workspace-side facade over the in-sandbox MCP gateway.
 
-    Owns a shared :class:`httpx.AsyncClient` so all derived
-    :class:`GatewayMCPClient` and :class:`GatewayMCPTool` instances
-    share connection pooling.
-
-    The gateway ``base_url`` is the host-visible URL (e.g.
-    ``http://127.0.0.1:<host_port>`` after Docker port mapping); the
-    ``token`` is the bearer the host generated and shipped into the
-    container's gateway config.
+    Every method dispatches through :meth:`exec_request`, which in
+    turn drives :meth:`BackendBase.exec_shell` on the workspace's
+    backend so the network call always happens **inside** the sandbox.
+    No host port mapping or HTTPS proxy is required.
     """
 
     def __init__(
         self,
-        base_url: str,
+        backend: "BackendBase",
+        gateway_port: int,
         token: str,
+        *,
         timeout: float | None = None,
-        extra_headers: dict[str, str] | None = None,
+        inline_limit: int = BODY_INLINE_LIMIT,
+        tmp_dir: str = SANDBOX_TMP_DIR,
     ) -> None:
         """Build a workspace-side gateway facade.
 
         Args:
-            base_url: Host-visible base URL of the gateway, e.g.
-                ``http://127.0.0.1:<host_port>`` after Docker port
-                mapping or ``https://<sandbox-id>.e2b.dev`` for E2B.
-                Trailing slash is stripped.
-            token: Bearer token shared with the gateway via its config
+            backend (`BackendBase`):
+                The workspace's backend handle. Every gateway request
+                runs as ``backend.exec_shell([...])`` inside the
+                sandbox (Docker container or E2B sandbox).
+            gateway_port (`int`):
+                TCP port the gateway listens on inside the sandbox.
+                The URL dialed by the shim is always
+                ``http://127.0.0.1:<gateway_port>``.
+            token (`str`):
+                Bearer token shared with the gateway via its config
                 file. Sent as ``Authorization: Bearer …`` on every
-                request and propagated to every derived
-                :class:`GatewayMCPClient` / :class:`GatewayMCPTool` via
-                :meth:`make_client`.
-            timeout: Default HTTP timeout in seconds, applied to the
-                shared :class:`httpx.AsyncClient` (see
-                :meth:`_client`) and propagated to every derived
-                :class:`GatewayMCPClient` via :meth:`make_client`.
-                There is no per-call override path; per-tool execution
-                timeouts live on :attr:`MCPClient.execution_timeout`
-                and are honoured upstream inside the gateway.
-            extra_headers: Default headers applied to every request
-                through the shared httpx client (in addition to the
-                per-call bearer). :class:`E2BWorkspace` uses this to
-                inject E2B's ``X-Access-Token`` proxy header.
+                request. Pass an empty string to skip auth (useful
+                only in tests).
+            timeout (`float | None`, defaults to `None`):
+                Per-request timeout in seconds, passed straight through
+                to :meth:`BackendBase.exec_shell`. The shim itself
+                does not apply an HTTP-level timeout — long-running
+                MCP tools are limited only by the backend exec
+                timeout. ``None`` waits indefinitely.
+            inline_limit (`int`, defaults to `BODY_INLINE_LIMIT`):
+                Threshold (in bytes) below which response bodies ride
+                inline through stdout as base64. Larger bodies are
+                spilled to a sandbox tempfile and fetched via
+                :meth:`BackendBase.read_file` to avoid loading multi-MB
+                payloads through the exec stdout channel.
+            tmp_dir (`str`, defaults to `SANDBOX_TMP_DIR`):
+                Sandbox-side directory used for both request body
+                tempfiles (host → sandbox) and oversized response
+                spills (sandbox → host). Must be writable by the
+                gateway process; ``/tmp`` works on every supported
+                image.
         """
-        self.base_url = base_url.rstrip("/")
+        self.backend = backend
+        self.gateway_port = gateway_port
         self.token = token
         self.timeout = timeout
-        self.extra_headers: dict[str, str] = dict(extra_headers or {})
-        self._http: httpx.AsyncClient | None = None
-
-    def _client(self) -> httpx.AsyncClient:
-        """Return (lazily creating on first use) the shared
-        :class:`httpx.AsyncClient` reused by every gateway request."""
-        if self._http is None:
-            self._http = httpx.AsyncClient(
-                timeout=self.timeout,
-                headers=self.extra_headers or None,
-            )
-        return self._http
-
-    def _headers(self) -> dict[str, str]:
-        """Build the bearer-auth header dict for direct
-        :class:`GatewayClient` calls (``/health``, ``/mcps``)."""
-        return _bearer_headers(self.token)
+        self.inline_limit = inline_limit
+        self.tmp_dir = tmp_dir
 
     async def health(self) -> bool:
-        """Probe ``/health`` — used by the workspace to wait for readiness."""
+        """Probe ``/health`` — used by the workspace to wait for
+        readiness.
+
+        Returns:
+            `bool`:
+                ``True`` iff the gateway answered ``200``. Any other
+                outcome (shim transport failure, non-200 status)
+                returns ``False``; callers are expected to retry until
+                this flips.
+        """
         try:
-            resp = await self._client().get(f"{self.base_url}/health")
+            status, _ = await self.exec_request("GET", "/health")
         except Exception:
             return False
-        return resp.status_code == 200
+        return status == 200
 
     async def list_mcps(self) -> list[GatewayMCPClient]:
         """Fetch every MCP currently registered on the gateway.
@@ -536,15 +545,16 @@ class GatewayClient:
                 this list straight to its consumer.
 
         Raises:
-            httpx.HTTPStatusError: If the gateway returns a non-2xx
-                response.
+            `RuntimeError`:
+                If the gateway returns a non-2xx response.
         """
-        resp = await self._client().get(
-            f"{self.base_url}/mcps",
-            headers=self._headers(),
-        )
-        resp.raise_for_status()
-        return [self.make_client(spec, connected=True) for spec in resp.json()]
+        status, body = await self.exec_request("GET", "/mcps")
+        if status >= 400:
+            raise RuntimeError(
+                f"gateway failed to list MCPs: {_safe_detail(status, body)}",
+            )
+        specs = json.loads(body)
+        return [self.make_client(spec, connected=True) for spec in specs]
 
     def make_client(
         self,
@@ -555,22 +565,24 @@ class GatewayClient:
         """Build a :class:`GatewayMCPClient` wired to this gateway.
 
         Reconstructs the public field surface from ``spec`` via
-        :meth:`MCPClient.model_validate`, then hands the
-        transport-related private state to the new client through
+        :meth:`MCPClient.model_validate`, then hands the transport
+        handle to the new client through
         :meth:`GatewayMCPClient.attach`. Doing the wiring through
         ``attach`` keeps the writes inside the target class and avoids
         ``protected-access`` warnings on every assignment.
 
         Args:
-            spec: A dict produced by ``MCPClient.model_dump(mode="json")``
+            spec (`dict[str, Any]`):
+                A dict produced by ``MCPClient.model_dump(mode="json")``
                 — typically the body returned by the gateway's
                 ``GET /mcps`` endpoint, or built from user input by
                 ``DockerWorkspace.add_mcp``.
-            connected: When ``True``, mark the new client as already
-                connected so :meth:`GatewayMCPClient.connect` need not
-                run again. Set by :meth:`list_mcps` for clients that
-                came back from the gateway already registered. Leave
-                ``False`` for fresh clients the caller will explicitly
+            connected (`bool`, defaults to `False`):
+                When ``True``, mark the new client as already connected
+                so :meth:`GatewayMCPClient.connect` need not run again.
+                Set by :meth:`list_mcps` for clients that came back
+                from the gateway already registered. Leave ``False``
+                for fresh clients the caller will explicitly
                 ``await client.connect()`` on (the ``add_mcp`` path).
 
         Returns:
@@ -580,55 +592,164 @@ class GatewayClient:
                 ``await client.connect()`` unless ``connected=True``.
         """
         client = GatewayMCPClient.model_validate(spec)
-        client.attach(
-            gateway_url=self.base_url,
-            token=self.token,
-            http=self._client(),
-            timeout=self.timeout,
-            connected=connected,
-        )
+        client.attach(self, connected=connected)
         return client
 
     async def aclose(self) -> None:
-        """Close the shared HTTP client."""
-        if self._http is not None:
-            await self._http.aclose()
-            self._http = None
+        """No-op kept for API parity with the previous httpx-based
+        client.
+
+        The new transport holds no host-side resources (every call is
+        a one-shot ``exec_shell``), so there is nothing to close. The
+        method stays so callers can keep their existing shutdown
+        idiom.
+        """
+        return
+
+    # ── transport ─────────────────────────────────────────────────
+
+    async def exec_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        body: Any = None,
+    ) -> tuple[int, bytes]:
+        """Relay one HTTP request through the sandbox.
+
+        Mechanics:
+
+        1. If ``body`` is given, JSON-encode it and write it to
+           ``${tmp_dir}/<uuid>.json`` inside the sandbox via
+           :meth:`BackendBase.write_file`.
+        2. Run ``python3 -c <SHIM_SCRIPT> <method> <url> <token>
+           <body_file_or_""> <inline_limit> <tmp_dir>`` via
+           :meth:`BackendBase.exec_shell`. The shim performs the
+           ``urllib.request`` call against the gateway's loopback port
+           and prints a JSON envelope to stdout.
+        3. Parse the envelope. Inline bodies are base64-decoded;
+           oversized bodies are pulled back from
+           ``envelope["body_file"]`` via :meth:`BackendBase.read_file`
+           and then deleted.
+
+        Both the request and response temp files are best-effort
+        cleaned up so a crash does not leak files into the sandbox's
+        ``${tmp_dir}``.
+
+        Args:
+            method (`str`):
+                HTTP verb (``GET`` / ``POST`` / ``DELETE``).
+            path (`str`):
+                Path-only URL relative to the gateway root, e.g.
+                ``/mcps`` or ``/mcps/<name>/tools/<tool>``. Always
+                starts with ``/``.
+            body (`Any`, optional):
+                JSON-serializable request body. ``None`` (the default)
+                means no body — typical for ``GET`` / ``DELETE``.
+
+        Returns:
+            `tuple[int, bytes]`:
+                The HTTP status code returned by the gateway, paired
+                with the raw response body bytes (always decoded;
+                callers ``json.loads`` it themselves when needed).
+
+        Raises:
+            `RuntimeError`:
+                If the shim crashed (non-zero exit code, non-JSON
+                stdout) or reported a transport failure
+                (``status == -1`` — gateway unreachable, urllib
+                error, …).
+        """
+        body_file = ""
+        wrote_body_file: str | None = None
+        if body is not None:
+            body_file = f"{self.tmp_dir}/{uuid.uuid4().hex}.json"
+            wrote_body_file = body_file
+            await self.backend.write_file(
+                body_file,
+                json.dumps(body, ensure_ascii=False).encode("utf-8"),
+            )
+
+        try:
+            result: "ExecResult" = await self.backend.exec_shell(
+                [
+                    "python3",
+                    "-c",
+                    SHIM_SCRIPT,
+                    method,
+                    f"http://127.0.0.1:{self.gateway_port}{path}",
+                    self.token or "",
+                    body_file,
+                    str(self.inline_limit),
+                    self.tmp_dir,
+                ],
+                timeout=self.timeout,
+            )
+        finally:
+            if wrote_body_file is not None:
+                try:
+                    await self.backend.delete_path(wrote_body_file)
+                except Exception:
+                    pass
+
+        if result.exit_code != 0:
+            raise RuntimeError(
+                f"gateway shim exited with {result.exit_code}: "
+                f"{result.stderr.decode(errors='replace')[:500]}",
+            )
+
+        try:
+            env = json.loads(result.stdout)
+        except Exception as e:
+            raise RuntimeError(
+                "gateway shim produced non-JSON stdout: "
+                f"{result.stdout[:200]!r}",
+            ) from e
+
+        status = int(env["status"])
+        if status == -1:
+            raise RuntimeError(
+                "gateway request failed: "
+                f"{env.get('error', 'unknown error')}",
+            )
+
+        if "body_file" in env:
+            spilled = env["body_file"]
+            body_bytes = await self.backend.read_file(spilled)
+            try:
+                await self.backend.delete_path(spilled)
+            except Exception:
+                pass
+        else:
+            body_bytes = base64.b64decode(env.get("body", ""))
+
+        return status, body_bytes
 
 
 # ── module-private utilities ───────────────────────────────────────
 
 
-def _bearer_headers(token: str) -> dict[str, str]:
-    if token:
-        return {"Authorization": f"Bearer {token}"}
-    return {}
-
-
-@contextlib.asynccontextmanager
-async def _http_session(
-    shared: httpx.AsyncClient | None,
-    timeout: float | None,
-) -> AsyncIterator[httpx.AsyncClient]:
-    """Yield a shared httpx client when injected, else a one-shot client.
-
-    The shared variant lets the workspace pool connections across many
-    tool calls without each call paying the TLS/handshake cost.
-    """
-    if shared is not None:
-        yield shared
-    else:
-        async with httpx.AsyncClient(timeout=timeout) as http:
-            yield http
-
-
-def _safe_detail(resp: httpx.Response) -> str:
+def _safe_detail(status: int, body: bytes) -> str:
     """Best-effort extraction of an HTTPException-style detail from a
-    response."""
+    gateway response body.
+
+    Args:
+        status (`int`):
+            HTTP status code returned by the gateway.
+        body (`bytes`):
+            Raw response body bytes — typically a JSON object from
+            FastAPI's ``HTTPException``, but tolerate anything.
+
+    Returns:
+        `str`:
+            A human-readable diagnostic that always starts with
+            ``HTTP <status>:`` so it slots into the same exception /
+            ``ToolChunk`` messages as the previous httpx-based code.
+    """
     try:
-        body = resp.json()
+        data = json.loads(body)
     except Exception:
-        return f"HTTP {resp.status_code}: {resp.text[:200]}"
-    if isinstance(body, dict) and "detail" in body:
-        return f"HTTP {resp.status_code}: {body['detail']}"
-    return f"HTTP {resp.status_code}: {str(body)[:200]}"
+        return f"HTTP {status}: {body[:200].decode(errors='replace')}"
+    if isinstance(data, dict) and "detail" in data:
+        return f"HTTP {status}: {data['detail']}"
+    return f"HTTP {status}: {str(data)[:200]}"

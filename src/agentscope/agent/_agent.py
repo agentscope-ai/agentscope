@@ -121,23 +121,23 @@ class Agent:
             toolkit (`Toolkit | None`, optional):
                 The toolkit used for registering tools, MCPs and skills as the
                 sole source.
-            middlewares (`list[MiddlewareBase] | None`):
+            middlewares (`list[MiddlewareBase] | None`, optional):
                 Middlewares applied to the agent to modify its behavior
                 without altering its source code. Supported hook points
                 include: reply, reasoning, acting, model call, and system
                 prompt retrieval.
-            state (`AgentState`):
+            state (`AgentState | None`, optional):
                 The agent state. A new state will be created if not provided.
             offloader (`Offloader | None`, optional):
                 The context offloader. If provided, the compressed context and
                 tool result will be offloaded.
-            model_config (`ModelConfig`):
+            model_config (`ModelConfig | None`, optional):
                 The additional chat model configuration including fallback
                 model and retries.
-            context_config (`CompressionConfig`):
+            context_config (`ContextConfig | None`, optional):
                 The context config for context compression and tool result
                 compression.
-            react_config (`ReActConfig`):
+            react_config (`ReActConfig | None`, optional):
                 The config for the reasoning-acting loop.
         """
         self.name = name
@@ -299,7 +299,10 @@ class Agent:
                     }
 
                     async def next_handler(**kwargs: Any) -> None:
-                        await execute_chain(index + 1, **kwargs)
+                        await execute_chain(
+                            index + 1,
+                            **{**input_kwargs, **kwargs},
+                        )
 
                     await mw.on_compress_context(
                         agent=self,
@@ -553,7 +556,10 @@ class Agent:
                     async def next_handler(
                         **kwargs: Any,
                     ) -> AsyncGenerator[AgentEvent | Msg, None]:
-                        async for item in execute_chain(index + 1, **kwargs):
+                        async for item in execute_chain(
+                            index + 1,
+                            **{**input_kwargs, **kwargs},
+                        ):
                             yield item
 
                     async for item in mw.on_reply(
@@ -766,7 +772,10 @@ class Agent:
                     input_kwargs = {"tool_choice": tool_choice}
 
                     async def next_handler(**kwargs: Any) -> AsyncGenerator:
-                        async for item in execute_chain(index + 1, **kwargs):
+                        async for item in execute_chain(
+                            index + 1,
+                            **{**input_kwargs, **kwargs},
+                        ):
                             yield item
 
                     async for item in mw.on_reasoning(
@@ -868,6 +877,15 @@ class Agent:
             yield DataBlockEndEvent(
                 reply_id=self.state.reply_id,
                 block_id=data_block_id,
+            )
+
+        # Guard against empty or interrupted streaming responses.
+        if completed_response is None:
+            raise RuntimeError(
+                "Model returned an empty streaming response: no is_last=True"
+                " chunk was received.  The model call may have been "
+                "interrupted mid-stream (network dropout, timeout, or model "
+                "bug).",
             )
 
         # Send the model call ended event with usage if available
@@ -1309,7 +1327,7 @@ class Agent:
         """Execute a single tool call and forward every event into *queue*.
 
         Args:
-            tool_call (`ToolBlockCall`):
+            tool_call (`ToolCallBlock`):
                 The tool call to execute.
             queue (`Queue`):
                 The shared async queue that collects events from all
@@ -1609,7 +1627,10 @@ class Agent:
                     input_kwargs = {"tool_call": tool_call}
 
                     async def next_handler(**kwargs: Any) -> AsyncGenerator:
-                        async for item in execute_chain(index + 1, **kwargs):
+                        async for item in execute_chain(
+                            index + 1,
+                            **{**input_kwargs, **kwargs},
+                        ):
                             yield item
 
                     async for item in mw.on_acting(
@@ -1673,7 +1694,7 @@ class Agent:
             message (`str`):
                 The error message to be returned for the tool call.
             state (`ToolResultState`):
-                The state of the tool result, which can be "error", "denied",
+                The state of the tool result, such as "error" or "denied".
 
         Yields:
             `ToolResultStartEvent \
@@ -2145,7 +2166,7 @@ class Agent:
                                     # pylint: disable=cell-var-from-loop
                                     return await execute_chain(
                                         index + 1,
-                                        **kwargs,
+                                        **{**input_kwargs, **kwargs},
                                     )
 
                                 return await mw.on_model_call(
@@ -2452,39 +2473,11 @@ class Agent:
             elif isinstance(block, DataBlock):
                 data_blocks.append(block)
 
-        # Handle the text blocks. We only auto-close the open text block
-        # when the current chunk has neither text NOR data — a chunk that
-        # carries only data (e.g. an omni-style audio PCM delta arriving
-        # between two text deltas) must keep the text stream alive so the
-        # frontend doesn't fragment one logical text stream into many
-        # separate bubbles. A chunk with tool calls (and no text/data)
-        # still closes text, which preserves text → tool → text render
-        # order via distinct text blocks.
-        if text_blocks:
-            # If the current chunk has text blocks but no text block id,
-            # start with a start event
-            if not block_ids.get("text"):
-                block_ids["text"] = _generate_id()
-                yield TextBlockStartEvent(
-                    reply_id=self.state.reply_id,
-                    block_id=block_ids["text"],
-                )
-            # Go on using the existing text block id to generate delta events
-            yield TextBlockDeltaEvent(
-                reply_id=self.state.reply_id,
-                block_id=block_ids["text"],
-                delta="".join([_.text for _ in text_blocks]),
-            )
-
-        elif block_ids.get("text") and not data_blocks:
-            yield TextBlockEndEvent(
-                reply_id=self.state.reply_id,
-                block_id=block_ids["text"],
-            )
-            block_ids["text"] = None
-
-        # Same reasoning as the text block above — keep the thinking
-        # stream open across data-only chunks.
+        # Handle the thinking stream: continue/open or close.
+        # We only auto-close when the chunk also carries no data blocks;
+        # a data-only chunk (e.g. an omni-style audio PCM delta) must keep
+        # both text and thinking streams alive so the frontend doesn't
+        # fragment one logical stream into many separate bubbles.
         if thinking_blocks:
             # Generate a new thinking block id and start event
             if not block_ids.get("thinking"):
@@ -2506,6 +2499,28 @@ class Agent:
                 block_id=block_ids["thinking"],
             )
             block_ids["thinking"] = None
+
+        # Handle the text stream: continue/open or close.  Placed after
+        # thinking so that a chunk carrying both ThinkingBlock and TextBlock
+        # emits thinking events first.
+        if text_blocks:
+            if not block_ids.get("text"):
+                block_ids["text"] = _generate_id()
+                yield TextBlockStartEvent(
+                    reply_id=self.state.reply_id,
+                    block_id=block_ids["text"],
+                )
+            yield TextBlockDeltaEvent(
+                reply_id=self.state.reply_id,
+                block_id=block_ids["text"],
+                delta="".join([_.text for _ in text_blocks]),
+            )
+        elif block_ids.get("text") and not data_blocks:
+            yield TextBlockEndEvent(
+                reply_id=self.state.reply_id,
+                block_id=block_ids["text"],
+            )
+            block_ids["text"] = None
 
         # Handle the tool calls that exist in the current chunk
         for tool_call in tool_call_blocks:

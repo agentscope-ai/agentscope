@@ -11,6 +11,7 @@ from ...storage import (
     SessionRecord,
     TeamRecord,
 )
+from ..._service import SessionStatus
 
 
 class TeamMemberView(BaseModel):
@@ -185,4 +186,25 @@ class ListMessagesResponse(BaseModel):
     messages: list = Field(description="Messages in chronological order.")
     is_running: bool = Field(
         description="Whether the session is currently running.",
+    )
+
+
+class SessionStatusResponse(BaseModel):
+    """Response body for probing a session's high-level status.
+
+    See :class:`~agentscope.app._service.SessionStatus` for the
+    semantics of each ``status`` value and the precedence rules used
+    to derive it.
+    """
+
+    session_id: str = Field(description="The session that was probed.")
+    status: SessionStatus = Field(
+        description=(
+            "The session's unified status. One of ``running`` "
+            "(some worker holds the run lease), ``idle`` (no worker, "
+            "context clean), ``awaiting_permission`` (no worker, "
+            "context parked on HITL tool call), or "
+            "``awaiting_external_result`` (no worker, context parked "
+            "on external executor)."
+        ),
     )

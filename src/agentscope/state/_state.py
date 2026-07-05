@@ -154,9 +154,9 @@ class AgentState(BaseModel):
 
     summary: str | list[TextBlock | DataBlock] = ""
     """The compressed summary of the context, which will be prepended to the
-    context when feed into the LLM."""
+    context when fed into the LLM."""
     context: list[Msg] = Field(default_factory=list)
-    """The uncompressed conversation context, that will be feed into the LLM"""
+    """The uncompressed conversation context, which will be fed into the LLM"""
     reply_id: str = Field(default_factory=_generate_id)
     """The id of the current reply, which is also used as the id of the
     final message of the reply."""

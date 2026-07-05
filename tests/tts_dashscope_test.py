@@ -8,9 +8,11 @@ Covers:
   * ``DashScopeTTSModel`` non-streaming aggregation.
   * ``DashScopeTTSModel`` streaming: incremental deltas and ``is_last``
     placement at the final chunk only.
+  * ``DashScopeCosyVoiceTTSModel`` WebSocket TTS streaming and non-streaming
+    output over a mocked SDK.
   * ``DashScopeRealtimeTTSModel`` connect / close / push / synthesize
     lifecycle over a mocked WebSocket.
-  * ``DashScopeCosyVoiceRealtimeTTSModel`` connect / close / push /
+  * ``DashScopeCosyVoiceTTSModel`` realtime connect / close / push /
     synthesize lifecycle over a mocked SpeechSynthesizer.
 """
 import base64
@@ -20,9 +22,10 @@ from typing import Any, AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, Mock, patch
 
+from agentscope.app._service._tts_model import _resolve_tts_class
 from agentscope.credential import DashScopeCredential
 from agentscope.tts import (
-    DashScopeCosyVoiceRealtimeTTSModel,
+    DashScopeCosyVoiceTTSModel,
     DashScopeTTSModel,
     DashScopeRealtimeTTSModel,
     TTSModelBase,
@@ -316,6 +319,164 @@ class TestDashScopeTTSModel(IsolatedAsyncioTestCase):
         self.assertEqual(len(chunks), 1)
         self.assertIsNone(chunks[0].content)
         self.assertTrue(chunks[0].is_last)
+
+
+# ---------------------------------------------------------------------------
+# DashScopeCosyVoiceTTSModel — WebSocket TTS streaming and aggregation
+# ---------------------------------------------------------------------------
+
+
+class TestDashScopeCosyVoiceTTSModel(IsolatedAsyncioTestCase):
+    """The unittests for DashScope CosyVoice TTS model."""
+
+    def setUp(self) -> None:
+        """Set up the test case."""
+        self.patcher = patch(
+            "dashscope.audio.tts_v2.SpeechSynthesizer",
+        )
+        self.mock_synthesizer_class = self.patcher.start()
+        self.synthesizer_instances: list[Mock] = []
+        self.next_audio = b"FULL_AUDIO"
+        self.next_chunks = [b"CHUNK"]
+        self.mock_synthesizer_class.side_effect = self._make_synthesizer
+
+    def tearDown(self) -> None:
+        """Tear down the test case."""
+        self.patcher.stop()
+
+    def _make_synthesizer(self, **init_kwargs: Any) -> Mock:
+        """Create a mocked tts_v2 SpeechSynthesizer instance."""
+        synth = Mock()
+        synth.init_kwargs = init_kwargs
+        callback = init_kwargs.get("callback")
+
+        if callback is None:
+            synth.call = Mock(return_value=self.next_audio)
+        else:
+
+            def _call(text: str, **kwargs: Any) -> None:
+                del text, kwargs
+                for chunk in self.next_chunks:
+                    callback.on_data(chunk)
+                callback.on_complete()
+                callback.on_close()
+
+            synth.call = Mock(side_effect=_call)
+
+        self.synthesizer_instances.append(synth)
+        return synth
+
+    def _make_model(
+        self,
+        stream: bool = False,
+    ) -> DashScopeCosyVoiceTTSModel:
+        """Create a DashScopeCosyVoiceTTSModel with test credentials."""
+        return DashScopeCosyVoiceTTSModel(
+            credential=DashScopeCredential(api_key="test"),
+            model="cosyvoice-v3-flash",
+            parameters=DashScopeCosyVoiceTTSModel.Parameters(
+                voice="longanhuan",
+            ),
+            stream=stream,
+        )
+
+    async def test_empty_string_short_circuits(self) -> None:
+        """``synthesize("")`` returns empty without touching the SDK."""
+        model = self._make_model(stream=False)
+
+        result = await model.synthesize("")
+
+        self.assertIsNone(result.content)
+        self.mock_synthesizer_class.assert_not_called()
+
+    async def test_non_stream_returns_full_audio(
+        self,
+    ) -> None:
+        """stream=False returns one full audio payload from the SDK."""
+        self.next_audio = b"AAAABBBB"
+        model = self._make_model(stream=False)
+
+        result = await model.synthesize("Hello")
+
+        self.assertIsInstance(result, TTSResponse)
+        self.assertEqual(result.content.source.media_type, _MEDIA_TYPE)
+        wav_payload = base64.b64decode(result.content.source.data)
+        with wave.open(io.BytesIO(wav_payload), "rb") as wav:
+            self.assertEqual(wav.getnchannels(), 1)
+            self.assertEqual(wav.getframerate(), 24000)
+            self.assertEqual(wav.readframes(wav.getnframes()), b"AAAABBBB")
+
+        synth = self.synthesizer_instances[-1]
+        init_kwargs = synth.init_kwargs
+        self.assertEqual(init_kwargs["model"], "cosyvoice-v3-flash")
+        self.assertEqual(init_kwargs["voice"], "longanhuan")
+        self.assertEqual(init_kwargs["format"].format, "pcm")
+        self.assertEqual(init_kwargs["format"].sample_rate, 24000)
+        synth.call.assert_called_once_with(text="Hello")
+
+    async def test_streaming_returns_callback_audio_chunks(
+        self,
+    ) -> None:
+        """stream=True returns callback audio chunks."""
+        self.next_chunks = [b"AAAA", b"BBBB"]
+        model = self._make_model(stream=True)
+
+        gen = await model.synthesize("Hello")
+        chunks = [c async for c in gen]
+
+        self.assertEqual(len(chunks), 1)
+        payload = base64.b64decode(chunks[0].content.source.data)
+        self.assertTrue(payload.startswith(b"RIFF"))
+        self.assertTrue(payload.endswith(b"AAAABBBB"))
+        self.assertEqual([c.is_last for c in chunks], [True])
+
+        synth = self.synthesizer_instances[-1]
+        self.assertIsNotNone(synth.init_kwargs["callback"])
+        synth.call.assert_called_once_with(text="Hello")
+
+    async def test_model_cards_and_credential_wiring(self) -> None:
+        """CosyVoice model cards are discovered only by the CosyVoice class,
+        and DashScope credentials expose the class."""
+        cosyvoice_cards = DashScopeCosyVoiceTTSModel.list_models()
+        cosyvoice_names = {card.name for card in cosyvoice_cards}
+        self.assertEqual(len(cosyvoice_cards), 2)
+        self.assertIn("cosyvoice-v3-flash", cosyvoice_names)
+        self.assertIn("cosyvoice-v3-plus", cosyvoice_names)
+        self.assertTrue(all(not card.realtime for card in cosyvoice_cards))
+        for card in cosyvoice_cards:
+            properties = card.parameter_schema["properties"]
+            self.assertIn("voice", properties)
+            self.assertIn("realtime", properties)
+        plus_card = next(
+            card
+            for card in cosyvoice_cards
+            if card.name == "cosyvoice-v3-plus"
+        )
+        self.assertIn(
+            "longanhuan",
+            plus_card.parameter_schema["properties"]["voice"]["enum"],
+        )
+
+        qwen_names = {card.name for card in DashScopeTTSModel.list_models()}
+        self.assertNotIn("cosyvoice-v3-flash", qwen_names)
+        self.assertNotIn("cosyvoice-v3-plus", qwen_names)
+
+        credential_classes = DashScopeCredential.get_tts_model_classes()
+        self.assertIn(DashScopeCosyVoiceTTSModel, credential_classes)
+        credential_names = {
+            card.name for card in DashScopeCredential.list_tts_models()
+        }
+        self.assertIn("cosyvoice-v3-flash", credential_names)
+        self.assertIn("cosyvoice-v3-plus", credential_names)
+
+        resolved_without_realtime = _resolve_tts_class(
+            credential_classes,
+            "cosyvoice-v3-plus",
+        )
+        self.assertIs(
+            resolved_without_realtime,
+            DashScopeCosyVoiceTTSModel,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -701,15 +862,15 @@ class TestDashScopeRealtimeTTSModel(  # pylint: disable=too-many-public-methods
 
 
 # ---------------------------------------------------------------------------
-# DashScopeCosyVoiceRealtimeTTSModel — realtime push / synthesize lifecycle
+# DashScopeCosyVoiceTTSModel — realtime push / synthesize lifecycle
 # ---------------------------------------------------------------------------
 
 
 # pylint: disable=too-many-public-methods
-class TestDashScopeCosyVoiceRealtimeTTSModel(
+class TestDashScopeCosyVoiceRealtimeMode(
     IsolatedAsyncioTestCase,
 ):
-    """Unit tests for the CosyVoice Realtime TTS model."""
+    """Unit tests for CosyVoice realtime mode."""
 
     def setUp(self) -> None:
         self.mock_modules = self._create_mock_cosyvoice_modules()
@@ -753,16 +914,20 @@ class TestDashScopeCosyVoiceRealtimeTTSModel(
     def _make_model(
         self,
         **kwargs: Any,
-    ) -> DashScopeCosyVoiceRealtimeTTSModel:
+    ) -> DashScopeCosyVoiceTTSModel:
         defaults: dict[str, Any] = {
             "credential": DashScopeCredential(api_key="test"),
             "model": "cosyvoice-v3-plus",
+            "parameters": DashScopeCosyVoiceTTSModel.Parameters(
+                voice="longanhuan",
+                realtime=True,
+            ),
             "stream": True,
             "max_retries": 1,
             "retry_delay": 0.0,
         }
         defaults.update(kwargs)
-        return DashScopeCosyVoiceRealtimeTTSModel(**defaults)
+        return DashScopeCosyVoiceTTSModel(**defaults)
 
     def _mock_synthesize_callback(self, model: Any) -> None:
         """Set up callback mocks so synthesize() doesn't block."""
@@ -782,6 +947,21 @@ class TestDashScopeCosyVoiceRealtimeTTSModel(
             async with model:
                 self.assertTrue(model._connected)
             self.assertFalse(model._connected)
+
+    async def test_async_context_skips_connect_when_not_realtime(self) -> None:
+        """async with does not connect when the realtime parameter is off."""
+        with patch.dict("sys.modules", self.mock_modules):
+            model = self._make_model(
+                parameters=DashScopeCosyVoiceTTSModel.Parameters(
+                    voice="longanhuan",
+                    realtime=False,
+                ),
+            )
+            async with model:
+                self.assertFalse(model._connected)
+            self.mock_modules[
+                "dashscope.audio.tts_v2"
+            ].SpeechSynthesizer.assert_not_called()
 
     # -- push --
 
@@ -1043,7 +1223,7 @@ class TestDashScopeCosyVoiceRealtimeTTSModel(
     async def test_callback_on_complete_sets_finish_event(self) -> None:
         """on_complete() correctly sets finish_event and chunk_event."""
         with patch.dict("sys.modules", self.mock_modules):
-            from agentscope.tts._dashscope._cosyvoice_realtime_model import (
+            from agentscope.tts._dashscope._cosyvoice_utils import (
                 _make_cosyvoice_callback_class,
             )
 
@@ -1061,7 +1241,7 @@ class TestDashScopeCosyVoiceRealtimeTTSModel(
     async def test_callback_on_data_accumulates(self) -> None:
         """on_data() accumulates PCM bytes and signals chunk_event."""
         with patch.dict("sys.modules", self.mock_modules):
-            from agentscope.tts._dashscope._cosyvoice_realtime_model import (
+            from agentscope.tts._dashscope._cosyvoice_utils import (
                 _make_cosyvoice_callback_class,
             )
 
@@ -1077,7 +1257,7 @@ class TestDashScopeCosyVoiceRealtimeTTSModel(
     async def test_callback_take_delta_incremental(self) -> None:
         """_take_delta() returns only new bytes since last call."""
         with patch.dict("sys.modules", self.mock_modules):
-            from agentscope.tts._dashscope._cosyvoice_realtime_model import (
+            from agentscope.tts._dashscope._cosyvoice_utils import (
                 _make_cosyvoice_callback_class,
             )
 
@@ -1098,7 +1278,7 @@ class TestDashScopeCosyVoiceRealtimeTTSModel(
     async def test_callback_take_delta_with_header(self) -> None:
         """_take_delta(header=True) prepends WAV header to first chunk."""
         with patch.dict("sys.modules", self.mock_modules):
-            from agentscope.tts._dashscope._cosyvoice_realtime_model import (
+            from agentscope.tts._dashscope._cosyvoice_utils import (
                 _make_cosyvoice_callback_class,
             )
 
@@ -1118,7 +1298,7 @@ class TestDashScopeCosyVoiceRealtimeTTSModel(
         """get_audio_chunks() prepends a WAV header when push() has not
         yet consumed any bytes (_consumed == 0)."""
         with patch.dict("sys.modules", self.mock_modules):
-            from agentscope.tts._dashscope._cosyvoice_realtime_model import (
+            from agentscope.tts._dashscope._cosyvoice_utils import (
                 _make_cosyvoice_callback_class,
             )
 
@@ -1146,7 +1326,7 @@ class TestDashScopeCosyVoiceRealtimeTTSModel(
         push() already consumed and sent the first chunk with a header
         (_consumed > 0)."""
         with patch.dict("sys.modules", self.mock_modules):
-            from agentscope.tts._dashscope._cosyvoice_realtime_model import (
+            from agentscope.tts._dashscope._cosyvoice_utils import (
                 _make_cosyvoice_callback_class,
             )
 
@@ -1181,7 +1361,7 @@ class TestDashScopeCosyVoiceRealtimeTTSModel(
         """get_audio_response() prepends a WAV header when no data has been
         consumed yet (_consumed == 0)."""
         with patch.dict("sys.modules", self.mock_modules):
-            from agentscope.tts._dashscope._cosyvoice_realtime_model import (
+            from agentscope.tts._dashscope._cosyvoice_utils import (
                 _make_cosyvoice_callback_class,
             )
 
@@ -1204,7 +1384,7 @@ class TestDashScopeCosyVoiceRealtimeTTSModel(
         push() already consumed and sent the first chunk with a header
         (_consumed > 0)."""
         with patch.dict("sys.modules", self.mock_modules):
-            from agentscope.tts._dashscope._cosyvoice_realtime_model import (
+            from agentscope.tts._dashscope._cosyvoice_utils import (
                 _make_cosyvoice_callback_class,
             )
 
@@ -1228,7 +1408,7 @@ class TestDashScopeCosyVoiceRealtimeTTSModel(
     async def test_callback_reset(self) -> None:
         """reset() clears all state."""
         with patch.dict("sys.modules", self.mock_modules):
-            from agentscope.tts._dashscope._cosyvoice_realtime_model import (
+            from agentscope.tts._dashscope._cosyvoice_utils import (
                 _make_cosyvoice_callback_class,
             )
 

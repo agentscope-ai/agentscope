@@ -24,6 +24,7 @@ from utils import AnyString
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.app._tool import (
     AgentCreate,
+    AgentInvite,
     DEFAULT_SUB_AGENT_TEMPLATE,
     TeamCreate,
     TeamDelete,
@@ -1179,3 +1180,482 @@ class TestTeamDelete(_TeamToolsTestBase):
                 "id": AnyString(),
             },
         )
+
+
+# ----------------------------------------------------------------------
+# AgentInvite tests
+# ----------------------------------------------------------------------
+
+
+class TestAgentDataInvitableValidator(IsolatedAsyncioTestCase):
+    """:class:`InviteConfig`'s cross-field validator rejects
+    ``invitable=True`` without a non-empty ``invite_description`` at
+    model boundary so PATCH / POST return HTTP 422 automatically."""
+
+    async def test_invitable_requires_description(self) -> None:
+        """``invitable=True`` with empty description fails validation."""
+        from pydantic import ValidationError
+        from agentscope.app.storage._model._agent import InviteConfig
+
+        with self.assertRaises(ValidationError):
+            AgentData(
+                name="x",
+                context_config=ContextConfig(),
+                react_config=ReActConfig(),
+                invite_config=InviteConfig(
+                    invitable=True,
+                    invite_description=None,
+                ),
+            )
+        with self.assertRaises(ValidationError):
+            AgentData(
+                name="x",
+                context_config=ContextConfig(),
+                react_config=ReActConfig(),
+                invite_config=InviteConfig(
+                    invitable=True,
+                    invite_description="   ",
+                ),
+            )
+
+    async def test_invitable_off_keeps_description(self) -> None:
+        """Draft description is preserved when ``invitable=False``."""
+        from agentscope.app.storage._model._agent import InviteConfig
+
+        data = AgentData(
+            name="x",
+            context_config=ContextConfig(),
+            react_config=ReActConfig(),
+            invite_config=InviteConfig(
+                invitable=False,
+                invite_description="draft",
+            ),
+        )
+        self.assertEqual(data.invite_config.invite_description, "draft")
+        self.assertFalse(data.invite_config.invitable)
+
+
+class _AgentInviteTestBase(_TeamToolsTestBase):
+    """Fixture: leader in a team + one invitable "Monday" agent with
+    a primary session so ``AgentInvite`` has something to borrow."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        # Leader creates a team.
+        await TeamCreate(
+            storage=self.storage,
+            message_bus=self.bus,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+        )(name="team", description="d")
+
+        # A pre-existing invitable user-owned agent.
+        from agentscope.app.storage._model._agent import InviteConfig
+
+        self.monday_agent = AgentRecord(
+            user_id=self.user_id,
+            source="user",
+            data=AgentData(
+                name="Monday",
+                system_prompt="I am Monday.",
+                context_config=ContextConfig(),
+                react_config=ReActConfig(),
+                invite_config=InviteConfig(
+                    invitable=True,
+                    invite_description="Expert on X.",
+                ),
+            ),
+        )
+        await self.storage.upsert_agent(self.user_id, self.monday_agent)
+        self.monday_session = await self.storage.upsert_session(
+            user_id=self.user_id,
+            agent_id=self.monday_agent.id,
+            config=SessionConfig(workspace_id="ws-monday"),
+        )
+
+
+class TestAgentInviteSuccess(_AgentInviteTestBase):
+    """Happy-path: leader borrows Monday; borrowed session is minted
+    on top of Monday's existing AgentRecord and joins the team as an
+    invited member."""
+
+    async def test_invites_existing_agent(self) -> None:
+        """A successful ``AgentInvite`` mints a fresh session on the
+        invited agent, tags it invited in the team roster, and delivers
+        the initial prompt via inbox + wakeup."""
+        pool = [self.monday_agent]
+        tool = AgentInvite(
+            storage=self.storage,
+            message_bus=self.bus,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+            invitable_pool=pool,
+        )
+        target = f"Monday@{self.monday_agent.id[:8]}"
+        chunk = await tool(target=target, prompt="please look up X")
+        self.assertDictEqual(
+            chunk.model_dump(),
+            {
+                "content": [
+                    {"type": "text", "text": AnyString(), "id": AnyString()},
+                ],
+                "state": "running",
+                "is_last": True,
+                "metadata": {},
+                "id": AnyString(),
+            },
+        )
+
+        # No new AgentRecord — the invited agent's id is reused.
+        agents = await self.storage.list_agents(self.user_id)
+        agent_ids = {a.id for a in agents}
+        self.assertIn(self.monday_agent.id, agent_ids)
+        # Only leader + Monday exist (no team-spawned worker record).
+        self.assertEqual(len(agents), 2)
+
+        # Team now has exactly one invited member pointing at Monday.
+        sess = await self.storage.get_session(
+            self.user_id,
+            self.leader_agent.id,
+            self.leader_session.id,
+        )
+        team = await self.storage.get_team(self.user_id, sess.team_id)
+        self.assertEqual(len(team.data.members), 1)
+        member = team.data.members[0]
+        self.assertEqual(member.role, "invited")
+        self.assertEqual(member.agent_id, self.monday_agent.id)
+        self.assertEqual(member.owner_id, self.user_id)
+
+        # The borrowed session is distinct from Monday's primary
+        # session but inherits its workspace_id.
+        self.assertNotEqual(member.session_id, self.monday_session.id)
+        borrowed = await self.storage.get_session(
+            self.user_id,
+            self.monday_agent.id,
+            member.session_id,
+        )
+        self.assertEqual(borrowed.config.workspace_id, "ws-monday")
+        self.assertEqual(borrowed.team_id, team.id)
+
+        # Borrowed session starts with a fresh PermissionContext —
+        # no leader / Monday state carried over.
+        self.assertEqual(
+            borrowed.state.permission_context,
+            PermissionContext(),
+        )
+
+        # Initial prompt was delivered to the borrowed session only.
+        inbox = await self.bus.inbox_drain(member.session_id, max_count=10)
+        self.assertEqual(len(inbox), 1)
+        self.assertIn("please look up X", inbox[0][1]["hint"])
+        # Monday's primary session inbox is untouched.
+        primary_inbox = await self.bus.inbox_drain(
+            self.monday_session.id,
+            max_count=10,
+        )
+        self.assertEqual(primary_inbox, [])
+
+
+class TestAgentInviteRejections(_AgentInviteTestBase):
+    """``AgentInvite`` rejects the obvious bad inputs / states."""
+
+    _EXPECTED_ERROR_CHUNK = {
+        "content": [
+            {"type": "text", "text": AnyString(), "id": AnyString()},
+        ],
+        "state": "error",
+        "is_last": True,
+        "metadata": {},
+        "id": AnyString(),
+    }
+
+    def _tool(self, pool: list | None = None) -> AgentInvite:
+        """Build an :class:`AgentInvite` bound to the leader session."""
+        return AgentInvite(
+            storage=self.storage,
+            message_bus=self.bus,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+            invitable_pool=pool or [self.monday_agent],
+        )
+
+    async def test_rejects_malformed_target(self) -> None:
+        """A ``target`` without an ``@`` separator is rejected."""
+        chunk = await self._tool()(target="just-a-name", prompt="hi")
+        self.assertDictEqual(chunk.model_dump(), self._EXPECTED_ERROR_CHUNK)
+
+    async def test_rejects_unknown_handle(self) -> None:
+        """A syntactically-valid ``target`` whose handle prefix does
+        not match any agent in the pool is rejected."""
+        chunk = await self._tool()(
+            target="Monday@deadbeef",
+            prompt="hi",
+        )
+        self.assertDictEqual(chunk.model_dump(), self._EXPECTED_ERROR_CHUNK)
+
+    async def test_rejects_when_no_longer_invitable(self) -> None:
+        """Snapshot said invitable but fresh read shows the toggle off."""
+        # Flip the toggle off in storage while pool snapshot still has it.
+        stale = self.monday_agent
+        stale.data.invite_config.invitable = False
+        stale.data.invite_config.invite_description = None
+        await self.storage.upsert_agent(self.user_id, stale)
+
+        chunk = await self._tool(pool=[stale])(
+            target=f"Monday@{stale.id[:8]}",
+            prompt="hi",
+        )
+        self.assertDictEqual(chunk.model_dump(), self._EXPECTED_ERROR_CHUNK)
+
+    async def test_rejects_when_not_leader(self) -> None:
+        """A session that has no team can't invite."""
+        loner = await self.storage.upsert_session(
+            user_id=self.user_id,
+            agent_id=self.leader_agent.id,
+            config=SessionConfig(workspace_id="ws-lone"),
+        )
+        tool = AgentInvite(
+            storage=self.storage,
+            message_bus=self.bus,
+            user_id=self.user_id,
+            session_id=loner.id,
+            agent_id=self.leader_agent.id,
+            invitable_pool=[self.monday_agent],
+        )
+        chunk = await tool(
+            target=f"Monday@{self.monday_agent.id[:8]}",
+            prompt="hi",
+        )
+        self.assertDictEqual(chunk.model_dump(), self._EXPECTED_ERROR_CHUNK)
+
+    async def test_rejects_duplicate_borrow(self) -> None:
+        """One team, one borrow per agent."""
+        tool = self._tool()
+        await tool(
+            target=f"Monday@{self.monday_agent.id[:8]}",
+            prompt="task 1",
+        )
+        chunk = await tool(
+            target=f"Monday@{self.monday_agent.id[:8]}",
+            prompt="task 2",
+        )
+        self.assertDictEqual(chunk.model_dump(), self._EXPECTED_ERROR_CHUNK)
+
+
+class TestTeamSayInvitedRouting(_AgentInviteTestBase):
+    """``TeamSay`` reaches the borrowed session using the ``@handle``
+    display string, and the invited agent can reply back."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        # Borrow Monday.
+        await AgentInvite(
+            storage=self.storage,
+            message_bus=self.bus,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+            invitable_pool=[self.monday_agent],
+        )(target=f"Monday@{self.monday_agent.id[:8]}", prompt="join")
+
+        sess = await self.storage.get_session(
+            self.user_id,
+            self.leader_agent.id,
+            self.leader_session.id,
+        )
+        team = await self.storage.get_team(self.user_id, sess.team_id)
+        self.borrowed_sid = next(
+            m.session_id for m in team.data.members if m.role == "invited"
+        )
+        # Drain the initial "join" prompt so later inbox checks see
+        # only the subsequent TeamSay delivery.
+        await self.bus.inbox_drain(self.borrowed_sid, max_count=10)
+        await self.bus.dequeue_wakeups(max_count=10)
+
+    async def test_leader_addresses_invited_by_display(self) -> None:
+        """Leader's ``TeamSay(to="Monday@<prefix>")`` reaches the
+        borrowed session — not Monday's primary session."""
+        display = f"Monday@{self.monday_agent.id[:8]}"
+        tool = TeamSay(
+            storage=self.storage,
+            message_bus=self.bus,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+            role="leader",
+        )
+        chunk = await tool(content="hey", to=display)
+        self.assertEqual(chunk.state.value, "running")
+
+        borrowed_inbox = await self.bus.inbox_drain(
+            self.borrowed_sid,
+            max_count=10,
+        )
+        self.assertEqual(len(borrowed_inbox), 1)
+        primary_inbox = await self.bus.inbox_drain(
+            self.monday_session.id,
+            max_count=10,
+        )
+        self.assertEqual(primary_inbox, [])
+
+
+class TestTeamDeletePreservesInvited(_AgentInviteTestBase):
+    """``TeamDelete`` removes the borrowed session but preserves the
+    invited agent's :class:`AgentRecord` and other sessions."""
+
+    async def test_borrowed_session_dies_agent_survives(self) -> None:
+        """After ``TeamDelete``, the invited agent's ``AgentRecord``
+        and primary session survive; only the team-scoped borrowed
+        session is removed."""
+        await AgentInvite(
+            storage=self.storage,
+            message_bus=self.bus,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+            invitable_pool=[self.monday_agent],
+        )(target=f"Monday@{self.monday_agent.id[:8]}", prompt="join")
+
+        sess = await self.storage.get_session(
+            self.user_id,
+            self.leader_agent.id,
+            self.leader_session.id,
+        )
+        team = await self.storage.get_team(self.user_id, sess.team_id)
+        borrowed_sid = next(
+            m.session_id for m in team.data.members if m.role == "invited"
+        )
+
+        await TeamDelete(
+            storage=self.storage,
+            message_bus=self.bus,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+        )()
+
+        # Monday's AgentRecord survives.
+        monday = await self.storage.get_agent(
+            self.user_id,
+            self.monday_agent.id,
+        )
+        self.assertIsNotNone(monday)
+        # Monday's primary session survives.
+        primary = await self.storage.get_session(
+            self.user_id,
+            self.monday_agent.id,
+            self.monday_session.id,
+        )
+        self.assertIsNotNone(primary)
+        # Borrowed session is gone.
+        gone = await self.storage.get_session(
+            self.user_id,
+            self.monday_agent.id,
+            borrowed_sid,
+        )
+        self.assertIsNone(gone)
+
+
+class TestDeleteInvitedAgentReverseCascade(_AgentInviteTestBase):
+    """Deleting an invited agent while it is borrowed extracts the
+    stale entry from the borrowing team's roster."""
+
+    async def test_reverse_cascade(self) -> None:
+        """Deleting an invited agent while it is borrowed also strips
+        the stale entry from the borrowing team's ``members`` /
+        ``member_ids`` — the leader's later ``TeamSay`` will hit a
+        clean "no such member" instead of dangling routing."""
+        from agentscope.app._service import SessionService
+
+        await AgentInvite(
+            storage=self.storage,
+            message_bus=self.bus,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+            invitable_pool=[self.monday_agent],
+        )(target=f"Monday@{self.monday_agent.id[:8]}", prompt="join")
+
+        service = SessionService(
+            storage=self.storage,
+            message_bus=self.bus,
+        )
+        await service.delete_agent(self.user_id, self.monday_agent.id)
+
+        sess = await self.storage.get_session(
+            self.user_id,
+            self.leader_agent.id,
+            self.leader_session.id,
+        )
+        team = await self.storage.get_team(self.user_id, sess.team_id)
+        # No stale invited entry remains.
+        self.assertEqual(
+            [
+                m
+                for m in team.data.members
+                if m.agent_id == self.monday_agent.id
+            ],
+            [],
+        )
+        # Legacy member_ids scrubbed too.
+        self.assertNotIn(self.monday_agent.id, team.data.member_ids)
+
+
+class TestEnsureTeamMembersMigration(_TeamToolsTestBase):
+    """Legacy ``TeamRecord`` with only ``member_ids`` populated is
+    migrated to the new ``members`` shape on first read via
+    ``ensure_team_members``."""
+
+    async def test_legacy_member_ids_migrate_to_created_role(self) -> None:
+        """A ``TeamRecord`` whose stored shape only carries the legacy
+        ``member_ids`` list is migrated in place on first read via
+        ``ensure_team_members``: each id becomes a
+        ``TeamMember(role="created", ...)`` entry, and the writeback
+        means later reads hit the fast path."""
+        from agentscope.app.storage._model import TeamData, TeamRecord
+        from agentscope.app.storage._utils import _ensure_team_members
+
+        # Fabricate a legacy worker agent + session (no ``members``
+        # entry on the team, just ``member_ids``).
+        worker = _make_agent_record(
+            self.user_id,
+            "legacy-worker",
+            source="team",
+        )
+        await self.storage.upsert_agent(self.user_id, worker)
+        worker_sess = await self.storage.upsert_session(
+            user_id=self.user_id,
+            agent_id=worker.id,
+            config=SessionConfig(workspace_id="ws-w"),
+        )
+
+        team = TeamRecord(
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            data=TeamData(
+                name="legacy",
+                description="",
+                member_ids=[worker.id],
+                # members deliberately left empty
+            ),
+        )
+        await self.storage.upsert_team(self.user_id, team)
+
+        members = await _ensure_team_members(
+            self.storage,
+            self.user_id,
+            team,
+        )
+        self.assertEqual(len(members), 1)
+        self.assertEqual(members[0].role, "created")
+        self.assertEqual(members[0].agent_id, worker.id)
+        self.assertEqual(members[0].session_id, worker_sess.id)
+        self.assertEqual(members[0].owner_id, self.user_id)
+
+        # And the writeback happened — subsequent reads take the fast
+        # path.
+        stored = await self.storage.get_team(self.user_id, team.id)
+        self.assertEqual(len(stored.data.members), 1)

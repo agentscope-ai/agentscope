@@ -561,6 +561,81 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             user_messages[-1].get_text_content(),
         )
 
+    async def test_on_reply_keeps_outer_input_when_inner_omits_kwargs(
+        self,
+    ) -> None:
+        """Argumentless next_handler() keeps outer reply input changes."""
+
+        class ModifyInputMiddleware(MiddlewareBase):
+            """Middleware that replaces the reply input."""
+
+            async def on_reply(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., AsyncGenerator],
+            ) -> AsyncGenerator:
+                inputs = input_kwargs["inputs"]
+                modified = UserMsg(
+                    name=inputs.name,
+                    content="MODIFIED by outer middleware",
+                )
+                async for item in next_handler(inputs=modified):
+                    yield item
+
+        class TransparentMiddleware(MiddlewareBase):
+            """Middleware that calls next_handler() without passing kwargs."""
+
+            async def on_reply(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., AsyncGenerator],
+            ) -> AsyncGenerator:
+                assert (
+                    "MODIFIED by outer middleware"
+                    in input_kwargs["inputs"].get_text_content()
+                )
+                async for item in next_handler():
+                    yield item
+
+        received_messages = []
+
+        class TrackingModel(MockModel):
+            """Model that tracks received messages."""
+
+            async def _call_api(
+                self,
+                *args: Any,
+                **kwargs: Any,
+            ) -> ChatResponse:
+                received_messages.extend(kwargs.get("messages", []))
+                return await super()._call_api(*args, **kwargs)
+
+        tracking_model = TrackingModel()
+        tracking_model.set_responses(
+            [ChatResponse(content=[TextBlock(text="response")], is_last=True)],
+        )
+
+        agent_instance = Agent(
+            name="test_agent",
+            system_prompt="test prompt",
+            model=tracking_model,
+            toolkit=self.toolkit,
+            middlewares=[
+                ModifyInputMiddleware(),
+                TransparentMiddleware(),
+            ],
+        )
+
+        await agent_instance.reply(UserMsg("user", "original message"))
+
+        user_messages = [m for m in received_messages if m.role == "user"]
+        self.assertIn(
+            "MODIFIED by outer middleware",
+            user_messages[-1].get_text_content(),
+        )
+
     async def test_on_reasoning_middleware_modify_input(self) -> None:
         """Test that on_reasoning middleware can modify tool_choice input."""
 
@@ -814,6 +889,166 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             any(
                 "INJECTED SYSTEM MESSAGE" in m.get_text_content()
                 for m in system_messages
+            ),
+        )
+
+    async def test_on_model_call_keeps_outer_messages_when_inner_omits_kwargs(
+        self,
+    ) -> None:
+        """Transparent inner model-call middleware keeps outer messages."""
+
+        class ModifyMessagesMiddleware(MiddlewareBase):
+            """Middleware that changes the messages."""
+
+            async def on_model_call(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., Any],
+            ) -> Union[ChatResponse, AsyncGenerator[ChatResponse, None]]:
+                modified_messages = [
+                    SystemMsg(
+                        name="system",
+                        content="INJECTED SYSTEM MESSAGE",
+                    ),
+                ] + input_kwargs["messages"]
+                return await next_handler(messages=modified_messages)
+
+        class TransparentMiddleware(MiddlewareBase):
+            """Middleware that calls next_handler() without passing kwargs."""
+
+            async def on_model_call(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., Any],
+            ) -> Union[ChatResponse, AsyncGenerator[ChatResponse, None]]:
+                system_messages = [
+                    m for m in input_kwargs["messages"] if m.role == "system"
+                ]
+                assert any(
+                    "INJECTED SYSTEM MESSAGE" in m.get_text_content()
+                    for m in system_messages
+                )
+                return await next_handler()
+
+        received_messages = []
+
+        class TrackingModel(MockModel):
+            """Model that tracks received messages."""
+
+            async def _call_api(
+                self,
+                *args: Any,
+                **kwargs: Any,
+            ) -> ChatResponse:
+                received_messages.extend(kwargs.get("messages", []))
+                return await super()._call_api(*args, **kwargs)
+
+        tracking_model = TrackingModel()
+        tracking_model.set_responses(
+            [ChatResponse(content=[TextBlock(text="response")], is_last=True)],
+        )
+
+        agent_instance = Agent(
+            name="test_agent",
+            system_prompt="test prompt",
+            model=tracking_model,
+            toolkit=self.toolkit,
+            middlewares=[
+                ModifyMessagesMiddleware(),
+                TransparentMiddleware(),
+            ],
+        )
+
+        await agent_instance.reply(UserMsg("user", "test message"))
+
+        system_messages = [m for m in received_messages if m.role == "system"]
+        self.assertTrue(
+            any(
+                "INJECTED SYSTEM MESSAGE" in m.get_text_content()
+                for m in system_messages
+            ),
+        )
+
+    async def test_on_model_call_keeps_outer_messages_with_partial_kwargs(
+        self,
+    ) -> None:
+        """Partial next_handler kwargs keep outer model-call changes."""
+        injected_text = "INJECTED SYSTEM MESSAGE FROM OUTER MIDDLEWARE"
+        inner_saw_injected_message = False
+
+        class ModifyMessagesMiddleware(MiddlewareBase):
+            """Middleware that changes the messages."""
+
+            async def on_model_call(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., Any],
+            ) -> Union[ChatResponse, AsyncGenerator[ChatResponse, None]]:
+                modified_messages = [
+                    SystemMsg(
+                        name="system",
+                        content=injected_text,
+                    ),
+                ] + input_kwargs["messages"]
+                return await next_handler(messages=modified_messages)
+
+        class PartialForwardMiddleware(MiddlewareBase):
+            """Middleware that forwards only one of the current kwargs."""
+
+            async def on_model_call(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., Any],
+            ) -> Union[ChatResponse, AsyncGenerator[ChatResponse, None]]:
+                nonlocal inner_saw_injected_message
+                inner_saw_injected_message = any(
+                    injected_text in m.get_text_content()
+                    for m in input_kwargs["messages"]
+                )
+                return await next_handler(
+                    tool_choice=input_kwargs["tool_choice"],
+                )
+
+        received_messages = []
+
+        class TrackingModel(MockModel):
+            """Model that tracks received messages."""
+
+            async def _call_api(
+                self,
+                *args: Any,
+                **kwargs: Any,
+            ) -> ChatResponse:
+                received_messages.extend(kwargs.get("messages", []))
+                return await super()._call_api(*args, **kwargs)
+
+        tracking_model = TrackingModel()
+        tracking_model.set_responses(
+            [ChatResponse(content=[TextBlock(text="response")], is_last=True)],
+        )
+
+        agent_instance = Agent(
+            name="test_agent",
+            system_prompt="test prompt",
+            model=tracking_model,
+            toolkit=self.toolkit,
+            middlewares=[
+                ModifyMessagesMiddleware(),
+                PartialForwardMiddleware(),
+            ],
+        )
+
+        await agent_instance.reply(UserMsg("user", "test message"))
+
+        self.assertTrue(inner_saw_injected_message)
+        self.assertTrue(
+            any(
+                injected_text in m.get_text_content()
+                for m in received_messages
             ),
         )
 

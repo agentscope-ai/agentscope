@@ -96,6 +96,9 @@ class CredentialFactory:
                 "credential_cls must be a CredentialBase subclass.",
             )
 
+        if credential_cls in cls._classes:
+            return
+
         values = cls._get_discriminator_values(credential_cls)
         type_field = credential_cls.model_fields.get("type")
         if type_field is None:

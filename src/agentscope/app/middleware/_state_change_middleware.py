@@ -13,10 +13,11 @@ Two kinds of change are detected:
   while handling a user confirmation). Pushes
   ``CustomEvent(name="state_updated", value={...})``.
 - **Team change** — the tool that just ran is one of the team tools
-  (``TeamCreate``, ``AgentCreate``, ``TeamDelete``). These tools
-  directly mutate storage (``TeamRecord``, ``SessionRecord.team_id``),
-  so we don't need to check storage; the fact that the tool ran is
-  the trigger. Pushes ``CustomEvent(name="team_updated", value={})``.
+  (``TeamCreate``, ``AgentCreate``, ``AgentInvite``, ``TeamDelete``).
+  These tools directly mutate storage (``TeamRecord``,
+  ``SessionRecord.team_id``), so we don't need to check storage; the
+  fact that the tool ran is the trigger. Pushes
+  ``CustomEvent(name="team_updated", value={})``.
 
 Both events are published directly to the bus (via
 ``session_publish_event``) instead of being yielded through the agent's
@@ -32,7 +33,9 @@ from .._bus_ops import publish_session_event
 from ...event import CustomEvent
 from ...middleware import MiddlewareBase
 
-_TEAM_TOOL_NAMES = frozenset({"TeamCreate", "AgentCreate", "TeamDelete"})
+_TEAM_TOOL_NAMES = frozenset(
+    {"TeamCreate", "AgentCreate", "AgentInvite", "TeamDelete"},
+)
 # Tool names whose execution implies a team membership change.
 
 

@@ -13,6 +13,7 @@ from ._schedule import (
 )
 from ._agent import (
     AgentSchemaResponse,
+    AgentSchemaV2Response,
     ListAgentsResponse,
     CreateAgentRequest,
     CreateAgentResponse,
@@ -48,6 +49,8 @@ from ._session import (
     UpdateSessionRequest,
     ListSessionsResponse,
     ListMessagesResponse,
+    SessionStatus,
+    SessionStatusResponse,
     SessionView,
     TeamDetailResponse,
     TeamMemberView,
@@ -56,6 +59,7 @@ from ._session import (
 __all__ = [
     # Agent
     "AgentSchemaResponse",
+    "AgentSchemaV2Response",
     "ListAgentsResponse",
     "CreateAgentRequest",
     "CreateAgentResponse",
@@ -104,6 +108,8 @@ __all__ = [
     "UpdateSessionRequest",
     "ListSessionsResponse",
     "ListMessagesResponse",
+    "SessionStatus",
+    "SessionStatusResponse",
     "SessionView",
     "TeamDetailResponse",
     "TeamMemberView",

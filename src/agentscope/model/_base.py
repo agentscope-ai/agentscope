@@ -24,13 +24,12 @@ from ..message import (
     ThinkingBlock,
     ToolResultBlock,
     DataBlock,
-    URLSource,
-    Base64Source,
     HintBlock,
 )
 from ..tool import ToolChoice
 
 _TOOL_CHOICE_LITERAL_MODES = {"auto", "none", "required"}
+_MULTIMODAL_DATA_BLOCK_TOKEN_ESTIMATE = 2000
 
 
 class ChatModelBase:
@@ -371,13 +370,10 @@ class ChatModelBase:
         if tools:
             acc_texts.append(json.dumps(tools, ensure_ascii=False))
 
-        # Add the multimodal tokens
-        for block in data_blocks:
-            if isinstance(block.source, URLSource):
-                # We don't download the content here to avoid blocking
-                acc_texts.append(str(block.source.url))
-            elif isinstance(block.source, Base64Source):
-                cnt += len(block.source.data) // 4
+        # Add the multimodal tokens. Binary payloads are not consumed by
+        # multimodal models as base64 text, and file URLs should not count as
+        # only a path string. Use a stable flat estimate for all DataBlocks.
+        cnt += len(data_blocks) * _MULTIMODAL_DATA_BLOCK_TOKEN_ESTIMATE
 
         # Count the text tokens
         acc_text = "".join(acc_texts)

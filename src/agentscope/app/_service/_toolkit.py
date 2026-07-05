@@ -6,11 +6,17 @@ workspace builtins, MCPs, skills, planning tools (Task*), background-task
 control (ToolStop), schedule control (Schedule*), team participation
 tools, and caller-supplied extras — into one :class:`Toolkit`.
 """
-from typing import Any
+from typing import Any, Literal
 
 from .._manager import BackgroundTaskManager, SchedulerManager
 from ..message_bus import MessageBus
-from .._tool import AgentCreate, TeamCreate, TeamDelete, TeamSay
+from .._tool import (
+    AgentCreate,
+    AgentInvite,
+    TeamCreate,
+    TeamDelete,
+    TeamSay,
+)
 from .._types import AgentToolFactory, SubAgentTemplate
 from ..storage import AgentRecord, SessionRecord, StorageBase
 from ...middleware import MiddlewareBase
@@ -53,10 +59,15 @@ async def get_toolkit(
        :meth:`SchedulerManager.list_tools`). Only attached when the
        session has a model configured (Schedule tools need a model to
        fire new chats with).
-    5. Team tools — selected inline by ``agent_record.source``:
-       worker (``"team"``) gets only ``TeamSay``; everyone else gets
-       the full leader-side toolset
-       (``TeamCreate / AgentCreate / TeamSay / TeamDelete``)
+    5. Team tools — variant based on the *session's* team role, not
+       the agent's ``source``. This matters because a borrowed
+       ("invited") agent's session must see worker-only tools even
+       though its underlying :class:`AgentRecord` still has
+       ``source='user'``. A session that is a worker in some team
+       gets only ``TeamSay``. A session that is not in any team OR
+       that is its team's leader gets the full leader-side toolset
+       (``TeamCreate / AgentCreate / TeamSay / TeamDelete``, plus
+       ``AgentInvite`` when the user has at least one invitable agent).
     6. Caller-supplied extras (``extra_factory``)
 
     Plus the workspace's skills and MCPs, which become the toolkit's
@@ -87,11 +98,16 @@ async def get_toolkit(
         user_id (`str`):
             Caller user id.
         agent_record (`AgentRecord`):
-            Pre-loaded agent record (loaded once by the caller). Its
-            ``source`` field determines which team tools are attached.
+            Pre-loaded agent record (loaded once by the caller). Still
+            used for its identity (``id``) and for pipeline consumers
+            downstream; the ``source`` field is no longer the team-tool
+            gate — see :attr:`session_record.team_id` below.
         session_record (`SessionRecord`):
             Pre-loaded session record (loaded once by the caller).
-            Used for the schedule-tool model configuration.
+            Used for the schedule-tool model configuration and — via
+            :attr:`SessionRecord.team_id` and the resolved team's
+            leader session id — for deciding which team tools to
+            attach.
         extra_factory (`AgentToolFactory | None`, optional):
             Async factory invoked once per assembly to produce
             user/session-specific extra tools.
@@ -146,12 +162,14 @@ time or interval"
             ),
         )
 
-    # Team tools — variant based on ``agent_record.source``. A worker
-    # only gets TeamSay (to report back); a user-owned agent always
-    # gets the full leader-side toolset. Each tool checks its own
-    # preconditions (am I in a team? am I the leader?) at call time
-    # against fresh storage, which is why the full set can be attached
-    # unconditionally without needing a stale snapshot of team_id.
+    # Team tools — variant based on the session's team role rather
+    # than the agent's ``source`` field. A borrowed ("invited") agent
+    # runs with ``source='user'`` on its underlying AgentRecord but
+    # its session must behave as a worker; the session-level check
+    # captures both created and invited workers uniformly. Sessions
+    # not in a team fall through to the leader-side toolset — each
+    # leader tool has a runtime precondition check anyway (am I in a
+    # team? am I the leader?), so attaching the full set is safe.
     team_tool_kwargs: dict[str, Any] = {
         "storage": storage,
         "message_bus": message_bus,
@@ -159,7 +177,14 @@ time or interval"
         "session_id": session_record.id,
         "agent_id": agent_record.id,
     }
-    if agent_record.source == "team":
+    team_role: Literal["leader", "worker"] | None = None
+    if session_record.team_id is not None:
+        team = await storage.get_team(user_id, session_record.team_id)
+        if team is not None:
+            team_role = (
+                "leader" if team.session_id == session_record.id else "worker"
+            )
+    if team_role == "worker":
         tools.append(TeamSay(**team_tool_kwargs, role="worker"))
     else:
         tools += [
@@ -171,6 +196,26 @@ time or interval"
             TeamSay(**team_tool_kwargs, role="leader"),
             TeamDelete(**team_tool_kwargs),
         ]
+        # Conditionally attach AgentInvite. Skipping construction when
+        # the user has no invitable agents keeps the input_schema enum
+        # non-empty (an empty enum would break tool-schema validators
+        # and confuse the LLM into calling a tool with no valid
+        # targets). Team-tool base is safe to call for either team or
+        # non-team sessions — AgentInvite rechecks the leader
+        # precondition at call time.
+        invitable_pool = [
+            a
+            for a in await storage.list_agents(user_id)
+            if a.data.invite_config.invitable
+            and (a.data.invite_config.invite_description or "").strip()
+        ]
+        if invitable_pool:
+            tools.append(
+                AgentInvite(
+                    **team_tool_kwargs,
+                    invitable_pool=invitable_pool,
+                ),
+            )
 
     # Caller-supplied extras.
     if extra_factory is not None:
