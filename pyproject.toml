@@ -101,8 +101,6 @@ s3 = [
 # wouldn't crash but the 2-tier add fallback degenerates into a
 # wasted LLM call.
 mem0 = ["mem0ai>=2.0.0"]
-# Required by `agentscope.middleware._longterm_memory.ReMeMiddleware`.
-reme = ["reme-ai>=0.4.0.6"]
 # ------------ Full ------------
 full = [
     "agentscope[models]",
@@ -113,7 +111,6 @@ full = [
     "agentscope[rag]",
     "agentscope[s3]",
     "agentscope[mem0]",
-    "agentscope[reme]",
 ]
 
 # ------------ Development ------------
