@@ -574,3 +574,32 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+    async def test_tool_call_with_incomplete_input_does_not_crash(
+        self,
+    ) -> None:
+        """A truncated ``block.input`` must not crash the formatter.
+
+        Context compression or interrupted streaming can leave a
+        ``ToolCallBlock.input`` as an incomplete JSON fragment. Ollama
+        expects ``arguments`` as a dict, so the formatter must repair the
+        fragment instead of raising ``JSONDecodeError``.
+        """
+        fmt = OllamaChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_1",
+                        name="get_weather",
+                        input='{"city": "Tok',
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        args = res[0]["tool_calls"][0]["function"]["arguments"]
+        self.assertIsInstance(args, dict)

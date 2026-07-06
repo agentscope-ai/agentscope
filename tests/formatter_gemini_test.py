@@ -716,3 +716,37 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+    async def test_tool_call_with_incomplete_input_does_not_crash(
+        self,
+    ) -> None:
+        """A truncated ``block.input`` must not crash the formatter.
+
+        Context compression or interrupted streaming can leave a
+        ``ToolCallBlock.input`` as an incomplete JSON fragment. The
+        formatter must repair it into a dict instead of raising
+        ``JSONDecodeError``.
+        """
+        fmt = GeminiChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_1",
+                        name="get_weather",
+                        input='{"city": "Tok',
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        function_call = [
+            part
+            for m in res
+            for part in m.get("parts", [])
+            if "function_call" in part
+        ][0]["function_call"]
+        self.assertIsInstance(function_call["args"], dict)
