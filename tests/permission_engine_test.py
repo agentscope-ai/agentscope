@@ -546,6 +546,16 @@ class PermissionEngineReadOnlyTest(IsolatedAsyncioTestCase):
         # Should ask (not read-only)
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
 
+    async def test_find_delete_is_not_read_only(self) -> None:
+        """Test that mutating find actions are not auto-allowed."""
+        decision = await self.engine.check_permission(
+            Bash(),
+            {"command": "find . -delete"},
+        )
+
+        # Should ask (find action mutates files)
+        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+
     async def test_compound_command_with_dangerous_path(self) -> None:
         """Test compound command with read-only and dangerous path o
         perations."""

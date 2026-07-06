@@ -132,6 +132,46 @@ READ_ONLY_COMMANDS = {
     "pip show",
 }
 
+FIND_MUTATING_ACTIONS = {
+    "-delete",
+    "-exec",
+    "-execdir",
+    "-ok",
+    "-okdir",
+    "-fls",
+    "-fprint",
+    "-fprintf",
+}
+
+FIND_PREDICATES_WITH_VALUE = {
+    "-anewer",
+    "-cnewer",
+    "-context",
+    "-exec",
+    "-execdir",
+    "-fprint",
+    "-fprintf",
+    "-fstype",
+    "-gid",
+    "-group",
+    "-ilname",
+    "-iname",
+    "-inum",
+    "-iwholename",
+    "-lname",
+    "-name",
+    "-newer",
+    "-path",
+    "-perm",
+    "-regex",
+    "-samefile",
+    "-size",
+    "-type",
+    "-user",
+    "-wholename",
+    "-xtype",
+}
+
 
 class BashCommandParser:
     """Parse Bash commands using tree-sitter for accurate syntax analysis."""
@@ -195,6 +235,9 @@ class BashCommandParser:
             `bool`:
                 True if the command is read-only, False otherwise
         """
+        if self._find_command_has_mutating_action(cmd):
+            return False
+
         # Check exact match in read-only commands
         if cmd in READ_ONLY_COMMANDS:
             return True
@@ -220,6 +263,41 @@ class BashCommandParser:
                 return True
 
         return False
+
+    def _find_command_has_mutating_action(self, cmd: str) -> bool:
+        """Check whether a find command contains mutating actions."""
+        try:
+            tokens = shlex.split(cmd)
+        except ValueError:
+            return True
+
+        find_idx = self._find_command_index(tokens)
+        if find_idx is None:
+            return False
+
+        skip_next = False
+        for token in tokens[find_idx + 1 :]:
+            if skip_next:
+                skip_next = False
+                continue
+            if token in FIND_MUTATING_ACTIONS:
+                return True
+            if token in FIND_PREDICATES_WITH_VALUE:
+                skip_next = True
+
+        return False
+
+    @staticmethod
+    def _find_command_index(tokens: List[str]) -> Optional[int]:
+        """Return the token index for a find executable, if present."""
+        for i, token in enumerate(tokens):
+            if "=" in token and not token.startswith("-"):
+                continue
+            if token == "find" or token.endswith("/find"):
+                return i
+            return None
+
+        return None
 
     def extract_file_paths(
         self,

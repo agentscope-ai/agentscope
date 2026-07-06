@@ -290,6 +290,44 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
                     f"Expected '{cmd}' to be non-read-only",
                 )
 
+    async def test_find_mutating_actions_are_not_read_only(self) -> None:
+        """Test that mutating find actions require normal permission checks."""
+        mutating_find_commands = [
+            "find . -delete",
+            "find . -name '*.tmp' -delete",
+            "find . -exec rm {} \\;",
+            "find . -execdir chmod 600 {} \\;",
+            "find . -ok rm {} \\;",
+            "find . -okdir rm {} \\;",
+            "find . -fprint files.txt",
+            "find . -fprintf files.txt '%p\\n'",
+            "find . -fls files.txt",
+        ]
+        for cmd in mutating_find_commands:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd}' to be non-read-only",
+                )
+
+    async def test_find_quoted_action_like_patterns_are_read_only(
+        self,
+    ) -> None:
+        """Test action-like find predicate values do not become actions."""
+        read_only_find_commands = [
+            "find . -name '-delete'",
+            "find . -name '-exec'",
+            "find . -path './-delete'",
+            "find . -regex '.*-exec.*'",
+            "find . -iname '-fprint'",
+        ]
+        for cmd in read_only_find_commands:
+            with self.subTest(cmd=cmd):
+                self.assertTrue(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd}' to be read-only",
+                )
+
     async def test_compound_command_all_read_only(self) -> None:
         """Test compound commands with all read-only subcommands."""
         compound_commands = [
