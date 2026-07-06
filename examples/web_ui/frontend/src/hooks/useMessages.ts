@@ -255,10 +255,7 @@ export function useMessages(
 			// 1. Fetch persisted history
 			setLoading(true);
 			try {
-				const { messages, is_running } = await sessionApi.messages(
-					sessionId,
-					agentId,
-				);
+				const { messages, is_running } = await sessionApi.messages(sessionId, agentId);
 				if (cancelled) return;
 				msgsRef.current = messages;
 				// If a reply is in flight (running on a worker) OR the

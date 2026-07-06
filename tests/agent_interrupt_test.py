@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=missing-class-docstring,missing-function-docstring
 # pylint: disable=redefined-builtin
 """Tests for agent interruption:
 

@@ -615,8 +615,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 								<ChatContent
 									className={'max-w-[var(--chat-content-w)] w-full'}
 									msgs={msgs}
-									sending={phase !== 'idle'}
-									interrupting={phase === 'interrupting'}
+									phase={phase}
 									disabled={selectedModel === null}
 									onSend={send}
 									onUserConfirm={onUserConfirm}

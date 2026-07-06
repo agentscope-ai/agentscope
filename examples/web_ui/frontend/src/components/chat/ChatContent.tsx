@@ -5,17 +5,17 @@ import { useRef, useEffect } from 'react';
 import { EmptyMessage } from './Empty';
 import { MessageBubble } from '@/components/chat/MessageBubble';
 import { TextInput } from '@/components/chat/TextInput.tsx';
+import type { ReplyPhase } from '@/hooks/useMessages';
 import { cn } from '@/lib/utils';
 
 interface ChatContentProps {
 	msgs: Msg[];
-	sending: boolean;
 	/**
-	 * Whether an interrupt is currently in progress (Stop clicked, waiting
-	 * for the terminating ReplyEndEvent). Forwarded to TextInput so the
-	 * Stop button can be disabled to prevent duplicate clicks.
+	 * Reply lifecycle phase from ``useMessages`` — forwarded to
+	 * ``TextInput`` so the single send / stop button can pick its
+	 * icon, tooltip, disabled state and click handler from one source.
 	 */
-	interrupting?: boolean;
+	phase: ReplyPhase;
 	disabled: boolean;
 	onSend: (content: ContentBlock[]) => void;
 	onUserConfirm: (
@@ -44,8 +44,7 @@ interface ChatContentProps {
 
 const ChatContentComponent: React.FC<ChatContentProps> = ({
 	msgs,
-	sending,
-	interrupting,
+	phase,
 	disabled,
 	onSend,
 	onUserConfirm,
@@ -65,8 +64,9 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 		const currentCount = msgs.length;
 		const prevCount = prevMsgCountRef.current;
 
+		const isActive = phase !== 'idle';
 		const shouldCheck =
-			(currentCount > prevCount && prevCount > 0) || (sending && prevCount > 0);
+			(currentCount > prevCount && prevCount > 0) || (isActive && prevCount > 0);
 
 		if (shouldCheck && scrollAreaRef.current) {
 			const { scrollHeight } = scrollAreaRef.current;
@@ -83,7 +83,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 		}
 
 		prevMsgCountRef.current = currentCount;
-	}, [msgs, sending]);
+	}, [msgs, phase]);
 
 	// Track if user is near bottom whenever they scroll
 	useEffect(() => {
@@ -127,8 +127,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 				autoComplete={autoComplete}
 				allowedInputTypes={allowedInputTypes}
 				fileProcessor={fileProcessor}
-				streaming={sending}
-				interrupting={interrupting}
+				phase={phase}
 				onInterrupt={onInterrupt}
 			/>
 		</div>

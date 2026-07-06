@@ -1,5 +1,5 @@
 import type { ContentBlock, TextBlock } from '@agentscope-ai/agentscope/message';
-import { Paperclip, Send, Loader2, Square, X } from 'lucide-react';
+import { Paperclip, Send, Loader2, Square, X, type LucideIcon } from 'lucide-react';
 import React, {
 	useState,
 	useRef,
@@ -12,6 +12,7 @@ import React, {
 import { Button } from '../ui/button';
 import { Kbd } from '../ui/kbd';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import type { ReplyPhase } from '@/hooks/useMessages';
 import { useTranslation } from '@/i18n/useI18n.ts';
 import { cn } from '@/lib/utils';
 import { isMac } from '@/utils/platform';
@@ -55,9 +56,14 @@ interface TextInputProps {
 	 * Runs concurrently for all selected files; the UI shows a loading state per file while processing.
 	 */
 	fileProcessor: (file: File) => Promise<ContentBlock | null>;
-	streaming?: boolean;
-	/** When true, an interrupt is in flight — Stop button is disabled. */
-	interrupting?: boolean;
+	/**
+	 * The current reply lifecycle phase from ``useMessages``. Drives the
+	 * send / stop button in one shot:
+	 *   - ``idle`` — Send (enabled when there is content to send)
+	 *   - ``streaming`` — Stop (click to interrupt)
+	 *   - ``interrupting`` — Stop (disabled while the interrupt is in flight)
+	 */
+	phase?: ReplyPhase;
 	onInterrupt?: () => void;
 }
 
@@ -86,8 +92,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			className,
 			allowedInputTypes,
 			fileProcessor,
-			streaming,
-			interrupting,
+			phase = 'idle',
 			onInterrupt,
 		},
 		ref,
@@ -172,6 +177,40 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			setValue('');
 			setFiles([]);
 		};
+
+		/**
+		 * Send / stop button configuration derived from the current reply
+		 * phase. One struct = one branch of rendering, so the JSX stays flat.
+		 */
+		const sendButton: {
+			icon: LucideIcon;
+			tooltip: string;
+			disabled: boolean;
+			onClick: (() => void) | undefined;
+		} = (() => {
+			if (phase === 'streaming') {
+				return {
+					icon: Square,
+					tooltip: t('textInput.stop'),
+					disabled: false,
+					onClick: onInterrupt,
+				};
+			}
+			if (phase === 'interrupting') {
+				return {
+					icon: Square,
+					tooltip: t('textInput.stopping'),
+					disabled: true,
+					onClick: onInterrupt,
+				};
+			}
+			return {
+				icon: Send,
+				tooltip: t('textInput.send'),
+				disabled: disabled || !value.trim() || hasProcessing,
+				onClick: handleSend,
+			};
+		})();
 
 		const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
 			if (!e.target.files) return;
@@ -337,42 +376,21 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 								</TooltipContent>
 							</Tooltip>
 
-							{/* Send / Stop button */}
-							{streaming ? (
-								<Tooltip>
-									<TooltipTrigger asChild>
-										<Button
-											type="button"
-											onClick={onInterrupt}
-											disabled={interrupting}
-											size="icon"
-											className="shrink-0 rounded-full"
-										>
-											<Square className="h-4 w-4" />
-										</Button>
-									</TooltipTrigger>
-									<TooltipContent>
-										{interrupting
-											? t('textInput.stopping')
-											: t('textInput.stop')}
-									</TooltipContent>
-								</Tooltip>
-							) : (
-								<Tooltip>
-									<TooltipTrigger asChild>
-										<Button
-											type="button"
-											onClick={handleSend}
-											disabled={disabled || !value.trim() || hasProcessing}
-											size="icon"
-											className="shrink-0 rounded-full"
-										>
-											<Send className="h-4 w-4" />
-										</Button>
-									</TooltipTrigger>
-									<TooltipContent>{t('textInput.send')}</TooltipContent>
-								</Tooltip>
-							)}
+							{/* Send / Stop button — driven by ``sendButton`` config */}
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<Button
+										type="button"
+										onClick={sendButton.onClick}
+										disabled={sendButton.disabled}
+										size="icon"
+										className="shrink-0 rounded-full"
+									>
+										<sendButton.icon className="h-4 w-4" />
+									</Button>
+								</TooltipTrigger>
+								<TooltipContent>{sendButton.tooltip}</TooltipContent>
+							</Tooltip>
 
 							{/* Hidden file input */}
 							<input
