@@ -149,8 +149,11 @@ class ChatResponse(DictMixin):
                     pass
 
         if new_block_dict:
-            # Attach new blocks to the content
-            self.content.extend(new_block_dict.values())
+            # Attach new blocks to the content.
+            self.content.extend(
+                block.model_copy(deep=True)
+                for block in new_block_dict.values()
+            )
 
         # Override the chat usage
         if chat_response.usage:

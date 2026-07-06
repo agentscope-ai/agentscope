@@ -48,9 +48,7 @@ if TYPE_CHECKING:
 # Parses a queued ``resume`` input dict back into its concrete event,
 # discriminated by the ``type`` field shared by these result events.
 _RESUME_INPUT_ADAPTER: TypeAdapter = TypeAdapter(
-    UserConfirmResultEvent
-    | ExternalExecutionResultEvent
-    | UserInterruptEvent,
+    UserConfirmResultEvent | ExternalExecutionResultEvent | UserInterruptEvent,
 )
 
 # Delay before re-queuing a ``resume`` trigger whose target session is

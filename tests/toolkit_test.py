@@ -231,7 +231,6 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "state": "success",
-                "is_interrupted": False,
                 "metadata": {},
                 "id": "test_1",
             },
@@ -416,7 +415,6 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "state": "success",
-                "is_interrupted": False,
                 "metadata": {},
                 "id": "test_2",
             },
@@ -562,7 +560,6 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "state": "success",
-                "is_interrupted": False,
                 "metadata": {},
                 "id": "test_add",
             },
@@ -628,7 +625,6 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "state": "success",
-                "is_interrupted": False,
                 "metadata": {},
                 "id": "test_weather",
             },
@@ -783,7 +779,6 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "state": "success",
-                "is_interrupted": False,
                 "metadata": {},
                 "id": "test_count",
             },
@@ -934,7 +929,6 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "state": "success",
-                "is_interrupted": False,
                 "metadata": {},
                 "id": "test_multiply",
             },
@@ -1040,7 +1034,6 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "state": "success",
-                "is_interrupted": False,
                 "metadata": {},
                 "id": "test_sequence",
             },
@@ -1257,7 +1250,6 @@ The tool instructions are a collection of suggestions, rules and notifications a
                 ],
                 "metadata": {},
                 "state": "success",
-                "is_interrupted": False,
             },
         )
 
@@ -1292,7 +1284,6 @@ The tool instructions are a collection of suggestions, rules and notifications a
                 ],
                 "metadata": {},
                 "state": "success",
-                "is_interrupted": False,
             },
         )
 
@@ -1323,7 +1314,6 @@ The tool instructions are a collection of suggestions, rules and notifications a
                 ],
                 "metadata": {},
                 "state": "success",
-                "is_interrupted": False,
             },
         )
 

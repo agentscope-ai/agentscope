@@ -241,14 +241,11 @@ class AgentState(BaseModel):
         last_msg = self.context[-1]
         if last_msg.role != "assistant" or last_msg.name != name:
             return False
-        result_ids = {
-            b.id for b in last_msg.get_content_blocks("tool_result")
-        }
+        result_ids = {b.id for b in last_msg.get_content_blocks("tool_result")}
         return any(
             tc.state == ToolCallState.ASKING
             or (
-                tc.state == ToolCallState.SUBMITTED
-                and tc.id not in result_ids
+                tc.state == ToolCallState.SUBMITTED and tc.id not in result_ids
             )
             for tc in last_msg.get_content_blocks("tool_call")
         )

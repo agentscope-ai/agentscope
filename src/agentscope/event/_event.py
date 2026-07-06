@@ -93,9 +93,9 @@ class ReplyStartEvent(EventBase):
 class ReplyEndReason(StrEnum):
     """The reason for reply ended."""
 
-    COMPLETED = "COMPLETED"
-    INTERRUPTED = "INTERRUPTED"
-    EXCEED_MAX_ITERS = "EXCEED_MAX_ITERS"
+    COMPLETED = "completed"
+    INTERRUPTED = "interrupted"
+    EXCEED_MAX_ITERS = "exceed_max_iters"
 
 
 class ReplyEndEvent(EventBase):
@@ -107,7 +107,7 @@ class ReplyEndEvent(EventBase):
     """ID of the session this reply belongs to."""
     reply_id: str
     """ID of the reply message produced by this reply."""
-    finished_reason: ReplyEndReason
+    finished_reason: ReplyEndReason = ReplyEndReason.COMPLETED
     """The finished reason of this reply."""
 
 
@@ -133,7 +133,9 @@ class ModelCallEndEvent(EventBase):
     """Number of input tokens consumed."""
     output_tokens: int
     """Number of output tokens generated."""
-    finished_reason: FinishedReason
+    finished_reason: FinishedReason = Field(
+        default=FinishedReason.COMPLETED,
+    )
     """The finished reason of this model call."""
 
 
@@ -461,9 +463,7 @@ class UserInterruptEvent(EventBase):
         own ``CancelledError`` cleanup.
     """
 
-    type: Literal[
-        EventType.USER_INTERRUPT
-    ] = EventType.USER_INTERRUPT
+    type: Literal[EventType.USER_INTERRUPT] = EventType.USER_INTERRUPT
     """Event type."""
     reply_id: str
     """ID of the reply message this interrupt targets."""
@@ -480,6 +480,7 @@ class ExternalExecutionResultEvent(EventBase):
     """ID of the reply message associated with this run."""
     execution_results: List[ToolResultBlock]
     """Results returned by the external executor."""
+
 
 class CustomEvent(EventBase):
     """Generic extensible event for signals that don't fit a specific

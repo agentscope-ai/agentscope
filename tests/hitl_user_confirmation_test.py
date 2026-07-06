@@ -196,6 +196,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
         ]
 
@@ -307,6 +308,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
             {
                 "type": "REQUIRE_USER_CONFIRM",
@@ -570,6 +572,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
             {
                 "type": "REQUIRE_USER_CONFIRM",
@@ -920,6 +923,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
             {
                 "type": "REQUIRE_USER_CONFIRM",
@@ -1274,6 +1278,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
             {
                 "type": "REQUIRE_USER_CONFIRM",

@@ -240,6 +240,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
             {
                 "type": "REPLY_END",
@@ -423,6 +424,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
             {
                 "type": "REPLY_END",
@@ -694,6 +696,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
             {
                 "type": "TOOL_RESULT_START",
@@ -737,6 +740,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
             {
                 "type": "REPLY_END",
@@ -915,6 +919,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
         ]
 
@@ -966,6 +971,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
             {
                 "type": "REPLY_END",
@@ -1165,6 +1171,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
         ]
 
@@ -1237,6 +1244,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
             {
                 "type": "REPLY_END",
