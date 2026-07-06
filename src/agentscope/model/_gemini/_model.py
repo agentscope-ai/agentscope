@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """The Google Gemini chat model implementation."""
 import base64
-import asyncio
 import json
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
@@ -328,79 +327,70 @@ class GeminiChatModel(ChatModelBase):
         acc_thinking = ThinkingBlock(thinking="")
         acc_tool_calls: dict = {}
         usage = None
-        was_interrupted = False
 
-        try:
-            async for chunk in response:
-                # Capture response_id from the first chunk that carries it
-                if response_id is None:
-                    response_id = (
-                        getattr(chunk, "response_id", None) or _generate_id()
-                    )
-
-                delta_content: list = []
-
-                if (
-                    chunk.candidates
-                    and chunk.candidates[0].content
-                    and chunk.candidates[0].content.parts
-                ):
-                    for part in chunk.candidates[0].content.parts:
-                        if part.text:
-                            if part.thought:
-                                acc_thinking.thinking += part.text
-                                delta_content.append(
-                                    ThinkingBlock(
-                                        id=acc_thinking.id,
-                                        thinking=part.text,
-                                    ),
-                                )
-                            else:
-                                acc_text.text += part.text
-                                delta_content.append(
-                                    TextBlock(id=acc_text.id, text=part.text),
-                                )
-
-                        if part.function_call:
-                            keyword_args = part.function_call.args or {}
-                            if part.thought_signature:
-                                call_id = base64.b64encode(
-                                    part.thought_signature,
-                                ).decode("utf-8")
-                            else:
-                                call_id = (
-                                    part.function_call.id or _generate_id()
-                                )
-                            input_str = json.dumps(
-                                keyword_args,
-                                ensure_ascii=False,
-                            )
-                            acc_tool_calls[call_id] = {
-                                "name": part.function_call.name,
-                                "input": input_str,
-                            }
-                            delta_content.append(
-                                ToolCallBlock(
-                                    id=call_id,
-                                    name=part.function_call.name,
-                                    input=input_str,
-                                ),
-                            )
-
-                usage = self._extract_usage(
-                    chunk.usage_metadata,
-                    start_datetime,
+        async for chunk in response:
+            # Capture response_id from the first chunk that carries it
+            if response_id is None:
+                response_id = (
+                    getattr(chunk, "response_id", None) or _generate_id()
                 )
 
-                if delta_content:
-                    yield ChatResponse(
-                        id=response_id,
-                        content=delta_content,
-                        is_last=False,
-                        usage=usage,
-                    )
-        except asyncio.CancelledError:
-            was_interrupted = True
+            delta_content: list = []
+
+            if (
+                chunk.candidates
+                and chunk.candidates[0].content
+                and chunk.candidates[0].content.parts
+            ):
+                for part in chunk.candidates[0].content.parts:
+                    if part.text:
+                        if part.thought:
+                            acc_thinking.thinking += part.text
+                            delta_content.append(
+                                ThinkingBlock(
+                                    id=acc_thinking.id,
+                                    thinking=part.text,
+                                ),
+                            )
+                        else:
+                            acc_text.text += part.text
+                            delta_content.append(
+                                TextBlock(id=acc_text.id, text=part.text),
+                            )
+
+                    if part.function_call:
+                        keyword_args = part.function_call.args or {}
+                        if part.thought_signature:
+                            call_id = base64.b64encode(
+                                part.thought_signature,
+                            ).decode("utf-8")
+                        else:
+                            call_id = part.function_call.id or _generate_id()
+                        input_str = json.dumps(
+                            keyword_args,
+                            ensure_ascii=False,
+                        )
+                        acc_tool_calls[call_id] = {
+                            "name": part.function_call.name,
+                            "input": input_str,
+                        }
+                        delta_content.append(
+                            ToolCallBlock(
+                                id=call_id,
+                                name=part.function_call.name,
+                                input=input_str,
+                            ),
+                        )
+
+            usage = self._extract_usage(chunk.usage_metadata, start_datetime)
+
+            if delta_content:
+                yield ChatResponse(
+                    id=response_id,
+                    content=delta_content,
+                    is_last=False,
+                    usage=usage,
+                )
 
         final_content: list = []
         if acc_thinking.thinking:
@@ -417,7 +407,6 @@ class GeminiChatModel(ChatModelBase):
             content=final_content,
             is_last=True,
             usage=usage,
-            is_interrupted=was_interrupted,
         )
 
     def _parse_completion_response(

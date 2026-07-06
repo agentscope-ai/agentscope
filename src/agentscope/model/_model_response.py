@@ -28,6 +28,11 @@ class ChatResponse(DictMixin):
     """Whether this response is the last response, if `Ture`, the content will
     be the complete response, otherwise the content is a partial response"""
 
+    is_interrupted: bool = False
+    """Whether this response was truncated by an interruption signal.
+    When True, ``content`` carries whatever was generated before the
+    interruption occurred."""
+
     id: str = field(default_factory=_generate_id)
     """The unique identifier."""
 
@@ -41,11 +46,6 @@ class ChatResponse(DictMixin):
 
     usage: ChatUsage | None = field(default_factory=lambda: None)
     """The usage information of the chat response, if available."""
-
-    is_interrupted: bool = False
-    """Whether this response was truncated by an interruption signal.
-    When True, ``content`` carries whatever was generated before the
-    interruption occurred."""
 
     metadata: dict[str, JSONSerializableObject] = field(
         default_factory=lambda: {},

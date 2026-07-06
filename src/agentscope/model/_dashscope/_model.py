@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """The DashScope chat model class (OpenAI-compatible implementation)."""
-import asyncio
 import base64
 import io
 import warnings
@@ -307,137 +306,126 @@ class DashScopeChatModel(ChatModelBase):
         # streaming WAV header and yielded.
         audio_header_sent: bool = False
 
-        was_interrupted = False
         async with response as stream:
-            try:
-                async for chunk in stream:
-                    if chunk.usage:
-                        u = chunk.usage
-                        ptd = getattr(u, "prompt_tokens_details", None)
-                        if ptd and hasattr(ptd, "cached_tokens"):
-                            cache_read = ptd.cached_tokens or 0
-                        else:
-                            cache_read = 0
-                        usage = ChatUsage(
-                            input_tokens=u.prompt_tokens or 0,
-                            output_tokens=u.completion_tokens or 0,
-                            time=(
-                                datetime.now() - start_datetime
-                            ).total_seconds(),
-                            cache_input_tokens=cache_read,
-                        )
-
-                    response_id = response_id or getattr(chunk, "id", None)
-
-                    if not chunk.choices:
-                        continue
-
-                    choice = chunk.choices[0]
-                    delta = choice.delta
-
-                    delta_thinking = (
-                        getattr(delta, "reasoning_content", None) or ""
+            async for chunk in stream:
+                if chunk.usage:
+                    u = chunk.usage
+                    ptd = getattr(u, "prompt_tokens_details", None)
+                    if ptd and hasattr(ptd, "cached_tokens"):
+                        cache_read = ptd.cached_tokens or 0
+                    else:
+                        cache_read = 0
+                    usage = ChatUsage(
+                        input_tokens=u.prompt_tokens or 0,
+                        output_tokens=u.completion_tokens or 0,
+                        time=(datetime.now() - start_datetime).total_seconds(),
+                        cache_input_tokens=cache_read,
                     )
-                    delta_text = getattr(delta, "content", None) or ""
 
-                    # Collect audio output from Omni models (delta.audio.data).
-                    # Upstream sends raw PCM (24kHz, 16-bit mono); we prefix
-                    # the first chunk with a streaming WAV header so the
-                    # frontend
-                    # can start playback immediately rather than waiting for
-                    # end-of-stream.
-                    delta_audio = getattr(delta, "audio", None)
-                    delta_audio_block: DataBlock | None = None
-                    if delta_audio is not None:
-                        if isinstance(delta_audio, dict):
-                            audio_chunk = delta_audio.get("data", "")
+                response_id = response_id or getattr(chunk, "id", None)
+
+                if not chunk.choices:
+                    continue
+
+                choice = chunk.choices[0]
+                delta = choice.delta
+
+                delta_thinking = (
+                    getattr(delta, "reasoning_content", None) or ""
+                )
+                delta_text = getattr(delta, "content", None) or ""
+
+                # Collect audio output from Omni models (delta.audio.data).
+                # Upstream sends raw PCM (24kHz, 16-bit mono); we prefix the
+                # first chunk with a streaming WAV header so the frontend
+                # can start playback immediately rather than waiting for
+                # end-of-stream.
+                delta_audio = getattr(delta, "audio", None)
+                delta_audio_block: DataBlock | None = None
+                if delta_audio is not None:
+                    if isinstance(delta_audio, dict):
+                        audio_chunk = delta_audio.get("data", "")
+                    else:
+                        audio_chunk = getattr(delta_audio, "data", "") or ""
+                    if audio_chunk:
+                        if audio_block_id is None:
+                            audio_block_id = _generate_id()
+                        pcm_bytes = base64.b64decode(audio_chunk)
+                        acc_audio_data += pcm_bytes
+                        if not audio_header_sent:
+                            payload = _build_streaming_wav_header() + pcm_bytes
+                            audio_header_sent = True
                         else:
-                            audio_chunk = (
-                                getattr(delta_audio, "data", "") or ""
-                            )
-                        if audio_chunk:
-                            if audio_block_id is None:
-                                audio_block_id = _generate_id()
-                            pcm_bytes = base64.b64decode(audio_chunk)
-                            acc_audio_data += pcm_bytes
-                            if not audio_header_sent:
-                                payload = (
-                                    _build_streaming_wav_header() + pcm_bytes
-                                )
-                                audio_header_sent = True
-                            else:
-                                payload = pcm_bytes
-                            delta_audio_block = DataBlock(
-                                id=audio_block_id,
-                                source=Base64Source(
-                                    data=base64.b64encode(payload).decode(
-                                        "ascii",
-                                    ),
-                                    media_type="audio/wav",
+                            payload = pcm_bytes
+                        delta_audio_block = DataBlock(
+                            id=audio_block_id,
+                            source=Base64Source(
+                                data=base64.b64encode(payload).decode(
+                                    "ascii",
                                 ),
-                            )
-
-                    acc_thinking.thinking += delta_thinking
-                    acc_text.text += delta_text
-
-                    delta_tool_call_blocks: List[ToolCallBlock] = []
-                    for tool_call in getattr(delta, "tool_calls", None) or []:
-                        idx = tool_call.index
-                        args = (
-                            tool_call.function.arguments
-                            if tool_call.function
-                            else ""
-                        ) or ""
-                        if idx in acc_tool_calls:
-                            acc_tool_calls[idx]["input"] += args
-                        else:
-                            acc_tool_calls[idx] = {
-                                "id": tool_call.id or "",
-                                "name": (
-                                    tool_call.function.name
-                                    if tool_call.function
-                                    else ""
-                                ),
-                                "input": args,
-                            }
-                        tc = acc_tool_calls[idx]
-                        delta_tool_call_blocks.append(
-                            ToolCallBlock(
-                                id=tc["id"],
-                                name=tc["name"],
-                                input=args,
+                                media_type="audio/wav",
                             ),
                         )
 
-                    delta_contents: List[
-                        TextBlock | ToolCallBlock | ThinkingBlock | DataBlock
-                    ] = []
-                    if delta_thinking:
-                        delta_contents.append(
-                            ThinkingBlock(
-                                id=acc_thinking.id,
-                                thinking=delta_thinking,
-                            ),
-                        )
-                    if delta_text:
-                        delta_contents.append(
-                            TextBlock(id=acc_text.id, text=delta_text),
-                        )
-                    delta_contents.extend(delta_tool_call_blocks)
-                    if delta_audio_block is not None:
-                        delta_contents.append(delta_audio_block)
+                acc_thinking.thinking += delta_thinking
+                acc_text.text += delta_text
 
-                    if delta_contents:
-                        _kwargs: dict[str, Any] = {
-                            "content": delta_contents,
-                            "usage": usage,
-                            "is_last": False,
+                delta_tool_call_blocks: List[ToolCallBlock] = []
+                for tool_call in getattr(delta, "tool_calls", None) or []:
+                    idx = tool_call.index
+                    args = (
+                        tool_call.function.arguments
+                        if tool_call.function
+                        else ""
+                    ) or ""
+                    if idx in acc_tool_calls:
+                        acc_tool_calls[idx]["input"] += args
+                    else:
+                        acc_tool_calls[idx] = {
+                            "id": tool_call.id or "",
+                            "name": (
+                                tool_call.function.name
+                                if tool_call.function
+                                else ""
+                            ),
+                            "input": args,
                         }
-                        if response_id:
-                            _kwargs["id"] = response_id
-                        yield ChatResponse(**_kwargs)
-            except asyncio.CancelledError:
-                was_interrupted = True
+                    tc = acc_tool_calls[idx]
+                    delta_tool_call_blocks.append(
+                        ToolCallBlock(
+                            id=tc["id"],
+                            name=tc["name"],
+                            input=args,
+                        ),
+                    )
+
+                delta_contents: List[
+                    TextBlock | ToolCallBlock | ThinkingBlock | DataBlock
+                ] = []
+                if delta_thinking:
+                    delta_contents.append(
+                        ThinkingBlock(
+                            id=acc_thinking.id,
+                            thinking=delta_thinking,
+                        ),
+                    )
+                if delta_text:
+                    delta_contents.append(
+                        TextBlock(id=acc_text.id, text=delta_text),
+                    )
+                delta_contents.extend(delta_tool_call_blocks)
+                if delta_audio_block is not None:
+                    delta_contents.append(delta_audio_block)
+
+                if delta_contents:
+                    _kwargs: dict[str, Any] = {
+                        "content": delta_contents,
+                        "usage": usage,
+                        "is_last": False,
+                    }
+                    if response_id:
+                        _kwargs["id"] = response_id
+                    yield ChatResponse(**_kwargs)
 
         final_contents: List[
             TextBlock | ToolCallBlock | ThinkingBlock | DataBlock
@@ -482,7 +470,6 @@ class DashScopeChatModel(ChatModelBase):
             "content": final_contents,
             "usage": usage,
             "is_last": True,
-            "is_interrupted": was_interrupted,
         }
         if response_id:
             _final_kwargs["id"] = response_id

@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """The Ollama chat model implementation."""
 import json
-import asyncio
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 
@@ -256,63 +255,54 @@ class OllamaChatModel(ChatModelBase):
         acc_thinking = ThinkingBlock(thinking="")
         acc_tool_calls: dict = {}
         usage = None
-        was_interrupted = False
 
-        try:
-            async for chunk in response:
-                delta_content: list = []
-                msg = chunk.message
+        async for chunk in response:
+            delta_content: list = []
+            msg = chunk.message
 
-                chunk_thinking = getattr(msg, "thinking", None)
-                if chunk_thinking:
-                    acc_thinking.thinking += chunk_thinking
-                    delta_content.append(
-                        ThinkingBlock(
-                            id=acc_thinking.id,
-                            thinking=chunk_thinking,
-                        ),
-                    )
-
-                if msg.content:
-                    acc_text.text += msg.content
-                    delta_content.append(
-                        TextBlock(id=acc_text.id, text=msg.content),
-                    )
-
-                for idx, tool_call in enumerate(msg.tool_calls or []):
-                    function = tool_call.function
-                    tool_id = f"{idx}_{function.name}"
-                    input_str = json.dumps(function.arguments)
-                    acc_tool_calls[tool_id] = {
-                        "name": function.name,
-                        "input": input_str,
-                    }
-                    delta_content.append(
-                        ToolCallBlock(
-                            id=tool_id,
-                            name=function.name,
-                            input=input_str,
-                        ),
-                    )
-
-                current_time = (
-                    datetime.now() - start_datetime
-                ).total_seconds()
-                usage = ChatUsage(
-                    input_tokens=getattr(chunk, "prompt_eval_count", 0) or 0,
-                    output_tokens=getattr(chunk, "eval_count", 0) or 0,
-                    time=current_time,
+            chunk_thinking = getattr(msg, "thinking", None)
+            if chunk_thinking:
+                acc_thinking.thinking += chunk_thinking
+                delta_content.append(
+                    ThinkingBlock(id=acc_thinking.id, thinking=chunk_thinking),
                 )
 
-                if delta_content:
-                    yield ChatResponse(
-                        id=response_id,
-                        content=delta_content,
-                        is_last=False,
-                        usage=usage,
-                    )
-        except asyncio.CancelledError:
-            was_interrupted = True
+            if msg.content:
+                acc_text.text += msg.content
+                delta_content.append(
+                    TextBlock(id=acc_text.id, text=msg.content),
+                )
+
+            for idx, tool_call in enumerate(msg.tool_calls or []):
+                function = tool_call.function
+                tool_id = f"{idx}_{function.name}"
+                input_str = json.dumps(function.arguments)
+                acc_tool_calls[tool_id] = {
+                    "name": function.name,
+                    "input": input_str,
+                }
+                delta_content.append(
+                    ToolCallBlock(
+                        id=tool_id,
+                        name=function.name,
+                        input=input_str,
+                    ),
+                )
+
+            current_time = (datetime.now() - start_datetime).total_seconds()
+            usage = ChatUsage(
+                input_tokens=getattr(chunk, "prompt_eval_count", 0) or 0,
+                output_tokens=getattr(chunk, "eval_count", 0) or 0,
+                time=current_time,
+            )
+
+            if delta_content:
+                yield ChatResponse(
+                    id=response_id,
+                    content=delta_content,
+                    is_last=False,
+                    usage=usage,
+                )
 
         final_content: list = []
         if acc_thinking.thinking:
@@ -329,7 +319,6 @@ class OllamaChatModel(ChatModelBase):
             content=final_content,
             is_last=True,
             usage=usage,
-            is_interrupted=was_interrupted,
         )
 
     async def _parse_completion_response(

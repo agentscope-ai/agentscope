@@ -78,7 +78,6 @@ from ..tool import (
     ToolChoice,
     ToolResponse,
 )
-from ..tool._toolkit import TOOL_INTERRUPTED_MESSAGE
 from ..permission import (
     PermissionBehavior,
     PermissionEngine,
