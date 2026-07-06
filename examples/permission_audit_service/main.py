@@ -19,6 +19,8 @@ from agentscope.app import create_app
 from agentscope.app.message_bus import InMemoryMessageBus
 from agentscope.app.storage import RedisStorage
 from agentscope.app.workspace_manager import LocalWorkspaceManager
+from agentscope.middleware import MiddlewareBase
+from agentscope.tool import ToolBase
 
 # examples/permission_audit_service/ is not a package; import siblings.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -29,7 +31,11 @@ from audit_middleware import (  # noqa: E402
 from demo_tool import PermissionAuditDemoTool  # noqa: E402
 
 
-async def permission_audit_factory(user_id, agent_id, session_id):
+async def permission_audit_factory(
+    user_id: str,
+    agent_id: str,
+    session_id: str,
+) -> list[MiddlewareBase]:
     """Per-assembly audit middleware bound to tenant/session identity."""
     return [
         PermissionAuditMiddleware(
@@ -41,7 +47,11 @@ async def permission_audit_factory(user_id, agent_id, session_id):
     ]
 
 
-async def permission_audit_demo_tools(_user_id, _agent_id, _session_id):
+async def permission_audit_demo_tools(
+    _user_id: str,
+    _agent_id: str,
+    _session_id: str,
+) -> list[ToolBase]:
     """Per-assembly demo tool so every session can exercise audit scenarios."""
     return [PermissionAuditDemoTool()]
 

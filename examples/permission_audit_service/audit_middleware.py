@@ -9,7 +9,7 @@ agent, tool_call, tool_input, evaluation, or rules.
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, TYPE_CHECKING
 
 from agentscope.message import ToolCallBlock
 from agentscope.middleware import MiddlewareBase
@@ -19,6 +19,9 @@ from agentscope.permission import (
     PermissionRule,
 )
 from agentscope.tool import ToolBase
+
+if TYPE_CHECKING:
+    from agentscope.agent import Agent
 
 logger = logging.getLogger("permission_audit")
 # Configure explicitly so audit records are emitted even when the host
@@ -58,6 +61,8 @@ class PermissionAuditMiddleware(MiddlewareBase):
     Records deliberately exclude raw ``tool_input`` and raw rule content.
     """
 
+    # pylint: disable=unused-argument
+
     def __init__(
         self,
         user_id: str,
@@ -72,12 +77,13 @@ class PermissionAuditMiddleware(MiddlewareBase):
 
     async def on_permission_decision(
         self,
-        agent,
+        agent: "Agent",
         tool_call: ToolCallBlock,
         tool: ToolBase,
         tool_input: dict[str, Any],
         evaluation: PermissionEvaluation,
     ) -> None:
+        """Emit a JSON record for a permission decision."""
         effective = evaluation.effective_decision
         candidate = evaluation.candidate_decision
         record = {
@@ -98,11 +104,12 @@ class PermissionAuditMiddleware(MiddlewareBase):
 
     async def on_permission_confirmation(
         self,
-        agent,
+        agent: "Agent",
         tool_call: ToolCallBlock,
         confirmed: bool,
         rules: list[PermissionRule],
     ) -> None:
+        """Emit a JSON record for a user confirmation."""
         record = {
             "event": "permission_confirmation",
             "observed_at": _now_iso(),

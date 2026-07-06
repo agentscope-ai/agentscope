@@ -7,7 +7,8 @@ which is not a Python package, so tests load them via ``importlib``.
 import importlib.util
 import json
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
+from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from agentscope.message import TextBlock, ToolCallBlock
@@ -27,10 +28,11 @@ _EXAMPLE_DIR = (
 )
 
 
-def _load_example_module(module_name: str):
+def _load_example_module(module_name: str) -> ModuleType:
     """Load an example module by filename without requiring a package."""
     path = _EXAMPLE_DIR / f"{module_name}.py"
     spec = importlib.util.spec_from_file_location(module_name, path)
+    assert spec is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -77,7 +79,8 @@ def _agent(reply_id: str = "reply-1") -> SimpleNamespace:
     return SimpleNamespace(state=SimpleNamespace(reply_id=reply_id))
 
 
-def json_module_dumps(obj) -> str:
+def json_module_dumps(obj: Any) -> str:
+    """Serialize ``obj`` to JSON with ``str`` fallback."""
     return json.dumps(obj, default=str)
 
 
@@ -95,6 +98,7 @@ class PermissionAuditDecisionRecordTest(IsolatedAsyncioTestCase):
     """Spec §Validation 1-5: decision records."""
 
     async def test_direct_decision_emits_candidate_null(self) -> None:
+        """Test that a direct decision emits a record with candidate=null."""
         # 1. direct decision emits candidate=null
         sink = _CollectSink()
         mw = PermissionAuditMiddleware("u", "a", "s", sink)
@@ -109,6 +113,7 @@ class PermissionAuditDecisionRecordTest(IsolatedAsyncioTestCase):
         assert sink.records[0]["candidate"] is None
 
     async def test_candidate_and_effective_serialize(self) -> None:
+        """Test candidate/effective decisions and resolution serialize."""
         # 2. candidate/effective decisions and resolution serialize correctly
         sink = _CollectSink()
         mw = PermissionAuditMiddleware("u", "a", "s", sink)
@@ -136,6 +141,7 @@ class PermissionAuditDecisionRecordTest(IsolatedAsyncioTestCase):
         assert rec["candidate"]["bypass_immune"] is True
 
     async def test_raw_tool_input_never_in_record(self) -> None:
+        """Test that raw tool input never appears in the record."""
         # 3. raw tool input and raw model input never appear in the record
         sink = _CollectSink()
         mw = PermissionAuditMiddleware("u", "a", "s", sink)
@@ -155,6 +161,7 @@ class PermissionAuditDecisionRecordTest(IsolatedAsyncioTestCase):
         assert "input" not in rec
 
     async def test_factory_binds_identifiers(self) -> None:
+        """Test that the factory binds user/agent/session identifiers."""
         # 4. factory binds user, agent, and session identifiers correctly
         sink = _CollectSink()
         mw = PermissionAuditMiddleware("user-1", "agent-1", "session-1", sink)
@@ -173,6 +180,8 @@ class PermissionAuditDecisionRecordTest(IsolatedAsyncioTestCase):
         assert rec["tool_call_id"] == "call-1"
 
     async def test_sink_exception_propagates(self) -> None:
+        """Test that sink exceptions propagate (fail-closed contract)."""
+
         # 5. sink exceptions propagate (fail-closed contract)
         class _FailingSink:
             async def __call__(self, record: dict) -> None:
@@ -193,6 +202,7 @@ class PermissionAuditDemoToolTest(IsolatedAsyncioTestCase):
     """The demo tool emits the right ASK for each risk level."""
 
     async def test_ordinary_risk_emits_plain_ask(self) -> None:
+        """Test that an ordinary risk emits a plain (non-bypass-immune) ASK."""
         decision = await PermissionAuditDemoTool().check_permissions(
             {"risk": "ordinary", "label": "x"},
             context=None,
@@ -201,6 +211,7 @@ class PermissionAuditDemoToolTest(IsolatedAsyncioTestCase):
         assert decision.bypass_immune is False
 
     async def test_safety_risk_emits_bypass_immune_ask(self) -> None:
+        """Test that a safety risk emits a bypass-immune ASK."""
         decision = await PermissionAuditDemoTool().check_permissions(
             {"risk": "safety", "label": "x"},
             context=None,
@@ -209,7 +220,8 @@ class PermissionAuditDemoToolTest(IsolatedAsyncioTestCase):
         assert decision.bypass_immune is True
 
     async def test_call_has_no_side_effects(self) -> None:
-        chunk = await PermissionAuditDemoTool().__call__(
+        """Test that invoking the demo tool returns the labelled chunk."""
+        chunk = await PermissionAuditDemoTool()(
             risk="ordinary",
             label="hello",
         )
@@ -221,6 +233,7 @@ class PermissionAuditConfirmationRecordTest(IsolatedAsyncioTestCase):
     """Spec §Validation 6-8: confirmation records."""
 
     async def test_approval_and_rejection_serialize_separately(self) -> None:
+        """Test that approval and rejection serialize as separate records."""
         # 6. approval and rejection serialize as separate confirmation records
         sink = _CollectSink()
         mw = PermissionAuditMiddleware("u", "a", "s", sink)
@@ -247,6 +260,7 @@ class PermissionAuditConfirmationRecordTest(IsolatedAsyncioTestCase):
         assert sink.records[1]["confirmed"] is False
 
     async def test_confirmation_exposes_rule_count_not_content(self) -> None:
+        """Test that confirmation records expose rule count, not content."""
         # 7. confirmation records expose rule count but never raw rule content
         sink = _CollectSink()
         mw = PermissionAuditMiddleware("u", "a", "s", sink)
@@ -277,6 +291,7 @@ class PermissionAuditConfirmationRecordTest(IsolatedAsyncioTestCase):
         assert "rules" not in rec
 
     async def test_confirmation_and_decision_share_correlation(self) -> None:
+        """Test that confirmation and decision records share correlation."""
         # 8. confirmation and decision records share correlation identifiers
         sink = _CollectSink()
         mw = PermissionAuditMiddleware("user-1", "agent-1", "session-1", sink)
@@ -310,6 +325,7 @@ class PermissionAuditServiceSmokeTest(IsolatedAsyncioTestCase):
     """Importing main:app should not error (smoke). Requires Redis."""
 
     async def test_import_main_app(self) -> None:
+        """Test that importing ``main:app`` succeeds without error."""
         # Skip only on environment-dependent failures (missing optional
         # deps / Redis connection). Real code errors (SyntaxError, etc.)
         # must propagate so the example does not silently break.

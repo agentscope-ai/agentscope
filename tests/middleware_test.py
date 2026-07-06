@@ -36,6 +36,7 @@ from agentscope.permission import (
     PermissionContext,
     PermissionDecision,
     PermissionBehavior,
+    PermissionEvaluation,
     PermissionMode,
     PermissionRule,
     PermissionResolution,
@@ -1465,11 +1466,11 @@ class PermissionDecisionObserverTest(IsolatedAsyncioTestCase):
 
             async def on_permission_decision(
                 self,
-                agent,
-                tool_call,
-                tool,
-                tool_input,
-                evaluation,
+                agent: Agent,
+                tool_call: ToolCallBlock,
+                tool: ToolBase,
+                tool_input: dict,
+                evaluation: PermissionEvaluation,
             ) -> None:
                 records.append(
                     f"decision:{evaluation.effective_decision.behavior.value}",
@@ -1477,10 +1478,10 @@ class PermissionDecisionObserverTest(IsolatedAsyncioTestCase):
 
             async def on_acting(
                 self,
-                agent,
-                input_kwargs,
-                next_handler,
-            ):
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., AsyncGenerator],
+            ) -> AsyncGenerator:
                 records.append("acting:before")
                 async for item in next_handler():
                     yield item
@@ -1529,17 +1530,22 @@ class PermissionDecisionObserverTest(IsolatedAsyncioTestCase):
 
             async def on_permission_decision(
                 self,
-                agent,
-                tool_call,
-                tool,
-                tool_input,
-                evaluation,
+                agent: Agent,
+                tool_call: ToolCallBlock,
+                tool: ToolBase,
+                tool_input: dict,
+                evaluation: PermissionEvaluation,
             ) -> None:
                 records.append(
                     f"decision:{evaluation.effective_decision.behavior.value}",
                 )
 
-            async def on_acting(self, agent, input_kwargs, next_handler):
+            async def on_acting(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., AsyncGenerator],
+            ) -> AsyncGenerator:
                 records.append("acting")
                 async for item in next_handler():
                     yield item
@@ -1597,18 +1603,23 @@ class PermissionDecisionObserverTest(IsolatedAsyncioTestCase):
 
             async def on_permission_decision(
                 self,
-                agent,
-                tool_call,
-                tool,
-                tool_input,
-                evaluation,
+                agent: Agent,
+                tool_call: ToolCallBlock,
+                tool: ToolBase,
+                tool_input: dict,
+                evaluation: PermissionEvaluation,
             ) -> None:
                 evaluation.effective_decision.behavior = (
                     PermissionBehavior.ALLOW
                 )
                 records.append("observed")
 
-            async def on_acting(self, agent, input_kwargs, next_handler):
+            async def on_acting(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., AsyncGenerator],
+            ) -> AsyncGenerator:
                 records.append("acting")
                 async for item in next_handler():
                     yield item
@@ -1692,11 +1703,11 @@ class PermissionDecisionObserverTest(IsolatedAsyncioTestCase):
 
             async def on_permission_decision(
                 self,
-                agent,
-                tool_call,
-                tool,
-                tool_input,
-                evaluation,
+                agent: Agent,
+                tool_call: ToolCallBlock,
+                tool: ToolBase,
+                tool_input: dict,
+                evaluation: PermissionEvaluation,
             ) -> None:
                 tool_call.input = '{"value": "TAMPERED"}'
 
@@ -1730,17 +1741,22 @@ class PermissionDecisionObserverTest(IsolatedAsyncioTestCase):
 
             async def on_permission_decision(
                 self,
-                agent,
-                tool_call,
-                tool,
-                tool_input,
-                evaluation,
+                agent: Agent,
+                tool_call: ToolCallBlock,
+                tool: ToolBase,
+                tool_input: dict,
+                evaluation: PermissionEvaluation,
             ) -> None:
                 records.append(
                     f"decision:{evaluation.effective_decision.behavior.value}",
                 )
 
-            async def on_acting(self, agent, input_kwargs, next_handler):
+            async def on_acting(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., AsyncGenerator],
+            ) -> AsyncGenerator:
                 records.append("acting")
                 async for item in next_handler():
                     yield item
@@ -1786,11 +1802,11 @@ class PermissionDecisionObserverTest(IsolatedAsyncioTestCase):
 
             async def on_permission_decision(
                 self,
-                agent,
-                tool_call,
-                tool,
-                tool_input,
-                evaluation,
+                agent: Agent,
+                tool_call: ToolCallBlock,
+                tool: ToolBase,
+                tool_input: dict,
+                evaluation: PermissionEvaluation,
             ) -> None:
                 evaluations.append(evaluation)
 
@@ -1852,11 +1868,11 @@ class PermissionDecisionObserverTest(IsolatedAsyncioTestCase):
 
             async def on_permission_decision(
                 self,
-                agent,
-                tool_call,
-                tool,
-                tool_input,
-                evaluation,
+                agent: Agent,
+                tool_call: ToolCallBlock,
+                tool: ToolBase,
+                tool_input: dict,
+                evaluation: PermissionEvaluation,
             ) -> None:
                 observed_ids.append(tool_call.id)
 
@@ -1915,11 +1931,11 @@ class PermissionDecisionObserverTest(IsolatedAsyncioTestCase):
 
             async def on_permission_decision(
                 self,
-                agent,
-                tool_call,
-                tool,
-                tool_input,
-                evaluation,
+                agent: Agent,
+                tool_call: ToolCallBlock,
+                tool: ToolBase,
+                tool_input: dict,
+                evaluation: PermissionEvaluation,
             ) -> None:
                 records.append(evaluation)
 
@@ -1968,7 +1984,12 @@ class PermissionDecisionObserverTest(IsolatedAsyncioTestCase):
             def __init__(self) -> None:
                 self.acted = False
 
-            async def on_acting(self, agent, input_kwargs, next_handler):
+            async def on_acting(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., AsyncGenerator],
+            ) -> AsyncGenerator:
                 self.acted = True
                 async for item in next_handler():
                     yield item
@@ -2013,11 +2034,11 @@ class PermissionDecisionObserverTest(IsolatedAsyncioTestCase):
 
             async def on_permission_decision(
                 self,
-                agent,
-                tool_call,
-                tool,
-                tool_input,
-                evaluation,
+                agent: Agent,
+                tool_call: ToolCallBlock,
+                tool: ToolBase,
+                tool_input: dict,
+                evaluation: PermissionEvaluation,
             ) -> None:
                 raise RuntimeError("observer failed")
 
@@ -2074,11 +2095,11 @@ class PermissionDecisionObserverTest(IsolatedAsyncioTestCase):
 
             async def on_permission_decision(
                 self,
-                agent,
-                tool_call,
-                tool,
-                tool_input,
-                evaluation,
+                agent: Agent,
+                tool_call: ToolCallBlock,
+                tool: ToolBase,
+                tool_input: dict,
+                evaluation: PermissionEvaluation,
             ) -> None:
                 records.append(evaluation)
 
@@ -2124,7 +2145,8 @@ class PermissionDecisionObserverTest(IsolatedAsyncioTestCase):
         agent.model.set_responses(
             [
                 ChatResponse(
-                    content=[TextBlock(text="all done")], is_last=True
+                    content=[TextBlock(text="all done")],
+                    is_last=True,
                 ),
             ],
         )
@@ -2233,10 +2255,10 @@ class PermissionConfirmationObserverTest(IsolatedAsyncioTestCase):
 
             async def on_permission_confirmation(
                 self,
-                agent,
-                tool_call,
-                confirmed,
-                rules,
+                agent: Agent,
+                tool_call: ToolCallBlock,
+                confirmed: bool,
+                rules: list[PermissionRule],
             ) -> None:
                 rule_already_applied = bool(
                     agent.state.permission_context.allow_rules.get(
@@ -2249,15 +2271,20 @@ class PermissionConfirmationObserverTest(IsolatedAsyncioTestCase):
 
             async def on_permission_decision(
                 self,
-                agent,
-                tool_call,
-                tool,
-                tool_input,
-                evaluation,
+                agent: Agent,
+                tool_call: ToolCallBlock,
+                tool: ToolBase,
+                tool_input: dict,
+                evaluation: PermissionEvaluation,
             ) -> None:
                 decisions.append(evaluation.resolution)
 
-            async def on_acting(self, agent, input_kwargs, next_handler):
+            async def on_acting(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., AsyncGenerator],
+            ) -> AsyncGenerator:
                 acting.append(input_kwargs["tool_call"].id)
                 async for item in next_handler():
                     yield item
@@ -2322,10 +2349,10 @@ class PermissionConfirmationObserverTest(IsolatedAsyncioTestCase):
 
             async def on_permission_confirmation(
                 self,
-                agent,
-                tool_call,
-                confirmed,
-                rules,
+                agent: Agent,
+                tool_call: ToolCallBlock,
+                confirmed: bool,
+                rules: list[PermissionRule],
             ) -> None:
                 rules.clear()
                 tool_call.input = '{"value": "TAMPERED"}'
@@ -2390,14 +2417,19 @@ class PermissionConfirmationObserverTest(IsolatedAsyncioTestCase):
 
             async def on_permission_confirmation(
                 self,
-                agent,
-                tool_call,
-                confirmed,
-                rules,
+                agent: Agent,
+                tool_call: ToolCallBlock,
+                confirmed: bool,
+                rules: list[PermissionRule],
             ) -> None:
                 confirmations.append((tool_call.id, confirmed))
 
-            async def on_acting(self, agent, input_kwargs, next_handler):
+            async def on_acting(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., AsyncGenerator],
+            ) -> AsyncGenerator:
                 acting.append(input_kwargs["tool_call"].id)
                 async for item in next_handler():
                     yield item
@@ -2459,14 +2491,19 @@ class PermissionConfirmationObserverTest(IsolatedAsyncioTestCase):
 
             async def on_permission_confirmation(
                 self,
-                agent,
-                tool_call,
-                confirmed,
-                rules,
+                agent: Agent,
+                tool_call: ToolCallBlock,
+                confirmed: bool,
+                rules: list[PermissionRule],
             ) -> None:
                 raise RuntimeError("confirmation audit failed")
 
-            async def on_acting(self, agent, input_kwargs, next_handler):
+            async def on_acting(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., AsyncGenerator],
+            ) -> AsyncGenerator:
                 acting.append(input_kwargs["tool_call"].id)
                 async for item in next_handler():
                     yield item
@@ -2527,10 +2564,10 @@ class PermissionConfirmationObserverTest(IsolatedAsyncioTestCase):
 
             async def on_permission_confirmation(
                 self,
-                agent,
-                tool_call,
-                confirmed,
-                rules,
+                agent: Agent,
+                tool_call: ToolCallBlock,
+                confirmed: bool,
+                rules: list[PermissionRule],
             ) -> None:
                 observed.append((tool_call.id, confirmed))
 

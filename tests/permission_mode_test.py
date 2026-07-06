@@ -57,13 +57,17 @@ class _AlwaysDenyTool(ToolBase):
         "required": [],
     }
 
-    async def check_permissions(self, tool_input, context):
+    async def check_permissions(
+        self,
+        tool_input: dict,
+        context: PermissionContext,
+    ) -> PermissionDecision:
         return PermissionDecision(
             behavior=PermissionBehavior.DENY,
             message="tool-emitted DENY",
         )
 
-    async def __call__(self):
+    async def __call__(self) -> None:
         return None
 
 
@@ -79,14 +83,18 @@ class _AlwaysAskTool(ToolBase):
     }
     is_read_only: bool = False
 
-    async def check_permissions(self, tool_input, context):
+    async def check_permissions(
+        self,
+        tool_input: dict,
+        context: PermissionContext,
+    ) -> PermissionDecision:
         return PermissionDecision(
             behavior=PermissionBehavior.ASK,
             message="Confirm outbound transfer",
             decision_reason="Tool detected a sensitive transfer",
         )
 
-    async def __call__(self, value: str):
+    async def __call__(self, value: str) -> str:
         return value
 
 
@@ -102,13 +110,17 @@ class _PassthroughTool(ToolBase):
     }
     is_read_only: bool = False
 
-    async def check_permissions(self, tool_input, context):
+    async def check_permissions(
+        self,
+        tool_input: dict,
+        context: PermissionContext,
+    ) -> PermissionDecision:
         return PermissionDecision(
             behavior=PermissionBehavior.PASSTHROUGH,
             message="No tool-level permission opinion",
         )
 
-    async def __call__(self, value: str):
+    async def __call__(self, value: str) -> str:
         return value
 
 
