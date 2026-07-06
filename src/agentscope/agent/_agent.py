@@ -17,6 +17,7 @@ from typing import (
 import jsonschema
 
 from ._config import ContextConfig, ReActConfig, ModelConfig
+from ..event._event import UserInterruptEvent
 from ..state import AgentState
 from ._utils import _ToolCallBatch
 from .._logging import logger
@@ -195,18 +196,27 @@ class Agent:
         inputs: Msg
         | list[Msg]
         | UserConfirmResultEvent
+        | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
     ) -> AsyncGenerator[AgentEvent, None]:
         """Reply to the given inputs and stream agent events.
 
+        Args:
+            inputs (`Msg | list[Msg] | UserConfirmResultEvent | \
+            UserInterruptEvent | ExternalExecutionResultEvent | None`, \
+            optional):
+                The inputs that trigger this reply. See :meth:`reply` for
+                the full list of accepted variants.
 
-        **NOTE**:
+        Yields:
+            `AgentEvent`:
+                Streamed events produced during the reply.
 
-        - If requiring outside interaction for multiple tool calls and only
-         receive partial confirmation or execution results, the agent won't
-         re-send the requiring events for the unconfirmed or unexecuted tool
-         calls.
+        .. note:: If requiring outside interaction for multiple tool calls
+            and only receive partial confirmation or execution results, the
+            agent won't re-send the requiring events for the unconfirmed
+            or unexecuted tool calls.
         """
         async for chunk in self._reply(inputs=inputs):
             if not isinstance(chunk, Msg):
@@ -217,6 +227,7 @@ class Agent:
         inputs: Msg
         | list[Msg]
         | UserConfirmResultEvent
+        | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
     ) -> Msg:
@@ -224,7 +235,8 @@ class Agent:
 
         Args:
             inputs (`Msg | list[Msg] | UserConfirmResultEvent | \
-            ExternalExecutionResultEvent | None`, optional):
+            UserInterruptEvent | ExternalExecutionResultEvent | None`, \
+            optional):
                 The inputs that trigger this reply. It can be:
 
                 - a single `Msg` or a list of `Msg` objects to start a new
@@ -232,6 +244,10 @@ class Agent:
                 - a `UserConfirmResultEvent` or
                   `ExternalExecutionResultEvent` to continue from the
                   outside interaction required by the previous reply,
+                - a `UserInterruptEvent` to abort a parked reply — the
+                  agent closes all pending tool calls with an interrupted
+                  tool result and ends the reply without entering the
+                  reasoning-acting loop,
                 - `None` if there is nothing new to feed in (e.g. just
                   continue from the current state).
 
@@ -541,6 +557,7 @@ class Agent:
         inputs: Msg
         | list[Msg]
         | UserConfirmResultEvent
+        | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
@@ -555,6 +572,7 @@ class Agent:
                 inputs: Msg
                 | list[Msg]
                 | UserConfirmResultEvent
+                | UserInterruptEvent
                 | ExternalExecutionResultEvent
                 | None = inputs,
             ) -> AsyncGenerator[AgentEvent | Msg, None]:
@@ -586,7 +604,10 @@ class Agent:
 
     async def _close_unfinished_tool_calls(
         self,
-    ) -> AsyncGenerator[ToolResultTextDeltaEvent | ToolResultEndEvent, None]:
+    ) -> AsyncGenerator[
+        ToolResultStartEvent | ToolResultTextDeltaEvent | ToolResultEndEvent,
+        None,
+    ]:
         """Close the unfinished tool calls on interruption, so the next
         input will be handled normally."""
         if not self.state.context:
@@ -615,7 +636,12 @@ class Agent:
             assert isinstance(last_msg.content[index], ToolCallBlock)
             last_msg.content[index].state = ToolCallState.FINISHED
 
-            # Append tool result to the context
+            # Emit the full tool_result lifecycle (START → DELTA → END)
+            yield ToolResultStartEvent(
+                reply_id=self.state.reply_id,
+                tool_call_id=last_msg.content[index].id,
+                tool_call_name=last_msg.content[index].name,
+            )
             yield ToolResultTextDeltaEvent(
                 reply_id=self.state.reply_id,
                 tool_call_id=last_msg.content[index].id,
@@ -640,6 +666,7 @@ class Agent:
         inputs: Msg
         | list[Msg]
         | UserConfirmResultEvent
+        | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
@@ -650,18 +677,39 @@ class Agent:
             # Dispatch the unified inputs by type into the legacy local
             # variables
             event: (
-                UserConfirmResultEvent | ExternalExecutionResultEvent | None
+                UserConfirmResultEvent
+                | UserInterruptEvent
+                | ExternalExecutionResultEvent
+                | None
             )
             msgs: Msg | list[Msg] | None
             if isinstance(
                 inputs,
-                (UserConfirmResultEvent, ExternalExecutionResultEvent),
+                (
+                    UserConfirmResultEvent,
+                    UserInterruptEvent,
+                    ExternalExecutionResultEvent,
+                ),
             ):
                 event = inputs
                 msgs = None
             else:
                 event = None
                 msgs = inputs
+
+            # Parked-interrupt short-circuit: only signal an INTERRUPTED
+            # end when there is actual HITL work to close; otherwise the
+            # session is effectively idle and the call is a silent no-op.
+            # ``finally`` reuses the CancelledError cleanup path when
+            # ``end_event`` is set — no reasoning-acting loop either way.
+            if isinstance(inputs, UserInterruptEvent):
+                if self.state.has_awaiting_tool_calls(self.name):
+                    end_event = ReplyEndEvent(
+                        session_id=self.state.session_id,
+                        reply_id=self.state.reply_id,
+                        finished_reason=ReplyEndReason.INTERRUPTED,
+                    )
+                return
 
             # ===================================================================
             # Step 1: Checking agent input:

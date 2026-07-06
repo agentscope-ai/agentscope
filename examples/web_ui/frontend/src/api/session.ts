@@ -26,6 +26,16 @@ export const sessionApi = {
 	delete: (sessionId: string, agentId: string) =>
 		client.delete(`/sessions/${sessionId}`, { agent_id: agentId }),
 
+	/**
+	 * Request interruption of an in-progress reply (running or parked).
+	 *
+	 * Backend contract:
+	 * - 202 Accepted → returns `InterruptSessionResponse`; the cancel
+	 *   signal was broadcast (running) or a wakeup-interrupt was
+	 *   enqueued (parked). Idempotent: an idle target is a silent
+	 *   no-op at the agent layer.
+	 * - 404 Not Found → the session does not exist.
+	 */
 	interrupt: (sessionId: string, agentId: string) =>
 		client.post<InterruptSessionResponse>(`/sessions/${sessionId}/interrupt`, null, {
 			agent_id: agentId,

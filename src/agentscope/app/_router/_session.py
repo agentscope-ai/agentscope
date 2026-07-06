@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 
 from ..._utils._common import _generate_id
 from ..deps import (
+    get_chat_service,
     get_current_user_id,
     get_message_bus,
     get_session_service,
@@ -27,7 +28,12 @@ from ._schema import (
     UpdateSessionRequest,
 )
 from ..message_bus import MessageBus, MessageBusKeys
-from .._service import SessionService, SessionProjection, SubagentHitlProjector
+from .._service import (
+    ChatService,
+    SessionService,
+    SessionProjection,
+    SubagentHitlProjector,
+)
 from ..storage import (
     AgentRecord,
     ChatModelConfig,
@@ -339,65 +345,43 @@ async def delete_session(
 @session_router.post(
     "/{session_id}/interrupt",
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Interrupt a running chat run for a session",
+    summary="Interrupt a running or HITL-parked chat run for a session",
     responses={
         404: {"description": "Session not found."},
-        409: {"description": "Session is not running; nothing to interrupt."},
     },
 )
 async def interrupt_session(
     session_id: str,
     agent_id: str = Query(description="Agent the session belongs to."),
     user_id: str = Depends(get_current_user_id),
-    storage: StorageBase = Depends(get_storage),
-    message_bus: MessageBus = Depends(get_message_bus),
+    chat_service: ChatService = Depends(get_chat_service),
 ) -> InterruptSessionResponse:
-    """Request interruption of the currently running agent for a session.
+    """Request interruption of an in-progress reply for a session.
 
-    Publishes an interrupt signal on the message bus. The
-    :class:`~agentscope.app._manager.CancelDispatcher` that owns the
-    session cancels the local chat-run task, triggering graceful
-    ``CancelledError`` handling inside the agent.
-
-    Only the running case is handled here. Parked (HITL) or idle
-    sessions have no in-flight task to cancel and are rejected with
-    409; callers should resolve HITL state through the dedicated
-    endpoints instead.
+    Thin HTTP wrapper around :meth:`ChatService.interrupt`; see that
+    method for the running vs not-running dispatch. Idempotent — an
+    idle target session is a silent no-op at the agent layer.
 
     Args:
-        session_id: The session whose agent should be interrupted.
+        session_id: The session whose reply should be interrupted.
         agent_id: The agent that owns the session.
         user_id: Injected authenticated user id.
-        storage: Injected storage backend.
-        message_bus: Injected message bus.
+        chat_service: Injected chat service.
 
     Returns:
         202 with :class:`InterruptSessionResponse` echoing the
         session id.
 
     Raises:
-        HTTPException: 404 if the session does not exist; 409 if the
-            session has no running agent to interrupt.
+        HTTPException: 404 if the session does not exist.
     """
-    existing = await storage.get_session(user_id, agent_id, session_id)
-    if existing is None:
+    try:
+        await chat_service.interrupt(user_id, session_id, agent_id)
+    except LookupError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Session '{session_id}' not found.",
-        )
-
-    if not await message_bus.is_locked(
-        MessageBusKeys.session_lock(session_id),
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Session '{session_id}' is not running.",
-        )
-
-    await message_bus.publish(
-        MessageBusKeys.session_interrupt_channel(),
-        {"session_id": session_id},
-    )
+            detail=str(e),
+        ) from e
     return InterruptSessionResponse(session_id=session_id)
 
 

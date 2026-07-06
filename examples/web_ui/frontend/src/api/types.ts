@@ -157,7 +157,6 @@ export interface CreateSessionResponse {
 
 export interface InterruptSessionResponse {
 	session_id: string;
-	status: 'interrupted' | 'not_running';
 }
 
 export interface UpdateSessionRequest {

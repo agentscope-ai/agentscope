@@ -15,8 +15,8 @@ import asyncio
 
 from fastapi import HTTPException
 
+from .._bus_ops import enqueue_run_trigger, publish_session_event
 from ..message_bus import MessageBus, MessageBusKeys
-from .._bus_ops import publish_session_event
 from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from ..storage import StorageBase, AgentRecord, SessionRecord
 from .._manager import BackgroundTaskManager, SchedulerManager
@@ -47,6 +47,7 @@ from ...event import (
     ReplyStartEvent,
     UserConfirmResultEvent,
     ExternalExecutionResultEvent,
+    UserInterruptEvent,
 )
 from ...message import AssistantMsg, Msg, ToolCallState
 from ...permission import AdditionalWorkingDirectory
@@ -159,6 +160,7 @@ class ChatService:
         | list[Msg]
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
+        | UserInterruptEvent
         | None = None,
     ) -> None:
         """Drive a chat run to completion.
@@ -194,6 +196,9 @@ class ChatService:
                 - ``UserConfirmResultEvent`` /
                   ``ExternalExecutionResultEvent``: resume an awaiting
                   tool call (Case B).
+                - ``UserInterruptEvent``: abort a parked reply — the
+                  agent closes pending tool calls with interrupted
+                  results and ends the reply (Case B, no reasoning).
         """
         try:
             await self._run_impl(user_id, session_id, agent_id, input_msg)
@@ -207,6 +212,65 @@ class ChatService:
                 str(e),
             )
 
+    async def interrupt(
+        self,
+        user_id: str,
+        session_id: str,
+        agent_id: str,
+    ) -> None:
+        """Interrupt an in-progress reply for a session.
+
+        Two paths, chosen by session liveness:
+
+        - **Running** (lock held): publish on the interrupt channel so
+          the local :class:`~agentscope.app._manager.CancelDispatcher`
+          cancels its chat-run task; the agent's ``CancelledError``
+          cleanup runs (fake tool results for pending calls, fallback
+          message, ``ReplyEndEvent(INTERRUPTED)``).
+        - **Not running**: enqueue a ``resume`` trigger carrying a
+          :class:`UserInterruptEvent`. If the session is parked on
+          HITL, the agent short-circuits into the same cleanup path;
+          if it is idle, the agent silently no-ops. Callers do not
+          need to distinguish the two — the operation is idempotent.
+
+        Args:
+            user_id (`str`):
+                Authenticated caller's user id.
+            session_id (`str`):
+                Target session id.
+            agent_id (`str`):
+                Agent that owns the session.
+
+        Raises:
+            LookupError:
+                The session does not exist.
+        """
+        session = await self._storage.get_session(
+            user_id,
+            agent_id,
+            session_id,
+        )
+        if session is None:
+            raise LookupError(f"Session '{session_id}' not found.")
+
+        if await self._message_bus.is_locked(
+            MessageBusKeys.session_lock(session_id),
+        ):
+            await self._message_bus.publish(
+                MessageBusKeys.session_interrupt_channel(),
+                {"session_id": session_id},
+            )
+            return
+
+        await enqueue_run_trigger(
+            self._message_bus,
+            user_id=user_id,
+            session_id=session_id,
+            agent_id=agent_id,
+            kind=MessageBusKeys.WAKEUP_KIND_RESUME,
+            inputs=UserInterruptEvent(reply_id=session.state.reply_id),
+        )
+
     async def _run_impl(
         self,
         user_id: str,
@@ -216,6 +280,7 @@ class ChatService:
         | list[Msg]
         | UserConfirmResultEvent
         | ExternalExecutionResultEvent
+        | UserInterruptEvent
         | None,
     ) -> None:
         """The actual chat-run body; wrapped by :meth:`run` for error

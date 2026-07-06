@@ -156,7 +156,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		}
 	}, []);
 
-	const { msgs, streaming, send, onUserConfirm, onSubagentConfirm, subagentHitl, interrupt } =
+	const { msgs, phase, send, onUserConfirm, onSubagentConfirm, subagentHitl, interrupt } =
 		useMessages(agentId, sessionId, {
 			onTeamUpdated: handleTeamUpdated,
 			onStateUpdated: handleStateUpdated,
@@ -615,7 +615,8 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 								<ChatContent
 									className={'max-w-[var(--chat-content-w)] w-full'}
 									msgs={msgs}
-									sending={streaming}
+									sending={phase !== 'idle'}
+									interrupting={phase === 'interrupting'}
 									disabled={selectedModel === null}
 									onSend={send}
 									onUserConfirm={onUserConfirm}

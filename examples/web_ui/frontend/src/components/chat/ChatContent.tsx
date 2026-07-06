@@ -10,6 +10,12 @@ import { cn } from '@/lib/utils';
 interface ChatContentProps {
 	msgs: Msg[];
 	sending: boolean;
+	/**
+	 * Whether an interrupt is currently in progress (Stop clicked, waiting
+	 * for the terminating ReplyEndEvent). Forwarded to TextInput so the
+	 * Stop button can be disabled to prevent duplicate clicks.
+	 */
+	interrupting?: boolean;
 	disabled: boolean;
 	onSend: (content: ContentBlock[]) => void;
 	onUserConfirm: (
@@ -39,6 +45,7 @@ interface ChatContentProps {
 const ChatContentComponent: React.FC<ChatContentProps> = ({
 	msgs,
 	sending,
+	interrupting,
 	disabled,
 	onSend,
 	onUserConfirm,
@@ -121,6 +128,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 				allowedInputTypes={allowedInputTypes}
 				fileProcessor={fileProcessor}
 				streaming={sending}
+				interrupting={interrupting}
 				onInterrupt={onInterrupt}
 			/>
 		</div>

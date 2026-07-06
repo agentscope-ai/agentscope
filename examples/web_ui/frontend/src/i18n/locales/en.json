@@ -75,7 +75,8 @@
 		"attach": "Attach file",
 		"attachNotSupported": "This model does not support file attachments",
 		"send": "Send",
-		"stop": "Stop generating"
+		"stop": "Stop generating",
+		"stopping": "Stopping ..."
 	},
 	"confirmCard": {
 		"toConfirm": "to confirm",
@@ -97,6 +98,7 @@
 		"inputPlaceholder": "Type a message...",
 		"placeholder": "Type a message...",
 		"send": "Send",
+		"confirmToolCall": "Allow this action?",
 		"subagentConfirmTitle": "{{name}} requests confirmation",
 		"newSession": "New Session",
 		"noSessions": "No sessions yet",

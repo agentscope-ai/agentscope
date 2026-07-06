@@ -56,6 +56,8 @@ interface TextInputProps {
 	 */
 	fileProcessor: (file: File) => Promise<ContentBlock | null>;
 	streaming?: boolean;
+	/** When true, an interrupt is in flight — Stop button is disabled. */
+	interrupting?: boolean;
 	onInterrupt?: () => void;
 }
 
@@ -85,6 +87,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			allowedInputTypes,
 			fileProcessor,
 			streaming,
+			interrupting,
 			onInterrupt,
 		},
 		ref,
@@ -341,13 +344,18 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 										<Button
 											type="button"
 											onClick={onInterrupt}
+											disabled={interrupting}
 											size="icon"
 											className="shrink-0 rounded-full"
 										>
 											<Square className="h-4 w-4" />
 										</Button>
 									</TooltipTrigger>
-									<TooltipContent>{t('textInput.stop')}</TooltipContent>
+									<TooltipContent>
+										{interrupting
+											? t('textInput.stopping')
+											: t('textInput.stop')}
+									</TooltipContent>
 								</Tooltip>
 							) : (
 								<Tooltip>
