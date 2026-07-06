@@ -3,10 +3,10 @@
 ``append_*`` helpers."""
 from unittest.async_case import IsolatedAsyncioTestCase
 
+from utils import AnyString
+
 from agentscope.message import TextBlock
 from agentscope.model import ChatResponse, FinishedReason, ChatUsage
-
-from utils import AnyString
 
 
 def _dump(chat_response: ChatResponse) -> dict:

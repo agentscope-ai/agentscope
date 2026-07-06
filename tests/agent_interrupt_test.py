@@ -60,7 +60,7 @@ class AgentInterruptTest(IsolatedAsyncioTestCase):
         )
 
         events = []
-        async for evt in agent._handle_interruption():
+        async for evt in agent._close_unfinished_tool_calls():
             events.append(evt)
 
         # Should have yielded ReplyEndEvent with interrupted reason
@@ -115,7 +115,7 @@ class AgentInterruptTest(IsolatedAsyncioTestCase):
         )
 
         events = []
-        async for evt in agent._handle_interruption():
+        async for evt in agent._close_unfinished_tool_calls():
             events.append(evt)
 
         reply_end = events[0]
@@ -161,7 +161,7 @@ class AgentInterruptTest(IsolatedAsyncioTestCase):
         # Simulate CancelledError landing during reply — call
         # _handle_interruption directly to verify cleanup.
         events = []
-        async for evt in agent._handle_interruption():
+        async for evt in agent._close_unfinished_tool_calls():
             events.append(evt)
 
         self.assertEqual(len(events), 1)

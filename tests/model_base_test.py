@@ -4,11 +4,10 @@ retry / accumulation / interrupt wrapper around ``_call_api``."""
 import asyncio
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.message import TextBlock, ThinkingBlock, ToolCallBlock, UserMsg
-from agentscope.model import ChatResponse
-from agentscope.model._model_response import FinishedReason
-
 from utils import AnyString, MockModel
+
+from agentscope.message import TextBlock, ThinkingBlock, ToolCallBlock, UserMsg
+from agentscope.model import ChatResponse, FinishedReason
 
 
 def _dump(chat_response: ChatResponse) -> dict:

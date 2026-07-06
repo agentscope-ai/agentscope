@@ -14,6 +14,7 @@ from ..message import (
     ToolResultBlock,
     ToolResultState,
 )
+from ..model import FinishedReason
 from ..permission import PermissionRule
 
 
@@ -88,6 +89,14 @@ class ReplyStartEvent(EventBase):
     """Role of the agent."""
 
 
+class ReplyEndReason(StrEnum):
+    """The reason for reply ended."""
+
+    COMPLETED = "COMPLETED"
+    INTERRUPTED = "INTERRUPTED"
+    EXCEED_MAX_ITERS = "EXCEED_MAX_ITERS"
+
+
 class ReplyEndEvent(EventBase):
     """Reply end event."""
 
@@ -97,13 +106,8 @@ class ReplyEndEvent(EventBase):
     """ID of the session this reply belongs to."""
     reply_id: str
     """ID of the reply message produced by this reply."""
-    finished_reason: Literal[
-        "completed",
-        "interrupted",
-        "max_iters",
-    ] = "completed"
-    """Why the reply ended: completed normally, interrupted by user,
-    or exceeded max iterations."""
+    finished_reason: ReplyEndReason
+    """The finished reason of this reply."""
 
 
 class ModelCallStartEvent(EventBase):
@@ -128,6 +132,8 @@ class ModelCallEndEvent(EventBase):
     """Number of input tokens consumed."""
     output_tokens: int
     """Number of output tokens generated."""
+    finished_reason: FinishedReason
+    """The finished reason of this model call."""
 
 
 class TextBlockStartEvent(EventBase):

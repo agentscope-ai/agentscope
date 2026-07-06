@@ -107,7 +107,7 @@ class ChatResponse(DictMixin):
         self,
         block_id: str,
         name: str,
-        input: str,
+        input: str,  # pylint: disable=redefined-builtin
     ) -> Self:
         """Append tool call to the current response by tool call block ID."""
         for block in self.content:
@@ -184,3 +184,8 @@ class StructuredResponse:
         default_factory=lambda: {},
     )
     """The metadata of the chat response"""
+
+    finished_reason: FinishedReason = field(
+        default=FinishedReason.COMPLETED,
+    )
+    """The finished reason of the structured response."""

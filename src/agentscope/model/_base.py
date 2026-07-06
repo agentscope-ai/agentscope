@@ -622,4 +622,5 @@ class ChatModelBase:
             created_at=completed_response.created_at,
             content=structured_output,
             usage=completed_response.usage,
+            finished_reason=completed_response.finished_reason,
         )
