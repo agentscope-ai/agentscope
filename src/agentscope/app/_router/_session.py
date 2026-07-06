@@ -2,13 +2,11 @@
 """Session router — create, list, update, delete, stream, and get messages."""
 import asyncio
 import json
-from datetime import datetime
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
-from ..._logging import logger
 from ..._utils._common import _generate_id
 from ..deps import (
     get_current_user_id,
@@ -40,11 +38,9 @@ from ..storage import (
     StorageBase,
     TeamRecord,
 )
-from ...message import ToolCallState, ToolResultBlock, ToolResultState
-from ...tool._toolkit import TOOL_INTERRUPTED_MESSAGE
+from ...message import ToolCallState
 from ..storage._utils import _ensure_team_members
-from ...event import CustomEvent, ReplyEndEvent
-from .._bus_ops import publish_session_event
+from ...event import CustomEvent
 
 
 async def _build_team_detail(
@@ -342,7 +338,12 @@ async def delete_session(
 
 @session_router.post(
     "/{session_id}/interrupt",
+    status_code=status.HTTP_202_ACCEPTED,
     summary="Interrupt a running chat run for a session",
+    responses={
+        404: {"description": "Session not found."},
+        409: {"description": "Session is not running; nothing to interrupt."},
+    },
 )
 async def interrupt_session(
     session_id: str,
@@ -353,11 +354,15 @@ async def interrupt_session(
 ) -> InterruptSessionResponse:
     """Request interruption of the currently running agent for a session.
 
-    Publishes an interrupt signal on the message bus.  Every process's
-    :class:`~agentscope.app._manager.CancelDispatcher` is subscribed to
-    this channel — the one that owns the session will cancel the local
-    chat-run task, triggering graceful ``CancelledError`` handling
-    inside the agent.
+    Publishes an interrupt signal on the message bus. The
+    :class:`~agentscope.app._manager.CancelDispatcher` that owns the
+    session cancels the local chat-run task, triggering graceful
+    ``CancelledError`` handling inside the agent.
+
+    Only the running case is handled here. Parked (HITL) or idle
+    sessions have no in-flight task to cancel and are rejected with
+    409; callers should resolve HITL state through the dedicated
+    endpoints instead.
 
     Args:
         session_id: The session whose agent should be interrupted.
@@ -367,11 +372,12 @@ async def interrupt_session(
         message_bus: Injected message bus.
 
     Returns:
-        ``interrupted`` when an agent was running, ``not_running`` when
-        the session was idle.
+        202 with :class:`InterruptSessionResponse` echoing the
+        session id.
 
     Raises:
-        HTTPException: 404 if the session does not exist.
+        HTTPException: 404 if the session does not exist; 409 if the
+            session has no running agent to interrupt.
     """
     existing = await storage.get_session(user_id, agent_id, session_id)
     if existing is None:
@@ -383,97 +389,16 @@ async def interrupt_session(
     if not await message_bus.is_locked(
         MessageBusKeys.session_lock(session_id),
     ):
-        # Agent is not running — but it may be parked in ASKING /
-        # SUBMITTED state.  Patch any such tool calls so the next
-        # message does not raise ValueError.
-        patched = await _patch_pending_tool_calls(
-            storage,
-            user_id,
-            agent_id,
-            session_id,
-        )
-        if patched:
-            # Publish a ReplyEndEvent so the frontend dismisses the
-            # confirmation/execution card and shows the interrupted state.
-            reply_end = ReplyEndEvent(
-                session_id=session_id,
-                reply_id=patched,
-                finished_reason="interrupted",
-            )
-            await publish_session_event(
-                message_bus,
-                session_id,
-                reply_end.model_dump(mode="json"),
-            )
-        return InterruptSessionResponse(
-            status="not_running",
-            session_id=session_id,
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Session '{session_id}' is not running.",
         )
 
     await message_bus.publish(
         MessageBusKeys.session_interrupt_channel(),
         {"session_id": session_id},
     )
-    return InterruptSessionResponse(
-        status="interrupted",
-        session_id=session_id,
-    )
-
-
-async def _patch_pending_tool_calls(
-    storage: StorageBase,
-    user_id: str,
-    agent_id: str,
-    session_id: str,
-) -> str | None:
-    """Patch ASKING / SUBMITTED tool calls in the persisted agent state.
-
-    When the agent is parked (waiting for user confirmation or external
-    execution) and the user presses Stop, the session lock is already
-    released, so no ``CancelledError`` can be injected.  This helper
-    patches those tool calls directly in storage so the next
-    ``reply_stream`` call does not raise ``ValueError``.
-
-    Returns:
-        The ``reply_id`` of the patched message, or ``None`` if nothing
-        was patched.
-    """
-    existing = await storage.get_session(user_id, agent_id, session_id)
-    if existing is None or existing.state is None:
-        return None
-    state = existing.state
-    if not state.context:
-        return None
-    last_msg = state.context[-1]
-    result_ids = {b.id for b in last_msg.get_content_blocks("tool_result")}
-    patched = False
-    for tc in last_msg.get_content_blocks("tool_call"):
-        if tc.id not in result_ids and tc.state in (
-            ToolCallState.ASKING,
-            ToolCallState.SUBMITTED,
-        ):
-            tc.state = ToolCallState.FINISHED
-            last_msg.content.append(
-                ToolResultBlock(
-                    id=tc.id,
-                    name=tc.name,
-                    output=TOOL_INTERRUPTED_MESSAGE,
-                    state=ToolResultState.INTERRUPTED,
-                ),
-            )
-            patched = True
-    if patched:
-        if not last_msg.finished_at:
-            last_msg.finished_at = datetime.now().isoformat()
-        await storage.update_session_state(
-            user_id=user_id,
-            agent_id=agent_id,
-            session_id=session_id,
-            state=state,
-        )
-        await storage.upsert_message(user_id, session_id, last_msg)
-        return last_msg.id
-    return None
+    return InterruptSessionResponse(session_id=session_id)
 
 
 @session_router.patch(
@@ -876,46 +801,6 @@ async def stream_session_events(
                 await feeder_task
             except asyncio.CancelledError:
                 pass
-            # If the client disconnected while the agent was still
-            # running, publish an interrupt signal so the agent task
-            # is cancelled — no point wasting resources when nobody
-            # is listening.
-            # If the agent is parked in ASKING/SUBMITTED state (not
-            # locked), patch the tool calls in storage so the next
-            # message doesn't raise ValueError.
-            try:
-                if await message_bus.is_locked(
-                    MessageBusKeys.session_lock(session_id),
-                ):
-                    await message_bus.publish(
-                        MessageBusKeys.session_interrupt_channel(),
-                        {"session_id": session_id},
-                    )
-                else:
-                    patched = await _patch_pending_tool_calls(
-                        storage,
-                        user_id,
-                        agent_id,
-                        session_id,
-                    )
-                    if patched:
-                        reply_end = ReplyEndEvent(
-                            session_id=session_id,
-                            reply_id=patched,
-                            finished_reason="interrupted",
-                        )
-                        await publish_session_event(
-                            message_bus,
-                            session_id,
-                            reply_end.model_dump(mode="json"),
-                        )
-            except Exception:
-                logger.debug(
-                    "SSE disconnect: failed to publish interrupt for "
-                    "session %s",
-                    session_id,
-                    exc_info=True,
-                )
 
     return StreamingResponse(
         _sse_generator(),

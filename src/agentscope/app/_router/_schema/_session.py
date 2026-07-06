@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
 """Request / response schemas for the session router."""
-from typing import Literal
-
 from pydantic import BaseModel, Field
 
 from ....permission import PermissionMode
@@ -213,10 +211,7 @@ class SessionStatusResponse(BaseModel):
 
 
 class InterruptSessionResponse(BaseModel):
-    """Response returned by ``POST /sessions/{sid}/interrupt``."""
+    """Response body for a successful ``POST /sessions/{sid}/interrupt``
+    (HTTP 202). Non-running sessions are rejected with 409."""
 
-    session_id: str = Field(description="Echo of the session id.")
-    status: Literal["interrupted", "not_running"] = Field(
-        description="``interrupted`` when a signal was published, "
-        "``not_running`` when the session was idle.",
-    )
+    session_id: str = Field(description="Echo of the interrupted session id.")

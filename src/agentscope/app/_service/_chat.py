@@ -447,9 +447,8 @@ class ChatService:
             lock_key,
             ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
         ):
+            reply_msg: Msg | None = None
             try:
-                reply_msg: Msg | None = None
-
                 if input_msg is None or isinstance(input_msg, (Msg, list)):
                     # Case A: new reply (user message(s), or retrigger with
                     # empty input)
@@ -523,10 +522,11 @@ class ChatService:
                             reply_msg.append_event(event)
 
             finally:
-                # All persistence in a single shielded coroutine so that
-                # a CancelledError escaping the async-for loop cannot
-                # skip any of them.  The inner task runs to completion
-                # even if the outer await is cancelled.
+                # All persistence in a single coroutine, shielded from
+                # outer cancellation.  Must complete BEFORE the session
+                # lock is released — otherwise another worker could
+                # acquire the lock and load a stale state from storage
+                # before this write lands.
                 async def _persist() -> None:
                     if reply_msg is not None:
                         await self._storage.upsert_message(
@@ -542,10 +542,15 @@ class ChatService:
                     )
                     await self._message_bus.log_trim(events_key)
 
+                persist_task = asyncio.create_task(_persist())
                 try:
-                    await asyncio.shield(_persist())
+                    await asyncio.shield(persist_task)
                 except asyncio.CancelledError:
-                    pass
+                    # Await the shielded task so the lock is only
+                    # released after storage is consistent, then
+                    # propagate to honour asyncio semantics.
+                    await persist_task
+                    raise
 
     async def _project_event(
         self,

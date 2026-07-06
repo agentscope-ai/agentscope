@@ -128,7 +128,7 @@ class CancelDispatcher:
                 sid = payload.get("session_id")
                 if isinstance(sid, str):
                     self._cancel_session(sid)
-        except Exception:  # pylint: disable=broad-except
+        except Exception:
             logger.exception(
                 "CancelDispatcher session-cancel loop crashed.",
             )
