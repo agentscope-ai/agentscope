@@ -307,6 +307,36 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_empty_thinking_block_is_dropped(self) -> None:
+        """An empty ``ThinkingBlock`` must be skipped, not forwarded.
+
+        Gemini rejects a thought part whose text is empty with a 400
+        ("contents.parts must not be empty"). Empty thinking blocks occur
+        when a reasoning model returns no summary, so the formatter must
+        drop them rather than emit ``{"thought": True, "text": ""}``.
+        """
+        fmt = GeminiChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ThinkingBlock(thinking=""),
+                    TextBlock(text="reply"),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        # Only the text part remains — no empty thought part.
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["role"], "model")
+        thought_parts = [
+            p for p in res[0]["parts"] if p.get("thought") is True
+        ]
+        self.assertEqual(thought_parts, [])
+        self.assertEqual(res[0]["parts"], [{"text": "reply"}])
+
     @patch(
         "agentscope.formatter._formatter_base.shortuuid.uuid",
         return_value=_FIXED_ID,

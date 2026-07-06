@@ -157,7 +157,14 @@ class GeminiChatFormatter(_GeminiFormatterBase):
                     # Gemini API requires `thought: true` to mark a part as a
                     # thinking/reasoning block so the model can distinguish it
                     # from normal text and maintain reasoning continuity.
-                    parts.append({"thought": True, "text": block.thinking})
+                    # Skip empty thinking — Gemini rejects a thought part
+                    # whose text is empty with a 400
+                    # ("contents.parts must not be empty"). Empty thinking
+                    # occurs when a reasoning model returns no summary.
+                    if block.thinking:
+                        parts.append(
+                            {"thought": True, "text": block.thinking},
+                        )
 
                 elif isinstance(block, HintBlock):
                     if parts:
