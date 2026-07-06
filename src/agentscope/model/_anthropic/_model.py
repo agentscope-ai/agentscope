@@ -327,16 +327,8 @@ class AnthropicChatModel(ChatModelBase):
         response_id: str = _generate_id()
         text_id: str = _generate_id()
         thinking_id: str = _generate_id()
-        thinking_signature: str | None = None
         # The mapping from index to tool call id
         acc_tool_calls: dict = OrderedDict()
-
-        # The accumulated chat response
-        acc_res: ChatResponse = ChatResponse(
-            content=[],
-            is_last=True,
-            id=response_id,
-        )
 
         async for event in response:
             delta_res = ChatResponse(content=[], is_last=False, id=response_id)
@@ -347,7 +339,6 @@ class AnthropicChatModel(ChatModelBase):
                 # Update the response ID if exists
                 response_id = getattr(message, "id", None) or response_id
                 delta_res.id = response_id
-                acc_res.id = response_id
 
                 if message.usage:
                     u = message.usage
@@ -376,7 +367,7 @@ class AnthropicChatModel(ChatModelBase):
                         tool_block.name,
                     )
                     # New tool call block with empty input
-                    delta_res.append_tool_call_by_id(
+                    delta_res.append_tool_call(
                         block_id=tool_block.id,
                         name=tool_block.name,
                         input="",
@@ -411,7 +402,7 @@ class AnthropicChatModel(ChatModelBase):
                     and block_index in acc_tool_calls
                 ):
                     block_id, name = acc_tool_calls[block_index]
-                    delta_res.append_tool_call_by_id(
+                    delta_res.append_tool_call(
                         block_id=block_id,
                         name=name,
                         input=delta.partial_json or "",
@@ -421,24 +412,9 @@ class AnthropicChatModel(ChatModelBase):
                 if event.usage and usage:
                     usage.output_tokens = event.usage.output_tokens
 
-            if delta_res:
+            if delta_res.content:
                 delta_res.usage = usage
-                # Accumulate the delta data into the final response
-                acc_res.append_chat_response(delta_res)
                 yield delta_res
-
-        # Handle signature
-        if thinking_signature:
-            acc_res.append_thinking(
-                "",
-                block_id=thinking_id,
-                signature=thinking_signature,
-            )
-
-        # Handle usage
-        acc_res.usage = usage
-
-        yield acc_res
 
     def _format_tools(
         self,

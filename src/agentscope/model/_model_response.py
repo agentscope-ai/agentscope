@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import Literal, Sequence, Self, List
+from typing import Literal, Self, List
 
 from ._model_usage import ChatUsage
 from .._utils._common import _generate_id
@@ -93,16 +93,17 @@ class ChatResponse(DictMixin):
             ):
                 block.thinking += thinking
                 if signature:
-                    block.signature += signature
+                    block.signature = signature
                 return self
 
         assert isinstance(self.content, list)
         block = ThinkingBlock(thinking=thinking, id=block_id or _generate_id())
-        block.signature = signature
+        if signature:
+            block.signature = signature
         self.content.append(block)
         return self
 
-    def append_tool_call_by_id(
+    def append_tool_call(
         self,
         block_id: str,
         name: str,
@@ -123,30 +124,6 @@ class ChatResponse(DictMixin):
         self.content.append(block)
         return self
 
-    def append_tool_call_by_index(
-        self,
-        index: int,
-        input: str,
-        name: str | None = None,
-        block_id: str | None = None,
-    ) -> Self:
-        """Append tool call to the current response by tool call block ID."""
-        tc_index = 0
-        for block in self.content:
-            if isinstance(block, ToolCallBlock) and tc_index == index:
-                block.input += input
-                return self
-            tc_index += 1
-
-        block = ToolCallBlock(
-            id=block_id,
-            name=name,
-            input=input,
-        )
-        assert isinstance(self.content, list)
-        self.content.append(block)
-        return self
-
     def append_chat_response(self, chat_response: Self) -> Self:
         """Append chat response to the current response."""
         # Append content
@@ -157,6 +134,9 @@ class ChatResponse(DictMixin):
                 # Append data according to the block type
                 if isinstance(block, ThinkingBlock):
                     block.thinking += delta_block.thinking
+                    # Anthropic API requires additional signature field
+                    if getattr(delta_block, "signature", None):
+                        block.signature = delta_block.signature
 
                 elif isinstance(block, TextBlock):
                     block.text += delta_block.text
@@ -171,6 +151,10 @@ class ChatResponse(DictMixin):
         if new_block_dict:
             # Attach new blocks to the content
             self.content.extend(new_block_dict.values())
+
+        # Override the chat usage
+        if chat_response.usage:
+            self.usage = chat_response.usage
 
         return self
 

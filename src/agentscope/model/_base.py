@@ -11,7 +11,7 @@ from typing import Type, Any, AsyncGenerator
 import jsonschema
 from pydantic import BaseModel
 
-from ._model_response import StructuredResponse, ChatResponse
+from ._model_response import StructuredResponse, ChatResponse, FinishedReason
 from ._model_card import ModelCard
 from .._logging import logger
 from .._utils._common import _json_loads_with_repair
@@ -178,17 +178,26 @@ class ChatModelBase:
                 Additional keyword arguments passed to the underlying API.
         """
 
-        retryable = tuple(self._get_retryable_exceptions())
+        retryable = self._get_retryable_exceptions()
         last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
+            # The accumulated chat response
             try:
-                return await self._call_api(
+                res = await self._call_api(
                     self.model,
                     messages=messages,
                     tools=tools,
                     tool_choice=tool_choice,
                     **kwargs,
                 )
+                break
+            except asyncio.CancelledError:
+                return ChatResponse(
+                    content=[],
+                    is_last=True,
+                    finished_reason=FinishedReason.INTERRUPTED,
+                )
+
             except Exception as e:
                 if not isinstance(e, retryable):
                     raise
@@ -209,12 +218,47 @@ class ChatModelBase:
                         self.max_retries + 1,
                         self.model,
                     )
-        if last_error is not None:
-            raise last_error
-        raise RuntimeError(
-            f"Failed to call model {self.model} after "
-            f"{self.max_retries + 1} retries.",
+        else:
+            if last_error is not None:
+                raise last_error
+            raise RuntimeError(
+                f"Failed to call model {self.model} after "
+                f"{self.max_retries + 1} retries.",
+            )
+
+        # =====================================================================
+        # Consume the model calling result
+        # =====================================================================
+        if isinstance(res, ChatResponse):
+            return res
+
+        # The accumulated chat response
+        acc_res = ChatResponse(
+            content=[],
+            is_last=True,
+            finished_reason=FinishedReason.COMPLETED,
         )
+
+        async def _stream() -> AsyncGenerator[ChatResponse, None]:
+            """The wrapper around model calling."""
+            # For backward compatibility
+            yield_acc_res = True
+            try:
+                async for chunk in res:
+                    if not chunk.is_last:
+                        acc_res.append_chat_response(chunk)
+                        acc_res.id = chunk.id
+                    else:
+                        yield_acc_res = False
+                    yield chunk
+            except asyncio.CancelledError:
+                acc_res.finished_reason = FinishedReason.INTERRUPTED
+                yield_acc_res = True
+
+            if yield_acc_res:
+                yield acc_res
+
+        return _stream()
 
     @abstractmethod
     async def _call_api(
