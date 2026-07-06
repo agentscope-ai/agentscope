@@ -303,9 +303,9 @@ class SseSchemaDefsPreservationTest(IsolatedAsyncioTestCase):
                 "function": {
                     "name": "mcp__test_defs_client__tool_with_model",
                     "description": "A tool whose parameter uses a "
-                    "Pydantic sub-model.\n\n"
-                    "Args:\n    name: Item name.\n    "
-                    "config: Item configuration.\n",
+                    "Pydantic sub-model.\n\n    Args:\n        "
+                    "name: Item name.\n        "
+                    "config: Item configuration.\n    ",
                     "parameters": {
                         "$defs": {
                             "_ItemConfig": {

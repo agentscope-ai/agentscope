@@ -12,7 +12,6 @@ from agentscope.tool import (
     ToolBase,
     Toolkit,
     ToolChunk,
-    RegisteredTool,
 )
 from agentscope.permission import (
     PermissionDecision,
