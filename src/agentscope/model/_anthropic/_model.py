@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The Anthropic chat model implementation."""
+import json
 from collections import OrderedDict
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
@@ -262,13 +263,13 @@ class AnthropicChatModel(ChatModelBase):
                     hasattr(content_block, "type")
                     and content_block.type == "tool_use"
                 ):
-                    import json
-
                     content_blocks.append(
                         ToolCallBlock(
                             id=content_block.id,
                             name=content_block.name,
-                            input=json.dumps(content_block.input),
+                            input=json.dumps(
+                                content_block.input, ensure_ascii=False,
+                            ),
                         ),
                     )
 
@@ -328,7 +329,7 @@ class AnthropicChatModel(ChatModelBase):
         text_id: str = _generate_id()
         thinking_id: str = _generate_id()
         # The mapping from index to tool call id
-        acc_tool_calls: dict = OrderedDict()
+        tool_call_mapping: dict = OrderedDict()
 
         async for event in response:
             delta_res = ChatResponse(content=[], is_last=False, id=response_id)
@@ -362,7 +363,7 @@ class AnthropicChatModel(ChatModelBase):
                 if event.content_block.type == "tool_use":
                     tool_block = event.content_block
                     # Record the id and name
-                    acc_tool_calls[event.index] = (
+                    tool_call_mapping[event.index] = (
                         tool_block.id,
                         tool_block.name,
                     )
@@ -399,9 +400,9 @@ class AnthropicChatModel(ChatModelBase):
                 # Tool call block
                 elif (
                     delta.type == "input_json_delta"
-                    and block_index in acc_tool_calls
+                    and block_index in tool_call_mapping
                 ):
-                    block_id, name = acc_tool_calls[block_index]
+                    block_id, name = tool_call_mapping[block_index]
                     delta_res.append_tool_call(
                         block_id=block_id,
                         name=name,

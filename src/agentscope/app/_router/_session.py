@@ -696,7 +696,7 @@ async def stream_session_events(
             MessageBusKeys.session_events(session_id),
             max_count=MessageBusKeys.SESSION_REPLAY_MAX_LEN,
         ):
-            yield f"data: {json.dumps(event)}\n\n"
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
         # 1b. Inject pending subagent HITL cards projected onto this
         #     session as a team leader (design §3.5). These live in a
@@ -732,7 +732,12 @@ async def stream_session_events(
                 name=SubagentHitlProjector.EVT_REQUIRE,
                 value=payload,
             )
-            yield f"data: {json.dumps(custom.model_dump(mode='json'))}\n\n"
+            data = json.dumps(
+                custom.model_dump(mode="json"),
+                ensure_ascii=False,
+            )
+
+            yield f"data: {data}\n\n"
 
         # 2. Live subscribe via a background feeder task that pushes
         #    events into a queue. The main loop reads from the queue
@@ -776,7 +781,7 @@ async def stream_session_events(
                     )
                     if item is None:
                         break
-                    yield f"data: {json.dumps(item)}\n\n"
+                    yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
                 except asyncio.TimeoutError:
                     yield ":\n\n"
         finally:

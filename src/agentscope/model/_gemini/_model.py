@@ -318,24 +318,22 @@ class GeminiChatModel(ChatModelBase):
                 Incremental ``ChatResponse`` objects with ``is_last=False``
                 followed by a final one with ``is_last=True``.
         """
-        # All delta should have the same block identifier
-        # Use the API's response_id when available (it arrives at the first
-        # chunk); otherwise generate a UUID to ensure all chunks share a
-        # stable id.
-        response_id: str | None = None
-        acc_text = TextBlock(text="")
-        acc_thinking = ThinkingBlock(thinking="")
-        acc_tool_calls: dict = {}
-        usage = None
+
+        response_id: str = _generate_id()
+        text_id: str = _generate_id()
+        thinking_id: str = _generate_id()
 
         async for chunk in response:
             # Capture response_id from the first chunk that carries it
-            if response_id is None:
-                response_id = (
-                    getattr(chunk, "response_id", None) or _generate_id()
-                )
+            delta_res = ChatResponse(
+                content=[],
+                is_last=False,
+                id=response_id,
+            )
 
-            delta_content: list = []
+            # Update the response ID if exists
+            response_id = getattr(chunk, "response_id", None) or response_id
+            delta_res.id = response_id
 
             if (
                 chunk.candidates
@@ -344,70 +342,43 @@ class GeminiChatModel(ChatModelBase):
             ):
                 for part in chunk.candidates[0].content.parts:
                     if part.text:
+                        # Thinking
                         if part.thought:
-                            acc_thinking.thinking += part.text
-                            delta_content.append(
-                                ThinkingBlock(
-                                    id=acc_thinking.id,
-                                    thinking=part.text,
-                                ),
-                            )
-                        else:
-                            acc_text.text += part.text
-                            delta_content.append(
-                                TextBlock(id=acc_text.id, text=part.text),
+                            delta_res.append_thinking(
+                                block_id=thinking_id,
+                                thinking=part.text,
                             )
 
+                        # Text
+                        else:
+                            delta_res.append_text(
+                                block_id=text_id,
+                                text=part.text,
+                            )
+
+                    # Tool call
                     if part.function_call:
-                        keyword_args = part.function_call.args or {}
                         if part.thought_signature:
                             call_id = base64.b64encode(
                                 part.thought_signature,
                             ).decode("utf-8")
                         else:
                             call_id = part.function_call.id or _generate_id()
-                        input_str = json.dumps(
-                            keyword_args,
-                            ensure_ascii=False,
-                        )
-                        acc_tool_calls[call_id] = {
-                            "name": part.function_call.name,
-                            "input": input_str,
-                        }
-                        delta_content.append(
-                            ToolCallBlock(
-                                id=call_id,
-                                name=part.function_call.name,
-                                input=input_str,
+
+                        delta_res.append_tool_call(
+                            block_id=call_id,
+                            name=part.function_call.name,
+                            input=json.dumps(
+                                part.function_call.args or {},
+                                ensure_ascii=False,
                             ),
                         )
 
             usage = self._extract_usage(chunk.usage_metadata, start_datetime)
 
-            if delta_content:
-                yield ChatResponse(
-                    id=response_id,
-                    content=delta_content,
-                    is_last=False,
-                    usage=usage,
-                )
-
-        final_content: list = []
-        if acc_thinking.thinking:
-            final_content.append(acc_thinking)
-        if acc_text.text:
-            final_content.append(acc_text)
-        for call_id, tc in acc_tool_calls.items():
-            final_content.append(
-                ToolCallBlock(id=call_id, name=tc["name"], input=tc["input"]),
-            )
-
-        yield ChatResponse(
-            id=response_id or _generate_id(),
-            content=final_content,
-            is_last=True,
-            usage=usage,
-        )
+            if delta_res.content or usage:
+                delta_res.usage = usage
+                yield delta_res
 
     def _parse_completion_response(
         self,

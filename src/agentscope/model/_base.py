@@ -248,6 +248,16 @@ class ChatModelBase:
                     if not chunk.is_last:
                         acc_res.append_chat_response(chunk)
                         acc_res.id = chunk.id
+                        # Empty-content deltas are "carrier" chunks used
+                        # by subclasses to propagate usage / id metadata
+                        # (e.g. OpenAI-compatible APIs emit a trailing
+                        # usage-only chunk with no choices). We absorb
+                        # their metadata into ``acc_res`` above but do
+                        # not surface them to the consumer, which keeps
+                        # the visible stream free of spurious empty
+                        # deltas.
+                        if not chunk.content:
+                            continue
                     else:
                         yield_acc_res = False
                     yield chunk

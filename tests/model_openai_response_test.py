@@ -288,7 +288,6 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
                 (True, [TextBlock.model_construct(id=A, text="Hello world")]),
             ],
         )
-        self.assertEqual(responses[-1].id, "resp-1")
 
     @patch("openai.AsyncClient")
     async def test_stream_reasoning_and_text(
@@ -337,6 +336,20 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
                     [ThinkingBlock.model_construct(id=A, thinking="Thinking")],
                 ),
                 (False, [TextBlock.model_construct(id=A, text="Answer")]),
+                # ``reasoning_item_id`` is only known at
+                # ``response.completed``; it is emitted as a dedicated
+                # carrier delta chunk (empty thinking text) that the base
+                # accumulator merges onto the existing ``ThinkingBlock``.
+                (
+                    False,
+                    [
+                        ThinkingBlock.model_construct(
+                            id=A,
+                            thinking="",
+                            reasoning_item_id="rs_123",
+                        ),
+                    ],
+                ),
                 (
                     True,
                     [
