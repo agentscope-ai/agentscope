@@ -211,7 +211,22 @@ class SessionStatusResponse(BaseModel):
 
 
 class InterruptSessionResponse(BaseModel):
-    """Response body for a successful ``POST /sessions/{sid}/interrupt``
-    (HTTP 202). Non-running sessions are rejected with 409."""
+    """Response body for ``POST /sessions/{sid}/interrupt`` (HTTP 202).
+
+    The interrupt operation is idempotent and always succeeds for an
+    existing session (only ``404`` is raised when the session id does
+    not exist):
+
+    - If the session is **running**, an interrupt signal is published
+      so the local
+      :class:`~agentscope.app._manager.CancelDispatcher` cancels the
+      chat-run task; the agent then runs its ``CancelledError`` cleanup
+      path.
+    - If the session is **parked** on HITL / external execution, a
+      resume trigger carrying a
+      :class:`~agentscope.event.UserInterruptEvent` is enqueued so the
+      agent short-circuits into the same cleanup path.
+    - If the session is **idle**, the call is a no-op.
+    """
 
     session_id: str = Field(description="Echo of the interrupted session id.")

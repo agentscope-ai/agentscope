@@ -268,7 +268,8 @@ class AnthropicChatModel(ChatModelBase):
                             id=content_block.id,
                             name=content_block.name,
                             input=json.dumps(
-                                content_block.input, ensure_ascii=False,
+                                content_block.input,
+                                ensure_ascii=False,
                             ),
                         ),
                     )

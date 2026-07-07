@@ -17,7 +17,6 @@ from typing import (
 import jsonschema
 
 from ._config import ContextConfig, ReActConfig, ModelConfig
-from ..event._event import UserInterruptEvent
 from ..state import AgentState
 from ._utils import _ToolCallBatch
 from .._logging import logger
@@ -50,6 +49,7 @@ from ..event import (
     DataBlockEndEvent,
     ExceedMaxItersEvent,
     ReplyEndReason,
+    UserInterruptEvent,
 )
 from ..exception import AgentOrientedException
 from ..model import (

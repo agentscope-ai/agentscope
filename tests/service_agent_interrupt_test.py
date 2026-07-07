@@ -125,7 +125,7 @@ class ServiceAgentInterruptTest(IsolatedAsyncioTestCase):
 
                 # Step 1: Publish interrupt (simulating API endpoint)
                 await bus.publish(
-                    MessageBusKeys.session_cancel_channel(),
+                    MessageBusKeys.session_interrupt_channel(),
                     {"session_id": session_id},
                 )
 

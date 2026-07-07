@@ -23,7 +23,7 @@ class FinishedReason(StrEnum):
     """The finished reason of the model response."""
 
     INTERRUPTED = "interrupted"
-    """The model response is interrupted by the asyncio.CancelError."""
+    """The model response is interrupted by the asyncio.CancelledError."""
 
     COMPLETED = "completed"
     """The model response is completed."""

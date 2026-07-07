@@ -73,7 +73,9 @@ class MockModel(ChatModelBase):
 
     def set_responses(
         self,
-        mock_responses: list[ChatResponse | list[ChatResponse]],
+        mock_responses: list[
+            ChatResponse | BaseException | list[ChatResponse | BaseException]
+        ],
     ) -> None:
         """Set the mock responses.
 
