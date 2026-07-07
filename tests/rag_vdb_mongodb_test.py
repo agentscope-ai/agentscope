@@ -2,15 +2,11 @@
 """Unit tests for the MongoDBStore class (mocked pymongo backend)."""
 from __future__ import annotations
 
-import importlib.util
 import math
-import unittest
 from contextlib import AsyncExitStack
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch
-
-_HAS_PYMONGO = importlib.util.find_spec("pymongo") is not None
 
 from utils import AnyString
 
@@ -262,7 +258,6 @@ class _FakeMongoClient:
         self._databases.clear()
 
 
-@unittest.skipUnless(_HAS_PYMONGO, "pymongo is not installed")
 class MongoDBStoreTest(IsolatedAsyncioTestCase):
     """The test cases for the MongoDBStore class."""
 
@@ -522,18 +517,33 @@ class MongoDBStoreTest(IsolatedAsyncioTestCase):
             ],
         )
 
-        summaries = await self.store.list_documents("kb-1")
-        summaries_by_id = {s.document_id: s for s in summaries}
-
-        self.assertEqual(set(summaries_by_id), {"doc-1", "doc-2"})
-        self.assertEqual(summaries_by_id["doc-1"].chunk_count, 2)
-        self.assertEqual(summaries_by_id["doc-1"].source, "alpha.txt")
-        self.assertEqual(
-            summaries_by_id["doc-1"].metadata,
-            {"filename": "alpha.txt", "media_type": "text/plain"},
+        summaries = sorted(
+            await self.store.list_documents("kb-1"),
+            key=lambda summary: summary.document_id,
         )
-        self.assertEqual(summaries_by_id["doc-2"].chunk_count, 1)
-        self.assertEqual(summaries_by_id["doc-2"].source, "beta.md")
+        self.assertEqual(
+            [summary.model_dump() for summary in summaries],
+            [
+                {
+                    "document_id": "doc-1",
+                    "source": "alpha.txt",
+                    "chunk_count": 2,
+                    "metadata": {
+                        "filename": "alpha.txt",
+                        "media_type": "text/plain",
+                    },
+                },
+                {
+                    "document_id": "doc-2",
+                    "source": "beta.md",
+                    "chunk_count": 1,
+                    "metadata": {
+                        "filename": "beta.md",
+                        "media_type": "text/markdown",
+                    },
+                },
+            ],
+        )
 
     async def test_search_metadata_filter(self) -> None:
         """search applies the metadata_filter as a payload predicate."""
@@ -570,7 +580,26 @@ class MongoDBStoreTest(IsolatedAsyncioTestCase):
             top_k=5,
             metadata_filter={"kb_scope": "kb-a"},
         )
-        self.assertEqual([r.document_id for r in results], ["doc-1"])
+        self.assertEqual(
+            _dump_results(results),
+            [
+                {
+                    "score": 1.0,
+                    "document_id": "doc-1",
+                    "chunk": {
+                        "content": {
+                            "type": "text",
+                            "text": "A",
+                            "id": AnyString(),
+                        },
+                        "source": "doc-1.txt",
+                        "chunk_index": 0,
+                        "total_chunks": 1,
+                        "metadata": {"kb_scope": "kb-a"},
+                    },
+                },
+            ],
+        )
 
         results = await self.store.search(
             "kb-1",
@@ -578,4 +607,23 @@ class MongoDBStoreTest(IsolatedAsyncioTestCase):
             top_k=5,
             metadata_filter={"kb_scope": "kb-b"},
         )
-        self.assertEqual([r.document_id for r in results], ["doc-2"])
+        self.assertEqual(
+            _dump_results(results),
+            [
+                {
+                    "score": 1.0,
+                    "document_id": "doc-2",
+                    "chunk": {
+                        "content": {
+                            "type": "text",
+                            "text": "B",
+                            "id": AnyString(),
+                        },
+                        "source": "doc-2.txt",
+                        "chunk_index": 0,
+                        "total_chunks": 1,
+                        "metadata": {"kb_scope": "kb-b"},
+                    },
+                },
+            ],
+        )
