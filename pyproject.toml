@@ -156,12 +156,15 @@ include-package-data = true
 # ``"*"`` applies to every discovered package. Patterns:
 # - ``py.typed`` marks the typed package per PEP 561.
 # - ``_models/*.yaml`` reaches into the data-only ``_models/``
-#   subdirs that ship with each model provider (they have no
+#  subdirs that ship with each model provider (they have no
 #   ``__init__.py`` and are not packages, but the files still
 #   live alongside the parent package's source on disk).
-"*" = ["py.typed", "_models/*.yaml", "_cosyvoice_models/*.yaml"]
+"*" = [
+    "py.typed",
+    "_models/*.yaml",
+    "_cosyvoice_models/*.yaml",
+]
 "agentscope.workspace._docker" = ["Dockerfile*.template"]
-
 [build-system]
 requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
