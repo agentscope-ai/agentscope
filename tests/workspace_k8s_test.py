@@ -198,18 +198,18 @@ class TestK8sWorkspaceHappyPath(IsolatedAsyncioTestCase):
                 args=["mcp-server-time"],
             ),
         )
-        self.assertListEqual(await ws.list_mcps(), [])
+        self.assertListEqual(await ws.list_mcps("test-agent"), [])
 
-        await ws.add_mcp(mcp_client)
-        mcps = await ws.list_mcps()
+        await ws.add_mcp("test-agent", mcp_client)
+        mcps = await ws.list_mcps("test-agent")
         self.assertEqual(len(mcps), 1)
         self.assertEqual(mcps[0].name, "time")
 
         tools = await mcps[0].list_raw_tools()
         self.assertGreater(len(tools), 0)
 
-        await ws.remove_mcp("time")
-        self.assertListEqual(await ws.list_mcps(), [])
+        await ws.remove_mcp("test-agent", "time")
+        self.assertListEqual(await ws.list_mcps("test-agent"), [])
 
         # ── 4. Backend public API ───────────────────────────────
         # 4a. exec_shell success
@@ -326,7 +326,7 @@ class TestK8sWorkspaceReset(IsolatedAsyncioTestCase):
 
             state_after = {
                 "skills": await ws.list_skills(),
-                "mcps": await ws.list_mcps(),
+                "mcps": await ws.list_mcps("test-agent"),
                 "sessions_exists": await backend.file_exists(
                     f"{POD_WORKDIR}/sessions",
                 ),
