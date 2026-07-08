@@ -35,7 +35,6 @@ from ._utils import (
     _read_glob_helper_bytes,
 )
 
-
 if TYPE_CHECKING:
     from ._gateway_client import GatewayMCPClient
 
@@ -209,9 +208,7 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             if agent_id == "_default":
                 continue
             gw_clients = await self._gateway.list_mcps(agent_id)
-            self._gateway_clients[agent_id] = {
-                c.name: c for c in gw_clients
-            }
+            self._gateway_clients[agent_id] = {c.name: c for c in gw_clients}
 
         await self._save_mcp_file()
 
