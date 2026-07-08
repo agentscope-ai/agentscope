@@ -36,10 +36,10 @@ import asyncio
 import time
 from typing import Self
 
-from agentscope._logging import logger
-from agentscope.mcp import MCPClient
-from agentscope.workspace import E2BWorkspace
-from agentscope.workspace._e2b._bootstrap import (
+from ..._logging import logger
+from ...mcp import MCPClient
+from ...workspace import E2BWorkspace
+from ...workspace._e2b._constants import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_TEMPLATE,
     DEFAULT_TIMEOUT,

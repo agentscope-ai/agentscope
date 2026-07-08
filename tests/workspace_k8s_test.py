@@ -1,893 +1,419 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
-"""Unit tests for K8sWorkspace, K8sBackend, and K8sWorkspaceManager.
+"""Integration tests for :class:`K8sWorkspace`.
 
-All tests use mocked ``kubernetes_asyncio`` APIs — no real K8s cluster
-is required.
+These tests exercise a real Kubernetes cluster (kind is used in CI).
+The whole module is skipped when either:
+
+* the current platform is not Linux, or
+* ``K8S_TEST_IMAGE`` is not set (the pre-baked test image name), or
+* ``kubectl`` is not on ``PATH`` (kind cluster not provisioned).
+
+Each test uses a fresh ``workspace_id`` so PVCs/Pods never collide, and
+``delete_pvc_on_close=True`` so no residue is left in the cluster.
+
+The pre-baked image (see ``tests/docker/k8s_workspace_test.Dockerfile``)
+ships the gateway script at ``GATEWAY_HOME``, so ``initialize()`` skips
+bootstrap and each test finishes in ~15 s.
 """
-
-import io
-import tarfile
+import os
+import shutil
+import sys
+import tempfile
 import unittest
-from collections.abc import AsyncGenerator
+import uuid
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
 
-from agentscope.workspace._k8s._k8s_bootstrap import (
-    DEFAULT_GATEWAY_PORT,
-    DEFAULT_IMAGE,
+from agentscope.mcp import MCPClient, StdioMCPConfig
+from agentscope.workspace import K8sWorkspace
+from agentscope.workspace._k8s._constants import (
     GATEWAY_HOME,
-    GATEWAY_SCRIPT,
-    GATEWAY_VENV_PY,
-    POD_DATA_DIR,
-    POD_MCP_FILE,
-    POD_SESSIONS_DIR,
-    POD_SKILLS_DIR,
     POD_WORKDIR,
-    SYSTEM_DEPS,
-    _k8s_safe_name,
-    bootstrap_commands,
-    render_install_agentscope_cmd_dev,
-    render_install_agentscope_cmd_released,
 )
 
-# ── _k8s_safe_name tests ──────────────────────────────────────────
-
-
-class TestK8sSafeName(unittest.TestCase):
-    """Validate RFC-1123 name sanitisation."""
-
-    def test_uuid_hex_passthrough(self) -> None:
-        """A standard uuid4().hex (lowercase hex) passes through."""
-        wid = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
-        name = _k8s_safe_name(wid)
-        self.assertTrue(name.startswith("as-ws-"))
-        self.assertEqual(name, f"as-ws-{wid}")
-
-    def test_uppercase_lowered(self) -> None:
-        """Uppercase characters are lowered."""
-        name = _k8s_safe_name("ABC123")
-        self.assertEqual(name, "as-ws-abc123")
-
-    def test_special_chars_replaced(self) -> None:
-        """Underscores and dots are replaced with hyphens."""
-        name = _k8s_safe_name("my_ws.v2")
-        self.assertEqual(name, "as-ws-my-ws-v2")
-
-    def test_truncation(self) -> None:
-        """Names longer than 63 chars are truncated."""
-        wid = "a" * 100
-        name = _k8s_safe_name(wid)
-        self.assertLessEqual(len(name), 63)
-
-    def test_trailing_hyphen_stripped(self) -> None:
-        """Trailing hyphens from truncation are removed."""
-        wid = "a" * 56 + "---"
-        name = _k8s_safe_name(wid)
-        self.assertFalse(name.endswith("-"))
-
-    def test_custom_prefix(self) -> None:
-        """Custom prefix is applied."""
-        name = _k8s_safe_name("test", prefix="pvc-")
-        self.assertEqual(name, "pvc-test")
-
-
-# ── bootstrap_commands tests ──────────────────────────────────────
-
-
-class TestBootstrapCommands(unittest.TestCase):
-    """Validate the bootstrap command sequence."""
-
-    def test_basic_sequence_length(self) -> None:
-        """Bootstrap generates exactly 6 commands."""
-        cmds = bootstrap_commands(
-            install_agentscope_cmd="echo installed",
-        )
-        self.assertEqual(len(cmds), 6)
-
-    def test_mkdir_is_first(self) -> None:
-        """First command creates the persistent directory layout."""
-        cmds = bootstrap_commands(
-            install_agentscope_cmd="echo installed",
-        )
-        self.assertIn("mkdir -p", cmds[0])
-        self.assertIn(POD_DATA_DIR, cmds[0])
-        self.assertIn(POD_SKILLS_DIR, cmds[0])
-        self.assertIn(POD_SESSIONS_DIR, cmds[0])
-
-    def test_system_deps_installed(self) -> None:
-        """Second command installs system dependencies."""
-        cmds = bootstrap_commands(
-            install_agentscope_cmd="echo installed",
-        )
-        for dep in SYSTEM_DEPS:
-            self.assertIn(dep, cmds[1])
-
-    def test_uv_install(self) -> None:
-        """Third command installs uv."""
-        cmds = bootstrap_commands(
-            install_agentscope_cmd="echo installed",
-        )
-        self.assertIn("astral.sh/uv/install.sh", cmds[2])
-
-    def test_extra_pip_included(self) -> None:
-        """Extra pip packages appear in the venv install command."""
-        cmds = bootstrap_commands(
-            extra_pip=["numpy", "pandas"],
-            install_agentscope_cmd="echo installed",
-        )
-        self.assertIn("numpy", cmds[4])
-        self.assertIn("pandas", cmds[4])
-
-    def test_agentscope_cmd_forwarded(self) -> None:
-        """The agentscope install command is the last command."""
-        cmds = bootstrap_commands(
-            install_agentscope_cmd="uv pip install agentscope",
-        )
-        self.assertEqual(cmds[5], "uv pip install agentscope")
-
-
-class TestRenderInstallCommands(unittest.TestCase):
-    """Validate install command rendering."""
-
-    def test_released_cmd(self) -> None:
-        """Released mode pins the version."""
-        cmd = render_install_agentscope_cmd_released("1.2.3")
-        self.assertIn("agentscope==1.2.3", cmd)
-        self.assertIn("--no-deps", cmd)
-
-    def test_dev_cmd(self) -> None:
-        """Dev mode untars and installs from source."""
-        cmd = render_install_agentscope_cmd_dev()
-        self.assertIn("tar -xf", cmd)
-        self.assertIn("--no-deps", cmd)
-
-
-# ── K8sBackend tests ──────────────────────────────────────────────
-
-
-class TestK8sBackendExecShell(IsolatedAsyncioTestCase):
-    """Test K8sBackend.exec_shell with mocked K8s API."""
-
-    async def test_exec_shell_wraps_cwd(self) -> None:
-        """exec_shell wraps command with cd <cwd>."""
-        from agentscope.workspace._k8s._k8s_backend import K8sBackend
-
-        mock_api_client = MagicMock()
-        mock_api_client.configuration = MagicMock()
-
-        backend = K8sBackend(
-            api_client=mock_api_client,
-            namespace="default",
-            pod_name="test-pod",
-            container_name="workspace",
-            workdir="/workspace",
-        )
-
-        mock_v1 = MagicMock()
-        mock_sock = AsyncMock()
-        mock_sock.__aenter__ = AsyncMock(return_value=mock_sock)
-        mock_sock.__aexit__ = AsyncMock(return_value=False)
-
-        async def _empty_aiter(
-            _self: object,
-        ) -> "AsyncGenerator[None, None]":
-            return
-            yield  # make it an async generator
-
-        mock_sock.__aiter__ = _empty_aiter
-        mock_v1.connect_get_namespaced_pod_exec = AsyncMock(
-            return_value=mock_sock,
-        )
-
-        mock_ws_api = AsyncMock()
-        mock_ws_api.__aenter__ = AsyncMock(return_value=mock_ws_api)
-        mock_ws_api.__aexit__ = AsyncMock(return_value=False)
-
-        mock_core_v1 = MagicMock(return_value=mock_v1)
-
-        with (
-            patch(
-                "kubernetes_asyncio.stream.WsApiClient",
-                return_value=mock_ws_api,
-            ),
-            patch(
-                "kubernetes_asyncio.client.CoreV1Api",
-                mock_core_v1,
-            ),
-        ):
-            await backend.exec_shell(
-                ["ls", "-la"],
-                cwd="/tmp",
-            )
-
-        call_args = mock_v1.connect_get_namespaced_pod_exec.call_args
-        cmd = call_args.kwargs.get("command")
-        self.assertIn("/tmp", cmd[2])
-
-    async def test_exec_shell_timeout(self) -> None:
-        """exec_shell returns exit_code=-1 on timeout."""
-        from agentscope.workspace._k8s._k8s_backend import K8sBackend
-
-        mock_api_client = MagicMock()
-        mock_api_client.configuration = MagicMock()
-
-        backend = K8sBackend(
-            api_client=mock_api_client,
-            namespace="default",
-            pod_name="test-pod",
-            container_name="workspace",
-            workdir="/workspace",
-        )
-
-        mock_v1 = MagicMock()
-
-        async def hang_forever(
-            *_args: object,
-            **_kwargs: object,
-        ) -> None:
-            import asyncio
-
-            await asyncio.sleep(100)
-
-        mock_sock = AsyncMock()
-        mock_sock.__aenter__ = AsyncMock(side_effect=hang_forever)
-        mock_v1.connect_get_namespaced_pod_exec = AsyncMock(
-            return_value=mock_sock,
-        )
-
-        mock_ws_api = AsyncMock()
-        mock_ws_api.__aenter__ = AsyncMock(return_value=mock_ws_api)
-        mock_ws_api.__aexit__ = AsyncMock(return_value=False)
-
-        with (
-            patch(
-                "kubernetes_asyncio.stream.WsApiClient",
-                return_value=mock_ws_api,
-            ),
-            patch(
-                "kubernetes_asyncio.client.CoreV1Api",
-                return_value=mock_v1,
-            ),
-        ):
-            result = await backend.exec_shell(
-                ["sleep", "100"],
-                timeout=0.1,
-            )
-
-        self.assertEqual(result.exit_code, -1)
-        self.assertIn(b"timed out", result.stderr)
-
-
-class TestK8sBackendReadFile(IsolatedAsyncioTestCase):
-    """Test K8sBackend.read_file (tar extraction)."""
-
-    async def test_read_file_extracts_tar(self) -> None:
-        """read_file correctly extracts content from a tar stream."""
-        from agentscope.workspace._k8s._k8s_backend import K8sBackend
-
-        expected_content = b"hello world from pod"
-
-        # Build a tar containing the expected file
-        buf = io.BytesIO()
-        with tarfile.open(fileobj=buf, mode="w") as tf:
-            info = tarfile.TarInfo(name="test.txt")
-            info.size = len(expected_content)
-            tf.addfile(info, io.BytesIO(expected_content))
-        tar_bytes = buf.getvalue()
-
-        mock_api_client = MagicMock()
-        mock_api_client.configuration = MagicMock()
-
-        backend = K8sBackend(
-            api_client=mock_api_client,
-            namespace="default",
-            pod_name="test-pod",
-            container_name="workspace",
-            workdir="/workspace",
-        )
-
-        from agentscope.tool._builtin._backend import ExecResult
-
-        with patch.object(
-            backend,
-            "exec_shell",
-            new=AsyncMock(
-                return_value=ExecResult(
-                    exit_code=0,
-                    stdout=tar_bytes,
-                    stderr=b"",
-                ),
-            ),
-        ):
-            content = await backend.read_file("/workspace/test.txt")
-
-        self.assertEqual(content, expected_content)
-
-    async def test_read_file_not_found(self) -> None:
-        """read_file raises FileNotFoundError for missing files."""
-        from agentscope.workspace._k8s._k8s_backend import K8sBackend
-
-        mock_api_client = MagicMock()
-        mock_api_client.configuration = MagicMock()
-
-        backend = K8sBackend(
-            api_client=mock_api_client,
-            namespace="default",
-            pod_name="test-pod",
-            container_name="workspace",
-            workdir="/workspace",
-        )
-
-        from agentscope.tool._builtin._backend import ExecResult
-
-        with patch.object(
-            backend,
-            "exec_shell",
-            new=AsyncMock(
-                return_value=ExecResult(
-                    exit_code=1,
-                    stdout=b"",
-                    stderr=b"No such file or directory",
-                ),
-            ),
-        ):
-            with self.assertRaises(FileNotFoundError):
-                await backend.read_file("/workspace/missing.txt")
-
-
-class TestK8sBackendWriteFile(IsolatedAsyncioTestCase):
-    """Test K8sBackend.write_file (tar injection)."""
-
-    async def test_write_file_creates_tar(self) -> None:
-        """write_file constructs a tar and sends it via WS stdin."""
-        from agentscope.workspace._k8s._k8s_backend import K8sBackend
-
-        mock_api_client = MagicMock()
-        mock_api_client.configuration = MagicMock()
-
-        backend = K8sBackend(
-            api_client=mock_api_client,
-            namespace="default",
-            pod_name="test-pod",
-            container_name="workspace",
-            workdir="/workspace",
-        )
-
-        from agentscope.tool._builtin._backend import ExecResult
-
-        mock_v1 = MagicMock()
-        mock_sock = AsyncMock()
-        mock_sock.__aenter__ = AsyncMock(return_value=mock_sock)
-        mock_sock.__aexit__ = AsyncMock(return_value=False)
-        mock_sock.send_bytes = AsyncMock()
-        mock_sock.close = AsyncMock()
-        mock_v1.connect_get_namespaced_pod_exec = AsyncMock(
-            return_value=mock_sock,
-        )
-
-        mock_ws_api = AsyncMock()
-        mock_ws_api.__aenter__ = AsyncMock(return_value=mock_ws_api)
-        mock_ws_api.__aexit__ = AsyncMock(return_value=False)
-
-        mock_exec = AsyncMock(
-            return_value=ExecResult(
-                exit_code=0,
-                stdout=b"",
-                stderr=b"",
-            ),
-        )
-
-        with (
-            patch.object(
-                backend,
-                "exec_shell",
-                new=mock_exec,
-            ),
-            patch(
-                "kubernetes_asyncio.stream.WsApiClient",
-                return_value=mock_ws_api,
-            ),
-            patch(
-                "kubernetes_asyncio.client.CoreV1Api",
-                return_value=mock_v1,
-            ),
-        ):
-            await backend.write_file(
-                "/workspace/out.txt",
-                b"test data",
-            )
-
-            # Verify mkdir -p was called
-            mock_exec.assert_called()
-
-            # Verify tar was sent via stdin, then EOF
-            self.assertEqual(mock_sock.send_bytes.call_count, 2)
-            sent = mock_sock.send_bytes.call_args_list[0][0][0]
-            eof = mock_sock.send_bytes.call_args_list[1][0][0]
-            # Channel 0 prefix (stdin)
-            self.assertEqual(sent[0], 0)
-            # EOF is an empty channel-0 message
-            self.assertEqual(eof, bytes([0]))
-
-            # Verify the tar content is valid
-            tar_data = sent[1:]
-            with tarfile.open(
-                fileobj=io.BytesIO(tar_data),
-                mode="r",
-            ) as tf:
-                members = tf.getmembers()
-                self.assertEqual(len(members), 1)
-                self.assertEqual(members[0].name, "out.txt")
-                extracted = tf.extractfile(members[0])
-                self.assertIsNotNone(extracted)
-                self.assertEqual(extracted.read(), b"test data")
-
-
-# ── K8sWorkspaceManager tests ────────────────────────────────────
-
-
-class TestK8sWorkspaceManagerCache(IsolatedAsyncioTestCase):
-    """Test K8sWorkspaceManager cache and TTL logic."""
-
-    async def test_create_workspace_caches(self) -> None:
-        """create_workspace adds the workspace to the cache."""
-        from agentscope.app.workspace_manager import K8sWorkspaceManager
-
-        mgr = K8sWorkspaceManager(ttl=3600.0, sweep_interval=9999.0)
-
-        mock_ws = MagicMock()
-        mock_ws.workspace_id = "test-ws-123"
-        mock_ws.initialize = AsyncMock()
-        mock_ws.close = AsyncMock()
-
-        with patch.object(
-            mgr,
-            "_build_and_start",
-            new=AsyncMock(return_value=mock_ws),
-        ):
-            ws = await mgr.create_workspace("u1", "a1", "s1")
-
-        self.assertEqual(ws.workspace_id, "test-ws-123")
-        self.assertIn("test-ws-123", mgr._cache)
-
-    async def test_get_workspace_cache_hit(self) -> None:
-        """get_workspace returns cached workspace on hit."""
-        from agentscope.app.workspace_manager import K8sWorkspaceManager
-
-        mgr = K8sWorkspaceManager(ttl=3600.0, sweep_interval=9999.0)
-
-        mock_ws = MagicMock()
-        mock_ws.workspace_id = "cached-ws"
-        mock_ws.close = AsyncMock()
-
-        import time
-
-        mgr._cache["cached-ws"] = (mock_ws, time.monotonic())
-
-        ws = await mgr.get_workspace("u1", "a1", "s1", "cached-ws")
-        self.assertIs(ws, mock_ws)
-
-    async def test_close_removes_from_cache(self) -> None:
-        """close() evicts the workspace from cache."""
-        from agentscope.app.workspace_manager import K8sWorkspaceManager
-
-        mgr = K8sWorkspaceManager(ttl=3600.0, sweep_interval=9999.0)
-
-        mock_ws = MagicMock()
-        mock_ws.workspace_id = "to-close"
-        mock_ws.close = AsyncMock()
-
-        import time
-
-        mgr._cache["to-close"] = (mock_ws, time.monotonic())
-
-        await mgr.close("to-close")
-
-        self.assertNotIn("to-close", mgr._cache)
-        mock_ws.close.assert_called_once()
-
-    async def test_close_all_clears_cache(self) -> None:
-        """close_all() empties the cache."""
-        from agentscope.app.workspace_manager import K8sWorkspaceManager
-
-        mgr = K8sWorkspaceManager(ttl=3600.0, sweep_interval=9999.0)
-
-        import time
-
-        for i in range(3):
-            mock_ws = MagicMock()
-            mock_ws.workspace_id = f"ws-{i}"
-            mock_ws.close = AsyncMock()
-            mgr._cache[f"ws-{i}"] = (mock_ws, time.monotonic())
-
-        await mgr.close_all()
-        self.assertEqual(len(mgr._cache), 0)
-
-
-# ── constants consistency tests ──────────────────────────────────
-
-
-class TestConstants(unittest.TestCase):
-    """Verify that K8s constants are consistent."""
-
-    def test_default_image(self) -> None:
-        """Default image is python:3.11-slim."""
-        self.assertEqual(DEFAULT_IMAGE, "python:3.11-slim")
-
-    def test_default_port(self) -> None:
-        """Default gateway port is 5600."""
-        self.assertEqual(DEFAULT_GATEWAY_PORT, 5600)
-
-    def test_workdir_layout(self) -> None:
-        """Workspace layout paths are under POD_WORKDIR."""
-        self.assertTrue(POD_DATA_DIR.startswith(POD_WORKDIR))
-        self.assertTrue(POD_SKILLS_DIR.startswith(POD_WORKDIR))
-        self.assertTrue(POD_SESSIONS_DIR.startswith(POD_WORKDIR))
-        self.assertTrue(POD_MCP_FILE.startswith(POD_WORKDIR))
-
-    def test_gateway_layout(self) -> None:
-        """Gateway layout paths are under GATEWAY_HOME."""
-        self.assertTrue(GATEWAY_SCRIPT.startswith(GATEWAY_HOME))
-        self.assertTrue(GATEWAY_VENV_PY.startswith(GATEWAY_HOME))
-
-
-# ── K8sWorkspace lifecycle tests (mocked K8s API) ────────────────
-
-
-def _mock_pvc(
-    phase: str = "Bound",
-    deletion_timestamp: object = None,
-) -> MagicMock:
-    """Build a mock PVC object with the given phase.
+# ── cluster availability check ────────────────────────────────────
+
+_TEST_IMAGE = os.getenv("K8S_TEST_IMAGE", "")
+_TEST_NAMESPACE = os.getenv("K8S_TEST_NAMESPACE", "agentscope")
+_KIND_AVAILABLE = (
+    sys.platform.startswith("linux")
+    and bool(_TEST_IMAGE)
+    and shutil.which("kubectl") is not None
+)
+_SKIP_REASON = (
+    "requires linux + K8S_TEST_IMAGE + kubectl (kind cluster). "
+    "See tests/docker/k8s_workspace_test.Dockerfile and the "
+    "``k8s-workspace-tests`` CI job."
+)
+
+
+def _new_workspace(**overrides: object) -> K8sWorkspace:
+    """Construct a K8sWorkspace pinned to the pre-baked test image.
 
     Args:
-        phase: PVC status phase (``Bound``, ``Pending``, ``Lost``).
-        deletion_timestamp: When set, simulates a PVC that K8s has
-            accepted for deletion but whose finalizers have not yet
-            completed.
+        **overrides:
+            Additional/replacement kwargs forwarded to
+            :class:`K8sWorkspace`.
+
+    Returns:
+        `K8sWorkspace`:
+            A workspace with a unique ``workspace_id``, tiny PVC, and
+            ``delete_pvc_on_close=True`` so tests never leak state.
     """
-    pvc = MagicMock()
-    pvc.status = MagicMock()
-    pvc.status.phase = phase
-    pvc.metadata = MagicMock()
-    pvc.metadata.deletion_timestamp = deletion_timestamp
-    return pvc
+    kwargs: dict[str, object] = {
+        "workspace_id": f"test-{uuid.uuid4().hex[:8]}",
+        "image": _TEST_IMAGE,
+        "image_pull_policy": "Never",  # image is `kind load`-ed
+        "namespace": _TEST_NAMESPACE,
+        "storage_size": "100Mi",
+        "delete_pvc_on_close": True,
+    }
+    kwargs.update(overrides)
+    return K8sWorkspace(**kwargs)  # type: ignore[arg-type]
 
 
-def _mock_pod(phase: str = "Running") -> MagicMock:
-    """Build a mock Pod object with the given phase."""
-    pod = MagicMock()
-    pod.status = MagicMock()
-    pod.status.phase = phase
-    pod.status.pod_ip = "10.0.0.42"
-    pod.status.container_statuses = None
-    pod.status.conditions = None
-    return pod
+def _write_skill_dir(root: str, name: str, description: str) -> str:
+    """Create a minimal, valid skill directory on the host.
+
+    Args:
+        root (`str`):
+            Parent directory for the new skill.
+        name (`str`):
+            Skill name; also used as directory basename and written
+            into the ``SKILL.md`` front matter.
+        description (`str`):
+            Skill description for the front matter.
+
+    Returns:
+        `str`:
+            Absolute path to the created skill directory.
+    """
+    skill_dir = os.path.join(root, name)
+    os.makedirs(skill_dir, exist_ok=True)
+    with open(
+        os.path.join(skill_dir, "SKILL.md"),
+        "w",
+        encoding="utf-8",
+    ) as f:
+        f.write(
+            f"---\nname: {name}\ndescription: {description}\n---\n\n"
+            f"# {name}\n\n{description}\n",
+        )
+    return skill_dir
 
 
-class _FakeApiException(Exception):
-    """Mimics ``kubernetes_asyncio.client.rest.ApiException``."""
+# ── happy-path: bootstrap + skills + mcps + backend all share ────
+# a single Pod to minimise total CI time. Each section below cleans
+# up whatever it added so subsequent sections start from a known
+# state. Destructive scenarios (reset, close) get their own class /
+# workspace further down.
 
-    def __init__(self, status: int = 404) -> None:
-        self.status = status
-        super().__init__(f"ApiException({status})")
 
+@unittest.skipUnless(_KIND_AVAILABLE, _SKIP_REASON)
+class TestK8sWorkspaceHappyPath(IsolatedAsyncioTestCase):
+    """Scenarios 1 + 2 + 3 + 7 exercised against a single Pod.
 
-class TestEnsurePvcLifecycle(IsolatedAsyncioTestCase):
-    """Test ``_ensure_pvc`` branches with mocked K8s API."""
+    Every section restores the workspace to a clean state before the
+    next section runs, so ordering is not fragile — but ``unittest``
+    runs test methods alphabetically anyway and there is only one
+    test method here on purpose.
+    """
 
-    async def test_pvc_bound_reuse(self) -> None:
-        """Existing Bound PVC is reused without recreation."""
-        from agentscope.workspace._k8s._k8s_workspace import K8sWorkspace
+    async def asyncSetUp(self) -> None:
+        """Start a single workspace + host-side scratch dir."""
+        # pylint: disable=consider-using-with
+        self._skills_src = tempfile.TemporaryDirectory()
+        self._ws = _new_workspace()
+        await self._ws.initialize()
+        self._backend = self._ws.get_backend()
 
-        ws = K8sWorkspace(workspace_id="test-pvc-bound")
-        ws._pod_name = "as-ws-test-pvc-bound"
-        ws._namespace = "agentscope"
-        ws._v1 = AsyncMock()
-        ws._v1.read_namespaced_persistent_volume_claim = AsyncMock(
-            return_value=_mock_pvc("Bound"),
+    async def asyncTearDown(self) -> None:
+        """Tear the workspace down and drop the scratch dir."""
+        try:
+            await self._ws.close()
+        finally:
+            self._skills_src.cleanup()
+
+    async def test_workspace_end_to_end(self) -> None:
+        """Cover bootstrap artefacts, skills CRUD, MCP CRUD + call, and
+        every public backend API against one Pod.
+
+        Sections:
+
+        1. **Bootstrap** — verify every workdir / gateway artefact.
+        2. **Skills**    — ``add_skill`` → ``list_skills`` → ``remove_skill``.
+        3. **MCPs**      — register a pure-Python MCP (``uvx
+           mcp-server-time``), list it, call ``list_raw_tools`` on
+           it, deregister.
+        4. **Backend**   — exec_shell (success / nonzero / cwd),
+           write_file + read_file roundtrip (binary, nested path),
+           file_exists, delete_path, join_path.
+        """
+        backend = self._backend
+        ws = self._ws
+
+        # ── 1. Bootstrap artefacts ───────────────────────────────
+        artefact_paths = [
+            f"{POD_WORKDIR}/data",
+            f"{POD_WORKDIR}/skills",
+            f"{POD_WORKDIR}/sessions",
+            f"{POD_WORKDIR}/.mcp",
+            f"{GATEWAY_HOME}/_mcp_gateway_app.py",
+            f"{GATEWAY_HOME}/_glob_helper.py",
+            f"{GATEWAY_HOME}/.venv/bin/python",
+        ]
+        artefact_state = {
+            p: await backend.file_exists(p) for p in artefact_paths
+        }
+        self.assertDictEqual(
+            artefact_state,
+            {p: True for p in artefact_paths},
         )
 
-        with patch(
-            "agentscope.workspace._k8s._k8s_workspace.K8sWorkspace"
-            "._create_pvc",
-            new=AsyncMock(),
-        ) as mock_create:
-            with patch(
-                "kubernetes_asyncio.client.rest.ApiException",
-                _FakeApiException,
-            ):
-                await ws._ensure_pvc()
+        # ── 2. Skills CRUD ───────────────────────────────────────
+        skill_path = _write_skill_dir(
+            self._skills_src.name,
+            "greeter",
+            "Says hi.",
+        )
+        self.assertListEqual(await ws.list_skills(), [])
 
-        mock_create.assert_not_called()
-
-    async def test_pvc_404_creates_new(self) -> None:
-        """Missing PVC triggers creation."""
-        from agentscope.workspace._k8s._k8s_workspace import K8sWorkspace
-
-        ws = K8sWorkspace(workspace_id="test-pvc-new")
-        ws._pod_name = "as-ws-test-pvc-new"
-        ws._namespace = "agentscope"
-        ws._v1 = AsyncMock()
-        ws._v1.read_namespaced_persistent_volume_claim = AsyncMock(
-            side_effect=_FakeApiException(404),
+        await ws.add_skill(skill_path)
+        skills = await ws.list_skills()
+        self.assertEqual(len(skills), 1)
+        self.assertEqual(
+            (skills[0].name, skills[0].description, skills[0].dir),
+            ("greeter", "Says hi.", f"{POD_WORKDIR}/skills/greeter"),
         )
 
-        with (
-            patch(
-                "agentscope.workspace._k8s._k8s_workspace.K8sWorkspace"
-                "._create_pvc",
-                new=AsyncMock(),
-            ) as mock_create,
-            patch(
-                "kubernetes_asyncio.client.rest.ApiException",
-                _FakeApiException,
+        await ws.remove_skill("greeter")
+        self.assertListEqual(await ws.list_skills(), [])
+
+        # ── 3. MCP CRUD + call (pure Python stdio MCP) ──────────
+        mcp_client = MCPClient(
+            name="time",
+            is_stateful=True,
+            mcp_config=StdioMCPConfig(
+                command="uvx",
+                args=["mcp-server-time"],
             ),
-        ):
-            await ws._ensure_pvc()
+        )
+        self.assertListEqual(await ws.list_mcps(), [])
 
-        mock_create.assert_called_once_with("as-ws-test-pvc-new")
+        await ws.add_mcp(mcp_client)
+        mcps = await ws.list_mcps()
+        self.assertEqual(len(mcps), 1)
+        self.assertEqual(mcps[0].name, "time")
 
-    async def test_pvc_deleting_waits_then_recreates(self) -> None:
-        """PVC with deletion_timestamp is waited on, then recreated."""
-        from agentscope.workspace._k8s._k8s_workspace import K8sWorkspace
+        tools = await mcps[0].list_raw_tools()
+        self.assertGreater(len(tools), 0)
 
-        ws = K8sWorkspace(workspace_id="test-pvc-term")
-        ws._pod_name = "as-ws-test-pvc-term"
-        ws._namespace = "agentscope"
-        ws._v1 = AsyncMock()
-        ws._v1.read_namespaced_persistent_volume_claim = AsyncMock(
-            return_value=_mock_pvc(
-                "Bound",
-                deletion_timestamp="2026-07-02T00:00:00Z",
-            ),
+        await ws.remove_mcp("time")
+        self.assertListEqual(await ws.list_mcps(), [])
+
+        # ── 4. Backend public API ───────────────────────────────
+        # 4a. exec_shell success
+        r_ok = await backend.exec_shell(["echo", "hello"])
+        self.assertEqual(
+            (r_ok.exit_code, r_ok.stdout.strip(), r_ok.ok()),
+            (0, b"hello", True),
         )
 
-        with (
-            patch(
-                "agentscope.workspace._k8s._k8s_workspace.K8sWorkspace"
-                "._wait_pvc_deleted",
-                new=AsyncMock(),
-            ) as mock_wait,
-            patch(
-                "agentscope.workspace._k8s._k8s_workspace.K8sWorkspace"
-                "._create_pvc",
-                new=AsyncMock(),
-            ) as mock_create,
-            patch(
-                "kubernetes_asyncio.client.rest.ApiException",
-                _FakeApiException,
-            ),
-        ):
-            await ws._ensure_pvc()
-
-        mock_wait.assert_called_once()
-        mock_create.assert_called_once()
-
-
-class TestEnsurePodLifecycle(IsolatedAsyncioTestCase):
-    """Test ``_ensure_pod`` branches with mocked K8s API."""
-
-    async def test_pod_running_reuse(self) -> None:
-        """Running Pod is reused without recreation."""
-        from agentscope.workspace._k8s._k8s_workspace import K8sWorkspace
-
-        ws = K8sWorkspace(workspace_id="test-pod-run")
-        ws._pod_name = "as-ws-test-pod-run"
-        ws._namespace = "agentscope"
-        ws._v1 = AsyncMock()
-        ws._v1.read_namespaced_pod = AsyncMock(
-            return_value=_mock_pod("Running"),
+        # 4b. exec_shell non-zero exit + stderr
+        r_bad = await backend.exec_shell(
+            ["sh", "-c", "echo boom >&2; exit 3"],
+        )
+        self.assertEqual(
+            (r_bad.exit_code, r_bad.ok(), b"boom" in r_bad.stderr),
+            (3, False, True),
         )
 
-        with (
-            patch(
-                "agentscope.workspace._k8s._k8s_workspace.K8sWorkspace"
-                "._create_pod",
-                new=AsyncMock(),
-            ) as mock_create,
-            patch(
-                "kubernetes_asyncio.client.rest.ApiException",
-                _FakeApiException,
-            ),
-        ):
-            await ws._ensure_pod()
-
-        mock_create.assert_not_called()
-
-    async def test_pod_pending_not_rebuilt(self) -> None:
-        """Pending Pod is NOT rebuilt — left for _wait_pod_running."""
-        from agentscope.workspace._k8s._k8s_workspace import K8sWorkspace
-
-        ws = K8sWorkspace(workspace_id="test-pod-pend")
-        ws._pod_name = "as-ws-test-pod-pend"
-        ws._namespace = "agentscope"
-        ws._v1 = AsyncMock()
-        ws._v1.read_namespaced_pod = AsyncMock(
-            return_value=_mock_pod("Pending"),
+        # 4c. exec_shell honours cwd
+        r_cwd = await backend.exec_shell(["pwd"], cwd=POD_WORKDIR)
+        self.assertEqual(
+            (r_cwd.exit_code, r_cwd.stdout.strip()),
+            (0, POD_WORKDIR.encode()),
         )
 
-        with (
-            patch(
-                "agentscope.workspace._k8s._k8s_workspace.K8sWorkspace"
-                "._create_pod",
-                new=AsyncMock(),
-            ) as mock_create,
-            patch(
-                "kubernetes_asyncio.client.rest.ApiException",
-                _FakeApiException,
-            ),
-        ):
-            await ws._ensure_pod()
+        # 4d. write_file → read_file roundtrip, binary safe
+        blob_path = f"{POD_WORKDIR}/data/blob.bin"
+        blob = bytes(range(256)) * 16  # 4 KiB, all byte values
+        await backend.write_file(blob_path, blob)
+        self.assertEqual(await backend.read_file(blob_path), blob)
 
-        mock_create.assert_not_called()
-        ws._v1.delete_namespaced_pod.assert_not_called()
+        # 4e. write_file mkdir -p
+        nested = f"{POD_WORKDIR}/data/nested/deeper/note.txt"
+        await backend.write_file(nested, b"nested")
+        self.assertEqual(await backend.read_file(nested), b"nested")
 
-    async def test_pod_failed_rebuilds(self) -> None:
-        """Failed Pod is deleted and recreated."""
-        from agentscope.workspace._k8s._k8s_workspace import K8sWorkspace
+        # 4f. read_file on missing path
+        with self.assertRaises(FileNotFoundError):
+            await backend.read_file(f"{POD_WORKDIR}/does_not_exist")
 
-        ws = K8sWorkspace(workspace_id="test-pod-fail")
-        ws._pod_name = "as-ws-test-pod-fail"
-        ws._namespace = "agentscope"
-        ws._v1 = AsyncMock()
-        ws._v1.read_namespaced_pod = AsyncMock(
-            return_value=_mock_pod("Failed"),
-        )
-        ws._v1.delete_namespaced_pod = AsyncMock()
-
-        with (
-            patch(
-                "agentscope.workspace._k8s._k8s_workspace.K8sWorkspace"
-                "._wait_pod_deleted",
-                new=AsyncMock(),
-            ),
-            patch(
-                "agentscope.workspace._k8s._k8s_workspace.K8sWorkspace"
-                "._create_pod",
-                new=AsyncMock(),
-            ) as mock_create,
-            patch(
-                "kubernetes_asyncio.client.rest.ApiException",
-                _FakeApiException,
-            ),
-        ):
-            await ws._ensure_pod()
-
-        ws._v1.delete_namespaced_pod.assert_called_once()
-        mock_create.assert_called_once()
-
-    async def test_pod_404_creates_new(self) -> None:
-        """Missing Pod triggers creation."""
-        from agentscope.workspace._k8s._k8s_workspace import K8sWorkspace
-
-        ws = K8sWorkspace(workspace_id="test-pod-new")
-        ws._pod_name = "as-ws-test-pod-new"
-        ws._namespace = "agentscope"
-        ws._v1 = AsyncMock()
-        ws._v1.read_namespaced_pod = AsyncMock(
-            side_effect=_FakeApiException(404),
+        # 4g. file_exists reflects delete_path (files + directories)
+        tree_dir = f"{POD_WORKDIR}/data/tree"
+        tree_child = f"{tree_dir}/child.txt"
+        await backend.write_file(tree_child, b"child")
+        await backend.delete_path(blob_path)
+        await backend.delete_path(tree_dir)
+        self.assertDictEqual(
+            {
+                blob_path: await backend.file_exists(blob_path),
+                tree_dir: await backend.file_exists(tree_dir),
+            },
+            {blob_path: False, tree_dir: False},
         )
 
-        with (
-            patch(
-                "agentscope.workspace._k8s._k8s_workspace.K8sWorkspace"
-                "._create_pod",
-                new=AsyncMock(),
-            ) as mock_create,
-            patch(
-                "kubernetes_asyncio.client.rest.ApiException",
-                _FakeApiException,
-            ),
-        ):
-            await ws._ensure_pod()
-
-        mock_create.assert_called_once()
-
-
-class TestWaitPodPendingDetection(IsolatedAsyncioTestCase):
-    """Test ``_wait_pod_running`` early failure on Pending conditions."""
-
-    async def test_image_pull_backoff_raises_early(self) -> None:
-        """ImagePullBackOff is detected without waiting for timeout."""
-        from agentscope.workspace._k8s._k8s_workspace import K8sWorkspace
-
-        ws = K8sWorkspace(workspace_id="test-ipb")
-        ws._pod_name = "as-ws-test-ipb"
-        ws._namespace = "agentscope"
-        ws._v1 = AsyncMock()
-
-        pod = _mock_pod("Pending")
-        cs = MagicMock()
-        cs.state = MagicMock()
-        cs.state.waiting = MagicMock()
-        cs.state.waiting.reason = "ImagePullBackOff"
-        cs.state.waiting.message = "Back-off pulling image"
-        pod.status.container_statuses = [cs]
-        ws._v1.read_namespaced_pod = AsyncMock(return_value=pod)
-
-        with self.assertRaises(RuntimeError) as ctx:
-            await ws._wait_pod_running(timeout=5.0)
-
-        self.assertIn("Back-off pulling image", str(ctx.exception))
-
-    async def test_unschedulable_raises_early(self) -> None:
-        """Unschedulable Pod condition is detected early."""
-        from agentscope.workspace._k8s._k8s_workspace import K8sWorkspace
-
-        ws = K8sWorkspace(workspace_id="test-unsched")
-        ws._pod_name = "as-ws-test-unsched"
-        ws._namespace = "agentscope"
-        ws._v1 = AsyncMock()
-
-        pod = _mock_pod("Pending")
-        cond = MagicMock()
-        cond.type = "PodScheduled"
-        cond.status = "False"
-        cond.reason = "Unschedulable"
-        cond.message = "0/3 nodes are available"
-        pod.status.conditions = [cond]
-        ws._v1.read_namespaced_pod = AsyncMock(return_value=pod)
-
-        with self.assertRaises(RuntimeError) as ctx:
-            await ws._wait_pod_running(timeout=5.0)
-
-        self.assertIn("unschedulable", str(ctx.exception).lower())
-
-
-class TestDeletePvcOnClose(IsolatedAsyncioTestCase):
-    """Test the _delete_pvc_on_close constructor parameter."""
-
-    async def test_default_is_false(self) -> None:
-        """_delete_pvc_on_close defaults to False."""
-        from agentscope.workspace._k8s._k8s_workspace import K8sWorkspace
-
-        ws = K8sWorkspace(workspace_id="test-default")
-        self.assertFalse(ws._delete_pvc_on_close)
-
-    async def test_constructor_sets_true(self) -> None:
-        """delete_pvc_on_close=True is stored as private attribute."""
-        from agentscope.workspace._k8s._k8s_workspace import K8sWorkspace
-
-        ws = K8sWorkspace(
-            workspace_id="test-ctor",
-            delete_pvc_on_close=True,
-        )
-        self.assertTrue(ws._delete_pvc_on_close)
-
-
-class TestK8sWorkspaceInheritance(unittest.TestCase):
-    """Verify K8sWorkspace correctly inherits SandboxedWorkspaceBase."""
-
-    def test_inherits_sandboxed_base(self) -> None:
-        """K8sWorkspace is a subclass of SandboxedWorkspaceBase."""
-        from agentscope.workspace._k8s._k8s_workspace import K8sWorkspace
-        from agentscope.workspace._sandboxed_base import (
-            SandboxedWorkspaceBase,
+        # 4h. join_path is a pure string op
+        self.assertEqual(
+            backend.join_path("/workspace", "data", "x.txt"),
+            "/workspace/data/x.txt",
         )
 
-        self.assertTrue(issubclass(K8sWorkspace, SandboxedWorkspaceBase))
 
-    def test_class_attributes_set(self) -> None:
-        """K8sWorkspace sets all required class attributes."""
-        from agentscope.workspace._k8s._k8s_workspace import K8sWorkspace
+# ── destructive: reset ───────────────────────────────────────────
 
-        for attr in (
-            "_glob_helper_path",
-            "_gateway_home",
-            "_gateway_config",
-            "_gateway_log",
-            "_gateway_script",
-            "_gateway_python",
-        ):
-            self.assertTrue(
-                hasattr(K8sWorkspace, attr),
-                f"Missing class attribute {attr}",
+
+@unittest.skipUnless(_KIND_AVAILABLE, _SKIP_REASON)
+class TestK8sWorkspaceReset(IsolatedAsyncioTestCase):
+    """Scenario 5: ``reset`` wipes workspace state without killing the
+    Pod or the gateway. Isolated because it is destructive."""
+
+    async def asyncSetUp(self) -> None:
+        """Host-side temp dir for a seed skill."""
+        # pylint: disable=consider-using-with
+        self._skills_src = tempfile.TemporaryDirectory()
+
+    async def asyncTearDown(self) -> None:
+        """Drop the staging dir."""
+        self._skills_src.cleanup()
+
+    async def test_reset_clears_dirs_mcps_skills_but_keeps_gateway(
+        self,
+    ) -> None:
+        """After ``reset``: dirs empty, MCPs gone, skills gone,
+        gateway still alive.
+
+        Verifies:
+
+        1. Seed a skill file under ``skills/`` and a file under
+           ``sessions/``.
+        2. After ``reset``:
+           - ``list_skills`` and ``list_mcps`` return empty lists,
+           - ``sessions/`` and ``data/`` directories no longer exist,
+           - the gateway script under ``GATEWAY_HOME`` is untouched
+             (proves the Pod / gateway are still alive).
+        """
+        skill_path = _write_skill_dir(
+            self._skills_src.name,
+            "sample",
+            "sample skill",
+        )
+        ws = _new_workspace()
+        try:
+            await ws.initialize()
+            backend = ws.get_backend()
+
+            # Seed state.
+            await ws.add_skill(skill_path)
+            await backend.write_file(
+                f"{POD_WORKDIR}/sessions/s1/context.jsonl",
+                b'{"msg": "hi"}\n',
             )
-            val = getattr(K8sWorkspace, attr)
-            self.assertIsInstance(val, str)
-            self.assertTrue(len(val) > 0)
+            self.assertEqual(len(await ws.list_skills()), 1)
+
+            await ws.reset()
+
+            state_after = {
+                "skills": await ws.list_skills(),
+                "mcps": await ws.list_mcps(),
+                "sessions_exists": await backend.file_exists(
+                    f"{POD_WORKDIR}/sessions",
+                ),
+                "data_exists": await backend.file_exists(
+                    f"{POD_WORKDIR}/data",
+                ),
+                "gateway_alive": await backend.file_exists(
+                    f"{GATEWAY_HOME}/_mcp_gateway_app.py",
+                ),
+            }
+            self.assertDictEqual(
+                state_after,
+                {
+                    "skills": [],
+                    "mcps": [],
+                    "sessions_exists": False,
+                    "data_exists": False,
+                    "gateway_alive": True,
+                },
+            )
+        finally:
+            await ws.close()
+
+
+# ── destructive: close ───────────────────────────────────────────
+
+
+@unittest.skipUnless(_KIND_AVAILABLE, _SKIP_REASON)
+class TestK8sWorkspaceClose(IsolatedAsyncioTestCase):
+    """Scenario 4: ``close`` tears down cleanly and is idempotent.
+    Isolated because it terminates the workspace."""
+
+    async def test_close_is_idempotent_and_releases_backend(self) -> None:
+        """Two consecutive ``close`` calls succeed; backend is released.
+
+        Verifies:
+
+        1. After initialize, ``get_backend`` returns a backend.
+        2. First ``close`` succeeds.
+        3. Second ``close`` on the same workspace is a no-op (no
+           exception raised) — matches the docstring contract
+           "errors are swallowed so close is always safe to call".
+        """
+        ws = _new_workspace()
+        await ws.initialize()
+        self.assertIsNotNone(ws.get_backend())
+
+        await ws.close()
+        # Second close must not raise.
+        await ws.close()
+
+
+# ── local-only: get_instructions text ─────────────────────────────
+
+
+class TestK8sWorkspaceInstructions(IsolatedAsyncioTestCase):
+    """Scenario 6: ``get_instructions`` renders the workspace prompt.
+
+    Pure local check — no cluster needed, so *not* skip-guarded.
+    """
+
+    async def test_get_instructions_substitutes_workdir_in_template(
+        self,
+    ) -> None:
+        """Custom ``instructions`` template has ``{workdir}`` filled in."""
+        ws = K8sWorkspace(
+            workspace_id="prompt-only",
+            instructions="Workdir is {workdir}; nothing else.",
+        )
+        self.assertEqual(
+            await ws.get_instructions(),
+            f"Workdir is {POD_WORKDIR}; nothing else.",
+        )
+
+    async def test_get_instructions_default_template_mentions_workdir(
+        self,
+    ) -> None:
+        """Default template renders and mentions the Pod workdir."""
+        ws = K8sWorkspace(workspace_id="prompt-default")
+        text = await ws.get_instructions()
+        # Assert on the full rendered string as a golden of the default
+        # template — reviewers see intent at a glance.
+        self.assertIn(POD_WORKDIR, text)
+        self.assertIn("Kubernetes-based workspace", text)
+        self.assertIn("data/", text)
+        self.assertIn("skills/", text)
+        self.assertIn("sessions/", text)
 
 
 if __name__ == "__main__":

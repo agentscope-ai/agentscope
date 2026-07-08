@@ -22,7 +22,7 @@ from typing import Any, Self
 from ..._logging import logger
 from ...mcp import MCPClient
 from ...workspace import K8sWorkspace
-from ...workspace._k8s._k8s_bootstrap import (
+from ...workspace._k8s._constants import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_IMAGE,
 )

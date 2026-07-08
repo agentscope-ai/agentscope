@@ -1,0 +1,81 @@
+name: K8s Workspace Integration Tests
+
+# Runs the K8sWorkspace integration suite against a kind cluster.
+# The regular `unittest.yml` job also imports this test file, but every
+# test inside is guarded by `skipUnless(_KIND_AVAILABLE, ...)`, so it is
+# a no-op there. This workflow is where the tests actually execute.
+
+on:
+  push:
+    paths:
+      - "src/agentscope/workspace/**"
+      - "tests/workspace_k8s_test.py"
+      - "tests/docker/k8s_workspace_test.Dockerfile"
+      - ".github/workflows/k8s-workspace.yml"
+  pull_request:
+    paths:
+      - "src/agentscope/workspace/**"
+      - "tests/workspace_k8s_test.py"
+      - "tests/docker/k8s_workspace_test.Dockerfile"
+      - ".github/workflows/k8s-workspace.yml"
+
+jobs:
+  k8s-workspace-tests:
+    if: false == contains(github.event.pull_request.title, 'WIP')
+    # Ubuntu only: kind requires linux + docker; the test module's
+    # skipUnless would skip everything on Windows/macOS anyway.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.11'
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: agentscope-test
+          wait: 120s
+
+      - name: Build K8s workspace test image
+        run: |
+          docker build \
+            -f tests/docker/k8s_workspace_test.Dockerfile \
+            -t agentscope-k8s-test:ci .
+
+      - name: Load image into kind
+        run: kind load docker-image agentscope-k8s-test:ci --name agentscope-test
+
+      - name: Create test namespace
+        run: kubectl create namespace agentscope
+
+      - name: Install project
+        run: |
+          uv pip install -q -e .[dev]
+          uv pip install pytest
+
+      - name: Run K8s workspace tests
+        env:
+          K8S_TEST_IMAGE: agentscope-k8s-test:ci
+          K8S_TEST_NAMESPACE: agentscope
+        run: pytest tests/workspace_k8s_test.py -v
+
+      - name: Dump cluster diagnostics on failure
+        if: failure()
+        run: |
+          echo "── pods ──"
+          kubectl get pods -A -o wide || true
+          echo "── pvcs ──"
+          kubectl get pvc -A || true
+          echo "── events ──"
+          kubectl get events -A --sort-by=.lastTimestamp | tail -n 50 || true
+          echo "── describe agentscope pods ──"
+          for p in $(kubectl -n agentscope get pods -o name 2>/dev/null); do
+            echo "── $p ──"
+            kubectl -n agentscope describe "$p" || true
+            kubectl -n agentscope logs "$p" --all-containers=true --tail=200 || true
+          done
+

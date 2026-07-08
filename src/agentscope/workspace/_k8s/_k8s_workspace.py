@@ -17,7 +17,9 @@ Docker engine for the Kubernetes API (``kubernetes_asyncio``):
   ``.mcp``, sessions, and data survive restarts.
 * **Bootstrap.** First-time provisioning installs system deps +
   uv + gateway venv + agentscope and uploads the gateway script.
-  Detected by ``GATEWAY_SCRIPT`` file existence (idempotent).
+  The probe + install loop lives on :class:`SandboxedWorkspaceBase`;
+  this subclass only supplies Pod-specific shell commands via
+  :meth:`_bootstrap_commands`.
 * **MCP gateway.** Identical to Docker/E2B: a FastAPI process inside
   the Pod, host talks to it via :class:`GatewayClient` through the
   gateway shim (``exec_shell``-based transport, no host-to-Pod
@@ -30,31 +32,15 @@ from typing import Any
 from ..._logging import logger
 from ...mcp import MCPClient
 from .._sandboxed_base import SandboxedWorkspaceBase
-from .._utils import (
-    _agentscope_version,
-    _is_released_install,
-    _read_gateway_script_bytes,
-    _read_glob_helper_bytes,
-)
+from .._utils import _agentscope_version, _GATEWAY_BASE_REQUIREMENTS
 from ._k8s_backend import K8sBackend
-from ._k8s_bootstrap import (
-    BOOTSTRAP_CMD_TIMEOUT,
+from ._constants import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_IMAGE,
-    DEV_SRC_TAR,
-    GATEWAY_CONFIG,
     GATEWAY_HOME,
-    GATEWAY_LOG,
-    GATEWAY_SCRIPT,
-    GATEWAY_VENV_PY,
-    GLOB_HELPER_SCRIPT,
     POD_WORKDIR,
+    SYSTEM_DEPS,
     _k8s_safe_name,
-    bootstrap_commands,
-    build_source_tarball,
-    log_bootstrap_attempt,
-    render_install_agentscope_cmd_dev,
-    render_install_agentscope_cmd_released,
 )
 
 _DEFAULT_INSTRUCTIONS = """<workspace>
@@ -85,12 +71,7 @@ class K8sWorkspace(SandboxedWorkspaceBase):
     not retained as instance state past :meth:`initialize`.
     """
 
-    _glob_helper_path = GLOB_HELPER_SCRIPT
     _gateway_home = GATEWAY_HOME
-    _gateway_config = GATEWAY_CONFIG
-    _gateway_log = GATEWAY_LOG
-    _gateway_script = GATEWAY_SCRIPT
-    _gateway_python = GATEWAY_VENV_PY
 
     def __init__(
         self,
@@ -230,23 +211,6 @@ class K8sWorkspace(SandboxedWorkspaceBase):
             pod_name=self._pod_name,
             container_name="workspace",
             workdir=POD_WORKDIR,
-        )
-
-        if not await self._backend.file_exists(GATEWAY_SCRIPT):
-            await self._backend.exec_shell(
-                ["mkdir", "-p", POD_WORKDIR],
-                cwd="/",
-            )
-            await self._run_bootstrap()
-
-        await self._backend.exec_shell(
-            [
-                "mkdir",
-                "-p",
-                self._data_dir,
-                self._skills_dir,
-                self._sessions_dir,
-            ],
         )
 
     async def _teardown_backend(self) -> None:
@@ -615,41 +579,28 @@ class K8sWorkspace(SandboxedWorkspaceBase):
 
     # ── internals: bootstrap ────────────────────────────────────
 
-    async def _run_bootstrap(self) -> None:
-        """Provision a fresh Pod: sys deps -> uv -> venv -> agentscope."""
-        if _is_released_install():
-            log_bootstrap_attempt(self.workspace_id, "released")
-            install_cmd = render_install_agentscope_cmd_released(
-                _agentscope_version(),
-            )
-        else:
-            log_bootstrap_attempt(self.workspace_id, "dev")
-            tar_bytes = build_source_tarball()
-            await self._backend.write_file(DEV_SRC_TAR, tar_bytes)
-            install_cmd = render_install_agentscope_cmd_dev()
+    def _bootstrap_commands(self) -> list[str]:
+        """Shell commands that provision this Pod once.
 
-        commands = bootstrap_commands(
-            extra_pip=self.extra_pip,
-            install_agentscope_cmd=install_cmd,
-        )
-        for cmd in commands:
-            r = await self._backend.exec_shell(
-                ["sh", "-c", cmd],
-                timeout=BOOTSTRAP_CMD_TIMEOUT,
-            )
-            if not r.ok():
-                raise RuntimeError(
-                    f"K8sWorkspace bootstrap failed (exit {r.exit_code}) "
-                    f"for: {cmd!r}\n"
-                    f"stderr: {r.stderr.decode(errors='replace')}\n"
-                    f"stdout: {r.stdout.decode(errors='replace')}",
-                )
+        Only runs when the gateway script is missing (fresh PVC, or a
+        Pod that died before the script was written). Slim base image
+        runs as root, so no ``sudo`` needed — uv lands at
+        ``/usr/local/bin/uv`` which is on the default PATH.
+        """
+        pip_pkgs = list(_GATEWAY_BASE_REQUIREMENTS) + list(self.extra_pip)
+        pip_args = " ".join(pip_pkgs)
+        sys_deps = " ".join(SYSTEM_DEPS)
+        version = _agentscope_version()
 
-        await self._backend.write_file(
-            GLOB_HELPER_SCRIPT,
-            _read_glob_helper_bytes(),
-        )
-        await self._backend.write_file(
-            GATEWAY_SCRIPT,
-            _read_gateway_script_bytes(),
-        )
+        return [
+            f"apt-get update -qq "
+            f"&& apt-get install -y --no-install-recommends {sys_deps} "
+            f"&& rm -rf /var/lib/apt/lists/*",
+            "curl -LsSf https://astral.sh/uv/install.sh "
+            "| env UV_INSTALL_DIR=/usr/local/bin "
+            "INSTALLER_NO_MODIFY_PATH=1 sh",
+            f"uv venv {self._gateway_venv}",
+            f"uv pip install --python {self._gateway_python} {pip_args}",
+            f"uv pip install --python {self._gateway_python} "
+            f"--no-deps 'agentscope=={version}'",
+        ]
