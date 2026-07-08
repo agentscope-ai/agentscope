@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=protected-access,missing-function-docstring
 """Unit tests for the MongoDBStore class (mocked pymongo backend)."""
 from __future__ import annotations
 
@@ -108,7 +109,11 @@ class _FakeMongoCollection:
         self._docs: dict[str, dict[str, Any]] = {}
         self._index_queryable = False
 
-    async def bulk_write(self, operations: list[Any], ordered: bool = False) -> None:
+    async def bulk_write(
+        self,
+        operations: list[Any],
+        ordered: bool = False,
+    ) -> None:
         del ordered
         for operation in operations:
             self._docs[operation._doc["_id"]] = dict(operation._doc)
@@ -131,13 +136,19 @@ class _FakeMongoCollection:
         del name
         return _FakeAsyncIterator([{"queryable": self._index_queryable}])
 
-    async def aggregate(self, pipeline: list[dict[str, Any]]) -> _FakeAsyncIterator:
+    async def aggregate(
+        self,
+        pipeline: list[dict[str, Any]],
+    ) -> _FakeAsyncIterator:
         return _FakeAsyncIterator(self._run_aggregate(pipeline))
 
     async def drop(self) -> None:
         self._database._collections.pop(self._name, None)
 
-    def _run_aggregate(self, pipeline: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _run_aggregate(
+        self,
+        pipeline: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         if pipeline and "$vectorSearch" in pipeline[0]:
             return self._vector_search(pipeline[0]["$vectorSearch"])
         return self._list_documents(pipeline)
@@ -162,7 +173,10 @@ class _FakeMongoCollection:
         scored.sort(key=lambda item: item["score"], reverse=True)
         return scored[:top_k]
 
-    def _list_documents(self, pipeline: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _list_documents(
+        self,
+        pipeline: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         docs = list(self._docs.values())
         for stage in pipeline:
             if "$match" in stage:
@@ -176,7 +190,10 @@ class _FakeMongoCollection:
         return []
 
     @staticmethod
-    def _matches_match_stage(doc: dict[str, Any], match: dict[str, Any]) -> bool:
+    def _matches_match_stage(
+        doc: dict[str, Any],
+        match: dict[str, Any],
+    ) -> bool:
         for key, expected in match.items():
             value = doc
             for part in key.split("."):
@@ -208,6 +225,7 @@ class _FakeMongoCollection:
         docs: list[dict[str, Any]],
         group_stage: dict[str, Any],
     ) -> list[dict[str, Any]]:
+        del group_stage
         grouped: dict[str, dict[str, Any]] = {}
         for doc in docs:
             document_id = doc["document_id"]

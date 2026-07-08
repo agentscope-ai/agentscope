@@ -18,5 +18,5 @@ __all__ = [
     "VectorRecord",
     "VectorSearchResult",
     "QdrantStore",
-    "MongoDBStore"
+    "MongoDBStore",
 ]
