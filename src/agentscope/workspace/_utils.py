@@ -41,27 +41,6 @@ _GATEWAY_BASE_REQUIREMENTS: tuple[str, ...] = (
 )
 
 
-def _agentscope_version() -> str:
-    """Return the installed ``agentscope`` version string.
-
-    Falls back to :func:`importlib.metadata.version` when the package
-    has no ``__version__`` attribute.
-    """
-    import agentscope
-
-    version = getattr(agentscope, "__version__", None)
-    if not version:
-        try:
-            from importlib.metadata import version as _v
-
-            version = _v("agentscope")
-        except Exception as e:  # noqa: BLE001
-            raise RuntimeError(
-                "cannot determine agentscope version",
-            ) from e
-    return version
-
-
 # ── gateway script ─────────────────────────────────────────────────
 
 

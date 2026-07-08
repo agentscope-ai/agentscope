@@ -164,7 +164,7 @@ async def _run(config_path: str, port: int) -> None:
         app,
         host="127.0.0.1",
         port=port,
-        log_level="warning",
+        log_level="info",
     )
     server = uvicorn.Server(uvi_cfg)
     try:

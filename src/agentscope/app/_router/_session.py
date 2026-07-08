@@ -14,6 +14,7 @@ from ..deps import (
     get_message_bus,
     get_session_service,
     get_storage,
+    get_workspace_manager,
 )
 from ._schema import (
     CreateSessionRequest,
@@ -47,6 +48,7 @@ from ..storage import (
 from ...message import ToolCallState
 from ..storage._utils import _ensure_team_members
 from ...event import CustomEvent
+from ..workspace_manager import WorkspaceManagerBase
 
 
 async def _build_team_detail(
@@ -247,6 +249,7 @@ async def create_session(
     body: CreateSessionRequest,
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
+    workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
 ) -> CreateSessionResponse:
     """Create (or resume) a session for a given agent and workspace.
 
@@ -258,6 +261,10 @@ async def create_session(
         body (`CreateSessionRequest`): Agent, workspace, and model config.
         user_id (`str`): Injected authenticated user ID.
         storage (`StorageBase`): Injected storage backend.
+        workspace_manager (`WorkspaceManagerBase`): Injected workspace
+            manager; consulted via
+            :meth:`WorkspaceManagerBase.assign_workspace_id` to fill in
+            ``workspace_id`` when the request body omits it.
 
     Returns:
         `CreateSessionResponse`: The session identifier.
@@ -286,11 +293,23 @@ async def create_session(
         body.knowledge_config,
     )
 
+    # Resolve the workspace binding for this session. Explicit
+    # ``body.workspace_id`` always wins (used by team invite / borrow
+    # flows to force sharing); otherwise defer to the manager's
+    # isolation policy — see ``WorkspaceManagerBase.assign_workspace_id``.
+    resolved_workspace_id = body.workspace_id or (
+        workspace_manager.assign_workspace_id(
+            user_id=user_id,
+            agent_id=body.agent_id,
+            session_id=_generate_id(),
+        )
+    )
+
     session_record = await storage.upsert_session(
         user_id=user_id,
         agent_id=body.agent_id,
         config=SessionConfig(
-            workspace_id=body.workspace_id or _generate_id(),
+            workspace_id=resolved_workspace_id,
             chat_model_config=body.chat_model_config,
             fallback_chat_model_config=body.fallback_chat_model_config,
             tts_model_config=body.tts_model_config,

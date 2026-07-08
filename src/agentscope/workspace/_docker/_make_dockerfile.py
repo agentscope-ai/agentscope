@@ -26,7 +26,6 @@ from pathlib import Path
 
 from .._utils import (
     _GATEWAY_BASE_REQUIREMENTS,
-    _agentscope_version,
     _read_gateway_script_bytes,
     _read_glob_helper_bytes,
 )
@@ -162,9 +161,7 @@ def prepare_build_context(
     """
     extra_pip_list = list(extra_pip or [])
 
-    install_block = (
-        f'RUN uv pip install --no-deps "agentscope=={_agentscope_version()}"'
-    )
+    install_block = 'RUN uv pip install "agentscope"'
 
     dockerfile_text = render_dockerfile(
         base_image=base_image,

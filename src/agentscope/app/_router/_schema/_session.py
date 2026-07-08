@@ -60,7 +60,14 @@ class CreateSessionRequest(BaseModel):
     agent_id: str = Field(description="Agent this session belongs to.")
     workspace_id: str | None = Field(
         default=None,
-        description="Workspace this session belongs to.",
+        description=(
+            "Optional explicit workspace binding. When omitted the "
+            "server calls "
+            "``WorkspaceManagerBase.assign_workspace_id`` under the "
+            "configured isolation policy. Set only to force a "
+            "specific binding (e.g. share workspace with another "
+            "existing session)."
+        ),
     )
     name: str | None = Field(
         default=None,

@@ -167,6 +167,12 @@ class SandboxedWorkspaceBase(WorkspaceBase):
 
         Idempotent — a no-op when already alive.
         """
+        logger.info(
+            "Initialize workspace (id=%s) from %s ...",
+            self.workspace_id,
+            self.__class__.__name__,
+        )
+
         if self.is_alive:
             return
 
@@ -186,6 +192,12 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         await self._setup_skills()
 
         self.is_alive = True
+
+        logger.info(
+            "Finished initializing workspace (id=%s) from %s.",
+            self.workspace_id,
+            self.__class__.__name__,
+        )
 
     async def close(self) -> None:
         """Close the gateway facade, then tear down the sandbox.
@@ -390,6 +402,7 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             backend=backend,
             gateway_port=self.gateway_port,
             timeout=30.0,
+            gateway_log_path=self._gateway_log,
         )
         health_timeout = 30.0
         deadline = asyncio.get_event_loop().time() + health_timeout

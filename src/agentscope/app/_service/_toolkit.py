@@ -19,6 +19,7 @@ from .._tool import (
 )
 from .._types import AgentToolFactory, SubAgentTemplate
 from ..storage import AgentRecord, SessionRecord, StorageBase
+from ..workspace_manager import WorkspaceManagerBase
 from ...middleware import MiddlewareBase
 from ...tool import (
     TaskCreate,
@@ -35,6 +36,7 @@ async def get_toolkit(
     *,
     storage: StorageBase,
     workspace: WorkspaceBase,
+    workspace_manager: WorkspaceManagerBase,
     scheduler_manager: SchedulerManager,
     background_task_manager: BackgroundTaskManager,
     message_bus: MessageBus,
@@ -173,6 +175,7 @@ time or interval"
     team_tool_kwargs: dict[str, Any] = {
         "storage": storage,
         "message_bus": message_bus,
+        "workspace_manager": workspace_manager,
         "user_id": user_id,
         "session_id": session_record.id,
         "agent_id": agent_record.id,

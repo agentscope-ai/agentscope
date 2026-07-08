@@ -26,7 +26,7 @@ from ...workspace._k8s._constants import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_IMAGE,
 )
-from ._base import WorkspaceManagerBase
+from ._base import WorkspaceManagerBase, IsolationPolicy
 
 DEFAULT_SWEEP_INTERVAL = 300.0
 
@@ -41,6 +41,7 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
     def __init__(
         self,
         *,
+        isolation: IsolationPolicy = IsolationPolicy.PER_AGENT,
         namespace: str = "agentscope",
         kubeconfig: str | None = None,
         image: str = DEFAULT_IMAGE,
@@ -64,6 +65,9 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
         """Initialize the K8s workspace manager.
 
         Args:
+            isolation (`IsolationPolicy`, defaults to `PER_AGENT`):
+                Isolation grain for :meth:`assign_workspace_id`. See
+                :class:`DockerWorkspaceManager` for semantics.
             namespace (`str`, defaults to ``"agentscope"``):
                 K8s namespace for workspace Pods and PVCs.
             kubeconfig (`str | None`, optional):
@@ -124,6 +128,7 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
         self._ttl = ttl
         self._sweep_interval = sweep_interval
         self._delete_pvc_on_close = delete_pvc_on_close
+        super().__init__(isolation=isolation)
 
         # workspace_id → (workspace, last_access_monotonic)
         self._cache: dict[str, tuple[K8sWorkspace, float]] = {}
@@ -168,7 +173,7 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
         user_id: str,
         agent_id: str,
         session_id: str,
-        workspace_id: str,
+        workspace_id: str | None = None,
     ) -> K8sWorkspace:
         """Return an initialised workspace, reattaching on cache miss.
 
@@ -179,14 +184,23 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
                 Agent identifier.
             session_id (`str`):
                 Session identifier (unused; Pods are per-workspace).
-            workspace_id (`str`):
-                Stable workspace identifier — the cache key.
+            workspace_id (`str | None`, optional):
+                Stable workspace identifier — the cache key. When
+                ``None`` the manager falls back to
+                :meth:`assign_workspace_id`.
 
         Returns:
             `K8sWorkspace`:
                 A live, initialised workspace.
         """
-        del session_id, user_id, agent_id
+        del session_id
+
+        if workspace_id is None:
+            workspace_id = self.assign_workspace_id(
+                user_id=user_id,
+                agent_id=agent_id,
+                session_id="",
+            )
 
         async with self._lock:
             cached = self._cache.get(workspace_id)

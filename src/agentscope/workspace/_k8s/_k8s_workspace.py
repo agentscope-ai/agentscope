@@ -32,7 +32,7 @@ from typing import Any
 from ..._logging import logger
 from ...mcp import MCPClient
 from .._sandboxed_base import SandboxedWorkspaceBase
-from .._utils import _agentscope_version, _GATEWAY_BASE_REQUIREMENTS
+from .._utils import _GATEWAY_BASE_REQUIREMENTS
 from ._k8s_backend import K8sBackend
 from ._constants import (
     DEFAULT_GATEWAY_PORT,
@@ -590,7 +590,6 @@ class K8sWorkspace(SandboxedWorkspaceBase):
         pip_pkgs = list(_GATEWAY_BASE_REQUIREMENTS) + list(self.extra_pip)
         pip_args = " ".join(pip_pkgs)
         sys_deps = " ".join(SYSTEM_DEPS)
-        version = _agentscope_version()
 
         return [
             f"apt-get update -qq "
@@ -602,5 +601,5 @@ class K8sWorkspace(SandboxedWorkspaceBase):
             f"uv venv {self._gateway_venv}",
             f"uv pip install --python {self._gateway_python} {pip_args}",
             f"uv pip install --python {self._gateway_python} "
-            f"--no-deps 'agentscope=={version}'",
+            f"--no-deps 'agentscope'",
         ]

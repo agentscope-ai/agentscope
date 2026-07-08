@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 import mcp.types
 from pydantic import PrivateAttr
 
+from .._logging import logger
 from ..mcp import MCPClient
 from ..message import ToolResultState
 from ..permission import (
@@ -364,6 +365,7 @@ class GatewayClient:
         timeout: float | None = None,
         inline_limit: int = BODY_INLINE_LIMIT,
         tmp_dir: str = SANDBOX_TMP_DIR,
+        gateway_log_path: str | None = None,
     ) -> None:
         """Build a workspace-side gateway facade.
 
@@ -384,17 +386,36 @@ class GatewayClient:
             tmp_dir (`str`, defaults to `SANDBOX_TMP_DIR`):
                 Sandbox directory for request/response tempfiles. Must
                 be writable by the gateway process.
+            gateway_log_path (`str | None`, defaults to `None`):
+                Sandbox-side path of the gateway's stdout/stderr log
+                file. When set, :meth:`exec_request` failures trigger
+                a ``/health`` probe and — if the gateway is
+                unreachable — a tail of this log is emitted at
+                ``ERROR`` level to help diagnose crashes.
         """
         self.backend = backend
         self.gateway_port = gateway_port
         self.timeout = timeout
         self.inline_limit = inline_limit
         self.tmp_dir = tmp_dir
+        self.gateway_log_path = gateway_log_path
+        # Health-probe timeout is kept short so the diagnostic path adds
+        # little latency to the failing request. It only runs on the
+        # error path, never on the hot path.
+        self._health_probe_timeout: float = 5.0
+        # Number of bytes of the gateway log to tail into the error
+        # log on unreachable-gateway diagnosis.
+        self._log_tail_bytes: int = 4000
 
     async def health(self) -> bool:
         """Probe ``/health``. ``True`` iff the gateway answered 200;
         any other outcome (shim transport failure, non-200) → ``False``.
         Callers retry until this flips.
+
+        The ``/health`` path is treated specially by
+        :meth:`exec_request` — it never triggers the failure
+        diagnostic, so a dead gateway does not recursively probe
+        itself.
         """
         try:
             status, _ = await self.exec_request("GET", "/health")
@@ -466,6 +487,15 @@ class GatewayClient:
         oversized bodies are pulled back through ``body_file``. Request
         and response tempfiles are best-effort cleaned up.
 
+        On any failure — shim non-zero exit, non-JSON stdout, or
+        ``status == -1`` transport error — a self-diagnostic step
+        probes ``/health`` and, if the gateway is unreachable, tails
+        :attr:`gateway_log_path` at ``ERROR`` level so the real crash
+        cause reaches the host log stream. The original exception is
+        always re-raised so the caller's error contract is unchanged.
+        The ``/health`` path itself skips diagnosis to avoid recursing
+        on a dead gateway.
+
         Args:
             method (`str`):
                 HTTP verb (``GET`` / ``POST`` / ``DELETE``).
@@ -494,58 +524,131 @@ class GatewayClient:
             )
 
         try:
-            result: "ExecResult" = await self.backend.exec_shell(
-                [
-                    "python3",
-                    "-c",
-                    SHIM_SCRIPT,
-                    method,
-                    f"http://127.0.0.1:{self.gateway_port}{path}",
-                    body_file,
-                    str(self.inline_limit),
-                    self.tmp_dir,
-                ],
-                timeout=self.timeout,
-            )
-        finally:
-            if wrote_body_file is not None:
+            try:
+                result: "ExecResult" = await self.backend.exec_shell(
+                    [
+                        "python3",
+                        "-c",
+                        SHIM_SCRIPT,
+                        method,
+                        f"http://127.0.0.1:{self.gateway_port}{path}",
+                        body_file,
+                        str(self.inline_limit),
+                        self.tmp_dir,
+                    ],
+                    timeout=self.timeout,
+                )
+            finally:
+                if wrote_body_file is not None:
+                    try:
+                        await self.backend.delete_path(wrote_body_file)
+                    except Exception:
+                        pass
+
+            if result.exit_code != 0:
+                raise RuntimeError(
+                    f"gateway shim exited with {result.exit_code}: "
+                    f"{result.stderr.decode(errors='replace')[:500]}",
+                )
+
+            try:
+                env = json.loads(result.stdout)
+            except Exception as e:
+                raise RuntimeError(
+                    "gateway shim produced non-JSON stdout: "
+                    f"{result.stdout[:200]!r}",
+                ) from e
+
+            status = int(env["status"])
+            if status == -1:
+                raise RuntimeError(
+                    "gateway request failed: "
+                    f"{env.get('error', 'unknown error')}",
+                )
+
+            if "body_file" in env:
+                spilled = env["body_file"]
+                body_bytes = await self.backend.read_file(spilled)
                 try:
-                    await self.backend.delete_path(wrote_body_file)
+                    await self.backend.delete_path(spilled)
                 except Exception:
                     pass
+            else:
+                body_bytes = base64.b64decode(env.get("body", ""))
 
-        if result.exit_code != 0:
-            raise RuntimeError(
-                f"gateway shim exited with {result.exit_code}: "
-                f"{result.stderr.decode(errors='replace')[:500]}",
-            )
+            return status, body_bytes
+        except Exception as exc:
+            # ``/health`` never triggers diagnosis — otherwise a dead
+            # gateway would recursively probe itself.
+            if path != "/health":
+                await self._diagnose_failure(method, path, exc)
+            raise
+
+    async def _diagnose_failure(
+        self,
+        method: str,
+        path: str,
+        exc: BaseException,
+    ) -> None:
+        """Best-effort post-failure diagnostic invoked by
+        :meth:`exec_request` on any request failure.
+
+        Probes ``/health`` (via :meth:`health`, which short-circuits
+        the diagnostic path); if the gateway does not answer, emits
+        the tail of :attr:`gateway_log_path` at ``ERROR`` level so the
+        real crash cause reaches the host log stream. Every step is
+        guarded — diagnosis must never raise, so the caller's original
+        exception is always the one that surfaces.
+
+        Args:
+            method (`str`):
+                HTTP verb of the failed request (for log context).
+            path (`str`):
+                Path of the failed request (for log context).
+            exc (`BaseException`):
+                Original exception raised by the shim call (for log
+                context; not re-raised here).
+        """
+        try:
+            healthy = await self.health()
+        except Exception:  # pragma: no cover — defensive
+            healthy = False
+
+        if healthy:
+            # Gateway is up — the failure came from the request itself
+            # (bad payload, upstream MCP error, etc.). Original error
+            # is enough context.
+            return
+
+        logger.error(
+            "Gateway unreachable during %s %s: %s. Probing /health failed. "
+            "Attempting to tail gateway log at %r ...",
+            method,
+            path,
+            exc,
+            self.gateway_log_path,
+        )
+
+        if self.gateway_log_path is None:
+            return
 
         try:
-            env = json.loads(result.stdout)
-        except Exception as e:
-            raise RuntimeError(
-                "gateway shim produced non-JSON stdout: "
-                f"{result.stdout[:200]!r}",
-            ) from e
-
-        status = int(env["status"])
-        if status == -1:
-            raise RuntimeError(
-                "gateway request failed: "
-                f"{env.get('error', 'unknown error')}",
+            log_bytes = await self.backend.read_file(self.gateway_log_path)
+        except Exception as read_exc:  # noqa: BLE001
+            logger.error(
+                "Failed to read gateway log at %r: %s",
+                self.gateway_log_path,
+                read_exc,
             )
+            return
 
-        if "body_file" in env:
-            spilled = env["body_file"]
-            body_bytes = await self.backend.read_file(spilled)
-            try:
-                await self.backend.delete_path(spilled)
-            except Exception:
-                pass
-        else:
-            body_bytes = base64.b64decode(env.get("body", ""))
-
-        return status, body_bytes
+        tail = log_bytes[-self._log_tail_bytes :].decode(errors="replace")
+        logger.error(
+            "Gateway log tail (last %d bytes of %r):\n%s",
+            len(tail),
+            self.gateway_log_path,
+            tail,
+        )
 
 
 # ── module-private utilities ───────────────────────────────────────

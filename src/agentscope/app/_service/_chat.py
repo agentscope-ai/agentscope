@@ -421,6 +421,7 @@ class ChatService:
         toolkit = await get_toolkit(
             storage=self._storage,
             workspace=workspace,
+            workspace_manager=self._workspace_manager,
             scheduler_manager=self._scheduler_manager,
             background_task_manager=self._background_task_manager,
             message_bus=self._message_bus,
