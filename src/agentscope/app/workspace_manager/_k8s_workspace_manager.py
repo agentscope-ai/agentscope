@@ -19,6 +19,8 @@ import asyncio
 import time
 from typing import Any, Self
 
+from typing_extensions import deprecated
+
 from ..._logging import logger
 from ...mcp import MCPClient
 from ...workspace import K8sWorkspace
@@ -222,6 +224,11 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
             self._cache[workspace_id] = (ws, time.monotonic())
             return ws
 
+    @deprecated(
+        "K8sWorkspaceManager.create_workspace is deprecated; "
+        "use get_workspace(workspace_id=None) instead.",
+        category=None,
+    )
     async def create_workspace(
         self,
         user_id: str,
@@ -229,6 +236,11 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
         session_id: str,
     ) -> K8sWorkspace:
         """Build a brand-new workspace and track it.
+
+        .. deprecated::
+            Use :meth:`get_workspace` with ``workspace_id=None`` — it
+            falls back to :meth:`assign_workspace_id` under the
+            manager's isolation policy and reuses the cache path.
 
         Args:
             user_id (`str`):

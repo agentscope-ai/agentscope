@@ -117,15 +117,6 @@ class WorkspaceManagerBase(ABC):
         """
 
     @abstractmethod
-    async def create_workspace(
-        self,
-        user_id: str,
-        agent_id: str,
-        session_id: str,
-    ) -> WorkspaceBase:
-        """Create a new workspace and return it."""
-
-    @abstractmethod
     async def close(self, workspace_id: str) -> None:
         """Close and evict a single workspace from the cache."""
 

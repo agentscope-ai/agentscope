@@ -5,6 +5,8 @@ import asyncio
 import os
 import time
 
+from typing_extensions import deprecated
+
 from ..._logging import logger
 from ...workspace import LocalWorkspace
 from ._base import WorkspaceManagerBase, IsolationPolicy
@@ -137,13 +139,24 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
             self._cache[workspace_id] = (ws, time.monotonic())
             return ws
 
+    @deprecated(
+        "LocalWorkspaceManager.create_workspace is deprecated; "
+        "use get_workspace(workspace_id=None) instead.",
+        category=None,
+    )
     async def create_workspace(
         self,
         user_id: str,
         agent_id: str,
         session_id: str,
     ) -> LocalWorkspace:
-        """Create a new workspace for the given agent and return it."""
+        """Create a new workspace for the given agent and return it.
+
+        .. deprecated::
+            Use :meth:`get_workspace` with ``workspace_id=None`` — it
+            falls back to :meth:`assign_workspace_id` under the
+            manager's isolation policy and reuses the cache path.
+        """
         del user_id, session_id  # accepted for interface parity
 
         workdir = os.path.join(self._basedir, agent_id)

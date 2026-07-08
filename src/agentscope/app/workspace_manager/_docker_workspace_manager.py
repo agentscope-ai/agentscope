@@ -30,6 +30,8 @@ import os
 import time
 from typing import Self
 
+from typing_extensions import deprecated
+
 from ..._logging import logger
 from ...mcp import MCPClient
 from ...workspace import DockerWorkspace
@@ -244,6 +246,11 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
             self._cache[workspace_id] = (ws, time.monotonic())
             return ws
 
+    @deprecated(
+        "DockerWorkspaceManager.create_workspace is deprecated; "
+        "use get_workspace(workspace_id=None) instead.",
+        category=None,
+    )
     async def create_workspace(
         self,
         user_id: str,
@@ -252,10 +259,10 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
     ) -> DockerWorkspace:
         """Build a brand-new workspace and track it.
 
-        A fresh ``workspace_id`` is allocated by
-        :class:`DockerWorkspace` itself; the caller should persist
-        ``workspace.workspace_id`` for later :meth:`get_workspace`
-        calls.
+        .. deprecated::
+            Use :meth:`get_workspace` with ``workspace_id=None`` — it
+            falls back to :meth:`assign_workspace_id` under the
+            manager's isolation policy and reuses the cache path.
 
         Args:
             user_id (`str`):
