@@ -44,8 +44,8 @@ class SummarySchema(BaseModel):
             "Any promises made to the user"
         ),
     )
-    """Whether to execute multiple tool calls in parallel within one
-    reasoning step."""
+    """The important context to preserve across compression, e.g. user
+    preferences, domain-specific details and promises made to the user."""
 
 
 class ContextConfig(BaseModel):
@@ -101,7 +101,7 @@ class ContextConfig(BaseModel):
     )
     """The string template to present the compressed summary to the agent,
     which will be formatted with the fields from the
-    `compression_summary_model`."""
+    `summary_schema`."""
 
     summary_schema: dict = Field(
         default_factory=SummarySchema.model_json_schema,
@@ -140,6 +140,25 @@ class ReActConfig(BaseModel):
     """If stop reasoning when tool call(s) are rejected. If `True`, the agent
     won't continue reasoning and wait for outside interaction from the user.
     """
+
+    interruption_message: str = Field(
+        title="Interruption Message",
+        default="I notice the interruption. How can I help you?",
+        description="The quick reply message when interrupted.",
+    )
+    """The interruption message."""
+
+    interruption_raise_cancelled_error: bool = Field(
+        title="Raise CancelledError on Interruption",
+        default=False,
+        description="Whether to re-raise ``asyncio.CancelledError`` after "
+        "handling the interruption. When ``False``, the ``CancelledError`` "
+        "is swallowed once the interruption context has been produced.",
+    )
+    """Whether to re-raise the ``asyncio.CancelledError`` after the
+    interruption has been handled. When ``False``, the ``CancelledError``
+    is swallowed once the fallback interruption message and
+    ``ReplyEndEvent`` have been emitted."""
 
 
 class ModelConfig(BaseModel):

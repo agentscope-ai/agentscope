@@ -505,16 +505,28 @@ class StorageBase(ABC):
 
     @abstractmethod
     async def delete_team(self, user_id: str, team_id: str) -> bool:
-        """Delete a team record and cascade-delete all of its workers.
+        """Delete a team record and cascade-clean its members by role.
 
-        The cascade mirrors SQL's ``ON DELETE CASCADE`` semantics:
+        The cascade is role-aware — the two team-membership modes
+        (created vs invited, see :class:`TeamMember`) must be handled
+        differently:
 
-        1. For each ``member_id`` in :attr:`TeamData.member_ids`, call
-           :meth:`delete_agent` (which cascades that worker's session).
+        1. For each :class:`TeamMember` in the team's roster (resolved
+           via the ``ensure_team_members`` helper so legacy
+           ``member_ids``-only records are migrated on first read):
+
+           - ``role == "created"`` — call :meth:`delete_agent`
+             (which cascades that worker's session). The agent record
+             is fully removed because it was spawned solely for this
+             team.
+           - ``role == "invited"`` — call :meth:`delete_session` for
+             the borrowed team-scoped session only. The invited
+             agent's :class:`AgentRecord` and any other sessions it
+             owns survive the team's dissolution.
         2. Clear ``team_id`` on the leader session referenced by
-           :attr:`TeamRecord.session_id` (``ON DELETE SET NULL`` for the
-           leader's back-reference to the team). Idempotent if the
-           session has already been deleted.
+           :attr:`TeamRecord.session_id` (``ON DELETE SET NULL`` for
+           the leader's back-reference). Idempotent if the session has
+           already been deleted.
         3. Delete the :class:`TeamRecord` key and the per-user team
            index entry.
 

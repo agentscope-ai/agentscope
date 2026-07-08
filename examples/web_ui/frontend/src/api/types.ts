@@ -33,6 +33,11 @@ export interface ReActConfig {
 	stop_on_reject?: boolean;
 }
 
+export interface InviteConfig {
+	invitable?: boolean;
+	invite_description?: string | null;
+}
+
 // ─── Agent ────────────────────────────────────────────────────────────────────
 
 export interface AgentData {
@@ -41,6 +46,7 @@ export interface AgentData {
 	system_prompt: string;
 	context_config: ContextConfig;
 	react_config: ReActConfig;
+	invite_config: InviteConfig;
 }
 
 export interface AgentRecord extends RecordBase {
@@ -53,6 +59,7 @@ export interface CreateAgentRequest {
 	system_prompt?: string;
 	context_config?: ContextConfig;
 	react_config?: ReActConfig;
+	invite_config?: InviteConfig;
 }
 
 export interface CreateAgentResponse {
@@ -64,6 +71,7 @@ export interface UpdateAgentRequest {
 	system_prompt?: string;
 	context_config?: ContextConfig;
 	react_config?: ReActConfig;
+	invite_config?: InviteConfig;
 }
 
 export interface AgentListResponse {
@@ -72,14 +80,28 @@ export interface AgentListResponse {
 }
 
 /**
- * JSON Schema fragments returned by `GET /agent/schema`. Each fragment is a
- * self-contained JSON Schema object (no `$ref`s across fragments) covering
- * one section of the agent create / edit form.
+ * @deprecated Superseded by {@link AgentSchemaV2Response}. Kept only for
+ * legacy consumers still calling `GET /agent/schema`. The new form flow
+ * uses `GET /agent/schema/v2`, which returns the full `AgentData` JSON
+ * Schema in a single `schema` field.
  */
 export interface AgentSchemaResponse {
 	identity: JSONSchema;
 	context_config: JSONSchema;
 	react_config: JSONSchema;
+}
+
+/**
+ * Response of `GET /agent/schema/v2`. `schema` is the full `AgentData`
+ * JSON Schema (with `$ref`s inlined, `id` filtered out, and
+ * `context_config.summary_schema` filtered out). The frontend derives
+ * its section grouping directly from `schema.properties`:
+ *   - top-level scalar/textarea/boolean properties → "identity" section
+ *   - top-level `object`-typed properties (currently `context_config`,
+ *     `react_config`, and `invite_config`) → one section each
+ */
+export interface AgentSchemaV2Response {
+	schema: JSONSchema;
 }
 
 // ─── Session ──────────────────────────────────────────────────────────────────
@@ -130,6 +152,10 @@ export interface CreateSessionRequest {
 }
 
 export interface CreateSessionResponse {
+	session_id: string;
+}
+
+export interface InterruptSessionResponse {
 	session_id: string;
 }
 

@@ -106,10 +106,10 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             "mw1_TEXT_BLOCK_END",
             "mw2_MODEL_CALL_END",
             "mw1_MODEL_CALL_END",
-            "mw2_REPLY_END",
-            "mw1_REPLY_END",
             "mw2_msg",
             "mw1_msg",
+            "mw2_REPLY_END",
+            "mw1_REPLY_END",
             "mw2_post",
             "mw1_post",
         ]

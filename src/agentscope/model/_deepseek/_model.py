@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse, StructuredResponse
 from .._model_usage import ChatUsage
+from ..._utils._common import _generate_id
 from ...credential import DeepSeekCredential
 from ...formatter import FormatterBase, DeepSeekChatFormatter
 from ...message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
@@ -242,14 +243,24 @@ class DeepSeekChatModel(ChatModelBase):
                 followed by a final one with ``is_last=True``.
         """
         usage = None
-        response_id: str | None = None
-        # All delta should have the same block identifier
-        acc_text = TextBlock(text="")
-        acc_thinking = ThinkingBlock(thinking="")
-        acc_tool_calls: OrderedDict = OrderedDict()
+        response_id: str = _generate_id()
+        text_id: str = _generate_id()
+        thinking_id: str = _generate_id()
+        # The mapping from index to tool call id
+        tool_call_mapping: dict = OrderedDict()
 
         async with response as stream:
             async for chunk in stream:
+                delta_res = ChatResponse(
+                    content=[],
+                    is_last=False,
+                    id=response_id,
+                )
+
+                # Update the response ID if exists
+                response_id = getattr(chunk, "id", None) or response_id
+                delta_res.id = response_id
+
                 if chunk.usage:
                     u = chunk.usage
                     usage = ChatUsage(
@@ -263,92 +274,60 @@ class DeepSeekChatModel(ChatModelBase):
                         ),
                     )
 
-                # Capture response_id from the first chunk that carries it
-                response_id = response_id or getattr(chunk, "id", None)
-
                 if not chunk.choices:
+                    # DeepSeek emits a trailing usage-only chunk with no
+                    # choices; forward it as an empty-content delta so the
+                    # base class ``__call__`` can absorb ``usage`` into
+                    # ``acc_res``. The empty delta itself is filtered out
+                    # of the surfaced stream by ``_stream``.
+                    if usage is not None:
+                        delta_res.usage = usage
+                        yield delta_res
                     continue
 
                 choice = chunk.choices[0]
                 delta = choice.delta
 
-                delta_thinking = (
-                    getattr(delta, "reasoning_content", None) or ""
-                )
-                delta_text = getattr(delta, "content", None) or ""
+                # Thinking block
+                if getattr(delta, "reasoning_content", None):
+                    delta_res.append_thinking(
+                        block_id=thinking_id,
+                        thinking=delta.reasoning_content,
+                    )
 
-                acc_thinking.thinking += delta_thinking
-                acc_text.text += delta_text
+                # Text
+                if getattr(delta, "content", None):
+                    delta_res.append_text(
+                        block_id=text_id,
+                        text=delta.content,
+                    )
 
-                delta_tool_call_blocks: List[ToolCallBlock] = []
+                # Tool call
                 for tool_call in getattr(delta, "tool_calls", None) or []:
-                    idx = tool_call.index
-                    args = tool_call.function.arguments or ""
-                    if idx in acc_tool_calls:
-                        acc_tool_calls[idx]["input"] += args
-                    else:
-                        acc_tool_calls[idx] = {
-                            "id": tool_call.id,
-                            "name": tool_call.function.name,
-                            "input": args,
-                        }
-                    tc = acc_tool_calls[idx]
-                    delta_tool_call_blocks.append(
-                        ToolCallBlock(
-                            id=tc["id"],
-                            name=tc["name"],
-                            input=args,
-                        ),
+                    index = tool_call.index
+                    fn = getattr(tool_call, "function", None)
+                    delta_name = getattr(fn, "name", None) if fn else None
+                    delta_args = getattr(fn, "arguments", None) if fn else None
+
+                    # Record the id and name in case following deltas
+                    # don't provide them
+                    if index not in tool_call_mapping:
+                        tool_call_mapping[index] = (
+                            tool_call.id,
+                            delta_name or "unknown",
+                        )
+
+                    stored_id, stored_name = tool_call_mapping[index]
+
+                    delta_res.append_tool_call(
+                        block_id=tool_call.id or stored_id,
+                        name=delta_name or stored_name,
+                        input=delta_args or "",
                     )
 
-                delta_contents: List[
-                    TextBlock | ToolCallBlock | ThinkingBlock
-                ] = []
-                if delta_thinking:
-                    delta_contents.append(
-                        ThinkingBlock(
-                            id=acc_thinking.id,
-                            thinking=delta_thinking,
-                        ),
-                    )
-                if delta_text:
-                    delta_contents.append(
-                        TextBlock(id=acc_text.id, text=delta_text),
-                    )
-                delta_contents.extend(delta_tool_call_blocks)
-
-                if delta_contents:
-                    _kwargs: dict[str, Any] = {
-                        "content": delta_contents,
-                        "usage": usage,
-                        "is_last": False,
-                    }
-                    if response_id:
-                        _kwargs["id"] = response_id
-                    yield ChatResponse(**_kwargs)
-
-        final_contents: List[TextBlock | ToolCallBlock | ThinkingBlock] = []
-        if acc_thinking.thinking:
-            final_contents.append(acc_thinking)
-        if acc_text.text:
-            final_contents.append(acc_text)
-        for tc in acc_tool_calls.values():
-            final_contents.append(
-                ToolCallBlock(
-                    id=tc["id"],
-                    name=tc["name"],
-                    input=tc["input"],
-                ),
-            )
-
-        _final_kwargs: dict[str, Any] = {
-            "content": final_contents,
-            "usage": usage,
-            "is_last": True,
-        }
-        if response_id:
-            _final_kwargs["id"] = response_id
-        yield ChatResponse(**_final_kwargs)
+                if delta_res.content or usage:
+                    delta_res.usage = usage
+                    yield delta_res
 
     def _parse_completion_response(
         self,

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The Anthropic chat model implementation."""
+import json
 from collections import OrderedDict
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
@@ -9,6 +10,7 @@ from pydantic import BaseModel, Field
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse, StructuredResponse
 from .._model_usage import ChatUsage
+from ..._utils._common import _generate_id
 from ...credential import AnthropicCredential
 from ...formatter import FormatterBase, AnthropicChatFormatter
 from ...message import Msg, ThinkingBlock, ToolCallBlock, TextBlock
@@ -261,13 +263,14 @@ class AnthropicChatModel(ChatModelBase):
                     hasattr(content_block, "type")
                     and content_block.type == "tool_use"
                 ):
-                    import json
-
                     content_blocks.append(
                         ToolCallBlock(
                             id=content_block.id,
                             name=content_block.name,
-                            input=json.dumps(content_block.input),
+                            input=json.dumps(
+                                content_block.input,
+                                ensure_ascii=False,
+                            ),
                         ),
                     )
 
@@ -323,21 +326,22 @@ class AnthropicChatModel(ChatModelBase):
         """
 
         usage = None
-        response_id: str | None = None
-        # All delta should have the same block identifier
-        acc_text = TextBlock(text="")
-        acc_thinking = ThinkingBlock(thinking="")
-        thinking_signature = ""
-        # index -> {id, name, input}
-        acc_tool_calls: OrderedDict = OrderedDict()
+        response_id: str = _generate_id()
+        text_id: str = _generate_id()
+        thinking_id: str = _generate_id()
+        # The mapping from index to tool call id
+        tool_call_mapping: dict = OrderedDict()
 
         async for event in response:
-            delta_content: list = []
+            delta_res = ChatResponse(content=[], is_last=False, id=response_id)
 
             if event.type == "message_start":
                 message = event.message
-                if response_id is None:
-                    response_id = getattr(message, "id", None)
+
+                # Update the response ID if exists
+                response_id = getattr(message, "id", None) or response_id
+                delta_res.id = response_id
+
                 if message.usage:
                     u = message.usage
                     usage = ChatUsage(
@@ -358,86 +362,61 @@ class AnthropicChatModel(ChatModelBase):
 
             elif event.type == "content_block_start":
                 if event.content_block.type == "tool_use":
-                    block_index = event.index
                     tool_block = event.content_block
-                    acc_tool_calls[block_index] = {
-                        "id": tool_block.id,
-                        "name": tool_block.name,
-                        "input": "",
-                    }
+                    # Record the id and name
+                    tool_call_mapping[event.index] = (
+                        tool_block.id,
+                        tool_block.name,
+                    )
+                    # New tool call block with empty input
+                    delta_res.append_tool_call(
+                        block_id=tool_block.id,
+                        name=tool_block.name,
+                        input="",
+                    )
 
             elif event.type == "content_block_delta":
                 block_index = event.index
                 delta = event.delta
+
+                # Text block
                 if delta.type == "text_delta":
-                    acc_text.text += delta.text
-                    delta_content.append(
-                        TextBlock(id=acc_text.id, text=delta.text),
-                    )
+                    delta_res.append_text(delta.text, block_id=text_id)
+
+                # Thinking block
                 elif delta.type == "thinking_delta":
-                    acc_thinking.thinking += delta.thinking
-                    delta_content.append(
-                        ThinkingBlock(
-                            id=acc_thinking.id,
-                            thinking=delta.thinking,
-                        ),
+                    delta_res.append_thinking(
+                        delta.thinking,
+                        block_id=thinking_id,
                     )
+
+                # Special handling for Anthropic API that requires signature
                 elif delta.type == "signature_delta":
-                    thinking_signature = delta.signature
+                    delta_res.append_thinking(
+                        "",
+                        block_id=thinking_id,
+                        signature=delta.signature,
+                    )
+
+                # Tool call block
                 elif (
                     delta.type == "input_json_delta"
-                    and block_index in acc_tool_calls
+                    and block_index in tool_call_mapping
                 ):
-                    fragment = delta.partial_json or ""
-                    acc_tool_calls[block_index]["input"] += fragment
-                    tc = acc_tool_calls[block_index]
-                    delta_content.append(
-                        ToolCallBlock(
-                            id=tc["id"],
-                            name=tc["name"],
-                            input=fragment,
-                        ),
+                    block_id, name = tool_call_mapping[block_index]
+                    delta_res.append_tool_call(
+                        block_id=block_id,
+                        name=name,
+                        input=delta.partial_json or "",
                     )
 
             elif event.type == "message_delta":
                 if event.usage and usage:
                     usage.output_tokens = event.usage.output_tokens
 
-            if delta_content:
-                _kwargs: dict[str, Any] = {
-                    "content": delta_content,
-                    "is_last": False,
-                    "usage": usage,
-                }
-                if response_id:
-                    _kwargs["id"] = response_id
-                yield ChatResponse(**_kwargs)
-
-        # Build final accumulated content
-        final_content: list = []
-        if acc_thinking.thinking:
-            acc_thinking.signature = thinking_signature
-            final_content.append(acc_thinking)
-        if acc_text.text:
-            final_content.append(acc_text)
-        for tc in acc_tool_calls.values():
-            input_str = tc["input"]
-            final_content.append(
-                ToolCallBlock(
-                    id=tc["id"],
-                    name=tc["name"],
-                    input=input_str,
-                ),
-            )
-
-        _final_kwargs: dict[str, Any] = {
-            "content": final_content,
-            "is_last": True,
-            "usage": usage,
-        }
-        if response_id:
-            _final_kwargs["id"] = response_id
-        yield ChatResponse(**_final_kwargs)
+            if delta_res.content:
+                delta_res.usage = usage
+                yield delta_res
 
     def _format_tools(
         self,

@@ -73,11 +73,28 @@ class MockModel(ChatModelBase):
 
     def set_responses(
         self,
-        mock_responses: list[ChatResponse | list[ChatResponse]],
+        mock_responses: list[
+            ChatResponse | BaseException | list[ChatResponse | BaseException]
+        ],
     ) -> None:
-        """Set the mock responses."""
+        """Set the mock responses.
+
+        Each item in ``mock_responses`` may be:
+
+        - ``ChatResponse`` — returned directly by the next non-stream call.
+        - ``BaseException`` — raised from inside the next non-stream call
+          (use e.g. ``asyncio.CancelledError()`` to simulate an
+          interrupted API call).
+        - ``list[ChatResponse | BaseException]`` — returned as an async
+          generator by the next stream call, where each element is
+          either yielded (``ChatResponse``) or raised (``BaseException``)
+          at that position in the stream.
+        """
         self.mock_chat_responses = mock_responses
-        if all(isinstance(_, ChatResponse) for _ in mock_responses):
+        if all(
+            isinstance(_, (ChatResponse, BaseException))
+            for _ in mock_responses
+        ):
             self.stream = False
         else:
             self.stream = True
@@ -91,10 +108,16 @@ class MockModel(ChatModelBase):
         """Mock the API call."""
         mock_responses = self.mock_chat_responses[self.cnt]
         self.cnt += 1
+
+        if isinstance(mock_responses, BaseException):
+            raise mock_responses
+
         if isinstance(mock_responses, list):
 
             async def _stream() -> AsyncGenerator[ChatResponse, None]:
                 for response in mock_responses:
+                    if isinstance(response, BaseException):
+                        raise response
                     yield response
 
             return _stream()

@@ -5,11 +5,17 @@ import { useRef, useEffect } from 'react';
 import { EmptyMessage } from './Empty';
 import { MessageBubble } from '@/components/chat/MessageBubble';
 import { TextInput } from '@/components/chat/TextInput.tsx';
+import type { ReplyPhase } from '@/hooks/useMessages';
 import { cn } from '@/lib/utils';
 
 interface ChatContentProps {
 	msgs: Msg[];
-	sending: boolean;
+	/**
+	 * Reply lifecycle phase from ``useMessages`` — forwarded to
+	 * ``TextInput`` so the single send / stop button can pick its
+	 * icon, tooltip, disabled state and click handler from one source.
+	 */
+	phase: ReplyPhase;
 	disabled: boolean;
 	onSend: (content: ContentBlock[]) => void;
 	onUserConfirm: (
@@ -20,6 +26,8 @@ interface ChatContentProps {
 	) => void;
 	autoComplete?: (input: string) => string | null;
 	className?: string;
+	/** Called when the user clicks the stop button. */
+	onInterrupt?: () => void;
 	/**
 	 * Optional content pinned at the bottom of the chat — between the
 	 * message scroll area and the text input (e.g. pending subagent HITL
@@ -36,12 +44,13 @@ interface ChatContentProps {
 
 const ChatContentComponent: React.FC<ChatContentProps> = ({
 	msgs,
-	sending,
+	phase,
 	disabled,
 	onSend,
 	onUserConfirm,
 	autoComplete,
 	className,
+	onInterrupt,
 	footerSlot,
 	allowedInputTypes,
 	fileProcessor,
@@ -55,8 +64,9 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 		const currentCount = msgs.length;
 		const prevCount = prevMsgCountRef.current;
 
+		const isActive = phase !== 'idle';
 		const shouldCheck =
-			(currentCount > prevCount && prevCount > 0) || (sending && prevCount > 0);
+			(currentCount > prevCount && prevCount > 0) || (isActive && prevCount > 0);
 
 		if (shouldCheck && scrollAreaRef.current) {
 			const { scrollHeight } = scrollAreaRef.current;
@@ -73,7 +83,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 		}
 
 		prevMsgCountRef.current = currentCount;
-	}, [msgs, sending]);
+	}, [msgs, phase]);
 
 	// Track if user is near bottom whenever they scroll
 	useEffect(() => {
@@ -117,6 +127,8 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 				autoComplete={autoComplete}
 				allowedInputTypes={allowedInputTypes}
 				fileProcessor={fileProcessor}
+				phase={phase}
+				onInterrupt={onInterrupt}
 			/>
 		</div>
 	);
