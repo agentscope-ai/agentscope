@@ -54,10 +54,10 @@ from agentscope.message import (
 from agentscope.permission import PermissionBehavior, PermissionDecision
 from agentscope.tool import ToolBase, ToolChunk
 from agentscope.workspace import DockerWorkspace
-from agentscope.workspace._docker._make_dockerfile import (
-    CONTAINER_SESSIONS_DIR,
-    CONTAINER_SKILLS_DIR,
-)
+from agentscope.workspace._docker._make_dockerfile import CONTAINER_WORKDIR
+
+CONTAINER_SKILLS_DIR = f"{CONTAINER_WORKDIR}/skills"
+CONTAINER_SESSIONS_DIR = f"{CONTAINER_WORKDIR}/sessions"
 
 # ── docker daemon detection ────────────────────────────────────────
 

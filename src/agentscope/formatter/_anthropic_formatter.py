@@ -2,7 +2,6 @@
 """The Anthropic formatter module."""
 import base64
 import fnmatch
-import json
 from abc import ABC
 from typing import Any
 
@@ -11,6 +10,7 @@ from pydantic import Field
 
 from ._formatter_base import FormatterBase
 from .._logging import logger
+from .._utils._common import _json_loads_with_repair
 from ..message import (
     Msg,
     TextBlock,
@@ -145,8 +145,13 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                             "id": block.id,
                             "name": block.name,
                             # Anthropic API expects input as a dict, not a
-                            # JSON string.
-                            "input": json.loads(block.input or "{}"),
+                            # JSON string. Use the repair helper so a
+                            # truncated input (from interrupted streaming or
+                            # context compression) degrades to {} instead of
+                            # raising JSONDecodeError.
+                            "input": _json_loads_with_repair(
+                                block.input or "{}",
+                            ),
                         },
                     )
 

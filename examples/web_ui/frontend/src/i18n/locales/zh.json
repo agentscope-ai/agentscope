@@ -74,7 +74,9 @@
 		"newLine": "换行",
 		"attach": "添加附件",
 		"attachNotSupported": "当前模型不支持文件附件",
-		"send": "发送"
+		"send": "发送",
+		"stop": "停止生成",
+		"stopping": "停止中 ..."
 	},
 	"confirmCard": {
 		"toConfirm": "确认",
@@ -140,6 +142,15 @@
 			"description": "控制推理和行动循环的行为。",
 			"max-iters": { "label": "最大迭代次数" },
 			"stop-on-reject": { "label": "拒绝时停止" }
+		},
+		"invite-config": {
+			"legend": "邀请配置",
+			"description": "控制此 Agent 是否可被其他 Agent 通过 AgentInvite 邀请。",
+			"invitable": { "label": "允许被邀请" },
+			"invite-description": {
+				"label": "邀请说明",
+				"placeholder": "简要描述此 Agent 的专长；允许被邀请时必填。"
+			}
 		}
 	},
 	"dialog-agent-edit": {

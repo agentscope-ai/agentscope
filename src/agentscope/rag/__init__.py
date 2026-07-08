@@ -9,10 +9,12 @@ from ._document import (
 from ._parser import ImageParser, ParserBase, PDFParser, PPTParser, TextParser
 from ._vdb import (
     DocumentSummary,
+    MilvusLiteStore,
     VectorStoreBase,
     VectorRecord,
     VectorSearchResult,
     QdrantStore,
+    MongoDBStore,
 )
 from ._knowledge import KnowledgeBase
 
@@ -22,6 +24,7 @@ __all__ = [
     "Chunk",
     "DocumentSummary",
     "ImageParser",
+    "MilvusLiteStore",
     "ParserBase",
     "PDFParser",
     "PPTParser",
@@ -32,4 +35,5 @@ __all__ = [
     "VectorSearchResult",
     "QdrantStore",
     "KnowledgeBase",
+    "MongoDBStore",
 ]
