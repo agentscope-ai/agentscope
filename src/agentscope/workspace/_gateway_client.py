@@ -463,8 +463,7 @@ class GatewayClient:
             )
         specs = json.loads(body)
         return [
-            self.make_client(agent_id, spec, connected=True)
-            for spec in specs
+            self.make_client(agent_id, spec, connected=True) for spec in specs
         ]
 
     def make_client(

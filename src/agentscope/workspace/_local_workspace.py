@@ -175,8 +175,12 @@ class LocalWorkspace(WorkspaceBase):
 
         # Connect restored stateful clients. Each agent gets its own
         # client instances so isolated sessions are maintained.
+        # "_default" is a template key — its entries are never used
+        # directly, only deep-copied via lazy clone in list_mcps().
         failed: list[tuple[str, MCPClient]] = []
         for agent_id, mcps in list(self._mcps.items()):
+            if agent_id == "_default":
+                continue
             for mcp in mcps:
                 if mcp.is_stateful and not mcp.is_connected:
                     try:

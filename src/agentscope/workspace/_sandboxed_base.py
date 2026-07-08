@@ -202,9 +202,12 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         await self._setup_mcp_gateway()
 
         # Populate per-agent gateway handles from the gateway.
-        # Each agent listed in self._mcps gets its own client instances.
+        # Each real agent in self._mcps gets its own client instances.
+        # "_default" is a template key — skip it.
         self._gateway_clients = {}
         for agent_id in list(self._mcps.keys()):
+            if agent_id == "_default":
+                continue
             gw_clients = await self._gateway.list_mcps(agent_id)
             self._gateway_clients[agent_id] = {
                 c.name: c for c in gw_clients
@@ -286,6 +289,8 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         ``_default`` config specs and registered with the gateway, so
         each agent gets its own isolated sessions.
         """
+        if self._gateway is None:
+            return []
         if agent_id not in self._gateway_clients:
             new_clients: dict[str, "GatewayMCPClient"] = {}
             default_cfgs = self._mcps.get("_default", [])
@@ -368,9 +373,7 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             except Exception as e:
                 logger.warning("MCP %r close failed: %s", name, e)
             agent_mcps = self._mcps.get(agent_id, [])
-            self._mcps[agent_id] = [
-                m for m in agent_mcps if m.name != name
-            ]
+            self._mcps[agent_id] = [m for m in agent_mcps if m.name != name]
             await self._save_mcp_file()
 
     # ── workspace layout helpers ──────────────────────────────────
@@ -396,8 +399,7 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         payload = json.dumps(
             {
                 "_default": [
-                    m.model_dump(mode="json")
-                    for m in self.default_mcps
+                    m.model_dump(mode="json") for m in self.default_mcps
                 ],
             },
             indent=2,
