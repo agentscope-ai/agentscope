@@ -111,6 +111,9 @@ mongodb = [
 elasticsearch = [
     "elasticsearch[async]>=8.12",
 ]
+valkey = [
+    "valkey-glide>=2.4.0,<3.0.0",
+]
 
 # ------------ S3-compatible blob store ------------
 s3 = [
