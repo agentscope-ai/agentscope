@@ -289,6 +289,7 @@ class DockerWorkspace(SandboxedWorkspaceBase):
                             f"{log}",
                         )
         finally:
+            logger.info("DockerWorkspace: finish building image %r", tag)
             shutil.rmtree(ctx_dir, ignore_errors=True)
 
     # ── internals: container lifecycle ──────────────────────────
