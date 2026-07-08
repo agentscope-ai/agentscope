@@ -325,14 +325,39 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             cwd="/",
         )
 
-        # Copy the .mcp files into the container
-        if await backend.file_exists(self._mcp_file):
-            return
+        # Seed ``.mcp`` on first use. If a persisted file already
+        # exists we validate it: a partial/corrupted write (crash mid
+        # ``_save_mcp_file``) would otherwise brick the gateway on the
+        # next startup because it expects a JSON list.  When the
+        # payload is unusable we log and reseed the defaults instead
+        # of failing initialization.
         payload = json.dumps(
             [m.model_dump(mode="json") for m in self.default_mcps],
             indent=2,
             ensure_ascii=False,
         ).encode("utf-8")
+
+        if await backend.file_exists(self._mcp_file):
+            try:
+                existing = await backend.read_file(self._mcp_file)
+                parsed = json.loads(existing.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as e:
+                logger.warning(
+                    "%s: %s is corrupted (%s); reseeding defaults",
+                    type(self).__name__,
+                    self._mcp_file,
+                    e,
+                )
+            else:
+                if isinstance(parsed, list):
+                    return
+                logger.warning(
+                    "%s: %s does not contain a JSON list "
+                    "(got %s); reseeding defaults",
+                    type(self).__name__,
+                    self._mcp_file,
+                    type(parsed).__name__,
+                )
         await backend.write_file(self._mcp_file, payload)
 
     # ── gateway lifecycle helpers ─────────────────────────────────

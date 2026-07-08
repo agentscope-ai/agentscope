@@ -38,6 +38,7 @@ manager handles cache, TTL eviction and metadata-based reattachment.
 """
 
 import asyncio
+import shlex
 from typing import Any
 
 from ..._logging import logger
@@ -352,7 +353,10 @@ class E2BWorkspace(SandboxedWorkspaceBase):
         compile.
         """
         pip_pkgs = list(_GATEWAY_BASE_REQUIREMENTS) + list(self.extra_pip)
-        pip_args = " ".join(pip_pkgs)
+        # Quote every requirement string so entries with spaces or
+        # shell metacharacters cannot break the ``sh -c`` command or
+        # become a command-injection vector inside the sandbox.
+        pip_args = " ".join(shlex.quote(p) for p in pip_pkgs)
 
         return [
             # 1. System deps + uv installer, both via sudo so uv lands

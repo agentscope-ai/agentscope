@@ -27,6 +27,7 @@ Docker engine for the Kubernetes API (``kubernetes_asyncio``):
 """
 
 import asyncio
+import shlex
 from typing import Any
 
 from ..._logging import logger
@@ -363,6 +364,11 @@ class K8sWorkspace(SandboxedWorkspaceBase):
         trigger a delete-and-recreate cycle.  ``Pending`` Pods are left
         for :meth:`_wait_pod_running` which inspects container statuses
         for early failure detection.
+
+        A Pod whose ``metadata.deletion_timestamp`` is set is already
+        being deleted (by a previous ``close()`` or an external actor)
+        — attaching to it would race the terminator, so we wait for it
+        to disappear and then create a fresh one.
         """
         from kubernetes_asyncio.client.rest import ApiException
 
@@ -374,6 +380,20 @@ class K8sWorkspace(SandboxedWorkspaceBase):
                 self._namespace,
             )
             phase = pod.status.phase if pod.status else None
+            deletion_ts = (
+                pod.metadata.deletion_timestamp
+                if pod.metadata is not None
+                else None
+            )
+            if deletion_ts is not None:
+                logger.info(
+                    "K8sWorkspace: Pod %r is being deleted, "
+                    "waiting to recreate",
+                    self._pod_name,
+                )
+                await self._wait_pod_deleted()
+                await self._create_pod()
+                return
             if phase in {"Running", "Pending"}:
                 return
             if phase in _REBUILD_PHASES:
@@ -588,8 +608,12 @@ class K8sWorkspace(SandboxedWorkspaceBase):
         ``/usr/local/bin/uv`` which is on the default PATH.
         """
         pip_pkgs = list(_GATEWAY_BASE_REQUIREMENTS) + list(self.extra_pip)
-        pip_args = " ".join(pip_pkgs)
-        sys_deps = " ".join(SYSTEM_DEPS)
+        # Quote every requirement string so entries containing spaces
+        # or shell metacharacters (e.g. version specifiers wrapped in
+        # brackets, direct-URL installs) cannot break the ``sh -c``
+        # command or become an injection vector.
+        pip_args = " ".join(shlex.quote(p) for p in pip_pkgs)
+        sys_deps = " ".join(shlex.quote(d) for d in SYSTEM_DEPS)
 
         return [
             f"apt-get update -qq "
