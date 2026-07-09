@@ -255,7 +255,7 @@ class SqlStorage(StorageBase):
                 # Overwrite every mutable column in place so the SA
                 # session tracks the update.
                 for col in ("updated_at", "payload") + tuple(
-                    row_cls._indexed_fields,
+                    row_cls.get_indexed_fields(),
                 ):
                     setattr(existing, col, getattr(new_row, col))
             else:

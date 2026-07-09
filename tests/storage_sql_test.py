@@ -9,6 +9,7 @@ backend implements, mirroring the shape (though not always the
 literal assertions) of the Redis backend's tests so both backends
 stay behavioural equivalents.
 """
+from contextlib import AsyncExitStack
 from datetime import datetime, timedelta
 from unittest.async_case import IsolatedAsyncioTestCase
 
@@ -33,19 +34,8 @@ from agentscope.app.storage import (
     TeamRecord,
 )
 from agentscope.agent import ContextConfig, ReActConfig
-from agentscope.credential import CredentialBase
+from agentscope.credential._dashscope import DashScopeCredential
 from agentscope.message import AssistantMsg, UserMsg
-
-
-class _DummyCredential(CredentialBase):
-    """Trivial concrete :class:`CredentialBase` for round-trip testing.
-
-    Ships one :class:`SecretStr` attribute so we also cover the secret
-    materialisation path in ``_dump_with_secrets``.
-    """
-
-    api_key: SecretStr
-    type: str = "openai_credential"
 
 
 def _agent_record(user_id: str, name: str = "agent-x") -> AgentRecord:
@@ -134,14 +124,16 @@ class SqlStorageTest(IsolatedAsyncioTestCase):
         # ``:memory:`` gives a private DB per connection; using a
         # shared-cache URI would too, but per-test isolation is what
         # we want here.
-        self.storage = SqlStorage(
-            "sqlite+aiosqlite:///:memory:",
-            create_tables=True,
+        self._stack = AsyncExitStack()
+        self.storage = await self._stack.enter_async_context(
+            SqlStorage(
+                "sqlite+aiosqlite:///:memory:",
+                create_tables=True,
+            ),
         )
-        await self.storage.__aenter__()
 
     async def asyncTearDown(self) -> None:
-        await self.storage.aclose()
+        await self._stack.aclose()
 
     # ------------------------------------------------------------------
     # Credentials
@@ -149,7 +141,7 @@ class SqlStorageTest(IsolatedAsyncioTestCase):
 
     async def test_credentials_round_trip(self) -> None:
         """Upsert / list / get / delete + owner scoping."""
-        cred = _DummyCredential(api_key=SecretStr("sk-1"))
+        cred = DashScopeCredential(api_key=SecretStr("sk-1"))
         cid = await self.storage.upsert_credential("user-1", cred)
 
         listed = await self.storage.list_credentials("user-1")

@@ -59,7 +59,7 @@ def _from_record(
     for field in _ENVELOPE_FIELDS:
         dump.pop(field, None)
     column_values: dict = {}
-    for field in row_cls._indexed_fields:
+    for field in row_cls.get_indexed_fields():
         column_values[field] = dump.pop(field, None)
     return row_cls(
         id=record.id,
@@ -95,6 +95,6 @@ def _to_record(
     obj["id"] = row.id
     obj["created_at"] = row.created_at
     obj["updated_at"] = row.updated_at
-    for field in row.__class__._indexed_fields:
+    for field in row.__class__.get_indexed_fields():
         obj[field] = getattr(row, field)
     return record_cls.model_validate(obj)

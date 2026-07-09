@@ -41,7 +41,7 @@ class _Base(DeclarativeBase):
     """
 
 
-class _JsonRecordMixin:
+class _JsonRecordMixin(_Base):
     """Column set common to every ``*Row`` that stores a record payload.
 
     Concrete tables inherit this mixin plus :class:`_Base`, add their
@@ -60,6 +60,8 @@ class _JsonRecordMixin:
     extra table-specific columns.
     """
 
+    __abstract__ = True
+
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(),
@@ -77,14 +79,19 @@ class _JsonRecordMixin:
     _record_cls: ClassVar[type]
     _indexed_fields: ClassVar[tuple[str, ...]] = ()
 
+    @classmethod
+    def get_indexed_fields(cls) -> tuple[str, ...]:
+        """Return the tuple of record fields promoted to dedicated columns."""
+        return cls._indexed_fields
 
-class UserRow(_JsonRecordMixin, _Base):
+
+class UserRow(_JsonRecordMixin):
     """One row per :class:`~agentscope.app.storage.UserRecord`."""
 
     __tablename__ = "users"
 
 
-class CredentialRow(_JsonRecordMixin, _Base):
+class CredentialRow(_JsonRecordMixin):
     """One row per :class:`~agentscope.app.storage.CredentialRecord`."""
 
     __tablename__ = "credentials"
@@ -98,7 +105,7 @@ class CredentialRow(_JsonRecordMixin, _Base):
     _indexed_fields = ("user_id",)
 
 
-class AgentRow(_JsonRecordMixin, _Base):
+class AgentRow(_JsonRecordMixin):
     """One row per :class:`~agentscope.app.storage.AgentRecord`."""
 
     __tablename__ = "agents"
@@ -119,7 +126,7 @@ class AgentRow(_JsonRecordMixin, _Base):
     _indexed_fields = ("user_id", "source")
 
 
-class SessionRow(_JsonRecordMixin, _Base):
+class SessionRow(_JsonRecordMixin):
     """One row per :class:`~agentscope.app.storage.SessionRecord`."""
 
     __tablename__ = "sessions"
@@ -161,7 +168,7 @@ class SessionRow(_JsonRecordMixin, _Base):
     )
 
 
-class ScheduleRow(_JsonRecordMixin, _Base):
+class ScheduleRow(_JsonRecordMixin):
     """One row per :class:`~agentscope.app.storage.ScheduleRecord`."""
 
     __tablename__ = "schedules"
@@ -180,7 +187,7 @@ class ScheduleRow(_JsonRecordMixin, _Base):
     _indexed_fields = ("user_id", "agent_id")
 
 
-class TeamRow(_JsonRecordMixin, _Base):
+class TeamRow(_JsonRecordMixin):
     """One row per :class:`~agentscope.app.storage.TeamRecord`."""
 
     __tablename__ = "teams"
@@ -198,7 +205,7 @@ class TeamRow(_JsonRecordMixin, _Base):
     _indexed_fields = ("user_id", "session_id")
 
 
-class KnowledgeBaseRow(_JsonRecordMixin, _Base):
+class KnowledgeBaseRow(_JsonRecordMixin):
     """One row per :class:`~agentscope.app.storage.KnowledgeBaseRecord`."""
 
     __tablename__ = "knowledge_bases"
@@ -212,7 +219,7 @@ class KnowledgeBaseRow(_JsonRecordMixin, _Base):
     _indexed_fields = ("user_id",)
 
 
-class KnowledgeDocumentRow(_JsonRecordMixin, _Base):
+class KnowledgeDocumentRow(_JsonRecordMixin):
     """One row per :class:`KnowledgeDocumentRecord`.
 
     Promotes every lifecycle / sweeper field to a dedicated column so
