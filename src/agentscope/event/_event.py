@@ -50,6 +50,7 @@ class EventType(StrEnum):
     TOOL_RESULT_END = "TOOL_RESULT_END"
 
     EXCEED_MAX_ITERS = "EXCEED_MAX_ITERS"
+    STATUS = "STATUS"
 
     REQUIRE_USER_CONFIRM = "REQUIRE_USER_CONFIRM"
     REQUIRE_EXTERNAL_EXECUTION = "REQUIRE_EXTERNAL_EXECUTION"
@@ -375,6 +376,26 @@ class ExceedMaxItersEvent(EventBase):
     """Name of the agent."""
 
 
+class StatusEvent(EventBase):
+    """General-purpose progress/status notification event.
+
+    This event is intentionally operation-agnostic. Producers should use
+    ``name`` to identify the current operation and place structured,
+    UI-specific details in ``value``.
+    """
+
+    type: Literal[EventType.STATUS] = EventType.STATUS
+    """Event type."""
+    reply_id: str
+    """ID of the reply message associated with this status update."""
+    name: str
+    """Operation or status name, e.g. ``"context_compaction"``."""
+    message: str | None = None
+    """Optional human-readable status message."""
+    value: dict[str, Any] = Field(default_factory=dict)
+    """Arbitrary JSON-serializable status payload."""
+
+
 class RequireUserConfirmEvent(EventBase):
     """Require user confirm event."""
 
@@ -479,6 +500,7 @@ AgentEvent: TypeAlias = (
     ReplyStartEvent
     | ReplyEndEvent
     | ExceedMaxItersEvent
+    | StatusEvent
     | RequireUserConfirmEvent
     | RequireExternalExecutionEvent
     | ModelCallStartEvent

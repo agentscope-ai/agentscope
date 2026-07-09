@@ -239,6 +239,9 @@ class Msg(BaseModel):
             case EventType.REPLY_END:
                 self.finished_at = event.created_at
 
+            case EventType.STATUS:
+                pass
+
             case EventType.MODEL_CALL_END:
                 if self.usage is None:
                     self.usage = Usage(

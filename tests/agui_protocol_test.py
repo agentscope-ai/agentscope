@@ -26,6 +26,7 @@ from agentscope.event import (
     ReplyStartEvent,
     RequireExternalExecutionEvent,
     RequireUserConfirmEvent,
+    StatusEvent,
     TextBlockDeltaEvent,
     TextBlockEndEvent,
     TextBlockStartEvent,
@@ -130,6 +131,26 @@ class AGUIProtocolStreamTest(IsolatedAsyncioTestCase):
         self.assertEqual(data["threadId"], "sess_1")
         self.assertEqual(data["runId"], "reply_1")
 
+    async def test_status_sse_data_frame_is_converted(self) -> None:
+        """Test StatusEvent JSON inside an SSE data frame is converted."""
+        event = StatusEvent(
+            reply_id="reply_1",
+            name="context_compaction",
+            message="Compacting context",
+            value={"phase": "start"},
+        )
+
+        body = await _collect_stream(
+            self.mw,
+            [f"data: {event.model_dump_json()}\n\n"],
+        )
+        data = json.loads(body.removeprefix("data: ").strip())
+
+        self.assertEqual(data["type"], "CUSTOM")
+        self.assertEqual(data["name"], "status")
+        self.assertEqual(data["value"]["type"], "STATUS")
+        self.assertEqual(data["value"]["name"], "context_compaction")
+
     async def test_fastapi_sse_response_is_converted(self) -> None:
         """Test middleware converts a real FastAPI SSE response."""
         app = FastAPI()
@@ -230,6 +251,24 @@ class AGUIProtocolLifecycleTest(IsolatedAsyncioTestCase):
         self.assertEqual(result["type"], "RUN_ERROR")
         self.assertIn("my_agent", result["message"])
         self.assertEqual(result["code"], "exceed_max_iters")
+
+    async def test_status_event_to_custom(self) -> None:
+        """Test StatusEvent -> CUSTOM."""
+        event = StatusEvent(
+            reply_id="reply_1",
+            name="context_compaction",
+            message="Compacting context",
+            value={"phase": "start"},
+        )
+        result = self.mw._convert_to_protocol(event)
+
+        self.assertEqual(result["type"], "CUSTOM")
+        self.assertEqual(result["name"], "status")
+        self.assertEqual(result["value"]["type"], "STATUS")
+        self.assertEqual(result["value"]["reply_id"], "reply_1")
+        self.assertEqual(result["value"]["name"], "context_compaction")
+        self.assertEqual(result["value"]["message"], "Compacting context")
+        self.assertEqual(result["value"]["value"], {"phase": "start"})
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""
