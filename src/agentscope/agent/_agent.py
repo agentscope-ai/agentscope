@@ -1717,9 +1717,18 @@ class Agent:
             # ================================================================
             # Step 4: Delegate raw execution to _acting (middleware hook point)
             # ================================================================
-            async for chunk in self._acting(tool_call):
-                # The ToolResponse is the last and completed tool result here
-                if isinstance(chunk, ToolResponse):
+            try:
+                async for chunk in self._acting(tool_call):
+                    # The ToolResponse is the last and completed tool result here
+                    if isinstance(chunk, ToolResponse):
+            except Exception as e:
+                async for evt in self._handle_error_tool_call(
+                    tool_call,
+                    f"Tool call execution failed: {e}",
+                    state=ToolResultState.ERROR,
+                ):
+                    yield evt
+                return
                     tool_result_block = ToolResultBlock(
                         id=tool_call.id,
                         name=tool_call.name,
