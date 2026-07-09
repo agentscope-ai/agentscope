@@ -690,14 +690,14 @@ class LocalWorkspace(WorkspaceBase):
 
     async def add_mcp(
         self,
-        agent_id: str,
-        mcp_client: MCPClient,
+        agent_id: str = "default_agent",
+        mcp_client: MCPClient | None = None,
     ) -> None:
         """Add an MCP client for an agent, connect it if stateful,
         and persist.
 
         Args:
-            agent_id (`str`):
+            agent_id (`str`, defaults to ``"default_agent"``):
                 The agent this MCP client belongs to.
             mcp_client (`MCPClient`):
                 The MCP client to add.
@@ -720,12 +720,16 @@ class LocalWorkspace(WorkspaceBase):
             self._mcps.setdefault(agent_id, []).append(mcp_client)
             await self._save_mcp_file()
 
-    async def remove_mcp(self, agent_id: str, name: str) -> None:
+    async def remove_mcp(
+        self,
+        agent_id: str = "default_agent",
+        name: str | None = None,
+    ) -> None:
         """Remove an MCP client by name for an agent, disconnecting
         it if stateful.
 
         Args:
-            agent_id (`str`):
+            agent_id (`str`, defaults to ``"default_agent"``):
                 The agent whose MCP client to remove.
             name (`str`):
                 The ``name`` field of the client to remove.

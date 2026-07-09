@@ -278,7 +278,10 @@ class SandboxedWorkspaceBase(WorkspaceBase):
 
     # ── MCP management (gateway-routed, per-agent) ────────────────
 
-    async def list_mcps(self, agent_id: str) -> list[MCPClient]:
+    async def list_mcps(
+        self,
+        agent_id: str = "default_agent",
+    ) -> list[MCPClient]:
         """Gateway-wrapped MCP handles for the given agent.
 
         On first access for an ``agent_id`` that has no cached handles,
@@ -304,13 +307,13 @@ class SandboxedWorkspaceBase(WorkspaceBase):
 
     async def add_mcp(
         self,
-        agent_id: str,
-        mcp_client: MCPClient,
+        agent_id: str = "default_agent",
+        mcp_client: MCPClient | None = None,
     ) -> None:
         """Register a new MCP server for an agent through the gateway.
 
         Args:
-            agent_id (`str`):
+            agent_id (`str`, defaults to ``"default_agent"``):
                 The agent this MCP client belongs to.
             mcp_client (`MCPClient`):
                 The MCP to register.
@@ -339,11 +342,15 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             by_name[gw_client.name] = gw_client
             await self._save_mcp_file()
 
-    async def remove_mcp(self, agent_id: str, name: str) -> None:
+    async def remove_mcp(
+        self,
+        agent_id: str = "default_agent",
+        name: str | None = None,
+    ) -> None:
         """Deregister an MCP server by name for an agent.
 
         Args:
-            agent_id (`str`):
+            agent_id (`str`, defaults to ``"default_agent"``):
                 The agent whose MCP client to remove.
             name (`str`):
                 MCP name to remove. Unknown names log a warning and

@@ -438,7 +438,10 @@ class GatewayClient:
             return False
         return status == 200
 
-    async def list_mcps(self, agent_id: str) -> list[GatewayMCPClient]:
+    async def list_mcps(
+        self,
+        agent_id: str = "default_agent",
+    ) -> list[GatewayMCPClient]:
         """Fetch MCPs registered on the gateway for a given agent.
 
         Returned clients are marked already-connected (via

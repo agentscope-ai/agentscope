@@ -337,7 +337,10 @@ class WorkspaceBase:
             Write(backend=backend),
         ]
 
-    async def list_mcps(self, agent_id: str) -> list[MCPClient]:
+    async def list_mcps(
+        self,
+        agent_id: str = "default_agent",
+    ) -> list[MCPClient]:
         """Return the MCP clients registered for the given agent.
 
         On first access for an ``agent_id`` that has no cached clients
@@ -351,7 +354,7 @@ class WorkspaceBase:
         gateway-wired handles instead.
 
         Args:
-            agent_id (`str`):
+            agent_id (`str`, defaults to ``"default_agent"``):
                 The agent whose MCP clients to return. Each agent
                 gets its own client instances so that stateful MCP
                 sessions are isolated.
@@ -388,11 +391,15 @@ class WorkspaceBase:
     # ── for User: dynamic MCP management ───────────────────────────
 
     @abstractmethod
-    async def add_mcp(self, agent_id: str, mcp_client: MCPClient) -> None:
+    async def add_mcp(
+        self,
+        agent_id: str = "default_agent",
+        mcp_client: MCPClient | None = None,
+    ) -> None:
         """Register a new MCP server for an agent.
 
         Args:
-            agent_id (`str`):
+            agent_id (`str`, defaults to ``"default_agent"``):
                 The agent this MCP client belongs to.
             mcp_client (`MCPClient`):
                 The MCP to register.
@@ -404,11 +411,15 @@ class WorkspaceBase:
         """
 
     @abstractmethod
-    async def remove_mcp(self, agent_id: str, name: str) -> None:
+    async def remove_mcp(
+        self,
+        agent_id: str = "default_agent",
+        name: str | None = None,
+    ) -> None:
         """Deregister an MCP server by name for an agent.
 
         Args:
-            agent_id (`str`):
+            agent_id (`str`, defaults to ``"default_agent"``):
                 The agent whose MCP client to remove.
             name (`str`):
                 MCP name to remove. Unknown names log a warning and
