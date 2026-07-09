@@ -739,6 +739,72 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_context_compression_missing_summary_field(self) -> None:
+        """Missing structured summary fields do not break compression."""
+        model = MockModel(context_size=100)
+        agent = Agent(
+            name="Friday",
+            system_prompt="".join(["0" for _ in range(20 * 4)]),
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.7,
+                reserve_ratio=0.4,
+            ),
+            state=AgentState(
+                session_id="123",
+                context=[
+                    UserMsg(
+                        "User",
+                        "".join(["1" for _ in range(30 * 4)]),
+                        id="1",
+                    ),
+                    AssistantMsg(
+                        "Friday",
+                        "".join(["2" for _ in range(10 * 4)]),
+                        id="2",
+                    ),
+                    UserMsg(
+                        "User",
+                        "".join(["3" for _ in range(10 * 4)]),
+                        id="3",
+                    ),
+                ],
+            ),
+            toolkit=Toolkit(),
+        )
+
+        model.set_structured_response(
+            StructuredResponse(
+                content={
+                    "task_overview": "1",
+                    "current_state": "2",
+                    "important_discoveries": "3",
+                    "context_to_preserve": "5",
+                },
+            ),
+        )
+
+        await agent.compress_context()
+
+        self.assertEqual(
+            agent.state.summary,
+            """<system-info>Here is a summary of your previous work
+# Task Overview
+1
+
+# Current State
+2
+
+# Important Discoveries
+3
+
+# Next Steps
+
+
+# Context to Preserve
+5</system-info>""",
+        )
+
     async def test_context_compression_clears_evicted_read_cache(self) -> None:
         """Read cache is cleared when its Read block is compressed out."""
         with tempfile.TemporaryDirectory() as temp_dir:
