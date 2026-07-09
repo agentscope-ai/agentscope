@@ -1,4 +1,3 @@
-
 [project]
 name = "agentscope"
 dynamic = ["version"]
@@ -67,6 +66,14 @@ service = [
 storage = [
     "redis",
 ]
+# ------------ SQL storage ------------
+# Async SQLAlchemy 2.0 + Alembic. The concrete driver
+# (aiosqlite / asyncpg / aiomysql / asyncmy) is left to the user
+# so the extra stays lightweight.
+sql = [
+    "sqlalchemy[asyncio]>=2.0",
+    "alembic>=1.13",
+]
 # ------------ Workspace -----------
 workspace = [
     "aiodocker",
@@ -108,6 +115,7 @@ full = [
     "agentscope[models]",
     "agentscope[service]",
     "agentscope[storage]",
+    "agentscope[sql]",
     "agentscope[workspace]",
     "agentscope[tools]",
     "agentscope[rag]",
@@ -128,6 +136,8 @@ dev = [
     "myst_parser",
     "matplotlib",
     "fakeredis",
+    # SQL backend tests — SQLite via aiosqlite so no server is needed.
+    "aiosqlite",
     # S3-backend testing — moto[server] spins up an in-process S3, the
     # store-under-test (`S3BlobStore`) uses aioboto3, and boto3 is the
     # sync client the test fixtures use to seed/verify buckets.

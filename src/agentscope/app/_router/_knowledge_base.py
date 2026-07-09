@@ -269,9 +269,9 @@ async def list_knowledge_bases(
     views = [
         KnowledgeBaseView(
             id=record.id,
-            name=record.name,
-            description=record.description,
-            embedding_model_config=record.embedding_model_config,
+            name=record.data.name,
+            description=record.data.description,
+            embedding_model_config=record.data.embedding_model_config,
             created_at=record.created_at,
             updated_at=record.updated_at,
         )
@@ -319,9 +319,9 @@ async def update_knowledge_base(
     )
     return KnowledgeBaseView(
         id=record.id,
-        name=record.name,
-        description=record.description,
-        embedding_model_config=record.embedding_model_config,
+        name=record.data.name,
+        description=record.data.description,
+        embedding_model_config=record.data.embedding_model_config,
         created_at=record.created_at,
         updated_at=record.updated_at,
     )
@@ -500,7 +500,7 @@ async def upload_knowledge_document(
     return UploadKnowledgeDocumentResponse(
         document_id=record.id,
         filename=record.data.filename,
-        status=record.data.status,
+        status=record.status,
     )
 
 

@@ -22,7 +22,7 @@ from ._errors import KnowledgeBaseNotFoundError
 from ...._logging import logger
 from ....rag import KnowledgeBase
 from ..._service._embedding import get_embedding_model
-from ...storage import KnowledgeBaseRecord
+from ...storage import KnowledgeBaseRecord, KnowledgeBaseData
 
 if TYPE_CHECKING:
     from ...storage import EmbeddingModelConfig
@@ -74,15 +74,17 @@ class CollectionPerKbManager(KnowledgeBaseManagerBase):
         """
         record = KnowledgeBaseRecord(
             user_id=user_id,
-            name=name,
-            description=description,
-            embedding_model_config=embedding_model_config,
-            collection_name="",
+            data=KnowledgeBaseData(
+                name=name,
+                description=description,
+                embedding_model_config=embedding_model_config,
+                collection_name="",
+            ),
         )
-        record.collection_name = f"kb_{record.id}"
+        record.data.collection_name = f"kb_{record.id}"
 
         await self._vector_store.create_collection(
-            name=record.collection_name,
+            name=record.data.collection_name,
             dimensions=embedding_model_config.dimensions,
         )
         try:
@@ -94,13 +96,13 @@ class CollectionPerKbManager(KnowledgeBaseManagerBase):
             # would leave no trace.
             try:
                 await self._vector_store.delete_collection(
-                    record.collection_name,
+                    record.data.collection_name,
                 )
             except Exception:  # noqa: BLE001 — best-effort cleanup
                 logger.exception(
                     "Failed to drop orphan collection %r after "
                     "upsert_knowledge_base failed; collection leaked.",
-                    record.collection_name,
+                    record.data.collection_name,
                 )
             raise
 
@@ -129,8 +131,12 @@ class CollectionPerKbManager(KnowledgeBaseManagerBase):
         if record is None:
             return False
 
-        if await self._vector_store.has_collection(record.collection_name):
-            await self._vector_store.delete_collection(record.collection_name)
+        if await self._vector_store.has_collection(
+            record.data.collection_name,
+        ):
+            await self._vector_store.delete_collection(
+                record.data.collection_name,
+            )
         return await self._storage.delete_knowledge_base(
             user_id,
             knowledge_base_id,
@@ -175,14 +181,14 @@ class CollectionPerKbManager(KnowledgeBaseManagerBase):
 
         embedding_model = await get_embedding_model(
             user_id=user_id,
-            config=record.embedding_model_config,
+            config=record.data.embedding_model_config,
             storage=self._storage,
         )
         return KnowledgeBase(
-            name=record.name,
-            description=record.description,
+            name=record.data.name,
+            description=record.data.description,
             embedding_model=embedding_model,
             vector_store=self._vector_store,
-            collection=record.collection_name,
+            collection=record.data.collection_name,
             metadata_filter=None,
         )
