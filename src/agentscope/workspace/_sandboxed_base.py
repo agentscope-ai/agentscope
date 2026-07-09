@@ -328,6 +328,7 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         """
         if self._gateway is None:
             raise RuntimeError("Workspace has no MCP gateway attached.")
+        assert mcp_client is not None  # pragma: no cover
         async with self._mcp_lock:
             by_name = self._gateway_clients.setdefault(agent_id, {})
             if mcp_client.name in by_name:
@@ -362,6 +363,7 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         """
         if self._gateway is None:
             raise RuntimeError("Workspace has no MCP gateway attached.")
+        assert name is not None  # pragma: no cover
         async with self._mcp_lock:
             by_name = self._gateway_clients.get(agent_id, {})
             gw_client = by_name.pop(name, None)

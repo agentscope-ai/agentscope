@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -61,6 +62,11 @@ _SKIP_REASON = "Docker daemon not available"
 
 
 @unittest.skipUnless(_DOCKER_OK, _SKIP_REASON)
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Docker on Windows CI uses Windows container mode, "
+    "Linux images unavailable",
+)
 class TestDockerPerAgentMCP(unittest.IsolatedAsyncioTestCase):
     """Per-agent MCP isolation tests for DockerWorkspace."""
 

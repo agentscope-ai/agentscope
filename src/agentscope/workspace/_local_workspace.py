@@ -707,6 +707,7 @@ class LocalWorkspace(WorkspaceBase):
                 If an MCP with the same name already exists for
                 this agent.
         """
+        assert mcp_client is not None  # pragma: no cover
         async with self._mcp_lock:
             agent_mcps = self._mcps.get(agent_id, [])
             for existing in agent_mcps:
