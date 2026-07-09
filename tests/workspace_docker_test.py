@@ -28,6 +28,7 @@ The whole module is skipped when no Docker daemon is reachable.
 import base64
 import hashlib
 import os
+import sys
 import re
 import shutil
 import subprocess
@@ -68,6 +69,11 @@ def _docker_available() -> bool:
     Probes via the ``docker`` CLI rather than the aiodocker async client
     so the check is cheap and synchronous (runs at module import time).
     """
+    if sys.platform == "win32":
+        # Docker workspace tests require Linux containers; the Windows
+        # CI runner ships Docker in Windows mode which cannot build or
+        # run the Linux-based workspace images.
+        return False
     if shutil.which("docker") is None:
         return False
     try:
