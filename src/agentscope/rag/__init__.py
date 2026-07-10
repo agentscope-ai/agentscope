@@ -18,6 +18,7 @@ from ._parser import (
 from ._vdb import (
     DocumentSummary,
     MilvusLiteStore,
+    RAGFlowStore,
     VectorStoreBase,
     VectorRecord,
     VectorSearchResult,
@@ -44,6 +45,7 @@ __all__ = [
     "VectorRecord",
     "VectorSearchResult",
     "QdrantStore",
+    "RAGFlowStore",
     "KnowledgeBase",
     "MongoDBStore",
 ]
