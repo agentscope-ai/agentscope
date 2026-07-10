@@ -324,6 +324,37 @@ class SqlStorageTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual([m.id for m in paged], [m2.id])
 
+    async def test_messages_max_width_ids(self) -> None:
+        """Composite key stores ids a concatenated key couldn't hold.
+
+        Two 64-char ids would be 129 chars once joined as
+        ``session_id:msg_id`` — overflowing the old ``String(96)``
+        synthetic primary key.  The composite ``(session_id, msg_id)``
+        key round-trips them without truncation.
+        """
+        long_session = "s" * 64
+        long_msg_id = "m" * 64
+        msg = UserMsg(id=long_msg_id, name="u", content="hi")
+        await self.storage.upsert_message("user-1", long_session, msg)
+
+        fetched = await self.storage.get_message(
+            "user-1",
+            long_session,
+            long_msg_id,
+        )
+        self.assertIsNotNone(fetched)
+        self.assertEqual(fetched.id, long_msg_id)
+        self.assertEqual(
+            [
+                m.id
+                for m in await self.storage.list_messages(
+                    "user-1",
+                    long_session,
+                )
+            ],
+            [long_msg_id],
+        )
+
     # ------------------------------------------------------------------
     # Teams
     # ------------------------------------------------------------------
@@ -665,3 +696,50 @@ class SqlStorageAutoMigrateTest(IsolatedAsyncioTestCase):
                 await storage.upsert_agent("user-1", agent)
                 fetched = await storage.get_agent("user-1", agent.id)
                 self.assertEqual(fetched.id, agent.id)
+
+
+class LegacyRecordShapeTest(IsolatedAsyncioTestCase):
+    """The ``mode='before'`` validators absorb pre-refactor payloads.
+
+    Records written before the KB-``data`` nesting / KD-lifecycle
+    promotion refactor must still deserialise, so a database populated
+    by an older build keeps round-tripping after an upgrade.
+    """
+
+    async def test_knowledge_base_flat_payload_migrates(self) -> None:
+        """Flat KB fields fold into :attr:`KnowledgeBaseRecord.data`."""
+        record = KnowledgeBaseRecord.model_validate(
+            {
+                "user_id": "u1",
+                "name": "kb",
+                "description": "d",
+                "embedding_model_config": {
+                    "type": "openai_credential",
+                    "credential_id": "cred-1",
+                    "model": "text-embedding-3-small",
+                    "dimensions": 8,
+                },
+                "collection_name": "c",
+            },
+        )
+        self.assertEqual(record.data.name, "kb")
+        self.assertEqual(record.data.collection_name, "c")
+
+    async def test_knowledge_document_lifecycle_fields_lift(self) -> None:
+        """Legacy in-``data`` ``status`` / ``lease_expires_at`` lift up."""
+        record = KnowledgeDocumentRecord.model_validate(
+            {
+                "user_id": "u1",
+                "knowledge_base_id": "kb1",
+                "data": {
+                    "filename": "f.txt",
+                    "size": 1,
+                    "blob_uri": "local://f.txt",
+                    "status": "ready",
+                    "lease_expires_at": None,
+                },
+            },
+        )
+        self.assertEqual(record.status, "ready")
+        # The fields moved to the top level and no longer shadow ``data``.
+        self.assertNotIn("status", record.data.model_dump())

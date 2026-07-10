@@ -28,7 +28,6 @@ from sqlalchemy import (
     DateTime,
     Index,
     String,
-    UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -83,12 +82,6 @@ class _JsonRecordMixin(_Base):
     def get_indexed_fields(cls) -> tuple[str, ...]:
         """Return the tuple of record fields promoted to dedicated columns."""
         return cls._indexed_fields
-
-
-class UserRow(_JsonRecordMixin):
-    """One row per :class:`~agentscope.app.storage.UserRecord`."""
-
-    __tablename__ = "users"
 
 
 class CredentialRow(_JsonRecordMixin):
@@ -284,23 +277,20 @@ class MessageRow(_Base):
     """One row per persisted :class:`~agentscope.message.Msg`.
 
     Sits outside the ``_JsonRecordMixin`` family because messages are
-    not stand-alone records — they are per-session events. The primary
-    key is a synthetic ``id`` string (the ``Msg.id`` itself is not
-    globally unique across sessions), and ``(session_id, msg_id)``
-    carries a UNIQUE constraint so the "same id → replace" semantic
-    inherited from :class:`RedisStorage.upsert_message` is enforced
-    by the DB rather than the application.
+    not stand-alone records — they are per-session events. A message is
+    identified by the **composite** primary key ``(session_id, msg_id)``
+    rather than a synthetic concatenated string: ``Msg.id`` is only
+    unique *within* a session, and a composite key keeps the write path
+    ("same ``(session, msg_id)`` → replace", inheriting
+    :class:`RedisStorage.upsert_message`'s semantic) enforced by the DB
+    without having to bound the length of a ``session_id:msg_id`` blob
+    (both ids come from a user-overridable id factory).
     """
 
     __tablename__ = "messages"
 
-    id: Mapped[str] = mapped_column(String(96), primary_key=True)
-    session_id: Mapped[str] = mapped_column(
-        String(64),
-        nullable=False,
-        index=True,
-    )
-    msg_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    session_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    msg_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(),
         nullable=False,
@@ -308,10 +298,5 @@ class MessageRow(_Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
 
     __table_args__ = (
-        UniqueConstraint(
-            "session_id",
-            "msg_id",
-            name="uq_messages_session_msg",
-        ),
         Index("ix_messages_session_created", "session_id", "created_at"),
     )

@@ -7,8 +7,16 @@ Talks to any dialect supported by SQLAlchemy's async engine
 installs the matching driver.  All schema and query building goes
 through dialect-neutral SA constructs; see the module doc of
 :mod:`_tables` for the portability constraints we hold ourselves to.
+
+Timestamps are stored as **naive UTC**: the backend generates every
+timestamp with :func:`_utcnow` (UTC, not the machine-local
+``datetime.now()``) and normalises any caller-supplied datetime with
+:func:`_to_naive_utc`.  Using UTC keeps timestamps comparable across
+nodes in a distributed deployment regardless of each node's local
+timezone, while staying tz-naive so the plain ``DateTime`` columns
+need no dialect-specific timezone handling.
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Self
 
 from .._base import StorageBase
@@ -47,6 +55,29 @@ if TYPE_CHECKING:
         AsyncSession,
         async_sessionmaker,
     )
+
+
+def _utcnow() -> datetime:
+    """Current time as a naive UTC timestamp.
+
+    Uses UTC rather than the machine-local ``datetime.now()`` so
+    timestamps stay comparable across nodes in a distributed
+    deployment; the ``tzinfo`` is stripped so the value round-trips
+    through the naive ``DateTime`` columns without mixing aware/naive
+    datetimes.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _to_naive_utc(dt: datetime) -> datetime:
+    """Normalise *dt* to a naive UTC timestamp.
+
+    Aware datetimes are converted to UTC; naive datetimes are assumed
+    to be in the machine-local zone — the project-wide convention for
+    ``datetime.now()`` — and re-anchored to UTC.  Either way the result
+    is tz-naive so it matches the values produced by :func:`_utcnow`.
+    """
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 class SqlStorage(StorageBase):
@@ -222,7 +253,7 @@ class SqlStorage(StorageBase):
         Reads the existing row (if any) to preserve ``created_at``
         (mirrors the Redis backend's semantics — an upsert refreshes
         ``updated_at`` but keeps the original creation time), stamps
-        ``updated_at`` to ``datetime.now()``, and writes.  Returns
+        ``updated_at`` to the current UTC time, and writes.  Returns
         the (possibly-updated) record so callers can propagate the
         stamped timestamps.
 
@@ -241,17 +272,15 @@ class SqlStorage(StorageBase):
             `Any`:
                 The (mutated) record.
         """
-        from sqlalchemy import select
-
         async with self._session() as sess:
             existing = None
             if preserve_created_at:
                 existing = await sess.get(row_cls, record.id)
-            record.updated_at = datetime.now()
-            new_row = _from_record(row_cls, record)
+            record.updated_at = _utcnow()
             if existing is not None:
+                # Preserve the original creation time on update.
                 record.created_at = existing.created_at
-                new_row.created_at = existing.created_at
+                new_row = _from_record(row_cls, record)
                 # Overwrite every mutable column in place so the SA
                 # session tracks the update.
                 for col in ("updated_at", "payload") + tuple(
@@ -259,9 +288,12 @@ class SqlStorage(StorageBase):
                 ):
                     setattr(existing, col, getattr(new_row, col))
             else:
+                # First insert — anchor created_at to UTC too (the
+                # record default uses machine-local ``datetime.now()``).
+                record.created_at = _to_naive_utc(record.created_at)
+                new_row = _from_record(row_cls, record)
                 sess.add(new_row)
             await sess.commit()
-        _ = select  # imported for type checkers only
         return record
 
     # ------------------------------------------------------------------
@@ -536,7 +568,7 @@ class SqlStorage(StorageBase):
         """Single-column UPDATE — atomic on all supported dialects."""
         from sqlalchemy import update
 
-        now = datetime.now()
+        now = _utcnow()
         async with self._session() as sess:
             await sess.execute(
                 update(SessionRow)
@@ -563,7 +595,7 @@ class SqlStorage(StorageBase):
                 raise KeyError(f"Session {session_id!r} not found.")
             record = _to_record(row, SessionRecord)
             record.state = state
-            record.updated_at = datetime.now()
+            record.updated_at = _utcnow()
             new_row = _from_record(SessionRow, record)
             row.payload = new_row.payload
             row.updated_at = new_row.updated_at
@@ -774,7 +806,7 @@ class SqlStorage(StorageBase):
         _ = user_id  # scoping enforced by caller
         from sqlalchemy import update
 
-        now = datetime.now()
+        now = _utcnow()
         payload = msg.model_dump(mode="json")
 
         async with self._session() as sess:
@@ -789,7 +821,6 @@ class SqlStorage(StorageBase):
             if result.rowcount == 0:
                 sess.add(
                     MessageRow(
-                        id=f"{session_id}:{msg.id}",
                         session_id=session_id,
                         msg_id=msg.id,
                         payload=payload,
@@ -838,7 +869,10 @@ class SqlStorage(StorageBase):
                     await sess.execute(
                         select(MessageRow)
                         .where(MessageRow.session_id == session_id)
-                        .order_by(MessageRow.created_at.asc())
+                        .order_by(
+                            MessageRow.created_at.asc(),
+                            MessageRow.msg_id.asc(),
+                        )
                         .offset(offset)
                         .limit(limit),
                     )
@@ -1111,7 +1145,7 @@ class SqlStorage(StorageBase):
                 record.data.error = error
             if chunk_count is not None:
                 record.data.chunk_count = chunk_count
-            record.updated_at = datetime.now()
+            record.updated_at = _utcnow()
             new_row = _from_record(KnowledgeDocumentRow, record)
             row.status = new_row.status
             row.payload = new_row.payload
@@ -1130,7 +1164,7 @@ class SqlStorage(StorageBase):
         """Conditional UPDATE — atomic on every supported dialect."""
         from sqlalchemy import or_, update
 
-        now = now or datetime.now()
+        now = _to_naive_utc(now) if now is not None else _utcnow()
         deadline = now + lease_ttl
 
         async with self._session() as sess:
@@ -1168,7 +1202,7 @@ class SqlStorage(StorageBase):
         """Conditional UPDATE constrained to the current holder."""
         from sqlalchemy import update
 
-        now = now or datetime.now()
+        now = _to_naive_utc(now) if now is not None else _utcnow()
         deadline = now + lease_ttl
 
         async with self._session() as sess:
@@ -1196,7 +1230,7 @@ class SqlStorage(StorageBase):
         """Conditional UPDATE constrained to the current holder."""
         from sqlalchemy import update
 
-        now = datetime.now()
+        now = _utcnow()
         async with self._session() as sess:
             await sess.execute(
                 update(KnowledgeDocumentRow)
@@ -1222,7 +1256,7 @@ class SqlStorage(StorageBase):
         """Documents past their lease deadline, non-terminal, held."""
         from sqlalchemy import select
 
-        now = now or datetime.now()
+        now = _to_naive_utc(now) if now is not None else _utcnow()
         terminal = ("ready", "error")
         async with self._session() as sess:
             rows = (
@@ -1248,6 +1282,7 @@ class SqlStorage(StorageBase):
         """Documents stuck in ``pending`` before *threshold*."""
         from sqlalchemy import select
 
+        threshold = _to_naive_utc(threshold)
         async with self._session() as sess:
             rows = (
                 (

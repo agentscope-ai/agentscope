@@ -170,6 +170,16 @@ include-package-data = true
     "_cosyvoice_models/*.yaml",
 ]
 "agentscope.workspace._docker" = ["Dockerfile*.template"]
+# The Alembic scaffolding for the SQL storage backend lives in the
+# data-only ``_alembic/`` subtree (no ``__init__.py`` — Alembic loads
+# ``env.py`` / the version scripts by file path, not import). Ship them
+# explicitly so ``auto_migrate=True`` works from an installed wheel.
+"agentscope.app.storage._sql" = [
+    "_alembic/alembic.ini",
+    "_alembic/script.py.mako",
+    "_alembic/env.py",
+    "_alembic/versions/*.py",
+]
 
 [build-system]
 requires = ["setuptools>=45", "wheel"]
