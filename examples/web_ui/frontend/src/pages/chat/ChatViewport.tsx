@@ -348,11 +348,15 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		const items = groups[selectedModel.type];
 		if (!items) return null;
 		for (const { models } of items) {
-			const card = models.find((m) => m.name === selectedModel.model);
+			const card = models.find(
+				(m) =>
+					m.name === selectedModel.model &&
+					(!selectedModel.model_class || m.model_class === selectedModel.model_class),
+			);
 			if (card) return card;
 		}
 		return null;
-	}, [groups, selectedModel?.type, selectedModel?.model]);
+	}, [groups, selectedModel?.type, selectedModel?.model, selectedModel?.model_class]);
 
 	/**
 	 * Pick the first model the available-models endpoint surfaces, used
@@ -368,14 +372,13 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		const items = groups[firstType];
 		if (!items || items.length === 0) return null;
 		const firstItem = items[0];
-		const firstModel = (firstItem.models as { name?: string; id?: string }[])[0];
+		const firstModel = firstItem.models[0];
 		if (!firstModel) return null;
-		const modelName = firstModel.name ?? firstModel.id ?? null;
-		if (!modelName) return null;
 		return {
 			type: firstType,
 			credential_id: firstItem.credential.id,
-			model: modelName,
+			model: firstModel.name,
+			model_class: firstModel.model_class,
 			parameters: {},
 		};
 	};

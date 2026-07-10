@@ -124,6 +124,10 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
             content_parts: list[dict] = []
             function_calls: list[dict] = []
 
+            text_type = (
+                "output_text" if msg.role == "assistant" else "input_text"
+            )
+
             for block in msg.get_content_blocks():
                 if isinstance(block, TextBlock):
                     text_type = (
@@ -271,7 +275,8 @@ class OpenAIResponseFormatter(_OpenAIResponseFormatterBase):
                     items.append(
                         {
                             "type": "function_call_output",
-                            "call_id": block.id,
+                            "call_id": getattr(block, "call_id", None)
+                            or block.id,
                             "output": textual_output,
                         },
                     )

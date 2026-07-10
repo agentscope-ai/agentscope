@@ -682,6 +682,50 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_tool_call_two_id_scenario(self) -> None:
+        """When ToolCallBlock carries a separate call_id (OpenAI Responses
+        API two-ID style), the formatter must use call_id (not id) for
+        function_call_output."""
+        fmt = OpenAIResponseFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="fc_abc",
+                        call_id="call-1",
+                        name="search",
+                        input='{"q": "test"}',
+                    ),
+                    ToolResultBlock(
+                        id="fc_abc",
+                        call_id="call-1",
+                        name="search",
+                        output=[TextBlock(text="result")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "type": "function_call",
+                    "id": "fc_abc",
+                    "call_id": "call-1",
+                    "name": "search",
+                    "arguments": '{"q": "test"}',
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call-1",
+                    "output": "result",
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_hint_block(self) -> None:
         """HintBlock flushes preceding content and becomes a user message."""
         fmt = OpenAIResponseFormatter()
