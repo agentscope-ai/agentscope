@@ -101,13 +101,14 @@ class ResourceAccessPolicyBase(ABC):
         cross-owner refs.
 
         Args:
-            viewer_id: The current viewer's user id.
-            kind: The resource kind to list.
-            storage: The owner-scoped storage backend. Policy subclasses may
-                use it for read-only lookups.
+            viewer_id (`str`): The current viewer's user id.
+            kind (`ResourceKind`): The resource kind to list.
+            storage (`StorageBase`): The owner-scoped storage backend. Policy
+                subclasses may use it for read-only lookups.
 
         Returns:
-            A list of accessible cross-owner resource references.
+            `list[ResourceRef]`: The accessible cross-owner resource
+            references.
         """
 
     async def can_edit(
@@ -127,14 +128,14 @@ class ResourceAccessPolicyBase(ABC):
         perform a more efficient direct authorization check.
 
         Args:
-            viewer_id: The current viewer's user id.
-            kind: The resource kind.
-            owner_id: The resource owner's user id.
-            resource_id: The resource id under ``owner_id``.
-            storage: The owner-scoped storage backend.
+            viewer_id (`str`): The current viewer's user id.
+            kind (`ResourceKind`): The resource kind.
+            owner_id (`str`): The resource owner's user id.
+            resource_id (`str`): The resource id under ``owner_id``.
+            storage (`StorageBase`): The owner-scoped storage backend.
 
         Returns:
-            ``True`` when mutation is allowed, otherwise ``False``.
+            `bool`: ``True`` when mutation is allowed, otherwise ``False``.
         """
         if viewer_id == owner_id:
             return True

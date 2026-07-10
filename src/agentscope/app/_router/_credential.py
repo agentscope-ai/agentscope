@@ -146,9 +146,15 @@ async def update_credential(
     await storage.upsert_credential(owner_id, credential)
     # ``resolve_for_edit`` proved the record existed under ``owner_id``
     # and the upsert above just wrote back to the same key, so the read
-    # is a value refresh, not an existence check.
+    # is a value refresh, not an existence check. If it still comes back
+    # empty (e.g. a concurrent delete), surface an explicit server error
+    # rather than relying on ``assert`` (which ``-O`` strips).
     updated = await storage.get_credential(owner_id, credential_id)
-    assert updated is not None
+    if updated is None:
+        raise RuntimeError(
+            f"Credential {credential_id!r} for owner {owner_id!r} "
+            "disappeared immediately after a successful upsert.",
+        )
     # Only reachable via ``resolve_for_edit``, so the caller has edit
     # permission by construction.
     return CredentialView.model_validate(

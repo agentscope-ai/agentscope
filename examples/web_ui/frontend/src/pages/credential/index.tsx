@@ -222,7 +222,7 @@ function DetailPanel({ credential, schema, onEdit, onDelete }: DetailPanelProps)
 						variant="outline"
 						onClick={onEdit}
 						disabled={!credential.editable}
-						tooltip={!credential.editable ? undefined : t('common.readOnlyTooltip')}
+						tooltip={credential.editable ? undefined : t('common.readOnlyTooltip')}
 					>
 						<Pencil />
 					</Button>

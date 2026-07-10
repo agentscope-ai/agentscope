@@ -8,8 +8,12 @@ from ._manager import (
     ChatRunRegistry,
     SchedulerManager,
 )
-from ._service import ChatService, KnowledgeBaseService, SessionService
-from ._service._access import ResourceAccessService
+from ._service import (
+    ChatService,
+    KnowledgeBaseService,
+    ResourceAccessService,
+    SessionService,
+)
 from ._types import AgentMiddlewareFactory, AgentToolFactory
 from .message_bus import MessageBus
 from .rag.blob_store import BlobStoreBase

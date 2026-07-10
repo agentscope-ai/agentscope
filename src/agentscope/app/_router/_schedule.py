@@ -4,6 +4,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from ..access import ResourceKind
 from .._manager import SchedulerManager
 from ..deps import (
     get_current_user_id,
@@ -88,11 +89,20 @@ async def create_schedule(
             The ID of the newly created schedule.
 
     Raises:
-        `HTTPException`: 404 if the specified agent is not visible to
-            the caller.
+        `HTTPException`: 404 if the specified agent or the credential
+            referenced by ``chat_model_config`` is not visible to the
+            caller.
     """
-    # Visibility check — raises 404 when neither owned nor shared.
+    # Visibility checks — raise 404 when neither owned nor shared. The
+    # schedule fires under the owner's user_id, so re-validating the
+    # credential here surfaces the error at creation time rather than
+    # silently at the first (possibly much later) scheduled run.
     await access.resolve_agent(user_id, body.agent_id)
+    await access.get_resource(
+        user_id,
+        ResourceKind.CREDENTIAL,
+        body.chat_model_config.credential_id,
+    )
 
     record = ScheduleRecord(
         user_id=user_id,
