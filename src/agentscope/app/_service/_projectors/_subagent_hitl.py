@@ -112,17 +112,22 @@ class SubagentHitlProjector:
             session_record (`SessionRecord`):
                 The currently-running session's record.
             agent_record (`AgentRecord`):
-                The currently-running agent's record. Only
-                ``source == "team"`` agents forward.
+                The currently-running agent's record. Whether this
+                session forwards is decided by ``session_record.team_id``
+                (and the leader check below), NOT by
+                ``agent_record.source`` — an ``AgentInvite`` borrowed
+                session runs on a ``source='user'`` record but is still
+                a team worker, so its HITL must project onto the leader.
             event (`AgentEvent`):
                 The event just published to this session's channel.
             projection (`SessionProjection`):
                 Shared primitive used to write the durable entry and the
                 live notification.
         """
-        # Fast path: only team-member sessions forward anything, and
-        # only for the event kinds we care about.
-        if agent_record.source != "team" or not session_record.team_id:
+        # Fast path: only sessions that participate in a team forward
+        # anything, and only for the event kinds we care about. The
+        # leader/worker distinction is made below via ``team.session_id``.
+        if not session_record.team_id:
             return
         if not isinstance(
             event,

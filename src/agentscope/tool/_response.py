@@ -44,7 +44,7 @@ class ToolChunk(BaseModel):
     parse the tool result block."""
 
     id: str = Field(default_factory=_generate_id)
-    """The identity of the tool response."""
+    """The identity of the tool chunk."""
 
 
 class ToolResponse(BaseModel):

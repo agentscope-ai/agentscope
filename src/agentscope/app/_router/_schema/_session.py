@@ -11,6 +11,7 @@ from ...storage import (
     SessionRecord,
     TeamRecord,
 )
+from ..._service import SessionStatus
 
 
 class TeamMemberView(BaseModel):
@@ -59,7 +60,14 @@ class CreateSessionRequest(BaseModel):
     agent_id: str = Field(description="Agent this session belongs to.")
     workspace_id: str | None = Field(
         default=None,
-        description="Workspace this session belongs to.",
+        description=(
+            "Optional explicit workspace binding. When omitted the "
+            "server calls "
+            "``WorkspaceManagerBase.assign_workspace_id`` under the "
+            "configured isolation policy. Set only to force a "
+            "specific binding (e.g. share workspace with another "
+            "existing session)."
+        ),
     )
     name: str | None = Field(
         default=None,
@@ -186,3 +194,46 @@ class ListMessagesResponse(BaseModel):
     is_running: bool = Field(
         description="Whether the session is currently running.",
     )
+
+
+class SessionStatusResponse(BaseModel):
+    """Response body for probing a session's high-level status.
+
+    See :class:`~agentscope.app._service.SessionStatus` for the
+    semantics of each ``status`` value and the precedence rules used
+    to derive it.
+    """
+
+    session_id: str = Field(description="The session that was probed.")
+    status: SessionStatus = Field(
+        description=(
+            "The session's unified status. One of ``running`` "
+            "(some worker holds the run lease), ``idle`` (no worker, "
+            "context clean), ``awaiting_permission`` (no worker, "
+            "context parked on HITL tool call), or "
+            "``awaiting_external_result`` (no worker, context parked "
+            "on external executor)."
+        ),
+    )
+
+
+class InterruptSessionResponse(BaseModel):
+    """Response body for ``POST /sessions/{sid}/interrupt`` (HTTP 202).
+
+    The interrupt operation is idempotent and always succeeds for an
+    existing session (only ``404`` is raised when the session id does
+    not exist):
+
+    - If the session is **running**, an interrupt signal is published
+      so the local
+      :class:`~agentscope.app._manager.CancelDispatcher` cancels the
+      chat-run task; the agent then runs its ``CancelledError`` cleanup
+      path.
+    - If the session is **parked** on HITL / external execution, a
+      resume trigger carrying a
+      :class:`~agentscope.event.UserInterruptEvent` is enqueued so the
+      agent short-circuits into the same cleanup path.
+    - If the session is **idle**, the call is a no-op.
+    """
+
+    session_id: str = Field(description="Echo of the interrupted session id.")

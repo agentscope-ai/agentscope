@@ -600,6 +600,35 @@ class TestGeminiSchemaUtils(unittest.TestCase):
             },
         )
 
+    def test_sanitize_converts_const_to_enum(self) -> None:
+        """`const` is converted into a single-value `enum` for Gemini."""
+        self.assertEqual(
+            _sanitize_schema_for_gemini(
+                {
+                    "type": "object",
+                    "properties": {
+                        "topic": {"type": "string", "const": "general"},
+                        "query": {
+                            "type": "string",
+                            "description": "Search query",
+                        },
+                    },
+                    "required": ["query"],
+                },
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string", "enum": ["general"]},
+                    "query": {
+                        "type": "string",
+                        "description": "Search query",
+                    },
+                },
+                "required": ["query"],
+            },
+        )
+
     def test_flatten_resolves_ref_and_removes_defs(self) -> None:
         """$ref inlined with extra keys merged; $defs removed."""
         self.assertEqual(

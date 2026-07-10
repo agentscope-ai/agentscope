@@ -46,12 +46,52 @@ component that touches both in the same call. Storage code never
 imports the bus; bus code never imports storage.
 """
 import asyncio
+from enum import StrEnum
 
 from ..message_bus import MessageBus, MessageBusKeys
 from ..storage import StorageBase
+from ..storage._utils import _ensure_team_members
 from ._session_projection import SessionProjection
 from ._projectors import SubagentHitlProjector
 from ..._logging import logger
+from ...message import ToolCallState
+
+
+class SessionStatus(StrEnum):
+    """The high-level status of a session, unifying cluster liveness
+    (from the message bus) with the durable tool-call parking state
+    (from the persisted :class:`~agentscope.state.AgentState.context`).
+
+    Exactly one value applies at any moment — the frontend renders a
+    single indicator without having to reconcile multiple boolean
+    flags.
+
+    Precedence: ``RUNNING`` is decided first from the distributed
+    session-run lock; only when the session is not held by any worker
+    do the ``AWAITING_*`` / ``IDLE`` values (derived from the stored
+    context tail) apply. This ordering reflects the ground-truth
+    hierarchy — while a worker owns the run, the live in-memory state
+    supersedes the persisted snapshot, which is by definition stale
+    until the run yields.
+
+    Values:
+        - ``RUNNING``: a worker somewhere in the cluster currently
+          holds the session's run lease on the message bus.
+        - ``IDLE``: no worker is running the session, and its
+          persisted context is not parked on any pending tool call.
+        - ``AWAITING_PERMISSION``: no worker is running the session,
+          and the persisted context tail has at least one tool call
+          waiting for user permission confirmation (HITL).
+        - ``AWAITING_EXTERNAL_RESULT``: no worker is running the
+          session, and the persisted context tail has at least one
+          tool call dispatched to an external executor and awaiting
+          its result (with no peer awaiting permission).
+    """
+
+    RUNNING = "running"
+    IDLE = "idle"
+    AWAITING_PERMISSION = "awaiting_permission"
+    AWAITING_EXTERNAL_RESULT = "awaiting_external_result"
 
 
 class SessionService:
@@ -91,6 +131,116 @@ class SessionService:
         self._storage = storage
         self._bus = message_bus
         self._projection = SessionProjection(message_bus)
+
+    # ------------------------------------------------------------------
+    # Status
+    # ------------------------------------------------------------------
+
+    async def get_session_status(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+    ) -> SessionStatus | None:
+        """Return the unified :class:`SessionStatus` for a session.
+
+        The status collapses two orthogonal signals into a single
+        four-valued enum:
+
+        - cluster liveness comes from the distributed session-run lock
+          on the shared message bus (Redis in production) — the answer
+          is cluster-wide, so any worker in the deployment holding the
+          lease yields ``RUNNING`` regardless of which API replica
+          serves the caller;
+        - the parked state (``AWAITING_PERMISSION`` /
+          ``AWAITING_EXTERNAL_RESULT`` / ``IDLE``) is derived from the
+          persisted ``AgentState.context`` tail, and only applies when
+          no worker owns the run.
+
+        The ``RUNNING`` check is performed **before** loading the
+        persisted context: while a worker owns the run, the live
+        in-memory state supersedes the stored snapshot, and the parked
+        derivation would be stale. This also saves a storage round-trip
+        in the hot ``RUNNING`` case.
+
+        .. note::
+            The run lease auto-expires after
+            ``MessageBusKeys.SESSION_RUN_TTL_SECS`` and is refreshed by
+            the owning worker while it is actively producing events, so
+            a crashed worker's session flips out of ``RUNNING`` on
+            lease expiry.
+
+        Args:
+            user_id (`str`):
+                The authenticated user id (ownership check).
+            agent_id (`str`):
+                The agent that owns the session (ownership check).
+            session_id (`str`):
+                The session to probe.
+
+        Returns:
+            `SessionStatus | None`:
+                The unified status, or ``None`` if the session does
+                not exist or is not owned by the user.
+        """
+        # RUNNING is checked first: while a worker owns the lease, the
+        # persisted context is by definition a stale snapshot, and we
+        # save a storage round-trip.
+        if await self._bus.is_locked(
+            MessageBusKeys.session_lock(session_id),
+        ):
+            return SessionStatus.RUNNING
+
+        session = await self._storage.get_session(
+            user_id,
+            agent_id,
+            session_id,
+        )
+        if session is None:
+            return None
+
+        return self._derive_parked_status(session.state.context)
+
+    @staticmethod
+    def _derive_parked_status(context: list) -> SessionStatus:
+        """Derive the parked :class:`SessionStatus` from a persisted
+        ``AgentState.context``.
+
+        Only the tail assistant message is inspected — a paused reply
+        can only park pending tool calls at the very end of the
+        context. ``AWAITING_PERMISSION`` wins over
+        ``AWAITING_EXTERNAL_RESULT`` when both appear on the tail: no
+        submitted call can complete while a peer is still awaiting user
+        confirmation, so the caller-visible status is dominated by the
+        blocker.
+
+        Callers must first ensure the session is not currently held by
+        any worker (see :attr:`SessionStatus.RUNNING`) — while a worker
+        owns the run, the live in-memory state supersedes the persisted
+        snapshot and this function's answer is by definition stale.
+
+        Args:
+            context (`list[Msg]`):
+                The persisted ``AgentState.context`` list.
+
+        Returns:
+            `SessionStatus`:
+                One of ``AWAITING_PERMISSION``,
+                ``AWAITING_EXTERNAL_RESULT``, or ``IDLE``.
+        """
+        if not context:
+            return SessionStatus.IDLE
+        last_msg = context[-1]
+        if last_msg.role != "assistant":
+            return SessionStatus.IDLE
+        tool_calls = last_msg.get_content_blocks("tool_call")
+        if not tool_calls:
+            return SessionStatus.IDLE
+        if any(tc.state == ToolCallState.ASKING for tc in tool_calls):
+            return SessionStatus.AWAITING_PERMISSION
+        if any(tc.state == ToolCallState.SUBMITTED for tc in tool_calls):
+            return SessionStatus.AWAITING_EXTERNAL_RESULT
+        return SessionStatus.IDLE
 
     # ------------------------------------------------------------------
     # Cancel
@@ -230,11 +380,27 @@ class SessionService:
     async def delete_team(self, user_id: str, team_id: str) -> bool:
         """Cancel, delete and bus-purge a team.
 
-        Delegates worker dissolution to :meth:`delete_agent` (one call
-        per ``member_id``) so the per-session cancel + bus purge runs
-        for each worker. The leader's own session is **not** deleted —
-        teams dissolve, leaders survive (and have their ``team_id``
-        cleared by ``storage.delete_team``).
+        With :meth:`StorageBase.delete_team` now role-aware, the service
+        method's sole responsibility is to run per-member
+        ``cancel + bus purge`` (storage cannot touch the bus) via the
+        role-appropriate ``delete_agent`` / ``delete_session`` call, and
+        then delegate to storage for the remaining leader-detach +
+        team-record cleanup.
+
+        Branches per member role:
+
+        - ``role == "created"``: the member was spawned by ``AgentCreate``
+          and lives only as long as the team — delegate to
+          :meth:`delete_agent` so its record, session, and bus state
+          are fully removed.
+        - ``role == "invited"``: the member is a pre-existing user-owned
+          agent borrowed via ``AgentInvite``. Only the borrowed
+          team-scoped session is removed; the underlying
+          :class:`AgentRecord` and its other sessions survive.
+
+        The leader's own session is **not** deleted — teams dissolve,
+        leaders survive (and have their ``team_id`` cleared by
+        ``storage.delete_team``).
 
         Args:
             user_id (`str`): The owner user id.
@@ -250,13 +416,21 @@ class SessionService:
             # residue, but the return value will be False.
             return await self._storage.delete_team(user_id, team_id)
 
-        for member_id in team.data.member_ids:
-            await self.delete_agent(user_id, member_id)
+        members = await _ensure_team_members(self._storage, user_id, team)
+        for member in members:
+            if member.role == "created":
+                await self.delete_agent(member.owner_id, member.agent_id)
+            else:  # invited
+                await self.delete_session(
+                    member.owner_id,
+                    member.agent_id,
+                    member.session_id,
+                )
 
-        # storage.delete_team will iterate member_ids again to delete
-        # each worker agent — those calls are now no-ops because the
-        # agents are already gone, leaving only the leader-detach and
-        # team-record cleanup work.
+        # storage.delete_team walks the same members again to run its
+        # own role-aware cascade — those calls are now idempotent
+        # no-ops (records already removed above). What remains for
+        # storage is leader-detach + team-record + index cleanup.
         return await self._storage.delete_team(user_id, team_id)
 
     async def delete_agent(self, user_id: str, agent_id: str) -> bool:
@@ -268,6 +442,20 @@ class SessionService:
         storage to clean the remaining agent-scoped state (the agent
         record, the agent index entry, and any team back-references).
 
+        **Reverse-cascade for invited members.** When an agent is
+        borrowed into a team (``AgentInvite``), it has a session with
+        ``team_id`` set that it does not lead. Deleting the agent while
+        such a borrowed session exists would leave a stale
+        :class:`TeamMember` entry behind, and — worse — trigger the
+        storage cascade in that team's next ``delete_team``, which
+        iterates the team roster (via ``_ensure_team_members``) and
+        would try to re-delete this already-gone agent. So before
+        deleting each session, this method extracts the corresponding
+        entry from the borrowing team's roster (matched by
+        ``session_id``, not ``agent_id``, so a leader session that
+        happens to share the agent id — impossible today but cheap to
+        be careful about — is not touched).
+
         Args:
             user_id (`str`): The owner user id.
             agent_id (`str`): The agent to delete.
@@ -277,6 +465,31 @@ class SessionService:
                 ``True`` if the agent record existed and was deleted.
         """
         for session in await self._storage.list_sessions(user_id, agent_id):
+            if session.team_id is not None:
+                team = await self._storage.get_team(
+                    user_id,
+                    session.team_id,
+                )
+                # Only worker sessions require the extraction — a leader
+                # session dropping its team is handled by
+                # ``storage.delete_session -> delete_team`` further down.
+                if team is not None and team.session_id != session.id:
+                    members = await _ensure_team_members(
+                        self._storage,
+                        user_id,
+                        team,
+                    )
+                    filtered = [
+                        m for m in members if m.session_id != session.id
+                    ]
+                    if len(filtered) != len(members):
+                        team.data.members = filtered
+                        team.data.member_ids = [
+                            mid
+                            for mid in team.data.member_ids
+                            if mid != agent_id
+                        ]
+                        await self._storage.upsert_team(user_id, team)
             await self.delete_session(user_id, agent_id, session.id)
 
         for schedule in await self._storage.list_schedules(user_id):
@@ -336,6 +549,13 @@ class SessionService:
         Mirrors :meth:`StorageBase.delete_session`'s own team-leader
         cascade so the bus side can purge the same sessions.
 
+        Uses :func:`ensure_team_members` — which carries the exact
+        session id per member (including invited members whose agent
+        can have multiple sessions of its own, only one of which
+        belongs to this team). Falling back to
+        ``list_sessions(agent_id)[0]`` here would pick the wrong
+        session for invited agents.
+
         Args:
             user_id (`str`): The owner user id.
             agent_id (`str`):
@@ -359,14 +579,8 @@ class SessionService:
         team = await self._storage.get_team(user_id, session.team_id)
         if team is None or team.session_id != session_id:
             return []
-        sids: list[str] = []
-        for member_id in team.data.member_ids:
-            worker_sessions = await self._storage.list_sessions(
-                user_id,
-                member_id,
-            )
-            sids.extend(s.id for s in worker_sessions)
-        return sids
+        members = await _ensure_team_members(self._storage, user_id, team)
+        return [m.session_id for m in members]
 
     async def _cancel_runs(self, session_ids: list[str]) -> None:
         """Cancel every in-flight run in ``session_ids`` concurrently.

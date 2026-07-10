@@ -8,7 +8,7 @@ from ._index_worker import IndexWorker
 from ._knowledge_base import KnowledgeBaseService
 from ._model import get_model
 from ._tts_model import get_tts_model
-from ._session import SessionService
+from ._session import SessionService, SessionStatus
 from ._session_projection import SessionProjection
 from ._projectors import SubagentHitlProjector
 from ._toolkit import get_toolkit
@@ -20,6 +20,7 @@ __all__ = [
     "IndexWorker",
     "KnowledgeBaseService",
     "SessionService",
+    "SessionStatus",
     "SessionProjection",
     "SubagentHitlProjector",
     "get_embedding_model",

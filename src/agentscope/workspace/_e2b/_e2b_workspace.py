@@ -18,10 +18,11 @@ Docker engine for the E2B SDK (``e2b.AsyncSandbox``):
   there is no host-side ``workdir`` parameter. Pausing keeps the disk;
   resuming brings it back wholesale.
 * **Bootstrap.** First-time provisioning installs uv + a gateway venv
-  + agentscope (``--no-deps``) and uploads the gateway script. We
-  detect whether bootstrap has already happened via a single
-  ``files.exists(GATEWAY_SCRIPT)`` probe so the cost is paid exactly
-  once per sandbox lifetime.
+  + agentscope (``--no-deps``) and uploads the gateway script. The
+  probe + install loop lives on :class:`SandboxedWorkspaceBase`; this
+  subclass only supplies the sandbox-specific shell commands via
+  :meth:`_bootstrap_commands`. Bootstrap runs at most once per sandbox
+  lifetime (the presence of the gateway script on disk is the marker).
 * **MCP gateway.** Identical to Docker: a FastAPI process inside the
   sandbox. All host-side calls drive the gateway through
   :class:`GatewayClient`, which runs an in-sandbox ``python3 -c`` shim
@@ -37,35 +38,20 @@ manager handles cache, TTL eviction and metadata-based reattachment.
 """
 
 import asyncio
+import shlex
 from typing import Any
 
 from ..._logging import logger
 from ...mcp import MCPClient
 from .._sandboxed_base import SandboxedWorkspaceBase
-from .._utils import (
-    _agentscope_version,
-    _is_released_install,
-    _read_gateway_script_bytes,
-    _read_glob_helper_bytes,
-)
-from ._bootstrap import (
+from .._utils import _GATEWAY_BASE_REQUIREMENTS
+from ._constants import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_TEMPLATE,
     DEFAULT_TIMEOUT,
-    DEV_SRC_TAR,
-    GATEWAY_CONFIG,
     GATEWAY_HOME,
-    GATEWAY_LOG,
-    GATEWAY_SCRIPT,
-    GATEWAY_VENV_PY,
-    GLOB_HELPER_SCRIPT,
     METADATA_WORKSPACE_ID_KEY,
     SANDBOX_WORKDIR,
-    bootstrap_commands,
-    build_source_tarball,
-    log_bootstrap_attempt,
-    render_install_agentscope_cmd_dev,
-    render_install_agentscope_cmd_released,
 )
 from ._e2b_backend import E2BBackend
 
@@ -97,12 +83,11 @@ class E2BWorkspace(SandboxedWorkspaceBase):
     not retained as instance state past :meth:`initialize`.
     """
 
-    _glob_helper_path = GLOB_HELPER_SCRIPT
     _gateway_home = GATEWAY_HOME
-    _gateway_config = GATEWAY_CONFIG
-    _gateway_log = GATEWAY_LOG
-    _gateway_script = GATEWAY_SCRIPT
-    _gateway_python = GATEWAY_VENV_PY
+    # E2B ``base`` template already ships Python + curl, so every
+    # bootstrap step is expected to complete inside 10 minutes even on
+    # the slowest CI runners.
+    _bootstrap_cmd_timeout = 600.0
 
     def __init__(
         self,
@@ -186,27 +171,14 @@ class E2BWorkspace(SandboxedWorkspaceBase):
     async def _provision_backend(self) -> None:
         """Reattach or create the sandbox and bind the backend.
 
-        First-time provisioning also runs bootstrap (uv → gateway
-        venv → agentscope → gateway script upload). Bootstrap is
-        detected by ``files.exists(GATEWAY_SCRIPT)`` and every step
-        is idempotent so an interrupted bootstrap re-runs cleanly.
+        First-time bootstrap (uv → gateway venv → agentscope → gateway
+        script upload) is driven by
+        :meth:`SandboxedWorkspaceBase._ensure_bootstrapped` once
+        ``initialize`` has bound the backend; every step is idempotent
+        so an interrupted bootstrap re-runs cleanly.
         """
         await self._attach_or_create_sandbox()
         self._backend = E2BBackend(self._sandbox, workdir=SANDBOX_WORKDIR)
-
-        # If the gateway script is missing, the sandbox is fresh (or a
-        # prior bootstrap was interrupted). Every bootstrap step is
-        # idempotent so re-running is safe.
-        if not await self._sandbox.files.exists(GATEWAY_SCRIPT):
-            # The backend pins ``cwd=SANDBOX_WORKDIR`` so the very
-            # first bootstrap command (a ``mkdir -p``) would fail
-            # before it ran when the dir does not yet exist. Use
-            # ``cwd="/"`` to break the chicken-and-egg.
-            await self._backend.exec_shell(
-                ["mkdir", "-p", SANDBOX_WORKDIR],
-                cwd="/",
-            )
-            await self._run_bootstrap()
 
     async def _teardown_backend(self) -> None:
         """Pause the sandbox (keep filesystem) and drop the handle.
@@ -366,51 +338,39 @@ class E2BWorkspace(SandboxedWorkspaceBase):
 
     # ── internals: bootstrap ────────────────────────────────────
 
-    async def _run_bootstrap(self) -> None:
-        """Provision a fresh sandbox: uv → venv → agentscope → script.
+    def _bootstrap_commands(self) -> list[str]:
+        """Shell commands that provision this E2B sandbox once.
 
-        Each command runs through :meth:`_exec`; a non-zero exit
-        raises :class:`RuntimeError` with the captured stderr so
-        startup failures are visible in logs (mirroring the docker
-        build-tail strategy).
+        Only runs when the gateway script is missing (fresh sandbox or
+        a prior bootstrap that was interrupted). Every step is
+        idempotent so a resumed sandbox can re-run cleanly.
+
+        ``--no-deps`` on agentscope is mandatory: the gateway only
+        imports :class:`agentscope.mcp.MCPClient` whose transitive
+        needs (``mcp / pydantic / httpx``) are already installed via
+        the gateway base requirements. Pulling the full dep tree
+        drags in heavy / Rust-built packages the E2B image cannot
+        compile.
         """
-        if _is_released_install():
-            log_bootstrap_attempt(self.workspace_id, "released")
-            install_cmd = render_install_agentscope_cmd_released(
-                _agentscope_version(),
-            )
-        else:
-            log_bootstrap_attempt(self.workspace_id, "dev")
-            tar_bytes = build_source_tarball()
-            await self._backend.write_file(DEV_SRC_TAR, tar_bytes)
-            install_cmd = render_install_agentscope_cmd_dev()
+        pip_pkgs = list(_GATEWAY_BASE_REQUIREMENTS) + list(self.extra_pip)
+        # Quote every requirement string so entries with spaces or
+        # shell metacharacters cannot break the ``sh -c`` command or
+        # become a command-injection vector inside the sandbox.
+        pip_args = " ".join(shlex.quote(p) for p in pip_pkgs)
 
-        commands = bootstrap_commands(
-            extra_pip=self.extra_pip,
-            install_agentscope_cmd=install_cmd,
-        )
-        for cmd in commands:
-            r = await self._backend.exec_shell(
-                ["sh", "-c", cmd],
-                timeout=600.0,
-            )
-            if not r.ok():
-                raise RuntimeError(
-                    f"E2BWorkspace bootstrap failed (exit {r.exit_code}) "
-                    f"for: {cmd!r}\n"
-                    f"stderr: {r.stderr.decode(errors='replace')}\n"
-                    f"stdout: {r.stdout.decode(errors='replace')}",
-                )
-
-        # Upload helper scripts used by builtin tools.
-        await self._backend.write_file(
-            GLOB_HELPER_SCRIPT,
-            _read_glob_helper_bytes(),
-        )
-
-        # Upload the gateway script last so its presence is the
-        # idempotency marker we probe in :meth:`initialize`.
-        await self._backend.write_file(
-            GATEWAY_SCRIPT,
-            _read_gateway_script_bytes(),
-        )
+        return [
+            # 1. System deps + uv installer, both via sudo so uv lands
+            # at /usr/local/bin (on PATH — no absolute-path plumbing
+            # needed downstream).
+            "sudo apt-get update -qq "
+            "&& sudo apt-get install -y --no-install-recommends ripgrep "
+            "&& sudo rm -rf /var/lib/apt/lists/*",
+            "curl -LsSf https://astral.sh/uv/install.sh "
+            "| sudo env UV_INSTALL_DIR=/usr/local/bin "
+            "INSTALLER_NO_MODIFY_PATH=1 sh",
+            # 2. Gateway venv + base requirements + agentscope.
+            f"uv venv {self._gateway_venv}",
+            f"uv pip install --python {self._gateway_python} {pip_args}",
+            f"uv pip install --python {self._gateway_python} "
+            f"--no-deps 'agentscope'",
+        ]

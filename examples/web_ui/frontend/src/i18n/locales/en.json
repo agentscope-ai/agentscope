@@ -74,7 +74,9 @@
 		"newLine": "new line",
 		"attach": "Attach file",
 		"attachNotSupported": "This model does not support file attachments",
-		"send": "Send"
+		"send": "Send",
+		"stop": "Stop generating",
+		"stopping": "Stopping ..."
 	},
 	"confirmCard": {
 		"toConfirm": "to confirm",
@@ -140,6 +142,15 @@
 			"description": "Controls the reasoning and action loop behaviour.",
 			"max-iters": { "label": "Max iterations" },
 			"stop-on-reject": { "label": "Stop on reject" }
+		},
+		"invite-config": {
+			"legend": "Invite Config",
+			"description": "Controls whether other agents can borrow this one via AgentInvite.",
+			"invitable": { "label": "Invitable" },
+			"invite-description": {
+				"label": "Invite description",
+				"placeholder": "Briefly describe this agent's expertise; required when invitable is on."
+			}
 		}
 	},
 	"dialog-agent-edit": {
