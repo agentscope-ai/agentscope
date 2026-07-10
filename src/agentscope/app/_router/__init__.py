@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """App routers."""
+
 from ._agent import agent_router
 from ._chat import chat_router
 from ._credential import credential_router

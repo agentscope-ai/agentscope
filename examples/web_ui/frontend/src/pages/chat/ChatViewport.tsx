@@ -1,6 +1,14 @@
 import type { PermissionContext } from '@agentscope-ai/agentscope/permission';
 import type { TaskContext } from '@agentscope-ai/agentscope/state';
-import { BookText, ChevronDown, Database, ListTodo, PanelRight, ShieldCheck } from 'lucide-react';
+import {
+	BookText,
+	ChevronDown,
+	Database,
+	FolderTree,
+	ListTodo,
+	PanelRight,
+	ShieldCheck,
+} from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { ChatModelConfig, SessionKnowledgeConfig, TTSModelConfig } from '@/api';
@@ -9,6 +17,7 @@ import MCPSvg from '@/assets/images/mcp.svg?react';
 import { ChatContent } from '@/components/chat/ChatContent.tsx';
 import { SubagentHitlCard } from '@/components/chat/SubagentHitlCard';
 import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDialog';
+import { ArtifactPanel } from '@/components/panel/ArtifactPanel';
 import { KnowledgeBasePanel } from '@/components/panel/KnowledgeBasePanel';
 import { McpPanel } from '@/components/panel/McpPanel';
 import { PanelDock, type PanelDescriptor, type PanelKey } from '@/components/panel/PanelDock.tsx';
@@ -293,6 +302,11 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 					/>
 				),
 			},
+			artifact: {
+				title: t('panel.artifact.title'),
+				icon: <FolderTree className="size-4" />,
+				content: <ArtifactPanel agentId={agentId} sessionId={sessionId} />,
+			},
 		}),
 		[
 			t,
@@ -311,6 +325,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 			selectedKnowledgeConfig,
 			kbMiddlewareSchema,
 			handleKnowledgeConfigChange,
+			agentId,
 			sessionId,
 		],
 	);
@@ -598,6 +613,14 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 											>
 												<ShieldCheck />
 												{t('panel.permission.title')}
+											</DropdownMenuCheckboxItem>
+											<DropdownMenuCheckboxItem
+												checked={isPanelOpen('artifact')}
+												onCheckedChange={() => togglePanel('artifact')}
+												onSelect={(e) => e.preventDefault()}
+											>
+												<FolderTree />
+												{t('panel.artifact.title')}
 											</DropdownMenuCheckboxItem>
 											<DropdownMenuCheckboxItem
 												checked={isPanelOpen('knowledge')}

@@ -562,6 +562,20 @@
 			"parametersDescription": "知识库检索参数设置",
 			"selectedCount": "已挂载 {{count}} 个"
 		},
+		"artifact": {
+			"title": "产物",
+			"workspaceFiles": "工作区文件",
+			"preview": "预览",
+			"refresh": "刷新产物",
+			"download": "下载",
+			"emptyTitle": "暂无产物",
+			"emptyDescription": "工作区中生成的文件会显示在这里。",
+			"emptyPreviewTitle": "选择文件",
+			"emptyPreviewDescription": "从工作区文件树中选择一个文件进行预览。",
+			"noSessionTitle": "未选择会话",
+			"noSessionDescription": "请选择一个会话以浏览其工作区。",
+			"errorTitle": "无法加载产物"
+		},
 		"permission": {
 			"title": "权限",
 			"description": "本会话应用的权限。",
