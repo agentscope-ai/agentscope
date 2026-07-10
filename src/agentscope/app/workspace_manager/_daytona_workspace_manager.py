@@ -35,7 +35,7 @@ from ...workspace._daytona._bootstrap import (
     DEFAULT_SWEEP_INTERVAL,
     DEFAULT_TIMEOUT,
 )
-from ._base import WorkspaceManagerBase
+from ._base import IsolationPolicy, WorkspaceManagerBase
 
 
 class DaytonaWorkspaceManager(WorkspaceManagerBase):
@@ -49,6 +49,7 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
     def __init__(
         self,
         *,
+        isolation: IsolationPolicy = IsolationPolicy.PER_AGENT,
         api_key: str = "",
         api_url: str = "",
         target: str = "",
@@ -66,6 +67,9 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
         """Initialize the Daytona workspace manager.
 
         Args:
+            isolation (`IsolationPolicy`, defaults to `PER_AGENT`):
+                Isolation grain for :meth:`assign_workspace_id`. See
+                :class:`DockerWorkspaceManager` for semantics.
             api_key (`str`, defaults to `""`):
                 Daytona API key forwarded to every workspace. ``""``
                 lets the Daytona SDK read credentials from the
@@ -117,6 +121,7 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
         self._os_user = os_user
         self._ttl = ttl
         self._sweep_interval = sweep_interval
+        super().__init__(isolation=isolation)
 
         # workspace_id → (workspace, last_access_monotonic)
         self._cache: dict[str, tuple[DaytonaWorkspace, float]] = {}
@@ -178,7 +183,7 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
         user_id: str,
         agent_id: str,
         session_id: str,
-        workspace_id: str,
+        workspace_id: str | None = None,
     ) -> DaytonaWorkspace:
         """Return an initialized workspace, reattaching on cache miss.
 
@@ -194,14 +199,22 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
             session_id (`str`):
                 Session identifier (unused; sessions partition under
                 ``sessions/<session_id>/`` inside a workspace).
-            workspace_id (`str`):
-                Stable workspace identifier and cache key.
+            workspace_id (`str | None`, optional):
+                Stable workspace identifier and cache key. When ``None``,
+                the manager falls back to :meth:`assign_workspace_id`.
 
         Returns:
             `DaytonaWorkspace`:
                 A live, initialized workspace.
         """
         del session_id  # accepted for interface parity; not used here
+
+        if workspace_id is None:
+            workspace_id = self.assign_workspace_id(
+                user_id=user_id,
+                agent_id=agent_id,
+                session_id="",
+            )
 
         async with self._lock:
             cached = self._cache.get(workspace_id)

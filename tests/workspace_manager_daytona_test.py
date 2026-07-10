@@ -8,7 +8,10 @@ from types import SimpleNamespace
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 
-from agentscope.app.workspace_manager import DaytonaWorkspaceManager
+from agentscope.app.workspace_manager import (
+    DaytonaWorkspaceManager,
+    IsolationPolicy,
+)
 
 
 class _FakeWorkspace:
@@ -101,6 +104,28 @@ class TestDaytonaWorkspaceManager(IsolatedAsyncioTestCase):
         self.assertIs(first, second)
         self.assertEqual(len(_FakeWorkspace.created), 1)
         self.assertEqual(first.kwargs["workspace_id"], "wid")
+
+    async def test_get_workspace_without_id_uses_isolation_policy(
+        self,
+    ) -> None:
+        """``workspace_id=None`` follows the base manager API contract."""
+        manager = DaytonaWorkspaceManager(
+            isolation=IsolationPolicy.PER_USER,
+        )
+
+        first = await manager.get_workspace("u", "a1", "s1")
+        second = await manager.get_workspace("u", "a2", "s2")
+
+        self.assertIs(first, second)
+        self.assertEqual(len(_FakeWorkspace.created), 1)
+        self.assertEqual(
+            first.kwargs["workspace_id"],
+            manager.assign_workspace_id(
+                user_id="u",
+                agent_id="a1",
+                session_id="",
+            ),
+        )
 
     async def test_concurrent_get_workspace_creates_one_instance(self) -> None:
         """Concurrent requests for one id share the initialized workspace."""
