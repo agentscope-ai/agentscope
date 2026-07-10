@@ -11,11 +11,7 @@ from typing import TYPE_CHECKING, Literal
 from ..._logging import logger
 from ...mcp import MCPClient
 from .._sandboxed_base import SandboxedWorkspaceBase
-from .._utils import (
-    _GATEWAY_BASE_REQUIREMENTS,
-    _read_gateway_script_bytes,
-    _read_glob_helper_bytes,
-)
+from .._utils import _GATEWAY_BASE_REQUIREMENTS
 from ._constants import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_IMAGE,
@@ -60,6 +56,10 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
     """
 
     _gateway_home = GATEWAY_HOME
+    # The slim base image streams apt-get + uv + pip for several
+    # minutes on first bootstrap, so cap each bootstrap command at the
+    # same budget the SDK HTTP layer is configured for.
+    _bootstrap_cmd_timeout = BOOTSTRAP_COMMAND_TIMEOUT
 
     def __init__(
         self,
@@ -161,11 +161,14 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
     async def _provision_backend(self) -> None:
         """Reattach or create the sandbox and bind the backend.
 
-        First-time provisioning also runs bootstrap (uv → gateway
-        venv → agentscope → gateway script upload). Bootstrap is
-        detected by a single ``test -e`` probe on the gateway script,
-        and every step is idempotent so an interrupted bootstrap
-        re-runs cleanly.
+        First-time bootstrap (uv → gateway venv → agentscope → gateway
+        script upload) is driven by
+        :meth:`SandboxedWorkspaceBase._setup_mcp_gateway` once
+        ``initialize`` has bound the backend and created the workspace
+        layout (which lays down ``workdir`` / ``_gateway_home`` first),
+        so this hook only has to attach or create the sandbox. Every
+        bootstrap step is idempotent, so an interrupted bootstrap
+        re-runs cleanly on the next ``initialize``.
         """
         existing = await self._find_existing_sandbox()
         if existing is not None:
@@ -175,21 +178,6 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         await self._wait_until_running()
 
         self._backend = OpenSandboxBackend(self._sandbox, SANDBOX_WORKDIR)
-
-        marker = await self._backend.exec_shell(
-            ["test", "-e", self._gateway_script],
-            cwd="/",
-        )
-        if not marker.ok():
-            # The backend pins ``cwd=SANDBOX_WORKDIR`` so the very
-            # first bootstrap command (a ``mkdir -p``) would fail
-            # before it ran when the dir does not yet exist. Use
-            # ``cwd="/"`` to break the chicken-and-egg.
-            await self._backend.exec_shell(
-                ["mkdir", "-p", SANDBOX_WORKDIR],
-                cwd="/",
-            )
-            await self._run_bootstrap()
 
     async def _teardown_backend(self) -> None:
         """Pause the sandbox (keep filesystem) and drop the handle.
@@ -366,55 +354,29 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
             f"(workspace_id={self.workspace_id!r})",
         )
 
-    async def _run_bootstrap(self) -> None:
-        """Provision the sandbox runtime, then upload helper scripts."""
-        logger.info(
-            "OpenSandboxWorkspace: bootstrapping sandbox for workspace_id=%r",
-            self.workspace_id,
-        )
-        for cmd in self._bootstrap_commands(extra_pip=self.extra_pip):
-            result = await self._backend.exec_shell(
-                ["sh", "-c", cmd],
-                timeout=BOOTSTRAP_COMMAND_TIMEOUT,
-            )
-            if not result.ok():
-                raise RuntimeError(
-                    f"OpenSandboxWorkspace bootstrap failed "
-                    f"(exit {result.exit_code}) for: {cmd!r}\n"
-                    f"stderr: {result.stderr.decode(errors='replace')}\n"
-                    f"stdout: {result.stdout.decode(errors='replace')}",
-                )
-
-        await self._backend.write_file(
-            self._glob_helper_path,
-            _read_glob_helper_bytes(),
-        )
-        await self._backend.write_file(
-            self._gateway_script,
-            _read_gateway_script_bytes(),
-        )
-
-    def _bootstrap_commands(
-        self,
-        extra_pip: list[str] | None = None,
-    ) -> list[str]:
+    def _bootstrap_commands(self) -> list[str]:
         """Return the provisioning shell command sequence.
+
+        Called once by :meth:`SandboxedWorkspaceBase._setup_mcp_gateway`
+        when the gateway script is missing (fresh sandbox, or a prior
+        bootstrap that was interrupted before the script was written).
+        The base class runs each command with
+        :attr:`_bootstrap_cmd_timeout` and then uploads the glob helper
+        and gateway script itself, so this hook only builds the command
+        list.
 
         The workspace layout (``data/``, ``skills/``, ``sessions/``,
         gateway home) is created by the base class
-        :meth:`_ensure_workspace_layout`, so bootstrap only installs the
-        runtime. ``uv`` lands at ``/usr/local/bin`` (on the default PATH,
-        root needs no sudo) and is invoked bare, matching K8s/E2B.
-
-        Args:
-            extra_pip: Extra Python packages to install into the gateway
-                venv alongside the base requirements.
+        :meth:`_ensure_workspace_layout` before bootstrap runs, so
+        bootstrap only installs the runtime. ``uv`` lands at
+        ``/usr/local/bin`` (on the default PATH, root needs no sudo) and
+        is invoked bare, matching K8s/E2B.
 
         Returns:
             A list of shell command strings, to be executed in order. Each
             must exit 0; a non-zero exit aborts bootstrap.
         """
-        pip_pkgs = list(_GATEWAY_BASE_REQUIREMENTS) + list(extra_pip or [])
+        pip_pkgs = list(_GATEWAY_BASE_REQUIREMENTS) + list(self.extra_pip)
         # Quote every requirement so entries with spaces or shell
         # metacharacters cannot break ``sh -c`` or inject inside the sandbox.
         pip_args = " ".join(shlex.quote(p) for p in pip_pkgs)
