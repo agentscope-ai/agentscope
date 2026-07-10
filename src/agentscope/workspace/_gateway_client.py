@@ -2,44 +2,23 @@
 """Host-side client for the in-sandbox MCP gateway, driven through
 ``backend.exec_shell``.
 
-Three classes live here:
+Three classes:
 
-* :class:`GatewayClient` — workspace-side facade over the gateway's
-  ``/health`` and ``/mcps`` endpoints. Used by :class:`DockerWorkspace`
-  and :class:`E2BWorkspace` for top-level operations.
-
+* :class:`GatewayClient` — workspace-side facade over ``/health`` and
+  ``/mcps``. Used by the sandboxed workspaces for top-level operations.
 * :class:`GatewayMCPClient` — an :class:`MCPClient` subclass whose
-  protocol behaviour is replaced by gateway-relayed calls. The field
-  surface is identical to ``MCPClient`` (instances are built from
-  ``MCPClient.model_dump()`` data the gateway returns), so callers
-  that ``model_dump()`` it round-trip cleanly. Local stdio/HTTP
-  session machinery is bypassed: ``model_post_init`` is a no-op,
-  ``connect`` registers via ``POST /mcps``, ``close`` deregisters via
-  ``DELETE /mcps/{name}``, and ``list_raw_tools`` / ``get_tool`` fetch
-  / wrap upstream tools.
+  protocol behaviour is replaced by gateway-relayed calls. Local
+  stdio/HTTP machinery is bypassed; ``model_post_init`` is a no-op;
+  ``connect`` / ``close`` / ``list_raw_tools`` / ``get_tool`` all
+  round-trip through ``/mcps``.
+* :class:`GatewayMCPTool` — :class:`ToolBase` whose ``__call__``
+  invokes the upstream tool via ``POST /mcps/{name}/tools/{tool}``.
 
-* :class:`GatewayMCPTool` — :class:`ToolBase` subclass whose
-  ``__call__`` invokes the upstream tool via
-  ``POST /mcps/{name}/tools/{tool}`` and reconstructs the returned
-  ``ToolChunk``.
-
-Transport
----------
-
-Unlike a normal HTTP client, **every** request runs **inside the
-sandbox**. The host serialises the request body (if any) to a tempfile
-via :meth:`BackendBase.write_file`, then spawns a tiny Python script
-through :meth:`BackendBase.exec_shell` (see
-:mod:`agentscope.workspace._gateway_shim`) which performs the actual
-``urllib.request`` call against the gateway's loopback port, writes a
-JSON envelope to stdout, and exits 0. The host parses the envelope and
-reconstructs status code + response bytes (base64-decoded inline, or
-read back from a sandbox tempfile for large payloads).
-
-This removes the host→sandbox network reachability requirement
-(previously satisfied by Docker port mapping or the E2B HTTPS proxy);
-the gateway listens on a fixed loopback port inside the sandbox and is
-no longer reachable from the host at all.
+Every request runs inside the sandbox: the host writes an optional
+body to a sandbox tempfile, spawns a small Python shim via
+:meth:`BackendBase.exec_shell` (see :mod:`._gateway_shim`), and parses
+the JSON envelope the shim prints on stdout. No host→sandbox network
+reachability is required — the gateway only binds sandbox loopback.
 """
 
 from __future__ import annotations
@@ -52,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 import mcp.types
 from pydantic import PrivateAttr
 
+from .._logging import logger
 from ..mcp import MCPClient
 from ..message import ToolResultState
 from ..permission import (
@@ -92,27 +72,20 @@ class GatewayMCPTool(ToolBase):
     ) -> None:
         """Build a gateway-backed MCP tool.
 
-        The instance mirrors the field surface of
-        :class:`agentscope.tool.MCPTool` (``name``, ``description``,
-        ``input_schema``, ``is_read_only``, …) so the host-side toolkit
-        cannot tell the difference between a local MCP tool and one
-        that forwards through the in-sandbox gateway.
+        Mirrors the field surface of :class:`agentscope.tool.MCPTool`
+        so the toolkit cannot tell the difference.
 
         Args:
             mcp_name (`str`):
-                Name of the upstream MCP server this tool belongs to.
-                Used both for the visible ``mcp__{mcp}__{tool}`` name
-                and for the gateway URL path.
+                Upstream MCP server name; drives the visible
+                ``mcp__{mcp}__{tool}`` name and the URL path.
             tool (`mcp.types.Tool`):
                 Raw upstream tool descriptor as returned by the gateway.
-                Its ``name`` is the upstream-side identifier (no
-                ``mcp__`` prefix), ``inputSchema`` is forwarded verbatim,
-                and ``annotations.readOnlyHint`` drives the permission
+                ``inputSchema`` is forwarded verbatim;
+                ``annotations.readOnlyHint`` drives the permission
                 policy.
             gateway (`GatewayClient`):
-                The workspace-side gateway facade that owns the
-                backend handle, gateway port, and bearer token. All
-                tool invocations are dispatched through its
+                Facade dispatching every call through
                 :meth:`GatewayClient.exec_request`.
         """
         self.mcp_name = mcp_name
@@ -140,10 +113,8 @@ class GatewayMCPTool(ToolBase):
         *_args: Any,
         **_kwargs: Any,
     ) -> PermissionDecision:
-        """Default policy: read-only tools auto-allow, everything else
-        defers to the user via ``ASK``. Mirrors
-        :class:`agentscope.tool.MCPTool.check_permissions` so toolkit
-        callers see identical behaviour through the gateway.
+        """Read-only tools auto-allow; everything else defers via
+        ``ASK``. Mirrors :meth:`MCPTool.check_permissions`.
         """
         if self.is_read_only:
             return PermissionDecision(
@@ -156,27 +127,12 @@ class GatewayMCPTool(ToolBase):
         )
 
     async def __call__(self, **kwargs: Any) -> ToolChunk:
-        """Invoke the upstream tool by relaying
-        ``POST /mcps/{mcp}/tools/{tool}`` to the gateway via the
-        sandbox shim.
+        """Relay ``POST /mcps/{mcp}/tools/{tool}`` to the gateway.
 
-        Args:
-            **kwargs:
-                Tool arguments forwarded as the JSON body's
-                ``arguments`` field; the gateway re-dispatches them to
-                the upstream MCP session.
-
-        Returns:
-            `ToolChunk`:
-                The reconstructed chunk returned by the upstream tool.
-                4xx / 5xx responses are surfaced as a
-                ``ToolChunk(state=ERROR)`` so the agent loop can reason
-                about the failure instead of crashing.
-
-        Raises:
-            `RuntimeError`:
-                If the gateway returns 2xx but no ``chunk`` payload
-                (protocol violation on the gateway side).
+        4xx / 5xx responses come back as ``ToolChunk(state=ERROR)`` so
+        the agent loop can reason about failure. Raises
+        :class:`RuntimeError` only if the gateway returns 2xx with no
+        ``chunk`` payload (protocol violation).
         """
         status, body = await self._gateway.exec_request(
             "POST",
@@ -218,14 +174,8 @@ class GatewayMCPClient(MCPClient):
     _gateway: "GatewayClient | None" = PrivateAttr(default=None)
 
     def model_post_init(self, __context: Any) -> None:
-        """Skip the parent's stdio/HTTP client preparation.
-
-        For a real :class:`MCPClient`, ``model_post_init`` builds the
-        local stdio context manager (or wires up an HTTP client) so
-        the in-process session can be opened. For
-        :class:`GatewayMCPClient` all MCP-side work happens inside the
-        gateway sandbox; the host-side proxy needs no local session
-        machinery, so this override is a no-op.
+        """No-op — the parent builds local stdio/HTTP transport, which
+        the gateway-relayed client does not need.
         """
         return
 
@@ -239,30 +189,19 @@ class GatewayMCPClient(MCPClient):
     ) -> None:
         """Wire this client to a gateway facade.
 
-        :class:`GatewayMCPClient` is normally produced by
-        ``model_validate(spec)`` over a dict returned by the gateway's
-        ``GET /mcps`` endpoint — that step recovers the public field
-        surface but leaves all transport-related private attributes
-        empty. ``attach`` injects them in a single call so subsequent
-        :meth:`connect`, :meth:`close`, :meth:`list_raw_tools`, and
-        :meth:`get_tool` can talk to the gateway. It is the only
-        supported way to populate the transport state from outside the
-        class — encapsulating the writes here keeps callers free of
-        ``protected-access`` warnings.
+        Instances come out of ``model_validate(spec)`` with the public
+        field surface set but no transport wiring. ``attach`` injects
+        it so :meth:`connect` / :meth:`close` / :meth:`list_raw_tools`
+        can talk to the gateway.
 
         Args:
             gateway (`GatewayClient`):
-                The workspace-side gateway facade that owns the
-                sandbox backend handle, gateway port, and bearer
-                token. All subsequent calls are dispatched through its
+                Facade dispatching calls through
                 :meth:`GatewayClient.exec_request`.
             connected (`bool`, defaults to `False`):
                 When ``True``, mark this client as already connected
-                (i.e. the gateway is already maintaining the upstream
-                session). Used by :meth:`GatewayClient.list_mcps` for
-                clients that came back from the gateway as registered.
-                Leave ``False`` when the caller will call
-                :meth:`connect` themselves.
+                (used by :meth:`GatewayClient.list_mcps` for entries
+                the gateway is already serving).
         """
         self._gateway = gateway
         if connected:
@@ -272,15 +211,12 @@ class GatewayMCPClient(MCPClient):
         """Register this MCP on the gateway via ``POST /mcps``.
 
         All MCPs (stateless and stateful) must be registered so that
-        ``/mcps/{name}/tools/{tool}`` can locate the client. For
-        stateful MCPs the gateway additionally opens the upstream
-        session before responding.
+        ``/mcps/{name}/tools/{tool}`` can locate the client.
 
         Raises:
             `RuntimeError`:
-                If the client is already connected, the gateway is
-                unreachable, or the gateway returns a 4xx/5xx
-                response.
+                Already connected, gateway unreachable, or gateway
+                returned 4xx/5xx.
         """
         if self._is_connected:
             raise RuntimeError(
@@ -302,21 +238,12 @@ class GatewayMCPClient(MCPClient):
         self._is_connected = True
 
     async def close(self, ignore_errors: bool = True) -> None:
-        """Deregister this MCP from the gateway via
-        ``DELETE /mcps/{name}``.
-
-        All MCPs are deregistered from the gateway registry; the
-        gateway additionally closes the upstream session for stateful
-        clients before responding.
+        """Deregister this MCP via ``DELETE /mcps/{name}``.
 
         Args:
             ignore_errors (`bool`, defaults to `True`):
-                When ``True`` (the default), suppress both "not
-                connected" precondition failures and gateway-side
-                4xx/5xx responses; when ``False`` such conditions
-                raise :class:`RuntimeError`. Mirrors
-                :meth:`MCPClient.close` so callers can use the same
-                shutdown idiom regardless of transport.
+                Suppress "not connected" precondition and gateway
+                4xx/5xx. Mirrors :meth:`MCPClient.close`.
         """
         if not self._is_connected:
             if ignore_errors:
@@ -343,24 +270,17 @@ class GatewayMCPClient(MCPClient):
     # ── tool discovery ────────────────────────────────────────────
 
     async def list_raw_tools(self) -> list[mcp.types.Tool]:
-        """Fetch the upstream tool list via ``GET /mcps/{name}/tools``.
+        """Fetch upstream tools via ``GET /mcps/{name}/tools``.
 
-        Returns the raw :class:`mcp.types.Tool` descriptors the gateway
-        forwarded — i.e. with their **upstream** names (no ``mcp__``
-        prefix) so the inherited :meth:`list_tools` / :meth:`get_tool`
-        path can re-wrap them through :meth:`_wrap_tool` exactly as a
-        local :class:`MCPClient` would. The full unfiltered list is
-        cached on ``_cached_tools`` first; the returned list then has
-        ``enable_tools`` / ``disable_tools`` filtering applied
-        identically to :meth:`MCPClient.list_raw_tools`.
-
-        Returns:
-            `list[mcp.types.Tool]`:
-                The upstream-named, post-filter tool descriptors.
+        Returns raw :class:`mcp.types.Tool` descriptors (upstream names,
+        no ``mcp__`` prefix) so the inherited :meth:`get_tool` can
+        re-wrap them like a local :class:`MCPClient`. The unfiltered
+        list is cached; the returned list has ``enable_tools`` /
+        ``disable_tools`` applied.
 
         Raises:
             `RuntimeError`:
-                If the gateway returns a non-2xx response.
+                Gateway returned non-2xx.
         """
         assert self._gateway is not None
         status, body = await self._gateway.exec_request(
@@ -377,8 +297,8 @@ class GatewayMCPClient(MCPClient):
         raw_tools = [mcp.types.Tool.model_validate(d) for d in data]
         self._cached_tools = raw_tools
 
-        # Honour the same enable/disable filtering MCPClient does
-        # locally — gateway returns the unfiltered upstream view.
+        # Gateway returns the unfiltered upstream view; honour the same
+        # enable/disable filtering ``MCPClient`` applies locally.
         if self.enable_tools is not None:
             raw_tools = [t for t in raw_tools if t.name in self.enable_tools]
         if self.disable_tools is not None:
@@ -394,26 +314,13 @@ class GatewayMCPClient(MCPClient):
         """Look up a single tool by upstream name and wrap it.
 
         Falls back to :meth:`list_raw_tools` on cache miss, then
-        searches ``_cached_tools`` (which holds the **unfiltered**
-        upstream view) so tools that ``enable_tools`` /
+        searches the unfiltered cache so tools that ``enable_tools`` /
         ``disable_tools`` would have hidden are still resolvable —
-        matching :meth:`MCPClient.get_tool`'s behaviour.
-
-        Args:
-            name (`str`):
-                Upstream tool name (no ``mcp__`` prefix). The returned
-                :class:`GatewayMCPTool` exposes the prefixed form via
-                its own ``name`` attribute.
-
-        Returns:
-            `GatewayMCPTool`:
-                A fresh wrapper around the upstream descriptor, ready
-                to be ``await``-ed or registered with a toolkit.
+        matching :meth:`MCPClient.get_tool`.
 
         Raises:
             `ValueError`:
-                If no tool with that upstream name exists on the
-                gateway side.
+                No tool with that upstream name exists on the gateway.
         """
         if self._cached_tools is None:
             await self.list_raw_tools()
@@ -429,16 +336,6 @@ class GatewayMCPClient(MCPClient):
     def _wrap_tool(self, tool: mcp.types.Tool) -> GatewayMCPTool:
         """Build a :class:`GatewayMCPTool` bound to this client's
         gateway facade.
-
-        Args:
-            tool (`mcp.types.Tool`):
-                Raw upstream tool descriptor (typically pulled out of
-                ``_cached_tools``).
-
-        Returns:
-            `GatewayMCPTool`:
-                The host-side wrapper that will relay every call
-                through the gateway facade.
         """
         assert self._gateway is not None
         return GatewayMCPTool(
@@ -464,64 +361,61 @@ class GatewayClient:
         self,
         backend: "BackendBase",
         gateway_port: int,
-        token: str,
         *,
         timeout: float | None = None,
         inline_limit: int = BODY_INLINE_LIMIT,
         tmp_dir: str = SANDBOX_TMP_DIR,
+        gateway_log_path: str | None = None,
     ) -> None:
         """Build a workspace-side gateway facade.
 
         Args:
             backend (`BackendBase`):
-                The workspace's backend handle. Every gateway request
-                runs as ``backend.exec_shell([...])`` inside the
-                sandbox (Docker container or E2B sandbox).
+                Workspace backend; every request runs as
+                ``backend.exec_shell([...])`` inside the sandbox.
             gateway_port (`int`):
                 TCP port the gateway listens on inside the sandbox.
-                The URL dialed by the shim is always
-                ``http://127.0.0.1:<gateway_port>``.
-            token (`str`):
-                Bearer token shared with the gateway via its config
-                file. Sent as ``Authorization: Bearer …`` on every
-                request. Pass an empty string to skip auth (useful
-                only in tests).
+                The shim dials ``http://127.0.0.1:<gateway_port>``.
             timeout (`float | None`, defaults to `None`):
-                Per-request timeout in seconds, passed straight through
-                to :meth:`BackendBase.exec_shell`. The shim itself
-                does not apply an HTTP-level timeout — long-running
-                MCP tools are limited only by the backend exec
-                timeout. ``None`` waits indefinitely.
+                Per-request timeout forwarded to
+                :meth:`BackendBase.exec_shell`; ``None`` waits
+                indefinitely.
             inline_limit (`int`, defaults to `BODY_INLINE_LIMIT`):
-                Threshold (in bytes) below which response bodies ride
-                inline through stdout as base64. Larger bodies are
-                spilled to a sandbox tempfile and fetched via
-                :meth:`BackendBase.read_file` to avoid loading multi-MB
-                payloads through the exec stdout channel.
+                Response bodies above this size spill through a sandbox
+                tempfile rather than base64-inline through stdout.
             tmp_dir (`str`, defaults to `SANDBOX_TMP_DIR`):
-                Sandbox-side directory used for both request body
-                tempfiles (host → sandbox) and oversized response
-                spills (sandbox → host). Must be writable by the
-                gateway process; ``/tmp`` works on every supported
-                image.
+                Sandbox directory for request/response tempfiles. Must
+                be writable by the gateway process.
+            gateway_log_path (`str | None`, defaults to `None`):
+                Sandbox-side path of the gateway's stdout/stderr log
+                file. When set, :meth:`exec_request` failures trigger
+                a ``/health`` probe and — if the gateway is
+                unreachable — a tail of this log is emitted at
+                ``ERROR`` level to help diagnose crashes.
         """
         self.backend = backend
         self.gateway_port = gateway_port
-        self.token = token
         self.timeout = timeout
         self.inline_limit = inline_limit
         self.tmp_dir = tmp_dir
+        self.gateway_log_path = gateway_log_path
+        # Health-probe timeout is kept short so the diagnostic path adds
+        # little latency to the failing request. It only runs on the
+        # error path, never on the hot path.
+        self._health_probe_timeout: float = 5.0
+        # Number of bytes of the gateway log to tail into the error
+        # log on unreachable-gateway diagnosis.
+        self._log_tail_bytes: int = 4000
 
     async def health(self) -> bool:
-        """Probe ``/health`` — used by the workspace to wait for
-        readiness.
+        """Probe ``/health``. ``True`` iff the gateway answered 200;
+        any other outcome (shim transport failure, non-200) → ``False``.
+        Callers retry until this flips.
 
-        Returns:
-            `bool`:
-                ``True`` iff the gateway answered ``200``. Any other
-                outcome (shim transport failure, non-200 status)
-                returns ``False``; callers are expected to retry until
-                this flips.
+        The ``/health`` path is treated specially by
+        :meth:`exec_request` — it never triggers the failure
+        diagnostic, so a dead gateway does not recursively probe
+        itself.
         """
         try:
             status, _ = await self.exec_request("GET", "/health")
@@ -530,23 +424,15 @@ class GatewayClient:
         return status == 200
 
     async def list_mcps(self) -> list[GatewayMCPClient]:
-        """Fetch every MCP currently registered on the gateway.
+        """Fetch every MCP the gateway is currently serving.
 
-        The returned clients are marked as already connected (via
-        :meth:`GatewayMCPClient.attach`'s ``connected=True``) because
-        the gateway is already maintaining their upstream sessions —
-        the host should not invoke :meth:`GatewayMCPClient.connect`
-        again.
-
-        Returns:
-            `list[GatewayMCPClient]`:
-                One transport-wired client per registered MCP. The
-                workspace's :meth:`list_mcps` implementation surfaces
-                this list straight to its consumer.
+        Returned clients are marked already-connected (via
+        :meth:`GatewayMCPClient.attach`) — the gateway is already
+        maintaining their upstream sessions.
 
         Raises:
             `RuntimeError`:
-                If the gateway returns a non-2xx response.
+                Gateway returned non-2xx.
         """
         status, body = await self.exec_request("GET", "/mcps")
         if status >= 400:
@@ -564,45 +450,22 @@ class GatewayClient:
     ) -> GatewayMCPClient:
         """Build a :class:`GatewayMCPClient` wired to this gateway.
 
-        Reconstructs the public field surface from ``spec`` via
-        :meth:`MCPClient.model_validate`, then hands the transport
-        handle to the new client through
-        :meth:`GatewayMCPClient.attach`. Doing the wiring through
-        ``attach`` keeps the writes inside the target class and avoids
-        ``protected-access`` warnings on every assignment.
-
         Args:
             spec (`dict[str, Any]`):
-                A dict produced by ``MCPClient.model_dump(mode="json")``
-                — typically the body returned by the gateway's
-                ``GET /mcps`` endpoint, or built from user input by
-                ``DockerWorkspace.add_mcp``.
+                ``MCPClient.model_dump(mode="json")`` payload — either
+                from ``GET /mcps`` or from user input via ``add_mcp``.
             connected (`bool`, defaults to `False`):
-                When ``True``, mark the new client as already connected
-                so :meth:`GatewayMCPClient.connect` need not run again.
-                Set by :meth:`list_mcps` for clients that came back
-                from the gateway already registered. Leave ``False``
-                for fresh clients the caller will explicitly
-                ``await client.connect()`` on (the ``add_mcp`` path).
-
-        Returns:
-            `GatewayMCPClient`:
-                A pydantic-valid client whose transport state is fully
-                populated. Stateful clients still require an explicit
-                ``await client.connect()`` unless ``connected=True``.
+                Mark the client as already-connected. Set by
+                :meth:`list_mcps`; leave ``False`` when the caller will
+                ``await client.connect()`` itself.
         """
         client = GatewayMCPClient.model_validate(spec)
         client.attach(self, connected=connected)
         return client
 
     async def aclose(self) -> None:
-        """No-op kept for API parity with the previous httpx-based
-        client.
-
-        The new transport holds no host-side resources (every call is
-        a one-shot ``exec_shell``), so there is nothing to close. The
-        method stays so callers can keep their existing shutdown
-        idiom.
+        """No-op kept for API parity — the transport holds no host-side
+        resources, but callers keep their shutdown idiom.
         """
         return
 
@@ -617,48 +480,38 @@ class GatewayClient:
     ) -> tuple[int, bytes]:
         """Relay one HTTP request through the sandbox.
 
-        Mechanics:
+        Writes ``body`` (if any) to a sandbox tempfile, runs
+        ``python3 -c <SHIM_SCRIPT> ...`` inside the sandbox via
+        :meth:`BackendBase.exec_shell`, and parses the JSON envelope
+        the shim prints on stdout. Inline bodies are base64-decoded;
+        oversized bodies are pulled back through ``body_file``. Request
+        and response tempfiles are best-effort cleaned up.
 
-        1. If ``body`` is given, JSON-encode it and write it to
-           ``${tmp_dir}/<uuid>.json`` inside the sandbox via
-           :meth:`BackendBase.write_file`.
-        2. Run ``python3 -c <SHIM_SCRIPT> <method> <url> <token>
-           <body_file_or_""> <inline_limit> <tmp_dir>`` via
-           :meth:`BackendBase.exec_shell`. The shim performs the
-           ``urllib.request`` call against the gateway's loopback port
-           and prints a JSON envelope to stdout.
-        3. Parse the envelope. Inline bodies are base64-decoded;
-           oversized bodies are pulled back from
-           ``envelope["body_file"]`` via :meth:`BackendBase.read_file`
-           and then deleted.
-
-        Both the request and response temp files are best-effort
-        cleaned up so a crash does not leak files into the sandbox's
-        ``${tmp_dir}``.
+        On any failure — shim non-zero exit, non-JSON stdout, or
+        ``status == -1`` transport error — a self-diagnostic step
+        probes ``/health`` and, if the gateway is unreachable, tails
+        :attr:`gateway_log_path` at ``ERROR`` level so the real crash
+        cause reaches the host log stream. The original exception is
+        always re-raised so the caller's error contract is unchanged.
+        The ``/health`` path itself skips diagnosis to avoid recursing
+        on a dead gateway.
 
         Args:
             method (`str`):
                 HTTP verb (``GET`` / ``POST`` / ``DELETE``).
             path (`str`):
-                Path-only URL relative to the gateway root, e.g.
-                ``/mcps`` or ``/mcps/<name>/tools/<tool>``. Always
-                starts with ``/``.
+                Path-only URL, e.g. ``/mcps/<name>/tools/<tool>``.
             body (`Any`, optional):
-                JSON-serializable request body. ``None`` (the default)
-                means no body — typical for ``GET`` / ``DELETE``.
+                JSON-serializable request body; ``None`` for no body.
 
         Returns:
             `tuple[int, bytes]`:
-                The HTTP status code returned by the gateway, paired
-                with the raw response body bytes (always decoded;
-                callers ``json.loads`` it themselves when needed).
+                Status code + raw response bytes (callers decode).
 
         Raises:
             `RuntimeError`:
-                If the shim crashed (non-zero exit code, non-JSON
-                stdout) or reported a transport failure
-                (``status == -1`` — gateway unreachable, urllib
-                error, …).
+                Shim crash (non-zero exit / non-JSON stdout) or
+                transport failure (``status == -1``).
         """
         body_file = ""
         wrote_body_file: str | None = None
@@ -671,80 +524,139 @@ class GatewayClient:
             )
 
         try:
-            result: "ExecResult" = await self.backend.exec_shell(
-                [
-                    "python3",
-                    "-c",
-                    SHIM_SCRIPT,
-                    method,
-                    f"http://127.0.0.1:{self.gateway_port}{path}",
-                    self.token or "",
-                    body_file,
-                    str(self.inline_limit),
-                    self.tmp_dir,
-                ],
-                timeout=self.timeout,
-            )
-        finally:
-            if wrote_body_file is not None:
+            try:
+                result: "ExecResult" = await self.backend.exec_shell(
+                    [
+                        "python3",
+                        "-c",
+                        SHIM_SCRIPT,
+                        method,
+                        f"http://127.0.0.1:{self.gateway_port}{path}",
+                        body_file,
+                        str(self.inline_limit),
+                        self.tmp_dir,
+                    ],
+                    timeout=self.timeout,
+                )
+            finally:
+                if wrote_body_file is not None:
+                    try:
+                        await self.backend.delete_path(wrote_body_file)
+                    except Exception:
+                        pass
+
+            if result.exit_code != 0:
+                raise RuntimeError(
+                    f"gateway shim exited with {result.exit_code}: "
+                    f"{result.stderr.decode(errors='replace')[:500]}",
+                )
+
+            try:
+                env = json.loads(result.stdout)
+            except Exception as e:
+                raise RuntimeError(
+                    "gateway shim produced non-JSON stdout: "
+                    f"{result.stdout[:200]!r}",
+                ) from e
+
+            status = int(env["status"])
+            if status == -1:
+                raise RuntimeError(
+                    "gateway request failed: "
+                    f"{env.get('error', 'unknown error')}",
+                )
+
+            if "body_file" in env:
+                spilled = env["body_file"]
+                body_bytes = await self.backend.read_file(spilled)
                 try:
-                    await self.backend.delete_path(wrote_body_file)
+                    await self.backend.delete_path(spilled)
                 except Exception:
                     pass
+            else:
+                body_bytes = base64.b64decode(env.get("body", ""))
 
-        if result.exit_code != 0:
-            raise RuntimeError(
-                f"gateway shim exited with {result.exit_code}: "
-                f"{result.stderr.decode(errors='replace')[:500]}",
-            )
+            return status, body_bytes
+        except Exception as exc:
+            # ``/health`` never triggers diagnosis — otherwise a dead
+            # gateway would recursively probe itself.
+            if path != "/health":
+                await self._diagnose_failure(method, path, exc)
+            raise
+
+    async def _diagnose_failure(
+        self,
+        method: str,
+        path: str,
+        exc: BaseException,
+    ) -> None:
+        """Best-effort post-failure diagnostic invoked by
+        :meth:`exec_request` on any request failure.
+
+        Probes ``/health`` (via :meth:`health`, which short-circuits
+        the diagnostic path); if the gateway does not answer, emits
+        the tail of :attr:`gateway_log_path` at ``ERROR`` level so the
+        real crash cause reaches the host log stream. Every step is
+        guarded — diagnosis must never raise, so the caller's original
+        exception is always the one that surfaces.
+
+        Args:
+            method (`str`):
+                HTTP verb of the failed request (for log context).
+            path (`str`):
+                Path of the failed request (for log context).
+            exc (`BaseException`):
+                Original exception raised by the shim call (for log
+                context; not re-raised here).
+        """
+        try:
+            healthy = await self.health()
+        except Exception:  # pragma: no cover — defensive
+            healthy = False
+
+        if healthy:
+            # Gateway is up — the failure came from the request itself
+            # (bad payload, upstream MCP error, etc.). Original error
+            # is enough context.
+            return
+
+        logger.error(
+            "Gateway unreachable during %s %s: %s. Probing /health failed. "
+            "Attempting to tail gateway log at %r ...",
+            method,
+            path,
+            exc,
+            self.gateway_log_path,
+        )
+
+        if self.gateway_log_path is None:
+            return
 
         try:
-            env = json.loads(result.stdout)
-        except Exception as e:
-            raise RuntimeError(
-                "gateway shim produced non-JSON stdout: "
-                f"{result.stdout[:200]!r}",
-            ) from e
-
-        status = int(env["status"])
-        if status == -1:
-            raise RuntimeError(
-                "gateway request failed: "
-                f"{env.get('error', 'unknown error')}",
+            log_bytes = await self.backend.read_file(self.gateway_log_path)
+        except Exception as read_exc:  # noqa: BLE001
+            logger.error(
+                "Failed to read gateway log at %r: %s",
+                self.gateway_log_path,
+                read_exc,
             )
+            return
 
-        if "body_file" in env:
-            spilled = env["body_file"]
-            body_bytes = await self.backend.read_file(spilled)
-            try:
-                await self.backend.delete_path(spilled)
-            except Exception:
-                pass
-        else:
-            body_bytes = base64.b64decode(env.get("body", ""))
-
-        return status, body_bytes
+        tail = log_bytes[-self._log_tail_bytes :].decode(errors="replace")
+        logger.error(
+            "Gateway log tail (last %d bytes of %r):\n%s",
+            len(tail),
+            self.gateway_log_path,
+            tail,
+        )
 
 
 # ── module-private utilities ───────────────────────────────────────
 
 
 def _safe_detail(status: int, body: bytes) -> str:
-    """Best-effort extraction of an HTTPException-style detail from a
-    gateway response body.
-
-    Args:
-        status (`int`):
-            HTTP status code returned by the gateway.
-        body (`bytes`):
-            Raw response body bytes — typically a JSON object from
-            FastAPI's ``HTTPException``, but tolerate anything.
-
-    Returns:
-        `str`:
-            A human-readable diagnostic that always starts with
-            ``HTTP <status>:`` so it slots into the same exception /
-            ``ToolChunk`` messages as the previous httpx-based code.
+    """Best-effort ``HTTP <status>: <detail>`` string from a gateway
+    error response — tolerates non-JSON, missing ``detail``, etc.
     """
     try:
         data = json.loads(body)

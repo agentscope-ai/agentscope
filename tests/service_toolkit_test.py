@@ -19,6 +19,7 @@ Verifies the assembly rules:
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
 
+from utils import FakeWorkspaceManager
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.app._manager import (
     BackgroundTaskManager,
@@ -221,6 +222,7 @@ class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
         toolkit = await get_toolkit(
             storage=_NoOpStorage(),  # type: ignore[arg-type]
             workspace=workspace,  # type: ignore[arg-type]
+            workspace_manager=FakeWorkspaceManager(),
             scheduler_manager=SchedulerManager(
                 storage=_NoOpStorage(),  # type: ignore[arg-type]
                 message_bus=_NullBus(),  # type: ignore[arg-type]
@@ -291,6 +293,7 @@ class TestGetToolkitWorkerVariant(IsolatedAsyncioTestCase):
                 team_id_map={"t1": team},
             ),  # type: ignore[arg-type]
             workspace=_FakeWorkspace(),  # type: ignore[arg-type]
+            workspace_manager=FakeWorkspaceManager(),
             scheduler_manager=SchedulerManager(
                 storage=_NoOpStorage(),  # type: ignore[arg-type]
                 message_bus=_NullBus(),  # type: ignore[arg-type]
@@ -334,6 +337,7 @@ class TestGetToolkitSchedulingGuard(IsolatedAsyncioTestCase):
         toolkit = await get_toolkit(
             storage=_NoOpStorage(),  # type: ignore[arg-type]
             workspace=_FakeWorkspace(),  # type: ignore[arg-type]
+            workspace_manager=FakeWorkspaceManager(),
             scheduler_manager=SchedulerManager(
                 storage=_NoOpStorage(),  # type: ignore[arg-type]
                 message_bus=_NullBus(),  # type: ignore[arg-type]
@@ -391,6 +395,7 @@ class TestGetToolkitExtraFactory(IsolatedAsyncioTestCase):
         toolkit = await get_toolkit(
             storage=_NoOpStorage(),  # type: ignore[arg-type]
             workspace=_FakeWorkspace(),  # type: ignore[arg-type]
+            workspace_manager=FakeWorkspaceManager(),
             scheduler_manager=SchedulerManager(
                 storage=_NoOpStorage(),  # type: ignore[arg-type]
                 message_bus=_NullBus(),  # type: ignore[arg-type]

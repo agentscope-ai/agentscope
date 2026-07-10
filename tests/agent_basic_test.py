@@ -240,10 +240,12 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
             {
                 "type": "REPLY_END",
                 "session_id": session_id,
+                "finished_reason": "completed",
             },
         ]
 
@@ -422,10 +424,12 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
             {
                 "type": "REPLY_END",
                 "session_id": session_id,
+                "finished_reason": "completed",
             },
         ]
 
@@ -692,6 +696,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
             {
                 "type": "TOOL_RESULT_START",
@@ -735,8 +740,13 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
-            {"type": "REPLY_END", "session_id": session_id},
+            {
+                "type": "REPLY_END",
+                "session_id": session_id,
+                "finished_reason": "completed",
+            },
         ]
 
         basic_dict = self._get_event_base(reply_id)
@@ -909,6 +919,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
         ]
 
@@ -960,8 +971,13 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
-            {"type": "REPLY_END", "session_id": session_id},
+            {
+                "type": "REPLY_END",
+                "session_id": session_id,
+                "finished_reason": "completed",
+            },
         ]
 
         # Assert prefix events (fixed order)
@@ -1155,6 +1171,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
         ]
 
@@ -1227,8 +1244,13 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
-            {"type": "REPLY_END", "session_id": session_id},
+            {
+                "type": "REPLY_END",
+                "session_id": session_id,
+                "finished_reason": "completed",
+            },
         ]
 
         # Assert prefix events (fixed order)

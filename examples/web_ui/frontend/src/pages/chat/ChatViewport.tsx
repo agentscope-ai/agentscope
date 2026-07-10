@@ -156,14 +156,11 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		}
 	}, []);
 
-	const { msgs, streaming, send, onUserConfirm, onSubagentConfirm, subagentHitl } = useMessages(
-		agentId,
-		sessionId,
-		{
+	const { msgs, phase, send, onUserConfirm, onSubagentConfirm, subagentHitl, interrupt } =
+		useMessages(agentId, sessionId, {
 			onTeamUpdated: handleTeamUpdated,
 			onStateUpdated: handleStateUpdated,
-		},
-	);
+		});
 	const {
 		mcps,
 		loading: mcpsLoading,
@@ -618,10 +615,11 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 								<ChatContent
 									className={'max-w-[var(--chat-content-w)] w-full'}
 									msgs={msgs}
-									sending={streaming}
+									phase={phase}
 									disabled={selectedModel === null}
 									onSend={send}
 									onUserConfirm={onUserConfirm}
+									onInterrupt={interrupt}
 									footerSlot={
 										subagentHitl.length > 0 ? (
 											<div className="space-y-2 pb-2">

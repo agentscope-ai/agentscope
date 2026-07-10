@@ -160,6 +160,10 @@ export interface CreateSessionResponse {
 	session_id: string;
 }
 
+export interface InterruptSessionResponse {
+	session_id: string;
+}
+
 export interface UpdateSessionRequest {
 	name?: string;
 	chat_model_config?: ChatModelConfig;

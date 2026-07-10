@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from agentscope.event import (
         ExternalExecutionResultEvent,
         UserConfirmResultEvent,
+        UserInterruptEvent,
     )
 
 
@@ -76,6 +77,7 @@ async def enqueue_run_trigger(
     kind: Literal["wake", "resume"] = MessageBusKeys.WAKEUP_KIND_WAKE,
     inputs: UserConfirmResultEvent
     | ExternalExecutionResultEvent
+    | UserInterruptEvent
     | None = None,
 ) -> None:
     """Enqueue a typed run trigger and signal dispatchers.
@@ -85,10 +87,10 @@ async def enqueue_run_trigger(
     - ``wake`` — idle-session wake-up.  The dispatcher skips the entry
       when the session is already running (the live run drains the inbox
       itself).  ``inputs`` must be ``None``.
-    - ``resume`` — resume a HITL-parked session with a user confirmation
-      or external execution result.  The dispatcher waits (with backoff)
-      until the parked run releases its lock, then spawns with
-      ``input_msg`` set to the deserialised event.
+    - ``resume`` — resume a HITL-parked session with a user confirmation,
+      an external execution result, or a user interrupt.  The dispatcher
+      waits (with backoff) until the parked run releases its lock, then
+      spawns with ``input_msg`` set to the deserialised event.
 
     The payload is serialised to a plain dict before being pushed to the
     wakeup queue; the ``MessageBus`` transport layer never sees event

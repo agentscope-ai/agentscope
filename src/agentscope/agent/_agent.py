@@ -48,12 +48,15 @@ from ..event import (
     DataBlockDeltaEvent,
     DataBlockEndEvent,
     ExceedMaxItersEvent,
+    ReplyEndReason,
+    UserInterruptEvent,
 )
 from ..exception import AgentOrientedException
 from ..model import (
     ChatResponse,
     ChatUsage,
     ChatModelBase,
+    FinishedReason,
 )
 from ..message import (
     Msg,
@@ -193,31 +196,38 @@ class Agent:
         inputs: Msg
         | list[Msg]
         | UserConfirmResultEvent
+        | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
     ) -> AsyncGenerator[AgentEvent, None]:
         """Reply to the given inputs and stream agent events.
 
+        Args:
+            inputs (`Msg | list[Msg] | UserConfirmResultEvent | \
+            UserInterruptEvent | ExternalExecutionResultEvent | None`, \
+            optional):
+                The inputs that trigger this reply. See :meth:`reply` for
+                the full list of accepted variants.
 
-        **NOTE**:
+        Yields:
+            `AgentEvent`:
+                Streamed events produced during the reply.
 
-        - If requiring outside interaction for multiple tool calls and only
-         receive partial confirmation or execution results, the agent won't
-         re-send the requiring events for the unconfirmed or unexecuted tool
-         calls.
+        .. note:: If requiring outside interaction for multiple tool calls
+            and only receive partial confirmation or execution results, the
+            agent won't re-send the requiring events for the unconfirmed
+            or unexecuted tool calls.
         """
-        try:
-            async for chunk in self._reply(inputs=inputs):
-                if not isinstance(chunk, Msg):
-                    yield chunk
-        finally:
-            pass
+        async for chunk in self._reply(inputs=inputs):
+            if not isinstance(chunk, Msg):
+                yield chunk
 
     async def reply(
         self,
         inputs: Msg
         | list[Msg]
         | UserConfirmResultEvent
+        | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
     ) -> Msg:
@@ -225,7 +235,8 @@ class Agent:
 
         Args:
             inputs (`Msg | list[Msg] | UserConfirmResultEvent | \
-            ExternalExecutionResultEvent | None`, optional):
+            UserInterruptEvent | ExternalExecutionResultEvent | None`, \
+            optional):
                 The inputs that trigger this reply. It can be:
 
                 - a single `Msg` or a list of `Msg` objects to start a new
@@ -233,6 +244,10 @@ class Agent:
                 - a `UserConfirmResultEvent` or
                   `ExternalExecutionResultEvent` to continue from the
                   outside interaction required by the previous reply,
+                - a `UserInterruptEvent` to abort a parked reply — the
+                  agent closes all pending tool calls with an interrupted
+                  tool result and ends the reply without entering the
+                  reasoning-acting loop,
                 - `None` if there is nothing new to feed in (e.g. just
                   continue from the current state).
 
@@ -240,16 +255,13 @@ class Agent:
             `Msg`:
                 A final reply message.
         """
-        try:
-            final_msg: Msg | None = None
-            async for evt_or_msg in self._reply(inputs=inputs):
-                if isinstance(evt_or_msg, Msg):
-                    final_msg = evt_or_msg
-            if final_msg is None:
-                raise RuntimeError("Agent did not produce a final message.")
-            return final_msg
-        finally:
-            pass
+        final_msg: Msg | None = None
+        async for evt_or_msg in self._reply(inputs=inputs):
+            if isinstance(evt_or_msg, Msg):
+                final_msg = evt_or_msg
+        if final_msg is None:
+            raise RuntimeError("Agent did not produce a final message.")
+        return final_msg
 
     async def observe(self, msgs: Msg | list[Msg] | None = None) -> None:
         """Receive external observation message(s) and save them into
@@ -496,29 +508,45 @@ class Agent:
             else:
                 raise e from None
 
+        if res.finished_reason == FinishedReason.INTERRUPTED:
+            logger.warning(
+                "The context compression was interrupted and skipped. ",
+            )
+            raise asyncio.CancelledError()
+
         # Update the summary
-        self.state.summary = cfg.summary_template.format(**res.content)
+        async def _apply_change() -> None:
+            """Apply the context change with interruption protection."""
+            new_summary = cfg.summary_template.format(**res.content)
+            if self.offloader:
+                path = await self.offloader.offload_context(
+                    self.state.session_id,
+                    msgs=msgs_to_compress,
+                )
+                new_summary += (
+                    f"\n<system-reminder>The compressed context is offloaded "
+                    f"to '{path}', you can refer to it when needed."
+                    f"</system-reminder>"
+                )
 
-        if self.offloader:
-            path = await self.offloader.offload_context(
-                self.state.session_id,
-                msgs=msgs_to_compress,
+            # Protected from interruption
+            await self._clear_unreserved_read_cache(msgs_to_reserve)
+
+            # Update the context
+            self.state.summary = new_summary
+            self.state.context = msgs_to_reserve
+
+            logger.info(
+                "[AGENT %s]: The context compression finished.",
+                self.name,
             )
 
-            self.state.summary += (
-                f"\n<system-reminder>The compressed context is offloaded to "
-                f"'{path}', you can refer to it when needed.</system-reminder>"
-            )
-
-        await self._clear_unreserved_read_cache(msgs_to_reserve)
-
-        # Update the context
-        self.state.context = msgs_to_reserve
-
-        logger.info(
-            "[AGENT %s]: The context compression finished.",
-            self.name,
-        )
+        apply_task = asyncio.create_task(_apply_change())
+        try:
+            await asyncio.shield(apply_task)
+        except asyncio.CancelledError:
+            await apply_task
+            raise
 
     # ======================================================================
     # Agent core methods, including _reply, _reasoning, _acting, etc.
@@ -529,6 +557,7 @@ class Agent:
         inputs: Msg
         | list[Msg]
         | UserConfirmResultEvent
+        | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
@@ -543,6 +572,7 @@ class Agent:
                 inputs: Msg
                 | list[Msg]
                 | UserConfirmResultEvent
+                | UserInterruptEvent
                 | ExternalExecutionResultEvent
                 | None = inputs,
             ) -> AsyncGenerator[AgentEvent | Msg, None]:
@@ -572,164 +602,316 @@ class Agent:
             async for item in execute_chain():
                 yield item
 
+    async def _close_unfinished_tool_calls(
+        self,
+    ) -> AsyncGenerator[
+        ToolResultStartEvent | ToolResultTextDeltaEvent | ToolResultEndEvent,
+        None,
+    ]:
+        """Close the unfinished tool calls on interruption, so the next
+        input will be handled normally."""
+        if not self.state.context:
+            return
+
+        last_msg = self.state.context[-1]
+        if last_msg.role != "assistant" or last_msg.name != self.name:
+            return
+
+        # Searching for tool calls that requires user confirmation or external
+        # execution without tool results
+        awaiting_tool_calls: dict = {}
+        for index, block in enumerate(last_msg.content):
+            if isinstance(block, ToolCallBlock):
+                awaiting_tool_calls[block.id] = index
+            elif isinstance(block, ToolResultBlock):
+                awaiting_tool_calls.pop(block.id, None)
+
+        interruption_message = (
+            "<system-reminder>The tool call has been interrupted by "
+            "the user.</system-reminder>"
+        )
+
+        for index in awaiting_tool_calls.values():
+            # First update the status
+            assert isinstance(last_msg.content[index], ToolCallBlock)
+            last_msg.content[index].state = ToolCallState.FINISHED
+
+            # Emit the full tool_result lifecycle (START → DELTA → END)
+            yield ToolResultStartEvent(
+                reply_id=self.state.reply_id,
+                tool_call_id=last_msg.content[index].id,
+                tool_call_name=last_msg.content[index].name,
+            )
+            yield ToolResultTextDeltaEvent(
+                reply_id=self.state.reply_id,
+                tool_call_id=last_msg.content[index].id,
+                delta=interruption_message,
+            )
+            yield ToolResultEndEvent(
+                reply_id=self.state.reply_id,
+                tool_call_id=last_msg.content[index].id,
+                state=ToolResultState.INTERRUPTED,
+            )
+            last_msg.content.append(
+                ToolResultBlock(
+                    id=last_msg.content[index].id,
+                    name=last_msg.content[index].name,
+                    output=interruption_message,
+                    state=ToolResultState.INTERRUPTED,
+                ),
+            )
+
     async def _reply_impl(
         self,
         inputs: Msg
         | list[Msg]
         | UserConfirmResultEvent
+        | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Core reply logic."""
-        # Dispatch the unified inputs by type into the legacy local variables
-        event: (UserConfirmResultEvent | ExternalExecutionResultEvent | None)
-        msgs: Msg | list[Msg] | None
-        if isinstance(
-            inputs,
-            (UserConfirmResultEvent, ExternalExecutionResultEvent),
-        ):
-            event = inputs
-            msgs = None
-        else:
-            event = None
-            msgs = inputs
 
-        # ===================================================================
-        # Step 1: Checking agent input:
-        #  - if incoming event and agent is waiting for an event
-        #  - if event is None and agent is not waiting for an event
-        # ===================================================================
-        is_awaiting = await self._check_incoming_event(event)
+        end_event: ReplyEndEvent | None = None
+        try:
+            # Dispatch the unified inputs by type into the legacy local
+            # variables
+            event: (
+                UserConfirmResultEvent
+                | UserInterruptEvent
+                | ExternalExecutionResultEvent
+                | None
+            )
+            msgs: Msg | list[Msg] | None
+            if isinstance(
+                inputs,
+                (
+                    UserConfirmResultEvent,
+                    UserInterruptEvent,
+                    ExternalExecutionResultEvent,
+                ),
+            ):
+                event = inputs
+                msgs = None
+            else:
+                event = None
+                msgs = inputs
 
-        # ===================================================================
-        # Step 2: Handling agent event if applicable
-        #  - yield tool result events for the denied tool calls, or
-        #  - update the reply state as a new reply process
-        # ===================================================================
-        if is_awaiting:
-            async for evt in self._handle_incoming_event(event):
-                yield evt
-        else:
-            await self._handle_incoming_messages(msgs)
-            # Update the context with the incoming message and state
-            self.state.reply_id = _generate_id()
-            self.state.cur_iter = 0
+            # Parked-interrupt short-circuit: only signal an INTERRUPTED
+            # end when there is actual HITL work to close; otherwise the
+            # session is effectively idle and the call is a silent no-op.
+            # ``finally`` reuses the CancelledError cleanup path when
+            # ``end_event`` is set — no reasoning-acting loop either way.
+            if isinstance(inputs, UserInterruptEvent):
+                if self.state.has_awaiting_tool_calls(self.name):
+                    end_event = ReplyEndEvent(
+                        session_id=self.state.session_id,
+                        reply_id=self.state.reply_id,
+                        finished_reason=ReplyEndReason.INTERRUPTED,
+                    )
+                return
 
-            yield ReplyStartEvent(
-                session_id=self.state.session_id,
+            # ===================================================================
+            # Step 1: Checking agent input:
+            #  - if incoming event and agent is waiting for an event
+            #  - if event is None and agent is not waiting for an event
+            # ===================================================================
+            is_awaiting = await self._check_incoming_event(event)
+
+            # ===================================================================
+            # Step 2: Handling agent event if applicable
+            #  - yield tool result events for the denied tool calls, or
+            #  - update the reply state as a new reply process
+            # ===================================================================
+            if is_awaiting:
+                async for evt in self._handle_incoming_event(event):
+                    yield evt
+            else:
+                await self._handle_incoming_messages(msgs)
+                # Update the context with the incoming message and state
+                self.state.reply_id = _generate_id()
+                self.state.cur_iter = 0
+
+                yield ReplyStartEvent(
+                    session_id=self.state.session_id,
+                    reply_id=self.state.reply_id,
+                    name=self.name,
+                )
+
+            # =================================================================
+            # Step 3: Enter the reasoning-acting loop until reaching max_iters
+            #  or no more tool calls to execute
+            # =================================================================
+            while self.state.cur_iter < self.react_config.max_iters:
+                # =============================================================
+                # Step 3.1:
+                # =============================================================
+                action, data = self._check_next_action()
+                if action == "exit" and isinstance(data, Msg):
+                    yield data
+                    return
+
+                # =============================================================
+                # Step 3.2: Execute reasoning if no more tools to be executed
+                # =============================================================
+                if action == "reasoning":
+                    # Compressed the memory if needed before reasoning
+                    await self.compress_context()
+
+                    # Perform reasoning
+                    interrupted = False
+                    async for evt in self._reasoning():
+                        # Exit the loop when no tool calls generated and the
+                        # reply message is generated
+                        if isinstance(evt, Msg):
+                            end_event = ReplyEndEvent(
+                                session_id=self.state.session_id,
+                                reply_id=self.state.reply_id,
+                                finished_reason=ReplyEndReason.COMPLETED,
+                            )
+                            yield evt
+                            return
+
+                        elif isinstance(evt, ModelCallEndEvent):
+                            interrupted = (
+                                evt.finished_reason
+                                == FinishedReason.INTERRUPTED
+                            )
+
+                        yield evt
+
+                    if interrupted:
+                        end_event = ReplyEndEvent(
+                            session_id=self.state.session_id,
+                            reply_id=self.state.reply_id,
+                            finished_reason=ReplyEndReason.INTERRUPTED,
+                        )
+                        return
+
+                # =============================================================
+                # Step 3.3: Getting batches of tool calls to be executed
+                #  - If not, finish loop by yielding RunFinishedEvent and exit
+                #  - Otherwise, execute by batch and continue the loop
+                # =============================================================
+                for batch in await self._batch_tool_calls():
+                    if batch.type == "sequential":
+                        evt_generator = self._execute_sequential_tool_calls(
+                            batch.tool_calls,
+                        )
+
+                    elif batch.type == "concurrent":
+                        evt_generator = self._execute_concurrent_tool_calls(
+                            batch.tool_calls,
+                        )
+
+                    else:
+                        raise ValueError(
+                            f"Invalid batch type: {batch.type}",
+                        )
+
+                    break_execution_for_hitl = False
+                    break_execution_for_interruption = False
+                    break_message = ""
+                    async for evt in evt_generator:
+                        yield evt
+                        if isinstance(
+                            evt,
+                            (
+                                RequireUserConfirmEvent,
+                                RequireExternalExecutionEvent,
+                            ),
+                        ):
+                            break_execution_for_hitl = True
+                            break_message = (
+                                "Waiting for tool calls to be confirmed or "
+                                "executed from outside ..."
+                            )
+
+                        elif (
+                            isinstance(evt, ToolResultEndEvent)
+                            and evt.state == ToolResultState.INTERRUPTED
+                        ):
+                            # Handle the interruption event
+                            break_execution_for_interruption = True
+
+                    if break_execution_for_interruption:
+                        end_event = ReplyEndEvent(
+                            session_id=self.state.session_id,
+                            reply_id=self.state.reply_id,
+                            finished_reason=ReplyEndReason.INTERRUPTED,
+                        )
+                        return
+
+                    # If it requires outside interaction stop executing the
+                    # next batch and wait for outside trigger events
+                    if break_execution_for_hitl:
+                        yield AssistantMsg(
+                            id=self.state.reply_id,
+                            name=self.name,
+                            content=break_message,
+                        )
+                        return
+
+                # Update iteration count after each round of reasoning-acting
+                self.state.cur_iter += 1
+
+            # =================================================================
+            # Step 4: Handling the max iteration executed
+            # =================================================================
+            yield ExceedMaxItersEvent(
                 reply_id=self.state.reply_id,
                 name=self.name,
             )
+            logger.warning(
+                "Agent %s exceeds the max iteration numbers %d. "
+                "Stop the react loop.",
+                self.name,
+                self.react_config.max_iters,
+            )
 
-        # ===================================================================
-        # Step 3: Enter the reasoning-acting loop until reaching max_iters or
-        #  no more tool calls to execute
-        # ===================================================================
-        while self.state.cur_iter < self.react_config.max_iters:
-            # ===============================================================
-            # Step 3.1:
-            # ===============================================================
-            action, data = self._check_next_action()
-            if action == "exit" and isinstance(data, Msg):
-                yield data
-                return
+            # Mirror the normal-exit path so subscribers (e.g. SSE clients
+            # waiting on a terminal event) don't hang when the loop bails
+            # out on max_iters.
+            end_event = ReplyEndEvent(
+                session_id=self.state.session_id,
+                reply_id=self.state.reply_id,
+                finished_reason=ReplyEndReason.EXCEED_MAX_ITERS,
+            )
 
-            # ===============================================================
-            # Step 3.2: Execute reasoning if no more tools to be executed
-            # ===============================================================
-            if action == "reasoning":
-                # Compressed the memory if needed before reasoning
-                await self.compress_context()
-                # Perform reasoning
-                async for evt in self._reasoning():
-                    # Exit the loop when no tool calls generated and the reply
-                    # message is generated
-                    if isinstance(evt, Msg):
-                        yield ReplyEndEvent(
-                            session_id=self.state.session_id,
-                            reply_id=self.state.reply_id,
-                        )
-                        yield evt
-                        return
-                    yield evt
+            yield AssistantMsg(
+                id=self.state.reply_id,
+                name=self.name,
+                content="Executed maximum iterations of reasoning-acting loop "
+                "without finishing the task.",
+            )
 
-            # ===============================================================
-            # Step 3.3: Getting batches of tool calls to be executed
-            #  - If not, finish the loop by yielding RunFinishedEvent and exit
-            #  - Otherwise, execute by batch and continue the loop
-            # ===============================================================
-            for batch in await self._batch_tool_calls():
-                if batch.type == "sequential":
-                    evt_generator = self._execute_sequential_tool_calls(
-                        batch.tool_calls,
-                    )
+        except asyncio.CancelledError:
+            # Handle the CancelledError within the _reply_impl for the
+            # agent middlewares
+            end_event = ReplyEndEvent(
+                session_id=self.state.session_id,
+                reply_id=self.state.reply_id,
+                finished_reason=ReplyEndReason.INTERRUPTED,
+            )
 
-                elif batch.type == "concurrent":
-                    evt_generator = self._execute_concurrent_tool_calls(
-                        batch.tool_calls,
-                    )
+            if self.react_config.interruption_raise_cancelled_error:
+                raise
 
-                else:
-                    raise ValueError(
-                        f"Invalid batch type: {batch.type}",
-                    )
+        finally:
+            if end_event is not None:
+                if end_event.finished_reason == ReplyEndReason.INTERRUPTED:
+                    # Handle the context when interruption
+                    async for _ in self._close_unfinished_tool_calls():
+                        yield _
 
-                break_execution = False
-                async for evt in evt_generator:
-                    yield evt
-                    if isinstance(
-                        evt,
-                        (
-                            RequireUserConfirmEvent,
-                            RequireExternalExecutionEvent,
-                        ),
-                    ):
-                        break_execution = True
-
-                # If it requires outside interaction stop executing the next
-                # batch and wait for outside trigger events
-                if break_execution:
-                    # Yield a Msg object for outside handling
+                    # A fallback msg object
                     yield AssistantMsg(
                         id=self.state.reply_id,
                         name=self.name,
-                        content="Waiting for tool calls to be confirmed or "
-                        "executed from outside ...",
+                        content=self.react_config.interruption_message,
                     )
 
-                    return
-
-            # Update the iteration count after each round of reasoning-acting
-            self.state.cur_iter += 1
-
-        # ===================================================================
-        # Step 4: Handling the max iteration executed
-        # ===================================================================
-        yield ExceedMaxItersEvent(
-            reply_id=self.state.reply_id,
-            name=self.name,
-        )
-        logger.warning(
-            "Agent %s exceeds the max iteration numbers %d. "
-            "Stop the react loop.",
-            self.name,
-            self.react_config.max_iters,
-        )
-
-        # Mirror the normal-exit path so subscribers (e.g. SSE clients
-        # waiting on a terminal event) don't hang when the loop bails
-        # out on max_iters.
-        yield ReplyEndEvent(
-            session_id=self.state.session_id,
-            reply_id=self.state.reply_id,
-        )
-
-        yield AssistantMsg(
-            id=self.state.reply_id,
-            name=self.name,
-            content="Executed maximum iterations of reasoning-acting loop"
-            "without finishing the task.",
-        )
+                yield end_event
 
     async def _reasoning(
         self,
@@ -897,6 +1079,7 @@ class Agent:
             output_tokens=completed_response.usage.output_tokens
             if completed_response.usage
             else 0,
+            finished_reason=completed_response.finished_reason,
         )
 
         self._save_to_context(
@@ -905,8 +1088,12 @@ class Agent:
         )
 
         # If no tool call is generated, return the final message directly
-        if not any(
-            isinstance(_, ToolCallBlock) for _ in completed_response.content
+        if (
+            completed_response.finished_reason != FinishedReason.INTERRUPTED
+            and not any(
+                isinstance(_, ToolCallBlock)
+                for _ in completed_response.content
+            )
         ):
             last_ctx = self._get_last_msg()
             final_usage = (
@@ -920,6 +1107,7 @@ class Agent:
             yield AssistantMsg(
                 id=self.state.reply_id,
                 name=self.name,
+                # Text only response message
                 content=list(completed_response.content),
                 usage=final_usage,
             )
@@ -1225,6 +1413,9 @@ class Agent:
                         RequireUserConfirmEvent,
                         RequireExternalExecutionEvent,
                     ),
+                ) or (
+                    isinstance(evt, ToolResultEndEvent)
+                    and evt.state == ToolResultState.INTERRUPTED
                 ):
                     break_execution = True
                     break
@@ -1255,6 +1446,16 @@ class Agent:
         after a sentinel value placed by the gather task is received, which
         means every ``queue.put`` from every worker has already finished
         before the generator returns.
+
+        If the caller task is cancelled from outside, the concurrent worker
+        tasks are cancelled explicitly (to avoid orphan tasks), any events
+        already queued by the workers (including interruption chunks emitted
+        by ``toolkit.call_tool`` when it catches ``CancelledError``) are
+        flushed to the caller, and the generator returns normally. The
+        caller is expected to detect the interruption via the flushed
+        ``ToolResultEndEvent(state=INTERRUPTED)`` events, mirroring the
+        event-based propagation used by
+        :meth:`_execute_sequential_tool_calls`.
 
         Args:
             tool_calls (`list[ToolCallBlock]`):
@@ -1303,12 +1504,35 @@ class Agent:
 
         gather_task = asyncio.create_task(_run_all())
 
-        # Drain the queue until the sentinel is encountered.
-        while True:
-            event = await queue.get()
-            if event is sentinel:
-                break
-            yield event
+        try:
+            # Drain the queue until the sentinel is encountered.
+            while True:
+                event = await queue.get()
+                if event is sentinel:
+                    break
+                yield event
+        except asyncio.CancelledError:
+            # Cancel the gather tasks, which will be handled within the toolkit
+            gather_task.cancel()
+            try:
+                await gather_task
+            except asyncio.CancelledError:
+                pass
+            while True:
+                try:
+                    event = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if event is sentinel:
+                    continue
+                yield event
+            # Consume the cancel so this generator returns normally. The
+            # caller relies on the flushed ``ToolResultEndEvent(state=
+            # INTERRUPTED)`` events, not on the exception, to detect the
+            # interruption — mirroring the event-based propagation used by
+            # :meth:`_execute_sequential_tool_calls`.
+            asyncio.current_task().uncancel()
+            return
 
         # All tasks are done at this point; collect and re-raise exceptions.
         results = await gather_task

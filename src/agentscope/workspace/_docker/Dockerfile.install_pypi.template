@@ -1,5 +1,0 @@
-# ``--no-deps``: see Dockerfile.install_src.template for the rationale.
-# Gateway only needs ``agentscope.mcp.MCPClient`` and its lightweight
-# transitive imports (mcp, pydantic, httpx, fastapi), all of which are
-# pulled in by requirements.txt above.
-RUN uv pip install --no-deps "agentscope=={agentscope_version}"

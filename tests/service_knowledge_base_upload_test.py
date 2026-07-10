@@ -261,15 +261,15 @@ class _NoopWorkspaceManager(WorkspaceManagerBase):
     touches it, but ``create_app`` requires one to be wired in."""
 
     async def get_workspace(self, *args: Any, **kwargs: Any) -> Any:
-        raise NotImplementedError
-
-    async def create_workspace(self, *args: Any, **kwargs: Any) -> Any:
+        """Fake implementation."""
         raise NotImplementedError
 
     async def close(self, workspace_id: str) -> None:
+        """Fake implementation."""
         return None
 
     async def close_all(self) -> None:
+        """Fake implementation."""
         return None
 
 

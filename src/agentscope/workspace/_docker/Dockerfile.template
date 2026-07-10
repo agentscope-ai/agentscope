@@ -1,4 +1,8 @@
 # syntax=docker/dockerfile:1.6
+# The filenames `.venv`, `_mcp_gateway_app.py`, `_glob_helper.py`,
+# `gateway.log` below MUST stay in sync with the DEFAULT_GATEWAY_*
+# constants in ``agentscope.workspace._utils`` — the base class derives
+# runtime paths from those and joins them under ``_gateway_home``.
 {node_from_block}FROM {base_image}
 
 # Install uv via Astral's official shell installer.

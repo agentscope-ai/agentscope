@@ -406,7 +406,7 @@ class MilvusLiteStore(VectorStoreBase):
     @staticmethod
     def _build_document_filter(document_id: str) -> str:
         """Build a Milvus scalar filter for a document id."""
-        return f"document_id == {json.dumps(document_id)}"
+        return f"document_id == {json.dumps(document_id, ensure_ascii=False)}"
 
     @staticmethod
     def _build_metadata_filter(
@@ -417,7 +417,8 @@ class MilvusLiteStore(VectorStoreBase):
             return ""
 
         return " and ".join(
-            f"metadata[{json.dumps(key)}] == {json.dumps(value)}"
+            f"metadata[{json.dumps(key, ensure_ascii=False)}] == "
+            f"{json.dumps(value, ensure_ascii=False)}"
             for key, value in metadata_filter.items()
         )
 

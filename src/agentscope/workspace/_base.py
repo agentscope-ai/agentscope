@@ -13,6 +13,8 @@ Three concrete implementations:
 - :class:`agentscope.workspace.LocalWorkspace` — local filesystem.
 - :class:`agentscope.workspace.DockerWorkspace` — Docker container.
 - :class:`agentscope.workspace.E2BWorkspace` — E2B cloud sandbox.
+- :class:`agentscope.workspace.OpenSandboxWorkspace` — OpenSandbox
+  remote sandbox.
 
 Consumers:
 
@@ -71,6 +73,12 @@ from ..message import (
 )
 from ..skill import Skill
 from ..tool import BackendBase, ToolBase
+from ._utils import (
+    DEFAULT_DATA_DIR,
+    DEFAULT_MCP_FILE,
+    DEFAULT_SESSIONS_DIR,
+    DEFAULT_SKILLS_DIR,
+)
 
 _EXTRACT_TAR_SHIM = (
     "import tarfile, sys, os\n"
@@ -129,10 +137,10 @@ class WorkspaceBase:
     _mcps: list[MCPClient]
     """Currently registered MCP clients (in-memory authoritative copy).
 
-    For sandbox-gateway subclasses this list mirrors the spec the
-    gateway was registered with (live handles hang off
-    :class:`SandboxedWorkspaceBase._gateway_clients`); for
-    :class:`LocalWorkspace` it *is* the live handle list.
+    :class:`LocalWorkspace` stores the local live handles directly;
+    :class:`SandboxedWorkspaceBase` stores gateway-side
+    :class:`GatewayMCPClient` wrappers (also ``MCPClient`` instances)
+    so ``list_mcps`` / persistence work uniformly across both.
     """
 
     _mcp_lock: asyncio.Lock
@@ -140,15 +148,6 @@ class WorkspaceBase:
 
     _skill_lock: asyncio.Lock
     """Guards mutation of the ``skills/`` directory."""
-
-    _glob_helper_path: str | None = None
-    """Optional path (backend-side) to the ``Glob`` helper script.
-
-    ``None`` means the :class:`Glob` builtin tool falls back to its
-    default behaviour (suitable for :class:`LocalBackend`). Remote
-    backends override this with a sandbox-/container-side script path
-    so :class:`Glob` can run efficiently inside the workspace.
-    """
 
     def __init__(
         self,
@@ -192,22 +191,28 @@ class WorkspaceBase:
     @property
     def _data_dir(self) -> str:
         """``${workdir}/data`` — offloaded multimodal payloads."""
-        return self.get_backend().join_path(self.workdir, "data")
+        return self.get_backend().join_path(self.workdir, DEFAULT_DATA_DIR)
 
     @property
     def _skills_dir(self) -> str:
         """``${workdir}/skills`` — skill subdirectories."""
-        return self.get_backend().join_path(self.workdir, "skills")
+        return self.get_backend().join_path(
+            self.workdir,
+            DEFAULT_SKILLS_DIR,
+        )
 
     @property
     def _sessions_dir(self) -> str:
         """``${workdir}/sessions`` — per-session offload files."""
-        return self.get_backend().join_path(self.workdir, "sessions")
+        return self.get_backend().join_path(
+            self.workdir,
+            DEFAULT_SESSIONS_DIR,
+        )
 
     @property
     def _mcp_file(self) -> str:
         """``${workdir}/.mcp`` — persisted MCP registrations."""
-        return self.get_backend().join_path(self.workdir, ".mcp")
+        return self.get_backend().join_path(self.workdir, DEFAULT_MCP_FILE)
 
     @property
     def is_persistent(self) -> bool:
@@ -389,53 +394,6 @@ class WorkspaceBase:
                 self._mcp_file,
                 e,
             )
-
-    async def _restore_or_seed_mcps(self) -> list[MCPClient]:
-        """Read ``${workdir}/.mcp`` if present, else return ``default_mcps``.
-
-        Decoding / validation failures are downgraded to warnings and
-        treated as a missing file — :attr:`default_mcps` is returned so
-        a corrupted persistence file cannot block startup.
-        """
-        if not self.is_persistent:
-            return list(self.default_mcps)
-        backend = self._backend
-        if backend is None:
-            return list(self.default_mcps)
-        try:
-            if not await backend.file_exists(self._mcp_file):
-                return list(self.default_mcps)
-            raw = await backend.read_file(self._mcp_file)
-        except (FileNotFoundError, OSError) as e:
-            logger.warning(
-                "Failed to read MCP file at %s, falling back to "
-                "default_mcps: %s",
-                self._mcp_file,
-                e,
-            )
-            return list(self.default_mcps)
-        try:
-            data = json.loads(raw.decode("utf-8"))
-        except Exception as e:
-            logger.warning(
-                "Failed to parse MCP file at %s, falling back to "
-                "default_mcps: %s",
-                self._mcp_file,
-                e,
-            )
-            return list(self.default_mcps)
-        result: list[MCPClient] = []
-        for m in data:
-            try:
-                result.append(MCPClient.model_validate(m))
-            except Exception as e:
-                name = m.get("name", "?") if isinstance(m, dict) else "?"
-                logger.warning(
-                    "Skipping invalid MCP entry %r: %s",
-                    name,
-                    e,
-                )
-        return result
 
     # ── for Agent: offload (shared) ────────────────────────────────
 
@@ -745,7 +703,7 @@ class WorkspaceBase:
         await backend.delete_path(target_dir)
         logger.info("Removed skill %r at %s", name, target_dir)
 
-    async def _seed_skills(self) -> None:
+    async def _setup_skills(self) -> None:
         """Copy :attr:`skill_paths` into ``${workdir}/skills`` once.
 
         Skips seeding when:

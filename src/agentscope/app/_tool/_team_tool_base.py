@@ -12,6 +12,7 @@ from ...tool import ToolBase
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
     from ..storage import StorageBase
+    from ..workspace_manager import WorkspaceManagerBase
 
 
 class _TeamToolBase(ToolBase):
@@ -20,8 +21,9 @@ class _TeamToolBase(ToolBase):
     All team tools are constructed at agent assembly time (in
     :func:`get_toolkit`) with the request-scoped ``user_id``,
     ``session_id``, and ``agent_id`` plus ``storage`` + ``message_bus``
-    references. Each tool's ``__call__`` does its work directly via
-    those two dependencies — there is no intermediate service layer.
+    + ``workspace_manager`` references. Each tool's ``__call__`` does
+    its work directly via those dependencies — there is no intermediate
+    service layer.
 
     Permissions: all team tools allow themselves unconditionally — the
     agent's authority to call them is already gated by the
@@ -43,6 +45,7 @@ class _TeamToolBase(ToolBase):
         self,
         storage: "StorageBase",
         message_bus: "MessageBus",
+        workspace_manager: "WorkspaceManagerBase",
         user_id: str,
         session_id: str,
         agent_id: str,
@@ -51,17 +54,13 @@ class _TeamToolBase(ToolBase):
 
         Args:
             storage (`StorageBase`):
-                Application storage. Each tool reads the current
-                session / team records at ``__call__`` time to do
-                runtime precondition checks (am I in a team? am I the
-                leader?) — this is what lets all four team tools be
-                attached unconditionally to ``source='user'`` agents
-                without depending on a stale snapshot of ``team_id``
-                taken at agent assembly time.
+                Application storage.
             message_bus (`MessageBus`):
-                Application message bus. Tools that deliver
-                inter-session messages (``AgentCreate``, ``TeamSay``)
-                push HintBlocks + wakeups through it.
+                Application message bus for inter-session delivery.
+            workspace_manager (`WorkspaceManagerBase`):
+                Workspace manager, consulted by tools that provision
+                brand-new sessions (e.g. ``AgentInvite``) to honour
+                the deployment's isolation policy.
             user_id (`str`):
                 The owner user id of the calling agent.
             session_id (`str`):
@@ -71,6 +70,7 @@ class _TeamToolBase(ToolBase):
         """
         self._storage = storage
         self._message_bus = message_bus
+        self._workspace_manager = workspace_manager
         self._user_id = user_id
         self._session_id = session_id
         self._agent_id = agent_id

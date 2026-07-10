@@ -58,8 +58,8 @@ importers:
   frontend:
     dependencies:
       '@agentscope-ai/agentscope':
-        specifier: ^0.0.12
-        version: 0.0.12
+        specifier: ^0.0.13
+        version: 0.0.13
       '@fontsource-variable/geist':
         specifier: ^5.2.8
         version: 5.2.8
@@ -208,8 +208,8 @@ importers:
 
 packages:
 
-  '@agentscope-ai/agentscope@0.0.12':
-    resolution: {integrity: sha512-yiCNx1sqtZ2X0YHY3X4+BavDxyQ2QutSlYlVLLJ9pVw3oZg1qEKcWA7HkXiNyXtEDDs/zTM4zco8hyeTCvjKWw==}
+  '@agentscope-ai/agentscope@0.0.13':
+    resolution: {integrity: sha512-SUNKypyVR8ANu6mSiQ0cPaD2GuFzTJmTxj0FqFjjGR+gIy0J44L+46dOxbwfOoZS/2Cl60gMqV33A/K+XPcJVw==}
 
   '@babel/code-frame@7.29.0':
     resolution: {integrity: sha512-9NhCeYjq9+3uxgdtp20LSiJXJvN0FeCtNGpJxuMFZ1Kv3cWUNb6DOhJwUvcVCzKGR66cw4njwM6hrJLqgOwbcw==}
@@ -4644,7 +4644,7 @@ packages:
 
 snapshots:
 
-  '@agentscope-ai/agentscope@0.0.12':
+  '@agentscope-ai/agentscope@0.0.13':
     dependencies:
       '@cfworker/json-schema': 4.1.1
       '@modelcontextprotocol/sdk': 1.29.0(@cfworker/json-schema@4.1.1)(zod@4.4.3)

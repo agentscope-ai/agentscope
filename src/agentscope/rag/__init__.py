@@ -14,6 +14,7 @@ from ._vdb import (
     VectorRecord,
     VectorSearchResult,
     QdrantStore,
+    MongoDBStore,
 )
 from ._knowledge import KnowledgeBase
 
@@ -34,4 +35,5 @@ __all__ = [
     "VectorSearchResult",
     "QdrantStore",
     "KnowledgeBase",
+    "MongoDBStore",
 ]

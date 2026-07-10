@@ -76,7 +76,9 @@
 		"newLine": "new line",
 		"attach": "Attach file",
 		"attachNotSupported": "This model does not support file attachments",
-		"send": "Send"
+		"send": "Send",
+		"stop": "Stop generating",
+		"stopping": "Stopping ..."
 	},
 	"confirmCard": {
 		"toConfirm": "to confirm",

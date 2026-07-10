@@ -10,15 +10,18 @@ from fastapi.responses import StreamingResponse
 from ..._utils._common import _generate_id
 from ..access import ResourceKind
 from ..deps import (
+    get_chat_service,
     get_current_user_id,
     get_message_bus,
     get_resource_access_service,
     get_session_service,
     get_storage,
+    get_workspace_manager,
 )
 from ._schema import (
     CreateSessionRequest,
     CreateSessionResponse,
+    InterruptSessionResponse,
     ListMessagesResponse,
     ListSessionsResponse,
     SessionStatusResponse,
@@ -31,6 +34,7 @@ from ..message_bus import MessageBus, MessageBusKeys
 from .._service import (
     AgentView,
     ResourceAccessService,
+    ChatService,
     SessionService,
     SessionProjection,
     SubagentHitlProjector,
@@ -47,6 +51,7 @@ from ..storage import (
 from ...message import ToolCallState
 from ..storage._utils import _ensure_team_members
 from ...event import CustomEvent
+from ..workspace_manager import WorkspaceManagerBase
 
 
 async def _build_team_detail(
@@ -261,6 +266,7 @@ async def create_session(
     body: CreateSessionRequest,
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
+    workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
     access: ResourceAccessService = Depends(get_resource_access_service),
 ) -> CreateSessionResponse:
     """Create (or resume) a session for a given agent and workspace.
@@ -273,6 +279,10 @@ async def create_session(
         body (`CreateSessionRequest`): Agent, workspace, and model config.
         user_id (`str`): Injected authenticated user ID.
         storage (`StorageBase`): Injected storage backend.
+        workspace_manager (`WorkspaceManagerBase`): Injected workspace
+            manager; consulted via
+            :meth:`WorkspaceManagerBase.assign_workspace_id` to fill in
+            ``workspace_id`` when the request body omits it.
         access (`ResourceAccessService`): Injected access service.
 
     Returns:
@@ -298,11 +308,23 @@ async def create_session(
         body.knowledge_config,
     )
 
+    # Resolve the workspace binding for this session. Explicit
+    # ``body.workspace_id`` always wins (used by team invite / borrow
+    # flows to force sharing); otherwise defer to the manager's
+    # isolation policy — see ``WorkspaceManagerBase.assign_workspace_id``.
+    resolved_workspace_id = body.workspace_id or (
+        workspace_manager.assign_workspace_id(
+            user_id=user_id,
+            agent_id=body.agent_id,
+            session_id=_generate_id(),
+        )
+    )
+
     session_record = await storage.upsert_session(
         user_id=user_id,
         agent_id=body.agent_id,
         config=SessionConfig(
-            workspace_id=body.workspace_id or _generate_id(),
+            workspace_id=resolved_workspace_id,
             chat_model_config=body.chat_model_config,
             fallback_chat_model_config=body.fallback_chat_model_config,
             tts_model_config=body.tts_model_config,
@@ -352,6 +374,49 @@ async def delete_session(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Session '{session_id}' not found.",
         )
+
+
+@session_router.post(
+    "/{session_id}/interrupt",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Interrupt a running or HITL-parked chat run for a session",
+    responses={
+        404: {"description": "Session not found."},
+    },
+)
+async def interrupt_session(
+    session_id: str,
+    agent_id: str = Query(description="Agent the session belongs to."),
+    user_id: str = Depends(get_current_user_id),
+    chat_service: ChatService = Depends(get_chat_service),
+) -> InterruptSessionResponse:
+    """Request interruption of an in-progress reply for a session.
+
+    Thin HTTP wrapper around :meth:`ChatService.interrupt`; see that
+    method for the running vs not-running dispatch. Idempotent — an
+    idle target session is a silent no-op at the agent layer.
+
+    Args:
+        session_id: The session whose reply should be interrupted.
+        agent_id: The agent that owns the session.
+        user_id: Injected authenticated user id.
+        chat_service: Injected chat service.
+
+    Returns:
+        202 with :class:`InterruptSessionResponse` echoing the
+        session id.
+
+    Raises:
+        HTTPException: 404 if the session does not exist.
+    """
+    try:
+        await chat_service.interrupt(user_id, session_id, agent_id)
+    except LookupError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        ) from e
+    return InterruptSessionResponse(session_id=session_id)
 
 
 @session_router.patch(
@@ -667,7 +732,7 @@ async def stream_session_events(
             MessageBusKeys.session_events(session_id),
             max_count=MessageBusKeys.SESSION_REPLAY_MAX_LEN,
         ):
-            yield f"data: {json.dumps(event)}\n\n"
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
         # 1b. Inject pending subagent HITL cards projected onto this
         #     session as a team leader (design §3.5). These live in a
@@ -703,7 +768,12 @@ async def stream_session_events(
                 name=SubagentHitlProjector.EVT_REQUIRE,
                 value=payload,
             )
-            yield f"data: {json.dumps(custom.model_dump(mode='json'))}\n\n"
+            data = json.dumps(
+                custom.model_dump(mode="json"),
+                ensure_ascii=False,
+            )
+
+            yield f"data: {data}\n\n"
 
         # 2. Live subscribe via a background feeder task that pushes
         #    events into a queue. The main loop reads from the queue
@@ -747,7 +817,7 @@ async def stream_session_events(
                     )
                     if item is None:
                         break
-                    yield f"data: {json.dumps(item)}\n\n"
+                    yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
                 except asyncio.TimeoutError:
                     yield ":\n\n"
         finally:
