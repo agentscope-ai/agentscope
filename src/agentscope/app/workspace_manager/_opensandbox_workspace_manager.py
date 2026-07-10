@@ -39,9 +39,7 @@ from ...workspace._opensandbox._constants import (
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_TIMEOUT,
 )
-from ...workspace._opensandbox._opensandbox_workspace import (
-    OpenSandboxWorkspace,
-)
+from ...workspace import OpenSandboxWorkspace
 
 from ._base import IsolationPolicy, WorkspaceManagerBase
 
