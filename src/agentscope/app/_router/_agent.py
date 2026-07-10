@@ -3,11 +3,14 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import ValidationError
 
 from ...agent import ContextConfig, ReActConfig
+from ..._utils._common import _flatten_json_schema
 from ..deps import get_current_user_id, get_session_service, get_storage
 from ._schema import (
     AgentSchemaResponse,
+    AgentSchemaV2Response,
     ListAgentsResponse,
     CreateAgentRequest,
     CreateAgentResponse,
@@ -26,15 +29,22 @@ agent_router = APIRouter(
 @agent_router.get(
     "/schema",
     response_model=AgentSchemaResponse,
-    summary="Get JSON Schema fragments for the agent form",
+    deprecated=True,
+    summary="[Deprecated] Legacy sectioned schema — use /schema/v2",
 )
 async def get_agent_schema() -> AgentSchemaResponse:
-    """Return the JSON Schema fragments used by the frontend to render
-    the agent create / edit forms.
+    """Return the legacy sectioned JSON Schema fragments.
 
-    The frontend uses three sections — identity, context config, and
-    react config — so we return them as separate self-contained schemas
-    rather than a single ``AgentData`` schema with ``$ref``s.
+    .. deprecated::
+        Superseded by :func:`get_agent_schema_v2`, which returns the
+        full :class:`AgentData` schema in a single ``schema`` field.
+        Kept for backwards compatibility with existing API consumers.
+        New consumers should call ``GET /agent/schema/v2``.
+
+    The frontend previously used three sections — identity, context
+    config, and react config — so we return them as separate
+    self-contained schemas rather than a single :class:`AgentData`
+    schema with ``$ref`` s.
 
     Returns:
         `AgentSchemaResponse`:
@@ -70,6 +80,50 @@ async def get_agent_schema() -> AgentSchemaResponse:
         context_config=context_schema,
         react_config=ReActConfig.model_json_schema(),
     )
+
+
+@agent_router.get(
+    "/schema/v2",
+    response_model=AgentSchemaV2Response,
+    summary="Full AgentData JSON Schema for the agent form",
+)
+async def get_agent_schema_v2() -> AgentSchemaV2Response:
+    """Return the full :class:`AgentData` JSON Schema.
+
+    Superset of the legacy sectioned endpoint. The response body is a
+    single ``schema`` field carrying the whole Pydantic-generated
+    schema of :class:`AgentData`, with two curated exclusions handled
+    at the model layer (so no post-processing is needed here):
+
+    - ``id``: server-assigned, marked :class:`SkipJsonSchema` on
+      :attr:`AgentData.id`.
+    - ``context_config.summary_schema``: internal structured-output
+      spec for the compression model, dropped below since it is not
+      user-editable and there is no equivalent hook on the Pydantic
+      side.
+
+    ``$ref`` inlining is delegated to
+    :func:`~agentscope._utils._common._flatten_json_schema` so the
+    frontend can render every property from the response body alone.
+
+    The frontend derives its section grouping (identity / context /
+    react / invite) directly from this schema — top-level scalar
+    properties are the "identity" section, and top-level nested-object
+    properties each become their own section. Adding a new
+    user-editable field to :class:`AgentData` is thus enough to have it
+    appear in the create / edit form without a router change.
+
+    Returns:
+        `AgentSchemaV2Response`:
+            ``schema`` = the full :class:`AgentData` JSON Schema.
+    """
+    schema = _flatten_json_schema(AgentData.model_json_schema())
+    # ``summary_schema`` is Pydantic's structured-output spec fed to the
+    # compression model — internal, not user-editable. No pydantic-side
+    # hook covers this deep nested field, so drop it after inlining.
+    context_config = schema.get("properties", {}).get("context_config", {})
+    context_config.get("properties", {}).pop("summary_schema", None)
+    return AgentSchemaV2Response(schema=schema)
 
 
 @agent_router.get(
@@ -121,16 +175,29 @@ async def create_agent(
     Returns:
         `CreateAgentResponse`:
             The server-assigned agent identifier.
+
+    Raises:
+        `HTTPException`: 422 if the request body passes
+            :class:`CreateAgentRequest` validation but the resulting
+            :class:`AgentData` fails its cross-field invariants (e.g.
+            ``invite_config.invitable=True`` without a non-empty
+            ``invite_description``). Symmetrical with
+            :func:`update_agent`.
     """
-    record = AgentRecord(
-        user_id=user_id,
-        data=AgentData(
+    try:
+        data = AgentData(
             name=body.name,
             system_prompt=body.system_prompt,
             context_config=body.context_config,
             react_config=body.react_config,
-        ),
-    )
+            invite_config=body.invite_config,
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=exc.errors(),
+        ) from exc
+    record = AgentRecord(user_id=user_id, data=data)
     agent_id = await storage.upsert_agent(user_id, record)
     return CreateAgentResponse(agent_id=agent_id)
 
@@ -173,7 +240,20 @@ async def update_agent(
         )
 
     updates = body.model_dump(exclude_none=True)
-    updated_data = existing.data.model_copy(update=updates)
+    # ``model_copy(update=...)`` skips validators; re-run
+    # ``AgentData.model_validate`` on the merged shape so the
+    # ``invite_config`` sub-model's ``invitable ⇒ non-empty description``
+    # invariant enforced by ``@model_validator(mode="after")`` produces
+    # an HTTP 422 instead of a stored-but-invalid record.
+    try:
+        updated_data = AgentData.model_validate(
+            {**existing.data.model_dump(), **updates},
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=exc.errors(),
+        ) from exc
     updated_agent = existing.model_copy(
         update={"data": updated_data, "updated_at": datetime.now()},
     )

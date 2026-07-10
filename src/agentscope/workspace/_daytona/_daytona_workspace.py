@@ -44,34 +44,18 @@ runtime sandbox handle.
 from __future__ import annotations
 
 import posixpath
+import shlex
 from typing import Any
 
 from ..._logging import logger
 from ...mcp import MCPClient
 from .._sandboxed_base import SandboxedWorkspaceBase
-from .._utils import (
-    _agentscope_version,
-    _is_released_install,
-    _read_gateway_script_bytes,
-    _read_glob_helper_bytes,
-)
 from ._bootstrap import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_TIMEOUT,
-    DEV_SRC_DIR_NAME,
-    DEV_SRC_TAR_NAME,
-    GATEWAY_CONFIG_NAME,
     GATEWAY_HOME_NAME,
-    GATEWAY_LOG_NAME,
-    GATEWAY_SCRIPT_NAME,
-    GATEWAY_VENV_NAME,
-    GLOB_HELPER_NAME,
     METADATA_WORKSPACE_ID_KEY,
     bootstrap_commands,
-    build_source_tarball,
-    log_bootstrap_attempt,
-    render_install_agentscope_cmd_dev,
-    render_install_agentscope_cmd_released,
 )
 from ._daytona_backend import DaytonaBackend
 
@@ -105,16 +89,10 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
     persisted state.
     """
 
-    # Gateway paths are derived from Daytona SDK path APIs during
-    # ``_provision_backend``; unlike Docker/E2B, they are not module
-    # constants because Daytona snapshots may choose a different user
-    # home.
-    _glob_helper_path: str
+    # Gateway home is derived from Daytona SDK path APIs during
+    # ``_provision_backend``; the shared base derives venv, python,
+    # script, log and glob-helper paths from this anchor.
     _gateway_home: str
-    _gateway_config: str
-    _gateway_log: str
-    _gateway_script: str
-    _gateway_python: str
 
     def __init__(
         self,
@@ -197,10 +175,7 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
 
         # ── SDK-derived paths ───────────────────────────────────
         self._user_home: str
-        self._gateway_venv: str
         self._uv_bin: str
-        self._dev_src_tar: str
-        self._dev_src_dir: str
 
         # ── runtime state (Daytona-only) ────────────────────────
         self._daytona: Any = None
@@ -230,9 +205,6 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
         # Ensure the backend default cwd exists before helper commands
         # such as ``file_exists`` run with ``cwd=self.workdir``.
         await self._backend.exec_shell(["mkdir", "-p", self.workdir], cwd="/")
-
-        if not await self._backend.file_exists(self._gateway_script):
-            await self._run_bootstrap()
 
     async def _teardown_backend(self) -> None:
         """Gracefully stop the sandbox and release the SDK client.
@@ -465,104 +437,32 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
             self._user_home,
             GATEWAY_HOME_NAME,
         )
-        self._gateway_venv = posixpath.join(
-            self._gateway_home,
-            GATEWAY_VENV_NAME,
-        )
-        self._gateway_python = posixpath.join(
-            self._gateway_venv,
-            "bin",
-            "python",
-        )
-        self._gateway_script = posixpath.join(
-            self._gateway_home,
-            GATEWAY_SCRIPT_NAME,
-        )
-        self._glob_helper_path = posixpath.join(
-            self._gateway_home,
-            GLOB_HELPER_NAME,
-        )
-        self._gateway_config = posixpath.join(
-            self._gateway_home,
-            GATEWAY_CONFIG_NAME,
-        )
-        self._gateway_log = posixpath.join(
-            self._gateway_home,
-            GATEWAY_LOG_NAME,
-        )
         self._uv_bin = posixpath.join(self._user_home, ".local", "bin", "uv")
-        self._dev_src_tar = posixpath.join(
-            self._gateway_home,
-            DEV_SRC_TAR_NAME,
-        )
-        self._dev_src_dir = posixpath.join(
-            self._gateway_home,
-            DEV_SRC_DIR_NAME,
-        )
 
-    async def _run_bootstrap(self) -> None:
-        """Provision a fresh sandbox: tools → uv → venv → scripts.
+    def _bootstrap_commands(self) -> list[str]:
+        """Provisioning commands for a fresh Daytona sandbox.
 
-        Released installs pin the host AgentScope version. Dev installs
-        upload a tarball of the current source tree and install it into
-        the gateway venv with ``--no-deps``.
+        The shared sandbox base runs these only when the gateway script
+        is missing, then uploads the glob helper and gateway script.
+        Daytona-specific path anchors come from the SDK, so the command
+        sequence does not assume a fixed OS user or home directory.
 
-        Each command runs through :class:`DaytonaBackend`; a non-zero
-        exit raises :class:`RuntimeError` with the command, exit code,
-        stderr and stdout so provider-side startup failures are visible
-        in host logs.
+        Returns:
+            `list[str]`:
+                Shell command strings executed in order through
+                ``["sh", "-c", command]``.
         """
-        backend = self.get_backend()
-        if _is_released_install():
-            log_bootstrap_attempt(self.workspace_id, "released")
-            install_cmd = render_install_agentscope_cmd_released(
-                uv_bin=self._uv_bin,
-                gateway_venv_py=self._gateway_python,
-                version=_agentscope_version(),
-            )
-        else:
-            log_bootstrap_attempt(self.workspace_id, "dev")
-            tar_bytes = build_source_tarball()
-            await backend.write_file(self._dev_src_tar, tar_bytes)
-            install_cmd = render_install_agentscope_cmd_dev(
-                uv_bin=self._uv_bin,
-                gateway_venv_py=self._gateway_python,
-                dev_src_tar=self._dev_src_tar,
-                dev_src_dir=self._dev_src_dir,
-            )
-
-        for cmd in bootstrap_commands(
-            workdir=self.workdir,
-            data_dir=self._data_dir,
-            skills_dir=self._skills_dir,
-            sessions_dir=self._sessions_dir,
+        install_cmd = (
+            f"{shlex.quote(self._uv_bin)} pip install --python "
+            f"{shlex.quote(self._gateway_python)} --no-deps 'agentscope'"
+        )
+        return bootstrap_commands(
             user_home=self._user_home,
-            gateway_home=self._gateway_home,
             gateway_venv=self._gateway_venv,
             gateway_venv_py=self._gateway_python,
             uv_bin=self._uv_bin,
             extra_pip=self.extra_pip,
             install_agentscope_cmd=install_cmd,
-        ):
-            result = await backend.exec_shell(
-                ["sh", "-c", cmd],
-                timeout=600.0,
-            )
-            if not result.ok():
-                raise RuntimeError(
-                    f"DaytonaWorkspace bootstrap failed "
-                    f"(exit {result.exit_code}) for: {cmd!r}\n"
-                    f"stderr: {result.stderr.decode(errors='replace')}\n"
-                    f"stdout: {result.stdout.decode(errors='replace')}",
-                )
-
-        await backend.write_file(
-            self._glob_helper_path,
-            _read_glob_helper_bytes(),
-        )
-        await backend.write_file(
-            self._gateway_script,
-            _read_gateway_script_bytes(),
         )
 
 

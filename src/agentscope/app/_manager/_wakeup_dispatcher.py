@@ -31,7 +31,11 @@ from typing import TYPE_CHECKING, Self
 from pydantic import TypeAdapter
 
 from ..._logging import logger
-from ...event import UserConfirmResultEvent, ExternalExecutionResultEvent
+from ...event import (
+    ExternalExecutionResultEvent,
+    UserConfirmResultEvent,
+    UserInterruptEvent,
+)
 from ..message_bus import MessageBusKeys
 from .._bus_ops import enqueue_run_trigger
 
@@ -42,9 +46,9 @@ if TYPE_CHECKING:
     from ._chat_run_registry import ChatRunRegistry
 
 # Parses a queued ``resume`` input dict back into its concrete event,
-# discriminated by the ``type`` field shared by both result events.
+# discriminated by the ``type`` field shared by these result events.
 _RESUME_INPUT_ADAPTER: TypeAdapter = TypeAdapter(
-    UserConfirmResultEvent | ExternalExecutionResultEvent,
+    UserConfirmResultEvent | ExternalExecutionResultEvent | UserInterruptEvent,
 )
 
 # Delay before re-queuing a ``resume`` trigger whose target session is

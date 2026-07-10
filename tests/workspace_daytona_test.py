@@ -9,6 +9,7 @@ Live tests are opt-in via ``DAYTONA_API_KEY``.
 import asyncio
 import json
 import os
+import shlex
 import sys
 import tempfile
 import types
@@ -19,7 +20,7 @@ from enum import Enum
 from types import SimpleNamespace
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 from _daytona_live_utils import (
     DAYTONA_API_KEY,
@@ -50,21 +51,15 @@ from agentscope.message import (
 )
 from agentscope.permission import PermissionMode
 from agentscope.state import AgentState
-from agentscope.tool import ExecResult, ToolResponse
+from agentscope.tool import ToolResponse
 from agentscope.workspace import DaytonaBackend, DaytonaWorkspace
 from agentscope.workspace import _sandboxed_base as sandboxed_mod
-from agentscope.workspace._daytona import _daytona_workspace as daytona_mod
 from agentscope.workspace._daytona._bootstrap import (
     DEFAULT_GATEWAY_PORT,
     METADATA_WORKSPACE_ID_KEY,
     bootstrap_commands,
-    render_install_agentscope_cmd_dev,
-    render_install_agentscope_cmd_released,
 )
-from agentscope.workspace._utils import (
-    _GATEWAY_BASE_REQUIREMENTS,
-    _read_glob_helper_bytes,
-)
+from agentscope.workspace._utils import _GATEWAY_BASE_REQUIREMENTS
 
 
 class _NullBus:
@@ -74,18 +69,37 @@ class _NullBus:
 class _NoOpStorage:
     """Storage placeholder for tools that only bind the reference."""
 
+    async def list_agents(self, _user_id: str) -> list[AgentRecord]:
+        """No invitable agents in toolkit assembly tests."""
+        return []
+
+
+class _NoOpWorkspaceManager:
+    """Workspace manager placeholder for toolkit assembly tests."""
+
 
 class _FakeProcess:
     """Daytona process fake."""
 
     def __init__(self) -> None:
         self.commands: list[str] = []
+        self.fs: Any = None
 
     async def exec(self, command: str, **_kwargs: object) -> object:
         """Record command and return success."""
         self.commands.append(command)
+        args = shlex.split(command)
+        exit_code = 0
+        if self.fs is not None and args[:2] == ["mkdir", "-p"]:
+            self.fs.dirs.update(args[2:])
+        elif self.fs is not None and args[:2] == ["test", "-e"]:
+            path = args[2]
+            exit_code = 0 if self.fs.exists(path) else 1
+        elif self.fs is not None and args[:2] == ["test", "-d"]:
+            path = args[2]
+            exit_code = 0 if path in self.fs.dirs else 1
         return SimpleNamespace(
-            exit_code=0,
+            exit_code=exit_code,
             result="",
             artifacts=SimpleNamespace(stdout=""),
             additional_properties={},
@@ -97,6 +111,11 @@ class _FakeFS:
 
     def __init__(self) -> None:
         self.files: dict[str, bytes] = {}
+        self.dirs: set[str] = set()
+
+    def exists(self, path: str) -> bool:
+        """Return whether a fake file or directory exists."""
+        return path in self.files or path in self.dirs
 
     async def download_file(self, path: str) -> bytes:
         """Return stored file bytes."""
@@ -106,6 +125,9 @@ class _FakeFS:
 
     async def upload_file(self, file: bytes, remote_path: str) -> None:
         """Store uploaded bytes."""
+        parent = os.path.dirname(remote_path)
+        if parent:
+            self.dirs.add(parent)
         self.files[remote_path] = file
 
 
@@ -131,8 +153,9 @@ class _FakeSandbox:
         self.created_at = f"2026-01-01T00:00:00Z-{sandbox_id}"
         self.updated_at: str | None = None
         self.last_activity_at: str | None = None
-        self.process = _FakeProcess()
         self.fs = _FakeFS()
+        self.process = _FakeProcess()
+        self.process.fs = self.fs
         self.started = False
         self.recovered = False
         self.stopped: list[dict[str, object]] = []
@@ -396,13 +419,17 @@ class _FakeGateway:
         *,
         backend: DaytonaBackend,
         gateway_port: int,
-        token: str,
-        timeout: float,
+        timeout: float | None = None,
+        inline_limit: int | None = None,
+        tmp_dir: str | None = None,
+        gateway_log_path: str | None = None,
     ) -> None:
         self.backend = backend
         self.gateway_port = gateway_port
-        self.token = token
         self.timeout = timeout
+        self.inline_limit = inline_limit
+        self.tmp_dir = tmp_dir
+        self.gateway_log_path = gateway_log_path
         self.closed = False
         _FakeGateway.instances.append(self)
 
@@ -411,8 +438,14 @@ class _FakeGateway:
         return True
 
     async def list_mcps(self) -> list[MCPClient]:
-        """No registered MCPs by default."""
-        return []
+        """Read persisted MCP specs from the fake sandbox."""
+        path = self.backend.join_path(self.backend._workdir, ".mcp")
+        try:
+            raw = await self.backend.read_file(path)
+        except FileNotFoundError:
+            return []
+        specs = json.loads(raw.decode("utf-8"))
+        return [MCPClient.model_validate(spec) for spec in specs]
 
     async def aclose(self) -> None:
         """Mark closed."""
@@ -420,16 +453,22 @@ class _FakeGateway:
 
     def make_client(self, spec: dict[str, object]) -> MCPClient:
         """Build a regular MCP client from spec for add_mcp tests."""
-        return _FakeGatewayMCPClient(str(spec["name"]))
+        return _FakeGatewayMCPClient(spec)
 
 
 class _FakeGatewayMCPClient:
     """Small gateway MCP client fake for add/remove tests."""
 
-    def __init__(self, name: str) -> None:
-        self.name = name
+    def __init__(self, spec: dict[str, object]) -> None:
+        self._spec = spec
+        self.name = str(spec["name"])
         self.connected = False
         self.closed = False
+
+    def model_dump(self, mode: str = "python") -> dict[str, object]:
+        """Return the original MCP spec for persistence."""
+        del mode
+        return self._spec
 
     async def connect(self) -> None:
         """Mark connected."""
@@ -457,17 +496,12 @@ def _install_fake_daytona_module() -> types.ModuleType:
 class TestDaytonaBootstrapHelpers(IsolatedAsyncioTestCase):
     """Pure bootstrap command rendering tests."""
 
-    async def test_bootstrap_commands_include_layout_tools_and_extra_pip(
+    async def test_bootstrap_commands_include_tools_and_extra_pip(
         self,
     ) -> None:
-        """Bootstrap commands provision layout, tools, venv and packages."""
+        """Bootstrap commands provision tools, venv and packages."""
         commands = bootstrap_commands(
-            workdir="/work",
-            data_dir="/work/data",
-            skills_dir="/work/skills",
-            sessions_dir="/work/sessions",
             user_home="/home/daytona",
-            gateway_home="/home/daytona/.agentscope",
             gateway_venv="/home/daytona/.agentscope/.venv",
             gateway_venv_py="/home/daytona/.agentscope/.venv/bin/python",
             uv_bin="/home/daytona/.local/bin/uv",
@@ -475,59 +509,23 @@ class TestDaytonaBootstrapHelpers(IsolatedAsyncioTestCase):
             install_agentscope_cmd="install-agentscope",
         )
 
-        self.assertEqual(len(commands), 6)
+        self.assertEqual(len(commands), 5)
+        self.assertIn("apt-get install", commands[0])
+        self.assertIn("ripgrep", commands[0])
+        self.assertIn("UV_INSTALL_DIR=/home/daytona/.local/bin", commands[1])
         self.assertEqual(
-            commands[0],
-            "mkdir -p /work /work/data /work/skills "
-            "/work/sessions /home/daytona/.agentscope",
-        )
-        self.assertIn("apt-get install", commands[1])
-        self.assertIn("ripgrep", commands[1])
-        self.assertIn("UV_INSTALL_DIR=/home/daytona/.local/bin", commands[2])
-        self.assertEqual(
-            commands[3],
+            commands[2],
             "/home/daytona/.local/bin/uv venv "
             "/home/daytona/.agentscope/.venv",
         )
         for package in (*_GATEWAY_BASE_REQUIREMENTS, "extra-a", "extra-b"):
-            self.assertIn(package, commands[4])
-        self.assertEqual(commands[5], "install-agentscope")
-
-    async def test_render_install_agentscope_commands(self) -> None:
-        """Released and dev install commands are rendered deterministically."""
-        released = render_install_agentscope_cmd_released(
-            uv_bin="/u/uv",
-            gateway_venv_py="/venv/bin/python",
-            version="1.2.3",
-        )
-        self.assertEqual(
-            released,
-            "/u/uv pip install --python /venv/bin/python "
-            "--no-deps agentscope==1.2.3",
-        )
-
-        dev = render_install_agentscope_cmd_dev(
-            uv_bin="/u/uv",
-            gateway_venv_py="/venv/bin/python",
-            dev_src_tar="/tmp/src.tar",
-            dev_src_dir="/tmp/src",
-        )
-        self.assertEqual(
-            dev,
-            "mkdir -p /tmp/src && tar -xf /tmp/src.tar -C /tmp/src && "
-            "/u/uv pip install --python /venv/bin/python --no-deps /tmp/src "
-            "&& rm -rf /tmp/src.tar /tmp/src",
-        )
+            self.assertIn(package, commands[3])
+        self.assertEqual(commands[4], "install-agentscope")
 
     async def test_bootstrap_commands_quote_shell_arguments(self) -> None:
         """SDK-derived paths and extra packages are shell-quoted."""
         commands = bootstrap_commands(
-            workdir="/work dir",
-            data_dir="/work dir/data",
-            skills_dir="/work dir/skills",
-            sessions_dir="/work dir/sessions",
             user_home="/home/day tona",
-            gateway_home="/home/day tona/.agentscope",
             gateway_venv="/home/day tona/.agentscope/.venv",
             gateway_venv_py="/home/day tona/.agentscope/.venv/bin/python",
             uv_bin="/home/day tona/.local/bin/uv",
@@ -535,49 +533,16 @@ class TestDaytonaBootstrapHelpers(IsolatedAsyncioTestCase):
             install_agentscope_cmd="install-agentscope",
         )
 
-        self.assertEqual(
-            commands[0],
-            "mkdir -p '/work dir' '/work dir/data' '/work dir/skills' "
-            "'/work dir/sessions' '/home/day tona/.agentscope'",
-        )
         self.assertIn(
             "UV_INSTALL_DIR='/home/day tona/.local/bin'",
-            commands[2],
+            commands[1],
         )
         self.assertEqual(
-            commands[3],
+            commands[2],
             "'/home/day tona/.local/bin/uv' venv "
             "'/home/day tona/.agentscope/.venv'",
         )
-        self.assertIn("'bad; echo injected'", commands[4])
-
-        released = render_install_agentscope_cmd_released(
-            uv_bin="/home/day tona/.local/bin/uv",
-            gateway_venv_py="/home/day tona/.agentscope/.venv/bin/python",
-            version="1.2.3",
-        )
-        self.assertEqual(
-            released,
-            "'/home/day tona/.local/bin/uv' pip install --python "
-            "'/home/day tona/.agentscope/.venv/bin/python' "
-            "--no-deps agentscope==1.2.3",
-        )
-
-        dev = render_install_agentscope_cmd_dev(
-            uv_bin="/home/day tona/.local/bin/uv",
-            gateway_venv_py="/home/day tona/.agentscope/.venv/bin/python",
-            dev_src_tar="/tmp/src tar",
-            dev_src_dir="/tmp/src dir",
-        )
-        self.assertEqual(
-            dev,
-            "mkdir -p '/tmp/src dir' && tar -xf '/tmp/src tar' "
-            "-C '/tmp/src dir' && '/home/day tona/.local/bin/uv' "
-            "pip install --python "
-            "'/home/day tona/.agentscope/.venv/bin/python' "
-            "--no-deps '/tmp/src dir' && "
-            "rm -rf '/tmp/src tar' '/tmp/src dir'",
-        )
+        self.assertIn("'bad; echo injected'", commands[3])
 
 
 class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
@@ -599,8 +564,8 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
         self.gateway_patch.start()
         self.bootstrap_patch = patch.object(
             DaytonaWorkspace,
-            "_run_bootstrap",
-            AsyncMock(),
+            "_bootstrap_commands",
+            return_value=[],
         )
         self.bootstrap_patch.start()
 
@@ -778,22 +743,10 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
             "/users/daytona/.agentscope/_glob_helper.py",
         )
         self.assertEqual(
-            workspace._gateway_config,
-            "/users/daytona/.agentscope/gateway.config.json",
-        )
-        self.assertEqual(
             workspace._gateway_log,
             "/users/daytona/.agentscope/gateway.log",
         )
         self.assertEqual(workspace._uv_bin, "/users/daytona/.local/bin/uv")
-        self.assertEqual(
-            workspace._dev_src_tar,
-            "/users/daytona/.agentscope/agentscope_src.tar",
-        )
-        self.assertEqual(
-            workspace._dev_src_dir,
-            "/users/daytona/.agentscope/agentscope_src",
-        )
 
     async def test_initialize_recovers_recoverable_error_candidate(
         self,
@@ -925,60 +878,56 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
             "fallback",
         )
 
-    async def test_run_bootstrap_error_includes_command_and_output(
+    async def test_initialize_bootstrap_error_includes_command_and_output(
         self,
     ) -> None:
         """Bootstrap failures include command, exit code, stderr and stdout."""
         self.bootstrap_patch.stop()
         try:
-            workspace = DaytonaWorkspace(workspace_id="wid-bootstrap-error")
-            workspace.workdir = "/work"
-            workspace._user_home = "/home/daytona"
-            workspace._gateway_home = "/home/daytona/.agentscope"
-            workspace._gateway_venv = "/home/daytona/.agentscope/.venv"
-            workspace._gateway_python = (
-                "/home/daytona/.agentscope/.venv/bin/python"
-            )
-            workspace._uv_bin = "/home/daytona/.local/bin/uv"
-            workspace._dev_src_tar = (
-                "/home/daytona/.agentscope/agentscope_src.tar"
-            )
-            workspace._dev_src_dir = "/home/daytona/.agentscope/agentscope_src"
-            workspace._glob_helper_path = "/home/daytona/.agentscope/glob.py"
-            workspace._gateway_script = "/home/daytona/.agentscope/gateway.py"
-            backend = DaytonaBackend(_FakeSandbox(), workdir="/work")
-            backend.exec_shell = AsyncMock(  # type: ignore[method-assign]
-                return_value=ExecResult(
-                    exit_code=9,
-                    stdout=b"bootstrap stdout",
-                    stderr=b"bootstrap stderr",
-                ),
-            )
-            backend.write_file = AsyncMock()  # type: ignore[method-assign]
-            workspace._backend = backend
 
-            with (
-                patch.object(
-                    daytona_mod,
-                    "_is_released_install",
-                    return_value=True,
-                ),
-                patch.object(
-                    daytona_mod,
-                    "_agentscope_version",
-                    return_value="1.2.3",
-                ),
+            class _FailingProcess(_FakeProcess):
+                async def exec(
+                    self,
+                    command: str,
+                    **_kwargs: object,
+                ) -> object:
+                    self.commands.append(command)
+                    if shlex.split(command) == [
+                        "sh",
+                        "-c",
+                        "broken bootstrap",
+                    ]:
+                        return SimpleNamespace(
+                            exit_code=9,
+                            result="bootstrap stdout",
+                            artifacts=SimpleNamespace(stdout=""),
+                            additional_properties={},
+                        )
+                    return await super().exec(command, **_kwargs)
+
+            candidate = _FakeSandbox("sandbox-bootstrap-error")
+            candidate.labels = {
+                METADATA_WORKSPACE_ID_KEY: "wid-bootstrap-error",
+            }
+            candidate.process = _FailingProcess()
+            candidate.process.fs = candidate.fs
+            _FakeDaytona.list_result[:] = [candidate]
+            workspace = DaytonaWorkspace(workspace_id="wid-bootstrap-error")
+
+            with patch.object(
+                DaytonaWorkspace,
+                "_bootstrap_commands",
+                return_value=["broken bootstrap"],
             ):
                 with self.assertRaisesRegex(
                     RuntimeError,
                     "DaytonaWorkspace bootstrap failed",
                 ) as cm:
-                    await workspace._run_bootstrap()
+                    await workspace.initialize()
 
             msg = str(cm.exception)
             self.assertIn("exit 9", msg)
-            self.assertIn("mkdir -p /work /work/data", msg)
-            self.assertIn("stderr: bootstrap stderr", msg)
+            self.assertIn("broken bootstrap", msg)
             self.assertIn("stdout: bootstrap stdout", msg)
         finally:
             self.bootstrap_patch.start()
@@ -1046,17 +995,13 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
         self.gateway_patch.start()
         self.bootstrap_patch = patch.object(
             DaytonaWorkspace,
-            "_run_bootstrap",
-            AsyncMock(),
+            "_bootstrap_commands",
+            return_value=[],
         )
         self.bootstrap_patch.start()
 
         self.workspace = DaytonaWorkspace(workspace_id="wid-tools")
         await self.workspace.initialize()
-        await self.workspace._backend.write_file(
-            self.workspace._glob_helper_path,
-            _read_glob_helper_bytes(),
-        )
         self.tools = {
             tool.name: tool for tool in await self.workspace.list_tools()
         }
@@ -1127,15 +1072,15 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
 
         await self.workspace.add_mcp(mcp)
 
-        self.assertIn("demo", self.workspace._gateway_clients)
+        self.assertIn("demo", [m.name for m in self.workspace._mcps])
         raw = await self.workspace._backend.read_file("/home/daytona/.mcp")
         self.assertEqual(json.loads(raw.decode("utf-8"))[0]["name"], "demo")
 
-        gw_client = self.workspace._gateway_clients["demo"]
+        gw_client = next(m for m in self.workspace._mcps if m.name == "demo")
         await self.workspace.remove_mcp("demo")
 
         self.assertTrue(gw_client.closed)
-        self.assertNotIn("demo", self.workspace._gateway_clients)
+        self.assertNotIn("demo", [m.name for m in self.workspace._mcps])
         raw = await self.workspace._backend.read_file("/home/daytona/.mcp")
         self.assertEqual(json.loads(raw.decode("utf-8")), [])
 
@@ -1679,6 +1624,9 @@ class TestDaytonaWorkspaceLive(IsolatedAsyncioTestCase):
             toolkit = await get_toolkit(
                 storage=_NoOpStorage(),  # type: ignore[arg-type]
                 workspace=workspace,
+                workspace_manager=(
+                    _NoOpWorkspaceManager()  # type: ignore[arg-type]
+                ),
                 scheduler_manager=SchedulerManager(
                     storage=_NoOpStorage(),  # type: ignore[arg-type]
                     message_bus=_NullBus(),  # type: ignore[arg-type]

@@ -12,7 +12,8 @@ from ._team_tool_base import _TeamToolBase
 from .._types import SubAgentTemplate
 from ..message_bus import MessageBusKeys
 from .._bus_ops import enqueue_run_trigger
-from ..storage import AgentData, AgentRecord, SessionConfig
+from ..storage import AgentData, AgentRecord, SessionConfig, TeamMember
+from ..storage._utils import _ensure_team_members
 from ...message import HintBlock, TextBlock, ToolResultState
 from ...permission import PermissionContext
 from ...state import AgentState
@@ -21,6 +22,7 @@ from ...tool import ToolChunk, ParamsBase
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
     from ..storage import StorageBase
+    from ..workspace_manager import WorkspaceManagerBase
 
 
 _DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
@@ -177,6 +179,7 @@ overall communication topology unnecessarily complex.
         self,
         storage: "StorageBase",
         message_bus: "MessageBus",
+        workspace_manager: "WorkspaceManagerBase",
         user_id: str,
         session_id: str,
         agent_id: str,
@@ -184,34 +187,37 @@ overall communication topology unnecessarily complex.
     ) -> None:
         """Bind request-scoped identifiers plus sub-agent templates.
 
-        Extends :meth:`_TeamToolBase.__init__` with an optional
+        Extends :meth:`_TeamToolBase.__init__` with the optional
         template registry. The built-in ``"default"`` template is
-        always present as a fallback; developers can override it by
-        registering their own template with ``type="default"``.
-
-        When more than one template type is available (i.e. custom
-        templates were registered), the tool's ``input_schema`` is
-        dynamically extended with a ``subagent_type`` enum field so
-        the leader agent can choose which type to create.
+        always injected; extra templates unlock a ``subagent_type``
+        enum in the tool's input schema.
 
         Args:
             storage (`StorageBase`):
                 Application storage backend.
             message_bus (`MessageBus`):
-                Application message bus for inter-session delivery.
+                Application message bus.
+            workspace_manager (`WorkspaceManagerBase`):
+                Workspace manager (forwarded to base for uniform
+                team-tool wiring; currently unused here).
             user_id (`str`):
-                The owner user id of the calling agent.
+                The owner user id.
             session_id (`str`):
-                The current session id of the calling agent.
+                The calling session id.
             agent_id (`str`):
-                The id of the agent invoking the tool.
+                The calling agent id.
             sub_agent_templates (`dict[str, SubAgentTemplate] | None`, \
 optional):
-                Template registry keyed by template type. The
-                built-in ``"default"`` template is injected
-                automatically if not already present.
+                Template registry keyed by type.
         """
-        super().__init__(storage, message_bus, user_id, session_id, agent_id)
+        super().__init__(
+            storage,
+            message_bus,
+            workspace_manager,
+            user_id,
+            session_id,
+            agent_id,
+        )
 
         self._sub_agent_templates: dict[str, SubAgentTemplate] = dict(
             sub_agent_templates or {},
@@ -375,6 +381,24 @@ optional):
             # ``name`` (not agent_id), so duplicates would be ambiguous
             # and unaddressable. The leader's name participates too —
             # workers must not collide with it.
+            #
+            # Also reject ``@`` in the name: invited members display as
+            # ``"<name>@<agent_id[:8]>"`` in TeamSay, and letting a
+            # created member sneak an ``@`` into its name would make
+            # the two routing forms visually collide.
+            if "@" in name:
+                return ToolChunk(
+                    content=[
+                        TextBlock(
+                            text=(
+                                f"AgentCreate: member name {name!r} cannot "
+                                f"contain the character '@'."
+                            ),
+                        ),
+                    ],
+                    state=ToolResultState.ERROR,
+                )
+
             leader_agent_record = await self._storage.get_agent(
                 self._user_id,
                 leader_session.agent_id,
@@ -382,10 +406,15 @@ optional):
             existing_names: set[str] = set()
             if leader_agent_record is not None:
                 existing_names.add(leader_agent_record.data.name)
-            for member_id in team.data.member_ids:
+            members = await _ensure_team_members(
+                self._storage,
+                self._user_id,
+                team,
+            )
+            for member in members:
                 member_record = await self._storage.get_agent(
-                    self._user_id,
-                    member_id,
+                    member.owner_id,
+                    member.agent_id,
                 )
                 if member_record is not None:
                     existing_names.add(member_record.data.name)
@@ -480,10 +509,25 @@ optional):
                 team.id,
             )
 
-            # 3. Append worker to team.member_ids.
+            # 3. Append worker to the team roster. Write both the
+            #    legacy ``member_ids`` (for backwards-compatible
+            #    readers) and the new ``members`` entry with
+            #    ``role="created"`` — the two must stay in sync so
+            #    ``ensure_team_members`` and any legacy reader agree
+            #    on membership. ``members`` above was materialised via
+            #    the same helper, so it includes any prior migration.
             team.data.member_ids = [
                 *team.data.member_ids,
                 worker_agent.id,
+            ]
+            team.data.members = [
+                *members,
+                TeamMember(
+                    owner_id=self._user_id,
+                    agent_id=worker_agent.id,
+                    session_id=worker_session.id,
+                    role="created",
+                ),
             ]
             await self._storage.upsert_team(self._user_id, team)
 

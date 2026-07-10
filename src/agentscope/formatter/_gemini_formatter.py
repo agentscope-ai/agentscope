@@ -2,7 +2,6 @@
 """Google Gemini API formatter in agentscope."""
 import base64
 import fnmatch
-import json
 from abc import ABC
 from typing import Any
 
@@ -11,6 +10,7 @@ from pydantic import Field
 
 from ._formatter_base import FormatterBase
 from .._logging import logger
+from .._utils._common import _json_loads_with_repair
 from ..message import (
     Msg,
     TextBlock,
@@ -157,7 +157,14 @@ class GeminiChatFormatter(_GeminiFormatterBase):
                     # Gemini API requires `thought: true` to mark a part as a
                     # thinking/reasoning block so the model can distinguish it
                     # from normal text and maintain reasoning continuity.
-                    parts.append({"thought": True, "text": block.thinking})
+                    # Skip empty thinking — Gemini rejects a thought part
+                    # whose text is empty with a 400
+                    # ("contents.parts must not be empty"). Empty thinking
+                    # occurs when a reasoning model returns no summary.
+                    if block.thinking:
+                        parts.append(
+                            {"thought": True, "text": block.thinking},
+                        )
 
                 elif isinstance(block, HintBlock):
                     if parts:
@@ -199,7 +206,13 @@ class GeminiChatFormatter(_GeminiFormatterBase):
                             "function_call": {
                                 "id": block.id,
                                 "name": block.name,
-                                "args": json.loads(block.input or "{}"),
+                                # Use the repair helper so a truncated input
+                                # (from interrupted streaming or context
+                                # compression) degrades to {} instead of
+                                # raising JSONDecodeError.
+                                "args": _json_loads_with_repair(
+                                    block.input or "{}",
+                                ),
                             },
                         },
                     )

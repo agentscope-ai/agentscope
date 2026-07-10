@@ -4,9 +4,11 @@ from typing import Any
 
 from pydantic import Field
 
+from ._constants import HANDLE_LEN
 from ._team_tool_base import _TeamToolBase
 from ..message_bus import MessageBusKeys
 from .._bus_ops import enqueue_run_trigger
+from ..storage._utils import _ensure_team_members
 from ...message import HintBlock, TextBlock, ToolResultState
 from ...tool import ToolChunk, ParamsBase
 
@@ -200,12 +202,19 @@ class TeamSay(_TeamToolBase):
                     state=ToolResultState.ERROR,
                 )
 
-            # Build a (name -> (session_id, agent_id)) directory in one
-            # pass over the team. Routing is by **name** rather than
-            # agent_id so workers can address the leader (they receive
-            # the leader's name in the <team-message from="..."> hint
-            # but never see the leader's agent_id). Uniqueness of names
-            # within the team is enforced at AgentCreate time.
+            # Build a (name -> (session_id, agent_id)) directory. The
+            # leader is always in the directory under its plain agent
+            # name; workers come from the team's members roster via
+            # ``ensure_team_members`` (which migrates legacy
+            # ``member_ids``-only records on first read). Invited
+            # members display as ``"<name>@<agent_id[:8]>"`` so a
+            # borrowed agent whose name collides with an already-created
+            # member (or the leader) remains addressable.
+            #
+            # Uniqueness of the resulting display strings within a team
+            # is preserved by the AgentCreate name check (which rejects
+            # ``@``) and by AgentInvite's one-borrow-per-agent-per-team
+            # rule.
             leader_agent = await self._storage.get_agent(
                 self._user_id,
                 leader_session.agent_id,
@@ -218,22 +227,26 @@ class TeamSay(_TeamToolBase):
             directory: dict[str, tuple[str, str]] = {
                 leader_name: (leader_session.id, leader_session.agent_id),
             }
-            for worker_agent_id in team.data.member_ids:
-                worker_agent = await self._storage.get_agent(
-                    self._user_id,
-                    worker_agent_id,
+            members = await _ensure_team_members(
+                self._storage,
+                self._user_id,
+                team,
+            )
+            for member in members:
+                member_agent = await self._storage.get_agent(
+                    member.owner_id,
+                    member.agent_id,
                 )
-                if worker_agent is None:
+                if member_agent is None:
                     continue
-                sessions = await self._storage.list_sessions(
-                    self._user_id,
-                    worker_agent_id,
-                )
-                if sessions:
-                    directory[worker_agent.data.name] = (
-                        sessions[0].id,
-                        worker_agent_id,
+                if member.role == "invited":
+                    display = (
+                        f"{member_agent.data.name}"
+                        f"@{member.agent_id[:HANDLE_LEN]}"
                     )
+                else:
+                    display = member_agent.data.name
+                directory[display] = (member.session_id, member.agent_id)
 
             own_session_ids = {sid for sid, _aid in directory.values()}
             if self._session_id not in own_session_ids:
