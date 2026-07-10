@@ -47,9 +47,6 @@ Layout:
 ├── skills/      # reusable skills
 └── sessions/    # session context and tool results
 ```
-
-Use the MCP-provided tools to interact with the container's filesystem
-and processes.
 </workspace>"""
 
 

@@ -4,41 +4,38 @@
 from __future__ import annotations
 
 import asyncio
-import importlib
 from datetime import timedelta
-from typing import Any
+import shlex
+from typing import TYPE_CHECKING, Literal
 
 from ..._logging import logger
 from ...mcp import MCPClient
 from .._sandboxed_base import SandboxedWorkspaceBase
 from .._utils import (
-    _agentscope_version,
-    _is_released_install,
+    _GATEWAY_BASE_REQUIREMENTS,
     _read_gateway_script_bytes,
     _read_glob_helper_bytes,
 )
-from ._bootstrap import (
+from ._constants import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_IMAGE,
     BOOTSTRAP_COMMAND_TIMEOUT,
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_TIMEOUT,
-    DEV_SRC_TAR,
-    GATEWAY_CONFIG,
     GATEWAY_HOME,
-    GATEWAY_LOG,
-    GATEWAY_SCRIPT,
-    GATEWAY_VENV_PY,
-    GLOB_HELPER_SCRIPT,
     METADATA_WORKSPACE_ID_KEY,
     SANDBOX_WORKDIR,
-    bootstrap_commands,
-    build_source_tarball,
-    log_bootstrap_attempt,
-    render_install_agentscope_cmd_dev,
-    render_install_agentscope_cmd_released,
 )
 from ._opensandbox_backend import OpenSandboxBackend
+
+if TYPE_CHECKING:
+    from opensandbox import Sandbox
+    from opensandbox.config.connection import ConnectionConfig
+    from opensandbox.models.sandboxes import (
+        NetworkPolicy,
+        SandboxInfo,
+    )
+
 
 _DEFAULT_INSTRUCTIONS = """<workspace>
 You have an OpenSandbox-based workspace. All tool calls execute **inside
@@ -52,9 +49,6 @@ Layout:
 ├── skills/      # reusable skills
 └── sessions/    # session context and tool results
 ```
-
-Use the MCP-provided tools to interact with the sandbox's filesystem
-and processes.
 </workspace>"""
 
 
@@ -65,12 +59,7 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
     not retained as instance state past :meth:`initialize`.
     """
 
-    _glob_helper_path = GLOB_HELPER_SCRIPT
     _gateway_home = GATEWAY_HOME
-    _gateway_config = GATEWAY_CONFIG
-    _gateway_log = GATEWAY_LOG
-    _gateway_script = GATEWAY_SCRIPT
-    _gateway_python = GATEWAY_VENV_PY
 
     def __init__(
         self,
@@ -79,7 +68,7 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         image: str = DEFAULT_IMAGE,
         api_key: str = "",
         domain: str = "",
-        protocol: str = "http",
+        protocol: Literal["http", "https"] = "http",
         request_timeout_seconds: float | None = DEFAULT_REQUEST_TIMEOUT,
         timeout_seconds: int = DEFAULT_TIMEOUT,
         gateway_port: int = DEFAULT_GATEWAY_PORT,
@@ -87,7 +76,7 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         sandbox_metadata: dict[str, str] | None = None,
         resource: dict[str, str] | None = None,
         entrypoint: list[str] | None = None,
-        network_policy: Any | None = None,
+        network_policy: NetworkPolicy | None = None,
         extra_pip: list[str] | None = None,
         instructions: str = _DEFAULT_INSTRUCTIONS,
         default_mcps: list[MCPClient] | None = None,
@@ -110,7 +99,7 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
             domain (`str`, defaults to `""`):
                 Optional OpenSandbox server domain.
             protocol (`str`, defaults to `"http"`):
-                Protocol forwarded to the OpenSandbox connection config.
+                Protocol to use (http/https)
             request_timeout_seconds (`float | None`, optional):
                 SDK HTTP request timeout. ``None`` leaves the SDK
                 default in effect.
@@ -126,7 +115,7 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
                 OpenSandbox resource hints for newly-created sandboxes.
             entrypoint (`list[str] | None`, optional):
                 Entrypoint override for newly-created sandboxes.
-            network_policy (`Any | None`, optional):
+            network_policy (`NetworkPolicy | None`, optional):
                 Creation-time OpenSandbox network policy. Runtime egress
                 mutation is intentionally left to a follow-up.
             extra_pip (`list[str] | None`, optional):
@@ -161,7 +150,7 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         self.extra_pip = list(extra_pip or [])
         self.instructions = instructions
 
-        self._sandbox: Any = None
+        self._sandbox: Sandbox | None = None
         self._backend: OpenSandboxBackend | None = None
 
     @property
@@ -178,11 +167,17 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         and every step is idempotent so an interrupted bootstrap
         re-runs cleanly.
         """
-        await self._attach_or_create_sandbox()
+        existing = await self._find_existing_sandbox()
+        if existing is not None:
+            self._sandbox = await self._attach_existing_sandbox(existing)
+        else:
+            self._sandbox = await self._create_sandbox()
+        await self._wait_until_running()
+
         self._backend = OpenSandboxBackend(self._sandbox, SANDBOX_WORKDIR)
 
         marker = await self._backend.exec_shell(
-            ["test", "-e", GATEWAY_SCRIPT],
+            ["test", "-e", self._gateway_script],
             cwd="/",
         )
         if not marker.ok():
@@ -206,11 +201,11 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         if self._sandbox is not None:
             try:
                 await self._sandbox.pause()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning("OpenSandboxWorkspace: pause failed: %s", exc)
             try:
                 await self._sandbox.close()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning(
                     "OpenSandboxWorkspace: local close failed: %s",
                     exc,
@@ -226,21 +221,11 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         """
         return self.instructions.format(workdir=SANDBOX_WORKDIR)
 
-    def _merged_metadata(self) -> dict[str, str]:
-        """Merge caller metadata with the stable workspace id tag."""
-        return {
-            **self.sandbox_metadata,
-            METADATA_WORKSPACE_ID_KEY: self.workspace_id,
-        }
-
-    def _connection_config(self) -> Any:
+    def _connection_config(self) -> ConnectionConfig:
         """Build OpenSandbox connection config on demand."""
-        ConnectionConfig = _import_sdk_attr(
-            "opensandbox.config.connection",
-            "ConnectionConfig",
-        )
+        from opensandbox.config.connection import ConnectionConfig
 
-        kwargs: dict[str, Any] = {"protocol": self.protocol}
+        kwargs: dict = {"protocol": self.protocol}
         if self.api_key:
             kwargs["api_key"] = self.api_key
         if self.domain:
@@ -251,15 +236,14 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
             )
         return ConnectionConfig(**kwargs)
 
-    async def _find_existing_sandbox(self) -> Any:
+    async def _find_existing_sandbox(self) -> SandboxInfo | None:
         """Return the most recent sandbox matching this workspace id."""
-        SandboxFilter = _import_sdk_attr(
-            "opensandbox.models.sandboxes",
-            "SandboxFilter",
-        )
-        SandboxManager = _import_sdk_attr("opensandbox", "SandboxManager")
+        from opensandbox.models.sandboxes import SandboxFilter
+        from opensandbox import SandboxManager
 
-        manager = await self._create_sandbox_manager(SandboxManager)
+        manager = await SandboxManager.create(
+            connection_config=self._connection_config(),
+        )
         sandbox_filter = SandboxFilter(
             states=["RUNNING", "PAUSED"],
             metadata={METADATA_WORKSPACE_ID_KEY: self.workspace_id},
@@ -274,7 +258,7 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
                     "OpenSandboxWorkspace: manager close failed: %s",
                     exc,
                 )
-        candidates = self._sandbox_infos(infos)
+        candidates = infos.sandbox_infos
         if not candidates:
             return None
         if len(candidates) > 1:
@@ -287,55 +271,17 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         candidates.sort(key=lambda item: item.created_at, reverse=True)
         return candidates[0]
 
-    async def _create_sandbox_manager(self, manager_cls: Any) -> Any:
-        """Create an OpenSandbox SDK manager."""
-        return await manager_cls.create(
-            connection_config=self._connection_config(),
-        )
-
-    @staticmethod
-    def _sandbox_infos(infos: Any) -> list[Any]:
-        """Normalize paged OpenSandbox SDK results into a list."""
-        if infos is None:
-            return []
-        return list(infos.sandbox_infos)
-
-    @staticmethod
-    def _info_id(info: Any) -> str:
-        """Return the sandbox id from an OpenSandbox SDK info object."""
-        if not info.id:
-            raise RuntimeError("OpenSandbox sandbox info has no id")
-        return str(info.id)
-
-    async def _attach_or_create_sandbox(self) -> None:
-        """Reattach to an existing sandbox by metadata, or create one.
-
-        Resolution rule: a single sandbox is expected per
-        ``workspace_id``. If multiple are returned (for example a
-        leaked running + paused pair after an unclean shutdown), we
-        attach to the newest by ``created_at`` and log a warning;
-        manual cleanup is left to the operator.
-
-        Always blocks until the sandbox is healthy so the caller can
-        issue ``commands`` / ``files`` calls without hitting transient
-        "not yet routable" errors after create, connect, or resume.
-        """
-        existing = await self._find_existing_sandbox()
-        if existing is not None:
-            self._sandbox = await self._attach_existing_sandbox(existing)
-        else:
-            self._sandbox = await self._create_sandbox()
-        await self._wait_until_running()
-
-    async def _create_sandbox(self) -> Any:
+    async def _create_sandbox(self) -> Sandbox:
         """Create a fresh sandbox with workspace metadata applied."""
-        opensandbox = _import_opensandbox()
-        Sandbox = opensandbox.Sandbox
+        from opensandbox import Sandbox
 
-        kwargs: dict[str, Any] = {
+        kwargs: dict = {
             "image": self.image,
             "connection_config": self._connection_config(),
-            "metadata": self._merged_metadata(),
+            "metadata": {
+                **self.sandbox_metadata,
+                METADATA_WORKSPACE_ID_KEY: self.workspace_id,
+            },
             "timeout": timedelta(seconds=self.timeout_seconds),
             "ready_timeout": timedelta(seconds=self.timeout_seconds),
         }
@@ -349,46 +295,30 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
             kwargs["network_policy"] = self.network_policy
         return await Sandbox.create(**kwargs)
 
-    async def _resume_sandbox(self, sandbox_id: str) -> Any:
-        """Resume an existing sandbox by id."""
-        opensandbox = _import_opensandbox()
-        Sandbox = opensandbox.Sandbox
-
-        return await Sandbox.resume(
-            sandbox_id=sandbox_id,
-            connection_config=self._connection_config(),
-            resume_timeout=timedelta(seconds=self.timeout_seconds),
-        )
-
-    async def _connect_sandbox(self, sandbox_id: str) -> Any:
-        """Connect to an already-running sandbox by id."""
-        opensandbox = _import_opensandbox()
-        Sandbox = opensandbox.Sandbox
-
-        return await Sandbox.connect(
-            sandbox_id=sandbox_id,
-            connection_config=self._connection_config(),
-            connect_timeout=timedelta(seconds=self.timeout_seconds),
-        )
-
-    async def _attach_existing_sandbox(self, info: Any) -> Any:
+    async def _attach_existing_sandbox(self, info: SandboxInfo) -> Sandbox:
         """Connect or resume depending on the OpenSandbox info state."""
-        sandbox_id = self._info_id(info)
-        state = self._info_state(info)
+        from opensandbox import Sandbox
+
+        state = info.status.state.lower()
+
         if state == "paused":
-            return await self._resume_sandbox(sandbox_id)
+            return await Sandbox.resume(
+                sandbox_id=info.id,
+                connection_config=self._connection_config(),
+                resume_timeout=timedelta(seconds=self.timeout_seconds),
+            )
+
         if state == "running":
-            return await self._connect_sandbox(sandbox_id)
+            return await Sandbox.connect(
+                sandbox_id=info.id,
+                connection_config=self._connection_config(),
+                connect_timeout=timedelta(seconds=self.timeout_seconds),
+            )
+
         raise RuntimeError(
-            f"OpenSandbox sandbox {sandbox_id!r} is not attachable "
+            f"OpenSandbox sandbox {info.id!r} is not attachable "
             f"(state={state!r})",
         )
-
-    @staticmethod
-    def _info_state(info: Any) -> str:
-        """Return the normalized state from an OpenSandbox SDK info object."""
-        state = info.status.state
-        return str(state).lower()
 
     async def _wait_until_running(self, timeout: float = 30.0) -> None:
         """Poll until the sandbox reports healthy.
@@ -423,7 +353,7 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
             try:
                 if await probe():
                     return
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.debug(
                     "OpenSandboxWorkspace: %s probe error (will retry): %s",
                     probe_name,
@@ -438,20 +368,11 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
 
     async def _run_bootstrap(self) -> None:
         """Provision the sandbox runtime, then upload helper scripts."""
-        if _is_released_install():
-            log_bootstrap_attempt(self.workspace_id, "released")
-            install_cmd = render_install_agentscope_cmd_released(
-                _agentscope_version(),
-            )
-        else:
-            log_bootstrap_attempt(self.workspace_id, "dev")
-            await self._backend.write_file(DEV_SRC_TAR, build_source_tarball())
-            install_cmd = render_install_agentscope_cmd_dev()
-
-        for cmd in bootstrap_commands(
-            extra_pip=self.extra_pip,
-            install_agentscope_cmd=install_cmd,
-        ):
+        logger.info(
+            "OpenSandboxWorkspace: bootstrapping sandbox for workspace_id=%r",
+            self.workspace_id,
+        )
+        for cmd in self._bootstrap_commands(extra_pip=self.extra_pip):
             result = await self._backend.exec_shell(
                 ["sh", "-c", cmd],
                 timeout=BOOTSTRAP_COMMAND_TIMEOUT,
@@ -465,39 +386,56 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
                 )
 
         await self._backend.write_file(
-            GLOB_HELPER_SCRIPT,
+            self._glob_helper_path,
             _read_glob_helper_bytes(),
         )
         await self._backend.write_file(
-            GATEWAY_SCRIPT,
+            self._gateway_script,
             _read_gateway_script_bytes(),
         )
 
+    def _bootstrap_commands(
+        self,
+        extra_pip: list[str] | None = None,
+    ) -> list[str]:
+        """Return the provisioning shell command sequence.
 
-def _import_opensandbox() -> Any:
-    """Import the OpenSandbox SDK with an actionable installation hint."""
-    try:
-        return importlib.import_module("opensandbox")
-    except ModuleNotFoundError as exc:
-        if exc.name != "opensandbox":
-            raise
-        raise ImportError(
-            "OpenSandbox SDK is required for OpenSandboxWorkspace. "
-            "Install the workspace extras with "
-            '`pip install "agentscope[workspace]"`.',
-        ) from exc
+        The workspace layout (``data/``, ``skills/``, ``sessions/``,
+        gateway home) is created by the base class
+        :meth:`_ensure_workspace_layout`, so bootstrap only installs the
+        runtime. ``uv`` lands at ``/usr/local/bin`` (on the default PATH,
+        root needs no sudo) and is invoked bare, matching K8s/E2B.
 
+        Args:
+            extra_pip: Extra Python packages to install into the gateway
+                venv alongside the base requirements.
 
-def _import_sdk_attr(module_name: str, attr: str) -> Any:
-    """Import an OpenSandbox SDK attribute with the standard install hint."""
-    try:
-        module = importlib.import_module(module_name)
-        return getattr(module, attr)
-    except ModuleNotFoundError as exc:
-        if exc.name and exc.name.startswith("opensandbox"):
-            raise ImportError(
-                "OpenSandbox SDK is required for OpenSandboxWorkspace. "
-                "Install the workspace extras with "
-                '`pip install "agentscope[workspace]"`.',
-            ) from exc
-        raise
+        Returns:
+            A list of shell command strings, to be executed in order. Each
+            must exit 0; a non-zero exit aborts bootstrap.
+        """
+        pip_pkgs = list(_GATEWAY_BASE_REQUIREMENTS) + list(extra_pip or [])
+        # Quote every requirement so entries with spaces or shell
+        # metacharacters cannot break ``sh -c`` or inject inside the sandbox.
+        pip_args = " ".join(shlex.quote(p) for p in pip_pkgs)
+
+        return [
+            # 1. System packages used by bootstrap and builtin tools. The
+            # default image runs as root, so no sudo is needed. ``procps``
+            # backs gateway-process cleanup; ``ripgrep`` backs the Grep tool.
+            "apt-get update -qq "
+            "&& apt-get install -y --no-install-recommends curl "
+            "ca-certificates procps ripgrep "
+            "&& rm -rf /var/lib/apt/lists/*",
+            # 2. Astral uv → /usr/local/bin (on PATH). INSTALLER_NO_MODIFY_PATH
+            # suppresses shell rc edits.
+            "curl -LsSf https://astral.sh/uv/install.sh "
+            "| env UV_INSTALL_DIR=/usr/local/bin "
+            "INSTALLER_NO_MODIFY_PATH=1 sh",
+            # 3. Gateway venv + base requirements + agentscope from PyPI.
+            # ``uv venv`` creates the gateway home as a parent dir.
+            f"uv venv {self._gateway_venv}",
+            f"uv pip install --python {self._gateway_python} {pip_args}",
+            f"uv pip install --python {self._gateway_python} "
+            f"--no-deps 'agentscope'",
+        ]

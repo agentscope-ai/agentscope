@@ -147,7 +147,3 @@ class TestE2BBackend(IsolatedAsyncioTestCase):
 
         # Deleting a non-existent path must not raise.
         await self.backend.delete_path(f"{SANDBOX_WORKDIR}/missing")
-
-
-if __name__ == "__main__":
-    unittest.main()

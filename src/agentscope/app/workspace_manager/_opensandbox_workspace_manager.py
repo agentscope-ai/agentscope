@@ -2,8 +2,8 @@
 """OpenSandboxWorkspaceManager -- lifecycle manager for OpenSandbox.
 
 Mirrors :class:`DockerWorkspaceManager` and :class:`E2BWorkspaceManager`
-in its public surface (``get_workspace`` / ``create_workspace`` /
-``close`` / ``close_all``) so callers do not branch on backend.
+in its public surface (``get_workspace`` / ``close`` / ``close_all``) so
+callers do not branch on backend.
 
 Differences from the Docker manager:
 
@@ -29,11 +29,11 @@ Differences from the Docker manager:
 
 import asyncio
 import time
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 from ..._logging import logger
 from ...mcp import MCPClient
-from ...workspace._opensandbox._bootstrap import (
+from ...workspace._opensandbox._constants import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_IMAGE,
     DEFAULT_REQUEST_TIMEOUT,
@@ -43,7 +43,7 @@ from ...workspace._opensandbox._opensandbox_workspace import (
     OpenSandboxWorkspace,
 )
 
-from ._base import WorkspaceManagerBase
+from ._base import IsolationPolicy, WorkspaceManagerBase
 
 DEFAULT_SWEEP_INTERVAL = 300.0
 
@@ -59,10 +59,11 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
     def __init__(
         self,
         *,
+        isolation: IsolationPolicy = IsolationPolicy.PER_AGENT,
         image: str = DEFAULT_IMAGE,
         api_key: str = "",
         domain: str = "",
-        protocol: str = "http",
+        protocol: Literal["http", "https"] = "http",
         request_timeout_seconds: float | None = DEFAULT_REQUEST_TIMEOUT,
         timeout_seconds: int = DEFAULT_TIMEOUT,
         gateway_port: int = DEFAULT_GATEWAY_PORT,
@@ -80,6 +81,10 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
         """Initialize the OpenSandbox workspace manager.
 
         Args:
+            isolation (`IsolationPolicy`, defaults to `PER_AGENT`):
+                Isolation grain for :meth:`assign_workspace_id`, used
+                when :meth:`get_workspace` is called without an explicit
+                ``workspace_id``.
             image (`str`, defaults to `DEFAULT_IMAGE`):
                 OpenSandbox image passed to every workspace this manager
                 produces.
@@ -147,42 +152,26 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
         self._skill_paths = list(skill_paths or [])
         self._ttl = ttl
         self._sweep_interval = sweep_interval
+        super().__init__(isolation=isolation)
 
         # workspace_id -> (workspace, last_access_monotonic)
         self._cache: dict[str, tuple[OpenSandboxWorkspace, float]] = {}
         self._lock = asyncio.Lock()
         self._sweep_task: asyncio.Task | None = None
 
-    def _metadata_for(
-        self,
-        user_id: str,
-        agent_id: str,
-    ) -> dict[str, str]:
-        """Build extra sandbox metadata for ``(user_id, agent_id)``.
-
-        ``OpenSandboxWorkspace`` always sets
-        ``agentscope.workspace.id`` itself; the manager adds user/agent
-        keys so they show up alongside it in sandbox metadata filters.
-        """
-        return {
-            "agentscope.user.id": user_id,
-            "agentscope.agent.id": agent_id,
-            **self._sandbox_metadata,
-        }
-
     async def _build_and_start(
         self,
         *,
-        workspace_id: str | None,
+        workspace_id: str,
         user_id: str,
         agent_id: str,
     ) -> OpenSandboxWorkspace:
         """Construct an OpenSandbox workspace and run full initialize.
 
-        ``workspace_id=None`` lets :class:`WorkspaceBase` allocate a
-        fresh UUID, used by :meth:`create_workspace`. Otherwise the
-        provided id is forwarded so metadata-based reattachment works
-        on cache miss.
+        ``workspace_id`` is always concrete here — :meth:`get_workspace`
+        resolves ``None`` via :meth:`assign_workspace_id` before calling
+        — and is forwarded so metadata-based reattachment works on the
+        next cache miss.
         """
         ws = OpenSandboxWorkspace(
             workspace_id=workspace_id,
@@ -194,7 +183,11 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
             timeout_seconds=self._timeout_seconds,
             gateway_port=self._gateway_port,
             env=self._env,
-            sandbox_metadata=self._metadata_for(user_id, agent_id),
+            sandbox_metadata={
+                "agentscope.user.id": user_id,
+                "agentscope.agent.id": agent_id,
+                **self._sandbox_metadata,
+            },
             resource=self._resource,
             entrypoint=self._entrypoint,
             network_policy=self._network_policy,
@@ -210,7 +203,7 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
         user_id: str,
         agent_id: str,
         session_id: str,
-        workspace_id: str,
+        workspace_id: str | None = None,
     ) -> OpenSandboxWorkspace:
         """Return an initialized workspace, reattaching on cache miss.
 
@@ -222,8 +215,35 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
 
         Idle eviction is not performed here; the background sweeper
         started by :meth:`__aenter__` handles that.
+
+        Args:
+            user_id (`str`):
+                Owning user identifier (forwarded as sandbox metadata
+                only — not part of the cache key).
+            agent_id (`str`):
+                Agent identifier (forwarded as sandbox metadata only —
+                not part of the cache key).
+            session_id (`str`):
+                Session identifier (unused; sandboxes are per-workspace,
+                sessions partition under ``sessions/<session_id>/``).
+            workspace_id (`str | None`, optional):
+                Stable workspace identifier — the cache key and the
+                value stored in the sandbox's ``agentscope.workspace.id``
+                metadata. When ``None`` the manager falls back to
+                :meth:`assign_workspace_id` under its isolation policy.
+
+        Returns:
+            `OpenSandboxWorkspace`:
+                A live, initialized workspace.
         """
         del session_id  # accepted for interface parity; not used here
+
+        if workspace_id is None:
+            workspace_id = self.assign_workspace_id(
+                user_id=user_id,
+                agent_id=agent_id,
+                session_id="",
+            )
 
         async with self._lock:
             cached = self._cache.get(workspace_id)
@@ -249,30 +269,6 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
             )
             self._cache[workspace_id] = (ws, time.monotonic())
             return ws
-
-    async def create_workspace(
-        self,
-        user_id: str,
-        agent_id: str,
-        session_id: str,
-    ) -> OpenSandboxWorkspace:
-        """Build a brand-new workspace and track it.
-
-        A fresh ``workspace_id`` is allocated by
-        :class:`WorkspaceBase`; callers should persist
-        ``workspace.workspace_id`` for later :meth:`get_workspace`
-        calls.
-        """
-        del session_id  # accepted for interface parity; not used here
-
-        ws = await self._build_and_start(
-            workspace_id=None,
-            user_id=user_id,
-            agent_id=agent_id,
-        )
-        async with self._lock:
-            self._cache[ws.workspace_id] = (ws, time.monotonic())
-        return ws
 
     async def close(self, workspace_id: str) -> None:
         """Close (= pause the sandbox) and evict a single workspace."""
