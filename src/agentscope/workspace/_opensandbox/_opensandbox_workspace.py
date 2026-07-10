@@ -226,14 +226,14 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
 
     async def _find_existing_sandbox(self) -> SandboxInfo | None:
         """Return the most recent sandbox matching this workspace id."""
-        from opensandbox.models.sandboxes import SandboxFilter
+        from opensandbox.models.sandboxes import SandboxFilter, SandboxState
         from opensandbox import SandboxManager
 
         manager = await SandboxManager.create(
             connection_config=self._connection_config(),
         )
         sandbox_filter = SandboxFilter(
-            states=["RUNNING", "PAUSED"],
+            states=[SandboxState.RUNNING, SandboxState.PAUSED],
             metadata={METADATA_WORKSPACE_ID_KEY: self.workspace_id},
         )
         try:
@@ -382,19 +382,19 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         pip_args = " ".join(shlex.quote(p) for p in pip_pkgs)
 
         return [
-            # 1. System packages used by bootstrap and builtin tools. The
-            # default image runs as root, so no sudo is needed. ``procps``
-            # backs gateway-process cleanup; ``ripgrep`` backs the Grep tool.
+            # System packages used by bootstrap and builtin tools. The
+            # default image runs as root, so no sudo is needed. ``ripgrep``
+            # backs the Grep tool.
             "apt-get update -qq "
             "&& apt-get install -y --no-install-recommends curl "
-            "ca-certificates procps ripgrep "
+            "ca-certificates ripgrep "
             "&& rm -rf /var/lib/apt/lists/*",
-            # 2. Astral uv → /usr/local/bin (on PATH). INSTALLER_NO_MODIFY_PATH
+            # Astral uv → /usr/local/bin (on PATH). INSTALLER_NO_MODIFY_PATH
             # suppresses shell rc edits.
             "curl -LsSf https://astral.sh/uv/install.sh "
             "| env UV_INSTALL_DIR=/usr/local/bin "
             "INSTALLER_NO_MODIFY_PATH=1 sh",
-            # 3. Gateway venv + base requirements + agentscope from PyPI.
+            # Gateway venv + base requirements + agentscope from PyPI.
             # ``uv venv`` creates the gateway home as a parent dir.
             f"uv venv {self._gateway_venv}",
             f"uv pip install --python {self._gateway_python} {pip_args}",
