@@ -7,7 +7,7 @@ Two library-mode walk-throughs of `agentscope.rag` — no FastAPI service, no ma
 | [`index_and_search.py`](./index_and_search.py) | The minimal pipeline: parse → chunk → embed → insert, then `KnowledgeBase.search`. Start here. |
 | [`integrate_with_agent.py`](./integrate_with_agent.py) | Attaches the same `KnowledgeBase` to an `Agent` via `RAGMiddleware`, in both `static` (auto-inject) and `agentic` (tool-driven) modes. |
 
-Both examples use an in-memory Qdrant store (`location=":memory:"`) and the DashScope `text-embedding-v4` model, so no external services are required. The sections below show how to swap in Milvus Lite or MongoDB instead; those backends need additional setup.
+Both examples use an in-memory Qdrant store (`location=":memory:"`) and the DashScope `text-embedding-v4` model, so no external services are required. The sections below show how to swap in Milvus Lite, MongoDB, or RAGFlow instead; those backends need additional setup.
 
 ## Install
 
@@ -112,14 +112,79 @@ async with store:
   to `create_app(vector_store=...)` in `examples/agent_service/main.py`
   (the default there uses in-memory Qdrant for zero-setup demos).
 
+### RAGFlow
+
+To use RAGFlow as the vector backend instead of the in-memory Qdrant
+store — useful when you need RAGFlow's advanced document parsing and
+hybrid (keyword + vector) retrieval capabilities — install the optional
+extra:
+
+```bash
+uv pip install "agentscope[ragflow]"
+# Or from source (repo root)
+uv pip install -e ".[ragflow]"
+```
+
+**Prerequisites**
+
+- A running RAGFlow server instance. See the
+  [RAGFlow documentation](https://ragflow.io/docs) for setup instructions.
+- A RAGFlow API key available in the environment:
+
+```bash
+export RAGFLOW_API_KEY="ragflow-..."
+# Default base URL (override if your server runs elsewhere):
+# export RAGFLOW_BASE_URL="http://localhost:9380"
+```
+
+Then replace the vector store construction in `index_and_search.py`
+and/or `integrate_with_agent.py`:
+
+```python
+import os
+
+from agentscope.rag import RAGFlowStore
+
+store = RAGFlowStore(
+    api_key=os.environ["RAGFLOW_API_KEY"],
+    base_url=os.environ.get("RAGFLOW_BASE_URL", "http://localhost:9380"),
+)
+
+# RAGFlowStore is also an async context manager — same as QdrantStore.
+async with store:
+    knowledge = KnowledgeBase(
+        name="demo-kb",
+        description="A toy corpus on cats and AgentScope.",
+        embedding_model=embedding_model,
+        vector_store=store,
+        collection=COLLECTION,
+    )
+    ...
+```
+
+**Notes**
+
+- RAGFlow is a full RAG engine that manages its own embeddings and
+  chunking. The vectors passed via `VectorRecord` at insert time are
+  **not** used for retrieval — RAGFlow's native hybrid search is used
+  instead. Retrieval quality depends on RAGFlow's configured embedding
+  model, not on the vectors computed by AgentScope's embedding pipeline.
+- The examples use DashScope `text-embedding-v4` with `dimensions=1024`.
+  `RAGFlowStore.create_collection` stores this dimension in the dataset
+  description for reference only — RAGFlow manages its own embedding
+  dimensions internally.
+- Unlike Qdrant `:memory:` or Milvus Lite (local `.db` file), RAGFlow is
+  an external service; you must have a reachable RAGFlow server before
+  running the scripts.
+
 ### Choosing a vector backend
 
-| | Qdrant (default) | Milvus Lite | MongoDB |
-| --- | --- | --- | --- |
-| Install extra | `agentscope[rag]` | `agentscope[milvuslite]` | `agentscope[mongodb]` |
-| External service | No | No | Yes |
-| Persistence | No (`:memory:`) | Yes (local `.db`) | Yes (server) |
-| Best for | Quick start / tests | Local dev with persistence | Teams already on MongoDB |
+| | Qdrant (default) | Milvus Lite | MongoDB | RAGFlow |
+| --- | --- | --- | --- | --- |
+| Install extra | `agentscope[rag]` | `agentscope[milvuslite]` | `agentscope[mongodb]` | `agentscope[ragflow]` |
+| External service | No | No | Yes | Yes |
+| Persistence | No (`:memory:`) | Yes (local `.db`) | Yes (server) | Yes (server) |
+| Best for | Quick start / tests | Local dev with persistence | Teams already on MongoDB | Hybrid search & advanced doc parsing |
 
 `integrate_with_agent.py` additionally uses `DashScopeChatModel`, which is already in the base `agentscope` dependencies.
 
@@ -132,7 +197,8 @@ python examples/rag/index_and_search.py
 python examples/rag/integrate_with_agent.py
 ```
 
-When using MongoDB, also export `MONGODB_URI` before running.
+When using MongoDB, also export `MONGODB_URI` before running. When using
+RAGFlow, export `RAGFLOW_API_KEY` and optionally `RAGFLOW_BASE_URL`.
 
 ## Service mode
 
