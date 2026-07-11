@@ -179,6 +179,7 @@ class TestBubblewrapWorkspaceInstructions(IsolatedAsyncioTestCase):
         class _FailingWorkspace(BubblewrapWorkspace):
             async def _provision_backend(self) -> None:
                 """Create owned resources, then fail provisioning."""
+                # pylint: disable=attribute-defined-outside-init
                 self._owned_workdir = tempfile.TemporaryDirectory()
                 self.host_workdir = self._owned_workdir.name
                 self._tmpdir = tempfile.TemporaryDirectory()
@@ -589,8 +590,15 @@ class TestBubblewrapWorkspaceCache(IsolatedAsyncioTestCase):
                 host_cache_dir=cache_dir,
             )
             try:
-                self.assertEqual(ws1._resolve_host_cache_dir(), cache_dir)
-                self.assertEqual(ws2._resolve_host_cache_dir(), cache_dir)
+                expected_cache_dir = os.path.realpath(cache_dir)
+                self.assertEqual(
+                    ws1._resolve_host_cache_dir(),
+                    expected_cache_dir,
+                )
+                self.assertEqual(
+                    ws2._resolve_host_cache_dir(),
+                    expected_cache_dir,
+                )
             finally:
                 await ws1.close()
                 await ws2.close()

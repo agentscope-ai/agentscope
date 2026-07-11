@@ -105,7 +105,7 @@ class TestBubblewrapBackendUnit(IsolatedAsyncioTestCase):
         argv = backend._bwrap_argv(["true"], cwd=None)
 
         self.assertIn(SANDBOX_CACHE_DIR, argv)
-        bind_index = argv.index(cache_dir.name)
+        bind_index = argv.index(os.path.realpath(cache_dir.name))
         self.assertEqual(argv[bind_index - 1], "--bind")
         self.assertEqual(argv[bind_index + 1], SANDBOX_CACHE_DIR)
 
