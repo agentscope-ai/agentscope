@@ -8,11 +8,13 @@ from ._docker_workspace_manager import DockerWorkspaceManager
 from ._e2b_workspace_manager import E2BWorkspaceManager
 from ._k8s_workspace_manager import K8sWorkspaceManager
 from ._opensandbox_workspace_manager import OpenSandboxWorkspaceManager
+from ._bubblewrap_workspace_manager import BubblewrapWorkspaceManager
 
 __all__ = [
     "IsolationPolicy",
     "WorkspaceManagerBase",
     "LocalWorkspaceManager",
+    "BubblewrapWorkspaceManager",
     "DockerWorkspaceManager",
     "E2BWorkspaceManager",
     "K8sWorkspaceManager",
