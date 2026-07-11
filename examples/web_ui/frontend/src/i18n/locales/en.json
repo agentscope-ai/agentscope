@@ -78,7 +78,9 @@
 		"attachNotSupported": "This model does not support file attachments",
 		"send": "Send",
 		"stop": "Stop generating",
-		"stopping": "Stopping ..."
+		"stopping": "Stopping ...",
+		"deferredSend": "Queue send",
+		"pendingMessage": "Message queued — will send automatically"
 	},
 	"confirmCard": {
 		"toConfirm": "to confirm",

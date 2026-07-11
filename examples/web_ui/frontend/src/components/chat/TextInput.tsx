@@ -1,5 +1,5 @@
 import type { ContentBlock, TextBlock } from '@agentscope-ai/agentscope/message';
-import { Paperclip, Send, Loader2, Square, X, type LucideIcon } from 'lucide-react';
+import { Paperclip, Send, Loader2, Square, X, Clock, type LucideIcon } from 'lucide-react';
 import React, {
 	useState,
 	useRef,
@@ -65,6 +65,17 @@ interface TextInputProps {
 	 */
 	phase?: ReplyPhase;
 	onInterrupt?: () => void;
+	/**
+	 * When non-null, user input has been cached for deferred send
+	 * while the agent is actively replying. Displayed as a pending
+	 * indicator above the textarea.
+	 */
+	deferredInput?: ContentBlock[] | null;
+	/**
+	 * Cancel a deferred send, removing the pending indicator and
+	 * allowing the user to type again.
+	 */
+	onCancelDefer?: () => void;
 }
 
 export interface TextInputRef {
@@ -94,6 +105,8 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			fileProcessor,
 			phase = 'idle',
 			onInterrupt,
+			deferredInput = null,
+			onCancelDefer,
 		},
 		ref,
 	) => {
@@ -151,6 +164,29 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			}
 		};
 
+		const handleDeferredSend = () => {
+			if (!value.trim() || disabled || hasProcessing) return;
+
+			const blocks: ContentBlock[] = [];
+			if (value.trim()) {
+				const textBlock: TextBlock = {
+					id: crypto.randomUUID(),
+					type: 'text',
+					text: value.trim(),
+				};
+				blocks.push(textBlock);
+			}
+			files.forEach((f) => {
+				if (f.status === 'done' && f.block) {
+					blocks.push(f.block);
+				}
+			});
+
+			onSend?.(blocks);
+			setValue('');
+			setFiles([]);
+		};
+
 		const handleSend = () => {
 			if (!value.trim() || disabled || hasProcessing) return;
 
@@ -188,6 +224,17 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			disabled: boolean;
 			onClick: (() => void) | undefined;
 		} = (() => {
+			// Streaming + user has typed text -> queue for deferred send.
+			if (phase === 'streaming' && value.trim()) {
+				return {
+					icon: Send,
+					tooltip: t('textInput.deferredSend'),
+					disabled: disabled || hasProcessing,
+					onClick: () => {
+						handleDeferredSend();
+					},
+				};
+			}
 			if (phase === 'streaming') {
 				return {
 					icon: Square,
@@ -343,6 +390,27 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 							</div>
 						)}
 					</div>
+
+					{/* Deferred input pending indicator */}
+					{deferredInput && deferredInput.length > 0 && (
+						<div className="mb-2 flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm">
+							<Clock className="h-4 w-4 shrink-0 text-blue-500" />
+							<span className="flex-1 truncate text-blue-700">
+								{deferredInput
+									.filter((b) => b.type === 'text')
+									.map((b) => (b as TextBlock).text)
+									.join(' ')}
+							</span>
+							{onCancelDefer && (
+								<button
+									onClick={onCancelDefer}
+									className="shrink-0 text-blue-500 hover:text-blue-700"
+								>
+									<X className="h-3 w-3" />
+								</button>
+							)}
+						</div>
+					)}
 
 					{/* Button row */}
 					<div className="mt-2 flex items-center justify-between">
