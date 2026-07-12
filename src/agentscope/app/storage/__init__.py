@@ -2,6 +2,11 @@
 """The storage module in agentscope."""
 
 from ._base import StorageBase
+from ._exceptions import (
+    SessionForkConflictError,
+    SessionForkCorruptedGraphError,
+    SessionForkNotFoundError,
+)
 from ._redis_storage import RedisStorage
 from ._model import (
     AgentData,
@@ -31,6 +36,9 @@ from ._model import (
 __all__ = [
     "StorageBase",
     "RedisStorage",
+    "SessionForkConflictError",
+    "SessionForkCorruptedGraphError",
+    "SessionForkNotFoundError",
     # The ORM models
     "InviteConfig",
     "AgentData",

@@ -6,8 +6,19 @@ from datetime import datetime, timedelta
 from typing import Any, TYPE_CHECKING, Self
 
 from pydantic import BaseModel
+from pydantic import ValidationError
 
 from ._base import StorageBase
+from ._exceptions import (
+    SessionForkConflictError,
+    SessionForkCorruptedGraphError,
+    SessionForkNotFoundError,
+)
+from ._fork import (
+    SessionForkPlan,
+    build_fork_session_name,
+    validate_regular_fork_source,
+)
 from ._model import (
     AgentRecord,
     CredentialRecord,
@@ -24,6 +35,9 @@ from ._utils import _dump_with_secrets
 from ...credential import CredentialBase
 from ...message import Msg
 from ...state import AgentState
+
+
+_SESSION_FORK_MAX_RETRIES = 3
 
 if TYPE_CHECKING:
     from redis.asyncio import ConnectionPool, Redis
@@ -626,6 +640,129 @@ class RedisStorage(StorageBase):
             await self._client.sadd(schedule_session_key, record.id)
 
         return record
+
+    async def fork_session(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+    ) -> SessionRecord:
+        """Atomically fork a regular, non-scheduled, non-team session."""
+        for _ in range(_SESSION_FORK_MAX_RETRIES):
+            async with self._client.pipeline(transaction=True) as pipe:
+                try:
+                    source_key = self._key(
+                        self.key_config.session,
+                        user_id=user_id,
+                        session_id=session_id,
+                    )
+                    source_messages_key = self._message_key(
+                        user_id,
+                        session_id,
+                    )
+                    await pipe.watch(source_key, source_messages_key)
+                    raw_session = await pipe.get(source_key)
+                    if not raw_session:
+                        raise SessionForkNotFoundError(
+                            f"Session '{session_id}' not found.",
+                        )
+                    try:
+                        source_session = SessionRecord.model_validate_json(
+                            raw_session,
+                        )
+                    except ValidationError as error:
+                        raise SessionForkCorruptedGraphError(
+                            "The source session record is invalid.",
+                        ) from error
+                    validate_regular_fork_source(
+                        source_session,
+                        user_id,
+                        agent_id,
+                        session_id,
+                    )
+                    raw_messages = await pipe.lrange(
+                        source_messages_key,
+                        0,
+                        -1,
+                    )
+
+                    target_session = SessionRecord(
+                        user_id=user_id,
+                        agent_id=agent_id,
+                        source=SessionSource.USER,
+                        source_schedule_id=None,
+                        team_id=None,
+                        config=source_session.config.model_copy(deep=True),
+                        state=source_session.state.model_copy(deep=True),
+                    )
+                    target_session.config.name = build_fork_session_name(
+                        source_session.config.name,
+                    )
+                    target_session_key = self._key(
+                        self.key_config.session,
+                        user_id=user_id,
+                        session_id=target_session.id,
+                    )
+                    target_messages_key = self._message_key(
+                        user_id,
+                        target_session.id,
+                    )
+                    target_index_key = self._key(
+                        self.key_config.session_index,
+                        user_id=user_id,
+                        agent_id=agent_id,
+                    )
+                    plan = SessionForkPlan(
+                        source_session_id=session_id,
+                        target_session=target_session,
+                        source_messages=tuple(raw_messages),
+                        target_session_key=target_session_key,
+                        target_messages_key=target_messages_key,
+                        target_session_index_key=target_index_key,
+                    )
+
+                    target_keys = [
+                        plan.target_session_key,
+                        plan.target_messages_key,
+                    ]
+                    await pipe.watch(*target_keys)
+                    target_exists = False
+                    for target_key in target_keys:
+                        if await pipe.exists(target_key):
+                            target_exists = True
+                            break
+                    if target_exists:
+                        continue
+
+                    pipe.multi()
+                    pipe.set(
+                        plan.target_session_key,
+                        plan.target_session.model_dump_json(),
+                    )
+                    if self.key_ttl is not None:
+                        pipe.expire(plan.target_session_key, self.key_ttl)
+                    pipe.sadd(
+                        plan.target_session_index_key,
+                        plan.target_session.id,
+                    )
+                    if plan.source_messages:
+                        pipe.rpush(
+                            plan.target_messages_key,
+                            *plan.source_messages,
+                        )
+                        if self.key_ttl is not None:
+                            pipe.expire(
+                                plan.target_messages_key,
+                                self.key_ttl,
+                            )
+                    await pipe.execute()
+                    return plan.target_session
+                except _watch_error():
+                    continue
+        raise SessionForkConflictError(
+            "The session could not be forked due to concurrent changes "
+            "or target identifier conflicts.",
+        )
 
     async def update_session_state(
         self,
