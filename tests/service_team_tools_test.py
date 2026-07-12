@@ -1386,6 +1386,73 @@ class TestAgentInviteSuccess(_AgentInviteTestBase):
         )
         self.assertEqual(primary_inbox, [])
 
+    async def test_cross_owner_invite_uses_verified_member_namespace(
+        self,
+    ) -> None:
+        """Team and invited Agent resources keep separate owners."""
+        from agentscope.app.storage._model._agent import InviteConfig
+
+        member_owner_id = "member-owner"
+        invited = AgentRecord(
+            user_id=member_owner_id,
+            source="user",
+            data=AgentData(
+                name="Remote Monday",
+                system_prompt="I am remote Monday.",
+                context_config=ContextConfig(),
+                react_config=ReActConfig(),
+                invite_config=InviteConfig(
+                    invitable=True,
+                    invite_description="Remote expert.",
+                ),
+            ),
+        )
+        await self.storage.upsert_agent(member_owner_id, invited)
+        standalone = await self.storage.upsert_session(
+            member_owner_id,
+            invited.id,
+            SessionConfig(workspace_id="remote-workspace"),
+        )
+        tool = AgentInvite(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=self.leader_session.id,
+            agent_id=self.leader_agent.id,
+            invitable_pool=[invited],
+        )
+
+        chunk = await tool(
+            target=f"Remote Monday@{invited.id[:8]}",
+            prompt="remote task",
+        )
+        self.assertEqual(chunk.state.value, "running")
+        leader = await self.storage.get_session(
+            self.user_id,
+            self.leader_agent.id,
+            self.leader_session.id,
+        )
+        assert leader is not None and leader.team_id is not None
+        team = await self.storage.get_team(self.user_id, leader.team_id)
+        assert team is not None
+        member = team.data.members[0]
+        self.assertEqual(member.owner_id, member_owner_id)
+        self.assertIsNone(standalone.team_id)
+        borrowed = await self.storage.get_session(
+            member_owner_id,
+            invited.id,
+            member.session_id,
+        )
+        self.assertIsNotNone(borrowed)
+        self.assertIsNone(
+            await self.storage.get_session(
+                self.user_id,
+                invited.id,
+                member.session_id,
+            ),
+        )
+
 
 class TestAgentInviteRejections(_AgentInviteTestBase):
     """``AgentInvite`` rejects the obvious bad inputs / states."""
