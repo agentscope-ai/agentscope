@@ -18,7 +18,18 @@ from utils import AnyString, MockModel
 from agentscope.agent import Agent, ContextConfig
 from agentscope.model import ChatResponse, StructuredResponse
 from agentscope.state import AgentState
-from agentscope.tool import Toolkit, ToolBase, ToolChunk
+from agentscope.tool import (
+    Bash,
+    Edit,
+    Glob,
+    Grep,
+    LocalBackend,
+    Read,
+    Toolkit,
+    ToolBase,
+    ToolChunk,
+    Write,
+)
 from agentscope.permission import PermissionDecision, PermissionBehavior
 from agentscope.workspace import LocalWorkspace
 from agentscope.mcp import MCPClient, StdioMCPConfig
@@ -79,6 +90,28 @@ class _LongResultTool(ToolBase):
             ],
             state=ToolResultState.SUCCESS,
         )
+
+
+class TestLocalWorkspaceTools(IsolatedAsyncioTestCase):
+    """Test cases for LocalWorkspace builtin tools."""
+
+    async def test_list_tools_builtin(self) -> None:
+        """Return all six builtin tools backed by LocalBackend."""
+        with tempfile.TemporaryDirectory() as workdir:
+            workspace = LocalWorkspace(workdir=workdir)
+            await workspace.initialize()
+            try:
+                tools = await workspace.list_tools()
+            finally:
+                await workspace.close()
+
+        self.assertEqual(len(tools), 6)
+        self.assertSetEqual(
+            {type(tool) for tool in tools},
+            {Bash, Edit, Glob, Grep, Read, Write},
+        )
+        for tool in tools:
+            self.assertIsInstance(tool._backend, LocalBackend)
 
 
 class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
