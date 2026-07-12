@@ -14,14 +14,15 @@ if TYPE_CHECKING:
 class MiddlewareBase:  # pylint: disable=unused-argument
     """Base class for all middleware implementations.
 
-    Middleware provides interception mechanisms at 5 key execution points
-    in the Agent lifecycle:
+    Middleware provides interception mechanisms at several key execution
+    points in the Agent lifecycle:
 
     **Onion Pattern Hooks** (with before/after logic):
     - `on_reply`: Intercepts the entire reply process
     - `on_reasoning`: Intercepts the reasoning/model call phase
     - `on_acting`: Intercepts individual tool call execution
     - `on_model_call`: Intercepts the raw model API call
+    - `on_compress_context`: Intercepts context compression
 
     **Transformer Pattern Hook** (sequential pipeline):
     - `on_system_prompt`: Transforms the system prompt string

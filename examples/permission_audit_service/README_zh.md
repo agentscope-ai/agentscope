@@ -59,8 +59,8 @@ pnpm dev
   "tool_name": "PermissionAuditDemoTool",
   "mode": "bypass",
   "resolution": "bypass_ask_suppressed",
-  "effective": {"behavior": "allow", "reason": "...", "bypass_immune": false},
-  "candidate": {"behavior": "ask", "reason": "...", "bypass_immune": true}
+  "effective": {"behavior": "allow", "bypass_immune": false},
+  "candidate": {"behavior": "ask", "bypass_immune": true}
 }
 ```
 
@@ -90,11 +90,11 @@ pnpm dev
 
 1. **DEFAULT ASK** —— 在 DEFAULT 模式下用 `risk=ordinary` 调用。演示工具返回
    普通 ASK;审计记录显示 `effective=ASK`、`candidate=null`、
-   `resolution=DIRECT`。这是基线:即使没有任何模式转换,最终的 ASK 及其
-   原因现在对中间件也可见。
+   `resolution=DIRECT`。这是基线:即使没有任何模式转换,最终的 ASK
+   现在对中间件也可见。
 
-   ![DEFAULT ASK —— Web UI 确认](img/img.png)
-   ![DEFAULT ASK —— 控制台审计记录](img/img_1.png)
+   ![DEFAULT ASK —— Web UI 确认](img/scenario-1-default-ask-ui.png)
+   ![DEFAULT ASK —— 控制台审计记录](img/scenario-1-default-ask-console.png)
 
 2. **用户确认复用** —— 在场景 1 的待确认调用上点同意(可选"记住规则")。
    控制台先收到一条 `confirmed=true` 的 `permission_confirmation` 记录,
@@ -102,16 +102,16 @@ pnpm dev
    两条记录通过 `tool_call_id` 关联:确认记录说明用户的选择,后续决策记录
    解释复用调用为何不再经过引擎评估。
 
-   ![用户确认复用 —— Web UI](img/img_2.png)
-   ![用户确认复用 —— 控制台记录](img/img_4.png)
+   ![用户确认复用 —— Web UI](img/scenario-2-user-confirmed-ui.png)
+   ![用户确认复用 —— 控制台记录](img/scenario-2-user-confirmed-console.png)
 
 3. **用户拒绝** —— 拒绝待处理的调用。控制台收到一条 `confirmed=false` 的
    `permission_confirmation` 记录;之后不会再出现 `USER_CONFIRMED` 或工具
    执行记录。拒绝可与未应答、被中断的 ASK 区分开。
 
-   ![用户拒绝 —— Web UI](img/img_3.png)
-   ![用户拒绝 —— 控制台记录](img/img_6.png)
-   ![用户拒绝 —— 细节](img/img_5.png)
+   ![用户拒绝 —— 确认提示](img/scenario-3-user-rejection-prompt.png)
+   ![用户拒绝 —— Web UI](img/scenario-3-user-rejection-ui.png)
+   ![用户拒绝 —— 控制台记录](img/scenario-3-user-rejection-console.png)
 
 4. **BYPASS 安全压制** —— 将会话切换到 BYPASS,用 `risk=safety` 调用。
    演示工具的 bypass-immune 安全 ASK 被压制成 ALLOW。记录显示
@@ -119,16 +119,16 @@ pnpm dev
    `resolution=BYPASS_ASK_SUPPRESSED`。没有这个 hook,最终 ALLOW 会被误读
    为干净的安全批准。
 
-   ![BYPASS 安全压制 —— Web UI](img/img_7.png)
-   ![BYPASS 安全压制 —— 控制台记录](img/img_8.png)
+   ![BYPASS 安全压制 —— Web UI](img/scenario-4-bypass-suppression-ui.png)
+   ![BYPASS 安全压制 —— 控制台记录](img/scenario-4-bypass-suppression-console.png)
 
 5. **DONT_ASK 转换** —— 无人值守(DONT_ASK 模式)下用 `risk=ordinary` 调用。
    没有用户可应答,ASK 被转成 DENY。记录显示 `candidate=ASK`、
    `effective=DENY`、`resolution=ASK_CONVERTED_TO_DENY` —— 可与显式 deny
    rule 区分开。
 
-   ![DONT_ASK 转换 —— Web UI](img/img_9.png)
-   ![DONT_ASK 转换 —— 控制台记录](img/img_10.png)
+   ![DONT_ASK 转换 —— Web UI](img/scenario-5-dont-ask-ui.png)
+   ![DONT_ASK 转换 —— 控制台记录](img/scenario-5-dont-ask-console.png)
 
 6. **Allow rule 覆盖** —— 在 DEFAULT 模式下,先对一次待确认调用点同意并
    "记住规则",加一条 tool-name 级 allow rule,再用 `risk=ordinary` 重新
@@ -137,21 +137,15 @@ pnpm dev
    `resolution=ASK_OVERRIDDEN_BY_ALLOW_RULE`。区别于 `USER_CONFIRMED`:
    这里是**新调用**被规则预授权,而非同一调用确认后复用。
 
-   ![Allow rule 覆盖 —— Web UI](img/img_11.png)
-   ![Allow rule 覆盖 —— 控制台记录](img/img_12.png)
+   ![Allow rule 覆盖 —— Web UI](img/scenario-6-allow-rule-ui.png)
+   ![Allow rule 覆盖 —— 控制台记录](img/scenario-6-allow-rule-console.png)
 
 ## 隐私
 
-记录刻意排除原始 `tool_input`、原始模型输入(`tool_call.input`)、原始
-权限规则内容、文件内容、shell 命令文本和凭证。生产环境消费者可增加
-schema 感知的脱敏或字段白名单;本示例展示的是安全的默认行为。
-
-> **警告 —— `reason` 字段。** `effective.reason` / `candidate.reason`
-> 字段原样携带 `PermissionDecision.decision_reason`。当决策由规则匹配
-> 产生时,引擎会设置 `decision_reason=f"Rule: {rule_content}"`,因此
-> `reason` 可能包含所匹配规则的内容——对 Bash 是命令子串模式,对
-> Write/Read 是文件路径 glob。如果你的规则匹配敏感路径或命令,请在 sink
-> 持久化审计记录前对 `reason` 字段脱敏或丢弃。
+记录刻意排除原始 `tool_input`、原始模型输入(`tool_call.input`)、自由文本
+决策原因、原始权限规则内容、文件内容、shell 命令文本和凭证。生产环境
+消费者可增加 schema 感知的脱敏或字段白名单;本示例展示的是安全的默认
+行为。
 
 ## 失败语义
 

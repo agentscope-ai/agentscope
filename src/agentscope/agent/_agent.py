@@ -130,9 +130,10 @@ class Agent:
                 sole source.
             middlewares (`list[MiddlewareBase] | None`, optional):
                 Middlewares applied to the agent to modify its behavior
-                without altering its source code. Supported hook points
-                include: reply, reasoning, acting, model call, and system
-                prompt retrieval.
+                without altering its source code. Supported hook points are
+                reply, reasoning, acting, model call, context compression,
+                system prompt retrieval, permission decisions, and user
+                permission confirmations.
             state (`AgentState | None`, optional):
                 The agent state. A new state will be created if not provided.
             offloader (`Offloader | None`, optional):
@@ -1857,8 +1858,9 @@ class Agent:
         """Notify on_permission_decision observers (read-only, fail-closed).
 
         Called after permission evaluation and before the decision is
-        consumed. Empty when no observer middleware is attached (zero
-        overhead). Exceptions propagate per the hook contract.
+        consumed. When no observer middleware is attached, no copying or
+        observer invocation occurs. Exceptions propagate per the hook
+        contract.
 
         Each observer receives deep copies of ``evaluation``,
         ``tool_input``, and ``tool_call`` so it cannot mutate the
