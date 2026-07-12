@@ -64,8 +64,8 @@ Decision record:
   "tool_name": "PermissionAuditDemoTool",
   "mode": "bypass",
   "resolution": "bypass_ask_suppressed",
-  "effective": {"behavior": "allow", "bypass_immune": false},
-  "candidate": {"behavior": "ask", "bypass_immune": true}
+  "effective": {"behavior": "allow", "reason": "...", "bypass_immune": false},
+  "candidate": {"behavior": "ask", "reason": "...", "bypass_immune": true}
 }
 ```
 
@@ -98,8 +98,8 @@ mode.
 1. **DEFAULT ASK** — In DEFAULT mode, invoke with `risk=ordinary`. The
    demo tool returns a plain ASK; the audit record shows
    `effective=ASK`, `candidate=null`, `resolution=DIRECT`. This is the
-   baseline: a final ASK is now visible to middleware even without any
-   mode conversion.
+   baseline: a final ASK and its reason are now visible to middleware
+   even without any mode conversion.
 
    ![DEFAULT ASK — Web UI confirmation](img/scenario-1-default-ask-ui.png)
    ![DEFAULT ASK — console audit record](img/scenario-1-default-ask-console.png)
@@ -159,10 +159,19 @@ mode.
 ## Privacy
 
 Records deliberately exclude raw `tool_input`, raw model input
-(`tool_call.input`), free-form decision reasons, raw permission-rule
-content, file contents, shell command text, and credentials. Production
-consumers may add schema-aware redaction or allowlisted fields; this
-example teaches the safe default.
+(`tool_call.input`), raw permission-rule content, file contents, shell
+command text, and credentials. Production consumers may add
+schema-aware redaction or allowlisted fields; this example teaches the
+safe default.
+
+> **Warning — `reason` field.** The `effective.reason` / `candidate.reason`
+> field carries `PermissionDecision.decision_reason` verbatim. When a
+> decision is produced by a rule match, the engine sets
+> `decision_reason=f"Rule: {rule_content}"`, so `reason` may contain the
+> matched rule's content — which for Bash is a command substring pattern
+> and for Write/Read is a file-path glob. If your rules match sensitive
+> paths or commands, redact or drop the `reason` field in your sink
+> before persisting audit records.
 
 ## Failure semantics
 
