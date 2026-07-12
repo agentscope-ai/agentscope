@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Storage Fork tests for Teams with created members."""
-# pylint: disable=protected-access
+# pylint: disable=protected-access,too-many-public-methods
 
 from unittest import IsolatedAsyncioTestCase
 from itertools import cycle
@@ -11,7 +11,6 @@ from redis.exceptions import ResponseError, WatchError
 
 from agentscope._utils import _common
 from agentscope.agent import ContextConfig, ReActConfig
-import agentscope.app.storage._utils as storage_utils
 from agentscope.app.storage import (
     AgentData,
     AgentRecord,
@@ -333,6 +332,25 @@ class TestTeamCreatedMemberFork(IsolatedAsyncioTestCase):
         ]
         self.team.data.member_ids = [invited_agent.id]
         await self.storage.upsert_team(self.user_id, self.team)
+        standalone_before = await self.storage.get_session(
+            member_owner_id,
+            invited_agent.id,
+            standalone.id,
+        )
+        assert standalone_before is not None
+        standalone_index_key = self.storage._key(
+            self.storage.key_config.session_index,
+            user_id=member_owner_id,
+            agent_id=invited_agent.id,
+        )
+        standalone_index_before = await self.storage._client.smembers(
+            standalone_index_key,
+        )
+        standalone_messages_before = await self.storage._client.lrange(
+            self.storage._message_key(member_owner_id, standalone.id),
+            0,
+            -1,
+        )
         owner_agent_index_before = await self.storage._client.smembers(
             self.storage._key(
                 self.storage.key_config.agent_index,
@@ -351,7 +369,31 @@ class TestTeamCreatedMemberFork(IsolatedAsyncioTestCase):
         self.assertEqual(member.owner_id, member_owner_id)
         self.assertEqual(member.agent_id, invited_agent.id)
         self.assertNotEqual(member.session_id, standalone.id)
-        self.assertIsNone(standalone.team_id)
+        standalone_after = await self.storage.get_session(
+            member_owner_id,
+            invited_agent.id,
+            standalone.id,
+        )
+        assert standalone_after is not None
+        self.assertEqual(
+            standalone_after.model_dump_json(),
+            standalone_before.model_dump_json(),
+        )
+        standalone_index_after = await self.storage._client.smembers(
+            standalone_index_key,
+        )
+        self.assertEqual(
+            standalone_index_after,
+            standalone_index_before | {member.session_id},
+        )
+        self.assertEqual(
+            standalone_messages_before,
+            await self.storage._client.lrange(
+                self.storage._message_key(member_owner_id, standalone.id),
+                0,
+                -1,
+            ),
+        )
         self.assertIsNotNone(
             await self.storage.get_session(
                 member_owner_id,
@@ -387,6 +429,217 @@ class TestTeamCreatedMemberFork(IsolatedAsyncioTestCase):
                 limit=10,
             ),
         )
+
+    async def test_legacy_multiple_sessions_is_not_migrated(self) -> None:
+        """Reject legacy members when their Agent has multiple Sessions."""
+        member_agent_id = "legacy-agent"
+        self.team.data.members = []
+        self.team.data.member_ids = [member_agent_id]
+        await self.storage.upsert_agent(
+            self.user_id,
+            self._agent(member_agent_id, "legacy-data", "legacy"),
+        )
+        await self.storage.upsert_session(
+            self.user_id,
+            member_agent_id,
+            make_config("Legacy 1"),
+            session_id="legacy-session-1",
+        )
+        await self.storage.set_session_team_id(
+            self.user_id,
+            "legacy-session-1",
+            self.team.id,
+        )
+        await self.storage.upsert_session(
+            self.user_id,
+            member_agent_id,
+            make_config("Legacy 2"),
+            session_id="legacy-session-2",
+        )
+        await self.storage.set_session_team_id(
+            self.user_id,
+            "legacy-session-2",
+            self.team.id,
+        )
+        await self.storage.upsert_team(self.user_id, self.team)
+        before = await self.storage.get_team(self.user_id, self.team.id)
+        assert before is not None
+
+        with self.assertRaises(SessionForkCorruptedGraphError):
+            await self.storage.fork_session(
+                self.user_id,
+                self.leader_agent_id,
+                self.leader_session_id,
+            )
+
+        after = await self.storage.get_team(self.user_id, self.team.id)
+        assert after is not None
+        self.assertEqual(after.data.members, before.data.members)
+        self.assertEqual(after.data.member_ids, before.data.member_ids)
+
+    async def test_legacy_session_for_another_team_is_not_migrated(
+        self,
+    ) -> None:
+        """Reject a legacy member whose only Session belongs elsewhere."""
+        member_agent_id = "legacy-agent"
+        self.team.data.members = []
+        self.team.data.member_ids = [member_agent_id]
+        await self.storage.upsert_agent(
+            self.user_id,
+            self._agent(member_agent_id, "legacy-data", "legacy"),
+        )
+        await self.storage.upsert_session(
+            self.user_id,
+            member_agent_id,
+            make_config("Legacy"),
+            session_id="legacy-session",
+        )
+        other_team = TeamRecord(
+            user_id=self.user_id,
+            session_id=self.leader_session_id,
+            data=TeamData(name="Other Team"),
+        )
+        await self.storage.upsert_team(self.user_id, other_team)
+        await self.storage.set_session_team_id(
+            self.user_id,
+            "legacy-session",
+            other_team.id,
+        )
+        await self.storage.upsert_team(self.user_id, self.team)
+        before = await self.storage.get_team(self.user_id, self.team.id)
+        assert before is not None
+
+        with self.assertRaises(SessionForkCorruptedGraphError):
+            await self.storage.fork_session(
+                self.user_id,
+                self.leader_agent_id,
+                self.leader_session_id,
+            )
+
+        after = await self.storage.get_team(self.user_id, self.team.id)
+        assert after is not None
+        self.assertEqual(after.data.members, before.data.members)
+        self.assertEqual(after.data.member_ids, before.data.member_ids)
+
+    async def test_legacy_user_agent_is_not_migrated(self) -> None:
+        """Reject a legacy member whose Agent is not team-created."""
+        member_agent_id = "legacy-agent"
+        self.team.data.members = []
+        self.team.data.member_ids = [member_agent_id]
+        user_agent = self._agent(member_agent_id, "legacy-data", "leader")
+        await self.storage.upsert_agent(self.user_id, user_agent)
+        await self.storage.upsert_session(
+            self.user_id,
+            member_agent_id,
+            make_config("Legacy"),
+            session_id="legacy-session",
+        )
+        await self.storage.set_session_team_id(
+            self.user_id,
+            "legacy-session",
+            self.team.id,
+        )
+        await self.storage.upsert_team(self.user_id, self.team)
+        before = await self.storage.get_team(self.user_id, self.team.id)
+        assert before is not None
+
+        with self.assertRaises(SessionForkCorruptedGraphError):
+            await self.storage.fork_session(
+                self.user_id,
+                self.leader_agent_id,
+                self.leader_session_id,
+            )
+
+        after = await self.storage.get_team(self.user_id, self.team.id)
+        assert after is not None
+        self.assertEqual(after.data.members, before.data.members)
+        self.assertEqual(after.data.member_ids, before.data.member_ids)
+
+    async def test_legacy_duplicate_member_ids_are_not_migrated(self) -> None:
+        """Reject duplicate legacy ids without changing the Team."""
+        member_agent_id = "legacy-agent"
+        self.team.data.members = []
+        self.team.data.member_ids = [member_agent_id, member_agent_id]
+        await self.storage.upsert_agent(
+            self.user_id,
+            self._agent(member_agent_id, "legacy-data", "legacy"),
+        )
+        await self.storage.upsert_session(
+            self.user_id,
+            member_agent_id,
+            make_config("Legacy"),
+            session_id="legacy-session",
+        )
+        await self.storage.set_session_team_id(
+            self.user_id,
+            "legacy-session",
+            self.team.id,
+        )
+        await self.storage.upsert_team(self.user_id, self.team)
+        before = await self.storage.get_team(self.user_id, self.team.id)
+        assert before is not None
+
+        with self.assertRaises(SessionForkCorruptedGraphError):
+            await self.storage.fork_session(
+                self.user_id,
+                self.leader_agent_id,
+                self.leader_session_id,
+            )
+
+        after = await self.storage.get_team(self.user_id, self.team.id)
+        assert after is not None
+        self.assertEqual(after.data.members, [])
+        self.assertEqual(after.data.member_ids, before.data.member_ids)
+
+    async def test_legacy_agent_key_id_mismatch_is_not_migrated(self) -> None:
+        """Reject a legacy Agent whose payload id differs from its key."""
+        member_agent_id = "legacy-agent"
+        self.team.data.members = []
+        self.team.data.member_ids = [member_agent_id]
+        mismatched_agent = self._agent(
+            "different-agent",
+            "legacy-data",
+            "legacy",
+        )
+        await self.storage.upsert_agent(
+            self.user_id,
+            mismatched_agent.model_copy(update={"id": member_agent_id}),
+        )
+        raw_agent = mismatched_agent.model_dump_json()
+        await self.storage._client.set(
+            self.storage._key(
+                self.storage.key_config.agent,
+                user_id=self.user_id,
+                agent_id=member_agent_id,
+            ),
+            raw_agent,
+        )
+        await self.storage.upsert_session(
+            self.user_id,
+            member_agent_id,
+            make_config("Legacy"),
+            session_id="legacy-session",
+        )
+        await self.storage.set_session_team_id(
+            self.user_id,
+            "legacy-session",
+            self.team.id,
+        )
+        await self.storage.upsert_team(self.user_id, self.team)
+        before = await self.storage.get_team(self.user_id, self.team.id)
+        assert before is not None
+
+        with self.assertRaises(SessionForkCorruptedGraphError):
+            await self.storage.fork_session(
+                self.user_id,
+                self.leader_agent_id,
+                self.leader_session_id,
+            )
+
+        after = await self.storage.get_team(self.user_id, self.team.id)
+        assert after is not None
+        self.assertEqual(after.data.members, [])
+        self.assertEqual(after.data.member_ids, before.data.member_ids)
 
     async def test_worker_is_conflict(self) -> None:
         """A created worker Session cannot be forked as a Team root."""
@@ -562,28 +815,27 @@ class TestTeamCreatedMemberFork(IsolatedAsyncioTestCase):
             "session-b",
             team_b.id,
         )
-        original_ensure = storage_utils._ensure_team_members
+        original_ensure = self.storage._ensure_legacy_team_members_atomically
         changed = False
 
         async def ensure_and_change(
-            storage: Any,
             user_id: str,
-            team: TeamRecord,
-        ) -> list[TeamMember]:
+            team_id: str,
+        ) -> TeamRecord:
             nonlocal changed
-            result = await original_ensure(storage, user_id, team)
+            result = await original_ensure(user_id, team_id)
             if not changed:
                 changed = True
-                source = await storage.get_session(
+                source = await self.storage.get_session(
                     self.user_id,
                     self.leader_agent_id,
                     self.leader_session_id,
                 )
                 assert source is not None
                 source.team_id = team_b.id
-                await storage._client.set(
-                    storage._key(
-                        storage.key_config.session,
+                await self.storage._client.set(
+                    self.storage._key(
+                        self.storage.key_config.session,
                         user_id=self.user_id,
                         session_id=self.leader_session_id,
                     ),
@@ -591,7 +843,7 @@ class TestTeamCreatedMemberFork(IsolatedAsyncioTestCase):
                 )
             return result
 
-        storage_utils._ensure_team_members = ensure_and_change
+        self.storage._ensure_legacy_team_members_atomically = ensure_and_change
         try:
             fork = await self.storage.fork_session(
                 self.user_id,
@@ -599,7 +851,9 @@ class TestTeamCreatedMemberFork(IsolatedAsyncioTestCase):
                 self.leader_session_id,
             )
         finally:
-            storage_utils._ensure_team_members = original_ensure
+            self.storage._ensure_legacy_team_members_atomically = (
+                original_ensure
+            )
         fork_team = await self.storage.get_team(self.user_id, fork.team_id)
         assert fork_team is not None
         self.assertEqual(len(fork_team.data.members), 1)
@@ -684,7 +938,7 @@ class TestTeamCreatedMemberFork(IsolatedAsyncioTestCase):
             )
         finally:
             self.storage._client.pipeline = original_pipeline
-        self.assertEqual(pipeline_count, 2)
+        self.assertGreaterEqual(pipeline_count, 3)
 
     async def test_wrongtype_during_preread_retries(self) -> None:
         """A pre-read WRONGTYPE retries before member migration."""

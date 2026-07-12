@@ -40,6 +40,7 @@ from ._model import (
     SessionSource,
     TeamRecord,
 )
+from . import _utils
 from ._utils import _dump_with_secrets
 from ..._utils._common import _generate_id
 from ...credential import CredentialBase
@@ -820,21 +821,194 @@ class RedisStorage(StorageBase):
             "The source Team graph changed during pre-read.",
         )
 
-    async def _validate_legacy_team_members(
+    async def _ensure_legacy_team_members_atomically(
         self,
         user_id: str,
-        team: TeamRecord,
-    ) -> None:
-        """Validate legacy ids before the helper migrates them as created."""
-        if team.data.members or not team.data.member_ids:
-            return
-        for agent_id in team.data.member_ids:
-            agent = await self.get_agent(user_id, agent_id)
-            sessions = await self.list_sessions(user_id, agent_id)
-            if agent is None or agent.user_id != user_id or not sessions:
-                raise SessionForkCorruptedGraphError(
-                    "Legacy Team members cannot be reliably normalized.",
-                )
+        team_id: str,
+    ) -> TeamRecord:
+        """Normalize legacy members under one optimistic transaction."""
+        team_key = self._key(
+            self.key_config.team,
+            user_id=user_id,
+            team_id=team_id,
+        )
+        team_index_key = self._key(
+            self.key_config.team_index,
+            user_id=user_id,
+        )
+        for _ in range(_SESSION_FORK_MAX_RETRIES):
+            async with self._client.pipeline(transaction=True) as pipe:
+                try:
+                    await pipe.watch(team_key)
+                    if (
+                        _normalize_redis_type(await pipe.type(team_key))
+                        != "string"
+                    ):
+                        raise SessionForkCorruptedGraphError(
+                            "The legacy Team record is missing or corrupted.",
+                        )
+                    raw_team = await pipe.get(team_key)
+                    try:
+                        team = TeamRecord.model_validate_json(raw_team)
+                    except ValidationError as error:
+                        raise SessionForkCorruptedGraphError(
+                            "The legacy Team record is corrupted.",
+                        ) from error
+                    if team.id != team_id or team.user_id != user_id:
+                        raise SessionForkCorruptedGraphError(
+                            "The legacy Team record identity is inconsistent.",
+                        )
+                    if team.data.members or not team.data.member_ids:
+                        return team
+                    if len(team.data.member_ids) != len(
+                        set(team.data.member_ids),
+                    ):
+                        raise SessionForkCorruptedGraphError(
+                            "Legacy Team members cannot be reliably "
+                            "normalized.",
+                        )
+
+                    agent_keys = [
+                        self._key(
+                            self.key_config.agent,
+                            user_id=user_id,
+                            agent_id=member_id,
+                        )
+                        for member_id in team.data.member_ids
+                    ]
+                    session_index_keys = [
+                        self._key(
+                            self.key_config.session_index,
+                            user_id=user_id,
+                            agent_id=member_id,
+                        )
+                        for member_id in team.data.member_ids
+                    ]
+                    await pipe.watch(
+                        *agent_keys,
+                        *session_index_keys,
+                    )
+                    legacy_sessions: dict[str, SessionRecord] = {}
+                    for member_id, agent_key, index_key in zip(
+                        team.data.member_ids,
+                        agent_keys,
+                        session_index_keys,
+                    ):
+                        if (
+                            _normalize_redis_type(await pipe.type(agent_key))
+                            != "string"
+                        ):
+                            raise SessionForkCorruptedGraphError(
+                                "Legacy Team member Agent is missing or "
+                                "corrupted.",
+                            )
+                        raw_agent = await pipe.get(agent_key)
+                        try:
+                            agent = AgentRecord.model_validate_json(raw_agent)
+                        except ValidationError as error:
+                            raise SessionForkCorruptedGraphError(
+                                "Legacy Team member Agent is corrupted.",
+                            ) from error
+                        agent_is_valid = (
+                            agent.id == member_id
+                            and agent.user_id == user_id
+                            and agent.source == "team"
+                        )
+                        if not agent_is_valid:
+                            raise SessionForkCorruptedGraphError(
+                                "Legacy Team member Agent is inconsistent.",
+                            )
+                        if (
+                            _normalize_redis_type(await pipe.type(index_key))
+                            != "set"
+                        ):
+                            raise SessionForkCorruptedGraphError(
+                                "Legacy Team member Session Index is "
+                                "corrupted.",
+                            )
+                        session_ids = await pipe.smembers(index_key)
+                        if len(session_ids) != 1:
+                            raise SessionForkCorruptedGraphError(
+                                "Legacy Team member Session is not unique.",
+                            )
+                        legacy_session_id = next(iter(session_ids))
+                        if isinstance(legacy_session_id, bytes):
+                            legacy_session_id = legacy_session_id.decode()
+                        session_key = self._key(
+                            self.key_config.session,
+                            user_id=user_id,
+                            session_id=legacy_session_id,
+                        )
+                        await pipe.watch(session_key)
+                        if (
+                            _normalize_redis_type(await pipe.type(session_key))
+                            != "string"
+                        ):
+                            raise SessionForkCorruptedGraphError(
+                                "Legacy Team member Session is missing or "
+                                "corrupted.",
+                            )
+                        raw_session = await pipe.get(session_key)
+                        try:
+                            legacy_session = SessionRecord.model_validate_json(
+                                raw_session,
+                            )
+                        except ValidationError as error:
+                            raise SessionForkCorruptedGraphError(
+                                "Legacy Team member Session is corrupted.",
+                            ) from error
+                        session_is_valid = all(
+                            (
+                                legacy_session.id == legacy_session_id,
+                                legacy_session.user_id == user_id,
+                                legacy_session.agent_id == member_id,
+                                legacy_session.team_id == team.id,
+                                legacy_session.source == SessionSource.USER,
+                                legacy_session.source_schedule_id is None,
+                            ),
+                        )
+                        if not session_is_valid:
+                            raise SessionForkCorruptedGraphError(
+                                "Legacy Team member Session is inconsistent.",
+                            )
+                        legacy_sessions[member_id] = legacy_session
+
+                    await pipe.watch(team_index_key)
+                    team_index_type = _normalize_redis_type(
+                        await pipe.type(team_index_key),
+                    )
+                    if team_index_type not in {"none", "set"}:
+                        raise SessionForkCorruptedGraphError(
+                            "The Team Index is corrupted.",
+                        )
+                    # The helper only builds the normalized members here;
+                    # the enclosing pipeline owns the atomic Team write.
+                    # pylint: disable=protected-access
+                    await _utils._ensure_team_members(
+                        self,
+                        user_id,
+                        team,
+                        legacy_sessions=legacy_sessions,
+                        persist=False,
+                    )
+                    team.updated_at = datetime.now()
+                    team_payload = team.model_dump_json()
+                    pipe.multi()
+                    pipe.set(team_key, team_payload)
+                    if self.key_ttl is not None:
+                        pipe.expire(team_key, self.key_ttl)
+                    pipe.sadd(team_index_key, team.id)
+                    await pipe.execute()
+                    return team
+                except _watch_error():
+                    continue
+                except ResponseError as error:
+                    if _is_wrongtype_response_error(error):
+                        continue
+                    raise
+        raise SessionForkConflictError(
+            "The legacy Team graph changed during normalization.",
+        )
 
     async def _fork_team_session(
         self,
@@ -851,10 +1025,7 @@ class RedisStorage(StorageBase):
                 session_id,
             )
             team_id = team.id
-            from ._utils import _ensure_team_members
-
-            await self._validate_legacy_team_members(user_id, team)
-            await _ensure_team_members(self, user_id, team)
+            await self._ensure_legacy_team_members_atomically(user_id, team_id)
             async with self._client.pipeline(transaction=True) as pipe:
                 try:
                     plan = await self._build_team_fork_plan(

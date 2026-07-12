@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """The utils for storage."""
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, SecretStr
 
@@ -40,6 +40,9 @@ async def _ensure_team_members(
     storage: "StorageBase",
     user_id: str,
     team: "TeamRecord",
+    *,
+    legacy_sessions: dict[str, Any] | None = None,
+    persist: bool = True,
 ) -> list[TeamMember]:
     """Return the team's members, lazily migrating legacy ``member_ids``.
 
@@ -80,7 +83,11 @@ async def _ensure_team_members(
 
     migrated: list[TeamMember] = []
     for agent_id in team.data.member_ids:
-        sessions = await storage.list_sessions(user_id, agent_id)
+        sessions = (
+            [legacy_sessions[agent_id]]
+            if legacy_sessions is not None and agent_id in legacy_sessions
+            else await storage.list_sessions(user_id, agent_id)
+        )
         if not sessions:
             # Session already deleted — nothing sensible to route to.
             continue
@@ -103,5 +110,6 @@ async def _ensure_team_members(
     # ``member_ids`` to match ``migrated`` keeps the record consistent
     # and terminates the migration.
     team.data.member_ids = [m.agent_id for m in migrated]
-    await storage.upsert_team(user_id, team)
+    if persist:
+        await storage.upsert_team(user_id, team)
     return migrated

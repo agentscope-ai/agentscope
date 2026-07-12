@@ -45,6 +45,7 @@ from agentscope.permission import (
     PermissionMode,
     PermissionRule,
 )
+from agentscope.message import TextBlock, UserMsg
 from agentscope.state import AgentState
 
 
@@ -1413,6 +1414,33 @@ class TestAgentInviteSuccess(_AgentInviteTestBase):
             invited.id,
             SessionConfig(workspace_id="remote-workspace"),
         )
+        await self.storage.upsert_message(
+            member_owner_id,
+            standalone.id,
+            UserMsg(
+                name="user",
+                content=[TextBlock(text="standalone history")],
+            ),
+        )
+        standalone_messages_before = await self.storage._client.lrange(
+            self.storage._message_key(member_owner_id, standalone.id),
+            0,
+            -1,
+        )
+        standalone_before = await self.storage.get_session(
+            member_owner_id,
+            invited.id,
+            standalone.id,
+        )
+        assert standalone_before is not None
+        standalone_index_key = self.storage._key(
+            self.storage.key_config.session_index,
+            user_id=member_owner_id,
+            agent_id=invited.id,
+        )
+        standalone_index_before = await self.storage._client.smembers(
+            standalone_index_key,
+        )
         tool = AgentInvite(
             storage=self.storage,
             message_bus=self.bus,
@@ -1438,7 +1466,29 @@ class TestAgentInviteSuccess(_AgentInviteTestBase):
         assert team is not None
         member = team.data.members[0]
         self.assertEqual(member.owner_id, member_owner_id)
-        self.assertIsNone(standalone.team_id)
+        standalone_after = await self.storage.get_session(
+            member_owner_id,
+            invited.id,
+            standalone.id,
+        )
+        assert standalone_after is not None
+        self.assertEqual(
+            standalone_after.model_dump_json(),
+            standalone_before.model_dump_json(),
+        )
+        self.assertIsNone(standalone_after.team_id)
+        self.assertEqual(
+            await self.storage._client.smembers(standalone_index_key),
+            standalone_index_before | {member.session_id},
+        )
+        self.assertEqual(
+            await self.storage._client.lrange(
+                self.storage._message_key(member_owner_id, standalone.id),
+                0,
+                -1,
+            ),
+            standalone_messages_before,
+        )
         borrowed = await self.storage.get_session(
             member_owner_id,
             invited.id,
