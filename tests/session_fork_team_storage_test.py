@@ -272,8 +272,8 @@ class TestTeamCreatedMemberFork(IsolatedAsyncioTestCase):
             {self.leader_agent_id},
         )
 
-    async def test_invited_member_is_conflict(self) -> None:
-        """The created-only phase rejects invited members."""
+    async def test_missing_invited_member_is_corrupted_graph(self) -> None:
+        """An invited member without its Agent is corrupted."""
         self.team.data.members = [
             TeamMember(
                 owner_id=self.user_id,
@@ -283,12 +283,110 @@ class TestTeamCreatedMemberFork(IsolatedAsyncioTestCase):
             ),
         ]
         await self.storage.upsert_team(self.user_id, self.team)
-        with self.assertRaises(SessionForkConflictError):
+        with self.assertRaises(SessionForkCorruptedGraphError):
             await self.storage.fork_session(
                 self.user_id,
                 self.leader_agent_id,
                 self.leader_session_id,
             )
+
+    async def test_invited_member_reuses_agent_and_owner_namespace(
+        self,
+    ) -> None:
+        """An invited Agent is reused while its Session is cloned."""
+        member_owner_id = "member-owner"
+        invited_agent = self._agent(
+            "invited-agent",
+            "invited-data",
+            "Invited",
+        ).model_copy(update={"user_id": member_owner_id, "source": "user"})
+        await self.storage.upsert_agent(member_owner_id, invited_agent)
+        standalone = await self.storage.upsert_session(
+            member_owner_id,
+            invited_agent.id,
+            make_config("Standalone"),
+            session_id="standalone-session",
+        )
+        source_team_session = await self.storage.upsert_session(
+            member_owner_id,
+            invited_agent.id,
+            make_config("Team Session"),
+            session_id="team-session",
+        )
+        await self.storage.set_session_team_id(
+            member_owner_id,
+            source_team_session.id,
+            self.team.id,
+        )
+        await self.storage.upsert_message(
+            member_owner_id,
+            source_team_session.id,
+            UserMsg(name="user", content=[TextBlock(text="history")]),
+        )
+        self.team.data.members = [
+            TeamMember(
+                owner_id=member_owner_id,
+                agent_id=invited_agent.id,
+                session_id=source_team_session.id,
+                role="invited",
+            ),
+        ]
+        self.team.data.member_ids = [invited_agent.id]
+        await self.storage.upsert_team(self.user_id, self.team)
+        owner_agent_index_before = await self.storage._client.smembers(
+            self.storage._key(
+                self.storage.key_config.agent_index,
+                user_id=member_owner_id,
+            ),
+        )
+
+        fork = await self.storage.fork_session(
+            self.user_id,
+            self.leader_agent_id,
+            self.leader_session_id,
+        )
+        fork_team = await self.storage.get_team(self.user_id, fork.team_id)
+        assert fork_team is not None
+        member = fork_team.data.members[0]
+        self.assertEqual(member.owner_id, member_owner_id)
+        self.assertEqual(member.agent_id, invited_agent.id)
+        self.assertNotEqual(member.session_id, standalone.id)
+        self.assertIsNone(standalone.team_id)
+        self.assertIsNotNone(
+            await self.storage.get_session(
+                member_owner_id,
+                invited_agent.id,
+                member.session_id,
+            ),
+        )
+        self.assertIsNone(
+            await self.storage.get_session(
+                self.user_id,
+                invited_agent.id,
+                member.session_id,
+            ),
+        )
+        self.assertEqual(
+            owner_agent_index_before,
+            await self.storage._client.smembers(
+                self.storage._key(
+                    self.storage.key_config.agent_index,
+                    user_id=member_owner_id,
+                ),
+            ),
+        )
+        self.assertEqual(
+            await self.storage.list_messages(
+                member_owner_id,
+                member.session_id,
+                limit=10,
+            ),
+            await self.storage.list_messages(
+                member_owner_id,
+                source_team_session.id,
+                limit=10,
+            ),
+        )
 
     async def test_worker_is_conflict(self) -> None:
         """A created worker Session cannot be forked as a Team root."""

@@ -18,11 +18,21 @@ class TeamMemberForkPlan:
     """Serialized Agent, Session, and raw messages for one member."""
 
     source_member: TeamMember
+    target_owner_id: str
     target_agent_id: str
     target_session_id: str
-    target_agent_payload: str
+    target_agent_payload: str | None
     target_session_payload: str
     source_messages: tuple[str | bytes, ...]
+
+
+@dataclass(frozen=True)
+class TeamIndexPlan:
+    """An Index Key, its semantic category, and sharing behavior."""
+
+    key: str
+    category: str
+    shared: bool
 
 
 @dataclass(frozen=True)
@@ -39,7 +49,7 @@ class TeamForkPlan:
     target_leader_messages: tuple[str | bytes, ...]
     target_members: tuple[TeamMemberForkPlan, ...]
     exclusive_target_keys: tuple[str, ...]
-    shared_index_keys: tuple[str, ...]
+    index_plans: tuple[TeamIndexPlan, ...]
 
 
 def validate_team_source_identity(
@@ -83,11 +93,7 @@ def validate_team_members(
     seen_sessions: set[str] = set()
     source_is_member = False
     for member in team.data.members:
-        if member.role == "invited":
-            raise SessionForkConflictError(
-                "Teams with invited members are not supported yet.",
-            )
-        if member.role != "created":
+        if member.role not in {"created", "invited"}:
             raise SessionForkCorruptedGraphError(
                 "The Team contains an unknown member role.",
             )
@@ -119,14 +125,14 @@ def validate_team_members(
     return tuple(team.data.members)
 
 
-def validate_created_member_resources(
+def validate_member_resources(
     member: TeamMember,
     agent: AgentRecord,
     session: SessionRecord,
     team: TeamRecord,
 ) -> None:
-    """Validate one created member's Agent and Session relationships."""
-    if agent.id != member.agent_id or agent.user_id != team.user_id:
+    """Validate one member's Agent and Session relationships."""
+    if agent.id != member.agent_id or agent.user_id != member.owner_id:
         raise SessionForkCorruptedGraphError(
             "A Team member Agent does not match its graph entry.",
         )
@@ -144,4 +150,12 @@ def validate_created_member_resources(
     ):
         raise SessionForkCorruptedGraphError(
             "A Team member Session has invalid provenance.",
+        )
+    if member.role == "created" and member.owner_id != team.user_id:
+        raise SessionForkCorruptedGraphError(
+            "A created member owner does not match the Team owner.",
+        )
+    if member.role == "invited" and agent.source != "user":
+        raise SessionForkCorruptedGraphError(
+            "An invited member Agent must be user-owned.",
         )

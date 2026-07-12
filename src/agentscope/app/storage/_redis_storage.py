@@ -22,8 +22,9 @@ from ._fork import (
 )
 from ._team_fork import (
     TeamForkPlan,
+    TeamIndexPlan,
     TeamMemberForkPlan,
-    validate_created_member_resources,
+    validate_member_resources,
     validate_team_members,
     validate_team_source_identity,
 )
@@ -819,6 +820,22 @@ class RedisStorage(StorageBase):
             "The source Team graph changed during pre-read.",
         )
 
+    async def _validate_legacy_team_members(
+        self,
+        user_id: str,
+        team: TeamRecord,
+    ) -> None:
+        """Validate legacy ids before the helper migrates them as created."""
+        if team.data.members or not team.data.member_ids:
+            return
+        for agent_id in team.data.member_ids:
+            agent = await self.get_agent(user_id, agent_id)
+            sessions = await self.list_sessions(user_id, agent_id)
+            if agent is None or agent.user_id != user_id or not sessions:
+                raise SessionForkCorruptedGraphError(
+                    "Legacy Team members cannot be reliably normalized.",
+                )
+
     async def _fork_team_session(
         self,
         user_id: str,
@@ -836,6 +853,7 @@ class RedisStorage(StorageBase):
             team_id = team.id
             from ._utils import _ensure_team_members
 
+            await self._validate_legacy_team_members(user_id, team)
             await _ensure_team_members(self, user_id, team)
             async with self._client.pipeline(transaction=True) as pipe:
                 try:
@@ -953,7 +971,7 @@ class RedisStorage(StorageBase):
         leader_messages_key = self._message_key(user_id, session_id)
         member_keys: list[tuple[str, str, str]] = []
         for member in members:
-            if member.owner_id != team.user_id:
+            if member.role == "created" and member.owner_id != team.user_id:
                 raise SessionForkCorruptedGraphError(
                     "Created member owner does not match the Team owner.",
                 )
@@ -1032,7 +1050,7 @@ class RedisStorage(StorageBase):
                     raise SessionForkCorruptedGraphError(
                         "A Team member resource is invalid.",
                     ) from error
-                validate_created_member_resources(
+                validate_member_resources(
                     members[len(source_members)],
                     member_agent,
                     member_session,
@@ -1075,18 +1093,27 @@ class RedisStorage(StorageBase):
             members,
             source_members,
         ):
-            target_agent_id = _generate_id()
-            target_data_id = _generate_id()
             target_session_id = _generate_id()
-            if target_data_id in source_data_ids:
-                raise _watch_error()
-            target_agent = source_agent.model_copy(deep=True)
-            target_agent.id = target_agent_id
-            target_agent.created_at = forked_at
-            target_agent.updated_at = forked_at
-            target_agent.data.id = target_data_id
+            target_owner_id = member.owner_id
+            target_agent_payload: str | None = None
+            if member.role == "created":
+                target_agent_id = _generate_id()
+                target_data_id = _generate_id()
+                if target_data_id in source_data_ids:
+                    raise _watch_error()
+                target_agent = source_agent.model_copy(deep=True)
+                target_agent.id = target_agent_id
+                target_agent.created_at = forked_at
+                target_agent.updated_at = forked_at
+                target_agent.data.id = target_data_id
+                target_agent_payload = target_agent.model_dump_json()
+                target_data_ids.append(target_data_id)
+            else:
+                target_agent_id = source_agent.id
+            target_agent_ids.append(target_agent_id)
             target_member_session = source_member_session.model_copy(deep=True)
             target_member_session.id = target_session_id
+            target_member_session.user_id = target_owner_id
             target_member_session.created_at = forked_at
             target_member_session.updated_at = forked_at
             target_member_session.agent_id = target_agent_id
@@ -1096,12 +1123,12 @@ class RedisStorage(StorageBase):
             target_member_session.config.name = (
                 source_member_session.config.name
             )
-            target_agent_payload = target_agent.model_dump_json()
             target_session_payload = target_member_session.model_dump_json()
             target_members.append(
                 TeamMemberForkPlan(
                     source_member=member,
-                    target_agent_id=target_agent.id,
+                    target_owner_id=target_owner_id,
+                    target_agent_id=target_agent_id,
                     target_session_id=target_member_session.id,
                     target_agent_payload=target_agent_payload,
                     target_session_payload=target_session_payload,
@@ -1109,8 +1136,6 @@ class RedisStorage(StorageBase):
                 ),
             )
             new_member_ids.append(target_agent_id)
-            target_agent_ids.append(target_agent_id)
-            target_data_ids.append(target_data_id)
             target_session_ids.append(target_session_id)
 
         if (
@@ -1154,19 +1179,25 @@ class RedisStorage(StorageBase):
             self._message_key(user_id, target_leader.id),
         ]
         for member in target_members:
+            if member.target_agent_payload is not None:
+                target_keys.append(
+                    self._key(
+                        self.key_config.agent,
+                        user_id=member.target_owner_id,
+                        agent_id=member.target_agent_id,
+                    ),
+                )
             target_keys.extend(
                 [
                     self._key(
-                        self.key_config.agent,
-                        user_id=user_id,
-                        agent_id=member.target_agent_id,
-                    ),
-                    self._key(
                         self.key_config.session,
-                        user_id=user_id,
+                        user_id=member.target_owner_id,
                         session_id=member.target_session_id,
                     ),
-                    self._message_key(user_id, member.target_session_id),
+                    self._message_key(
+                        member.target_owner_id,
+                        member.target_session_id,
+                    ),
                 ],
             )
         owner_agent_index = self._key(
@@ -1182,27 +1213,47 @@ class RedisStorage(StorageBase):
             user_id=user_id,
             agent_id=source_session.agent_id,
         )
-        new_member_session_indexes = tuple(
-            self._key(
+        index_plans: list[TeamIndexPlan] = [
+            TeamIndexPlan(owner_team_index, "team", True),
+            TeamIndexPlan(leader_session_index, "session", True),
+        ]
+        if any(
+            member.target_agent_payload is not None
+            for member in target_members
+        ):
+            index_plans.append(TeamIndexPlan(owner_agent_index, "agent", True))
+        created_session_index_keys: list[str] = []
+        for member in target_members:
+            member_session_index = self._key(
                 self.key_config.session_index,
-                user_id=user_id,
+                user_id=member.target_owner_id,
                 agent_id=member.target_agent_id,
             )
-            for member in target_members
-        )
-        target_keys.extend(new_member_session_indexes)
+            if member.target_agent_payload is not None:
+                created_session_index_keys.append(member_session_index)
+                index_plans.append(
+                    TeamIndexPlan(member_session_index, "session", False),
+                )
+            else:
+                index_plans.append(
+                    TeamIndexPlan(member_session_index, "session", True),
+                )
+        target_keys.extend(created_session_index_keys)
         exclusive_target_keys = tuple(target_keys)
         if len(exclusive_target_keys) != len(set(exclusive_target_keys)):
             raise _watch_error()
-        shared_index_keys = [owner_team_index, leader_session_index]
-        if target_members:
-            shared_index_keys.append(owner_agent_index)
-        if len(shared_index_keys) != len(set(shared_index_keys)):
-            raise SessionForkCorruptedGraphError(
-                "Team fork shared index key templates overlap.",
+        category_by_key: dict[str, str] = {}
+        for index_plan in index_plans:
+            previous_category = category_by_key.setdefault(
+                index_plan.key,
+                index_plan.category,
             )
-        if set(exclusive_target_keys) & set(shared_index_keys):
-            raise _watch_error()
+            if previous_category != index_plan.category:
+                raise SessionForkCorruptedGraphError(
+                    "Team fork Index categories overlap.",
+                )
+            if index_plan.shared and index_plan.key in exclusive_target_keys:
+                raise _watch_error()
         return TeamForkPlan(
             forked_at=forked_at,
             source_session_id=session_id,
@@ -1214,7 +1265,7 @@ class RedisStorage(StorageBase):
             target_leader_messages=tuple(raw_leader_messages),
             target_members=tuple(target_members),
             exclusive_target_keys=exclusive_target_keys,
-            shared_index_keys=tuple(shared_index_keys),
+            index_plans=tuple(index_plans),
         )
 
     async def _check_team_target_keys(
@@ -1225,19 +1276,21 @@ class RedisStorage(StorageBase):
         """WATCH and validate all Team fork target keys and indexes."""
         await pipe.watch(
             *plan.exclusive_target_keys,
-            *plan.shared_index_keys,
+            *(index_plan.key for index_plan in plan.index_plans),
         )
         for key in plan.exclusive_target_keys:
             if _normalize_redis_type(await pipe.type(key)) != "none":
                 raise _watch_error()
-        for key in plan.shared_index_keys:
-            if _normalize_redis_type(await pipe.type(key)) not in {
-                "none",
-                "set",
-            }:
+        for index_plan in plan.index_plans:
+            index_type = _normalize_redis_type(
+                await pipe.type(index_plan.key),
+            )
+            if index_plan.shared and index_type not in {"none", "set"}:
                 raise SessionForkCorruptedGraphError(
                     "A shared Team index has an invalid type.",
                 )
+            if not index_plan.shared and index_type != "none":
+                raise _watch_error()
 
     async def _queue_team_fork_writes(
         self,
@@ -1262,20 +1315,22 @@ class RedisStorage(StorageBase):
             pipe.expire(team_key, self.key_ttl)
             pipe.expire(leader_key, self.key_ttl)
         for member in plan.target_members:
-            agent_key = self._key(
-                self.key_config.agent,
-                user_id=user_id,
-                agent_id=member.target_agent_id,
-            )
             session_key = self._key(
                 self.key_config.session,
-                user_id=user_id,
+                user_id=member.target_owner_id,
                 session_id=member.target_session_id,
             )
-            pipe.set(agent_key, member.target_agent_payload)
+            if member.target_agent_payload is not None:
+                agent_key = self._key(
+                    self.key_config.agent,
+                    user_id=member.target_owner_id,
+                    agent_id=member.target_agent_id,
+                )
+                pipe.set(agent_key, member.target_agent_payload)
             pipe.set(session_key, member.target_session_payload)
             if self.key_ttl is not None:
-                pipe.expire(agent_key, self.key_ttl)
+                if member.target_agent_payload is not None:
+                    pipe.expire(agent_key, self.key_ttl)
                 pipe.expire(session_key, self.key_ttl)
         pipe.sadd(
             self._key(self.key_config.team_index, user_id=user_id),
@@ -1290,17 +1345,18 @@ class RedisStorage(StorageBase):
             plan.target_leader_session_id,
         )
         for member in plan.target_members:
-            pipe.sadd(
-                self._key(
-                    self.key_config.agent_index,
-                    user_id=user_id,
-                ),
-                member.target_agent_id,
-            )
+            if member.target_agent_payload is not None:
+                pipe.sadd(
+                    self._key(
+                        self.key_config.agent_index,
+                        user_id=user_id,
+                    ),
+                    member.target_agent_id,
+                )
             pipe.sadd(
                 self._key(
                     self.key_config.session_index,
-                    user_id=user_id,
+                    user_id=member.target_owner_id,
                     agent_id=member.target_agent_id,
                 ),
                 member.target_session_id,
@@ -1316,7 +1372,7 @@ class RedisStorage(StorageBase):
         for member in plan.target_members:
             if member.source_messages:
                 message_key = self._message_key(
-                    user_id,
+                    member.target_owner_id,
                     member.target_session_id,
                 )
                 pipe.rpush(message_key, *member.source_messages)
