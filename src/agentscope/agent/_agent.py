@@ -2073,6 +2073,44 @@ class Agent:
         if len(boundary_msg_to_reserve.content) > 0:
             msgs_to_reserve = [boundary_msg_to_reserve] + msgs_to_reserve
 
+        # ── Cross-message orphan detection ──
+        # The boundary-message pairing guard above only protects
+        # tool_call/tool_result pairs *within* the same message.  When
+        # tool_call and tool_result are in different messages (flat
+        # timeline format), a tool_result message can still be orphaned
+        # because its tool_call was evicted into msgs_to_compress.
+        # Move orphaned tool_result messages to msgs_to_compress so
+        # pairing is preserved and the model never sees orphans.
+        compress_tc_ids: set[str] = set()
+        for msg in msgs_to_compress:
+            for block in msg.get_content_blocks("tool_call"):
+                if isinstance(block, ToolCallBlock):
+                    compress_tc_ids.add(block.id)
+
+        if compress_tc_ids:
+            reserve_tc_ids: set[str] = set()
+            for msg in msgs_to_reserve:
+                for block in msg.get_content_blocks("tool_call"):
+                    if isinstance(block, ToolCallBlock):
+                        reserve_tc_ids.add(block.id)
+
+            still_reserve: list[Msg] = []
+            for msg in msgs_to_reserve:
+                is_orphan = False
+                for block in msg.get_content_blocks("tool_result"):
+                    if (
+                        isinstance(block, ToolResultBlock)
+                        and block.id in compress_tc_ids
+                        and block.id not in reserve_tc_ids
+                    ):
+                        is_orphan = True
+                        break
+                if is_orphan:
+                    msgs_to_compress.append(msg)
+                else:
+                    still_reserve.append(msg)
+            msgs_to_reserve = still_reserve
+
         return msgs_to_compress, msgs_to_reserve
 
     async def _clear_unreserved_read_cache(
