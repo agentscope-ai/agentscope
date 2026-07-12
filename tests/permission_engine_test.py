@@ -17,6 +17,7 @@ from agentscope.permission import (
     PermissionRule,
     PermissionBehavior,
     PermissionDecision,
+    PermissionEvaluation,
     AdditionalWorkingDirectory,
 )
 from agentscope.tool import (
@@ -811,3 +812,30 @@ class PermissionEngineBypassImmuneFieldTest(IsolatedAsyncioTestCase):
             {},
         )
         self.assertEqual(decision.behavior, PermissionBehavior.DENY)
+
+
+class CheckPermissionBackwardCompatTest(IsolatedAsyncioTestCase):
+    """check_permission must still return PermissionDecision, not
+    PermissionEvaluation, after evaluate_permission is introduced."""
+
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "Bash tool is not supported on Windows",
+    )
+    async def test_returns_decision_not_evaluation(self) -> None:
+        """The compatibility API returns PermissionDecision in every mode."""
+        for mode in (
+            PermissionMode.DEFAULT,
+            PermissionMode.EXPLORE,
+            PermissionMode.ACCEPT_EDITS,
+            PermissionMode.BYPASS,
+            PermissionMode.DONT_ASK,
+        ):
+            context = PermissionContext(mode=mode)
+            engine = PermissionEngine(context)
+            decision = await engine.check_permission(Bash(), {"command": "ls"})
+            assert isinstance(
+                decision,
+                PermissionDecision,
+            ), f"mode {mode}: check_permission must return PermissionDecision"
+            assert not isinstance(decision, PermissionEvaluation)
