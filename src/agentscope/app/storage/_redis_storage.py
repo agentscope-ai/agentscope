@@ -7,6 +7,7 @@ from typing import Any, TYPE_CHECKING, Self
 
 from pydantic import BaseModel
 from pydantic import ValidationError
+from redis.exceptions import ResponseError
 
 from ._base import StorageBase
 from ._exceptions import (
@@ -17,7 +18,7 @@ from ._exceptions import (
 from ._fork import (
     SessionForkPlan,
     build_fork_session_name,
-    validate_regular_fork_source,
+    validate_session_fork_source,
 )
 from ._model import (
     AgentRecord,
@@ -38,6 +39,19 @@ from ...state import AgentState
 
 
 _SESSION_FORK_MAX_RETRIES = 3
+
+
+def _normalize_redis_type(value: str | bytes) -> str:
+    """Normalize Redis TYPE responses from decoded and raw clients."""
+    if isinstance(value, bytes):
+        return value.decode("ascii")
+    return value
+
+
+def _is_wrongtype_response_error(error: ResponseError) -> bool:
+    """Return whether an error is Redis' concurrent WRONGTYPE failure."""
+    return str(error).upper().startswith("WRONGTYPE")
+
 
 if TYPE_CHECKING:
     from redis.asyncio import ConnectionPool, Redis
@@ -647,7 +661,7 @@ class RedisStorage(StorageBase):
         agent_id: str,
         session_id: str,
     ) -> SessionRecord:
-        """Atomically fork a regular, non-scheduled, non-team session."""
+        """Atomically fork a regular or Schedule non-team session."""
         for _ in range(_SESSION_FORK_MAX_RETRIES):
             async with self._client.pipeline(transaction=True) as pipe:
                 try:
@@ -660,8 +674,25 @@ class RedisStorage(StorageBase):
                         user_id,
                         session_id,
                     )
-                    await pipe.watch(source_key, source_messages_key)
-                    raw_session = await pipe.get(source_key)
+                    await pipe.watch(source_key)
+
+                    source_type = _normalize_redis_type(
+                        await pipe.type(source_key),
+                    )
+                    if source_type == "none":
+                        raise SessionForkNotFoundError(
+                            f"Session '{session_id}' not found.",
+                        )
+                    if source_type != "string":
+                        raise SessionForkCorruptedGraphError(
+                            "The source session key has an invalid type.",
+                        )
+                    try:
+                        raw_session = await pipe.get(source_key)
+                    except ResponseError as error:
+                        if _is_wrongtype_response_error(error):
+                            continue
+                        raise
                     if not raw_session:
                         raise SessionForkNotFoundError(
                             f"Session '{session_id}' not found.",
@@ -674,18 +705,42 @@ class RedisStorage(StorageBase):
                         raise SessionForkCorruptedGraphError(
                             "The source session record is invalid.",
                         ) from error
-                    validate_regular_fork_source(
+                    validate_session_fork_source(
                         source_session,
                         user_id,
                         agent_id,
                         session_id,
                     )
-                    raw_messages = await pipe.lrange(
-                        source_messages_key,
-                        0,
-                        -1,
+                    target_index_key = self._key(
+                        self.key_config.session_index,
+                        user_id=user_id,
+                        agent_id=source_session.agent_id,
                     )
-
+                    await pipe.watch(source_messages_key, target_index_key)
+                    message_type = _normalize_redis_type(
+                        await pipe.type(source_messages_key),
+                    )
+                    index_type = _normalize_redis_type(
+                        await pipe.type(target_index_key),
+                    )
+                    if message_type not in {"none", "list"}:
+                        raise SessionForkCorruptedGraphError(
+                            "The source message key has an invalid type.",
+                        )
+                    if index_type not in {"none", "set"}:
+                        raise SessionForkCorruptedGraphError(
+                            "The target session index has an invalid type.",
+                        )
+                    try:
+                        raw_messages = (
+                            await pipe.lrange(source_messages_key, 0, -1)
+                            if message_type == "list"
+                            else []
+                        )
+                    except ResponseError as error:
+                        if _is_wrongtype_response_error(error):
+                            continue
+                        raise
                     target_session = SessionRecord(
                         user_id=user_id,
                         agent_id=agent_id,
@@ -707,11 +762,6 @@ class RedisStorage(StorageBase):
                         user_id,
                         target_session.id,
                     )
-                    target_index_key = self._key(
-                        self.key_config.session_index,
-                        user_id=user_id,
-                        agent_id=agent_id,
-                    )
                     plan = SessionForkPlan(
                         source_session_id=session_id,
                         target_session=target_session,
@@ -721,17 +771,20 @@ class RedisStorage(StorageBase):
                         target_session_index_key=target_index_key,
                     )
 
-                    target_keys = [
+                    await pipe.watch(
                         plan.target_session_key,
                         plan.target_messages_key,
-                    ]
-                    await pipe.watch(*target_keys)
-                    target_exists = False
-                    for target_key in target_keys:
-                        if await pipe.exists(target_key):
-                            target_exists = True
-                            break
-                    if target_exists:
+                    )
+                    target_session_type = _normalize_redis_type(
+                        await pipe.type(plan.target_session_key),
+                    )
+                    target_message_type = _normalize_redis_type(
+                        await pipe.type(plan.target_messages_key),
+                    )
+                    if (
+                        target_session_type != "none"
+                        or target_message_type != "none"
+                    ):
                         continue
 
                     pipe.multi()

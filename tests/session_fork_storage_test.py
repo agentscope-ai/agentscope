@@ -7,15 +7,12 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
 from typing import Any
 
-import fakeredis.aioredis
 from redis.exceptions import WatchError
 
+from _storage_test_helpers import make_config, make_storage
 from agentscope._utils import _common
 import agentscope.app.storage._redis_storage as redis_storage_module
 from agentscope.app.storage import (
-    ChatModelConfig,
-    RedisStorage,
-    SessionConfig,
     SessionForkConflictError,
     SessionForkCorruptedGraphError,
     SessionForkNotFoundError,
@@ -23,35 +20,6 @@ from agentscope.app.storage import (
 )
 from agentscope.message import TextBlock, UserMsg
 from agentscope.state import AgentState
-
-
-def make_storage(
-    *,
-    key_ttl: int | None = None,
-    decode_responses: bool = True,
-) -> RedisStorage:
-    """Create a RedisStorage backed by fakeredis."""
-    storage = RedisStorage.__new__(RedisStorage)
-    storage._client = fakeredis.aioredis.FakeRedis(
-        decode_responses=decode_responses,
-    )
-    storage.key_ttl = key_ttl
-    storage.key_config = RedisStorage.KeyConfig()
-    return storage
-
-
-def make_config(name: str = "Original") -> SessionConfig:
-    """Build a session config with nested mutable data."""
-    return SessionConfig(
-        workspace_id="shared-workspace",
-        name=name,
-        chat_model_config=ChatModelConfig(
-            type="openai",
-            credential_id="credential",
-            model="model",
-            parameters={"temperature": 0.2},
-        ),
-    )
 
 
 class TestRegularSessionFork(IsolatedAsyncioTestCase):
@@ -246,7 +214,7 @@ class TestRegularSessionFork(IsolatedAsyncioTestCase):
             session_id="schedule-session",
         )
         self.assertEqual(schedule.source, SessionSource.SCHEDULE)
-        with self.assertRaises(SessionForkConflictError):
+        with self.assertRaises(SessionForkCorruptedGraphError):
             await self.storage.fork_session(
                 self.user_id,
                 self.agent_id,
@@ -272,7 +240,7 @@ class TestRegularSessionFork(IsolatedAsyncioTestCase):
             source_schedule_id="schedule-provenance",
             session_id="schedule-provenance-session",
         )
-        with self.assertRaises(SessionForkConflictError):
+        with self.assertRaises(SessionForkCorruptedGraphError):
             await self.storage.fork_session(
                 self.user_id,
                 self.agent_id,
@@ -313,6 +281,21 @@ class TestRegularSessionFork(IsolatedAsyncioTestCase):
 
     async def test_agent_mismatch_is_not_forkable(self) -> None:
         """The requested agent id is checked explicitly."""
+        with self.assertRaises(SessionForkNotFoundError):
+            await self.storage.fork_session(
+                self.user_id,
+                "different-agent",
+                self.source_id,
+            )
+
+    async def test_agent_mismatch_hides_corrupt_requested_index(self) -> None:
+        """An unrelated corrupt agent index does not change the 404 result."""
+        wrong_index_key = self.storage._key(
+            self.storage.key_config.session_index,
+            user_id=self.user_id,
+            agent_id="different-agent",
+        )
+        await self.storage._client.set(wrong_index_key, "wrong-type")
         with self.assertRaises(SessionForkNotFoundError):
             await self.storage.fork_session(
                 self.user_id,

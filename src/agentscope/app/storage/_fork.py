@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Small, ordinary-session-only helpers for storage session forking."""
+"""Helpers shared by ordinary and Schedule session forking."""
 
 from dataclasses import dataclass
 
@@ -31,13 +31,13 @@ class SessionForkPlan:
     target_session_index_key: str
 
 
-def validate_regular_fork_source(
+def validate_session_fork_source(
     session: SessionRecord,
     user_id: str,
     agent_id: str,
     session_id: str,
 ) -> None:
-    """Validate the source constraints supported by phase one."""
+    """Validate source identity, provenance, and non-team boundaries."""
     if session.id != session_id:
         raise SessionForkCorruptedGraphError(
             "The source session record does not match its storage key.",
@@ -52,14 +52,19 @@ def validate_regular_fork_source(
         )
     if session.team_id is not None:
         raise SessionForkConflictError(
-            "Team sessions are not supported by the first fork phase.",
+            "Team sessions are not supported by the current fork phase.",
         )
-    if session.source == SessionSource.SCHEDULE:
-        raise SessionForkConflictError(
-            "Schedule sessions are not supported by the first fork phase.",
-        )
-    if session.source_schedule_id is not None:
-        raise SessionForkConflictError(
-            "Sessions with schedule provenance are not supported by the "
-            "first fork phase.",
-        )
+    is_regular = (
+        session.source == SessionSource.USER
+        and session.source_schedule_id is None
+    )
+    is_schedule = (
+        session.source == SessionSource.SCHEDULE
+        and isinstance(session.source_schedule_id, str)
+        and bool(session.source_schedule_id.strip())
+    )
+    if is_regular or is_schedule:
+        return
+    raise SessionForkCorruptedGraphError(
+        "Session source and schedule provenance are inconsistent.",
+    )
