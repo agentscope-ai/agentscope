@@ -62,6 +62,22 @@ export function useSessions(agentId: string | null) {
 		[agentId, refetch],
 	);
 
+	/** Forks a session and returns the new Session ID. */
+	const fork = useCallback(
+		async (sessionId: string): Promise<string> => {
+			if (!agentId) throw new Error('No agent selected');
+			const response = await sessionApi.fork(sessionId, agentId);
+			const newSessionId = response.session_id;
+			try {
+				await refetch();
+			} catch {
+				// The API already created the Fork; navigation still uses its ID.
+			}
+			return newSessionId;
+		},
+		[agentId, refetch],
+	);
+
 	/** Deletes a session and refreshes the list. */
 	const remove = useCallback(
 		async (sessionId: string) => {
@@ -72,5 +88,5 @@ export function useSessions(agentId: string | null) {
 		[agentId, refetch],
 	);
 
-	return { sessions, loading, error, refetch, create, update, remove };
+	return { sessions, loading, error, refetch, create, update, remove, fork };
 }

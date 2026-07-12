@@ -176,6 +176,7 @@
 		"placeholder": "会话名称"
 	},
 	"session-menu": {
+		"fork": "创建副本",
 		"rename": "重命名",
 		"delete": "删除"
 	},
