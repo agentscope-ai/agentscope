@@ -226,7 +226,7 @@ class TestRegularSessionFork(IsolatedAsyncioTestCase):
             self.source_id,
             "team-1",
         )
-        with self.assertRaises(SessionForkConflictError):
+        with self.assertRaises(SessionForkCorruptedGraphError):
             await self.storage.fork_session(
                 self.user_id,
                 self.agent_id,

@@ -20,6 +20,13 @@ from ._fork import (
     build_fork_session_name,
     validate_session_fork_source,
 )
+from ._team_fork import (
+    TeamForkPlan,
+    TeamMemberForkPlan,
+    validate_created_member_resources,
+    validate_team_members,
+    validate_team_source_identity,
+)
 from ._model import (
     AgentRecord,
     CredentialRecord,
@@ -33,6 +40,7 @@ from ._model import (
     TeamRecord,
 )
 from ._utils import _dump_with_secrets
+from ..._utils._common import _generate_id
 from ...credential import CredentialBase
 from ...message import Msg
 from ...state import AgentState
@@ -656,6 +664,666 @@ class RedisStorage(StorageBase):
         return record
 
     async def fork_session(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+    ) -> SessionRecord:
+        """Fork a regular, Schedule, or created-member Team session."""
+        source_team_id = await self._peek_team_id(
+            user_id,
+            agent_id,
+            session_id,
+        )
+        if source_team_id is not None:
+            return await self._fork_team_session(
+                user_id,
+                agent_id,
+                session_id,
+                source_team_id,
+            )
+        return await self._fork_regular_session(user_id, agent_id, session_id)
+
+    async def _peek_team_id(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+    ) -> str | None:
+        """Detect a Team source without migrating or retaining a snapshot."""
+        source_key = self._key(
+            self.key_config.session,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        for _ in range(_SESSION_FORK_MAX_RETRIES):
+            try:
+                source_type = _normalize_redis_type(
+                    await self._client.type(source_key),
+                )
+                if source_type == "none" or source_type != "string":
+                    return None
+                raw_session = await self._client.get(source_key)
+                if not raw_session:
+                    return None
+                try:
+                    source_session = SessionRecord.model_validate_json(
+                        raw_session,
+                    )
+                except ValidationError:
+                    return None
+                if source_session.team_id is None:
+                    return None
+                validate_team_source_identity(
+                    source_session,
+                    user_id,
+                    agent_id,
+                    session_id,
+                )
+                return source_session.team_id
+            except ResponseError as error:
+                if _is_wrongtype_response_error(error):
+                    continue
+                raise
+        raise SessionForkConflictError(
+            "The source session changed during pre-read.",
+        )
+
+    async def _read_team_prerequisites(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+    ) -> tuple[SessionRecord, TeamRecord]:
+        """Safely read and validate source Session plus Team for migration."""
+        source_key = self._key(
+            self.key_config.session,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        for _ in range(_SESSION_FORK_MAX_RETRIES):
+            try:
+                source_type = _normalize_redis_type(
+                    await self._client.type(source_key),
+                )
+                if source_type == "none":
+                    raise SessionForkNotFoundError(
+                        f"Session '{session_id}' not found.",
+                    )
+                if source_type != "string":
+                    raise SessionForkCorruptedGraphError(
+                        "The source session key has an invalid type.",
+                    )
+                raw_session = await self._client.get(source_key)
+                if not raw_session:
+                    raise SessionForkNotFoundError(
+                        f"Session '{session_id}' not found.",
+                    )
+                try:
+                    source_session = SessionRecord.model_validate_json(
+                        raw_session,
+                    )
+                except ValidationError as error:
+                    raise SessionForkCorruptedGraphError(
+                        "The source session record is invalid.",
+                    ) from error
+                validate_team_source_identity(
+                    source_session,
+                    user_id,
+                    agent_id,
+                    session_id,
+                )
+                assert source_session.team_id is not None
+                team_key = self._key(
+                    self.key_config.team,
+                    user_id=user_id,
+                    team_id=source_session.team_id,
+                )
+                team_type = _normalize_redis_type(
+                    await self._client.type(team_key),
+                )
+                if team_type == "none":
+                    raise SessionForkCorruptedGraphError(
+                        "The Team record is missing.",
+                    )
+                if team_type != "string":
+                    raise SessionForkCorruptedGraphError(
+                        "The Team record key has an invalid type.",
+                    )
+                raw_team = await self._client.get(team_key)
+                if not raw_team:
+                    raise SessionForkCorruptedGraphError(
+                        "The Team record is missing.",
+                    )
+                try:
+                    team = TeamRecord.model_validate_json(raw_team)
+                except ValidationError as error:
+                    raise SessionForkCorruptedGraphError(
+                        "The Team record is invalid.",
+                    ) from error
+                if team.id != source_session.team_id:
+                    raise SessionForkCorruptedGraphError(
+                        "The Team record does not match the source session.",
+                    )
+                if team.user_id != user_id:
+                    raise SessionForkCorruptedGraphError(
+                        "The Team record does not belong to the requested "
+                        "user.",
+                    )
+                return source_session, team
+            except ResponseError as error:
+                if _is_wrongtype_response_error(error):
+                    continue
+                raise
+        raise SessionForkConflictError(
+            "The source Team graph changed during pre-read.",
+        )
+
+    async def _fork_team_session(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        team_id: str,
+    ) -> SessionRecord:
+        """Fork a Team leader with created members atomically."""
+        for _ in range(_SESSION_FORK_MAX_RETRIES):
+            _, team = await self._read_team_prerequisites(
+                user_id,
+                agent_id,
+                session_id,
+            )
+            team_id = team.id
+            from ._utils import _ensure_team_members
+
+            await _ensure_team_members(self, user_id, team)
+            async with self._client.pipeline(transaction=True) as pipe:
+                try:
+                    plan = await self._build_team_fork_plan(
+                        pipe,
+                        user_id,
+                        agent_id,
+                        session_id,
+                        team_id,
+                    )
+                    await self._check_team_target_keys(pipe, plan)
+                    pipe.multi()
+                    await self._queue_team_fork_writes(pipe, user_id, plan)
+                    await pipe.execute()
+                    return SessionRecord.model_validate_json(
+                        plan.target_leader_session_payload,
+                    )
+                except _watch_error():
+                    continue
+        raise SessionForkConflictError(
+            "The Team could not be forked due to concurrent changes or "
+            "target identifier conflicts.",
+        )
+
+    # The Team graph read and clone construction intentionally stays in one
+    # transaction-plan builder so every resource is derived from one WATCHed
+    # snapshot.
+    # pylint: disable=too-many-branches,too-many-statements
+    async def _build_team_fork_plan(
+        self,
+        pipe: Any,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        prepared_team_id: str,
+    ) -> TeamForkPlan:
+        """Read and clone the complete Team graph under WATCH."""
+        source_key = self._key(
+            self.key_config.session,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        await pipe.watch(source_key)
+        source_type = _normalize_redis_type(await pipe.type(source_key))
+        if source_type == "none":
+            raise SessionForkNotFoundError(
+                f"Session '{session_id}' not found.",
+            )
+        if source_type != "string":
+            raise SessionForkCorruptedGraphError(
+                "The source session key has an invalid type.",
+            )
+        try:
+            raw_session = await pipe.get(source_key)
+        except ResponseError as error:
+            if _is_wrongtype_response_error(error):
+                raise _watch_error() from error
+            raise
+        if not raw_session:
+            raise SessionForkNotFoundError(
+                f"Session '{session_id}' not found.",
+            )
+        try:
+            source_session = SessionRecord.model_validate_json(raw_session)
+        except ValidationError as error:
+            raise SessionForkCorruptedGraphError(
+                "The source session record is invalid.",
+            ) from error
+        validate_team_source_identity(
+            source_session,
+            user_id,
+            agent_id,
+            session_id,
+        )
+        assert source_session.team_id is not None
+        if source_session.team_id != prepared_team_id:
+            raise _watch_error()
+
+        team_key = self._key(
+            self.key_config.team,
+            user_id=user_id,
+            team_id=source_session.team_id,
+        )
+        await pipe.watch(team_key)
+        team_type = _normalize_redis_type(await pipe.type(team_key))
+        if team_type != "string":
+            raise SessionForkCorruptedGraphError(
+                "The Team record is missing or has an invalid type.",
+            )
+        try:
+            raw_team = await pipe.get(team_key)
+        except ResponseError as error:
+            if _is_wrongtype_response_error(error):
+                raise _watch_error() from error
+            raise
+        if not raw_team:
+            raise SessionForkCorruptedGraphError("The Team record is missing.")
+        try:
+            team = TeamRecord.model_validate_json(raw_team)
+        except ValidationError as error:
+            raise SessionForkCorruptedGraphError(
+                "The Team record is invalid.",
+            ) from error
+        if team.id != source_session.team_id or team.user_id != user_id:
+            raise SessionForkCorruptedGraphError(
+                "The Team record does not match the source graph.",
+            )
+        members = validate_team_members(team, session_id)
+        expected_member_ids = [member.agent_id for member in members]
+        if team.data.member_ids != expected_member_ids:
+            raise SessionForkCorruptedGraphError(
+                "Team member_ids do not match the normalized member graph.",
+            )
+
+        leader_messages_key = self._message_key(user_id, session_id)
+        member_keys: list[tuple[str, str, str]] = []
+        for member in members:
+            if member.owner_id != team.user_id:
+                raise SessionForkCorruptedGraphError(
+                    "Created member owner does not match the Team owner.",
+                )
+            member_keys.append(
+                (
+                    self._key(
+                        self.key_config.agent,
+                        user_id=member.owner_id,
+                        agent_id=member.agent_id,
+                    ),
+                    self._key(
+                        self.key_config.session,
+                        user_id=member.owner_id,
+                        session_id=member.session_id,
+                    ),
+                    self._message_key(member.owner_id, member.session_id),
+                ),
+            )
+        await pipe.watch(
+            leader_messages_key,
+            *(key for triple in member_keys for key in triple),
+        )
+        try:
+            leader_message_type = _normalize_redis_type(
+                await pipe.type(leader_messages_key),
+            )
+            if leader_message_type not in {"none", "list"}:
+                raise SessionForkCorruptedGraphError(
+                    "The source Leader message key has an invalid type.",
+                )
+            raw_leader_messages = (
+                await pipe.lrange(leader_messages_key, 0, -1)
+                if leader_message_type == "list"
+                else []
+            )
+            source_members: list[tuple[AgentRecord, SessionRecord, list]] = []
+            for agent_key, member_session_key, message_key in member_keys:
+                if (
+                    _normalize_redis_type(await pipe.type(agent_key))
+                    != "string"
+                ):
+                    raise SessionForkCorruptedGraphError(
+                        "A member Agent record is missing or invalid.",
+                    )
+                if (
+                    _normalize_redis_type(await pipe.type(member_session_key))
+                    != "string"
+                ):
+                    raise SessionForkCorruptedGraphError(
+                        "A member Session record is missing or invalid.",
+                    )
+                agent_raw = await pipe.get(agent_key)
+                session_raw = await pipe.get(member_session_key)
+                message_type = _normalize_redis_type(
+                    await pipe.type(message_key),
+                )
+                if message_type not in {"none", "list"}:
+                    raise SessionForkCorruptedGraphError(
+                        "A member message key has an invalid type.",
+                    )
+                messages = (
+                    await pipe.lrange(message_key, 0, -1)
+                    if message_type == "list"
+                    else []
+                )
+                if not agent_raw or not session_raw:
+                    raise SessionForkCorruptedGraphError(
+                        "A Team member resource is missing.",
+                    )
+                try:
+                    member_agent = AgentRecord.model_validate_json(agent_raw)
+                    member_session = SessionRecord.model_validate_json(
+                        session_raw,
+                    )
+                except ValidationError as error:
+                    raise SessionForkCorruptedGraphError(
+                        "A Team member resource is invalid.",
+                    ) from error
+                validate_created_member_resources(
+                    members[len(source_members)],
+                    member_agent,
+                    member_session,
+                    team,
+                )
+                source_members.append(
+                    (member_agent, member_session, messages),
+                )
+        except ResponseError as error:
+            if _is_wrongtype_response_error(error):
+                raise _watch_error() from error
+            raise
+
+        forked_at = datetime.now()
+        target_team_id = _generate_id()
+        target_leader_id = _generate_id()
+        target_leader = source_session.model_copy(deep=True)
+        target_leader.id = target_leader_id
+        target_leader.created_at = forked_at
+        target_leader.updated_at = forked_at
+        target_leader.team_id = target_team_id
+        target_leader.source = SessionSource.USER
+        target_leader.source_schedule_id = None
+        target_leader.config.name = build_fork_session_name(
+            source_session.config.name,
+        )
+
+        target_team = team.model_copy(deep=True)
+        target_team.id = target_team_id
+        target_team.created_at = forked_at
+        target_team.updated_at = forked_at
+        target_team.session_id = target_leader.id
+        target_members: list[TeamMemberForkPlan] = []
+        new_member_ids: list[str] = []
+        target_agent_ids: list[str] = []
+        target_data_ids: list[str] = []
+        target_session_ids: list[str] = [target_leader.id]
+        source_data_ids = {source.data.id for source, _, _ in source_members}
+        for member, (source_agent, source_member_session, messages) in zip(
+            members,
+            source_members,
+        ):
+            target_agent_id = _generate_id()
+            target_data_id = _generate_id()
+            target_session_id = _generate_id()
+            if target_data_id in source_data_ids:
+                raise _watch_error()
+            target_agent = source_agent.model_copy(deep=True)
+            target_agent.id = target_agent_id
+            target_agent.created_at = forked_at
+            target_agent.updated_at = forked_at
+            target_agent.data.id = target_data_id
+            target_member_session = source_member_session.model_copy(deep=True)
+            target_member_session.id = target_session_id
+            target_member_session.created_at = forked_at
+            target_member_session.updated_at = forked_at
+            target_member_session.agent_id = target_agent_id
+            target_member_session.team_id = target_team_id
+            target_member_session.source = SessionSource.USER
+            target_member_session.source_schedule_id = None
+            target_member_session.config.name = (
+                source_member_session.config.name
+            )
+            target_agent_payload = target_agent.model_dump_json()
+            target_session_payload = target_member_session.model_dump_json()
+            target_members.append(
+                TeamMemberForkPlan(
+                    source_member=member,
+                    target_agent_id=target_agent.id,
+                    target_session_id=target_member_session.id,
+                    target_agent_payload=target_agent_payload,
+                    target_session_payload=target_session_payload,
+                    source_messages=tuple(messages),
+                ),
+            )
+            new_member_ids.append(target_agent_id)
+            target_agent_ids.append(target_agent_id)
+            target_data_ids.append(target_data_id)
+            target_session_ids.append(target_session_id)
+
+        if (
+            len(target_agent_ids) != len(set(target_agent_ids))
+            or len(target_data_ids) != len(set(target_data_ids))
+            or len(target_session_ids) != len(set(target_session_ids))
+            or len(new_member_ids) != len(set(new_member_ids))
+            or len(
+                [member.target_session_id for member in target_members],
+            )
+            != len(
+                {member.target_session_id for member in target_members},
+            )
+        ):
+            raise _watch_error()
+
+        target_team.data.members = [
+            member.source_member.model_copy(
+                update={
+                    "agent_id": member.target_agent_id,
+                    "session_id": member.target_session_id,
+                },
+            )
+            for member in target_members
+        ]
+        target_team.data.member_ids = new_member_ids
+        target_team_payload = target_team.model_dump_json()
+        target_leader_session_payload = target_leader.model_dump_json()
+
+        target_keys = [
+            self._key(
+                self.key_config.team,
+                user_id=user_id,
+                team_id=target_team.id,
+            ),
+            self._key(
+                self.key_config.session,
+                user_id=user_id,
+                session_id=target_leader.id,
+            ),
+            self._message_key(user_id, target_leader.id),
+        ]
+        for member in target_members:
+            target_keys.extend(
+                [
+                    self._key(
+                        self.key_config.agent,
+                        user_id=user_id,
+                        agent_id=member.target_agent_id,
+                    ),
+                    self._key(
+                        self.key_config.session,
+                        user_id=user_id,
+                        session_id=member.target_session_id,
+                    ),
+                    self._message_key(user_id, member.target_session_id),
+                ],
+            )
+        owner_agent_index = self._key(
+            self.key_config.agent_index,
+            user_id=user_id,
+        )
+        owner_team_index = self._key(
+            self.key_config.team_index,
+            user_id=user_id,
+        )
+        leader_session_index = self._key(
+            self.key_config.session_index,
+            user_id=user_id,
+            agent_id=source_session.agent_id,
+        )
+        new_member_session_indexes = tuple(
+            self._key(
+                self.key_config.session_index,
+                user_id=user_id,
+                agent_id=member.target_agent_id,
+            )
+            for member in target_members
+        )
+        target_keys.extend(new_member_session_indexes)
+        exclusive_target_keys = tuple(target_keys)
+        if len(exclusive_target_keys) != len(set(exclusive_target_keys)):
+            raise _watch_error()
+        shared_index_keys = [owner_team_index, leader_session_index]
+        if target_members:
+            shared_index_keys.append(owner_agent_index)
+        if len(shared_index_keys) != len(set(shared_index_keys)):
+            raise SessionForkCorruptedGraphError(
+                "Team fork shared index key templates overlap.",
+            )
+        if set(exclusive_target_keys) & set(shared_index_keys):
+            raise _watch_error()
+        return TeamForkPlan(
+            forked_at=forked_at,
+            source_session_id=session_id,
+            target_team_id=target_team.id,
+            target_leader_agent_id=target_leader.agent_id,
+            target_leader_session_id=target_leader.id,
+            target_team_payload=target_team_payload,
+            target_leader_session_payload=target_leader_session_payload,
+            target_leader_messages=tuple(raw_leader_messages),
+            target_members=tuple(target_members),
+            exclusive_target_keys=exclusive_target_keys,
+            shared_index_keys=tuple(shared_index_keys),
+        )
+
+    async def _check_team_target_keys(
+        self,
+        pipe: Any,
+        plan: TeamForkPlan,
+    ) -> None:
+        """WATCH and validate all Team fork target keys and indexes."""
+        await pipe.watch(
+            *plan.exclusive_target_keys,
+            *plan.shared_index_keys,
+        )
+        for key in plan.exclusive_target_keys:
+            if _normalize_redis_type(await pipe.type(key)) != "none":
+                raise _watch_error()
+        for key in plan.shared_index_keys:
+            if _normalize_redis_type(await pipe.type(key)) not in {
+                "none",
+                "set",
+            }:
+                raise SessionForkCorruptedGraphError(
+                    "A shared Team index has an invalid type.",
+                )
+
+    async def _queue_team_fork_writes(
+        self,
+        pipe: Any,
+        user_id: str,
+        plan: TeamForkPlan,
+    ) -> None:
+        """Queue all Team fork writes after plan validation."""
+        team_key = self._key(
+            self.key_config.team,
+            user_id=user_id,
+            team_id=plan.target_team_id,
+        )
+        leader_key = self._key(
+            self.key_config.session,
+            user_id=user_id,
+            session_id=plan.target_leader_session_id,
+        )
+        pipe.set(team_key, plan.target_team_payload)
+        pipe.set(leader_key, plan.target_leader_session_payload)
+        if self.key_ttl is not None:
+            pipe.expire(team_key, self.key_ttl)
+            pipe.expire(leader_key, self.key_ttl)
+        for member in plan.target_members:
+            agent_key = self._key(
+                self.key_config.agent,
+                user_id=user_id,
+                agent_id=member.target_agent_id,
+            )
+            session_key = self._key(
+                self.key_config.session,
+                user_id=user_id,
+                session_id=member.target_session_id,
+            )
+            pipe.set(agent_key, member.target_agent_payload)
+            pipe.set(session_key, member.target_session_payload)
+            if self.key_ttl is not None:
+                pipe.expire(agent_key, self.key_ttl)
+                pipe.expire(session_key, self.key_ttl)
+        pipe.sadd(
+            self._key(self.key_config.team_index, user_id=user_id),
+            plan.target_team_id,
+        )
+        pipe.sadd(
+            self._key(
+                self.key_config.session_index,
+                user_id=user_id,
+                agent_id=plan.target_leader_agent_id,
+            ),
+            plan.target_leader_session_id,
+        )
+        for member in plan.target_members:
+            pipe.sadd(
+                self._key(
+                    self.key_config.agent_index,
+                    user_id=user_id,
+                ),
+                member.target_agent_id,
+            )
+            pipe.sadd(
+                self._key(
+                    self.key_config.session_index,
+                    user_id=user_id,
+                    agent_id=member.target_agent_id,
+                ),
+                member.target_session_id,
+            )
+        leader_messages_key = self._message_key(
+            user_id,
+            plan.target_leader_session_id,
+        )
+        if plan.target_leader_messages:
+            pipe.rpush(leader_messages_key, *plan.target_leader_messages)
+            if self.key_ttl is not None:
+                pipe.expire(leader_messages_key, self.key_ttl)
+        for member in plan.target_members:
+            if member.source_messages:
+                message_key = self._message_key(
+                    user_id,
+                    member.target_session_id,
+                )
+                pipe.rpush(message_key, *member.source_messages)
+                if self.key_ttl is not None:
+                    pipe.expire(message_key, self.key_ttl)
+
+    async def _fork_regular_session(
         self,
         user_id: str,
         agent_id: str,

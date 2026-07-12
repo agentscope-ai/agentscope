@@ -10,7 +10,6 @@ from redis.exceptions import ResponseError
 from _storage_test_helpers import make_config, make_storage
 from agentscope._utils import _common
 from agentscope.app.storage import (
-    SessionForkConflictError,
     SessionForkCorruptedGraphError,
     SessionSource,
 )
@@ -142,7 +141,7 @@ class TestScheduleSessionFork(IsolatedAsyncioTestCase):
             self.source_id,
             "team-1",
         )
-        with self.assertRaises(SessionForkConflictError):
+        with self.assertRaises(SessionForkCorruptedGraphError):
             await self.storage.fork_session(
                 self.user_id,
                 self.agent_id,
