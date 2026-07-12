@@ -12,6 +12,7 @@ from typing import TypedDict
 import frontmatter
 
 from .._logging import logger
+from .._utils._common import _normalize_local_path
 from ..mcp import MCPClient
 from ..skill import Skill
 from ..tool._builtin._backend import LocalBackend
@@ -144,7 +145,9 @@ class LocalWorkspace(WorkspaceBase):
 
         # ── seed-only ───────────────────────────────────────────
         self.default_mcps: list[MCPClient] = list(default_mcps or [])
-        self.skill_paths: list[str] = list(skill_paths or [])
+        self.skill_paths: list[str] = [
+            _normalize_local_path(path) for path in skill_paths or []
+        ]
 
         # ── runtime state ───────────────────────────────────────
         self._backend = LocalBackend()

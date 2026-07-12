@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 from dataclasses import asdict
 from urllib.parse import urlparse
 from urllib.request import url2pathname
@@ -565,6 +566,50 @@ description: {description}
             {k: v["skill_name"] for k, v in skills_index.items()},
             {"test_skill_1": "test_skill_1", "test_skill_2": "test_skill_2"},
         )
+
+    async def test_initialize_with_tilde_skill_path(self) -> None:
+        """Test that ``skill_paths`` expands user-home shorthand."""
+        with tempfile.TemporaryDirectory() as home_dir:
+            skill_dir = os.path.join(home_dir, "tilde_skill")
+            os.makedirs(skill_dir)
+            with open(
+                os.path.join(skill_dir, "SKILL.md"),
+                "w",
+                encoding="utf-8",
+            ) as f:
+                f.write(
+                    """---
+name: tilde_skill
+description: A skill under the user home directory
+---
+
+This skill is seeded through a tilde path.
+""",
+                )
+
+            env = {"HOME": home_dir, "USERPROFILE": home_dir}
+            drive, tail = os.path.splitdrive(home_dir)
+            if drive:
+                env["HOMEDRIVE"] = drive
+                env["HOMEPATH"] = tail
+
+            with patch.dict(os.environ, env, clear=False):
+                workspace = LocalWorkspace(
+                    workdir=self.temp_dir.name,
+                    skill_paths=[os.path.join("~", "tilde_skill")],
+                )
+                self.assertEqual(
+                    workspace.skill_paths,
+                    [os.path.abspath(skill_dir)],
+                )
+                await workspace.initialize()
+
+        skill_target = os.path.join(
+            self.temp_dir.name,
+            "skills",
+            "tilde_skill",
+        )
+        self.assertTrue(os.path.exists(os.path.join(skill_target, "SKILL.md")))
 
     async def test_initialize_skip_duplicate_skills(self) -> None:
         """Test that duplicate skills are not copied again.
