@@ -9,6 +9,9 @@ from ._e2b_workspace_manager import E2BWorkspaceManager
 from ._daytona_workspace_manager import DaytonaWorkspaceManager
 from ._k8s_workspace_manager import K8sWorkspaceManager
 from ._opensandbox_workspace_manager import OpenSandboxWorkspaceManager
+from ._applecontainer_workspace_manager import (
+    AppleContainerWorkspaceManager,
+)
 
 __all__ = [
     "IsolationPolicy",
@@ -19,4 +22,5 @@ __all__ = [
     "DaytonaWorkspaceManager",
     "K8sWorkspaceManager",
     "OpenSandboxWorkspaceManager",
+    "AppleContainerWorkspaceManager",
 ]
