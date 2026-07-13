@@ -53,7 +53,7 @@ class TestDaytonaWorkspaceManager(IsolatedAsyncioTestCase):
         """Undo patches."""
         self.workspace_patch.stop()
 
-    async def test_create_workspace_forwards_config_and_metadata(self) -> None:
+    async def test_get_workspace_forwards_config_and_metadata(self) -> None:
         """Manager forwards only the confirmed Daytona config surface."""
         manager = DaytonaWorkspaceManager(
             api_key="key",
@@ -67,18 +67,18 @@ class TestDaytonaWorkspaceManager(IsolatedAsyncioTestCase):
             sweep_interval=1,
         )
 
-        workspace = await manager.create_workspace("u1", "a1", "s1")
+        workspace = await manager.get_workspace("u1", "a1", "s1", "wid")
 
         self.assertIs(workspace, _FakeWorkspace.created[0])
         self.assertTrue(workspace.initialized)
         self.assertEqual(
             workspace.kwargs,
             {
-                "workspace_id": None,
+                "workspace_id": "wid",
                 "api_key": "key",
                 "api_url": "https://daytona.example/api",
                 "target": "us",
-                "timeout_seconds": 60,
+                "timeout_seconds": 300,
                 "gateway_port": 5600,
                 "env": {"A": "B"},
                 "sandbox_metadata": {

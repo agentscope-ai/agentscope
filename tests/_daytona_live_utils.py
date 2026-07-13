@@ -4,7 +4,7 @@
 import os
 import uuid
 
-from agentscope.workspace._daytona._bootstrap import METADATA_WORKSPACE_ID_KEY
+from agentscope.workspace._daytona._constants import METADATA_WORKSPACE_ID_KEY
 
 DAYTONA_API_KEY = os.getenv("DAYTONA_API_KEY", "")
 DAYTONA_API_URL = os.getenv("DAYTONA_API_URL", "")

@@ -2,9 +2,8 @@
 """DaytonaWorkspaceManager — lifecycle manager for Daytona workspaces.
 
 Mirrors :class:`E2BWorkspaceManager` and :class:`DockerWorkspaceManager`
-in its public surface (``get_workspace`` / ``create_workspace`` /
-``close`` / ``close_all``) so service-layer callers do not branch on
-backend.
+in its public surface (``get_workspace`` / ``close`` / ``close_all``) so
+service-layer callers do not branch on backend.
 
 Daytona-specific behavior:
 
@@ -30,7 +29,7 @@ from typing import Self
 from ..._logging import logger
 from ...mcp import MCPClient
 from ...workspace import DaytonaWorkspace
-from ...workspace._daytona._bootstrap import (
+from ...workspace._daytona._constants import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_SWEEP_INTERVAL,
     DEFAULT_TIMEOUT,
@@ -155,9 +154,8 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
         """Construct a :class:`DaytonaWorkspace` and initialize it.
 
         ``workspace_id=None`` lets :class:`WorkspaceBase` allocate a
-        fresh UUID, used by :meth:`create_workspace`. Otherwise the
-        provided id is forwarded so label-based reattachment works on
-        cache miss.
+        fresh UUID. Otherwise the provided id is forwarded so
+        label-based reattachment works on cache miss.
         """
         ws = DaytonaWorkspace(
             workspace_id=workspace_id,
@@ -239,43 +237,6 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
             )
             self._cache[workspace_id] = (ws, time.monotonic())
             return ws
-
-    async def create_workspace(
-        self,
-        user_id: str,
-        agent_id: str,
-        session_id: str,
-    ) -> DaytonaWorkspace:
-        """Build a brand-new workspace and track it.
-
-        A fresh ``workspace_id`` is allocated by
-        :class:`WorkspaceBase`; the caller should persist
-        ``workspace.workspace_id`` for later :meth:`get_workspace`
-        calls.
-
-        Args:
-            user_id (`str`):
-                Owning user identifier (forwarded as sandbox labels).
-            agent_id (`str`):
-                Agent identifier (forwarded as sandbox labels).
-            session_id (`str`):
-                Session identifier (accepted for parity; not used
-                here).
-
-        Returns:
-            `DaytonaWorkspace`:
-                The newly built workspace, already initialized.
-        """
-        del session_id  # accepted for interface parity; not used here
-
-        ws = await self._build_and_start(
-            workspace_id=None,
-            user_id=user_id,
-            agent_id=agent_id,
-        )
-        async with self._lock:
-            self._cache[ws.workspace_id] = (ws, time.monotonic())
-        return ws
 
     async def close(self, workspace_id: str) -> None:
         """Close (= gracefully stop the sandbox) and evict a workspace.

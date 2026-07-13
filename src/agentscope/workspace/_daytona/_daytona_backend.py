@@ -91,10 +91,18 @@ class DaytonaBackend(BackendBase):
 
         Returns:
             `ExecResult`:
-                The captured exit code, stdout and stderr. Transport
-                errors yield an ``exit_code`` of ``-1``.
+                The captured exit code and output. Daytona's SDK exposes
+                only ``exit_code`` and ``result`` (no separate stderr
+                field), so the command is wrapped with ``2>&1`` to fold
+                stderr into ``result`` — otherwise command error output
+                would be silently dropped. ``stdout`` therefore carries
+                the merged stream and ``stderr`` stays empty for normal
+                responses. Transport errors yield an ``exit_code`` of
+                ``-1`` with the exception text in ``stderr``.
         """
-        command_line = " ".join(shlex.quote(arg) for arg in command)
+        # Fold stderr into stdout at the shell level; the SDK lacks a
+        # dedicated stderr field, so without this error output is lost.
+        command_line = " ".join(shlex.quote(arg) for arg in command) + " 2>&1"
         kwargs: dict[str, Any] = {"cwd": cwd or self._workdir}
         if timeout is not None:
             kwargs["timeout"] = math.ceil(timeout)

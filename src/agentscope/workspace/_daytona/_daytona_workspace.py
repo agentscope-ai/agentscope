@@ -50,12 +50,12 @@ from typing import Any
 from ..._logging import logger
 from ...mcp import MCPClient
 from .._sandboxed_base import SandboxedWorkspaceBase
-from ._bootstrap import (
+from .._utils import _GATEWAY_BASE_REQUIREMENTS
+from ._constants import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_TIMEOUT,
     GATEWAY_HOME_NAME,
     METADATA_WORKSPACE_ID_KEY,
-    bootstrap_commands,
 )
 from ._daytona_backend import DaytonaBackend
 
@@ -196,15 +196,14 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
         gateway venv → agentscope → helper scripts). Bootstrap is
         detected by the gateway script path derived from the Daytona SDK
         and every step is idempotent so an interrupted bootstrap
-        re-runs cleanly.
+        re-runs cleanly. The workspace layout (``workdir`` /
+        ``_gateway_home`` / data / skills / sessions) is created by
+        :meth:`SandboxedWorkspaceBase._ensure_workspace_layout` right
+        after this hook, so it is not created here.
         """
         await self._attach_or_create_sandbox()
         await self._derive_sdk_paths()
         self._backend = DaytonaBackend(self._sandbox, workdir=self.workdir)
-
-        # Ensure the backend default cwd exists before helper commands
-        # such as ``file_exists`` run with ``cwd=self.workdir``.
-        await self._backend.exec_shell(["mkdir", "-p", self.workdir], cwd="/")
 
     async def _teardown_backend(self) -> None:
         """Gracefully stop the sandbox and release the SDK client.
@@ -444,26 +443,50 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
 
         The shared sandbox base runs these only when the gateway script
         is missing, then uploads the glob helper and gateway script.
-        Daytona-specific path anchors come from the SDK, so the command
-        sequence does not assume a fixed OS user or home directory.
+        Every step is idempotent so an interrupted bootstrap re-runs
+        cleanly. Path anchors come from the Daytona SDK, so the sequence
+        does not assume a fixed OS user or home directory.
+
+        ``--no-deps`` on agentscope is mandatory for the same reason as
+        E2B: the gateway only imports :class:`agentscope.mcp.MCPClient`,
+        whose transitive needs are already covered by the gateway base
+        requirements. Pulling the full dependency tree would make first
+        bootstrap slower and more fragile in minimal snapshots.
 
         Returns:
             `list[str]`:
                 Shell command strings executed in order through
                 ``["sh", "-c", command]``.
         """
-        install_cmd = (
+        pip_pkgs = list(_GATEWAY_BASE_REQUIREMENTS) + list(self.extra_pip)
+        # Quote every requirement so entries with spaces or shell
+        # metacharacters cannot break the command or become an injection
+        # vector inside the sandbox.
+        pip_args = " ".join(shlex.quote(pkg) for pkg in pip_pkgs)
+        uv_install_dir = f"{self._user_home}/.local/bin"
+
+        return [
+            # 1. Install ripgrep for the Grep builtin tool. Daytona
+            #    snapshots may run as non-root users, so use sudo here
+            #    and avoid assuming the SDK-selected OS user is root.
+            "sudo apt-get update -qq "
+            "&& sudo apt-get install -y --no-install-recommends ripgrep "
+            "&& sudo rm -rf /var/lib/apt/lists/*",
+            # 2. Astral uv — same shell installer as Docker/E2B. The
+            #    SDK-reported user home is the install root so we do not
+            #    assume /home/daytona or any fixed OS user.
+            f"curl -LsSf https://astral.sh/uv/install.sh "
+            f"| env UV_INSTALL_DIR={shlex.quote(uv_install_dir)} "
+            f"INSTALLER_NO_MODIFY_PATH=1 sh",
+            # 3. Gateway venv + base requirements.
+            f"{shlex.quote(self._uv_bin)} venv "
+            f"{shlex.quote(self._gateway_venv)}",
             f"{shlex.quote(self._uv_bin)} pip install --python "
-            f"{shlex.quote(self._gateway_python)} --no-deps 'agentscope'"
-        )
-        return bootstrap_commands(
-            user_home=self._user_home,
-            gateway_venv=self._gateway_venv,
-            gateway_venv_py=self._gateway_python,
-            uv_bin=self._uv_bin,
-            extra_pip=self.extra_pip,
-            install_agentscope_cmd=install_cmd,
-        )
+            f"{shlex.quote(self._gateway_python)} {pip_args}",
+            # 4. agentscope itself.
+            f"{shlex.quote(self._uv_bin)} pip install --python "
+            f"{shlex.quote(self._gateway_python)} --no-deps 'agentscope'",
+        ]
 
 
 # ── SDK response helpers ──────────────────────────────────────────

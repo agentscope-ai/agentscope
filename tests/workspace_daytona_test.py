@@ -54,10 +54,9 @@ from agentscope.state import AgentState
 from agentscope.tool import ToolResponse
 from agentscope.workspace import DaytonaBackend, DaytonaWorkspace
 from agentscope.workspace import _sandboxed_base as sandboxed_mod
-from agentscope.workspace._daytona._bootstrap import (
+from agentscope.workspace._daytona._constants import (
     DEFAULT_GATEWAY_PORT,
     METADATA_WORKSPACE_ID_KEY,
-    bootstrap_commands,
 )
 from agentscope.workspace._utils import _GATEWAY_BASE_REQUIREMENTS
 
@@ -89,6 +88,10 @@ class _FakeProcess:
         """Record command and return success."""
         self.commands.append(command)
         args = shlex.split(command)
+        # ``DaytonaBackend`` appends a ``2>&1`` redirection to every
+        # command; a real shell consumes it, so drop it before parsing.
+        if args and args[-1] == "2>&1":
+            args = args[:-1]
         exit_code = 0
         if self.fs is not None and args[:2] == ["mkdir", "-p"]:
             self.fs.dirs.update(args[2:])
@@ -494,20 +497,40 @@ def _install_fake_daytona_module() -> types.ModuleType:
 
 
 class TestDaytonaBootstrapHelpers(IsolatedAsyncioTestCase):
-    """Pure bootstrap command rendering tests."""
+    """Bootstrap command rendering via ``_bootstrap_commands``."""
+
+    @staticmethod
+    def _workspace_with_paths(
+        *,
+        user_home: str,
+        extra_pip: list[str],
+    ) -> DaytonaWorkspace:
+        """Build a workspace with the SDK-derived bootstrap paths set.
+
+        Binds a backend so the base-class gateway path properties
+        (``_gateway_venv`` / ``_gateway_python``) resolve without a live
+        sandbox, then sets the SDK-derived anchors directly.
+        """
+        workspace = DaytonaWorkspace(
+            workspace_id="wid-bootstrap",
+            extra_pip=extra_pip,
+        )
+        workspace._backend = DaytonaBackend(None, workdir=user_home)
+        workspace._user_home = user_home
+        workspace._gateway_home = f"{user_home}/.agentscope"
+        workspace._uv_bin = f"{user_home}/.local/bin/uv"
+        return workspace
 
     async def test_bootstrap_commands_include_tools_and_extra_pip(
         self,
     ) -> None:
         """Bootstrap commands provision tools, venv and packages."""
-        commands = bootstrap_commands(
+        workspace = self._workspace_with_paths(
             user_home="/home/daytona",
-            gateway_venv="/home/daytona/.agentscope/.venv",
-            gateway_venv_py="/home/daytona/.agentscope/.venv/bin/python",
-            uv_bin="/home/daytona/.local/bin/uv",
             extra_pip=["extra-a", "extra-b"],
-            install_agentscope_cmd="install-agentscope",
         )
+
+        commands = workspace._bootstrap_commands()
 
         self.assertEqual(len(commands), 5)
         self.assertIn("apt-get install", commands[0])
@@ -520,18 +543,16 @@ class TestDaytonaBootstrapHelpers(IsolatedAsyncioTestCase):
         )
         for package in (*_GATEWAY_BASE_REQUIREMENTS, "extra-a", "extra-b"):
             self.assertIn(package, commands[3])
-        self.assertEqual(commands[4], "install-agentscope")
+        self.assertIn("--no-deps 'agentscope'", commands[4])
 
     async def test_bootstrap_commands_quote_shell_arguments(self) -> None:
         """SDK-derived paths and extra packages are shell-quoted."""
-        commands = bootstrap_commands(
+        workspace = self._workspace_with_paths(
             user_home="/home/day tona",
-            gateway_venv="/home/day tona/.agentscope/.venv",
-            gateway_venv_py="/home/day tona/.agentscope/.venv/bin/python",
-            uv_bin="/home/day tona/.local/bin/uv",
             extra_pip=["safe-pkg", "bad; echo injected"],
-            install_agentscope_cmd="install-agentscope",
         )
+
+        commands = workspace._bootstrap_commands()
 
         self.assertIn(
             "UV_INSTALL_DIR='/home/day tona/.local/bin'",
@@ -892,11 +913,11 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
                     **_kwargs: object,
                 ) -> object:
                     self.commands.append(command)
-                    if shlex.split(command) == [
-                        "sh",
-                        "-c",
-                        "broken bootstrap",
-                    ]:
+                    # Strip the ``2>&1`` redirection the backend appends.
+                    args = shlex.split(command)
+                    if args and args[-1] == "2>&1":
+                        args = args[:-1]
+                    if args == ["sh", "-c", "broken bootstrap"]:
                         return SimpleNamespace(
                             exit_code=9,
                             result="bootstrap stdout",
@@ -944,7 +965,7 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
 
         await workspace.close()
 
-        self.assertEqual(sandbox.stopped, [{"timeout": 60, "force": False}])
+        self.assertEqual(sandbox.stopped, [{"timeout": 300, "force": False}])
         self.assertTrue(gateway.closed)
         self.assertTrue(daytona_client.closed)
         self.assertIsNone(workspace._sandbox)
