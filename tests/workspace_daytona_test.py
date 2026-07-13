@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=protected-access,too-many-public-methods,consider-using-with
+# pylint: disable=protected-access
 """Test cases for :class:`DaytonaWorkspace`.
 
 Most tests patch the Daytona SDK boundary so they run in normal CI.
@@ -10,6 +10,7 @@ import asyncio
 import json
 import os
 import shlex
+import shutil
 import sys
 import tempfile
 import types
@@ -32,7 +33,8 @@ from _daytona_live_utils import (
 
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.app._manager import BackgroundTaskManager, SchedulerManager
-from agentscope.app._service import get_toolkit
+from agentscope.app._service import ResourceAccessService, get_toolkit
+from agentscope.app.access import DenyAllResourceAccessPolicy
 from agentscope.app.storage import (
     AgentData,
     AgentRecord,
@@ -566,8 +568,8 @@ class TestDaytonaBootstrapHelpers(IsolatedAsyncioTestCase):
         self.assertIn("'bad; echo injected'", commands[3])
 
 
-class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
-    """Workspace lifecycle and configuration tests with a fake SDK."""
+class _DaytonaWorkspaceMockBase(IsolatedAsyncioTestCase):
+    """Shared fake-SDK fixture for Daytona workspace mock tests."""
 
     async def asyncSetUp(self) -> None:
         """Patch Daytona and gateway boundaries."""
@@ -595,6 +597,10 @@ class TestDaytonaWorkspaceMock(IsolatedAsyncioTestCase):
         self.bootstrap_patch.stop()
         self.gateway_patch.stop()
         sys.modules.pop("daytona", None)
+
+
+class TestDaytonaWorkspaceMock(_DaytonaWorkspaceMockBase):
+    """Workspace lifecycle and configuration tests with a fake SDK."""
 
     async def test_create_uses_minimal_params_and_sdk_paths(self) -> None:
         """Create passes labels/env and the secure public default."""
@@ -1003,8 +1009,8 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
         _FakeDaytona.configs.clear()
         _FakeGateway.instances.clear()
         _install_fake_daytona_module()
-        self.temp_dir = tempfile.TemporaryDirectory()
-        sandbox = _MappedSandbox(self.temp_dir.name)
+        self.temp_dir = tempfile.mkdtemp()
+        sandbox = _MappedSandbox(self.temp_dir)
         sandbox.labels = {METADATA_WORKSPACE_ID_KEY: "wid-tools"}
         _FakeDaytona.list_result[:] = [sandbox]
 
@@ -1033,7 +1039,7 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
         self.bootstrap_patch.stop()
         self.gateway_patch.stop()
         sys.modules.pop("daytona", None)
-        self.temp_dir.cleanup()
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     @unittest.skipIf(
         os.name == "nt",
@@ -1118,7 +1124,7 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
     )
     async def test_skill_add_list_remove_uses_sandbox_skills_dir(self) -> None:
         """Skill management stores and reads skills under SDK workdir."""
-        skill_dir = os.path.join(self.temp_dir.name, "local-skill")
+        skill_dir = os.path.join(self.temp_dir, "local-skill")
         os.makedirs(skill_dir)
         with open(
             os.path.join(skill_dir, "SKILL.md"),
@@ -1149,7 +1155,7 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
         """Skill upload validates local input before sandbox work."""
         with self.assertRaisesRegex(ValueError, "SKILL.md not found"):
             await self.workspace.add_skill(
-                os.path.join(self.temp_dir.name, "missing-skill"),
+                os.path.join(self.temp_dir, "missing-skill"),
             )
 
     @unittest.skipIf(
@@ -1158,7 +1164,7 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
     )
     async def test_add_skill_rejects_duplicate_skill(self) -> None:
         """Skill upload rejects duplicate remote dirs."""
-        skill_dir = os.path.join(self.temp_dir.name, "dupe-skill")
+        skill_dir = os.path.join(self.temp_dir, "dupe-skill")
         os.makedirs(skill_dir)
         with open(
             os.path.join(skill_dir, "SKILL.md"),
@@ -1660,6 +1666,10 @@ class TestDaytonaWorkspaceLive(IsolatedAsyncioTestCase):
                 user_id="daytona-live-user",
                 agent_record=agent,
                 session_record=session,
+                resource_access_service=ResourceAccessService(
+                    storage=_NoOpStorage(),  # type: ignore[arg-type]
+                    policy=DenyAllResourceAccessPolicy(),
+                ),
                 extra_factory=None,
             )
 
