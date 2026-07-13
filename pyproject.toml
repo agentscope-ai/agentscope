@@ -85,6 +85,10 @@ rag = [
     "qdrant-client",
     "pypdf",
     "python-pptx",
+    "python-docx",
+    "openpyxl>=3.1.5",
+    "xlrd>=2.0",
+    "pandas",
 ]
 milvuslite = [
     "pymilvus[milvus-lite]>=2.4.0",

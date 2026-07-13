@@ -23,6 +23,8 @@
 		"name": "名称",
 		"no": "否",
 		"noData": "暂无数据",
+		"readOnly": "只读",
+		"readOnlyTooltip": "该资源以只读方式共享给你，编辑和删除均被禁用。",
 		"completed": "已完成",
 		"failed": "已失败",
 		"running": "运行中",
@@ -107,7 +109,9 @@
 		"agent": {
 			"selectPlaceholder": "选择 Agent",
 			"emptyTitle": "暂无 Agent",
-			"emptyDescription": "创建一个 Agent 开始使用。"
+			"emptyDescription": "创建一个 Agent 开始使用。",
+			"groupYours": "我的",
+			"groupShared": "共享给我"
 		},
 		"session": {
 			"label": "会话",

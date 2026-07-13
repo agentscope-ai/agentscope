@@ -23,6 +23,8 @@
 		"name": "Name",
 		"no": "No",
 		"noData": "No data",
+		"readOnly": "Read-only",
+		"readOnlyTooltip": "Shared with you as read-only; editing and deletion are disabled.",
 		"completed": "Completed",
 		"failed": "Failed",
 		"running": "Running",
@@ -107,7 +109,9 @@
 		"agent": {
 			"selectPlaceholder": "Select an agent",
 			"emptyTitle": "No agents",
-			"emptyDescription": "Create an agent to get started."
+			"emptyDescription": "Create an agent to get started.",
+			"groupYours": "Yours",
+			"groupShared": "Shared with you"
 		},
 		"session": {
 			"label": "Session",

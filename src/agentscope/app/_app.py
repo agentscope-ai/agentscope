@@ -3,6 +3,7 @@
 from typing import Type, TYPE_CHECKING, Any
 
 from ._lifespan import lifespan
+from .access import DenyAllResourceAccessPolicy, ResourceAccessPolicyBase
 from .rag.blob_store import BlobStoreBase, LocalBlobStore
 from .rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from .workspace_manager import WorkspaceManagerBase
@@ -55,6 +56,7 @@ def create_app(
     extra_agent_tools: AgentToolFactory | None = None,
     custom_subagent_templates: list[SubAgentTemplate] | None = None,
     custom_agent_cls: Type[Agent] | None = None,
+    resource_access_policy: ResourceAccessPolicyBase | None = None,
     title: str = "AgentScope",
     version: str = __version__,
 ) -> FastAPI:
@@ -178,6 +180,12 @@ def create_app(
             A custom :class:`~agentscope.agent.Agent` subclass to use
             when assembling agents.  When ``None`` (default), the
             built-in :class:`~agentscope.agent.Agent` is used.
+        resource_access_policy (`ResourceAccessPolicyBase | None`, optional):
+            Policy deciding whether a viewer may access
+            credentials / agents / knowledge bases owned by another
+            user. When ``None`` (default), a
+            :class:`DenyAllResourceAccessPolicy` is installed which
+            preserves the historical owner-isolated behavior.
         title (`str`, defaults to ``"AgentScope"``):
             OpenAPI title shown in the docs UI.
         version (`str`, defaults to the package version):
@@ -202,6 +210,9 @@ def create_app(
     app.state.extra_agent_middlewares = extra_agent_middlewares
     app.state.extra_agent_tools = extra_agent_tools
     app.state.custom_agent_cls = custom_agent_cls
+    app.state.resource_access_policy = (
+        resource_access_policy or DenyAllResourceAccessPolicy()
+    )
 
     # Parser / chunker / blob-store defaults only make sense when the
     # KB feature is actually enabled.  When ``knowledge_base_manager`` is
