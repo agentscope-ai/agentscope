@@ -1,19 +1,17 @@
 import unidiff from 'unidiff';
 
-import {
-	defaultGetDisplayName,
-	defaultRenderCallArgs,
-	defaultRenderGroup,
-	defaultRenderResult,
-} from './DefaultRenderer';
+import { defaultRenderBody } from './DefaultRenderer';
 import { DiffPreview } from './DiffPreview';
-import type { ToolRenderer } from './types';
+import type { ToolCallWithResult, ToolRenderer } from './types';
 import {
 	countDiffStats,
 	DiffStats,
+	FramedFileBody,
 	getFilePath,
 	getResultDiff,
 	parseInput,
+	toolArgClass,
+	toolLabelClass,
 	tryGetFileName,
 } from '@/components/chat/tool-renderers/_shared.tsx';
 
@@ -31,43 +29,23 @@ function countLineChanges(
 	return countDiffStats(diffText);
 }
 
-function renderEditDiff(result: { metadata?: Record<string, unknown> }) {
-	// The post-execution diff is always produced by the backend Edit tool
-	// (with absolute line numbers and one hunk per replaced occurrence).
-	// If it's missing we deliberately render nothing — falling back to a
-	// client-side diff of ``old_string`` / ``new_string`` would silently
-	// produce misleading line numbers and miss the other replace_all
-	// occurrences.
-	const unifiedDiff = getResultDiff(result);
-	if (!unifiedDiff) return null;
-	return <DiffPreview unifiedDiff={unifiedDiff} />;
+/**
+ * Insert/delete counts for the header badge. Prefer the backend post-execution
+ * diff (correct for ``replace_all`` and absolute line numbers); before it
+ * arrives, fall back to a per-occurrence client-side estimate of
+ * ``old_string`` / ``new_string``.
+ */
+function headerStats(pair: ToolCallWithResult): { insertions: number; deletions: number } {
+	const resultDiff = pair.result ? getResultDiff(pair.result) : undefined;
+	if (resultDiff) return countDiffStats(resultDiff);
+	const input = parseInput(pair.call.input);
+	const oldString = typeof input.old_string === 'string' ? input.old_string : '';
+	const newString = typeof input.new_string === 'string' ? input.new_string : '';
+	return countLineChanges(oldString, newString);
 }
 
 export const EditRenderer: ToolRenderer = {
 	getDisplayName: (call) => call.name,
-
-	renderCallArgs: (call) => {
-		// While the tool-call JSON is still streaming, ``call.input`` is a
-		// partial dict and parsing yields the wrong file name / empty
-		// strings. Return an empty fragment (not ``null``) so the index.ts
-		// ``?? defaultRenderCallArgs`` fallback doesn't dump the raw JSON.
-		const fileName = tryGetFileName(call.input);
-		if (!fileName) return <></>;
-		const input = parseInput(call.input);
-		const oldString = typeof input.old_string === 'string' ? input.old_string : '';
-		const newString = typeof input.new_string === 'string' ? input.new_string : '';
-		// Use the real per-occurrence insert/delete counts rather than the
-		// raw line counts of old_string / new_string (which over-count when
-		// most lines are unchanged context).
-		const { insertions, deletions } = countLineChanges(oldString, newString);
-
-		return (
-			<div className="flex items-center gap-2 font-normal">
-				{fileName}
-				<DiffStats insertions={insertions} deletions={deletions} />
-			</div>
-		);
-	},
 
 	renderConfirmBody: (call) => (
 		<div className="w-full max-w-full overflow-hidden text-ellipsis truncate">
@@ -75,34 +53,37 @@ export const EditRenderer: ToolRenderer = {
 		</div>
 	),
 
-	renderGroup: (calls, t) =>
-		defaultRenderGroup(calls, t, {
-			getDisplayName: (call) =>
-				EditRenderer.getDisplayName?.(call, t) ?? defaultGetDisplayName(call),
-			renderCallArgs: (call) => {
-				// When the backend has provided the post-execution unified diff
-				// (handles replace_all correctly), prefer its insert/delete
-				// counts over the per-occurrence client-side estimate.
-				const enriched = calls.find((c) => c.call.id === call.id);
-				const resultDiff = enriched?.result
-					? getResultDiff(enriched.result as { metadata?: Record<string, unknown> })
-					: undefined;
-				if (resultDiff) {
-					const fileName = tryGetFileName(call.input);
-					if (!fileName) return null;
-					const { insertions, deletions } = countDiffStats(resultDiff);
-					return (
-						<div className="flex items-center gap-2 font-normal">
-							{fileName}
-							<DiffStats insertions={insertions} deletions={deletions} />
-						</div>
-					);
-				}
-				return EditRenderer.renderCallArgs?.(call, t) ?? defaultRenderCallArgs(call);
-			},
-			renderResult: (call, result) =>
-				(result.state === 'success' ? renderEditDiff(result) : null) ??
-				EditRenderer.renderResult?.(call, result, t) ??
-				defaultRenderResult(call, result, t),
-		}),
+	renderHeader: (pair) => {
+		// While the tool-call JSON is still streaming, ``call.input`` is a partial
+		// dict and the file name / diff can't be trusted yet — show just the label.
+		const fileName = tryGetFileName(pair.call.input);
+		if (!fileName) return <span className={toolLabelClass}>{pair.call.name}</span>;
+		const { insertions, deletions } = headerStats(pair);
+		return (
+			<>
+				<span className={toolLabelClass}>{pair.call.name}</span>
+				<span className={toolArgClass}>{fileName}</span>
+				<DiffStats insertions={insertions} deletions={deletions} />
+			</>
+		);
+	},
+
+	renderBody: (pair, t) => {
+		if (!pair.result) return null;
+		if (pair.result.state === 'success') {
+			// The backend Edit tool always attaches a unified diff (absolute line
+			// numbers, one hunk per replaced occurrence). A client-side diff of
+			// old_string/new_string would be misleading, so if it's missing we
+			// fall through to the default result body rather than fabricate one.
+			const diff = getResultDiff(pair.result);
+			if (diff) {
+				return (
+					<FramedFileBody filePath={getFilePath(pair.call.input)}>
+						<DiffPreview unifiedDiff={diff} />
+					</FramedFileBody>
+				);
+			}
+		}
+		return defaultRenderBody(pair, t);
+	},
 };

@@ -632,16 +632,19 @@ class Agent:
         )
 
         for index in awaiting_tool_calls.values():
-            # First update the status
-            assert isinstance(last_msg.content[index], ToolCallBlock)
-            last_msg.content[index].state = ToolCallState.FINISHED
+            call_block = last_msg.content[index]
+            assert isinstance(call_block, ToolCallBlock)
 
-            # Emit the full tool_result lifecycle (START → DELTA → END)
-            yield ToolResultStartEvent(
-                reply_id=self.state.reply_id,
-                tool_call_id=last_msg.content[index].id,
-                tool_call_name=last_msg.content[index].name,
-            )
+            # An ALLOWED call was already running, so its START was already
+            # emitted — skip it here (checked before flipping to FINISHED).
+            if call_block.state != ToolCallState.ALLOWED:
+                yield ToolResultStartEvent(
+                    reply_id=self.state.reply_id,
+                    tool_call_id=last_msg.content[index].id,
+                    tool_call_name=last_msg.content[index].name,
+                )
+
+            call_block.state = ToolCallState.FINISHED
             yield ToolResultTextDeltaEvent(
                 reply_id=self.state.reply_id,
                 tool_call_id=last_msg.content[index].id,

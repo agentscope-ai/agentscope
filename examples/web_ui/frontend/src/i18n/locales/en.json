@@ -50,7 +50,7 @@
 		"home": "Back to home"
 	},
 	"tool": {
-		"moreLines": "... {{count}} more lines",
+		"callGeneric": "Call tool",
 		"read": {
 			"name": "Read",
 			"fileCount_one": "{{count}} file",
@@ -62,13 +62,27 @@
 			"name": "Glob"
 		},
 		"taskCreate": {
-			"name": "TaskCreate",
-			"label": "Create",
-			"count_one": "{{count}} task",
-			"count_other": "{{count}} tasks"
+			"name": "TaskCreate"
 		},
 		"grep": {
 			"name": "Grep"
+		},
+		"summary": {
+			"separator": ", ",
+			"bash_one": "ran {{count}} shell command",
+			"bash_other": "ran {{count}} shell commands",
+			"read_one": "read {{count}} file",
+			"read_other": "read {{count}} files",
+			"edit_one": "edited {{count}} file",
+			"edit_other": "edited {{count}} files",
+			"search_one": "searched {{count}} pattern",
+			"search_other": "searched {{count}} patterns",
+			"todo_one": "updated todos {{count}} item",
+			"todo_other": "updated todos {{count}} items",
+			"mcp_one": "called {{count}} MCP tool",
+			"mcp_other": "called {{count}} MCP tools",
+			"fallback_one": "called {{count}} tool",
+			"fallback_other": "called {{count}} tools"
 		}
 	},
 	"textInput": {
@@ -129,28 +143,49 @@
 		"identity": {
 			"legend": "Agent Identity",
 			"description": "Name and instructions that define this agent's behaviour.",
-			"name": { "label": "Name", "placeholder": "My agent" },
-			"system-prompt": { "label": "System prompt" }
+			"name": {
+				"label": "Name",
+				"placeholder": "My agent"
+			},
+			"system-prompt": {
+				"label": "System prompt"
+			}
 		},
 		"context-config": {
 			"legend": "Context Config",
 			"description": "Controls how the context window is managed and compressed.",
-			"trigger-ratio": { "label": "Trigger ratio" },
-			"reserve-ratio": { "label": "Reserve ratio" },
-			"tool-result-limit": { "label": "Tool result limit" },
-			"compression-prompt": { "label": "Compression prompt" },
-			"summary-template": { "label": "Summary template" }
+			"trigger-ratio": {
+				"label": "Trigger ratio"
+			},
+			"reserve-ratio": {
+				"label": "Reserve ratio"
+			},
+			"tool-result-limit": {
+				"label": "Tool result limit"
+			},
+			"compression-prompt": {
+				"label": "Compression prompt"
+			},
+			"summary-template": {
+				"label": "Summary template"
+			}
 		},
 		"react-config": {
 			"legend": "ReAct Config",
 			"description": "Controls the reasoning and action loop behaviour.",
-			"max-iters": { "label": "Max iterations" },
-			"stop-on-reject": { "label": "Stop on reject" }
+			"max-iters": {
+				"label": "Max iterations"
+			},
+			"stop-on-reject": {
+				"label": "Stop on reject"
+			}
 		},
 		"invite-config": {
 			"legend": "Invite Config",
 			"description": "Controls whether other agents can borrow this one via AgentInvite.",
-			"invitable": { "label": "Invitable" },
+			"invitable": {
+				"label": "Invitable"
+			},
 			"invite-description": {
 				"label": "Invite description",
 				"placeholder": "Briefly describe this agent's expertise; required when invitable is on."

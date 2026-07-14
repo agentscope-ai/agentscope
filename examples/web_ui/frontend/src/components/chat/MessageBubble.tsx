@@ -4,6 +4,7 @@ import type {
 	Msg,
 	TextBlock,
 	ToolCallBlock,
+	ToolResultBlock,
 } from '@agentscope-ai/agentscope/message';
 import {
 	ArrowDown,
@@ -11,7 +12,7 @@ import {
 	Bot,
 	CalendarClock,
 	CheckCircle,
-	ChevronDownIcon,
+	ChevronRight,
 	CirclePlay,
 	Copy,
 	Loader2,
@@ -24,7 +25,8 @@ import remarkGfm from 'remark-gfm';
 
 import { ConfirmCard } from './ConfirmCard';
 import { FileAttachment } from './FileAttachment';
-import { renderToolGroup } from './tool-renderers';
+import { renderToolCall } from './tool-renderers';
+import { countDiffStats, DiffStats, getResultDiff } from './tool-renderers/_shared';
 import type { TFunction, ToolCallWithResult } from './tool-renderers/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -36,73 +38,60 @@ import {
 import { Item, ItemContent } from '@/components/ui/item.tsx';
 import { useAudioBlock, useReplayController } from '@/context/AudioContext';
 import { useTranslation } from '@/i18n/useI18n';
+import { cn } from '@/lib/utils';
 import { formatNumber, formatTime } from '@/utils/common';
 
+/**
+ * A run of *consecutive* tool calls (of any name) collapsed into a single
+ * container, each call paired to its result. The one aggregated summary/fold
+ * renders here; every call inside is dispatched to its dedicated per-tool
+ * renderer via `renderToolCall`.
+ */
 interface ToolCallGroupBlock {
 	type: 'tool_call_group';
-	id: string;
-	toolName: string;
 	calls: ToolCallWithResult[];
 }
 
 type ExtendedContentBlock = ContentBlock | ToolCallGroupBlock;
 
 /**
- * Group tool_call blocks of the same name into a single
- * `tool_call_group`, with each call paired to its matching
- * tool_result by id.
+ * Pair every tool_call with its tool_result (by id) and collect *consecutive*
+ * tool calls into a single `tool_call_group`, regardless of tool name — so a
+ * run like `[Read, Read, Edit, some_mcp_tool]` becomes one collapsible
+ * container. Non-tool blocks (text, thinking, data, ...) break the run and
+ * pass through unchanged at their original position.
  *
- * Unlike the previous implementation this does NOT require calls of
- * the same name to be consecutive. When the agent issues multiple
- * concurrent tool calls (e.g. Glob + Grep), the content layout is
- * `[call_Glob, call_Grep, result_Glob, result_Grep]` — the old
- * "consecutive-same-name" approach would split call and result into
- * separate groups. This version collects all calls first (preserving
- * encounter order), then matches results, and finally emits groups
- * in the order the first call of each tool name appeared,
- * interleaved with non-tool blocks at their original positions.
+ * Results may arrive after their calls — concurrent tool use lays content out
+ * as `[call_A, call_B, result_A, result_B]` — so calls are paired by id in a
+ * first pass before the run is assembled.
  */
 function groupToolCalls(content: ContentBlock[]): ExtendedContentBlock[] {
-	// Pass 1: pair calls ↔ results by id, track non-tool blocks.
+	// Pass 1: pair calls ↔ results by id; remember non-tool blocks in order.
 	const callMap = new Map<string, ToolCallWithResult>();
-	const resultMap = new Map<string, ContentBlock>();
+	const orphanResults: ToolResultBlock[] = [];
 	const ordering: Array<{ type: 'tool'; id: string } | { type: 'other'; block: ContentBlock }> =
 		[];
 
 	for (const block of content) {
 		if (block.type === 'tool_call') {
-			const entry: ToolCallWithResult = { call: block };
-			callMap.set(block.id, entry);
+			callMap.set(block.id, { call: block });
 			ordering.push({ type: 'tool', id: block.id });
 		} else if (block.type === 'tool_result') {
 			const matching = callMap.get(block.id);
-			if (matching) {
-				matching.result = block;
-			} else {
-				resultMap.set(block.id, block);
-			}
+			if (matching) matching.result = block;
+			else orphanResults.push(block);
 		} else {
 			ordering.push({ type: 'other', block });
 		}
 	}
 
-	// Pass 2: walk the ordering, group consecutive same-name calls
-	// (now that results are already attached).
+	// Pass 2: walk the ordering, accumulating consecutive calls into one group.
 	const result: ExtendedContentBlock[] = [];
-	let currentGroup: ToolCallWithResult[] = [];
-	let currentToolName: string | null = null;
-
+	let current: ToolCallWithResult[] = [];
 	const flush = () => {
-		if (currentGroup.length > 0 && currentToolName) {
-			result.push({
-				type: 'tool_call_group',
-				id: crypto.randomUUID(),
-				toolName: currentToolName,
-				calls: currentGroup,
-			});
-			currentGroup = [];
-			currentToolName = null;
-		}
+		if (current.length === 0) return;
+		result.push({ type: 'tool_call_group', calls: current });
+		current = [];
 	};
 
 	for (const item of ordering) {
@@ -111,37 +100,28 @@ function groupToolCalls(content: ContentBlock[]): ExtendedContentBlock[] {
 			result.push(item.block);
 		} else {
 			const entry = callMap.get(item.id);
-			if (!entry) continue;
-			if (currentToolName !== null && currentToolName !== entry.call.name) {
-				flush();
-			}
-			currentToolName = entry.call.name;
-			currentGroup.push(entry);
+			if (entry) current.push(entry);
 		}
 	}
 	flush();
 
-	// Orphan results (no matching call) — render as synthetic groups.
-	for (const [id, block] of resultMap) {
-		if (block.type === 'tool_result') {
-			result.push({
-				type: 'tool_call_group',
-				id: crypto.randomUUID(),
-				toolName: block.name,
-				calls: [
-					{
-						call: {
-							type: 'tool_call',
-							id,
-							name: block.name,
-							input: '',
-							state: 'finished' as const,
-						},
-						result: block,
+	// Orphan results (no matching call) — surface each as its own group.
+	for (const block of orphanResults) {
+		result.push({
+			type: 'tool_call_group',
+			calls: [
+				{
+					call: {
+						type: 'tool_call',
+						id: block.id,
+						name: block.name,
+						input: '',
+						state: 'finished' as const,
 					},
-				],
-			});
-		}
+					result: block,
+				},
+			],
+		});
 	}
 
 	return result;
@@ -298,11 +278,94 @@ function AudioInlineControl({ block }: { block: DataBlock }) {
 	);
 }
 
+type OnUserConfirm = (
+	toolCallBlock: ToolCallBlock,
+	confirm: boolean,
+	rules?: ToolCallBlock['suggested_rules'],
+) => void;
+
+const MCP_TOOL_PREFIX = 'mcp__';
+
+// Task-management tools are all surfaced under one "updated todos" summary.
+const TODO_TOOLS = new Set(['TaskGet', 'TaskUpdate', 'TaskList', 'TaskCreate']);
+
+function renderConfirmCard(askingCall: ToolCallBlock, onUserConfirm?: OnUserConfirm) {
+	return (
+		<ConfirmCard
+			toolCall={askingCall}
+			onUserConfirm={(confirm, rules) => {
+				if (onUserConfirm) onUserConfirm(askingCall, confirm, rules);
+			}}
+		/>
+	);
+}
+
 /**
- * Render a single content block. Tool call groups are dispatched to
- * `renderToolGroup`; the per-group truncation at the first `asking` call
- * (and the trailing ConfirmCard) lives here so renderers only see a clean
- * list of calls.
+ * Bucket a group's calls into per-category counts and total inserted/deleted
+ * lines (from Edit/Write result diffs), then build the localized collapsible
+ * title. Categories are appended in a fixed order — Bash, Read, Edit/Write,
+ * Search (Grep/Glob), Todo, MCP — each omitted when its count is zero. If
+ * nothing matches a known category, a generic "called N tools" fallback is used.
+ */
+function summarizeToolGroup(calls: ToolCallWithResult[], t: TFunction) {
+	let nBash = 0;
+	let nRead = 0;
+	let nEdit = 0;
+	let nSearch = 0;
+	let nTodo = 0;
+	let nMCP = 0;
+	let insertions = 0;
+	let deletions = 0;
+
+	for (const { call, result } of calls) {
+		const name = call.name;
+		if (name === 'Bash') {
+			nBash += 1;
+		} else if (name === 'Read') {
+			nRead += 1;
+		} else if (name === 'Edit' || name === 'Write') {
+			nEdit += 1;
+			// Sum the real +/- line changes from the backend-provided diff.
+			const diff = result ? getResultDiff(result) : undefined;
+			if (diff) {
+				const stats = countDiffStats(diff);
+				insertions += stats.insertions;
+				deletions += stats.deletions;
+			}
+		} else if (name === 'Grep' || name === 'Glob') {
+			nSearch += 1;
+		} else if (TODO_TOOLS.has(name)) {
+			nTodo += 1;
+		} else if (name.startsWith(MCP_TOOL_PREFIX)) {
+			nMCP += 1;
+		}
+	}
+
+	const parts: string[] = [];
+	if (nBash > 0) parts.push(t('tool.summary.bash', { count: nBash }));
+	if (nRead > 0) parts.push(t('tool.summary.read', { count: nRead }));
+	if (nEdit > 0) parts.push(t('tool.summary.edit', { count: nEdit }));
+	if (nSearch > 0) parts.push(t('tool.summary.search', { count: nSearch }));
+	if (nTodo > 0) parts.push(t('tool.summary.todo', { count: nTodo }));
+	if (nMCP > 0) parts.push(t('tool.summary.mcp', { count: nMCP }));
+
+	const joined =
+		parts.length > 0
+			? parts.join(t('tool.summary.separator'))
+			: t('tool.summary.fallback', { count: calls.length });
+	// Sentence-case only the very first letter (each i18n part is lower-cased
+	// so commas don't introduce mid-sentence capitals in English; a no-op for
+	// scripts without letter case such as Chinese).
+	const title = joined.length > 0 ? joined[0].toUpperCase() + joined.slice(1) : joined;
+
+	return { title, insertions, deletions };
+}
+
+/**
+ * Render a single content block. A `tool_call_group` renders one summary fold
+ * whose expanded body dispatches each call to `renderToolCall`. Truncation at
+ * the first `asking` call (and the trailing ConfirmCard, kept outside the fold)
+ * lives here so renderers only ever see a clean list of calls.
  */
 function renderBlock(
 	block: ExtendedContentBlock,
@@ -316,20 +379,42 @@ function renderBlock(
 ) {
 	switch (block.type) {
 		case 'tool_call_group': {
-			const firstAsk = block.calls.findIndex((item) => item.call.state === 'asking');
-			const visible = firstAsk === -1 ? block.calls : block.calls.slice(0, firstAsk + 1);
-			const askingCall = firstAsk === -1 ? null : block.calls[firstAsk].call;
+			const { title, insertions, deletions } = summarizeToolGroup(block.calls, t);
+			// Truncate at (and including) the first `asking` call — nothing runs
+			// after it. Its ConfirmCard renders OUTSIDE the Collapsible so
+			// collapsing never hides an action the user still needs to take.
+			const askIdx = block.calls.findIndex((c) => c.call.state === 'asking');
+			const visible = askIdx === -1 ? block.calls : block.calls.slice(0, askIdx + 1);
+			const askingCall = askIdx === -1 ? null : block.calls[askIdx].call;
+
+			const allFinished = block.calls.some((c) => !c.result || c.result.state === 'running');
 			return (
 				<div key={index} className="flex flex-col gap-y-4 text-muted-foreground">
-					{renderToolGroup(block.toolName, visible, t)}
-					{askingCall && (
-						<ConfirmCard
-							toolCall={askingCall}
-							onUserConfirm={(confirm, rules) => {
-								if (onUserConfirm) onUserConfirm(askingCall, confirm, rules);
-							}}
-						/>
-					)}
+					<Collapsible defaultOpen={false}>
+						<CollapsibleTrigger asChild>
+							<Button
+								variant="ghost"
+								className="group flex w-full items-center justify-between gap-2 px-0 hover:bg-transparent data-[state=open]:bg-transparent active:!translate-y-0 cursor-pointer"
+							>
+								<span
+									className={cn(
+										'flex min-w-0 items-center gap-2',
+										allFinished && 'shimmer',
+									)}
+								>
+									<span className="truncate text-sm">{title}</span>
+									<ChevronRight className="size-3 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
+								</span>
+								{(insertions > 0 || deletions > 0) && (
+									<DiffStats insertions={insertions} deletions={deletions} />
+								)}
+							</Button>
+						</CollapsibleTrigger>
+						<CollapsibleContent className="flex flex-col gap-y-1 bg-muted p-2 rounded text-sm">
+							{visible.map((pair) => renderToolCall(pair, t))}
+						</CollapsibleContent>
+					</Collapsible>
+					{askingCall && renderConfirmCard(askingCall, onUserConfirm)}
 				</div>
 			);
 		}
@@ -471,7 +556,7 @@ function renderBlock(
 											{hintSublabel}
 										</span>
 									)}
-									<ChevronDownIcon className="ml-auto group-data-[state=open]:rotate-180" />
+									<ChevronRight className="ml-auto group-data-[state=open]:rotate-90" />
 								</Button>
 							</CollapsibleTrigger>
 							<CollapsibleContent className="p-2.5 pt-0 max-w-full overflow-hidden break-all text-muted-foreground">

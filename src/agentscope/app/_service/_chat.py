@@ -558,17 +558,9 @@ class ChatService:
                             )
 
                     async for event in agent.reply_stream(inputs=input_msg):
-                        await publish_session_event(
-                            self._message_bus,
-                            session_id,
-                            event.model_dump(mode="json"),
-                        )
-                        await self._project_event(
-                            user_id,
-                            session_record,
-                            agent_record,
-                            event,
-                        )
+                        # Apply to reply_msg FIRST (sync — never
+                        # interrupted), so an interrupt in the awaits below
+                        # can't lose this event.
                         if isinstance(event, ReplyStartEvent):
                             reply_msg = AssistantMsg(
                                 id=event.reply_id,
@@ -577,6 +569,27 @@ class ChatService:
                             )
                         elif reply_msg is not None:
                             reply_msg.append_event(event)
+                        try:
+                            await publish_session_event(
+                                self._message_bus,
+                                session_id,
+                                event.model_dump(mode="json"),
+                            )
+                            await self._project_event(
+                                user_id,
+                                session_record,
+                                agent_record,
+                                event,
+                            )
+                        except asyncio.CancelledError:
+                            # Interrupt landed here, not at ``__anext__``.
+                            # Re-arm it so it's redelivered into the agent at
+                            # the next ``__anext__`` (which runs its
+                            # interruption cleanup) instead of abandoning the
+                            # generator and dropping that cleanup.
+                            current = asyncio.current_task()
+                            if current is not None:
+                                current.cancel()
 
                 else:
                     # Case B: continuation (UserConfirmResult
@@ -599,19 +612,28 @@ class ChatService:
                         reply_msg.append_event(input_msg)
 
                     async for event in agent.reply_stream(inputs=input_msg):
-                        await publish_session_event(
-                            self._message_bus,
-                            session_id,
-                            event.model_dump(mode="json"),
-                        )
-                        await self._project_event(
-                            user_id,
-                            session_record,
-                            agent_record,
-                            event,
-                        )
+                        # Apply to the persisted reply FIRST (synchronous),
+                        # then publish/project — see Case A above.
                         if reply_msg is not None:
                             reply_msg.append_event(event)
+                        try:
+                            await publish_session_event(
+                                self._message_bus,
+                                session_id,
+                                event.model_dump(mode="json"),
+                            )
+                            await self._project_event(
+                                user_id,
+                                session_record,
+                                agent_record,
+                                event,
+                            )
+                        except asyncio.CancelledError:
+                            # See Case A: redirect an interrupt landing here
+                            # back into the agent via the next ``__anext__``.
+                            current = asyncio.current_task()
+                            if current is not None:
+                                current.cancel()
 
             finally:
                 # All persistence in a single coroutine, shielded from

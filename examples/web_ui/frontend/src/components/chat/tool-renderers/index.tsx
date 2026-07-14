@@ -1,13 +1,13 @@
-import type { ToolCallBlock, ToolResultBlock } from '@agentscope-ai/agentscope/message';
+import type { ToolCallBlock } from '@agentscope-ai/agentscope/message';
 import type { ReactNode } from 'react';
 
+import { ToolCallRow } from './_shared';
 import { BashRenderer } from './BashRenderer';
 import {
 	defaultGetDisplayName,
-	defaultRenderCallArgs,
+	defaultRenderBody,
 	defaultRenderConfirmBody,
-	defaultRenderGroup,
-	defaultRenderResult,
+	defaultRenderHeader,
 } from './DefaultRenderer';
 import { EditRenderer } from './EditRenderer';
 import { GlobRenderer } from './GlobRenderer';
@@ -36,45 +36,20 @@ export function getDisplayName(call: ToolCallBlock, t: TFunction): string {
 	return r.getDisplayName?.(call, t) ?? defaultGetDisplayName(call);
 }
 
-export function renderCallArgs(call: ToolCallBlock, t: TFunction): ReactNode {
-	const r = getRenderer(call.name);
-	return r.renderCallArgs?.(call, t) ?? defaultRenderCallArgs(call);
-}
-
-export function renderResult(
-	call: ToolCallBlock,
-	result: ToolResultBlock,
-	t: TFunction,
-): ReactNode {
-	const r = getRenderer(call.name);
-	return r.renderResult?.(call, result, t) ?? defaultRenderResult(call, result, t);
-}
-
 export function renderConfirmBody(call: ToolCallBlock, t: TFunction): ReactNode {
 	const r = getRenderer(call.name);
 	return r.renderConfirmBody?.(call, t) ?? defaultRenderConfirmBody(call);
 }
 
 /**
- * Render a group of consecutive tool calls of the same name.
- *
- * - If the tool's renderer defines `renderGroup`, delegate to it.
- * - Otherwise fall back to `defaultRenderGroup`, wired with this registry's
- *   resolvers so per-tool `getDisplayName` / `renderCallArgs` / `renderResult`
- *   still apply.
+ * Render a single tool call as one collapsible row. The tool's renderer only
+ * supplies the trigger-line `header` and the expandable `body`; the shared
+ * `ToolCallRow` owns the collapsible shell, state icon and chevron. Falls back
+ * to the `Default*` implementations for tools without a dedicated renderer.
  */
-export function renderToolGroup(
-	toolName: string,
-	calls: ToolCallWithResult[],
-	t: TFunction,
-): ReactNode {
-	const r = getRenderer(toolName);
-	if (r.renderGroup) {
-		return r.renderGroup(calls, t);
-	}
-	return defaultRenderGroup(calls, t, {
-		getDisplayName: (call) => getDisplayName(call, t),
-		renderCallArgs: (call) => renderCallArgs(call, t),
-		renderResult: (call, result) => renderResult(call, result, t),
-	});
+export function renderToolCall(pair: ToolCallWithResult, t: TFunction): ReactNode {
+	const r = getRenderer(pair.call.name);
+	const header = r.renderHeader?.(pair, t) ?? defaultRenderHeader(pair, t);
+	const body = r.renderBody?.(pair, t) ?? defaultRenderBody(pair, t);
+	return <ToolCallRow key={pair.call.id} pair={pair} header={header} body={body} />;
 }

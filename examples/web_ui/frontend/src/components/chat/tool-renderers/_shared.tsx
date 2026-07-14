@@ -1,108 +1,111 @@
 import type { ToolResultBlock } from '@agentscope-ai/agentscope/message';
-import { Circle, Minus, Plus } from 'lucide-react';
+import { Ban, Check, ChevronRight, LoaderCircle, Minus, Plus, X } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 import type { ToolCallWithResult } from './types';
-import lineCornerSvg from '@/assets/images/line-corner.svg';
-import lineVerticalSvg from '@/assets/images/line-vertical.svg';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Separator } from '@/components/ui/separator';
+import { cn } from '@/lib/utils';
 import { formatNumber } from '@/utils/common.ts';
 
-/**
- * Pick the connector image for an item at `index` of `total`:
- * corner for the last row, vertical otherwise.
- */
-function getLineImage(index: number, total: number): string {
-	return index === total - 1 ? lineCornerSvg : lineVerticalSvg;
+export function ToolStateIcon({ state }: { state: ToolResultBlock['state'] | undefined }) {
+	if (state === 'success') {
+		return <Check className="size-3 text-emerald-600 dark:text-emerald-400 shrink-0" />;
+	}
+	if (state === 'error') {
+		return <X className="size-3 text-red-600 dark:text-red-400  shrink-0" />;
+	}
+	if (state === 'interrupted' || state === 'denied') {
+		return <Ban className="size-3 !h-3 min-h-3 shrink-0" />;
+	}
+
+	// running
+	return <LoaderCircle className="size-3 shrink-0 animate-spin" />;
 }
 
 /**
- * Single tree-line cell. Use inside flex rows where one column is the line
- * and the next is the actual content.
+ * Flatten a tool result's ``output`` (string or block array) into plain text,
+ * keeping only the text blocks. Returns ``''`` when the result is missing.
  */
-export function TreeLine({
-	index,
-	total,
-	className = 'w-3 h-full',
+export function getResultText(result?: ToolResultBlock): string {
+	if (!result) return '';
+	if (typeof result.output === 'string') return result.output;
+	if (Array.isArray(result.output)) {
+		return result.output.map((b) => (b.type === 'text' ? b.text : '')).join('\n');
+	}
+	return '';
+}
+
+/**
+ * Shared class for the *leading label* of a tool-call trigger line — the verb
+ * or tool name such as "Read", "Bash", "Grep pattern", or the generic
+ * "Call tool". Deliberately not bold (no `<strong>`): every tool's label looks
+ * the same and only brightens to the foreground colour on row hover (the row
+ * is a `group`).
+ */
+export const toolLabelClass = 'shrink-0 transition-colors group-hover:text-foreground';
+
+/**
+ * Shared class for the *primary argument* of a trigger line — the file name
+ * (Read/Edit/Write), search pattern (Grep/Glob), task subject (TaskCreate) or,
+ * for tools without a dedicated renderer, the tool name itself. Unifies weight
+ * and truncation so the second slot is visually identical across every tool.
+ */
+export const toolArgClass =
+	'font-[450] min-w-0 truncate transition-colors group-hover:text-foreground';
+
+/**
+ * One collapsible tool-call row — the single shared shell every tool renders
+ * through. The trigger line is ``{header}  <state-icon>  <chevron>``; the
+ * chevron only appears on hover and stays visible (rotated down) while open.
+ * When ``body`` is provided the row expands to reveal it; without a body the
+ * row is a plain, non-expandable line (no chevron, no pointer cursor).
+ *
+ * ``header`` should be a fragment of inline flex children (the parent supplies
+ * ``gap-x-2``); tools never touch the Collapsible / state icon themselves.
+ */
+export function ToolCallRow({
+	pair,
+	header,
+	body,
 }: {
-	index: number;
-	total: number;
-	className?: string;
+	pair: ToolCallWithResult;
+	header: ReactNode;
+	body?: ReactNode;
 }) {
-	return (
-		<div className="flex-shrink-0 h-full items-center">
-			<img src={getLineImage(index, total)} alt="" className={className} />
+	const expandable = body != null && body !== false;
+	// Shimmer the header text. The shadcn ``shimmer`` util is a text-clip effect,
+	// so it has to sit on the elements that *directly* hold the text — the
+	// header's own leaf spans — not on a wrapper (a wrapper only makes descendant
+	// text transparent). We target the direct span children of this flex row
+	// instead of wrapping ``header``, which also keeps their ``gap-x-2`` spacing.
+	const row = (
+		<div
+			className={cn(
+				'group flex flex-row gap-x-2 items-center w-full',
+				expandable && 'cursor-pointer',
+				!pair.result || pair.result.state === 'running' ? 'shimmer' : '',
+			)}
+		>
+			{header}
+			<ToolStateIcon state={pair.result?.state} />
+			{expandable && (
+				<ChevronRight
+					className={
+						'size-3 shrink-0 transition-transform hidden group-hover:flex group-data-[state=open]:flex group-data-[state=open]:rotate-90'
+					}
+				/>
+			)}
 		</div>
 	);
-}
 
-/**
- * Single corner-only line, used when only one trailing item exists.
- */
-export function CornerLine({ className = 'w-3 h-4' }: { className?: string }) {
+	if (!expandable) return row;
+
 	return (
-		<div className="flex-shrink-0">
-			<img src={lineCornerSvg} alt="" className={className} />
-		</div>
-	);
-}
-
-/**
- * Aggregated state icon over a list of tool result states. Mirrors the
- * pre-refactor priority: running/undefined → pulsing muted; all success →
- * green; any error → red; any interrupted → yellow; otherwise muted.
- */
-export function ToolStateIcon({ states }: { states: (ToolResultBlock['state'] | undefined)[] }) {
-	if (states.includes('running') || states.includes(undefined)) {
-		return (
-			<Circle className="size-2.5 text-muted-foreground fill-muted-foreground animate-pulse shrink-0" />
-		);
-	}
-	if (states.every((state) => state === 'success')) {
-		return <Circle className="size-2.5 text-green-500 fill-green-500 shrink-0" />;
-	}
-	if (states.some((state) => state === 'error')) {
-		return <Circle className="size-2.5 text-red-500 fill-red-500 shrink-0" />;
-	}
-	if (states.some((state) => state === 'interrupted')) {
-		return <Circle className="size-2.5 text-yellow-500 fill-yellow-500 shrink-0" />;
-	}
-	return <Circle className="size-2.5 text-muted-foreground fill-muted-foreground shrink-0" />;
-}
-
-/**
- * Header + indented item list, used by Read / Glob / Grep group renderers.
- * Each item shows only the per-call args (no result), connected by SVG tree
- * lines. `inline` lays items horizontally instead of stacked.
- */
-export function ToolCallGroupList({
-	calls,
-	label,
-	renderItem,
-	inline,
-}: {
-	calls: ToolCallWithResult[];
-	label: ReactNode;
-	renderItem: (item: ToolCallWithResult) => ReactNode;
-	inline?: boolean;
-}) {
-	return (
-		<div className="flex flex-col w-full">
-			<div className="flex flex-row gap-x-2 w-full max-w-full items-center">
-				<ToolStateIcon states={calls.map((item) => item.result?.state)} />
-				{label}
-			</div>
-			<div className={`flex ${inline ? 'flex-row' : 'flex-col'} gap-x-2 pl-6 max-w-full`}>
-				{calls.map((item, index) => (
-					<div
-						key={item.call.id}
-						className="flex flex-row gap-x-2 w-full max-w-full items-stretch"
-					>
-						<TreeLine index={index} total={calls.length} />
-						<div className="truncate flex-1 min-w-0 text-sm">{renderItem(item)}</div>
-					</div>
-				))}
-			</div>
-		</div>
+		<Collapsible>
+			<CollapsibleTrigger asChild>{row}</CollapsibleTrigger>
+			<CollapsibleContent>{body}</CollapsibleContent>
+		</Collapsible>
 	);
 }
 
@@ -143,7 +146,7 @@ export function getFileName(input: string): string {
 /**
  * Like ``getFileName`` but returns ``undefined`` when the input is not yet
  * a fully parseable JSON object with a non-empty ``file_path`` field. Use
- * this in ``renderCallArgs`` so partial JSON streamed during tool-call
+ * this in ``renderHeader`` so partial JSON streamed during tool-call
  * generation doesn't render a garbled file name (e.g. a fragment of the
  * ``content`` field being mistaken for the path).
  */
@@ -188,20 +191,39 @@ export function getResultDiff(result: { metadata?: Record<string, unknown> }): s
 }
 
 /**
+ * Framed body box shared by file-oriented tools (Read / Edit / Write): a
+ * bordered card with the file path as a header, a separator, then the tool's
+ * own content (numbered source lines for Read, a diff for Edit / Write).
+ */
+export function FramedFileBody({ filePath, children }: { filePath: string; children: ReactNode }) {
+	return (
+		<div className="flex flex-col border rounded-sm bg-background">
+			<div className="px-2 py-1 whitespace-nowrap overflow-x-auto">{filePath}</div>
+			<Separator />
+			{children}
+		</div>
+	);
+}
+
+/**
  * Compact ``+N -M`` badge used in tool call headers for Edit / Write to show
  * how many lines were inserted and deleted.
  */
 export function DiffStats({ insertions, deletions }: { insertions: number; deletions: number }) {
 	return (
 		<div className="flex items-center gap-0.5">
-			<div className="flex items-center text-emerald-600 dark:text-emerald-400">
-				<Plus className="size-2.5 stroke-2" />
-				{formatNumber(insertions)}
-			</div>
-			<div className="flex items-center text-red-600 dark:text-red-400">
-				<Minus className="size-2.5 stroke-2" />
-				{formatNumber(deletions)}
-			</div>
+			{insertions && (
+				<div className="flex items-center text-emerald-600 dark:text-emerald-400">
+					<Plus className="size-2.5 stroke-2" />
+					{formatNumber(insertions)}
+				</div>
+			)}
+			{deletions && (
+				<div className="flex items-center text-red-600 dark:text-red-400">
+					<Minus className="size-2.5 stroke-2" />
+					{formatNumber(deletions)}
+				</div>
+			)}
 		</div>
 	);
 }

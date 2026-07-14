@@ -1,36 +1,19 @@
-import {
-	defaultGetDisplayName,
-	defaultRenderCallArgs,
-	defaultRenderGroup,
-	defaultRenderResult,
-} from './DefaultRenderer';
+import { defaultRenderBody } from './DefaultRenderer';
 import { DiffPreview } from './DiffPreview';
 import type { ToolRenderer } from './types';
 import {
 	countDiffStats,
 	DiffStats,
+	FramedFileBody,
 	getFilePath,
 	getResultDiff,
+	toolArgClass,
+	toolLabelClass,
 	tryGetFileName,
 } from '@/components/chat/tool-renderers/_shared.tsx';
 
 export const WriteRenderer: ToolRenderer = {
 	getDisplayName: (call) => call.name,
-
-	renderCallArgs: (call) => {
-		// While the tool-call JSON is still streaming, ``call.input`` is a
-		// partial dict (e.g. ``{"file_path": "foo", "content": "...``) and
-		// parsing yields the wrong file name or none at all. Render an empty
-		// fragment (not ``null``) so the index.ts ``?? defaultRenderCallArgs``
-		// fallback doesn't kick in and dump the raw JSON string.
-		const fileName = tryGetFileName(call.input);
-		if (!fileName) return <></>;
-		// Pre-execution we only know the new ``content`` (not the previous
-		// file body), so any ``+N`` count would be misleading on overwrites.
-		// The post-execution renderGroup override below adds ``+N -M`` once
-		// ``metadata.diff`` arrives.
-		return <div className="flex items-center gap-2 font-normal">{fileName}</div>;
-	},
 
 	renderConfirmBody: (call) => (
 		<div className="w-full max-w-full overflow-hidden text-ellipsis truncate">
@@ -38,56 +21,38 @@ export const WriteRenderer: ToolRenderer = {
 		</div>
 	),
 
-	renderResult: (call, result, t) => {
-		if (result.state === 'success') {
-			// The backend Write tool always attaches a unified diff in
-			// ``metadata.diff`` (correctly representing both new-file
-			// creation against /dev/null and overwrites of existing files
-			// with absolute line numbers). If it's missing we fall through
-			// rather than render a misleading client-side diff.
-			const unifiedDiff = getResultDiff(result as { metadata?: Record<string, unknown> });
-			if (unifiedDiff) {
-				return <DiffPreview unifiedDiff={unifiedDiff} />;
-			}
-			return undefined;
-		}
-		if (call.state === 'asking' || !result || result.state === 'running') {
-			return t('common.running');
-		}
-		if (result.state === 'interrupted') {
-			return t('common.interrupted');
-		}
-		return undefined;
+	renderHeader: (pair) => {
+		const fileName = tryGetFileName(pair.call.input);
+		if (!fileName) return <span className={toolLabelClass}>{pair.call.name}</span>;
+		// Pre-execution we only know the new ``content`` (not the previous file
+		// body), so any ``+N`` count would be misleading on overwrites. Show the
+		// real ``+N -M`` only once the backend post-execution diff has arrived.
+		const diff = pair.result ? getResultDiff(pair.result) : undefined;
+		const stats = diff ? countDiffStats(diff) : null;
+		return (
+			<>
+				<span className={toolLabelClass}>{pair.call.name}</span>
+				<span className={toolArgClass}>{fileName}</span>
+				{stats && <DiffStats insertions={stats.insertions} deletions={stats.deletions} />}
+			</>
+		);
 	},
 
-	renderGroup: (calls, t) =>
-		defaultRenderGroup(calls, t, {
-			getDisplayName: (call) =>
-				WriteRenderer.getDisplayName?.(call, t) ?? defaultGetDisplayName(call),
-			renderCallArgs: (call) => {
-				// Once the backend has produced the post-execution unified
-				// diff, compute and show the real ``+N -M`` stats — this
-				// correctly accounts for overwrites of existing files
-				// (which the pre-execution renderCallArgs cannot know).
-				const enriched = calls.find((c) => c.call.id === call.id);
-				const resultDiff = enriched?.result
-					? getResultDiff(enriched.result as { metadata?: Record<string, unknown> })
-					: undefined;
-				if (resultDiff) {
-					const fileName = tryGetFileName(call.input);
-					if (!fileName) return null;
-					const { insertions, deletions } = countDiffStats(resultDiff);
-					return (
-						<div className="flex items-center gap-2 font-normal">
-							{fileName}
-							<DiffStats insertions={insertions} deletions={deletions} />
-						</div>
-					);
-				}
-				return WriteRenderer.renderCallArgs?.(call, t) ?? defaultRenderCallArgs(call);
-			},
-			renderResult: (call, result) =>
-				WriteRenderer.renderResult?.(call, result, t) ??
-				defaultRenderResult(call, result, t),
-		}),
+	renderBody: (pair, t) => {
+		if (!pair.result) return null;
+		if (pair.result.state === 'success') {
+			// The backend Write tool always attaches a unified diff (new-file
+			// creation against /dev/null or an overwrite with absolute line
+			// numbers). If it's missing we fall through rather than fabricate one.
+			const diff = getResultDiff(pair.result);
+			if (diff) {
+				return (
+					<FramedFileBody filePath={getFilePath(pair.call.input)}>
+						<DiffPreview unifiedDiff={diff} />
+					</FramedFileBody>
+				);
+			}
+		}
+		return defaultRenderBody(pair, t);
+	},
 };

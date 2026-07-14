@@ -50,7 +50,7 @@
 		"home": "返回首页"
 	},
 	"tool": {
-		"moreLines": "... 还有 {{count}} 行",
+		"callGeneric": "调用工具",
 		"read": {
 			"name": "读取",
 			"fileCount_one": "{{count}} 个文件",
@@ -62,13 +62,27 @@
 			"name": "Glob"
 		},
 		"taskCreate": {
-			"name": "TaskCreate",
-			"label": "创建",
-			"count_one": "{{count}} 个任务",
-			"count_other": "{{count}} 个任务"
+			"name": "TaskCreate"
 		},
 		"grep": {
 			"name": "Grep"
+		},
+		"summary": {
+			"separator": "，",
+			"bash_one": "执行 {{count}} 次脚本",
+			"bash_other": "执行 {{count}} 次脚本",
+			"read_one": "读取 {{count}} 个文件",
+			"read_other": "读取 {{count}} 个文件",
+			"edit_one": "编辑 {{count}} 个文件",
+			"edit_other": "编辑 {{count}} 个文件",
+			"search_one": "搜索 {{count}} 个模式",
+			"search_other": "搜索 {{count}} 个模式",
+			"todo_one": "更新 {{count}} 项待办",
+			"todo_other": "更新 {{count}} 项待办",
+			"mcp_one": "调用 {{count}} 次 MCP",
+			"mcp_other": "调用 {{count}} 次 MCP",
+			"fallback_one": "调用 {{count}} 次工具",
+			"fallback_other": "调用 {{count}} 次工具"
 		}
 	},
 	"textInput": {
@@ -129,28 +143,49 @@
 		"identity": {
 			"legend": "Agent 身份",
 			"description": "定义此 Agent 行为的名称和指令。",
-			"name": { "label": "名称", "placeholder": "我的 Agent" },
-			"system-prompt": { "label": "系统提示词" }
+			"name": {
+				"label": "名称",
+				"placeholder": "我的 Agent"
+			},
+			"system-prompt": {
+				"label": "系统提示词"
+			}
 		},
 		"context-config": {
 			"legend": "上下文配置",
 			"description": "控制上下文窗口的管理和压缩方式。",
-			"trigger-ratio": { "label": "触发比例" },
-			"reserve-ratio": { "label": "保留比例" },
-			"tool-result-limit": { "label": "工具结果限制" },
-			"compression-prompt": { "label": "压缩提示词" },
-			"summary-template": { "label": "摘要模板" }
+			"trigger-ratio": {
+				"label": "触发比例"
+			},
+			"reserve-ratio": {
+				"label": "保留比例"
+			},
+			"tool-result-limit": {
+				"label": "工具结果限制"
+			},
+			"compression-prompt": {
+				"label": "压缩提示词"
+			},
+			"summary-template": {
+				"label": "摘要模板"
+			}
 		},
 		"react-config": {
 			"legend": "ReAct 配置",
 			"description": "控制推理和行动循环的行为。",
-			"max-iters": { "label": "最大迭代次数" },
-			"stop-on-reject": { "label": "拒绝时停止" }
+			"max-iters": {
+				"label": "最大迭代次数"
+			},
+			"stop-on-reject": {
+				"label": "拒绝时停止"
+			}
 		},
 		"invite-config": {
 			"legend": "邀请配置",
 			"description": "控制此 Agent 是否可被其他 Agent 通过 AgentInvite 邀请。",
-			"invitable": { "label": "允许被邀请" },
+			"invitable": {
+				"label": "允许被邀请"
+			},
 			"invite-description": {
 				"label": "邀请说明",
 				"placeholder": "简要描述此 Agent 的专长；允许被邀请时必填。"
