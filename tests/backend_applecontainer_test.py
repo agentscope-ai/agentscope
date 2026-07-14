@@ -3,65 +3,93 @@
 # mypy: disable-error-code="misc,no-untyped-def,attr-defined"
 """Test cases for :class:`AppleContainerBackend`.
 
-Validates that the three backend primitives (``exec_shell``,
-``read_file``, ``write_file``) construct the correct ``container`` CLI
-commands. Subprocess calls are mocked — no real ``container`` CLI is
-required.
+Runs against a real Apple Container via the ``container`` CLI.
+Requires ``container`` CLI installed and ``container system start``
+running.
 """
 
-import asyncio
+import shutil
 import sys
+import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
-from unittest import skipUnless
 
-from agentscope.workspace._applecontainer._applecontainer_backend import (
-    AppleContainerBackend,
+from agentscope.tool import ExecResult
+from agentscope.workspace import AppleContainerBackend
+
+_CONTAINER_CLI = shutil.which("container")
+_RUN_REASON = "container CLI not found — install Apple Container first"
+
+
+@unittest.skipUnless(_CONTAINER_CLI, _RUN_REASON)
+@unittest.skipUnless(
+    sys.platform == "darwin",
+    "Apple Container requires macOS",
 )
-
-# ── mock helpers ────────────────────────────────────────────────────
-
-
-def _make_mock_process(
-    exit_code: int = 0,
-    stdout: bytes = b"",
-    stderr: bytes = b"",
-) -> MagicMock:
-    """Build an :class:`asyncio.subprocess.Process` mock."""
-    proc = MagicMock()
-    proc.returncode = exit_code
-    proc.communicate = AsyncMock(
-        return_value=(stdout, stderr),
-    )
-    return proc
-
-
-def _captured_cli_cmd(mock_create: MagicMock) -> list[str]:
-    """Extract the CLI command list from the last
-    ``create_subprocess_exec`` call."""
-    call_args = mock_create.call_args
-    if call_args is None:
-        return []
-    return list(call_args[0])
-
-
-# ── tests ───────────────────────────────────────────────────────────
-
-
-_IS_MACOS = sys.platform == "darwin"
-
-
-@skipUnless(_IS_MACOS, "Apple Container tests require macOS")
 class TestAppleContainerBackend(IsolatedAsyncioTestCase):
-    """Test cases for ``AppleContainerBackend`` with mocked subprocess."""
+    """Test cases against a real Apple Container."""
 
-    CONTAINER_ID = "as_ws_test1234"
     WORKDIR = "/workspace"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        """Create a test container once for all tests."""
+        import asyncio
+
+        asyncio.run(cls._setup_container())
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        """Remove the test container."""
+        import asyncio
+
+        asyncio.run(cls._teardown_container())
+
+    @classmethod
+    async def _setup_container(cls) -> None:
+        """Create a container for testing."""
+        import asyncio
+
+        proc = await asyncio.create_subprocess_exec(
+            "container",
+            "run",
+            "-d",
+            "--name",
+            "as_test_backend",
+            "python:3.11-slim",
+            "sleep",
+            "infinity",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"Failed to create test container: "
+                f"{stderr.decode(errors='replace')}",
+            )
+        cls.container_id = stdout.decode().strip() or "as_test_backend"
+
+    @classmethod
+    async def _teardown_container(cls) -> None:
+        """Remove the test container."""
+        import asyncio
+
+        await asyncio.create_subprocess_exec(
+            "container",
+            "stop",
+            "as_test_backend",
+        )
+        await asyncio.create_subprocess_exec(
+            "container",
+            "rm",
+            "-f",
+            "as_test_backend",
+        )
 
     def setUp(self) -> None:
         """Create a backend instance for each test."""
         self.backend = AppleContainerBackend(
-            container_id=self.CONTAINER_ID,
+            container_id="as_test_backend",
             workdir=self.WORKDIR,
         )
 
@@ -73,213 +101,94 @@ class TestAppleContainerBackend(IsolatedAsyncioTestCase):
 
     # ── exec_shell ─────────────────────────────────────────────────
 
-    @patch(
-        "asyncio.create_subprocess_exec",
-        new_callable=AsyncMock,
-    )
-    async def test_exec_simple_command(self, mock_create: AsyncMock) -> None:
-        """A simple command is passed directly to ``container exec``."""
-        mock_create.return_value = _make_mock_process(
-            exit_code=0,
-            stdout=b"hello\n",
-        )
-
+    async def test_exec_simple_command(self) -> None:
+        """A simple command runs successfully."""
         result = await self.backend.exec_shell(["echo", "hello"])
+        self.assertIsInstance(result, ExecResult)
         self.assertTrue(result.ok())
-        self.assertEqual(result.stdout, b"hello\n")
+        self.assertEqual(result.stdout.strip(), b"hello")
 
-        cmd = _captured_cli_cmd(mock_create)
-        self.assertEqual(cmd[0], "container")
-        self.assertEqual(cmd[1], "exec")
-        self.assertIn(self.CONTAINER_ID, cmd)
-        # The command args should appear after '--'
-        dash_index = cmd.index("--") if "--" in cmd else -1
-        self.assertGreater(dash_index, 0)
-        self.assertEqual(cmd[dash_index + 1 :], ["echo", "hello"])
-
-    @patch(
-        "asyncio.create_subprocess_exec",
-        new_callable=AsyncMock,
-    )
-    async def test_exec_with_custom_cwd(self, mock_create: AsyncMock) -> None:
-        """Custom ``cwd`` is forwarded via ``--workdir``."""
-        mock_create.return_value = _make_mock_process(
-            exit_code=0,
-            stdout=b"/tmp\n",
-        )
-
-        result = await self.backend.exec_shell(
-            ["pwd"],
-            cwd="/tmp",
-        )
+    async def test_exec_with_custom_cwd(self) -> None:
+        """Custom ``cwd`` changes the working directory."""
+        result = await self.backend.exec_shell(["pwd"], cwd="/tmp")
         self.assertTrue(result.ok())
-        cmd = _captured_cli_cmd(mock_create)
-        workdir_idx = cmd.index("--workdir")
-        self.assertEqual(cmd[workdir_idx + 1], "/tmp")
+        self.assertEqual(result.stdout.strip(), b"/tmp")
 
-    @patch(
-        "asyncio.create_subprocess_exec",
-        new_callable=AsyncMock,
-    )
-    async def test_exec_nonzero_exit(self, mock_create: AsyncMock) -> None:
+    async def test_exec_nonzero_exit(self) -> None:
         """Non-zero exit code is reported normally."""
-        mock_create.return_value = _make_mock_process(
-            exit_code=1,
-            stderr=b"error",
-        )
-
-        result = await self.backend.exec_shell(["false"])
-        self.assertEqual(result.exit_code, 1)
-        self.assertEqual(result.stderr, b"error")
-
-    @patch(
-        "asyncio.create_subprocess_exec",
-        new_callable=AsyncMock,
-    )
-    async def test_exec_timeout(self, mock_create: AsyncMock) -> None:
-        """Timeout returns exit_code -1."""
-        # Simulate a command that hangs: communicate() raises
-        # TimeoutError, then kill() + communicate() succeed.
-        proc = MagicMock()
-        proc.returncode = -1
-        # First communicate() call raises TimeoutError.
-        # Second communicate() call (after kill) returns empty.
-        proc.communicate = AsyncMock(
-            side_effect=[asyncio.TimeoutError(), (b"", b"")],
-        )
-        mock_create.return_value = proc
-
         result = await self.backend.exec_shell(
-            ["sleep", "999"],
-            timeout=0.001,
+            ["sh", "-c", "exit 4"],
+        )
+        self.assertEqual(result.exit_code, 4)
+
+    async def test_exec_timeout(self) -> None:
+        """Timeout returns exit_code -1."""
+        result = await self.backend.exec_shell(
+            ["sleep", "10"],
+            timeout=0.5,
         )
         self.assertEqual(result.exit_code, -1)
         self.assertIn(b"timed out", result.stderr)
 
-    @patch(
-        "asyncio.create_subprocess_exec",
-        new_callable=AsyncMock,
-    )
-    async def test_exec_cli_not_found(
-        self,
-        mock_create: AsyncMock,
-    ) -> None:
-        """``FileNotFoundError`` returns exit_code 127."""
-        mock_create.side_effect = FileNotFoundError("container not found")
-
-        result = await self.backend.exec_shell(["echo", "hello"])
-        self.assertEqual(result.exit_code, 127)
-        self.assertIn(b"CLI not found", result.stderr)
+    async def test_exec_stderr_captured(self) -> None:
+        """Stderr is captured."""
+        result = await self.backend.exec_shell(
+            ["sh", "-c", "echo err >&2"],
+        )
+        self.assertTrue(result.ok())
+        self.assertIn(b"err", result.stderr)
 
     # ── read_file ──────────────────────────────────────────────────
 
-    @patch(
-        "asyncio.create_subprocess_exec",
-        new_callable=AsyncMock,
-    )
-    async def test_read_file(self, mock_create: AsyncMock) -> None:
-        """``read_file`` uses ``container exec cat``."""
-        mock_create.return_value = _make_mock_process(
-            exit_code=0,
-            stdout=b"file contents\n",
-        )
+    async def test_read_write_roundtrip(self) -> None:
+        """Bytes written are read back verbatim."""
+        path = f"{self.WORKDIR}/roundtrip.txt"
+        payload = b"hello\nworld\n"
+        await self.backend.write_file(path, payload)
+        self.assertEqual(await self.backend.read_file(path), payload)
 
-        data = await self.backend.read_file("/workspace/test.txt")
-        self.assertEqual(data, b"file contents\n")
-
-        cmd = _captured_cli_cmd(mock_create)
-        self.assertIn("cat", cmd)
-        self.assertIn("/workspace/test.txt", cmd)
-
-    @patch(
-        "asyncio.create_subprocess_exec",
-        new_callable=AsyncMock,
-    )
-    async def test_read_file_not_found(self, mock_create: AsyncMock) -> None:
+    async def test_read_file_not_found(self) -> None:
         """Reading a missing file raises ``FileNotFoundError``."""
-        mock_create.return_value = _make_mock_process(
-            exit_code=1,
-            stderr=b"No such file",
+        with self.assertRaises(FileNotFoundError):
+            await self.backend.read_file(f"{self.WORKDIR}/missing.txt")
+
+    async def test_write_creates_parent_dirs(self) -> None:
+        """``write_file`` creates missing parent directories."""
+        path = f"{self.WORKDIR}/a/b/c/file.txt"
+        await self.backend.write_file(path, b"x")
+        self.assertEqual(await self.backend.read_file(path), b"x")
+
+    # ── derived filesystem helpers ─────────────────────────────────
+
+    async def test_file_exists_and_is_dir(self) -> None:
+        """``file_exists`` / ``is_dir`` work correctly."""
+        path = f"{self.WORKDIR}/f.txt"
+        await self.backend.write_file(path, b"x")
+        self.assertTrue(await self.backend.file_exists(path))
+        self.assertTrue(await self.backend.is_dir(self.WORKDIR))
+        self.assertFalse(await self.backend.is_dir(path))
+        self.assertFalse(
+            await self.backend.file_exists(f"{self.WORKDIR}/missing"),
         )
 
-        with self.assertRaises(FileNotFoundError):
-            await self.backend.read_file("/workspace/missing.txt")
+    async def test_list_dir(self) -> None:
+        """Non-recursive ``list_dir`` returns immediate children."""
+        base = f"{self.WORKDIR}/listing"
+        await self.backend.write_file(f"{base}/a.txt", b"x")
+        await self.backend.write_file(f"{base}/b.txt", b"x")
+        entries = await self.backend.list_dir(base)
+        self.assertEqual(sorted(entries), ["a.txt", "b.txt"])
 
-    # ── write_file ─────────────────────────────────────────────────
+    async def test_delete_path(self) -> None:
+        """``delete_path`` removes files and trees."""
+        path = f"{self.WORKDIR}/to_delete.txt"
+        await self.backend.write_file(path, b"x")
+        await self.backend.delete_path(path)
+        self.assertFalse(await self.backend.file_exists(path))
 
-    @patch(
-        "asyncio.create_subprocess_exec",
-        new_callable=AsyncMock,
-    )
-    async def test_write_file(self, mock_create: AsyncMock) -> None:
-        """``write_file`` creates a temp file and uses ``container cp``."""
-        # First call: mkdir -p (for parent dir)
-        # Second call: container cp
-        proc_mkdir = _make_mock_process(exit_code=0)
-        proc_cp = _make_mock_process(exit_code=0)
-
-        call_count = 0
-
-        async def _side_effect(  # type: ignore[no-untyped-def]
-            *_args: object,
-            **_kwargs: object,
-        ):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return proc_mkdir
-            return proc_cp
-
-        mock_create.side_effect = _side_effect
-
-        await self.backend.write_file("/workspace/sub/d.txt", b"hello")
-
-        # The second subprocess call should be ``container cp``.
-        self.assertGreaterEqual(call_count, 2)
-        # Get the second call args — should be container cp
-        all_calls = mock_create.call_args_list
-        cp_call = all_calls[1][0]
-        self.assertEqual(cp_call[0], "container")
-        self.assertEqual(cp_call[1], "cp")
-        # Third arg is temp path, fourth is container_id:dest_path
-        dest = cp_call[3]
-        self.assertTrue(dest.startswith(f"{self.CONTAINER_ID}:"))
-        self.assertTrue(dest.endswith("/workspace/sub/d.txt"))
-
-    @patch(
-        "asyncio.create_subprocess_exec",
-        new_callable=AsyncMock,
-    )
-    async def test_write_file_root_path(self, mock_create: AsyncMock) -> None:
-        """Writing to a root-level path skips mkdir -p."""
-        proc_cp = _make_mock_process(exit_code=0)
-        mock_create.return_value = proc_cp
-
-        await self.backend.write_file("/root_file.txt", b"data")
-        # Only one call for cp (mkdir -p skipped for parent='/')
-        self.assertEqual(mock_create.call_count, 1)
-        cmd = _captured_cli_cmd(mock_create)
-        self.assertEqual(cmd[0], "container")
-        self.assertEqual(cmd[1], "cp")
-
-    # ── temp file cleanup ──────────────────────────────────────────
-
-    @patch(
-        "asyncio.create_subprocess_exec",
-        new_callable=AsyncMock,
-    )
-    async def test_write_file_cleanup_temp(
-        self,
-        mock_create: AsyncMock,
-    ) -> None:
-        """Temp file is removed after ``container cp``, even on error."""
-        proc_cp = _make_mock_process(exit_code=1, stderr=b"cp failed")
-        mock_create.return_value = proc_cp
-
-        with self.assertRaises(OSError):
-            await self.backend.write_file("/workspace/f.txt", b"data")
-
-        # After the call, the temp file no longer exists.
-        # We can't easily verify this with mocked subprocess since
-        # tempfile.mkstemp is real, but the try/finally ensures
-        # os.unlink is called.
+        tree = f"{self.WORKDIR}/tree"
+        await self.backend.write_file(f"{tree}/deep/f.txt", b"x")
+        await self.backend.delete_path(tree)
+        self.assertFalse(await self.backend.file_exists(tree))
+        # Deleting a non-existent path must not raise.
+        await self.backend.delete_path(f"{self.WORKDIR}/missing")
