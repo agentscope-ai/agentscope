@@ -40,10 +40,10 @@ inside the sandbox at ``{workdir}``.
 Layout:
 
 ```
-{workdir}
-data/        # offloaded multimodal files
-skills/      # reusable skills
-sessions/    # session context and tool results
+{workdir}/
+|-- data/       # offloaded multimodal files
+|-- skills/     # reusable skills
+`-- sessions/   # session context and tool results
 ```
 </workspace>"""
 
@@ -212,7 +212,6 @@ class BubblewrapWorkspace(SandboxedWorkspaceBase):
         else:
             self._host_cache_dir = self._resolve_host_cache_dir()
         self._tmpdir = tempfile.TemporaryDirectory()
-        os.makedirs(self._tmpdir.name, exist_ok=True)
         self._backend = BubblewrapBackend(
             host_workdir=self.host_workdir,
             host_tmpdir=self._tmpdir.name,
@@ -372,6 +371,8 @@ class BubblewrapWorkspace(SandboxedWorkspaceBase):
         for attempt in range(max_attempts):
             if self._gateway_port_input is None:
                 self.gateway_port = self._allocate_gateway_port()
+            gateway_port = self.gateway_port
+            assert gateway_port is not None
             await self._stop_gateway_process()
             self._rotate_gateway_credentials()
 
@@ -379,7 +380,7 @@ class BubblewrapWorkspace(SandboxedWorkspaceBase):
                 f"exec {shlex.quote(self._gateway_python)} -I -u "
                 f"{shlex.quote(self._gateway_script)} "
                 f"--config {shlex.quote(self._mcp_file)} "
-                f"--port {self._gateway_port()} "
+                f"--port {gateway_port} "
                 f"--auth-token {shlex.quote(self._gateway_token)} "
                 f"--instance-nonce {shlex.quote(self._gateway_nonce)} "
                 f"> {shlex.quote(self._gateway_log)} 2>&1"
@@ -391,7 +392,7 @@ class BubblewrapWorkspace(SandboxedWorkspaceBase):
 
             self._gateway = GatewayClient(
                 backend=backend,
-                gateway_port=self._gateway_port(),
+                gateway_port=gateway_port,
                 timeout=30.0,
                 gateway_log_path=self._gateway_log,
                 auth_token=self._gateway_token,
@@ -436,11 +437,6 @@ class BubblewrapWorkspace(SandboxedWorkspaceBase):
         """Rotate per-launch gateway auth token and health nonce."""
         self._gateway_token = secrets.token_urlsafe(32)
         self._gateway_nonce = secrets.token_urlsafe(32)
-
-    def _gateway_port(self) -> int:
-        """Return the allocated gateway port after provisioning."""
-        assert self.gateway_port is not None
-        return self.gateway_port
 
     async def _wait_gateway_health(self, timeout: float) -> bool:
         """Wait for the tracked gateway process to answer health checks."""
@@ -583,7 +579,7 @@ class BubblewrapWorkspace(SandboxedWorkspaceBase):
             "c644a5cd2348a2c670894272999d3ba7"
         )
         aarch64_sha256 = (
-            "cc210b99844fbf16b7a36d1c963e835"
+            "c8c210b99844fbf16b7a36d1c963e835"
             "1bca5ff2dd7c788f5fba4ac18ba8c60d"
         )
         return (

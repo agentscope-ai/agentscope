@@ -162,13 +162,6 @@ class BubblewrapWorkspaceManager(WorkspaceManagerBase):
                 self._cache[workspace_id] = (ws, time.monotonic())
                 return ws
 
-        async with self._lock:
-            cached = self._cache.get(workspace_id)
-            if cached is not None:
-                ws, _ = cached
-                self._cache[workspace_id] = (ws, time.monotonic())
-                return ws
-
             ws = await self._build_and_start(
                 workspace_id=workspace_id,
                 user_id=user_id,
