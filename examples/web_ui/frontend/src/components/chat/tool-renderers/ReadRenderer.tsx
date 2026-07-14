@@ -1,12 +1,12 @@
 import {
 	FramedFileBody,
-	getFilePath,
-	getFileName,
 	getResultText,
-	parseInput,
 	toolArgClass,
 	toolLabelClass,
+	tryGetFileName,
+	tryGetFilePath,
 } from './_shared';
+import { defaultRenderBody } from './DefaultRenderer';
 import { DiffPreview } from './DiffPreview';
 import type { ToolRenderer } from './types';
 
@@ -44,18 +44,18 @@ export const ReadRenderer: ToolRenderer = {
 
 	renderConfirmBody: (call) => (
 		<div className="w-full max-w-full overflow-hidden text-ellipsis truncate">
-			<div className="text-secondary-foreground">{getFilePath(call.input)}</div>
+			<div className="text-secondary-foreground">{tryGetFilePath(call.input)}</div>
 		</div>
 	),
 
 	renderHeader: (pair) => {
-		const fileName = getFileName(parseInput(pair.call.input).file_path as string);
+		const fileName = tryGetFileName(pair.call.input);
 		const readContent = getResultText(pair.result);
 		const lines = readContent ? readContent.split('\n').length : 0;
 		return (
 			<>
 				<span className={toolLabelClass}>Read</span>
-				<span className={toolArgClass}>{fileName}</span>
+				{fileName && <span className={toolArgClass}>{fileName}</span>}
 				{pair.result?.state === 'success' && (
 					<span className={toolLabelClass}>{lines} lines</span>
 				)}
@@ -63,19 +63,15 @@ export const ReadRenderer: ToolRenderer = {
 		);
 	},
 
-	renderBody: (pair) => {
-		if (!pair.result) return null;
-		const filePath = parseInput(pair.call.input).file_path as string;
-		const readContent = getResultText(pair.result);
+	renderBody: (pair, t) => {
+		// Until the call has actually run there's no file content to frame — the
+		// input is still streaming in as partial JSON.
+		if (!pair.result || pair.result.state === 'running') return undefined;
+		// Errors / interruptions aren't file content, so drop the path frame.
+		if (pair.result.state !== 'success') return defaultRenderBody(pair, t);
 		return (
-			<FramedFileBody filePath={filePath}>
-				{pair.result.state === 'error' ? (
-					// Errors aren't file content, so show the raw message rather than
-					// forcing it through the diff renderer.
-					<div className="overflow-x-auto p-2 font-mono text-xs">{readContent}</div>
-				) : (
-					<DiffPreview unifiedDiff={buildContextDiff(readContent)} />
-				)}
+			<FramedFileBody filePath={tryGetFilePath(pair.call.input)}>
+				<DiffPreview unifiedDiff={buildContextDiff(getResultText(pair.result))} />
 			</FramedFileBody>
 		);
 	},

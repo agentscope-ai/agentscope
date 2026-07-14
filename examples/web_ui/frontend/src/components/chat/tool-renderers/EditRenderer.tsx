@@ -7,12 +7,12 @@ import {
 	countDiffStats,
 	DiffStats,
 	FramedFileBody,
-	getFilePath,
 	getResultDiff,
 	parseInput,
 	toolArgClass,
 	toolLabelClass,
 	tryGetFileName,
+	tryGetFilePath,
 } from '@/components/chat/tool-renderers/_shared.tsx';
 
 /**
@@ -49,7 +49,7 @@ export const EditRenderer: ToolRenderer = {
 
 	renderConfirmBody: (call) => (
 		<div className="w-full max-w-full overflow-hidden text-ellipsis truncate">
-			<div className="text-secondary-foreground">{getFilePath(call.input)}</div>
+			<div className="text-secondary-foreground">{tryGetFilePath(call.input)}</div>
 		</div>
 	),
 
@@ -69,7 +69,9 @@ export const EditRenderer: ToolRenderer = {
 	},
 
 	renderBody: (pair, t) => {
-		if (!pair.result) return null;
+		// Until the call has actually run there's no file change to frame — the
+		// input is still streaming in as partial JSON.
+		if (!pair.result || pair.result.state === 'running') return undefined;
 		if (pair.result.state === 'success') {
 			// The backend Edit tool always attaches a unified diff (absolute line
 			// numbers, one hunk per replaced occurrence). A client-side diff of
@@ -78,12 +80,13 @@ export const EditRenderer: ToolRenderer = {
 			const diff = getResultDiff(pair.result);
 			if (diff) {
 				return (
-					<FramedFileBody filePath={getFilePath(pair.call.input)}>
+					<FramedFileBody filePath={tryGetFilePath(pair.call.input)}>
 						<DiffPreview unifiedDiff={diff} />
 					</FramedFileBody>
 				);
 			}
 		}
+		// Errors / interruptions aren't file content, so drop the path frame.
 		return defaultRenderBody(pair, t);
 	},
 };

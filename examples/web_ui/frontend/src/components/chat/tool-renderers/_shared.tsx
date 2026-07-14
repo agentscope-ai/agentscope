@@ -116,50 +116,36 @@ export function ToolCallRow({
  */
 export function parseInput(input: string): Record<string, unknown> {
 	try {
-		return JSON.parse(input);
+		const parsed = JSON.parse(input);
+		return parsed && typeof parsed === 'object' ? parsed : {};
 	} catch {
 		return {};
 	}
 }
 
 /**
- * Get the filepath from the input arguments
+ * Get the filepath from the input arguments.
  * @param input
- * @returns The filepath from the input string
+ * @returns The filepath, or ``undefined`` when ``input`` isn't yet a complete
+ * JSON object carrying a non-empty ``file_path`` — a tool call's arguments
+ * stream in as partial JSON, and a fragment of ``content`` must never pass for
+ * a path.
  */
-export function getFilePath(input: string): string {
-	const { file_path } = parseInput(input) as { file_path?: string };
-	return file_path || input;
+export function tryGetFilePath(input: string): string | undefined {
+	const { file_path } = parseInput(input) as { file_path?: unknown };
+	return typeof file_path === 'string' && file_path.length > 0 ? file_path : undefined;
 }
 
 /**
- * Get the filename
+ * The basename of ``file_path``, or ``undefined`` while the tool-call JSON is
+ * still streaming. Use this in ``renderHeader`` so a partial input renders no
+ * file name rather than a garbled one.
  * @param input
- * @returns The filename from the input string, considering different OS path separators.
- */
-export function getFileName(input: string): string {
-	const filePath = getFilePath(input);
-	const segments = filePath.split(/[/\\]+/).filter(Boolean);
-	return segments.length > 0 ? segments[segments.length - 1] : filePath;
-}
-
-/**
- * Like ``getFileName`` but returns ``undefined`` when the input is not yet
- * a fully parseable JSON object with a non-empty ``file_path`` field. Use
- * this in ``renderHeader`` so partial JSON streamed during tool-call
- * generation doesn't render a garbled file name (e.g. a fragment of the
- * ``content`` field being mistaken for the path).
+ * @returns The filename, considering different OS path separators.
  */
 export function tryGetFileName(input: string): string | undefined {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(input);
-	} catch {
-		return undefined;
-	}
-	if (!parsed || typeof parsed !== 'object') return undefined;
-	const filePath = (parsed as { file_path?: unknown }).file_path;
-	if (typeof filePath !== 'string' || filePath.length === 0) return undefined;
+	const filePath = tryGetFilePath(input);
+	if (!filePath) return undefined;
 	const segments = filePath.split(/[/\\]+/).filter(Boolean);
 	return segments.length > 0 ? segments[segments.length - 1] : filePath;
 }
@@ -195,11 +181,15 @@ export function getResultDiff(result: { metadata?: Record<string, unknown> }): s
  * bordered card with the file path as a header, a separator, then the tool's
  * own content (numbered source lines for Read, a diff for Edit / Write).
  */
-export function FramedFileBody({ filePath, children }: { filePath: string; children: ReactNode }) {
+export function FramedFileBody({ filePath, children }: { filePath?: string; children: ReactNode }) {
 	return (
 		<div className="flex flex-col border rounded-sm bg-background">
-			<div className="px-2 py-1 whitespace-nowrap overflow-x-auto">{filePath}</div>
-			<Separator />
+			{filePath && (
+				<>
+					<div className="px-2 py-1 whitespace-nowrap overflow-x-auto">{filePath}</div>
+					<Separator />
+				</>
+			)}
 			{children}
 		</div>
 	);
