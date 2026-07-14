@@ -23,7 +23,6 @@ export const WriteRenderer: ToolRenderer = {
 
 	renderHeader: (pair) => {
 		const fileName = tryGetFileName(pair.call.input);
-		if (!fileName) return <span className={toolLabelClass}>{pair.call.name}</span>;
 		// Pre-execution we only know the new ``content`` (not the previous file
 		// body), so any ``+N`` count would be misleading on overwrites. Show the
 		// real ``+N -M`` only once the backend post-execution diff has arrived.
@@ -32,7 +31,7 @@ export const WriteRenderer: ToolRenderer = {
 		return (
 			<>
 				<span className={toolLabelClass}>{pair.call.name}</span>
-				<span className={toolArgClass}>{fileName}</span>
+				{fileName && <span className={toolArgClass}>{fileName}</span>}
 				{stats && <DiffStats insertions={stats.insertions} deletions={stats.deletions} />}
 			</>
 		);

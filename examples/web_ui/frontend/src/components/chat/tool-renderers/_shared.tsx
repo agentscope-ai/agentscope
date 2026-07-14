@@ -202,18 +202,15 @@ export function FramedFileBody({ filePath, children }: { filePath?: string; chil
 export function DiffStats({ insertions, deletions }: { insertions: number; deletions: number }) {
 	return (
 		<div className="flex items-center gap-0.5">
-			{insertions && (
-				<div className="flex items-center text-emerald-600 dark:text-emerald-400">
-					<Plus className="size-2.5 stroke-2" />
-					{formatNumber(insertions)}
-				</div>
-			)}
-			{deletions && (
-				<div className="flex items-center text-red-600 dark:text-red-400">
-					<Minus className="size-2.5 stroke-2" />
-					{formatNumber(deletions)}
-				</div>
-			)}
+			<div className="flex items-center text-emerald-600 dark:text-emerald-400">
+				<Plus className="size-2.5 stroke-2" />
+				{formatNumber(insertions)}
+			</div>
+
+			<div className="flex items-center text-red-600 dark:text-red-400">
+				<Minus className="size-2.5 stroke-2" />
+				{formatNumber(deletions)}
+			</div>
 		</div>
 	);
 }

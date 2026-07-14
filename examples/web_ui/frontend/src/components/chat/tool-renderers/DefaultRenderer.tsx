@@ -2,7 +2,7 @@ import type { ToolCallBlock } from '@agentscope-ai/agentscope/message';
 import * as mime from 'mime-types';
 import type { ReactNode } from 'react';
 
-import { toolArgClass, toolLabelClass } from './_shared';
+import { getResultText, toolArgClass, toolLabelClass } from './_shared';
 import type { TFunction, ToolCallWithResult } from './types';
 
 export function defaultGetDisplayName(call: ToolCallBlock): string {
@@ -40,10 +40,21 @@ export function defaultRenderBody(pair: ToolCallWithResult, t: TFunction): React
 	const { call, result } = pair;
 	if (!result) return null;
 	if (call.state === 'asking' || result.state === 'running') {
-		return <span>{t('common.running')} ...</span>;
+		return (
+			<div className="flex flex-col border rounded-sm bg-background">
+				<div className="px-2 py-1 whitespace-nowrap overflow-x-auto">
+					{t('common.running')}
+				</div>
+			</div>
+		);
 	}
 	if (result.state === 'interrupted') {
-		return <span>{t('common.interrupted')}</span>;
+		const result = getResultText(pair.result);
+		return (
+			<div className="flex flex-col border rounded-sm bg-background">
+				<div className="px-2 py-1 whitespace-nowrap overflow-x-auto">{result}</div>
+			</div>
+		);
 	}
 
 	// TODO: render multimodal outputs
