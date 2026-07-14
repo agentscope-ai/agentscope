@@ -64,8 +64,7 @@ class TestAppleContainerWorkspaceConstruct(unittest.TestCase):
         import asyncio
 
         ws = AppleContainerWorkspace()
-        loop = asyncio.get_event_loop()
-        text = loop.run_until_complete(ws.get_instructions())
+        text = asyncio.run(ws.get_instructions())
         self.assertIn(CONTAINER_WORKDIR, text)
 
 
