@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import os
 import posixpath
-import shlex
 import tempfile
 
 from ...tool import BackendBase, ExecResult
@@ -202,7 +201,7 @@ class AppleContainerBackend(BackendBase):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await process.communicate()
+            _stdout, stderr = await process.communicate()
             if process.returncode != 0:
                 raise OSError(
                     f"container cp failed (exit {process.returncode}): "

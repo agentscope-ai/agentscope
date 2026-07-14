@@ -22,14 +22,12 @@ from typing import Self
 
 from ..._logging import logger
 from ...mcp import MCPClient
+from ...workspace import AppleContainerWorkspace
 from ...workspace._applecontainer._constants import (
     DEFAULT_BASE_IMAGE,
     DEFAULT_CPUS,
     DEFAULT_GATEWAY_PORT,
     DEFAULT_MEMORY,
-)
-from ...workspace._applecontainer._applecontainer_workspace import (
-    AppleContainerWorkspace,
 )
 from ._base import IsolationPolicy, WorkspaceManagerBase
 

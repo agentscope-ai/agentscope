@@ -37,8 +37,8 @@ SDK for the ``container`` CLI:
 """
 
 import asyncio
+import json
 import shlex
-from typing import Any
 
 from ..._logging import logger
 from ...mcp import MCPClient
@@ -180,7 +180,7 @@ class AppleContainerWorkspace(SandboxedWorkspaceBase):
                 self.workspace_id,
             )
             # Ensure the container is running.
-            await self._start_container_if_stopped(existing_id)
+            await self._start_container_if_stopped()
         else:
             await self._create_and_start_container()
 
@@ -205,7 +205,8 @@ class AppleContainerWorkspace(SandboxedWorkspaceBase):
             await process.communicate()
         except Exception as e:
             logger.warning(
-                "AppleContainerWorkspace: stop failed: %s", e,
+                "AppleContainerWorkspace: stop failed: %s",
+                e,
             )
         try:
             process = await asyncio.create_subprocess_exec(
@@ -219,7 +220,8 @@ class AppleContainerWorkspace(SandboxedWorkspaceBase):
             await process.communicate()
         except Exception as e:
             logger.warning(
-                "AppleContainerWorkspace: rm failed: %s", e,
+                "AppleContainerWorkspace: rm failed: %s",
+                e,
             )
         self._backend = None
 
@@ -283,14 +285,15 @@ class AppleContainerWorkspace(SandboxedWorkspaceBase):
         )
         stdout, _ = await process.communicate()
         if process.returncode == 0:
-            import json
-
             try:
                 images = json.loads(stdout.decode())
             except (json.JSONDecodeError, UnicodeDecodeError):
                 images = []
             for img in images:
-                if isinstance(img, dict) and img.get("name") == self.base_image:
+                if (
+                    isinstance(img, dict)
+                    and img.get("name") == self.base_image
+                ):
                     logger.info(
                         "AppleContainerWorkspace: image %r already present",
                         self.base_image,
@@ -299,7 +302,8 @@ class AppleContainerWorkspace(SandboxedWorkspaceBase):
 
         # Pull the image.
         logger.info(
-            "AppleContainerWorkspace: pulling image %r ...", self.base_image,
+            "AppleContainerWorkspace: pulling image %r ...",
+            self.base_image,
         )
         process = await asyncio.create_subprocess_exec(
             "container",
@@ -341,8 +345,6 @@ class AppleContainerWorkspace(SandboxedWorkspaceBase):
         stdout, _ = await process.communicate()
         if process.returncode != 0:
             return None
-        import json
-
         try:
             containers = json.loads(stdout.decode())
         except (json.JSONDecodeError, UnicodeDecodeError):
@@ -352,13 +354,8 @@ class AppleContainerWorkspace(SandboxedWorkspaceBase):
                 return c.get("id")
         return None
 
-    async def _start_container_if_stopped(self, container_id: str) -> None:
-        """Start a stopped container.
-
-        Args:
-            container_id (`str`):
-                Container identifier.
-        """
+    async def _start_container_if_stopped(self) -> None:
+        """Start the container if it is not already running."""
         # Check if the container is already running.
         process = await asyncio.create_subprocess_exec(
             "container",
@@ -369,8 +366,6 @@ class AppleContainerWorkspace(SandboxedWorkspaceBase):
         )
         stdout, _ = await process.communicate()
         if process.returncode == 0:
-            import json
-
             try:
                 info = json.loads(stdout.decode())
             except (json.JSONDecodeError, UnicodeDecodeError):
@@ -381,14 +376,14 @@ class AppleContainerWorkspace(SandboxedWorkspaceBase):
             ) in ("running",):
                 logger.info(
                     "AppleContainerWorkspace: container %r already running",
-                    container_id,
+                    self._container_name,
                 )
                 return
 
         # Start the container.
         logger.info(
             "AppleContainerWorkspace: starting container %r ...",
-            container_id,
+            self._container_name,
         )
         process = await asyncio.create_subprocess_exec(
             "container",
@@ -400,7 +395,7 @@ class AppleContainerWorkspace(SandboxedWorkspaceBase):
         _, stderr = await process.communicate()
         if process.returncode != 0:
             raise RuntimeError(
-                f"Failed to start container {container_id!r}: "
+                f"Failed to start container {self._container_name!r}: "
                 f"{stderr.decode(errors='replace')}",
             )
 
@@ -427,11 +422,13 @@ class AppleContainerWorkspace(SandboxedWorkspaceBase):
             run_cmd.extend(["--env", f"{key}={value}"])
 
         # Image and init command.
-        run_cmd.extend([
-            self.base_image,
-            "sleep",
-            "infinity",
-        ])
+        run_cmd.extend(
+            [
+                self.base_image,
+                "sleep",
+                "infinity",
+            ],
+        )
 
         logger.info(
             "AppleContainerWorkspace: creating container %r ...",
