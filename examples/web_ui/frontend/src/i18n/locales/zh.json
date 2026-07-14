@@ -116,6 +116,9 @@
 		"send": "发送",
 		"confirmToolCall": "允许此操作？",
 		"subagentConfirmTitle": "{{name}} 请求确认",
+		"error": {
+			"exceedMaxIters": "Agent “{{name}}” 已达到最大迭代次数上限并提前停止，回复可能不完整——请尝试将任务拆分成更小的步骤，或调大 max_iters。"
+		},
 		"newSession": "新会话",
 		"noSessions": "暂无会话",
 		"noMessages": "暂无消息",

@@ -1,6 +1,6 @@
 import type { PermissionContext } from '@agentscope-ai/agentscope/permission';
 import type { TaskContext } from '@agentscope-ai/agentscope/state';
-import { BookText, ChevronDown, Database, ListTodo, PanelRight, ShieldCheck } from 'lucide-react';
+import { BookText, ChevronDown, CircleAlert, Database, ListTodo, PanelRight, ShieldCheck } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { ChatModelConfig, SessionKnowledgeConfig, TTSModelConfig } from '@/api';
@@ -19,6 +19,7 @@ import { KnowledgeBaseParametersPopover } from '@/components/popover/KnowledgeBa
 import { ModelParametersPopover } from '@/components/popover/ModelParametersPopover';
 import { LlmSelect } from '@/components/select/LlmSelect';
 import { PermissionModeSelect } from '@/components/select/PermissionModeSelect.tsx';
+import { Alert, AlertDescription, AlertAction } from '@/components/ui/alert.tsx';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -156,7 +157,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		}
 	}, []);
 
-	const { msgs, phase, send, onUserConfirm, onSubagentConfirm, subagentHitl, interrupt } =
+	const { msgs, phase, error, clearError, send, onUserConfirm, onSubagentConfirm, subagentHitl, interrupt } =
 		useMessages(agentId, sessionId, {
 			onTeamUpdated: handleTeamUpdated,
 			onStateUpdated: handleStateUpdated,
@@ -611,8 +612,21 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 									</DropdownMenu>
 								</div>
 							</div>
-							<div className="flex flex-1 justify-center min-h-0 overflow-hidden relative [--chat-content-w:48rem]">
-								<ChatContent
+						<div className="flex flex-1 justify-center min-h-0 overflow-hidden relative [--chat-content-w:48rem]">
+							{error && (
+								<div className="absolute top-0 left-0 right-0 z-10 p-2">
+									<Alert variant="destructive">
+										<CircleAlert />
+										<AlertDescription>{error.message}</AlertDescription>
+										<AlertAction>
+											<Button variant="outline" size="sm" onClick={clearError}>
+												{t('common.dismiss')}
+											</Button>
+										</AlertAction>
+									</Alert>
+								</div>
+							)}
+							<ChatContent
 									className={'max-w-[var(--chat-content-w)] w-full'}
 									msgs={msgs}
 									phase={phase}
