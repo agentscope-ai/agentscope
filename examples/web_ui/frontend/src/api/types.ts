@@ -401,10 +401,6 @@ export interface Skill {
 	updated_at: number;
 }
 
-export interface AddSkillRequest {
-	skill_path: string;
-}
-
 // ─── Schedule ─────────────────────────────────────────────────────────────────
 
 export type PermissionMode =

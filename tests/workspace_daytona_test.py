@@ -60,6 +60,7 @@ from agentscope.workspace._daytona._constants import (
     DEFAULT_GATEWAY_PORT,
     METADATA_WORKSPACE_ID_KEY,
 )
+from agentscope.workspace._skill import build_skill_archive
 from agentscope.workspace._utils import _GATEWAY_BASE_REQUIREMENTS
 
 
@@ -1139,13 +1140,13 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
                 "Use this skill.\n",
             )
 
-        await self.workspace.add_skill(skill_dir)
+        await self.workspace.add_skill(build_skill_archive(skill_dir))
         skills = await self.workspace.list_skills()
 
         self.assertEqual([skill.name for skill in skills], ["demo-skill"])
         self.assertEqual(
             skills[0].dir,
-            "/home/daytona/skills/local-skill",
+            "/home/daytona/skills/demo-skill",
         )
 
         await self.workspace.remove_skill("demo-skill")
@@ -1153,9 +1154,11 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
 
     async def test_add_skill_rejects_invalid_skill(self) -> None:
         """Skill upload validates local input before sandbox work."""
-        with self.assertRaisesRegex(ValueError, "SKILL.md not found"):
+        with self.assertRaisesRegex(ValueError, "not a directory"):
             await self.workspace.add_skill(
-                os.path.join(self.temp_dir, "missing-skill"),
+                build_skill_archive(
+                    os.path.join(self.temp_dir, "missing-skill"),
+                ),
             )
 
     @unittest.skipIf(
@@ -1179,9 +1182,10 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
                 "Use this skill.\n",
             )
 
-        await self.workspace.add_skill(skill_dir)
+        archive = build_skill_archive(skill_dir)
+        await self.workspace.add_skill(archive)
         with self.assertRaisesRegex(ValueError, "already exists"):
-            await self.workspace.add_skill(skill_dir)
+            await self.workspace.add_skill(archive)
 
     async def test_offload_context_tool_result_and_reset(self) -> None:
         """Offload writes sessions/data and reset clears persistent state."""
@@ -1474,7 +1478,7 @@ class TestDaytonaWorkspaceLive(IsolatedAsyncioTestCase):
                     "live_added_skill",
                     "Added live skill",
                 )
-                await workspace.add_skill(added)
+                await workspace.add_skill(build_skill_archive(added))
                 skills = await workspace.list_skills()
                 self.assertIn(
                     "live_added_skill",

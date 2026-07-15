@@ -48,11 +48,8 @@ keeping path semantics consistent with whichever backend is bound.
 import asyncio
 import base64
 import hashlib
-import io
 import json
 import mimetypes
-import os
-import tarfile
 from abc import abstractmethod
 from copy import deepcopy
 from pathlib import Path
@@ -79,6 +76,11 @@ from ._utils import (
     DEFAULT_SESSIONS_DIR,
     DEFAULT_SKILLS_DIR,
 )
+from ._skill import (
+    build_skill_archive,
+    sanitize_skill_dir_name,
+    validate_skill_archive,
+)
 
 _EXTRACT_TAR_SHIM = (
     "import tarfile, sys, os\n"
@@ -89,6 +91,8 @@ _EXTRACT_TAR_SHIM = (
     "try:\n"
     "    members = tf.getmembers()\n"
     "    for m in members:\n"
+    "        if not m.isfile():\n"
+    "            raise Exception('unsupported tar member: ' + m.name)\n"
     "        target = os.path.realpath(os.path.join(dst, m.name))\n"
     "        if not (target == dst_real"
     " or target.startswith(dst_real + os.sep)):\n"
@@ -96,7 +100,7 @@ _EXTRACT_TAR_SHIM = (
     "    tf.extractall(dst, members=members)\n"
     "finally:\n"
     "    tf.close()\n"
-    "os.unlink(src)\n"
+    "    if os.path.exists(src): os.unlink(src)\n"
 )
 
 
@@ -616,57 +620,45 @@ class WorkspaceBase:
                 logger.warning("Failed to load skill %s: %s", md_path, e)
         return skills
 
-    async def add_skill(self, skill_path: str) -> None:
-        """Copy a local skill directory into ``${workdir}/skills``.
+    async def add_skill(self, skill_archive: bytes) -> None:
+        """Add a validated skill archive into ``${workdir}/skills``.
 
-        Tars the directory on the host, writes the archive to the
-        backend's tmp area, and extracts it via ``python3 -c`` inside
-        the sandbox — two round trips regardless of skill size, and
-        portable across any backend whose image ships ``python3``
-        (same contract as the gateway shim).
+        The archive contains files relative to the skill root, including a
+        root ``SKILL.md``. It is validated on the host, written to the
+        backend's temporary area, then safely extracted inside the sandbox.
 
         Subclasses with richer dedup (e.g. :class:`LocalWorkspace`
         with hash-indexed conflict resolution) override this method.
 
         Args:
-            skill_path (`str`):
-                Path to a skill directory on the local filesystem.
+            skill_archive (`bytes`):
+                Uncompressed tar bytes containing the skill files.
 
         Raises:
             ValueError:
-                If ``SKILL.md`` is missing or a directory with the
-                same basename already exists in ``skills/``.
+                If the archive is invalid or a skill with the same name
+                already exists in ``skills/``.
             RuntimeError:
                 If extraction inside the sandbox fails.
         """
-        skill_md = os.path.join(skill_path, "SKILL.md")
-        if not os.path.isfile(skill_md):
-            raise ValueError(
-                f"Invalid skill at {skill_path!r}: SKILL.md not found",
-            )
-
+        metadata = validate_skill_archive(skill_archive)
         backend = self.get_backend()
 
         async with self._skill_lock:
-            dir_name = os.path.basename(os.path.abspath(skill_path))
+            dir_name = sanitize_skill_dir_name(metadata.name)
             remote_dir = backend.join_path(self._skills_dir, dir_name)
 
             if await backend.file_exists(remote_dir):
                 raise ValueError(
-                    f"Skill directory {dir_name!r} already exists in "
+                    f"Skill {metadata.name!r} already exists in "
                     f"{self._skills_dir}",
                 )
 
-            buf = io.BytesIO()
-            with tarfile.open(fileobj=buf, mode="w") as tf:
-                tf.add(skill_path, arcname=dir_name)
-            tar_bytes = buf.getvalue()
-
             tmp_path = f"/tmp/skill-{_generate_id()}.tar"
-            await backend.write_file(tmp_path, tar_bytes)
+            await backend.write_file(tmp_path, skill_archive)
 
             await backend.exec_shell(
-                ["mkdir", "-p", self._skills_dir],
+                ["mkdir", "-p", remote_dir],
             )
             result = await backend.exec_shell(
                 [
@@ -674,16 +666,17 @@ class WorkspaceBase:
                     "-c",
                     _EXTRACT_TAR_SHIM,
                     tmp_path,
-                    self._skills_dir,
+                    remote_dir,
                 ],
             )
             if not result.ok():
+                await backend.delete_path(remote_dir)
                 raise RuntimeError(
                     f"Failed to extract skill {dir_name!r}: "
                     f"{result.stderr.decode('utf-8', 'replace')}",
                 )
 
-            logger.info("Added skill %r at %s", dir_name, remote_dir)
+            logger.info("Added skill %r at %s", metadata.name, remote_dir)
 
     async def remove_skill(self, name: str) -> None:
         """Remove a skill by its agent-facing ``name`` (front matter).
@@ -737,7 +730,8 @@ class WorkspaceBase:
             return
         for path in self.skill_paths:
             try:
-                await self.add_skill(path)
+                archive = await asyncio.to_thread(build_skill_archive, path)
+                await self.add_skill(archive)
             except Exception as e:
                 logger.warning(
                     "Skip skill %r: %s",
