@@ -2,6 +2,7 @@
 # pylint: disable=too-many-public-methods
 """The Redis storage implementation."""
 
+import warnings
 from datetime import datetime, timedelta
 from typing import Any, TYPE_CHECKING, Self
 
@@ -1020,6 +1021,7 @@ class RedisStorage(StorageBase):
         session_id: str,
         limit: int = 50,
         before: str | None = None,
+        **kwargs: Any,
     ) -> tuple[list[Msg], bool]:
         """Return the most recent messages with cursor-based pagination.
 
@@ -1036,12 +1038,24 @@ class RedisStorage(StorageBase):
             before (`str | None`, optional): Message ID cursor. When
                 provided, returns messages before this message.
                 Omit to get the latest page.
+            **kwargs: Reserved for backward compatibility. Passing
+                ``offset`` will emit a ``DeprecationWarning`` and be
+                ignored.
 
         Returns:
             `tuple[list[Msg], bool]`: A tuple of (messages in
             chronological order, has_more). ``has_more`` is ``True``
             when older messages exist before the returned page.
         """
+        if "offset" in kwargs:
+            warnings.warn(
+                "The 'offset' parameter is deprecated and will be "
+                "removed in a future version. Use 'before' for "
+                "cursor-based pagination instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         key = self._message_key(user_id, session_id)
         total = await self._client.llen(key)
 

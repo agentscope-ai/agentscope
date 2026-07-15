@@ -522,6 +522,15 @@ async def list_messages(
             "to load older messages."
         ),
     ),
+    offset: int
+    | None = Query(
+        None,
+        deprecated=True,
+        description=(
+            "**Deprecated.** Use ``before`` for cursor-based pagination. "
+            "This parameter is ignored when ``before`` is provided."
+        ),
+    ),
     limit: int = Query(50, ge=1, le=200, description="Max messages."),
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
@@ -536,6 +545,8 @@ async def list_messages(
         before: Message ID cursor. Omit for the latest page; pass
             ``messages[0].id`` from the previous response to paginate
             backward.
+        offset: **Deprecated.** Numeric offset, ignored when ``before``
+            is provided. Kept for backward compatibility.
         limit: Maximum number of messages to return.
         user_id: Injected authenticated user ID.
         storage: Injected storage backend.
@@ -551,11 +562,17 @@ async def list_messages(
             detail=f"Session '{session_id}' not found.",
         )
 
+    # Forward deprecated offset via kwargs so storage can warn.
+    extra: dict = {}
+    if offset is not None:
+        extra["offset"] = offset
+
     messages, has_more = await storage.list_messages(
         user_id,
         session_id,
         limit=limit,
         before=before,
+        **extra,
     )
     return ListMessagesResponse(
         messages=messages,

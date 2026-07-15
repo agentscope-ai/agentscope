@@ -441,6 +441,7 @@ class StorageBase(ABC):
         session_id: str,
         limit: int = 50,
         before: str | None = None,
+        **kwargs: Any,
     ) -> tuple[list[Msg], bool]:
         """Return the most recent messages for a session with
         cursor-based pagination.
@@ -453,6 +454,8 @@ class StorageBase(ABC):
             before (`str | None`, optional): Message ID cursor. When
                 provided, returns messages *before* this message.
                 Omit to get the latest page.
+            **kwargs: Reserved for backward compatibility. Passing
+                ``offset`` will emit a ``DeprecationWarning``.
 
         Returns:
             `tuple[list[Msg], bool]`: A tuple of (messages in

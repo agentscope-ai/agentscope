@@ -580,6 +580,21 @@ class TestMessage(IsolatedAsyncioTestCase):
         self.assertFalse(has_more)
         self.assertListEqual(messages, [])
 
+    async def test_list_messages_offset_kwarg_warns(self) -> None:
+        """Passing deprecated offset via kwargs emits DeprecationWarning."""
+        msg = UserMsg(name="alice", content="hello")
+        await self.storage.upsert_message(self.user_id, self.session_id, msg)
+
+        with self.assertWarns(DeprecationWarning):
+            messages, has_more = await self.storage.list_messages(
+                self.user_id,
+                self.session_id,
+                offset=0,
+            )
+        # Should still return results (offset is ignored, latest page).
+        self.assertFalse(has_more)
+        self.assertEqual(len(messages), 1)
+
 
 def make_schedule_record(user_id: str, agent_id: str) -> ScheduleRecord:
     """Create a test ScheduleRecord."""
