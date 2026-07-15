@@ -470,6 +470,12 @@ class Msg(BaseModel):
                         continue
                     self.content.append(result)
 
+            case EventType.CONTEXT_COMPRESSION_START:
+                pass
+
+            case EventType.CONTEXT_COMPRESSION_END:
+                pass
+
         return self
 
 

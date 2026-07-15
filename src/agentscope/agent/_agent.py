@@ -5,6 +5,7 @@ import inspect
 
 from asyncio import Queue
 from copy import deepcopy
+from datetime import datetime
 from typing import (
     Any,
     AsyncGenerator,
@@ -50,6 +51,9 @@ from ..event import (
     ExceedMaxItersEvent,
     ReplyEndReason,
     UserInterruptEvent,
+    ContextCompressionStartEvent,
+    ContextCompressionEndEvent,
+    ContextCompressionState,
 )
 from ..exception import AgentOrientedException
 from ..model import (
@@ -268,6 +272,15 @@ class Agent:
         context."""
         await self._handle_incoming_messages(msgs)
 
+    async def _compress_context_stream(
+        self,
+    ) -> AsyncGenerator[
+        ContextCompressionStartEvent | ContextCompressionEndEvent, None
+    ]:
+        """The context compression method that yield compression events."""
+        async for evt in self._compress_context_impl():
+            yield evt
+
     async def compress_context(
         self,
         context_config: ContextConfig | None = None,
@@ -328,7 +341,9 @@ class Agent:
         self,
         context_config: ContextConfig | None = None,
         instructions: HintBlock | None = None,
-    ) -> None:
+    ) -> AsyncGenerator[
+        ContextCompressionStartEvent | ContextCompressionEndEvent, None
+    ]:
         """Compress the agent's context if the token count exceeds the
         threshold.
 
@@ -358,6 +373,14 @@ class Agent:
             self.name,
             int(estimated_tokens),
             int(threshold),
+        )
+
+        start_time = datetime.now()
+
+        yield ContextCompressionStartEvent(
+            reply_id=self.state.reply_id,
+            current_tokens=estimated_tokens,
+            threshold_tokens=int(threshold),
         )
 
         if len(self.state.context) == 0:
@@ -512,6 +535,15 @@ class Agent:
             logger.warning(
                 "The context compression was interrupted and skipped. ",
             )
+            yield ContextCompressionEndEvent(
+                reply_id=self.state.reply_id,
+                state=ContextCompressionState.INTERRUPTED,
+                message="The context compression was interrupted.",
+                summary=None,
+                tokens_before=estimated_tokens,
+                tokens_after=estimated_tokens,
+                used_time=(datetime.now() - start_time).total_seconds(),
+            )
             raise asyncio.CancelledError()
 
         # Update the summary
@@ -547,6 +579,19 @@ class Agent:
         except asyncio.CancelledError:
             await apply_task
             raise
+
+        # TODO: Estimate the current tokens after compression
+        tokens_after = 0
+
+        yield ContextCompressionEndEvent(
+            reply_id=self.state.reply_id,
+            state=ContextCompressionState.SUCCESS,
+            message="The context compression finished.",
+            summary=self.state.summary,
+            tokens_before=estimated_tokens,
+            tokens_after=tokens_after,
+            used_time=(datetime.now() - start_time).total_seconds(),
+        )
 
     # ======================================================================
     # Agent core methods, including _reply, _reasoning, _acting, etc.
