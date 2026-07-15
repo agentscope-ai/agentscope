@@ -193,6 +193,13 @@ class ListMessagesResponse(BaseModel):
     is_running: bool = Field(
         description="Whether the session is currently running.",
     )
+    has_more: bool = Field(
+        description=(
+            "Whether there are older messages before this page. "
+            "Use ``messages[0].id`` as the ``before`` cursor for "
+            "the next request."
+        ),
+    )
 
 
 class SessionStatusResponse(BaseModel):
