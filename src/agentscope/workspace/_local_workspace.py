@@ -129,7 +129,9 @@ class LocalWorkspace(WorkspaceBase):
                 persisted ``<workdir>/.mcp`` file.
             skill_paths (`list[str] | None`, optional):
                 Local skill directories seeded into
-                ``<workdir>/skills`` on first :meth:`initialize`.
+                ``<workdir>/skills`` on first :meth:`initialize`. Each
+                path is normalised to an absolute path with ``~``
+                expanded to the user home directory.
             instructions (`str`, defaults to \
             `_DEFAULT_WORKSPACE_INSTRUCTIONS`):
                 System-prompt fragment template returned by
@@ -144,7 +146,10 @@ class LocalWorkspace(WorkspaceBase):
 
         # ── seed-only ───────────────────────────────────────────
         self.default_mcps: list[MCPClient] = list(default_mcps or [])
-        self.skill_paths: list[str] = list(skill_paths or [])
+        self.skill_paths: list[str] = [
+            os.path.abspath(os.path.expanduser(path))
+            for path in (skill_paths or [])
+        ]
 
         # ── runtime state ───────────────────────────────────────
         self._backend = LocalBackend()

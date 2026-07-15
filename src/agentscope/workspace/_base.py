@@ -184,14 +184,18 @@ class WorkspaceBase:
                 without a persisted ``.mcp`` file.
             skill_paths (`list[str] | None`, optional):
                 Local skill directories to copy into ``skills/`` on
-                first start.
+                first start. Each path is normalised to an absolute
+                path with ``~`` expanded to the user home directory.
         """
         self.workspace_id = workspace_id or _generate_id()
         self.is_alive = False
         self._backend = None
 
         self.default_mcps = list(default_mcps or [])
-        self.skill_paths = list(skill_paths or [])
+        self.skill_paths = [
+            os.path.abspath(os.path.expanduser(path))
+            for path in (skill_paths or [])
+        ]
 
         self._mcps = []
         self._mcp_lock = asyncio.Lock()
@@ -631,6 +635,7 @@ class WorkspaceBase:
         Args:
             skill_path (`str`):
                 Path to a skill directory on the local filesystem.
+                ``~`` is expanded to the user home directory.
 
         Raises:
             ValueError:
@@ -639,6 +644,7 @@ class WorkspaceBase:
             RuntimeError:
                 If extraction inside the sandbox fails.
         """
+        skill_path = os.path.abspath(os.path.expanduser(skill_path))
         skill_md = os.path.join(skill_path, "SKILL.md")
         if not os.path.isfile(skill_md):
             raise ValueError(

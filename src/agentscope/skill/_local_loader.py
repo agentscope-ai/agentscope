@@ -25,7 +25,7 @@ class LocalSkillLoader(SkillLoaderBase):
                 Whether to scan subdirectories. Defaults to False (only
                 scan current directory).
         """
-        self.directory = os.path.abspath(directory)
+        self.directory = os.path.abspath(os.path.expanduser(directory))
         self.scan_subdir = scan_subdir
         self._cache: dict[str, Skill] = {}
 

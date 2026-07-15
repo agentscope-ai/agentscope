@@ -74,6 +74,49 @@ This is the subdir2 skill content.
         if os.path.exists(self.test_dir):
             shutil.rmtree(self.test_dir)
 
+    async def test_tilde_directory_is_expanded(self) -> None:
+        """Test that ``~`` in the directory is expanded to home.
+
+        Regression test for paths like ``~/.agentscope/skills/my_skill``
+        being treated as a literal segment instead of the home dir.
+        """
+        # Create a real skill directory under the user's home so that
+        # ``~`` expansion is observable end-to-end.
+        home = os.path.expanduser("~")
+        # pylint: disable=consider-using-with
+        home_root = tempfile.TemporaryDirectory(dir=home)
+        try:
+            skill_dir = os.path.join(home_root.name, "home_skill")
+            os.makedirs(skill_dir)
+            with open(
+                os.path.join(skill_dir, "SKILL.md"),
+                "w",
+                encoding="utf-8",
+            ) as f:
+                f.write(
+                    "---\nname: home_skill\n"
+                    "description: a skill under home\n---\nbody\n",
+                )
+
+            tilde_dir = "~/" + os.path.relpath(skill_dir, home)
+            loader = LocalSkillLoader(tilde_dir, scan_subdir=False)
+
+            # The stored directory must be the expanded absolute path,
+            # not a literal ``~/...`` segment.
+            self.assertEqual(
+                loader.directory,
+                os.path.abspath(os.path.expanduser(tilde_dir)),
+            )
+            self.assertNotIn("~", loader.directory)
+
+            # And the skill must actually be loadable.
+            skills = await loader.list_skills()
+            self.assertEqual(len(skills), 1)
+            self.assertEqual(skills[0].name, "home_skill")
+            self.assertEqual(skills[0].dir, skill_dir)
+        finally:
+            home_root.cleanup()
+
     async def test_nonexistent_skill(self) -> None:
         """Test loading from a directory without SKILL.md."""
         # Create a directory without SKILL.md

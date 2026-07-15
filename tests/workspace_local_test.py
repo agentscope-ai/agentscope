@@ -524,6 +524,53 @@ description: {description}
 
         return skill_dir
 
+    async def test_skill_paths_expand_tilde_before_seeding(self) -> None:
+        """Test that ``~`` in skill_paths is expanded before seeding.
+
+        Regression test for skill paths commonly supplied via config
+        files or env vars (e.g. ``~/.agentscope/skills/foo``) that were
+        treated as literal segments and silently failed to seed.
+        """
+        # Create a real skill directory under the user's home.
+        home = os.path.expanduser("~")
+        # pylint: disable=consider-using-with
+        home_root = tempfile.TemporaryDirectory(dir=home)
+        try:
+            skill_dir = os.path.join(home_root.name, "tilde_skill")
+            os.makedirs(skill_dir)
+            with open(
+                os.path.join(skill_dir, "SKILL.md"),
+                "w",
+                encoding="utf-8",
+            ) as f:
+                f.write(
+                    "---\nname: tilde_skill\n"
+                    "description: a skill referenced via tilde\n---\n"
+                    "# tilde_skill\n",
+                )
+
+            tilde_path = "~/" + os.path.relpath(skill_dir, home)
+            workspace = LocalWorkspace(
+                workdir=self.temp_dir.name,
+                skill_paths=[tilde_path],
+            )
+
+            # Stored paths must be expanded absolute paths.
+            expected = os.path.abspath(os.path.expanduser(tilde_path))
+            self.assertEqual(workspace.skill_paths, [expected])
+
+            # And seeding must actually copy the skill across.
+            await workspace.initialize()
+            seeded = os.path.join(
+                self.temp_dir.name,
+                "skills",
+                "tilde_skill",
+                "SKILL.md",
+            )
+            self.assertTrue(os.path.exists(seeded))
+        finally:
+            home_root.cleanup()
+
     async def test_initialize_copy_skills(self) -> None:
         """Test copying skills to workspace.
 
