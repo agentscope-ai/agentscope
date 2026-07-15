@@ -42,11 +42,7 @@ export const sessionApi = {
 			agent_id: agentId,
 		}),
 
-	messages: (
-		sessionId: string,
-		agentId: string,
-		params?: { before?: string; limit?: number },
-	) =>
+	messages: (sessionId: string, agentId: string, params?: { before?: string; limit?: number }) =>
 		client.get<MessagesResponse>(`/sessions/${sessionId}/messages`, {
 			agent_id: agentId,
 			...(params?.before != null && { before: params.before }),
