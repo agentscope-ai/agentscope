@@ -336,7 +336,7 @@ class TestMessage(IsolatedAsyncioTestCase):
         """Upserting a new message appends it to the session list."""
         msg = UserMsg(name="alice", content="hello")
         await self.storage.upsert_message(self.user_id, self.session_id, msg)
-        messages = await self.storage.list_messages(
+        messages, has_more = await self.storage.list_messages(
             self.user_id,
             self.session_id,
         )
@@ -344,6 +344,7 @@ class TestMessage(IsolatedAsyncioTestCase):
             [m.model_dump() for m in messages],
             [msg.model_dump()],
         )
+        self.assertFalse(has_more)
 
     async def test_upsert_refreshes_message_list_ttl(self) -> None:
         """Message list keys expire with the session storage TTL."""
@@ -373,7 +374,7 @@ class TestMessage(IsolatedAsyncioTestCase):
             updated,
         )
 
-        messages = await self.storage.list_messages(
+        messages, _has_more = await self.storage.list_messages(
             self.user_id,
             self.session_id,
         )
@@ -413,7 +414,7 @@ class TestMessage(IsolatedAsyncioTestCase):
         msg2 = UserMsg(name="alice", content="second")
         await self.storage.upsert_message(self.user_id, self.session_id, msg1)
         await self.storage.upsert_message(self.user_id, self.session_id, msg2)
-        messages = await self.storage.list_messages(
+        messages, _has_more = await self.storage.list_messages(
             self.user_id,
             self.session_id,
         )
@@ -447,35 +448,110 @@ class TestMessage(IsolatedAsyncioTestCase):
         self.assertIsNone(result)
 
     async def test_list_messages_empty_session(self) -> None:
-        """list_messages returns an empty list for a session with no
+        """list_messages returns an empty window for a session with no
         messages."""
-        messages = await self.storage.list_messages(
+        messages, has_more = await self.storage.list_messages(
             self.user_id,
             self.session_id,
         )
         self.assertListEqual(messages, [])
+        self.assertFalse(has_more)
 
-    async def test_list_messages_pagination(self) -> None:
-        """list_messages respects offset and limit parameters."""
-        msgs = [UserMsg(name="alice", content=f"msg-{i}") for i in range(5)]
+    async def _seed_n_messages(self, n: int) -> list[UserMsg]:
+        """Append ``n`` messages (oldest→newest) and return them."""
+        msgs = [UserMsg(name="alice", content=f"msg-{i}") for i in range(n)]
         for m in msgs:
             await self.storage.upsert_message(
                 self.user_id,
                 self.session_id,
                 m,
             )
+        return msgs
 
-        # Fetch the middle slice: offset=1, limit=3 → msgs[1], msgs[2], msgs[3]
-        page = await self.storage.list_messages(
+    async def test_list_messages_returns_newest_window(self) -> None:
+        """Without ``before`` the newest ``limit`` messages are returned
+        in chronological order, with ``has_more`` when older exist."""
+        msgs = await self._seed_n_messages(5)
+
+        messages, has_more = await self.storage.list_messages(
             self.user_id,
             self.session_id,
-            offset=1,
             limit=3,
         )
         self.assertListEqual(
-            [m.model_dump() for m in page],
+            [m.model_dump() for m in messages],
+            [m.model_dump() for m in msgs[2:5]],
+        )
+        self.assertTrue(has_more)
+
+    async def test_list_messages_has_more_false_when_fits(self) -> None:
+        """``has_more`` is False when the whole history fits the page."""
+        msgs = await self._seed_n_messages(3)
+
+        messages, has_more = await self.storage.list_messages(
+            self.user_id,
+            self.session_id,
+            limit=50,
+        )
+        self.assertListEqual(
+            [m.model_dump() for m in messages],
+            [m.model_dump() for m in msgs],
+        )
+        self.assertFalse(has_more)
+
+    async def test_list_messages_cursor_pagination(self) -> None:
+        """Paging backwards with ``before`` (the oldest id of the
+        previous page) yields every older message exactly once."""
+        msgs = await self._seed_n_messages(7)
+
+        # Page 1: newest 3 → msgs[4], msgs[5], msgs[6]; has_more True.
+        page1, has_more_1 = await self.storage.list_messages(
+            self.user_id,
+            self.session_id,
+            limit=3,
+        )
+        self.assertListEqual(
+            [m.model_dump() for m in page1],
+            [m.model_dump() for m in msgs[4:7]],
+        )
+        self.assertTrue(has_more_1)
+
+        # Anchor page 2 at the oldest id of page 1 (msgs[4]).
+        page2, has_more_2 = await self.storage.list_messages(
+            self.user_id,
+            self.session_id,
+            limit=3,
+            before=page1[0].id,
+        )
+        self.assertListEqual(
+            [m.model_dump() for m in page2],
             [m.model_dump() for m in msgs[1:4]],
         )
+        self.assertTrue(has_more_2)
+
+        # Anchor page 3 at the oldest id of page 2 (msgs[1]).
+        page3, has_more_3 = await self.storage.list_messages(
+            self.user_id,
+            self.session_id,
+            limit=3,
+            before=page2[0].id,
+        )
+        self.assertListEqual(
+            [m.model_dump() for m in page3],
+            [m.model_dump() for m in msgs[0:1]],
+        )
+        self.assertFalse(has_more_3)
+
+    async def test_list_messages_before_unknown_id(self) -> None:
+        """An unknown ``before`` id yields an empty window."""
+        await self._seed_n_messages(3)
+        messages, has_more = await self.storage.list_messages(
+            self.user_id,
+            self.session_id,
+            before="does-not-exist",
+        )
+        self.assertListEqual(messages, [])
+        self.assertFalse(has_more)
 
     async def test_list_messages_order_preserved(self) -> None:
         """Messages are returned in the insertion order (chronological)."""
@@ -489,7 +565,7 @@ class TestMessage(IsolatedAsyncioTestCase):
                 self.session_id,
                 m,
             )
-        messages = await self.storage.list_messages(
+        messages, _has_more = await self.storage.list_messages(
             self.user_id,
             self.session_id,
         )
@@ -505,11 +581,12 @@ class TestMessage(IsolatedAsyncioTestCase):
             "session-A",
             UserMsg(name="alice", content="in A"),
         )
-        messages = await self.storage.list_messages(
+        messages, has_more = await self.storage.list_messages(
             self.user_id,
             "session-B",
         )
         self.assertListEqual(messages, [])
+        self.assertFalse(has_more)
 
 
 def make_schedule_record(user_id: str, agent_id: str) -> ScheduleRecord:

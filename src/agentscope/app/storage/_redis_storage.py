@@ -988,17 +988,85 @@ class RedisStorage(StorageBase):
                     return msg
         return None
 
+    async def _find_message_index(
+        self,
+        key: str,
+        message_id: str,
+    ) -> int | None:
+        """Return the list index of the message with ``message_id``.
+
+        Redis lists are not indexed by id, so this scans newest→oldest
+        (the common cursor is a recent message). Returns ``None`` when
+        the id is not present.
+
+        Args:
+            key (`str`): The Redis list key.
+            message_id (`str`): The message id to locate.
+
+        Returns:
+            `int | None`: The 0-based index, or ``None`` if not found.
+        """
+        length = await self._client.llen(key)
+        for i in range(length - 1, -1, -1):
+            raw = await self._client.lindex(key, i)
+            if raw:
+                if Msg.model_validate_json(raw).id == message_id:
+                    return i
+        return None
+
     async def list_messages(
         self,
         user_id: str,
         session_id: str,
-        offset: int = 0,
         limit: int = 50,
-    ) -> list[Msg]:
-        """Return messages for a session with pagination."""
+        before: str | None = None,
+    ) -> tuple[list[Msg], bool]:
+        """Return a chronologically-ordered window of messages.
+
+        Messages are stored oldest→newest (``rpush``), so index ``0`` is
+        the oldest and index ``-1`` is the newest. This returns the
+        newest ``limit`` messages when ``before`` is ``None``, or the
+        ``limit`` messages immediately preceding the message whose id is
+        ``before``. Pages are always returned oldest→newest within the
+        window, which lets the frontend anchor the next request on
+        ``messages[0].id``.
+
+        Cursor-based pagination (rather than a numeric offset) is stable
+        under concurrent inserts: new messages pushed while the user
+        pages backwards never shift the window.
+
+        Args:
+            user_id (`str`): The owner user id.
+            session_id (`str`): The session id.
+            limit (`int`): Maximum number of messages to return.
+            before (`str | None`): Exclusive upper-bound message id.
+                ``None`` anchors the window at the newest message.
+
+        Returns:
+            `tuple[list[Msg], bool]`: The messages in chronological
+            order and ``has_more`` — whether older messages exist
+            before this window.
+        """
         key = self._message_key(user_id, session_id)
-        raw_list = await self._client.lrange(key, offset, offset + limit - 1)
-        return [Msg.model_validate_json(raw) for raw in raw_list]
+        total = await self._client.llen(key)
+        if total == 0:
+            return [], False
+
+        if before is None:
+            end = total - 1
+        else:
+            idx = await self._find_message_index(key, before)
+            if idx is None:
+                return [], False
+            end = idx - 1
+
+        if end < 0:
+            return [], False
+
+        start = max(end - limit + 1, 0)
+        raw_list = await self._client.lrange(key, start, end)
+        has_more = start > 0
+        return [Msg.model_validate_json(raw) for raw in raw_list], has_more
 
     # ------------------------------------------------------------------
     # Team persistence

@@ -13,6 +13,7 @@ import type {
 export interface MessagesResponse {
 	messages: Msg[];
 	is_running: boolean;
+	has_more: boolean;
 }
 
 export const sessionApi = {
@@ -41,10 +42,18 @@ export const sessionApi = {
 			agent_id: agentId,
 		}),
 
-	messages: (sessionId: string, agentId: string, offset = 0, limit = 50) =>
+	/**
+	 * Fetch a backwards page of persisted messages.
+	 *
+	 * Omit `before` to get the newest `limit` messages; pass the oldest
+	 * id of the previous page as `before` to page further back. The
+	 * response includes `has_more` so the caller knows whether another
+	 * older page exists.
+	 */
+	messages: (sessionId: string, agentId: string, before?: string, limit = 50) =>
 		client.get<MessagesResponse>(`/sessions/${sessionId}/messages`, {
 			agent_id: agentId,
-			offset: String(offset),
+			...(before ? { before } : {}),
 			limit: String(limit),
 		}),
 
