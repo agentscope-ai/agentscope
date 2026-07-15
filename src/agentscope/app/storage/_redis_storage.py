@@ -1025,19 +1025,16 @@ class RedisStorage(StorageBase):
     ) -> tuple[list[Msg], bool]:
         """Return the most recent messages with cursor-based pagination.
 
-        Messages are returned in chronological order. ``before`` anchors
-        the page to messages *before* the given message ID, avoiding the
-        drift problem that numeric offsets suffer from when new messages
-        arrive concurrently via SSE.
+        Messages are returned in chronological order.
 
         Args:
             user_id (`str`): The owner user id.
             session_id (`str`): The session id.
             limit (`int`, optional): Maximum number of messages to
                 return. Defaults to 50.
-            before (`str | None`, optional): Message ID cursor. When
-                provided, returns messages before this message.
-                Omit to get the latest page.
+            before (`str | None`, optional): A message ID used as the
+                cursor. When provided, returns messages created before
+                this message. Omit to get the latest page.
             **kwargs: Reserved for backward compatibility. Passing
                 ``offset`` will emit a ``DeprecationWarning`` and be
                 ignored.

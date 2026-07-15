@@ -196,8 +196,8 @@ class ListMessagesResponse(BaseModel):
     has_more: bool = Field(
         description=(
             "Whether there are older messages before this page. "
-            "Use ``messages[0].id`` as the ``before`` cursor for "
-            "the next request."
+            "When ``True``, pass a message ID from this response as "
+            "the ``before`` parameter to load the previous page."
         ),
     )
 

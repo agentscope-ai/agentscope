@@ -517,9 +517,9 @@ async def list_messages(
     | None = Query(
         None,
         description=(
-            "Message ID cursor for pagination. Omit to get the latest "
-            "page. Pass ``messages[0].id`` from the previous response "
-            "to load older messages."
+            "A message ID used as the pagination cursor. Omit to get "
+            "the latest page. Provide a message ID from a previous "
+            "response to load older messages."
         ),
     ),
     offset: int
@@ -542,9 +542,9 @@ async def list_messages(
     Args:
         session_id: The session to query.
         agent_id: Agent the session belongs to.
-        before: Message ID cursor. Omit for the latest page; pass
-            ``messages[0].id`` from the previous response to paginate
-            backward.
+        before: A message ID used as the pagination cursor. Omit for
+            the latest page; provide a message ID from a previous
+            response to load older messages.
         offset: **Deprecated.** Numeric offset, ignored when ``before``
             is provided. Kept for backward compatibility.
         limit: Maximum number of messages to return.

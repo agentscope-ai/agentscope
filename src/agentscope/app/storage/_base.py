@@ -451,9 +451,9 @@ class StorageBase(ABC):
             session_id (`str`): The session id.
             limit (`int`, optional): Maximum number of messages to
                 return. Defaults to 50.
-            before (`str | None`, optional): Message ID cursor. When
-                provided, returns messages *before* this message.
-                Omit to get the latest page.
+            before (`str | None`, optional): A message ID used as the
+                cursor. When provided, returns messages created before
+                this message. Omit to get the latest page.
             **kwargs: Reserved for backward compatibility. Passing
                 ``offset`` will emit a ``DeprecationWarning``.
 
