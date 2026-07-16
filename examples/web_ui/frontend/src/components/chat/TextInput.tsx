@@ -4,6 +4,7 @@ import React, {
 	useState,
 	useRef,
 	useMemo,
+	useLayoutEffect,
 	type KeyboardEvent,
 	useImperativeHandle,
 	forwardRef,
@@ -104,7 +105,6 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 		const [isFocused, setIsFocused] = useState(false);
 		const textareaRef = useRef<HTMLTextAreaElement>(null);
 		const fileInputRef = useRef<HTMLInputElement>(null);
-		const measureRef = useRef<HTMLSpanElement>(null);
 
 		// Derive the accept attribute for the hidden file input
 		const acceptAttr =
@@ -122,6 +122,13 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 		useImperativeHandle(ref, () => ({
 			focus: () => textareaRef.current?.focus(),
 		}));
+
+		useLayoutEffect(() => {
+			const textarea = textareaRef.current;
+			if (!textarea) return;
+			textarea.style.height = 'auto';
+			textarea.style.height = `${textarea.scrollHeight}px`;
+		}, [value]);
 
 		// Calculate autocomplete suggestion using useMemo
 		const suggestion = useMemo(() => {
@@ -289,72 +296,61 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 
 				{/* Input area */}
 				<div className="relative">
-					<div className="relative">
-						{/* Hidden measurement element */}
-						<span
-							ref={measureRef}
-							className="invisible absolute whitespace-pre text-sm"
-							style={{
-								font: 'inherit',
-								padding: '0.5rem 0.75rem',
-								lineHeight: '1.5em',
-							}}
-						>
-							{value}
-						</span>
-
-						<textarea
-							ref={textareaRef}
-							value={value}
-							onChange={(e) => setValue(e.target.value)}
-							onKeyDown={handleKeyDown}
-							onFocus={() => setIsFocused(true)}
-							onBlur={() => setIsFocused(false)}
-							placeholder={defaultPlaceholder}
-							disabled={disabled}
-							rows={1}
-							className="w-full resize-none rounded-md border-0 bg-transparent px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-							style={{
-								maxHeight: 'calc(1.5em * 6)',
-								lineHeight: '1.5em',
-								overflowY: 'auto',
-							}}
-							autoFocus={true}
-						/>
-
-						{/* Autocomplete suggestion - using absolute positioning overlay */}
-						{suggestion && isFocused && (
-							<div
-								className="pointer-events-none absolute left-0 top-0 px-3 py-2 text-sm"
-								style={{
-									lineHeight: '1.5em',
-									whiteSpace: 'pre-wrap',
-									wordWrap: 'break-word',
-								}}
-							>
-								{/* Invisible input text */}
-								<span className="invisible">{value}</span>
-								{/* Suggestion text */}
-								<span className="text-muted-foreground">{suggestion}</span>
-								{/* Tab hint */}
-								<span className="ml-2 text-xs text-muted-foreground/60">
-									<Kbd>Tab</Kbd> {t('textInput.toComplete')}
-								</span>
-							</div>
+					<span
+						className={cn(
+							'mb-1 block px-3 text-sm text-muted-foreground',
+							!isFocused && 'invisible',
 						)}
-					</div>
+					>
+						<Kbd>{isMac() ? '⇧' : 'Shift'}</Kbd> + <Kbd>Enter</Kbd>{' '}
+						{t('textInput.newLine')}
+					</span>
 
-					{/* Button row */}
-					<div className="mt-2 flex items-center justify-between">
-						<div>
-							<span
-								className={`text-muted-foreground text-sm ${!isFocused && 'hidden'}`}
-							>
-								<Kbd>{isMac() ? '⇧' : 'Shift'}</Kbd> + <Kbd>Enter</Kbd>{' '}
-								{t('textInput.newLine')}
-							</span>
+					<div className="flex items-end gap-2">
+						<div className="relative min-w-0 flex-1">
+							<textarea
+								ref={textareaRef}
+								value={value}
+								onChange={(e) => setValue(e.target.value)}
+								onKeyDown={handleKeyDown}
+								onFocus={() => setIsFocused(true)}
+								onBlur={() => setIsFocused(false)}
+								placeholder={defaultPlaceholder}
+								disabled={disabled}
+								rows={1}
+								className="w-full resize-none rounded-md border-0 bg-transparent px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+								style={{
+									minHeight: 'calc(1.5em + 1rem)',
+									maxHeight: 'calc(1.5em * 8 + 1rem)',
+									lineHeight: '1.5em',
+									overflowY: 'auto',
+								}}
+								autoFocus={true}
+							/>
+
+							{/* Autocomplete suggestion - using absolute positioning overlay */}
+							{suggestion && isFocused && (
+								<div
+									className="pointer-events-none absolute left-0 top-0 px-3 py-2 text-sm"
+									style={{
+										lineHeight: '1.5em',
+										whiteSpace: 'pre-wrap',
+										wordWrap: 'break-word',
+									}}
+								>
+									{/* Invisible input text */}
+									<span className="invisible">{value}</span>
+									{/* Suggestion text */}
+									<span className="text-muted-foreground">{suggestion}</span>
+									{/* Tab hint */}
+									<span className="ml-2 text-xs text-muted-foreground/60">
+										<Kbd>Tab</Kbd> {t('textInput.toComplete')}
+									</span>
+								</div>
+							)}
 						</div>
-						<div className="flex gap-2">
+
+						<div className="flex shrink-0 gap-2">
 							{/* Attachment button */}
 							<Tooltip>
 								<TooltipTrigger asChild>
@@ -391,18 +387,18 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 								</TooltipTrigger>
 								<TooltipContent>{sendButton.tooltip}</TooltipContent>
 							</Tooltip>
-
-							{/* Hidden file input */}
-							<input
-								ref={fileInputRef}
-								type="file"
-								multiple
-								accept={acceptAttr}
-								onChange={handleFileSelect}
-								className="hidden"
-							/>
 						</div>
 					</div>
+
+					{/* Hidden file input */}
+					<input
+						ref={fileInputRef}
+						type="file"
+						multiple
+						accept={acceptAttr}
+						onChange={handleFileSelect}
+						className="hidden"
+					/>
 				</div>
 			</div>
 		);
