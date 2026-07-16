@@ -8,7 +8,7 @@ OpenAI Responses API uses event-based streaming with response.completed.
 from typing import Any
 import unittest
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from utils import AnyString
 
@@ -131,14 +131,15 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self.model = _make_model(stream=False)
+        self.mock_client = MagicMock()
+        self.model.client = self.mock_client
 
-    @patch("openai.AsyncClient")
-    async def test_text_response(self, mock_client_cls: MagicMock) -> None:
+    async def test_text_response(self) -> None:
         """Non-stream text response returns a single ChatResponse."""
         mock_create = AsyncMock(
             return_value=_mock_completion(text="Hello!"),
         )
-        mock_client_cls.return_value.responses.create = mock_create
+        self.mock_client.responses.create = mock_create
 
         result = await self.model([])
 
@@ -148,10 +149,8 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.id, "resp-openai-1")
 
-    @patch("openai.AsyncClient")
     async def test_tool_call_response(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Parsing a tool-call response stores call_id as ToolCallBlock.id."""
         mock_create = AsyncMock(
@@ -166,7 +165,7 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
                 ],
             ),
         )
-        mock_client_cls.return_value.responses.create = mock_create
+        self.mock_client.responses.create = mock_create
 
         result = await self.model([])
 
@@ -184,10 +183,8 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
             ),
         )
 
-    @patch("openai.AsyncClient")
     async def test_reasoning_response(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Non-stream reasoning summary plus text returns both block types."""
         mock_create = AsyncMock(
@@ -197,7 +194,7 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
                 reasoning_id="rs_abc999",
             ),
         )
-        mock_client_cls.return_value.responses.create = mock_create
+        self.mock_client.responses.create = mock_create
 
         result = await self.model([])
 
@@ -216,10 +213,8 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
             ),
         )
 
-    @patch("openai.AsyncClient")
     async def test_empty_reasoning_summary_response(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Non-stream empty reasoning summary still preserves its item id."""
         mock_create = AsyncMock(
@@ -229,7 +224,7 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
                 reasoning_id="rs_empty",
             ),
         )
-        mock_client_cls.return_value.responses.create = mock_create
+        self.mock_client.responses.create = mock_create
 
         result = await self.model([])
 
@@ -287,9 +282,10 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self.model = _make_model(stream=True)
+        self.mock_client = MagicMock()
+        self.model.client = self.mock_client
 
-    @patch("openai.AsyncClient")
-    async def test_stream_text(self, mock_client_cls: MagicMock) -> None:
+    async def test_stream_text(self) -> None:
         """Stream text yields deltas then final with full content."""
         completed_resp = MagicMock()
         completed_resp.id = "resp-1"
@@ -314,7 +310,7 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
         mock_create = AsyncMock(
             return_value=_MockAsyncEventStream(events),
         )
-        mock_client_cls.return_value.responses.create = mock_create
+        self.mock_client.responses.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]
@@ -328,10 +324,8 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
             ],
         )
 
-    @patch("openai.AsyncClient")
     async def test_stream_reasoning_and_text(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Stream reasoning and text deltas then final with
         reasoning_item_id."""
@@ -362,7 +356,7 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
         mock_create = AsyncMock(
             return_value=_MockAsyncEventStream(events),
         )
-        mock_client_cls.return_value.responses.create = mock_create
+        self.mock_client.responses.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]
@@ -403,10 +397,8 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
             ],
         )
 
-    @patch("openai.AsyncClient")
     async def test_stream_empty_reasoning_summary_keeps_reasoning_item_id(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Stream empty reasoning summary still preserves its item id."""
         reasoning_item = MagicMock()
@@ -435,7 +427,7 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
         mock_create = AsyncMock(
             return_value=_MockAsyncEventStream(events),
         )
-        mock_client_cls.return_value.responses.create = mock_create
+        self.mock_client.responses.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]
@@ -468,10 +460,8 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
             ],
         )
 
-    @patch("openai.AsyncClient")
     async def test_stream_function_call(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Stream function-call events use call_id as ToolCallBlock.id."""
         fc_item = MagicMock()
@@ -509,7 +499,7 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
         mock_create = AsyncMock(
             return_value=_MockAsyncEventStream(events),
         )
-        mock_client_cls.return_value.responses.create = mock_create
+        self.mock_client.responses.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]
