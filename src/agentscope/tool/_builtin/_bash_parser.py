@@ -144,42 +144,6 @@ FIND_MUTATING_PREDICATES = {
     "-okdir",
 }
 
-FIND_PREDICATES_WITH_ARGUMENTS = {
-    "-amin",
-    "-anewer",
-    "-atime",
-    "-cmin",
-    "-cnewer",
-    "-context",
-    "-ctime",
-    "-fstype",
-    "-gid",
-    "-group",
-    "-ilname",
-    "-iname",
-    "-inum",
-    "-iwholename",
-    "-links",
-    "-lname",
-    "-maxdepth",
-    "-mindepth",
-    "-mmin",
-    "-mtime",
-    "-name",
-    "-newer",
-    "-path",
-    "-perm",
-    "-regex",
-    "-samefile",
-    "-size",
-    "-type",
-    "-uid",
-    "-used",
-    "-user",
-    "-wholename",
-    "-xtype",
-}
-
 
 class BashCommandParser:
     """Parse Bash commands using tree-sitter for accurate syntax analysis."""
@@ -273,28 +237,26 @@ class BashCommandParser:
         return False
 
     def _is_mutating_find_command(self, cmd: str) -> bool:
-        """Check if a find command contains mutating predicates."""
+        """Check if a find command contains mutating predicates via AST."""
         try:
-            tokens = shlex.split(cmd)
-        except ValueError:
-            tokens = cmd.split()
-
-        i = 0
-        while i < len(tokens) and "=" in tokens[i]:
-            i += 1
-
-        if i >= len(tokens) or tokens[i] != "find":
+            tree = self.parser.parse(bytes(cmd, "utf8"))
+        except Exception:
             return False
 
-        i += 1
-        while i < len(tokens):
-            token = tokens[i]
-            if token in FIND_MUTATING_PREDICATES:
-                return True
-            if token in FIND_PREDICATES_WITH_ARGUMENTS:
-                i += 2
-            else:
-                i += 1
+        root = tree.root_node
+        cmd_node = self._find_first_simple_command(root)
+        if cmd_node is None:
+            return False
+
+        name_node = cmd_node.child_by_field_name("name")
+        if name_node is None or name_node.text.decode("utf8") != "find":
+            return False
+
+        for child in cmd_node.children:
+            if child.type == "word":
+                text = child.text.decode("utf8")
+                if text in FIND_MUTATING_PREDICATES:
+                    return True
 
         return False
 
