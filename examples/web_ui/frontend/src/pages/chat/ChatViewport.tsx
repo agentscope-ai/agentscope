@@ -1,7 +1,7 @@
 import type { PermissionContext } from '@agentscope-ai/agentscope/permission';
 import type { TaskContext } from '@agentscope-ai/agentscope/state';
 import { BookText, ChevronDown, Database, ListTodo, PanelRight, ShieldCheck } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ChatModelConfig, SessionKnowledgeConfig, TTSModelConfig } from '@/api';
 import { sessionApi } from '@/api';
@@ -146,10 +146,26 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	// Dock layout: columns laid out left→right, each holding up to 2
 	// panels stacked top→bottom. Open order determines placement.
 	const [panelLayout, setPanelLayout] = useState<PanelKey[][]>([]);
+	const tasksContextSnapshotRef = useRef<string | null>(null);
+	const taskPanelAutoOpenHandledRef = useRef(false);
+
+	useEffect(() => {
+		tasksContextSnapshotRef.current = null;
+		taskPanelAutoOpenHandledRef.current = false;
+	}, [agentId, sessionId]);
 
 	const handleStateUpdated = useCallback((value: Record<string, unknown>) => {
 		if (value.tasks_context) {
-			setTasksContext(value.tasks_context as TaskContext);
+			const nextTasksContext = value.tasks_context as TaskContext;
+			const nextSnapshot = JSON.stringify(nextTasksContext);
+			if (nextSnapshot !== tasksContextSnapshotRef.current) {
+				tasksContextSnapshotRef.current = nextSnapshot;
+				setTasksContext(nextTasksContext);
+				if (nextTasksContext.tasks.length > 0 && !taskPanelAutoOpenHandledRef.current) {
+					taskPanelAutoOpenHandledRef.current = true;
+					setPanelLayout((layout) => openPanelInLayout(layout, 'plan'));
+				}
+			}
 		}
 		if (value.permission_context) {
 			setPermissionContext(value.permission_context as PermissionContext);
@@ -175,16 +191,23 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	const { schema: kbMiddlewareSchema } = useKnowledgeBaseMiddlewareSchema();
 
 	// Toggle a panel open/closed from the top-bar buttons.
-	const togglePanel = useCallback((key: PanelKey) => {
-		setPanelLayout((layout) =>
-			layout.some((column) => column.includes(key))
-				? closePanelInLayout(layout, key)
-				: openPanelInLayout(layout, key),
-		);
-	}, []);
+	const togglePanel = useCallback(
+		(key: PanelKey) => {
+			if (key === 'plan' && panelLayout.some((column) => column.includes(key))) {
+				taskPanelAutoOpenHandledRef.current = true;
+			}
+			setPanelLayout((layout) =>
+				layout.some((column) => column.includes(key))
+					? closePanelInLayout(layout, key)
+					: openPanelInLayout(layout, key),
+			);
+		},
+		[panelLayout],
+	);
 
 	// Close a panel (driven by the panel's own close button).
 	const closePanel = useCallback((key: PanelKey) => {
+		if (key === 'plan') taskPanelAutoOpenHandledRef.current = true;
 		setPanelLayout((layout) => closePanelInLayout(layout, key));
 	}, []);
 
@@ -394,6 +417,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		const tc = (view.session.state as Record<string, unknown>)?.tasks_context as
 			| TaskContext
 			| undefined;
+		tasksContextSnapshotRef.current = tc ? JSON.stringify(tc) : null;
 		setTasksContext(tc ?? null);
 	}, [view]);
 
