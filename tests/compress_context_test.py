@@ -18,6 +18,8 @@ from agentscope.message import (
     AssistantMsg,
     TextBlock,
     ToolCallBlock,
+    ToolResultBlock,
+    ToolResultState,
     HintBlock,
     Msg,
 )
@@ -632,6 +634,97 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "usage": None,
                 },
             ],
+        )
+
+    async def test_split_multi_tool_pairs_reaches_stable_boundary(
+        self,
+    ) -> None:
+        """The boundary is rechecked after moving an unmatched result."""
+        agent = Agent(
+            name="Friday",
+            system_prompt="",
+            model=MockModel(context_size=1_000),
+            state=AgentState(
+                session_id="multi-tool-compression",
+                context=[
+                    UserMsg("User", "old" * 80, id="old-user"),
+                    AssistantMsg(
+                        "Friday",
+                        [
+                            ToolCallBlock(
+                                id="tc1",
+                                name="first_tool",
+                                input=json.dumps({"value": "a" * 80}),
+                            ),
+                            ToolCallBlock(
+                                id="tc2",
+                                name="second_tool",
+                                input=json.dumps({"value": "b" * 80}),
+                            ),
+                            ToolResultBlock(
+                                id="tc1",
+                                name="first_tool",
+                                output=[
+                                    TextBlock(text="first result " * 8),
+                                ],
+                                state=ToolResultState.SUCCESS,
+                            ),
+                            ToolResultBlock(
+                                id="tc2",
+                                name="second_tool",
+                                output=[
+                                    TextBlock(text="second result " * 8),
+                                ],
+                                state=ToolResultState.SUCCESS,
+                            ),
+                            TextBlock(
+                                text="Both tools completed.",
+                                id="final-text",
+                            ),
+                        ],
+                        id="multi-tool-msg",
+                    ),
+                    UserMsg(
+                        "User",
+                        "latest question",
+                        id="latest-user",
+                    ),
+                ],
+            ),
+            toolkit=Toolkit(),
+        )
+
+        to_compress, to_reserve = await agent._split_context_for_compression(
+            to_reserved_tokens=86,
+            tools=[],
+        )
+
+        self.assertListEqual(
+            [msg.id for msg in to_compress],
+            ["old-user", "multi-tool-msg"],
+        )
+        self.assertListEqual(
+            [
+                (block.type, block.id)
+                for block in to_compress[-1].get_content_blocks()
+            ],
+            [
+                ("tool_call", "tc1"),
+                ("tool_call", "tc2"),
+                ("tool_result", "tc1"),
+                ("tool_result", "tc2"),
+            ],
+        )
+        self.assertListEqual(
+            [msg.id for msg in to_reserve],
+            ["multi-tool-msg", "latest-user"],
+        )
+        self.assertListEqual(
+            [
+                (block.type, block.id)
+                for block in to_reserve[0].get_content_blocks()
+            ],
+            [("text", "final-text")],
         )
 
     async def test_context_compression(self) -> None:
