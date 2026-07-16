@@ -156,11 +156,21 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		}
 	}, []);
 
-	const { msgs, phase, send, onUserConfirm, onSubagentConfirm, subagentHitl, interrupt } =
-		useMessages(agentId, sessionId, {
-			onTeamUpdated: handleTeamUpdated,
-			onStateUpdated: handleStateUpdated,
-		});
+	const {
+		msgs,
+		hasMore,
+		loadingMore,
+		loadMore,
+		phase,
+		send,
+		onUserConfirm,
+		onSubagentConfirm,
+		subagentHitl,
+		interrupt,
+	} = useMessages(agentId, sessionId, {
+		onTeamUpdated: handleTeamUpdated,
+		onStateUpdated: handleStateUpdated,
+	});
 	const {
 		mcps,
 		loading: mcpsLoading,
@@ -617,6 +627,9 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 									msgs={msgs}
 									phase={phase}
 									disabled={selectedModel === null}
+									hasMore={hasMore}
+									loadingMore={loadingMore}
+									onLoadMore={loadMore}
 									onSend={send}
 									onUserConfirm={onUserConfirm}
 									onInterrupt={interrupt}

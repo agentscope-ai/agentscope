@@ -1,14 +1,17 @@
 import type { ContentBlock, Msg, ToolCallBlock } from '@agentscope-ai/agentscope/message';
 import { ArrowDown } from 'lucide-react';
 import React from 'react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { EmptyMessage } from './Empty';
 import { MessageBubble } from '@/components/chat/MessageBubble';
 import { TextInput } from '@/components/chat/TextInput.tsx';
 import { Button } from '@/components/ui/button.tsx';
+import { Spinner } from '@/components/ui/spinner';
 import type { ReplyPhase } from '@/hooks/useMessages';
 import { cn } from '@/lib/utils';
+
+const LOAD_MORE_THRESHOLD_PX = 100;
 
 interface ChatContentProps {
 	msgs: Msg[];
@@ -19,6 +22,9 @@ interface ChatContentProps {
 	 */
 	phase: ReplyPhase;
 	disabled: boolean;
+	hasMore: boolean;
+	loadingMore: boolean;
+	onLoadMore: () => Promise<boolean>;
 	onSend: (content: ContentBlock[]) => void;
 	onUserConfirm: (
 		toolCall: ToolCallBlock,
@@ -48,6 +54,9 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	msgs,
 	phase,
 	disabled,
+	hasMore,
+	loadingMore,
+	onLoadMore,
 	onSend,
 	onUserConfirm,
 	autoComplete,
@@ -59,7 +68,14 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 }) => {
 	const scrollAreaRef = useRef<HTMLDivElement>(null);
 	const prevMsgCountRef = useRef<number>(0);
+	const prevFirstMsgIdRef = useRef<string | undefined>(undefined);
 	const wasNearBottomRef = useRef<boolean>(true);
+	const lastScrollTopRef = useRef<number>(0);
+	const pendingPrependRef = useRef<{
+		firstMessageId: string;
+		scrollHeight: number;
+		scrollTop: number;
+	} | null>(null);
 	const [showScrollToBottom, setShowScrollToBottom] = useState(false);
 
 	const updateScrollState = useCallback(() => {
@@ -73,15 +89,42 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 		setShowScrollToBottom(distanceFromBottom > 100);
 	}, []);
 
+	// Restore the viewport after older messages are prepended.
+	useLayoutEffect(() => {
+		if (msgs.length === 0) {
+			pendingPrependRef.current = null;
+			lastScrollTopRef.current = 0;
+			return;
+		}
+
+		const pending = pendingPrependRef.current;
+		const scrollArea = scrollAreaRef.current;
+		if (!pending || !scrollArea || msgs[0]?.id === pending.firstMessageId) return;
+
+		const heightDelta = scrollArea.scrollHeight - pending.scrollHeight;
+		const nextScrollTop = pending.scrollTop + heightDelta;
+		lastScrollTopRef.current = nextScrollTop;
+		scrollArea.scrollTop = nextScrollTop;
+		pendingPrependRef.current = null;
+		updateScrollState();
+	}, [msgs, updateScrollState]);
+
 	// Auto-scroll to bottom only if user is already near the bottom
 	useEffect(() => {
 		const currentCount = msgs.length;
 		const prevCount = prevMsgCountRef.current;
+		const firstMsgId = msgs[0]?.id;
+		const prependedMessages =
+			prevCount > 0 &&
+			currentCount > prevCount &&
+			prevFirstMsgIdRef.current !== undefined &&
+			firstMsgId !== prevFirstMsgIdRef.current;
 
 		const isActive = phase !== 'idle';
 		const isInitialLoad = prevCount === 0 && currentCount > 0;
 		const hasRelevantUpdate =
-			(currentCount > prevCount && prevCount > 0) || (isActive && prevCount > 0);
+			!prependedMessages &&
+			((currentCount > prevCount && prevCount > 0) || (isActive && prevCount > 0));
 		const shouldScroll = isInitialLoad || (hasRelevantUpdate && wasNearBottomRef.current);
 
 		if (shouldScroll && scrollAreaRef.current) {
@@ -96,16 +139,45 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 		}
 
 		prevMsgCountRef.current = currentCount;
+		prevFirstMsgIdRef.current = firstMsgId;
 	}, [msgs, phase, updateScrollState]);
 
-	// Track if user is near bottom whenever they scroll
+	// Track the scroll direction and load older messages near the top.
 	useEffect(() => {
 		const scrollArea = scrollAreaRef.current;
 		if (!scrollArea) return;
 
-		scrollArea.addEventListener('scroll', updateScrollState);
-		return () => scrollArea.removeEventListener('scroll', updateScrollState);
-	}, [updateScrollState]);
+		const handleScroll = () => {
+			const { scrollTop, scrollHeight } = scrollArea;
+
+			const wasScrollingUp = scrollTop < lastScrollTopRef.current;
+			lastScrollTopRef.current = scrollTop;
+			updateScrollState();
+			const firstMessageId = msgs[0]?.id;
+			if (
+				!wasScrollingUp ||
+				scrollTop >= LOAD_MORE_THRESHOLD_PX ||
+				!firstMessageId ||
+				!hasMore ||
+				loadingMore ||
+				pendingPrependRef.current
+			) {
+				return;
+			}
+
+			pendingPrependRef.current = {
+				firstMessageId,
+				scrollHeight,
+				scrollTop,
+			};
+			void onLoadMore().then((loaded) => {
+				if (!loaded) pendingPrependRef.current = null;
+			});
+		};
+
+		scrollArea.addEventListener('scroll', handleScroll);
+		return () => scrollArea.removeEventListener('scroll', handleScroll);
+	}, [hasMore, loadingMore, msgs, onLoadMore, updateScrollState]);
 
 	return (
 		<div className={cn('flex flex-col h-full w-full items-center p-2 gap-4', className)}>
@@ -128,6 +200,15 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 						)}
 					</div>
 				</div>
+				{loadingMore ? (
+					<div
+						role="status"
+						aria-label="Loading older messages"
+						className="pointer-events-none absolute inset-x-0 top-0 z-10 flex h-8 items-center justify-center"
+					>
+						<Spinner className="text-muted-foreground" />
+					</div>
+				) : null}
 				<Button
 					type="button"
 					variant="outline"

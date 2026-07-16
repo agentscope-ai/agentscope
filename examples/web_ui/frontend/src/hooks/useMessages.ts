@@ -101,8 +101,8 @@ const INTERRUPT_TIMEOUT_MS = 10_000;
  * @param agentId - The agent whose session to subscribe. ``null`` to
  *   skip.
  * @param sessionId - The session to subscribe. ``null`` to skip.
- * @returns Object with ``msgs``, ``loading``, ``phase``, ``error``,
- *   ``send``, ``onUserConfirm``, and ``abort``.
+ * @returns Object with message state, pagination controls, reply
+ *   lifecycle state, and chat actions.
  */
 export function useMessages(
 	agentId: string | null,
@@ -126,6 +126,8 @@ export function useMessages(
 ) {
 	const [msgs, setMsgs] = useState<Msg[]>([]);
 	const [loading, setLoading] = useState(false);
+	const [hasMore, setHasMore] = useState(false);
+	const [loadingMore, setLoadingMore] = useState(false);
 	const [phase, setPhase] = useState<ReplyPhase>('idle');
 	const [error, setError] = useState<Error | null>(null);
 	// Pending subagent HITL cards projected onto this (leader) session.
@@ -135,6 +137,9 @@ export function useMessages(
 	const currentReplyRef = useRef<Msg | null>(null);
 	const abortRef = useRef<AbortController | null>(null);
 	const rafRef = useRef<number | null>(null);
+	const hasMoreRef = useRef(false);
+	const loadingMoreRef = useRef(false);
+	const paginationGenerationRef = useRef(0);
 	// Timer that reverts ``interrupting`` back to ``idle`` if the
 	// terminating REPLY_END never arrives (dropped SSE frame, etc.).
 	const interruptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -236,9 +241,14 @@ export function useMessages(
 
 	// ── Lifecycle: fetch history + open SSE stream ──────────────────
 	useEffect(() => {
+		paginationGenerationRef.current += 1;
 		msgsRef.current = [];
 		currentReplyRef.current = null;
+		hasMoreRef.current = false;
+		loadingMoreRef.current = false;
 		setMsgs([]);
+		setHasMore(false);
+		setLoadingMore(false);
 		setError(null);
 		clearInterruptTimer();
 		setPhase('idle');
@@ -255,9 +265,14 @@ export function useMessages(
 			// 1. Fetch persisted history
 			setLoading(true);
 			try {
-				const { messages, is_running } = await sessionApi.messages(sessionId, agentId);
+				const { messages, is_running, has_more } = await sessionApi.messages(
+					sessionId,
+					agentId,
+				);
 				if (cancelled) return;
 				msgsRef.current = messages;
+				hasMoreRef.current = has_more;
+				setHasMore(has_more);
 				// If a reply is in flight (running on a worker) OR the
 				// tail msg is parked on a pending tool_call (awaiting
 				// user confirmation / external execution), initialise the
@@ -302,11 +317,61 @@ export function useMessages(
 
 		return () => {
 			cancelled = true;
+			paginationGenerationRef.current += 1;
 			controller.abort();
 			abortRef.current = null;
 			clearInterruptTimer();
 		};
 	}, [agentId, sessionId, scheduleUpdate, processEvent, audioManager, clearInterruptTimer]);
+
+	/** Fetch and prepend the next page of messages before the oldest one. */
+	const loadMore = useCallback(async (): Promise<boolean> => {
+		if (!agentId || !sessionId || !hasMoreRef.current || loadingMoreRef.current) {
+			return false;
+		}
+
+		const oldestMsgId = msgsRef.current[0]?.id;
+		if (!oldestMsgId) {
+			hasMoreRef.current = false;
+			setHasMore(false);
+			return false;
+		}
+
+		loadingMoreRef.current = true;
+		setLoadingMore(true);
+		const generation = paginationGenerationRef.current;
+
+		try {
+			const { messages, has_more } = await sessionApi.messages(sessionId, agentId, {
+				before: oldestMsgId,
+			});
+
+			if (generation !== paginationGenerationRef.current) {
+				return false;
+			}
+
+			const existingIds = new Set(msgsRef.current.map((msg) => msg.id));
+			const olderMessages = messages.filter((msg) => !existingIds.has(msg.id));
+			hasMoreRef.current = has_more;
+			setHasMore(has_more);
+
+			if (olderMessages.length === 0) return false;
+
+			msgsRef.current = [...olderMessages, ...msgsRef.current];
+			setMsgs([...msgsRef.current]);
+			return true;
+		} catch (e) {
+			if (generation === paginationGenerationRef.current) {
+				setError(e as Error);
+			}
+			return false;
+		} finally {
+			if (generation === paginationGenerationRef.current) {
+				loadingMoreRef.current = false;
+				setLoadingMore(false);
+			}
+		}
+	}, [agentId, sessionId]);
 
 	/**
 	 * Send a user message. Appends the message to the local list
@@ -479,6 +544,9 @@ export function useMessages(
 	return {
 		msgs,
 		loading,
+		hasMore,
+		loadingMore,
+		loadMore,
 		phase,
 		error,
 		send,
