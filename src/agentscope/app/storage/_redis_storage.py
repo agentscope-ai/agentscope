@@ -993,26 +993,30 @@ class RedisStorage(StorageBase):
         self,
         key: str,
         message_id: str,
+        chunk_size: int = 100,
     ) -> int | None:
         """Return the index of a message in the Redis list, or ``None``.
 
-        Scans from the tail (most recent) since ``before`` cursors are
-        typically near the end.
+        Scans backwards from the tail (most recent) in chunks, since
+        ``before`` cursors are typically near the end.
 
         Args:
             key (`str`): The Redis list key.
             message_id (`str`): The message ID to locate.
+            chunk_size (`int`, optional): Number of entries fetched per
+                round trip. Defaults to 100.
 
         Returns:
             `int | None`: Zero-based index, or ``None`` if not found.
         """
-        length = await self._client.llen(key)
-        for i in range(length - 1, -1, -1):
-            raw = await self._client.lindex(key, i)
-            if raw:
-                msg = Msg.model_validate_json(raw)
-                if msg.id == message_id:
-                    return i
+        end = await self._client.llen(key) - 1
+        while end >= 0:
+            start = max(end - chunk_size + 1, 0)
+            raw_list = await self._client.lrange(key, start, end)
+            for offset, raw in enumerate(reversed(raw_list)):
+                if Msg.model_validate_json(raw).id == message_id:
+                    return end - offset
+            end = start - 1
         return None
 
     async def list_messages(

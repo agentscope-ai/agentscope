@@ -544,6 +544,25 @@ class TestMessage(IsolatedAsyncioTestCase):
         self.assertFalse(has_more)
         self.assertListEqual(page, [])
 
+    async def test_find_message_index_across_chunks(self) -> None:
+        """_find_message_index locates messages beyond the first chunk."""
+        msgs = [UserMsg(name="alice", content=f"msg-{i}") for i in range(7)]
+        for m in msgs:
+            await self.storage.upsert_message(
+                self.user_id,
+                self.session_id,
+                m,
+            )
+        key = self.storage._message_key(self.user_id, self.session_id)
+
+        # chunk_size=2 forces the scan to walk several chunks.
+        for i, m in enumerate(msgs):
+            idx = await self.storage._find_message_index(key, m.id, 2)
+            self.assertEqual(idx, i)
+
+        idx = await self.storage._find_message_index(key, "nonexistent", 2)
+        self.assertIsNone(idx)
+
     async def test_list_messages_order_preserved(self) -> None:
         """Messages are returned in the insertion order (chronological)."""
         msgs = [

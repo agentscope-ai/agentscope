@@ -455,7 +455,8 @@ class StorageBase(ABC):
                 cursor. When provided, returns messages created before
                 this message. Omit to get the latest page.
             **kwargs: Reserved for backward compatibility. Passing
-                ``offset`` will emit a ``DeprecationWarning``.
+                ``offset`` will emit a ``DeprecationWarning`` and be
+                ignored.
 
         Returns:
             `tuple[list[Msg], bool]`: A tuple of (messages in

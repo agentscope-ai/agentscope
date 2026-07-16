@@ -528,7 +528,7 @@ async def list_messages(
         deprecated=True,
         description=(
             "**Deprecated.** Use ``before`` for cursor-based pagination. "
-            "This parameter is ignored when ``before`` is provided."
+            "This parameter is always ignored."
         ),
     ),
     limit: int = Query(50, ge=1, le=200, description="Max messages."),
@@ -545,8 +545,8 @@ async def list_messages(
         before: A message ID used as the pagination cursor. Omit for
             the latest page; provide a message ID from a previous
             response to load older messages.
-        offset: **Deprecated.** Numeric offset, ignored when ``before``
-            is provided. Kept for backward compatibility.
+        offset: **Deprecated.** Numeric offset, always ignored. Still
+            accepted for backward compatibility.
         limit: Maximum number of messages to return.
         user_id: Injected authenticated user ID.
         storage: Injected storage backend.
