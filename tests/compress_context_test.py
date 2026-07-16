@@ -700,31 +700,117 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         )
 
         self.assertListEqual(
-            [msg.id for msg in to_compress],
-            ["old-user", "multi-tool-msg"],
+            [msg.model_dump() for msg in to_compress],
+            [
+                {
+                    "id": "old-user",
+                    "created_at": AnyString(),
+                    "finished_at": AnyString(),
+                    "name": "User",
+                    "role": "user",
+                    "content": [
+                        {
+                            "id": AnyString(),
+                            "type": "text",
+                            "text": "old" * 80,
+                        },
+                    ],
+                    "metadata": {},
+                    "usage": None,
+                },
+                {
+                    "id": "multi-tool-msg",
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                    "name": "Friday",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "id": "tc1",
+                            "type": "tool_call",
+                            "name": "first_tool",
+                            "input": json.dumps({"value": "a" * 80}),
+                            "state": "pending",
+                            "suggested_rules": [],
+                        },
+                        {
+                            "id": "tc2",
+                            "type": "tool_call",
+                            "name": "second_tool",
+                            "input": json.dumps({"value": "b" * 80}),
+                            "state": "pending",
+                            "suggested_rules": [],
+                        },
+                        {
+                            "id": "tc1",
+                            "type": "tool_result",
+                            "name": "first_tool",
+                            "output": [
+                                {
+                                    "id": AnyString(),
+                                    "type": "text",
+                                    "text": "first result " * 8,
+                                },
+                            ],
+                            "state": "success",
+                            "metadata": {},
+                        },
+                        {
+                            "id": "tc2",
+                            "type": "tool_result",
+                            "name": "second_tool",
+                            "output": [
+                                {
+                                    "id": AnyString(),
+                                    "type": "text",
+                                    "text": "second result " * 8,
+                                },
+                            ],
+                            "state": "success",
+                            "metadata": {},
+                        },
+                    ],
+                    "metadata": {},
+                    "usage": None,
+                },
+            ],
         )
         self.assertListEqual(
+            [msg.model_dump() for msg in to_reserve],
             [
-                (block.type, block.id)
-                for block in to_compress[-1].get_content_blocks()
+                {
+                    "id": "multi-tool-msg",
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                    "name": "Friday",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "id": "final-text",
+                            "type": "text",
+                            "text": "Both tools completed.",
+                        },
+                    ],
+                    "metadata": {},
+                    "usage": None,
+                },
+                {
+                    "id": "latest-user",
+                    "created_at": AnyString(),
+                    "finished_at": AnyString(),
+                    "name": "User",
+                    "role": "user",
+                    "content": [
+                        {
+                            "id": AnyString(),
+                            "type": "text",
+                            "text": "latest question",
+                        },
+                    ],
+                    "metadata": {},
+                    "usage": None,
+                },
             ],
-            [
-                ("tool_call", "tc1"),
-                ("tool_call", "tc2"),
-                ("tool_result", "tc1"),
-                ("tool_result", "tc2"),
-            ],
-        )
-        self.assertListEqual(
-            [msg.id for msg in to_reserve],
-            ["multi-tool-msg", "latest-user"],
-        )
-        self.assertListEqual(
-            [
-                (block.type, block.id)
-                for block in to_reserve[0].get_content_blocks()
-            ],
-            [("text", "final-text")],
         )
 
     async def test_context_compression(self) -> None:
