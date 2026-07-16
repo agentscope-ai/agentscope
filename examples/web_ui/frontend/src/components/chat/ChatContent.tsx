@@ -65,21 +65,18 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 		const prevCount = prevMsgCountRef.current;
 
 		const isActive = phase !== 'idle';
-		const shouldCheck =
+		const isInitialLoad = prevCount === 0 && currentCount > 0;
+		const hasRelevantUpdate =
 			(currentCount > prevCount && prevCount > 0) || (isActive && prevCount > 0);
+		const shouldScroll = isInitialLoad || (hasRelevantUpdate && wasNearBottomRef.current);
 
-		if (shouldCheck && scrollAreaRef.current) {
+		if (shouldScroll && scrollAreaRef.current) {
 			const { scrollHeight } = scrollAreaRef.current;
 
-			// Check if user was near bottom before content changed
-			const isNearBottom = wasNearBottomRef.current;
-
-			if (isNearBottom) {
-				scrollAreaRef.current.scrollTo({
-					top: scrollHeight,
-					behavior: 'smooth',
-				});
-			}
+			scrollAreaRef.current.scrollTo({
+				top: scrollHeight,
+				behavior: 'smooth',
+			});
 		}
 
 		prevMsgCountRef.current = currentCount;
