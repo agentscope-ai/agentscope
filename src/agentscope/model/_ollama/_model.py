@@ -109,6 +109,13 @@ class OllamaChatModel(ChatModelBase):
         self.formatter = formatter or OllamaChatFormatter()
         self.client_kwargs = client_kwargs or {}
 
+        import ollama
+
+        self.client: ollama.AsyncClient = ollama.AsyncClient(
+            host=self.credential.host,
+            **self.client_kwargs,
+        )
+
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
         import httpx
@@ -150,14 +157,7 @@ class OllamaChatModel(ChatModelBase):
                 generator of ``ChatResponse`` objects when streaming is
                 enabled.
         """
-        import ollama
-
-        client = ollama.AsyncClient(
-            **{
-                "host": self.credential.host,
-                **self.client_kwargs,
-            },
-        )
+        client = self.client
 
         formatted_messages = await self.formatter.format(messages)
 
