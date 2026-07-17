@@ -274,12 +274,63 @@ class Agent:
 
     async def _compress_context_stream(
         self,
+        context_config: ContextConfig | None = None,
+        instructions: HintBlock | None = None,
     ) -> AsyncGenerator[
-        ContextCompressionStartEvent | ContextCompressionEndEvent, None
+        ContextCompressionStartEvent | ContextCompressionEndEvent,
+        None,
     ]:
-        """The context compression method that yield compression events."""
-        async for evt in self._compress_context_impl():
-            yield evt
+        """Run the context compression, yielding its events as they happen.
+
+        Args:
+            context_config (`ContextConfig | None`, optional):
+                If provided, compress the context with the given context
+                config. Otherwise, use the default context config in the
+                agent.
+            instructions (`HintBlock | None`, optional):
+                Optional hints or instructions injected into the compression
+                context to guide the summarization behavior.
+
+        Yields:
+            `ContextCompressionStartEvent | ContextCompressionEndEvent`:
+                The compression events, as they are produced.
+        """
+        # Without middlewares the impl generator is consumed directly, so that
+        # no task or queue is involved.
+        if not self._compress_context_middlewares:
+            async for evt in self._compress_context_impl(
+                context_config=context_config,
+                instructions=instructions,
+            ):
+                yield evt
+            return
+
+        # The middleware onion is await-based and cannot carry values yielded
+        # from below, so the events are bridged through a queue instead.
+        queue: Queue = Queue()
+        task = asyncio.create_task(
+            self._compress_context_chain(context_config, instructions, queue),
+        )
+        # Unblock the drain loop below once the chain finishes, fails or is
+        # cancelled. The sentinel is always queued after the events.
+        task.add_done_callback(lambda _: queue.put_nowait(None))
+
+        try:
+            while True:
+                event = await queue.get()
+                if event is None:
+                    break
+                yield event
+
+            # Surface the chain's exception, after its events are yielded
+            await task
+
+        finally:
+            if not task.done():
+                task.cancel()
+                # Let the chain settle (its context update is shielded from
+                # cancellation) before returning
+                await asyncio.gather(task, return_exceptions=True)
 
     async def compress_context(
         self,
@@ -298,51 +349,78 @@ class Agent:
                 Optional hints or instructions injected into the compression
                 context to guide the summarization behavior.
         """
-        if not self._compress_context_middlewares:
-            await self._compress_context_impl(
-                context_config=context_config,
-                instructions=instructions,
-            )
-        else:
+        # The compression events are discarded here, use
+        # ``_compress_context_stream`` to consume them.
+        await self._compress_context_chain(
+            context_config,
+            instructions,
+            Queue(),
+        )
 
-            async def execute_chain(
-                index: int = 0,
-                context_config: ContextConfig | None = context_config,
-                instructions: HintBlock | None = instructions,
-            ) -> None:
-                """Execute the compress_context middleware chain."""
-                if index >= len(self._compress_context_middlewares):
-                    await self._compress_context_impl(
-                        context_config=context_config,
-                        instructions=instructions,
+    async def _compress_context_chain(
+        self,
+        context_config: ContextConfig | None = None,
+        instructions: HintBlock | None = None,
+        queue: Queue | None = None,
+    ) -> None:
+        """The compress_context middleware onion, pushing the compression
+        events into ``queue`` as they are produced.
+
+        Args:
+            context_config (`ContextConfig | None`, optional):
+                If provided, compress the context with the given context
+                config. Otherwise, use the default context config in the
+                agent.
+            instructions (`HintBlock | None`, optional):
+                Optional hints or instructions injected into the compression
+                context to guide the summarization behavior.
+            queue (`Queue | None`, optional):
+                The queue that collects the compression events. It's kept out
+                of the middlewares' ``input_kwargs`` on purpose.
+        """
+
+        async def execute_chain(
+            index: int = 0,
+            context_config: ContextConfig | None = context_config,
+            instructions: HintBlock | None = instructions,
+        ) -> None:
+            """Execute the compress_context middleware chain."""
+            if index >= len(self._compress_context_middlewares):
+                # The impl is a generator while this onion is await-based, so
+                # its events are bridged into ``queue`` as they are produced.
+                async for evt in self._compress_context_impl(
+                    context_config=context_config,
+                    instructions=instructions,
+                ):
+                    queue.put_nowait(evt)
+            else:
+                mw = self._compress_context_middlewares[index]
+                input_kwargs = {
+                    "context_config": context_config,
+                    "instructions": instructions,
+                }
+
+                async def next_handler(**kwargs: Any) -> None:
+                    await execute_chain(
+                        index + 1,
+                        **{**input_kwargs, **kwargs},
                     )
-                else:
-                    mw = self._compress_context_middlewares[index]
-                    input_kwargs = {
-                        "context_config": context_config,
-                        "instructions": instructions,
-                    }
 
-                    async def next_handler(**kwargs: Any) -> None:
-                        await execute_chain(
-                            index + 1,
-                            **{**input_kwargs, **kwargs},
-                        )
+                await mw.on_compress_context(
+                    agent=self,
+                    input_kwargs=input_kwargs,
+                    next_handler=next_handler,
+                )
 
-                    await mw.on_compress_context(
-                        agent=self,
-                        input_kwargs=input_kwargs,
-                        next_handler=next_handler,
-                    )
-
-            await execute_chain()
+        await execute_chain()
 
     async def _compress_context_impl(
         self,
         context_config: ContextConfig | None = None,
         instructions: HintBlock | None = None,
     ) -> AsyncGenerator[
-        ContextCompressionStartEvent | ContextCompressionEndEvent, None
+        ContextCompressionStartEvent | ContextCompressionEndEvent,
+        None,
     ]:
         """Compress the agent's context if the token count exceeds the
         threshold.
@@ -383,158 +461,197 @@ class Agent:
             threshold_tokens=int(threshold),
         )
 
-        if len(self.state.context) == 0:
-            # The system prompt and the summary (if exists) exceeds the
-            # threshold, which cannot be compressed, raise the error to the
-            # developer!
-            suffix = ""
-            if self.state.summary:
-                suffix = "and the compression summary "
-            raise RuntimeError(
-                f"The system prompt {suffix}exceed(s) the compression "
-                f"threshold ({threshold} tokens), cannot be compressed.",
-            )
+        try:
+            if len(self.state.context) == 0:
+                # The system prompt and the summary (if exists) exceeds the
+                # threshold, which cannot be compressed, raise the error to the
+                # developer!
+                suffix = ""
+                if self.state.summary:
+                    suffix = "and the compression summary "
+                raise RuntimeError(
+                    f"The system prompt {suffix}exceed(s) the compression "
+                    f"threshold ({threshold} tokens), cannot be compressed.",
+                )
 
-        # Split the context into the ones to be compressed, and the others to
-        # be reserved
-        tools = kwargs.get("tools", [])
-        (
-            msgs_to_compress,
-            msgs_to_reserve,
-        ) = await self._split_context_for_compression(
-            cfg.reserve_ratio * self.model.context_size,
-            tools,
-        )
-
-        if len(msgs_to_compress) == 0:
-            # The reserve ratio is too large so that although it exceeds the
-            # trigger threshold, the context to be compressed is empty
-            # Fallback by lowering the reserve ratio to compress more context.
-            logger.warning(
-                "The reserve ratio %.2f is too large to compress any context."
-                "Lower the reserve ratio to 0 as a fallback.",
-                cfg.reserve_ratio,
-            )
+            # Split the context into the ones to be compressed, and the
+            # others to be reserved
+            tools = kwargs.get("tools", [])
             (
                 msgs_to_compress,
                 msgs_to_reserve,
             ) = await self._split_context_for_compression(
-                0 * self.model.context_size,
+                cfg.reserve_ratio * self.model.context_size,
                 tools,
             )
 
-            # The msgs to be compressed cannot be empty here, unless the
-            # system prompt and summary (if any) already exceed the context
-            # length, which we have handled before.
-
-        # Prepare the messages to compress
-        msgs_system = [
-            SystemMsg(
-                name="system",
-                content=await self._get_system_prompt(),
-            ),
-        ]
-        if self.state.summary:
-            msgs_system.append(UserMsg("user", self.state.summary))
-
-        instruction_msgs: list[Msg] = []
-        if instructions is not None:
-            instruction_msgs.append(
-                AssistantMsg(
-                    name=self.name,
-                    content=[instructions],
-                ),
-            )
-
-        messages = (
-            msgs_system
-            + msgs_to_compress
-            + instruction_msgs
-            + [
-                UserMsg(name="user", content=cfg.compression_prompt),
-            ]
-        )
-
-        # The compression prompt may exceed the context length, here we mark
-        # the overflow by a bool flag
-        compression_tool_schema = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "generate_structured_output",
-                    "description": "Call this function to generate "
-                    "structured output required by "
-                    "the user.",
-                    "parameters": cfg.summary_schema,
-                },
-            },
-        ]
-        context_overflow = False
-        estimated_compression_tokens = await self.model.count_tokens(
-            messages,
-            compression_tool_schema,
-        )
-        if estimated_compression_tokens > self.model.context_size:
-            logger.warning(
-                "The current context length exceeds the model's context "
-                "length (%d tokens), the compression maybe failed due to "
-                "insufficient reserved context for compression.",
-                self.model.context_size,
-            )
-            context_overflow = True
-
-        # Compress the messages
-        try:
-            res = await self.model.generate_structured_output(
-                messages=messages,
-                structured_model=cfg.summary_schema,
-            )
-
-        except Exception as e:
-            if context_overflow:
+            if len(msgs_to_compress) == 0:
+                # The reserve ratio is too large so that although it exceeds
+                # the trigger threshold, the context to be compressed is empty
+                # Fallback by lowering the reserve ratio to compress more
+                # context.
                 logger.warning(
-                    "Failed to compress context, which may be caused by "
-                    "insufficient reserved context for compression. "
-                    "Trying to compress by removing the oldest context.",
+                    "The reserve ratio %.2f is too large to compress any "
+                    "context. Lower the reserve ratio to 0 as a fallback.",
+                    cfg.reserve_ratio,
                 )
-                for i in range(1, len(msgs_to_compress) + 1):
-                    messages = (
-                        msgs_system
-                        + msgs_to_compress[i:]
-                        + instruction_msgs
-                        + [
-                            UserMsg(
-                                name="user",
-                                content=cfg.compression_prompt,
-                            ),
-                        ]
-                    )
-                    estimated_compression_tokens = (
-                        await self.model.count_tokens(
-                            messages,
-                            compression_tool_schema,
-                        )
-                    )
-                    # Considering trigger_ratio <= 0.9, at least reserve 10%
-                    # tokens for compression response
-                    if (
-                        estimated_compression_tokens
-                        < self.model.context_size * cfg.trigger_ratio
-                    ):
-                        break
+                (
+                    msgs_to_compress,
+                    msgs_to_reserve,
+                ) = await self._split_context_for_compression(
+                    0 * self.model.context_size,
+                    tools,
+                )
 
+                # The msgs to be compressed cannot be empty here, unless the
+                # system prompt and summary (if any) already exceed the context
+                # length, which we have handled before.
+
+            # Prepare the messages to compress
+            msgs_system = [
+                SystemMsg(
+                    name="system",
+                    content=await self._get_system_prompt(),
+                ),
+            ]
+            if self.state.summary:
+                msgs_system.append(UserMsg("user", self.state.summary))
+
+            instruction_msgs: list[Msg] = []
+            if instructions is not None:
+                instruction_msgs.append(
+                    AssistantMsg(
+                        name=self.name,
+                        content=[instructions],
+                    ),
+                )
+
+            messages = (
+                msgs_system
+                + msgs_to_compress
+                + instruction_msgs
+                + [
+                    UserMsg(name="user", content=cfg.compression_prompt),
+                ]
+            )
+
+            # The compression prompt may exceed the context length, here we
+            # mark the overflow by a bool flag
+            compression_tool_schema = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "generate_structured_output",
+                        "description": "Call this function to generate "
+                        "structured output required by "
+                        "the user.",
+                        "parameters": cfg.summary_schema,
+                    },
+                },
+            ]
+            context_overflow = False
+            estimated_compression_tokens = await self.model.count_tokens(
+                messages,
+                compression_tool_schema,
+            )
+            if estimated_compression_tokens > self.model.context_size:
+                logger.warning(
+                    "The current context length exceeds the model's context "
+                    "length (%d tokens), the compression maybe failed due to "
+                    "insufficient reserved context for compression.",
+                    self.model.context_size,
+                )
+                context_overflow = True
+
+            # Compress the messages
+            try:
                 res = await self.model.generate_structured_output(
                     messages=messages,
                     structured_model=cfg.summary_schema,
                 )
 
-            else:
-                raise e from None
+            except Exception as e:
+                if context_overflow:
+                    logger.warning(
+                        "Failed to compress context, which may be caused by "
+                        "insufficient reserved context for compression. "
+                        "Trying to compress by removing the oldest context.",
+                    )
+                    for i in range(1, len(msgs_to_compress) + 1):
+                        messages = (
+                            msgs_system
+                            + msgs_to_compress[i:]
+                            + instruction_msgs
+                            + [
+                                UserMsg(
+                                    name="user",
+                                    content=cfg.compression_prompt,
+                                ),
+                            ]
+                        )
+                        estimated_compression_tokens = (
+                            await self.model.count_tokens(
+                                messages,
+                                compression_tool_schema,
+                            )
+                        )
+                        # Considering trigger_ratio <= 0.9, at least reserve
+                        # 10% tokens for compression response
+                        if (
+                            estimated_compression_tokens
+                            < self.model.context_size * cfg.trigger_ratio
+                        ):
+                            break
 
-        if res.finished_reason == FinishedReason.INTERRUPTED:
-            logger.warning(
-                "The context compression was interrupted and skipped. ",
-            )
+                    res = await self.model.generate_structured_output(
+                        messages=messages,
+                        structured_model=cfg.summary_schema,
+                    )
+
+                else:
+                    raise e from None
+
+            if res.finished_reason == FinishedReason.INTERRUPTED:
+                logger.warning(
+                    "The context compression was interrupted and skipped. ",
+                )
+                raise asyncio.CancelledError()
+
+            # Update the summary
+            async def _apply_change() -> None:
+                """Apply the context change with interruption protection."""
+                new_summary = cfg.summary_template.format(**res.content)
+                if self.offloader:
+                    path = await self.offloader.offload_context(
+                        self.state.session_id,
+                        msgs=msgs_to_compress,
+                    )
+                    new_summary += (
+                        f"\n<system-reminder>The compressed context is "
+                        f"offloaded to '{path}', you can refer to it when "
+                        f"needed.</system-reminder>"
+                    )
+
+                # Protected from interruption
+                await self._clear_unreserved_read_cache(msgs_to_reserve)
+
+                # Update the context
+                self.state.summary = new_summary
+                self.state.context = msgs_to_reserve
+
+                logger.info(
+                    "[AGENT %s]: The context compression finished.",
+                    self.name,
+                )
+
+            apply_task = asyncio.create_task(_apply_change())
+            try:
+                await asyncio.shield(apply_task)
+            except asyncio.CancelledError:
+                await apply_task
+                raise
+
+        except asyncio.CancelledError:
             yield ContextCompressionEndEvent(
                 reply_id=self.state.reply_id,
                 state=ContextCompressionState.INTERRUPTED,
@@ -544,44 +661,19 @@ class Agent:
                 tokens_after=estimated_tokens,
                 used_time=(datetime.now() - start_time).total_seconds(),
             )
-            raise asyncio.CancelledError()
-
-        # Update the summary
-        async def _apply_change() -> None:
-            """Apply the context change with interruption protection."""
-            new_summary = cfg.summary_template.format(**res.content)
-            if self.offloader:
-                path = await self.offloader.offload_context(
-                    self.state.session_id,
-                    msgs=msgs_to_compress,
-                )
-                new_summary += (
-                    f"\n<system-reminder>The compressed context is offloaded "
-                    f"to '{path}', you can refer to it when needed."
-                    f"</system-reminder>"
-                )
-
-            # Protected from interruption
-            await self._clear_unreserved_read_cache(msgs_to_reserve)
-
-            # Update the context
-            self.state.summary = new_summary
-            self.state.context = msgs_to_reserve
-
-            logger.info(
-                "[AGENT %s]: The context compression finished.",
-                self.name,
-            )
-
-        apply_task = asyncio.create_task(_apply_change())
-        try:
-            await asyncio.shield(apply_task)
-        except asyncio.CancelledError:
-            await apply_task
             raise
 
-        # TODO: Estimate the current tokens after compression
-        tokens_after = 0
+        except Exception as e:
+            yield ContextCompressionEndEvent(
+                reply_id=self.state.reply_id,
+                state=ContextCompressionState.FAILED,
+                message=str(e),
+                summary=None,
+                tokens_before=estimated_tokens,
+                tokens_after=estimated_tokens,
+                used_time=(datetime.now() - start_time).total_seconds(),
+            )
+            raise
 
         yield ContextCompressionEndEvent(
             reply_id=self.state.reply_id,
@@ -589,7 +681,9 @@ class Agent:
             message="The context compression finished.",
             summary=self.state.summary,
             tokens_before=estimated_tokens,
-            tokens_after=tokens_after,
+            tokens_after=await self.model.count_tokens(
+                **await self._prepare_model_input(),
+            ),
             used_time=(datetime.now() - start_time).total_seconds(),
         )
 
@@ -804,7 +898,8 @@ class Agent:
                 # =============================================================
                 if action == "reasoning":
                     # Compressed the memory if needed before reasoning
-                    await self.compress_context()
+                    async for evt in self._compress_context_stream():
+                        yield evt
 
                     # Perform reasoning
                     interrupted = False
