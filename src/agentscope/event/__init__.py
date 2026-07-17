@@ -33,8 +33,11 @@ from ._event import (
     UserInterruptEvent,
     ExternalExecutionResultEvent,
     CustomEvent,
+    ContextCompressionStartEvent,
+    ContextCompressionEndEvent,
     AgentEvent,
     ConfirmResult,
+    ContextCompressionState,
 )
 
 
@@ -70,6 +73,9 @@ __all__ = [
     "UserInterruptEvent",
     "ExternalExecutionResultEvent",
     "CustomEvent",
+    "ContextCompressionState",
+    "ContextCompressionStartEvent",
+    "ContextCompressionEndEvent",
     "AgentEvent",
     "ConfirmResult",
 ]

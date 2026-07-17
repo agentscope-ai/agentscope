@@ -2,7 +2,7 @@
 # pylint: disable=abstract-method
 """Unit tests for middleware system."""
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 from typing import Any, AsyncGenerator, Callable, Union
 
 from utils import MockModel
@@ -25,6 +25,17 @@ from agentscope.permission import (
     PermissionDecision,
     PermissionBehavior,
 )
+
+
+def _empty_compression_impl(*_args: Any, **_kwargs: Any) -> AsyncGenerator:
+    """Stand-in for the generator ``_compress_context_impl`` that yields no
+    events, used to patch out the real token counting."""
+
+    async def _gen() -> AsyncGenerator:
+        return
+        yield  # pylint: disable=unreachable  - marks this as a generator
+
+    return _gen()
 
 
 class TestMiddleware(IsolatedAsyncioTestCase):
@@ -1124,7 +1135,7 @@ class TestMiddleware(IsolatedAsyncioTestCase):
         with patch.object(
             agent,
             "_compress_context_impl",
-            new_callable=AsyncMock,
+            side_effect=_empty_compression_impl,
         ) as mock_impl:
             await agent.compress_context(
                 context_config=context_config,
@@ -1132,7 +1143,7 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             )
 
             # _compress_context_impl must have been called exactly once.
-            mock_impl.assert_awaited_once_with(
+            mock_impl.assert_called_once_with(
                 context_config=context_config,
                 instructions=instructions,
             )
@@ -1186,14 +1197,14 @@ class TestMiddleware(IsolatedAsyncioTestCase):
         with patch.object(
             agent,
             "_compress_context_impl",
-            new_callable=AsyncMock,
+            side_effect=_empty_compression_impl,
         ) as mock_impl:
             await agent.compress_context(
                 context_config=context_config,
                 instructions=original,
             )
 
-            mock_impl.assert_awaited_once_with(
+            mock_impl.assert_called_once_with(
                 context_config=context_config,
                 instructions=replacement,
             )
@@ -1247,12 +1258,12 @@ class TestMiddleware(IsolatedAsyncioTestCase):
         with patch.object(
             agent,
             "_compress_context_impl",
-            new_callable=AsyncMock,
+            side_effect=_empty_compression_impl,
         ) as mock_impl:
             await agent.compress_context()
 
             # _compress_context_impl should NOT have been called.
-            mock_impl.assert_not_awaited()
+            mock_impl.assert_not_called()
 
         self.assertListEqual(self.execution_log, ["skipped"])
 
@@ -1282,10 +1293,10 @@ class TestMiddleware(IsolatedAsyncioTestCase):
         with patch.object(
             agent,
             "_compress_context_impl",
-            new_callable=AsyncMock,
+            side_effect=_empty_compression_impl,
         ) as mock_impl:
             await agent.compress_context(context_config=context_config)
-            mock_impl.assert_awaited_once_with(
+            mock_impl.assert_called_once_with(
                 context_config=context_config,
                 instructions=None,
             )

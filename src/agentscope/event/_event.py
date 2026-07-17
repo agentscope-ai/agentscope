@@ -61,6 +61,9 @@ class EventType(StrEnum):
 
     CUSTOM = "CUSTOM"
 
+    CONTEXT_COMPRESSION_START = "CONTEXT_COMPRESSION_EVENT"
+    CONTEXT_COMPRESSION_END = "CONTEXT_COMPRESSION_END"
+
 
 class EventBase(BaseModel):
     """Base event class."""
@@ -516,6 +519,62 @@ class CustomEvent(EventBase):
     """Arbitrary payload."""
 
 
+class ContextCompressionStartEvent(EventBase):
+    """The context compression start event."""
+
+    type: Literal[
+        EventType.CONTEXT_COMPRESSION_START
+    ] = EventType.CONTEXT_COMPRESSION_START
+    """Event type."""
+
+    reply_id: str
+    """The reply ID that this event belongs to."""
+
+    current_tokens: int
+    """The number of tokens after the compression."""
+
+    threshold_tokens: int
+    """The threshold tokens that trigger the compression."""
+
+
+class ContextCompressionState(StrEnum):
+    """The context compression state."""
+
+    FAILED = "FAILED"
+    SUCCESS = "SUCCESS"
+    INTERRUPTED = "INTERRUPTED"
+
+
+class ContextCompressionEndEvent(EventBase):
+    """The context compression end event."""
+
+    type: Literal[
+        EventType.CONTEXT_COMPRESSION_END
+    ] = EventType.CONTEXT_COMPRESSION_END
+    """Event type."""
+
+    reply_id: str
+    """The reply ID that this event belongs to."""
+
+    state: ContextCompressionState
+    """The context compression state."""
+
+    message: str | None
+    """When failed, the message contains the error message."""
+
+    summary: str | None
+    """The summary after the compression."""
+
+    tokens_before: int
+    """The number of tokens before the compression."""
+
+    tokens_after: int
+    """The number of tokens after the compression."""
+
+    used_time: float
+    """The time used to compress context."""
+
+
 AgentEvent: TypeAlias = (
     ReplyStartEvent
     | ReplyEndEvent
@@ -545,4 +604,6 @@ AgentEvent: TypeAlias = (
     | UserInterruptEvent
     | ExternalExecutionResultEvent
     | CustomEvent
+    | ContextCompressionStartEvent
+    | ContextCompressionEndEvent
 )
