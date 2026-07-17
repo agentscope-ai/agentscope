@@ -43,7 +43,7 @@ def _decision_summary(decision: PermissionDecision) -> dict[str, Any]:
 class PermissionAuditMiddleware(MiddlewareBase):
     """Emit the final permission decision returned by the middleware chain.
 
-    Tenant and session identifiers are supplied by the application's
+    User, agent, and session identifiers are supplied by the application's
     ``extra_agent_middlewares`` factory. Raw tool-call input is deliberately
     excluded from the record.
     """

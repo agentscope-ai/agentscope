@@ -2,10 +2,10 @@
 # pylint: disable=wrong-import-position,wrong-import-order
 """Start the permission audit example agent service.
 
-Follows ``examples/agent_service/main.py`` but omits RAG/MCP and adds a
-``PermissionAuditMiddleware`` factory plus the demo tool, so final permission
-decisions are observable in the service console while the existing Web UI is
-reused unchanged.
+Follows ``examples/agent_service/main.py`` but omits RAG/MCP and adds audit and
+per-user policy middlewares plus the demo tool. Permission decisions are
+observable in the service console while the existing Web UI is reused
+unchanged.
 """
 import os
 import sys
@@ -28,20 +28,36 @@ from audit_middleware import (  # noqa: E402
     console_audit_sink,
 )
 from demo_tool import PermissionAuditDemoTool  # noqa: E402
+from user_tool_policy import UserToolPolicyMiddleware  # noqa: E402
 
 
-async def permission_audit_factory(
+RESTRICTED_USER_ID = os.getenv(
+    "PERMISSION_AUDIT_RESTRICTED_USER_ID",
+    "restricted-user",
+)
+DENIED_TOOLS_BY_USER = {
+    RESTRICTED_USER_ID: {PermissionAuditDemoTool.name},
+}
+
+
+async def permission_middlewares_factory(
     user_id: str,
     agent_id: str,
     session_id: str,
 ) -> list[MiddlewareBase]:
-    """Per-assembly audit middleware bound to tenant/session identity."""
+    """Build per-request audit and application-policy middlewares."""
     return [
+        # Keep audit outermost so it records the decision returned by the
+        # complete permission middleware chain.
         PermissionAuditMiddleware(
             user_id=user_id,
             agent_id=agent_id,
             session_id=session_id,
             sink=console_audit_sink,
+        ),
+        UserToolPolicyMiddleware(
+            user_id=user_id,
+            denied_tools_by_user=DENIED_TOOLS_BY_USER,
         ),
     ]
 
@@ -66,7 +82,7 @@ app = create_app(
             "workspaces",
         ),
     ),
-    extra_agent_middlewares=permission_audit_factory,
+    extra_agent_middlewares=permission_middlewares_factory,
     extra_agent_tools=permission_audit_demo_tools,
     extra_middlewares=[
         Middleware(

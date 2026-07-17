@@ -39,6 +39,9 @@ PermissionAuditDemoTool = demo_tool_module.PermissionAuditDemoTool
 audit_middleware_module = _load_example_module("audit_middleware")
 PermissionAuditMiddleware = audit_middleware_module.PermissionAuditMiddleware
 
+user_policy_module = _load_example_module("user_tool_policy")
+UserToolPolicyMiddleware = user_policy_module.UserToolPolicyMiddleware
+
 
 def _agent(reply_id: str = "reply-1") -> SimpleNamespace:
     """Build the agent state fields consumed by the example middleware."""
@@ -165,6 +168,100 @@ class PermissionAuditMiddlewareTest(IsolatedAsyncioTestCase):
             )
 
 
+class UserToolPolicyMiddlewareTest(IsolatedAsyncioTestCase):
+    """The example can enforce an application-owned per-user tool policy."""
+
+    async def test_denied_user_short_circuits_demo_tool(self) -> None:
+        """A configured user receives DENY before the engine is called."""
+        middleware = UserToolPolicyMiddleware(
+            user_id="restricted-user",
+            denied_tools_by_user={
+                "restricted-user": {"PermissionAuditDemoTool"},
+            },
+        )
+        calls = 0
+
+        async def next_handler(**_kwargs: Any) -> PermissionDecision:
+            nonlocal calls
+            calls += 1
+            return PermissionDecision(
+                behavior=PermissionBehavior.ALLOW,
+                message="allowed by engine",
+            )
+
+        decision = await middleware.on_check_permission(
+            agent=_agent(),
+            input_kwargs=_input_kwargs(),
+            next_handler=next_handler,
+        )
+
+        self.assertEqual(decision.behavior, PermissionBehavior.DENY)
+        self.assertEqual(decision.decision_reason, "Application user policy")
+        self.assertEqual(calls, 0)
+
+    async def test_unrestricted_user_delegates_unchanged(self) -> None:
+        """A user without a matching deny rule reaches the next handler."""
+        middleware = UserToolPolicyMiddleware(
+            user_id="regular-user",
+            denied_tools_by_user={
+                "restricted-user": {"PermissionAuditDemoTool"},
+            },
+        )
+        expected = PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message="allowed by engine",
+        )
+
+        async def next_handler(**_kwargs: Any) -> PermissionDecision:
+            return expected
+
+        decision = await middleware.on_check_permission(
+            agent=_agent(),
+            input_kwargs=_input_kwargs(),
+            next_handler=next_handler,
+        )
+
+        self.assertIs(decision, expected)
+
+    async def test_outer_audit_records_user_policy_denial(self) -> None:
+        """Audit records the DENY returned by the inner user policy."""
+        sink = _CollectSink()
+        audit = PermissionAuditMiddleware(
+            "restricted-user",
+            "agent-1",
+            "session-1",
+            sink,
+        )
+        policy = UserToolPolicyMiddleware(
+            user_id="restricted-user",
+            denied_tools_by_user={
+                "restricted-user": {"PermissionAuditDemoTool"},
+            },
+        )
+        input_kwargs = _input_kwargs()
+
+        async def policy_handler(**kwargs: Any) -> PermissionDecision:
+            return await policy.on_check_permission(
+                agent=_agent(),
+                input_kwargs=kwargs,
+                next_handler=lambda **_kwargs: self.fail(
+                    "the denied call must not reach the engine",
+                ),
+            )
+
+        decision = await audit.on_check_permission(
+            agent=_agent(),
+            input_kwargs=input_kwargs,
+            next_handler=policy_handler,
+        )
+
+        self.assertEqual(decision.behavior, PermissionBehavior.DENY)
+        self.assertEqual(
+            sink.records[0]["decision"]["behavior"],
+            "deny",
+        )
+
+
 class PermissionAuditDemoToolTest(IsolatedAsyncioTestCase):
     """The side-effect-free demo emits all final permission behaviors."""
 
@@ -203,5 +300,14 @@ class PermissionAuditServiceSmokeTest(IsolatedAsyncioTestCase):
         except (ImportError, ConnectionError, OSError) as exc:
             self.skipTest(f"cannot import example main (deps/Redis?): {exc}")
         self.assertTrue(hasattr(main_module, "app"))
-        self.assertIsNotNone(main_module.permission_audit_factory)
+        self.assertIsNotNone(main_module.permission_middlewares_factory)
         self.assertIsNotNone(main_module.permission_audit_demo_tools)
+        middlewares = await main_module.permission_middlewares_factory(
+            "restricted-user",
+            "agent-1",
+            "session-1",
+        )
+        self.assertListEqual(
+            [type(middleware).__name__ for middleware in middlewares],
+            ["PermissionAuditMiddleware", "UserToolPolicyMiddleware"],
+        )

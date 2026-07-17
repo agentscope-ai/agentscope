@@ -2,27 +2,31 @@
 
 English | [中文](README_zh.md)
 
-A runnable AgentScope service showing how application middleware can observe
-the final permission decision for a tool call. It reuses the existing
+A runnable AgentScope service demonstrating the `on_check_permission`
+middleware hook through an audit-logging use case. It reuses the existing
 `examples/web_ui` frontend unchanged.
 
 ## What it demonstrates
 
-- `on_check_permission` runs after tool lookup and input validation, and before
-  Agent consumes the returned permission decision.
+- `on_check_permission` wraps permission checking after tool lookup and input
+  validation, and before Agent consumes the returned decision.
+- As a standard onion hook, middleware can delegate to the remaining permission
+  chain, replace its returned decision, or short-circuit it with an application
+  decision.
 - The audit middleware calls `next_handler(**input_kwargs)` once, records the
-  final ASK/DENY/ALLOW decision, and returns that same object unchanged.
+  returned ASK/DENY/ALLOW decision, and returns that same object unchanged.
+- A user-tool policy middleware denies `PermissionAuditDemoTool` for one
+  configured user without invoking the built-in permission engine.
 - Audit records carry application identity and correlation fields but exclude
   raw tool input.
 - A side-effect-free demo tool deterministically exercises all three final
   decision behaviors.
 
-The hook is an onion-style interception point, not an observer-only API.
-Application middleware can also replace the returned decision or short-circuit
-the built-in engine. That supports application-owned policies based on context
-such as user, role, tenant, environment, budget, or an external policy service.
-Such middleware becomes part of the trusted authorization boundary; this
-example intentionally limits itself to unchanged audit observation.
+The hook supports application-owned policies based on context such as user,
+role, tenant, environment, budget, or an external policy service. Middleware
+that changes permission outcomes becomes part of the application's trusted
+authorization boundary. This example uses the same hook only to audit the
+decision returned by the downstream permission chain.
 
 ## Run the service
 
@@ -40,6 +44,13 @@ cd examples/permission_audit_service
 python main.py
 ```
 
+The restricted demo user defaults to `restricted-user`. Override it when
+needed:
+
+```bash
+PERMISSION_AUDIT_RESTRICTED_USER_ID=another-user python main.py
+```
+
 Then start the existing Web UI:
 
 ```bash
@@ -48,7 +59,9 @@ pnpm install
 pnpm dev
 ```
 
-Point the UI at `http://localhost:8000`. Ask the agent to invoke
+Point the UI at `http://localhost:8000`. The username entered on the connection
+page is sent to the service as `X-User-ID`. Use `regular-user` for the normal
+permission scenarios, then ask the agent to invoke
 `PermissionAuditDemoTool` with `decision=allow`, `decision=ask`, or
 `decision=deny`. Permission interactions appear in the UI as usual and one
 JSON audit record is written to the service console for each checked call.
@@ -74,13 +87,15 @@ JSON audit record is written to the service console for each checked call.
 }
 ```
 
-The record represents the decision returned by the complete middleware chain.
-It does not expose the permission engine's internal rule-evaluation trace or a
-suppressed intermediate candidate. Raw user confirmation input is a separate
-lifecycle stage and can be observed through `on_reply`. When an approved call
-resumes, it skips built-in engine re-evaluation but still traverses
-`on_check_permission`, so application policy and final-decision auditing remain
-in effect.
+This example registers the audit middleware first, making it the outermost
+permission layer around the user-tool policy and built-in engine. The record is
+therefore the decision that Agent will consume. Applications should preserve
+that ordering when an audit middleware must record the decision returned by the
+complete chain.
+
+When an approved call resumes, it skips built-in engine re-evaluation but still
+traverses `on_check_permission`. Application policy checks and decision auditing
+therefore remain in effect immediately before tool execution.
 
 ## Scenarios
 
@@ -92,12 +107,17 @@ in effect.
    the denied tool result; the demo tool body is not executed.
 3. **ALLOW** — use `decision=allow`. The record contains ALLOW before Agent
    executes the side-effect-free demo tool.
+4. **Per-user DENY** — connect the UI as `restricted-user` and request
+   `decision=allow`. `UserToolPolicyMiddleware` short-circuits the built-in
+   engine with DENY, the outer audit middleware records that DENY, and the demo
+   tool body is not executed.
 
-For an unconfirmed request, the audit middleware delegates to the built-in
-engine through `next_handler(**input_kwargs)`. Depending on mode and configured
-rules, that result may differ from a tool's initial suggestion. Other
-middleware may further replace or short-circuit the result; this example
-records the decision returned by the complete chain.
+For an unconfirmed request, `next_handler(**input_kwargs)` continues through
+the remaining permission middleware and then the built-in permission engine.
+The built-in result reflects the active permission mode, configured rules, and
+tool-specific permission checks. A downstream middleware may also replace that
+result or short-circuit before the engine; the audit middleware records whatever
+decision the downstream chain returns.
 
 ## Privacy and failure behavior
 
@@ -105,6 +125,11 @@ Records deliberately exclude `tool_input` and `tool_call.input`. The `reason`
 field carries `PermissionDecision.decision_reason` and may contain matched rule
 content, so production sinks should redact or omit it when rules include
 sensitive command or path patterns.
+
+The Web UI uses the caller-supplied `X-User-ID` header as a temporary identity
+mechanism. It makes the per-user policy easy to exercise but is not production
+authentication. Real applications should build identity-aware permission
+middleware from authenticated, server-trusted user or tenant context.
 
 The example does not catch sink exceptions. A required audit sink failure
 therefore propagates before Agent consumes the decision. Applications wanting
