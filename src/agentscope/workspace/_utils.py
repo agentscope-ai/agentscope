@@ -29,8 +29,8 @@ This workspace is your personal working environment. You are responsible for \
 keeping it clean, structured, and easy to navigate over time.
 
 ### Project Directory
-- Create a `projects/` directory on first use, with one subdirectory per \
-task or project inside it.
+- Create a dedicated subdirectory for each task or project under the \
+workspace root.
 - Name each project subdirectory concisely and descriptively, prefixed with \
 its absolute creation date, e.g. `20240315_web-scraper`, so it stays \
 identifiable long after creation.

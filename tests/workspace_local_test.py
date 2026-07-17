@@ -855,7 +855,7 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
         """
         with tempfile.TemporaryDirectory() as workdir:
             session_id = "test_session"
-            model = MockModel(stream=False)
+            model = MockModel(stream=False, context_size=100000)
             agent = Agent(
                 name="Friday",
                 system_prompt="You're a helpful assistant named Friday.",
