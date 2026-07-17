@@ -19,7 +19,7 @@ from agentscope.permission import (
 _EXAMPLE_DIR = (
     Path(__file__).resolve().parent.parent
     / "examples"
-    / "permission_audit_service"
+    / "permission_middleware_service"
 )
 
 
@@ -34,7 +34,7 @@ def _load_example_module(module_name: str) -> ModuleType:
 
 
 demo_tool_module = _load_example_module("demo_tool")
-PermissionAuditDemoTool = demo_tool_module.PermissionAuditDemoTool
+PermissionDemoTool = demo_tool_module.PermissionDemoTool
 
 audit_middleware_module = _load_example_module("audit_middleware")
 PermissionAuditMiddleware = audit_middleware_module.PermissionAuditMiddleware
@@ -58,10 +58,10 @@ def _input_kwargs(secret: str = "secret-token-123") -> dict[str, Any]:
     return {
         "tool_call": ToolCallBlock(
             id="call-1",
-            name="PermissionAuditDemoTool",
+            name="PermissionDemoTool",
             input=json.dumps({"decision": "allow", "label": secret}),
         ),
-        "tool": PermissionAuditDemoTool(),
+        "tool": PermissionDemoTool(),
         "tool_input": {"decision": "allow", "label": secret},
     }
 
@@ -120,7 +120,7 @@ class PermissionAuditMiddlewareTest(IsolatedAsyncioTestCase):
         self.assertEqual(record["session_id"], "s-1")
         self.assertEqual(record["reply_id"], "reply-9")
         self.assertEqual(record["tool_call_id"], "call-1")
-        self.assertEqual(record["tool_name"], "PermissionAuditDemoTool")
+        self.assertEqual(record["tool_name"], "PermissionDemoTool")
         self.assertEqual(record["mode"], "default")
         self.assertEqual(record["decision"]["behavior"], "allow")
 
@@ -176,7 +176,7 @@ class UserToolPolicyMiddlewareTest(IsolatedAsyncioTestCase):
         middleware = UserToolPolicyMiddleware(
             user_id="restricted-user",
             denied_tools_by_user={
-                "restricted-user": {"PermissionAuditDemoTool"},
+                "restricted-user": {"PermissionDemoTool"},
             },
         )
         calls = 0
@@ -204,7 +204,7 @@ class UserToolPolicyMiddlewareTest(IsolatedAsyncioTestCase):
         middleware = UserToolPolicyMiddleware(
             user_id="regular-user",
             denied_tools_by_user={
-                "restricted-user": {"PermissionAuditDemoTool"},
+                "restricted-user": {"PermissionDemoTool"},
             },
         )
         expected = PermissionDecision(
@@ -235,7 +235,7 @@ class UserToolPolicyMiddlewareTest(IsolatedAsyncioTestCase):
         policy = UserToolPolicyMiddleware(
             user_id="restricted-user",
             denied_tools_by_user={
-                "restricted-user": {"PermissionAuditDemoTool"},
+                "restricted-user": {"PermissionDemoTool"},
             },
         )
         input_kwargs = _input_kwargs()
@@ -262,12 +262,12 @@ class UserToolPolicyMiddlewareTest(IsolatedAsyncioTestCase):
         )
 
 
-class PermissionAuditDemoToolTest(IsolatedAsyncioTestCase):
+class PermissionDemoToolTest(IsolatedAsyncioTestCase):
     """The side-effect-free demo emits all final permission behaviors."""
 
     async def test_engine_returns_selected_final_behavior(self) -> None:
         """DEFAULT mode resolves ALLOW, ASK, and DENY as demonstrated."""
-        tool = PermissionAuditDemoTool()
+        tool = PermissionDemoTool()
         engine = PermissionEngine(PermissionContext())
         for behavior in (
             PermissionBehavior.ALLOW,
@@ -282,7 +282,7 @@ class PermissionAuditDemoToolTest(IsolatedAsyncioTestCase):
 
     async def test_call_has_no_side_effects(self) -> None:
         """Executing the demo tool only returns an acknowledgement."""
-        chunk = await PermissionAuditDemoTool().call(
+        chunk = await PermissionDemoTool().call(
             decision="allow",
             label="hello",
         )
@@ -301,7 +301,7 @@ class PermissionAuditServiceSmokeTest(IsolatedAsyncioTestCase):
             self.skipTest(f"cannot import example main (deps/Redis?): {exc}")
         self.assertTrue(hasattr(main_module, "app"))
         self.assertIsNotNone(main_module.permission_middlewares_factory)
-        self.assertIsNotNone(main_module.permission_audit_demo_tools)
+        self.assertIsNotNone(main_module.permission_demo_tools)
         middlewares = await main_module.permission_middlewares_factory(
             "restricted-user",
             "agent-1",

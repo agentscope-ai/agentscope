@@ -1,4 +1,4 @@
-# Permission Audit Agent Service Example
+# Permission Middleware Agent Service Example
 
 English | [中文](README_zh.md)
 
@@ -15,7 +15,7 @@ middleware hook through an audit-logging use case. It reuses the existing
   decision.
 - The audit middleware calls `next_handler(**input_kwargs)` once, records the
   returned ASK/DENY/ALLOW decision, and returns that same object unchanged.
-- A user-tool policy middleware denies `PermissionAuditDemoTool` for one
+- A user-tool policy middleware denies `PermissionDemoTool` for one
   configured user without invoking the built-in permission engine.
 - Audit records carry application identity and correlation fields but exclude
   raw tool input.
@@ -40,7 +40,7 @@ redis-server                 # or: brew services start redis
 Run this service:
 
 ```bash
-cd examples/permission_audit_service
+cd examples/permission_middleware_service
 python main.py
 ```
 
@@ -48,7 +48,7 @@ The restricted demo user defaults to `restricted-user`. Override it when
 needed:
 
 ```bash
-PERMISSION_AUDIT_RESTRICTED_USER_ID=another-user python main.py
+PERMISSION_MIDDLEWARE_RESTRICTED_USER_ID=another-user python main.py
 ```
 
 Then start the existing Web UI:
@@ -62,7 +62,7 @@ pnpm dev
 Point the UI at `http://localhost:8000`. The username entered on the connection
 page is sent to the service as `X-User-ID`. Use `regular-user` for the normal
 permission scenarios, then ask the agent to invoke
-`PermissionAuditDemoTool` with `decision=allow`, `decision=ask`, or
+`PermissionDemoTool` with `decision=allow`, `decision=ask`, or
 `decision=deny`. Permission interactions appear in the UI as usual and one
 JSON audit record is written to the service console for each checked call.
 
@@ -77,7 +77,7 @@ JSON audit record is written to the service console for each checked call.
   "session_id": "session-1",
   "reply_id": "reply-1",
   "tool_call_id": "call-1",
-  "tool_name": "PermissionAuditDemoTool",
+  "tool_name": "PermissionDemoTool",
   "mode": "default",
   "decision": {
     "behavior": "ask",

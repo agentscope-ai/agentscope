@@ -1,4 +1,4 @@
-# 权限审计 Agent Service 示例
+# 权限中间件 Agent Service 示例
 
 [English](README.md) | 中文
 
@@ -14,7 +14,7 @@
   或直接返回应用决策以短路后续链路。
 - 审计中间件调用一次 `next_handler(**input_kwargs)`，记录下游权限链返回的
   ASK/DENY/ALLOW 决策，并原样返回同一个决策对象。
-- 用户工具策略中间件会拒绝一个指定用户调用 `PermissionAuditDemoTool`，且不会
+- 用户工具策略中间件会拒绝一个指定用户调用 `PermissionDemoTool`，且不会
   进入内置权限引擎。
 - 审计记录包含应用身份和关联字段，但不包含原始工具输入。
 - 一个无副作用的演示工具可确定性地触发三种最终决策行为。
@@ -35,14 +35,14 @@ redis-server                 # 或：brew services start redis
 启动本示例服务：
 
 ```bash
-cd examples/permission_audit_service
+cd examples/permission_middleware_service
 python main.py
 ```
 
 默认受限用户为 `restricted-user`，也可以通过环境变量修改：
 
 ```bash
-PERMISSION_AUDIT_RESTRICTED_USER_ID=another-user python main.py
+PERMISSION_MIDDLEWARE_RESTRICTED_USER_ID=another-user python main.py
 ```
 
 再启动既有 Web UI：
@@ -55,7 +55,7 @@ pnpm dev
 
 将 UI 指向 `http://localhost:8000`。连接页面填写的用户名会作为
 `X-User-ID` 发送给服务。使用 `regular-user` 体验常规权限场景，然后让 Agent 调用
-`PermissionAuditDemoTool`，并传入 `decision=allow`、`decision=ask` 或
+`PermissionDemoTool`，并传入 `decision=allow`、`decision=ask` 或
 `decision=deny`。权限交互会照常显示在 UI 中；每次经过权限检查的调用都会在
 服务控制台输出一条 JSON 审计记录。
 
@@ -70,7 +70,7 @@ pnpm dev
   "session_id": "session-1",
   "reply_id": "reply-1",
   "tool_call_id": "call-1",
-  "tool_name": "PermissionAuditDemoTool",
+  "tool_name": "PermissionDemoTool",
   "mode": "default",
   "decision": {
     "behavior": "ask",

@@ -21,22 +21,22 @@ from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.middleware import MiddlewareBase
 from agentscope.tool import ToolBase
 
-# examples/permission_audit_service/ is not a package; import siblings.
+# examples/permission_middleware_service/ is not a package; import siblings.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from audit_middleware import (  # noqa: E402
     PermissionAuditMiddleware,
     console_audit_sink,
 )
-from demo_tool import PermissionAuditDemoTool  # noqa: E402
+from demo_tool import PermissionDemoTool  # noqa: E402
 from user_tool_policy import UserToolPolicyMiddleware  # noqa: E402
 
 
 RESTRICTED_USER_ID = os.getenv(
-    "PERMISSION_AUDIT_RESTRICTED_USER_ID",
+    "PERMISSION_MIDDLEWARE_RESTRICTED_USER_ID",
     "restricted-user",
 )
 DENIED_TOOLS_BY_USER = {
-    RESTRICTED_USER_ID: {PermissionAuditDemoTool.name},
+    RESTRICTED_USER_ID: {PermissionDemoTool.name},
 }
 
 
@@ -62,13 +62,13 @@ async def permission_middlewares_factory(
     ]
 
 
-async def permission_audit_demo_tools(
+async def permission_demo_tools(
     _user_id: str,
     _agent_id: str,
     _session_id: str,
 ) -> list[ToolBase]:
     """Per-assembly demo tool so every session can exercise audit scenarios."""
-    return [PermissionAuditDemoTool()]
+    return [PermissionDemoTool()]
 
 
 storage = RedisStorage(host="localhost", port=6379)
@@ -83,7 +83,7 @@ app = create_app(
         ),
     ),
     extra_agent_middlewares=permission_middlewares_factory,
-    extra_agent_tools=permission_audit_demo_tools,
+    extra_agent_tools=permission_demo_tools,
     extra_middlewares=[
         Middleware(
             CORSMiddleware,
