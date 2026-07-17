@@ -1596,11 +1596,10 @@ class Agent:
     ) -> PermissionDecision:
         """Run permission checking through the middleware onion.
 
-        Middleware inputs are copied once at the chain boundary, so forwarded
-        changes are visible to downstream permission middleware and the
-        built-in engine without rewriting the actual tool invocation. A call
-        already allowed by user confirmation still traverses the middleware
-        chain, but skips re-evaluation by the built-in engine.
+        The middleware chain receives copies of the tool call and tool input;
+        changes to these copies do not alter the eventual tool invocation. A
+        call already allowed by user confirmation still traverses the
+        middleware chain, but skips re-evaluation by the built-in engine.
 
         Args:
             tool_call (`ToolCallBlock`):

@@ -173,9 +173,9 @@ class MiddlewareBase:  # pylint: disable=unused-argument
         the agent.
 
         Middleware can delegate with ``next_handler(**input_kwargs)``, replace
-        the returned decision, or return a decision without delegating. Changes
-        forwarded to ``next_handler`` affect downstream permission evaluation
-        only, not the actual tool invocation.
+        the returned decision, or return a decision without delegating. The
+        chain receives copies of ``tool_call`` and ``tool_input``; changes to
+        these copies do not alter the eventual tool invocation.
 
         .. note::
             Returning without calling ``next_handler`` bypasses the built-in

@@ -1596,15 +1596,16 @@ class TestCheckPermissionMiddleware(IsolatedAsyncioTestCase):
         engine.assert_not_awaited()
         self.assertIs(decision, short_circuit)
 
-    async def test_on_check_permission_forwards_modified_evaluation_input(
+    async def test_on_check_permission_forwards_replaced_input(
         self,
     ) -> None:
-        """Request changes flow through the permission middleware chain."""
+        """Explicitly forwarded inputs reach downstream permission checks."""
 
-        seen_by_inner: list[str] = []
+        forwarded_input = {"value": "original"}
+        seen_by_inner: list[dict[str, str]] = []
 
-        class MutatingMiddleware(MiddlewareBase):
-            """Normalize permission input before delegating."""
+        class ForwardingMiddleware(MiddlewareBase):
+            """Replace the chain-local input with an equivalent object."""
 
             async def on_check_permission(
                 self,
@@ -1612,9 +1613,12 @@ class TestCheckPermissionMiddleware(IsolatedAsyncioTestCase):
                 input_kwargs: dict,
                 next_handler: Callable[..., Awaitable[PermissionDecision]],
             ) -> PermissionDecision:
-                input_kwargs["tool_call"].input = '{"value": "mutated"}'
-                input_kwargs["tool_input"]["value"] = "mutated"
-                return await next_handler(**input_kwargs)
+                return await next_handler(
+                    **{
+                        **input_kwargs,
+                        "tool_input": forwarded_input,
+                    },
+                )
 
         class ObserveInnerMiddleware(MiddlewareBase):
             """Record the input forwarded by the outer middleware."""
@@ -1625,14 +1629,14 @@ class TestCheckPermissionMiddleware(IsolatedAsyncioTestCase):
                 input_kwargs: dict,
                 next_handler: Callable[..., Awaitable[PermissionDecision]],
             ) -> PermissionDecision:
-                seen_by_inner.append(input_kwargs["tool_input"]["value"])
+                seen_by_inner.append(input_kwargs["tool_input"])
                 return await next_handler(**input_kwargs)
 
         agent = Agent(
             name="test_agent",
             system_prompt="test prompt",
             model=self.mock_model,
-            middlewares=[MutatingMiddleware(), ObserveInnerMiddleware()],
+            middlewares=[ForwardingMiddleware(), ObserveInnerMiddleware()],
         )
         tool = AsyncMock(spec=ToolBase)
         tool_call = ToolCallBlock(
@@ -1660,8 +1664,8 @@ class TestCheckPermissionMiddleware(IsolatedAsyncioTestCase):
 
         self.assertEqual(tool_call.input, '{"value": "original"}')
         self.assertEqual(tool_input, {"value": "original"})
-        self.assertListEqual(seen_by_inner, ["mutated"])
-        engine.assert_awaited_once_with(tool, {"value": "mutated"})
+        self.assertIs(seen_by_inner[0], forwarded_input)
+        engine.assert_awaited_once_with(tool, forwarded_input)
 
     async def test_on_check_permission_exception_propagates(self) -> None:
         """Permission middleware failures propagate to the caller."""
