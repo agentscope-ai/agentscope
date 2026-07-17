@@ -6,6 +6,7 @@ from ._model_card import ModelCard
 from ._model_response import ChatResponse, StructuredResponse, FinishedReason
 from ._model_usage import ChatUsage
 from ._anthropic import AnthropicChatModel
+from ._atlascloud import AtlasCloudChatModel
 from ._dashscope import DashScopeChatModel
 from ._deepseek import DeepSeekChatModel
 from ._gemini import GeminiChatModel
@@ -23,6 +24,7 @@ __all__ = [
     "ModelCard",
     "StructuredResponse",
     "AnthropicChatModel",
+    "AtlasCloudChatModel",
     "DashScopeChatModel",
     "DeepSeekChatModel",
     "GeminiChatModel",
