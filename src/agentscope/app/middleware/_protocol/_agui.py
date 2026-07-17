@@ -33,6 +33,7 @@ from ....event import (
     ToolResultTextDeltaEvent,
     UserConfirmResultEvent,
 )
+from ....types import ReplyFinishedReason
 
 if TYPE_CHECKING:
     from ag_ui.core.events import BaseEvent as AGUIBaseEvent
@@ -99,6 +100,11 @@ class AGUIProtocolMiddleware(ProtocolMiddlewareBase):
             )
 
         if isinstance(event, ReplyEndEvent):
+            if event.finished_reason == ReplyFinishedReason.ERROR:
+                return AGUIRunErrorEvent(
+                    message="Agent reply failed",
+                    code="agent_reply_error",
+                )
             return AGUIRunFinishedEvent(
                 thread_id=event.session_id,
                 run_id=event.reply_id,

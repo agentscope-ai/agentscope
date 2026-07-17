@@ -1,4 +1,4 @@
-import { EventType } from '@agentscope-ai/agentscope/event';
+import { EventType, ReplyFinishedReason } from '@agentscope-ai/agentscope/event';
 import type {
 	AgentEvent,
 	CustomEvent,
@@ -56,6 +56,15 @@ const hitlKey = (e: { worker_session_id: string; reply_id: string }) =>
 	`${e.worker_session_id}:${e.reply_id}`;
 
 /**
+ * Finalize an in-memory reply when the server cannot emit REPLY_END.
+ * This client-local stamp is not persisted and will not survive a refresh.
+ */
+const finishMessage = (msg: Msg, reason: ReplyFinishedReason, finishedAt: string) => {
+	if (!msg.finished_at) msg.finished_at = finishedAt;
+	msg.finished_reason = reason;
+};
+
+/**
  * Lifecycle phase of the reply currently owned by this session.
  *
  * - ``idle`` — no in-flight reply; the send button is enabled.
@@ -72,7 +81,7 @@ const hitlKey = (e: { worker_session_id: string; reply_id: string }) =>
  */
 export type ReplyPhase = 'idle' | 'streaming' | 'interrupting';
 
-/** Safety fallback: force phase back to idle if REPLY_END is not seen. */
+/** Safety fallback: terminate locally if REPLY_END is not seen. */
 const INTERRUPT_TIMEOUT_MS = 10_000;
 
 /**
@@ -160,6 +169,19 @@ export function useMessages(
 		});
 	}, []);
 
+	const finalizeCurrentReply = useCallback(
+		(reason: ReplyFinishedReason) => {
+			if (currentReplyRef.current) {
+				finishMessage(currentReplyRef.current, reason, new Date().toISOString());
+			}
+			currentReplyRef.current = null;
+			clearInterruptTimer();
+			setPhase('idle');
+			scheduleUpdate();
+		},
+		[clearInterruptTimer, scheduleUpdate],
+	);
+
 	/** Apply a single AgentEvent to the in-progress reply. */
 	const processEvent = useCallback(
 		(event: AgentEvent) => {
@@ -199,9 +221,9 @@ export function useMessages(
 				if (currentReplyRef.current) {
 					appendEvent(currentReplyRef.current, event);
 				}
+				currentReplyRef.current = null;
 				clearInterruptTimer();
 				setPhase('idle');
-				currentReplyRef.current = null;
 			} else if (currentReplyRef.current) {
 				appendEvent(currentReplyRef.current, event);
 			}
@@ -268,12 +290,17 @@ export function useMessages(
 				const tail = messages[messages.length - 1];
 				if (is_running || hasPendingToolCall(tail)) {
 					setPhase('streaming');
-					if (hasPendingToolCall(tail)) {
+					if (tail?.role === 'assistant' && !tail.finished_at) {
 						// Prime the ref so continuation events (which
 						// arrive without a fresh REPLY_START) apply to
 						// the right msg.
 						currentReplyRef.current = tail ?? null;
 					}
+				} else if (tail?.role === 'assistant' && !tail.finished_at) {
+					// The server is idle, so an unfinished non-HITL tail can only
+					// be left by a worker/process failure that could not emit its
+					// terminal event.
+					finishMessage(tail, ReplyFinishedReason.ERROR, new Date().toISOString());
 				}
 				scheduleUpdate();
 			} catch (e) {
@@ -293,8 +320,13 @@ export function useMessages(
 					if (cancelled) break;
 					processEvent(event);
 				}
+				if (!cancelled) {
+					finalizeCurrentReply(ReplyFinishedReason.ERROR);
+					setError(new Error('Session event stream closed unexpectedly.'));
+				}
 			} catch (e) {
 				if ((e as Error).name !== 'AbortError' && !cancelled) {
+					finalizeCurrentReply(ReplyFinishedReason.ERROR);
 					setError(e as Error);
 				}
 			}
@@ -306,7 +338,15 @@ export function useMessages(
 			abortRef.current = null;
 			clearInterruptTimer();
 		};
-	}, [agentId, sessionId, scheduleUpdate, processEvent, audioManager, clearInterruptTimer]);
+	}, [
+		agentId,
+		sessionId,
+		scheduleUpdate,
+		processEvent,
+		audioManager,
+		clearInterruptTimer,
+		finalizeCurrentReply,
+	]);
 
 	/**
 	 * Send a user message. Appends the message to the local list
@@ -412,16 +452,15 @@ export function useMessages(
 		clearInterruptTimer();
 		interruptTimerRef.current = setTimeout(() => {
 			interruptTimerRef.current = null;
-			setPhase((prev) => (prev === 'interrupting' ? 'idle' : prev));
+			finalizeCurrentReply(ReplyFinishedReason.INTERRUPTED);
 		}, INTERRUPT_TIMEOUT_MS);
 		try {
 			await sessionApi.interrupt(sessionId, agentId);
 		} catch (e) {
-			clearInterruptTimer();
-			setPhase((prev) => (prev === 'interrupting' ? 'idle' : prev));
+			finalizeCurrentReply(ReplyFinishedReason.ERROR);
 			setError(e as Error);
 		}
-	}, [agentId, sessionId, clearInterruptTimer]);
+	}, [agentId, sessionId, clearInterruptTimer, finalizeCurrentReply]);
 
 	/**
 	 * Confirm or deny a tool call that a *team member* is awaiting,

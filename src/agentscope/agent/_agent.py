@@ -56,11 +56,11 @@ from ..event import (
     DataBlockDeltaEvent,
     DataBlockEndEvent,
     ExceedMaxItersEvent,
-    ReplyFinishedReason,
     UserInterruptEvent,
     HintBlockEvent,
 )
 from ..exception import AgentOrientedException
+from ..types import ReplyFinishedReason
 from ..model import (
     ChatResponse,
     ChatUsage,
@@ -741,6 +741,7 @@ class Agent:
         """Core reply logic."""
 
         end_event: ReplyEndEvent | None = None
+        reply_active = False
         try:
             # Dispatch the unified inputs by type into the legacy local
             # variables
@@ -785,6 +786,7 @@ class Agent:
             #  - if event is None and agent is not waiting for an event
             # ===================================================================
             is_awaiting = await self._check_incoming_event(event)
+            reply_active = is_awaiting
 
             # ===================================================================
             # Step 2: Handling agent event if applicable
@@ -799,6 +801,7 @@ class Agent:
                 # Update the context with the incoming message and state
                 self.state.reply_id = _generate_id()
                 self.state.cur_iter = 0
+                reply_active = True
 
                 yield ReplyStartEvent(
                     session_id=self.state.session_id,
@@ -968,6 +971,18 @@ class Agent:
 
             if self.react_config.interruption_raise_cancelled_error:
                 raise
+
+        except Exception:
+            # Preserve the exception for callers and logs, but close an
+            # already-started reply first so streaming consumers do not wait
+            # forever for a terminal event.
+            if reply_active:
+                end_event = ReplyEndEvent(
+                    session_id=self.state.session_id,
+                    reply_id=self.state.reply_id,
+                    finished_reason=ReplyFinishedReason.ERROR,
+                )
+            raise
 
         finally:
             if end_event is not None:
