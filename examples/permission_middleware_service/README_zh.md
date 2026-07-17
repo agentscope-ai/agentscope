@@ -23,6 +23,32 @@
 会改变权限结果的中间件将成为应用可信授权边界的一部分。本示例使用同一个
 hook，但只记录后续权限链返回的决策，不改变结果。
 
+## 运行效果
+
+### ASK 用户确认
+
+当 `decision=ask` 时，Agent 会在工具执行前暂停，并展示既有的确认界面：
+
+![PermissionDemoTool 的 ASK 确认界面](assets/permission-ask.png)
+
+### 权限审计记录
+
+最外层审计中间件会记录完整权限链返回的决策。下面的控制台日志展示了
+`restricted-user` 被应用策略判定为 DENY 的记录：
+
+![权限决策审计记录](assets/permission-audit-log.png)
+
+### 应用级按用户 DENY
+
+先使用 `restricted-user` 连接 Web UI，以触发示例中的应用策略：
+
+![使用 restricted-user 连接 Web UI](assets/restricted-user-setup.png)
+
+此时即使请求 `decision=allow`，应用中间件仍会在内置权限引擎和工具执行前
+短路为 DENY：
+
+![按用户拒绝工具调用](assets/permission-user-deny.png)
+
 ## 启动服务
 
 安装带 service extras 的 AgentScope，并启动 Redis：

@@ -28,6 +28,34 @@ that changes permission outcomes becomes part of the application's trusted
 authorization boundary. This example uses the same hook only to audit the
 decision returned by the downstream permission chain.
 
+## Screenshots
+
+### ASK confirmation
+
+With `decision=ask`, Agent pauses before tool execution and displays the
+existing confirmation UI:
+
+![ASK confirmation for PermissionDemoTool](assets/permission-ask.png)
+
+### Permission audit record
+
+The outer audit middleware records the decision returned by the complete
+permission chain. This console entry shows the application-owned DENY for
+`restricted-user`:
+
+![Permission decision audit record](assets/permission-audit-log.png)
+
+### Application-owned per-user DENY
+
+Connect the Web UI as `restricted-user` to exercise the application policy:
+
+![Web UI connected as restricted-user](assets/restricted-user-setup.png)
+
+The application middleware then short-circuits a requested `decision=allow`
+to DENY before the built-in permission engine and tool execution:
+
+![Per-user tool denial](assets/permission-user-deny.png)
+
 ## Run the service
 
 Install AgentScope with service extras and start Redis:
