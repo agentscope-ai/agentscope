@@ -168,18 +168,18 @@ class MiddlewareBase:  # pylint: disable=unused-argument
     ) -> "PermissionDecision":
         """Hook for intercepting permission checking for one tool call.
 
-        This onion-pattern hook runs after the tool has been resolved and its
-        input has been parsed and validated, but before the resulting decision
-        is consumed by the agent. Calling ``next_handler(**input_kwargs)``
-        delegates to the next middleware and, at the innermost layer, to
-        ``PermissionEngine.check_permission``.
+        This hook runs after the tool has been resolved and its input has been
+        parsed and validated, but before the resulting decision is consumed by
+        the agent.
 
-        A middleware can change inputs forwarded for downstream permission
-        evaluation, inspect or replace the returned decision, or return a
-        decision without calling ``next_handler``. Forwarded input changes do
-        not rewrite the actual tool invocation. Middleware using these
-        capabilities becomes part of the application's trusted authorization
-        boundary.
+        Middleware can delegate with ``next_handler(**input_kwargs)``, replace
+        the returned decision, or return a decision without delegating. Changes
+        forwarded to ``next_handler`` affect downstream permission evaluation
+        only, not the actual tool invocation.
+
+        .. note::
+            Returning without calling ``next_handler`` bypasses the built-in
+            permission resolution for that call.
 
         Args:
             agent (`Agent`):
@@ -189,11 +189,11 @@ class MiddlewareBase:  # pylint: disable=unused-argument
 
                 - ``tool_call`` (``ToolCallBlock``): validated call metadata
                   used to correlate the permission decision.
-                - ``tool`` (``ToolBase``): the resolved live tool instance.
+                - ``tool`` (``ToolBase``): the resolved tool instance.
                 - ``tool_input`` (``dict``): the parsed and validated input.
             next_handler (`Callable[..., Awaitable[PermissionDecision]]`):
                 Callable that executes the next middleware or the built-in
-                permission engine.
+                permission resolution.
 
         Returns:
             `PermissionDecision`:
