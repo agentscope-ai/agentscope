@@ -853,7 +853,7 @@ class TracingTest(IsolatedAsyncioTestCase):
     async def _drive_then_close_from_other_task(self, gen: Any) -> None:
         """Advance an async generator once, then close it from a *different*
         asyncio task, reproducing the cross-context close in issue #2076."""
-        await gen.__anext__()
+        await anext(gen)
 
         async def _close() -> None:
             await gen.aclose()
