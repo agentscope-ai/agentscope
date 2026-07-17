@@ -23,7 +23,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from agentscope.tool import ExecResult
 from agentscope.workspace import E2BWorkspace
 from agentscope.workspace import E2BBackend
-from agentscope.workspace._e2b._bootstrap import SANDBOX_WORKDIR
+from agentscope.workspace._e2b._constants import SANDBOX_WORKDIR
 
 
 # ── E2B availability check ─────────────────────────────────────────
@@ -147,7 +147,3 @@ class TestE2BBackend(IsolatedAsyncioTestCase):
 
         # Deleting a non-existent path must not raise.
         await self.backend.delete_path(f"{SANDBOX_WORKDIR}/missing")
-
-
-if __name__ == "__main__":
-    unittest.main()

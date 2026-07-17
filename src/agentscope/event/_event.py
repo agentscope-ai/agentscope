@@ -14,6 +14,7 @@ from ..message import (
     ToolResultBlock,
     ToolResultState,
 )
+from ..model import FinishedReason
 from ..permission import PermissionRule
 
 
@@ -55,6 +56,7 @@ class EventType(StrEnum):
     REQUIRE_EXTERNAL_EXECUTION = "REQUIRE_EXTERNAL_EXECUTION"
 
     USER_CONFIRM_RESULT = "USER_CONFIRM_RESULT"
+    USER_INTERRUPT = "USER_INTERRUPT"
     EXTERNAL_EXECUTION_RESULT = "EXTERNAL_EXECUTION_RESULT"
 
     CUSTOM = "CUSTOM"
@@ -88,6 +90,14 @@ class ReplyStartEvent(EventBase):
     """Role of the agent."""
 
 
+class ReplyEndReason(StrEnum):
+    """The reason for reply ended."""
+
+    COMPLETED = "completed"
+    INTERRUPTED = "interrupted"
+    EXCEED_MAX_ITERS = "exceed_max_iters"
+
+
 class ReplyEndEvent(EventBase):
     """Reply end event."""
 
@@ -97,6 +107,8 @@ class ReplyEndEvent(EventBase):
     """ID of the session this reply belongs to."""
     reply_id: str
     """ID of the reply message produced by this reply."""
+    finished_reason: ReplyEndReason = ReplyEndReason.COMPLETED
+    """The finished reason of this reply."""
 
 
 class ModelCallStartEvent(EventBase):
@@ -121,6 +133,10 @@ class ModelCallEndEvent(EventBase):
     """Number of input tokens consumed."""
     output_tokens: int
     """Number of output tokens generated."""
+    finished_reason: FinishedReason = Field(
+        default=FinishedReason.COMPLETED,
+    )
+    """The finished reason of this model call."""
 
 
 class TextBlockStartEvent(EventBase):
@@ -428,6 +444,31 @@ class UserConfirmResultEvent(EventBase):
     """Confirmation results for each pending tool call."""
 
 
+class UserInterruptEvent(EventBase):
+    """User-initiated interrupt targeting a parked reply.
+
+    Delivered to :meth:`Agent.reply_stream` (or :meth:`Agent.reply`) to
+    abort a reply that is currently waiting on external input — either
+    user confirmation (:class:`RequireUserConfirmEvent`) or external
+    execution (:class:`RequireExternalExecutionEvent`).
+
+    On receipt, the agent closes every pending tool call with an
+    interrupted tool result, emits a fallback assistant message, ends
+    the reply with :attr:`ReplyEndReason.INTERRUPTED`, and does **not**
+    enter the reasoning-acting loop.
+
+    .. note:: This event is only meaningful for parked replies. To
+        interrupt a running (actively-generating) reply, cancel the
+        underlying task instead — the agent handles that path via its
+        own ``CancelledError`` cleanup.
+    """
+
+    type: Literal[EventType.USER_INTERRUPT] = EventType.USER_INTERRUPT
+    """Event type."""
+    reply_id: str
+    """ID of the reply message this interrupt targets."""
+
+
 class ExternalExecutionResultEvent(EventBase):
     """External execution result event."""
 
@@ -501,6 +542,7 @@ AgentEvent: TypeAlias = (
     | ToolResultDataDeltaEvent
     | ToolResultEndEvent
     | UserConfirmResultEvent
+    | UserInterruptEvent
     | ExternalExecutionResultEvent
     | CustomEvent
 )

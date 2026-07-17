@@ -2,7 +2,7 @@ import { CircleAlert, Loader2, Save } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import type { AgentRecord, ContextConfig, InviteConfig, ReActConfig } from '@/api';
+import type { AgentView, ContextConfig, InviteConfig, ReActConfig } from '@/api';
 import {
 	AgentFormFields,
 	defaultAgentFormValues,
@@ -27,7 +27,7 @@ import { formatApiErrorForAlert } from '@/lib/api-error';
 interface Props {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
-	agent: AgentRecord;
+	agent: AgentView;
 	onUpdated?: () => void;
 }
 

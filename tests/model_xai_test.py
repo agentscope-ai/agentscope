@@ -417,6 +417,20 @@ class TestXAIStream(IsolatedAsyncioTestCase):
             [(r.is_last, r.content) for r in responses],
             [
                 (False, [TextBlock.model_construct(id=A, text="I'll search")]),
+                # ``xai_sdk`` does not stream tool calls — they only
+                # appear on the final accumulated response object, so
+                # the parser emits them as a dedicated trailing carrier
+                # delta that the base accumulator merges.
+                (
+                    False,
+                    [
+                        ToolCallBlock(
+                            id="call-1",
+                            name="search",
+                            input='{"q":"test"}',
+                        ),
+                    ],
+                ),
                 (
                     True,
                     [

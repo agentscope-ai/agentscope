@@ -17,13 +17,11 @@ from agentscope.permission import (
     PermissionRule,
     PermissionBehavior,
     PermissionDecision,
-    PermissionEvaluation,
     AdditionalWorkingDirectory,
 )
 from agentscope.tool import (
     Bash,
     Write,
-    Read,
     Edit,
     ToolBase,
 )
@@ -266,10 +264,15 @@ class PermissionEngineFileRuleTest(IsolatedAsyncioTestCase):
         self.engine = PermissionEngine(self.context)
 
     async def test_file_glob_pattern_matching(self) -> None:
-        """Test file path glob pattern matching."""
+        """Test file path glob pattern matching.
+
+        Uses ``Write`` (a mutating tool) rather than a read-only tool:
+        read-only invocations are auto-allowed before rule matching in
+        every mode, so they cannot exercise the allow-rule glob path.
+        """
         self.engine.add_rule(
             PermissionRule(
-                tool_name="Read",
+                tool_name="Write",
                 rule_content="*.py",
                 behavior=PermissionBehavior.ALLOW,
                 source="test",
@@ -278,14 +281,14 @@ class PermissionEngineFileRuleTest(IsolatedAsyncioTestCase):
 
         # Test matching file
         decision = await self.engine.check_permission(
-            Read(),
+            Write(),
             {"file_path": "test.py"},
         )
         self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
 
         # Test non-matching file
         decision = await self.engine.check_permission(
-            Read(),
+            Write(),
             {"file_path": "test.txt"},
         )
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
@@ -473,9 +476,14 @@ class PermissionEngineSuggestionTest(IsolatedAsyncioTestCase):
         self.assertIn("git commit:*", suggestion_contents)
 
     async def test_file_suggestions(self) -> None:
-        """Test suggestion generation for file operations."""
+        """Test suggestion generation for file operations.
+
+        Uses ``Write`` (a mutating tool): read-only tools are auto-allowed
+        and an ALLOW decision carries no suggestions, so a mutating tool is
+        needed to reach the ASK path that generates them.
+        """
         decision = await self.engine.check_permission(
-            Read(),
+            Write(),
             {"file_path": "/tmp/test.py"},
         )
 
@@ -812,30 +820,3 @@ class PermissionEngineBypassImmuneFieldTest(IsolatedAsyncioTestCase):
             {},
         )
         self.assertEqual(decision.behavior, PermissionBehavior.DENY)
-
-
-class CheckPermissionBackwardCompatTest(IsolatedAsyncioTestCase):
-    """check_permission must still return PermissionDecision, not
-    PermissionEvaluation, after evaluate_permission is introduced."""
-
-    @unittest.skipIf(
-        sys.platform == "win32",
-        "Bash tool is not supported on Windows",
-    )
-    async def test_returns_decision_not_evaluation(self) -> None:
-        """The compatibility API returns PermissionDecision in every mode."""
-        for mode in (
-            PermissionMode.DEFAULT,
-            PermissionMode.EXPLORE,
-            PermissionMode.ACCEPT_EDITS,
-            PermissionMode.BYPASS,
-            PermissionMode.DONT_ASK,
-        ):
-            context = PermissionContext(mode=mode)
-            engine = PermissionEngine(context)
-            decision = await engine.check_permission(Bash(), {"command": "ls"})
-            assert isinstance(
-                decision,
-                PermissionDecision,
-            ), f"mode {mode}: check_permission must return PermissionDecision"
-            assert not isinstance(decision, PermissionEvaluation)

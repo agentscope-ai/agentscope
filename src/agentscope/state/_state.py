@@ -13,6 +13,7 @@ from ..message import (
     DataBlock,
     Msg,
     ToolCallBlock,
+    ToolCallState,
     ToolResultBlock,
     HintBlock,
 )
@@ -219,3 +220,32 @@ class AgentState(BaseModel):
                     content=blocks,
                 ),
             )
+
+    def has_awaiting_tool_calls(self, name: str) -> bool:
+        """Whether the tail assistant message written by ``name`` has
+        any tool call still awaiting an outside response — an
+        ``ASKING`` user confirmation or a ``SUBMITTED`` external
+        execution with no matching tool result yet.
+
+        Args:
+            name (`str`):
+                Only messages authored by this agent name are inspected;
+                observed messages from other agents are ignored.
+
+        Returns:
+            `bool`:
+                ``True`` when at least one such tool call is pending.
+        """
+        if not self.context:
+            return False
+        last_msg = self.context[-1]
+        if last_msg.role != "assistant" or last_msg.name != name:
+            return False
+        result_ids = {b.id for b in last_msg.get_content_blocks("tool_result")}
+        return any(
+            tc.state == ToolCallState.ASKING
+            or (
+                tc.state == ToolCallState.SUBMITTED and tc.id not in result_ids
+            )
+            for tc in last_msg.get_content_blocks("tool_call")
+        )

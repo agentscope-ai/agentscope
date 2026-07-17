@@ -29,8 +29,6 @@ from agentscope.permission import (
     PermissionContext,
     PermissionRule,
     PermissionBehavior,
-    PermissionDecision,
-    PermissionResolution,
     AdditionalWorkingDirectory,
 )
 from agentscope.tool import (
@@ -38,98 +36,9 @@ from agentscope.tool import (
     Write,
     Read,
     Edit,
-    ToolBase,
+    Glob,
+    Grep,
 )
-
-
-class _AlwaysDenyTool(ToolBase):
-    """A tool whose ``check_permissions`` always returns DENY.
-
-    Used to exercise the BYPASS path where a tool-emitted DENY is
-    returned as-is (not suppressed like an ASK).
-    """
-
-    name: str = "always_deny"
-    description: str = "Always deny."
-    input_schema: dict = {
-        "type": "object",
-        "properties": {},
-        "required": [],
-    }
-
-    async def check_permissions(
-        self,
-        tool_input: dict,
-        context: PermissionContext,
-    ) -> PermissionDecision:
-        return PermissionDecision(
-            behavior=PermissionBehavior.DENY,
-            message="tool-emitted DENY",
-        )
-
-    async def __call__(self) -> None:
-        return None
-
-
-class _AlwaysAskTool(ToolBase):
-    """Tool that requests confirmation for a sensitive transfer."""
-
-    name: str = "always_ask"
-    description: str = "Request confirmation before transferring data."
-    input_schema: dict = {
-        "type": "object",
-        "properties": {"value": {"type": "string"}},
-        "required": ["value"],
-    }
-    is_read_only: bool = False
-
-    async def check_permissions(
-        self,
-        tool_input: dict,
-        context: PermissionContext,
-    ) -> PermissionDecision:
-        return PermissionDecision(
-            behavior=PermissionBehavior.ASK,
-            message="Confirm outbound transfer",
-            decision_reason="Tool detected a sensitive transfer",
-        )
-
-    async def __call__(self, value: str) -> str:
-        return value
-
-
-class _PassthroughTool(ToolBase):
-    """Tool that deliberately expresses no permission opinion."""
-
-    name: str = "passthrough"
-    description: str = "Delegate permission policy to the engine."
-    input_schema: dict = {
-        "type": "object",
-        "properties": {"value": {"type": "string"}},
-        "required": ["value"],
-    }
-    is_read_only: bool = False
-
-    async def check_permissions(
-        self,
-        tool_input: dict,
-        context: PermissionContext,
-    ) -> PermissionDecision:
-        return PermissionDecision(
-            behavior=PermissionBehavior.PASSTHROUGH,
-            message="No tool-level permission opinion",
-        )
-
-    async def __call__(self, value: str) -> str:
-        return value
-
-
-def test_allow_rule_override_resolution_is_public() -> None:
-    """ALLOW-rule ASK overrides have a stable machine-readable label."""
-    assert (
-        PermissionResolution.ASK_OVERRIDDEN_BY_ALLOW_RULE.value
-        == "ask_overridden_by_allow_rule"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +67,27 @@ class PermissionEngineDefaultModeTest(IsolatedAsyncioTestCase):
             {"file_path": "/tmp/file.txt"},
         )
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+
+    async def test_default_read_only_tools_auto_allow(self) -> None:
+        """Read / Glob / Grep are read-only and must be auto-allowed in
+        DEFAULT via the read-only fast path — no confirmation prompt.
+
+        Regression for the DEFAULT-mode gap where read-only tools fell
+        through to the default ASK because DEFAULT lacked the read-only
+        fast path that ACCEPT_EDITS / EXPLORE already had.
+        """
+        cases = [
+            (Read(), {"file_path": "/anywhere/file.txt"}),
+            (Glob(), {"pattern": "**/*.py"}),
+            (Grep(), {"pattern": "TODO"}),
+        ]
+        for tool, tool_input in cases:
+            decision = await self.engine.check_permission(tool, tool_input)
+            self.assertEqual(
+                decision.behavior,
+                PermissionBehavior.ALLOW,
+                f"Expected ALLOW for read-only tool {tool.name} in DEFAULT",
+            )
 
     async def test_default_deny_rule_returns_deny(self) -> None:
         """Deny rule has the highest priority."""
@@ -916,6 +846,99 @@ class PermissionEngineDontAskModeTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
 
+    async def test_dont_ask_read_only_tools_auto_allow(self) -> None:
+        """Read / Glob / Grep are auto-allowed in DONT_ASK: the read-only
+        fast path applies in every mode, so unattended runs can freely
+        inspect files without an (impossible) prompt."""
+        cases = [
+            (Read(), {"file_path": "/anywhere/file.txt"}),
+            (Glob(), {"pattern": "**/*.py"}),
+            (Grep(), {"pattern": "TODO"}),
+        ]
+        for tool, tool_input in cases:
+            decision = await self.engine.check_permission(tool, tool_input)
+            self.assertEqual(
+                decision.behavior,
+                PermissionBehavior.ALLOW,
+                f"Expected ALLOW for read-only tool {tool.name} in DONT_ASK",
+            )
+
+    async def test_dont_ask_edit_within_working_directory_allows(
+        self,
+    ) -> None:
+        """DONT_ASK is the unattended counterpart of ACCEPT_EDITS: edits
+        within a configured working directory are auto-allowed (no user is
+        available to grant them interactively)."""
+        context = PermissionContext(
+            mode=PermissionMode.DONT_ASK,
+            working_directories={
+                "/tmp/project": AdditionalWorkingDirectory(
+                    path="/tmp/project",
+                    source="test",
+                ),
+            },
+        )
+        engine = PermissionEngine(context)
+        for tool in (Write(), Edit()):
+            decision = await engine.check_permission(
+                tool,
+                {"file_path": "/tmp/project/file.txt"},
+            )
+            self.assertEqual(
+                decision.behavior,
+                PermissionBehavior.ALLOW,
+                f"Expected ALLOW for {tool.name} inside DONT_ASK working dir",
+            )
+
+    async def test_dont_ask_edit_outside_working_directory_denies(
+        self,
+    ) -> None:
+        """Edits outside the working directory cannot be granted without a
+        user to ask, so they are refused (DONT_ASK never returns ASK)."""
+        context = PermissionContext(
+            mode=PermissionMode.DONT_ASK,
+            working_directories={
+                "/tmp/project": AdditionalWorkingDirectory(
+                    path="/tmp/project",
+                    source="test",
+                ),
+            },
+        )
+        engine = PermissionEngine(context)
+        decision = await engine.check_permission(
+            Write(),
+            {"file_path": "/home/user/other.txt"},
+        )
+        self.assertEqual(decision.behavior, PermissionBehavior.DENY)
+
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "Bash tool is not supported on Windows",
+    )
+    async def test_dont_ask_bash_filesystem_command_working_dir(self) -> None:
+        """DONT_ASK auto-allows filesystem commands whose targets are all
+        inside the working directory, and denies those that escape it."""
+        context = PermissionContext(
+            mode=PermissionMode.DONT_ASK,
+            working_directories={
+                "/tmp/project": AdditionalWorkingDirectory(
+                    path="/tmp/project",
+                    source="test",
+                ),
+            },
+        )
+        engine = PermissionEngine(context)
+        inside = await engine.check_permission(
+            Bash(),
+            {"command": "touch /tmp/project/new.txt"},
+        )
+        self.assertEqual(inside.behavior, PermissionBehavior.ALLOW)
+        outside = await engine.check_permission(
+            Bash(),
+            {"command": "touch /home/user/new.txt"},
+        )
+        self.assertEqual(outside.behavior, PermissionBehavior.DENY)
+
     async def test_dont_ask_ask_rule_returns_deny(self) -> None:
         """An ASK rule hit is converted to DENY (issue #3): the user is
         not available to answer the prompt, so the operation cannot
@@ -988,554 +1011,51 @@ class PermissionEngineDontAskModeTest(IsolatedAsyncioTestCase):
         self.assertEqual(decision.behavior, PermissionBehavior.DENY)
 
 
-class PermissionEvaluationDefaultModeTest(IsolatedAsyncioTestCase):
-    """evaluate_permission returns structured evaluations for DEFAULT mode."""
-
-    async def asyncSetUp(self) -> None:
-        self.context = PermissionContext(mode=PermissionMode.DEFAULT)
-        self.engine = PermissionEngine(self.context)
-
-    async def test_deny_rule_is_direct(self) -> None:
-        """A DEFAULT deny-rule result is a direct evaluation."""
-        self.engine.add_rule(
-            PermissionRule(
-                tool_name="Bash",
-                rule_content="rm *",
-                behavior=PermissionBehavior.DENY,
-                source="test",
-            ),
-        )
-        evaluation = await self.engine.evaluate_permission(
-            Bash(),
-            {"command": "rm foo"},
-        )
-        assert evaluation.resolution == PermissionResolution.DIRECT
-        assert evaluation.candidate_decision is None
-        assert (
-            evaluation.effective_decision.behavior == PermissionBehavior.DENY
-        )
-        assert evaluation.mode == PermissionMode.DEFAULT
-
-    async def test_safety_ask_is_direct(self) -> None:
-        """A DEFAULT safety ASK remains a direct evaluation."""
-        # rm -rf / triggers bypass-immune safety ASK; in DEFAULT it is
-        # honored (returned as-is, not suppressible by allow rules).
-        evaluation = await self.engine.evaluate_permission(
-            Bash(),
-            {"command": "rm -rf /"},
-        )
-        assert evaluation.resolution == PermissionResolution.DIRECT
-        assert evaluation.candidate_decision is None
-        assert evaluation.effective_decision.behavior == PermissionBehavior.ASK
-        assert evaluation.effective_decision.bypass_immune is True
-
-    async def test_read_only_command_is_direct_allow(self) -> None:
-        """A DEFAULT read-only ALLOW remains direct."""
-        evaluation = await self.engine.evaluate_permission(
-            Bash(),
-            {"command": "ls"},
-        )
-        assert evaluation.resolution == PermissionResolution.DIRECT
-        assert evaluation.candidate_decision is None
-        assert (
-            evaluation.effective_decision.behavior == PermissionBehavior.ALLOW
-        )
+# ---------------------------------------------------------------------------
+# Cross-mode invariants
+# ---------------------------------------------------------------------------
 
 
-class PermissionEvaluationBypassModeTest(IsolatedAsyncioTestCase):
-    """evaluate_permission exposes ASKs suppressed by BYPASS."""
+class PermissionEngineReadOnlyConsistencyTest(IsolatedAsyncioTestCase):
+    """A read-only invocation must be ALLOWed in *every* mode.
 
-    async def asyncSetUp(self) -> None:
-        self.context = PermissionContext(mode=PermissionMode.BYPASS)
-        self.engine = PermissionEngine(self.context)
+    Read-only operations have no side effects, so every mode auto-allows
+    them via the shared read-only fast path. This test pins that invariant
+    across all modes at once — it is the guard against the modes drifting
+    apart on read-only handling (the divergence that once left DEFAULT and
+    DONT_ASK without a read-only fast path).
+    """
 
-    async def test_tool_allow_is_direct(self) -> None:
-        """A tool-emitted ALLOW remains direct in BYPASS."""
-        evaluation = await self.engine.evaluate_permission(
-            Bash(),
-            {"command": "ls"},
-        )
-        assert evaluation.resolution == PermissionResolution.DIRECT
-        assert evaluation.candidate_decision is None
-        assert (
-            evaluation.effective_decision.behavior == PermissionBehavior.ALLOW
-        )
-
-    async def test_safety_ask_suppressed_to_allow(self) -> None:
-        """Preserve a safety ASK suppressed by BYPASS fallback.
-
-        Scenario:
-            A BYPASS session invokes ``rm -rf /``; Bash flags the command
-            with a bypass-immune ASK, while the mode permits execution.
-
-        Expected evaluation:
-            candidate=ASK(bypass_immune=True), effective=ALLOW, and
-            resolution=BYPASS_ASK_SUPPRESSED.
-
-        Audit significance:
-            The ALLOW is attributable to an intentional mode override rather
-            than being mistaken for a command Bash considered safe.
-        """
-        # rm -rf / -> bypass-immune safety ASK, suppressed to ALLOW.
-        evaluation = await self.engine.evaluate_permission(
-            Bash(),
-            {"command": "rm -rf /"},
-        )
-        assert (
-            evaluation.resolution == PermissionResolution.BYPASS_ASK_SUPPRESSED
-        )
-        assert (
-            evaluation.effective_decision.behavior == PermissionBehavior.ALLOW
-        )
-        assert evaluation.candidate_decision is not None
-        assert evaluation.candidate_decision.behavior == PermissionBehavior.ASK
-        assert evaluation.candidate_decision.bypass_immune is True
-
-    async def test_allow_rule_after_ask_is_suppressed(self) -> None:
-        """Preserve a safety ASK suppressed through a BYPASS allow rule.
-
-        Scenario:
-            Bash flags a destructive command with a safety ASK and a
-            matching user-configured allow rule permits it in BYPASS.
-
-        Expected evaluation:
-            candidate=ASK(bypass_immune=True), effective=ALLOW, and
-            resolution=BYPASS_ASK_SUPPRESSED.
-
-        Audit significance:
-            The record retains Bash's warning even when explicit policy and
-            BYPASS jointly authorize the command.
-        """
-        # An allow rule that converts a suppressed ASK into ALLOW still
-        # records the suppressed ASK as the candidate.
-        self.engine.add_rule(
-            PermissionRule(
-                tool_name="Bash",
-                rule_content="rm *",
-                behavior=PermissionBehavior.ALLOW,
-                source="test",
-            ),
-        )
-        evaluation = await self.engine.evaluate_permission(
-            Bash(),
-            {"command": "rm -rf /"},
-        )
-        assert (
-            evaluation.resolution == PermissionResolution.BYPASS_ASK_SUPPRESSED
-        )
-        assert (
-            evaluation.effective_decision.behavior == PermissionBehavior.ALLOW
-        )
-        assert evaluation.candidate_decision is not None
-        assert evaluation.candidate_decision.behavior == PermissionBehavior.ASK
-        assert evaluation.candidate_decision.bypass_immune is True
-
-    async def test_deny_rule_is_direct(self) -> None:
-        """A BYPASS deny-rule result remains direct."""
-        self.engine.add_rule(
-            PermissionRule(
-                tool_name="Bash",
-                rule_content="rm *",
-                behavior=PermissionBehavior.DENY,
-                source="test",
-            ),
-        )
-        evaluation = await self.engine.evaluate_permission(
-            Bash(),
-            {"command": "rm foo"},
-        )
-        assert evaluation.resolution == PermissionResolution.DIRECT
-        assert evaluation.candidate_decision is None
-        assert (
-            evaluation.effective_decision.behavior == PermissionBehavior.DENY
-        )
-
-    async def test_tool_emitted_deny_is_direct(self) -> None:
-        """A tool-emitted DENY remains direct in BYPASS."""
-        # BYPASS returns a tool-emitted DENY as-is (only ASKs are
-        # suppressed); no candidate is preserved.
-        evaluation = await self.engine.evaluate_permission(
-            _AlwaysDenyTool(),
-            {},
-        )
-        assert evaluation.resolution == PermissionResolution.DIRECT
-        assert evaluation.candidate_decision is None
-        assert (
-            evaluation.effective_decision.behavior == PermissionBehavior.DENY
-        )
-
-
-class PermissionEvaluationDontAskModeTest(IsolatedAsyncioTestCase):
-    """evaluate_permission exposes ASKs converted to DENY by DONT_ASK."""
-
-    async def asyncSetUp(self) -> None:
-        self.context = PermissionContext(mode=PermissionMode.DONT_ASK)
-        self.engine = PermissionEngine(self.context)
-
-    async def test_safety_ask_converted_to_deny(self) -> None:
-        """Preserve a safety ASK converted into DENY by DONT_ASK.
-
-        Scenario:
-            An unattended task invokes ``rm -rf /`` and cannot present
-            Bash's safety confirmation request to a user.
-
-        Expected evaluation:
-            candidate=ASK(bypass_immune=True), effective=DENY, and
-            resolution=ASK_CONVERTED_TO_DENY.
-
-        Audit significance:
-            The DENY is identifiable as unavailable confirmation rather than
-            an explicit deny rule or invalid input.
-        """
-        evaluation = await self.engine.evaluate_permission(
-            Bash(),
-            {"command": "rm -rf /"},
-        )
-        assert (
-            evaluation.resolution == PermissionResolution.ASK_CONVERTED_TO_DENY
-        )
-        assert (
-            evaluation.effective_decision.behavior == PermissionBehavior.DENY
-        )
-        assert evaluation.candidate_decision is not None
-        assert evaluation.candidate_decision.behavior == PermissionBehavior.ASK
-        assert evaluation.candidate_decision.bypass_immune is True
-
-    async def test_ask_rule_converted_to_deny(self) -> None:
-        """Preserve an ask-rule decision converted by DONT_ASK.
-
-        Scenario:
-            An unattended task matches a user-configured ask rule, but no
-            user is available to answer the requested confirmation.
-
-        Expected evaluation:
-            candidate=ASK, effective=DENY, and
-            resolution=ASK_CONVERTED_TO_DENY.
-
-        Audit significance:
-            Operators can see that policy requested confirmation instead of
-            interpreting the result as a direct prohibition.
-        """
-        self.engine.add_rule(
-            PermissionRule(
-                tool_name="Bash",
-                rule_content="rm *",
-                behavior=PermissionBehavior.ASK,
-                source="test",
-            ),
-        )
-        evaluation = await self.engine.evaluate_permission(
-            Bash(),
-            {"command": "rm foo"},
-        )
-        assert (
-            evaluation.resolution == PermissionResolution.ASK_CONVERTED_TO_DENY
-        )
-        assert (
-            evaluation.effective_decision.behavior == PermissionBehavior.DENY
-        )
-        assert evaluation.candidate_decision is not None
-        assert evaluation.candidate_decision.behavior == PermissionBehavior.ASK
-
-    async def test_read_only_is_direct_allow(self) -> None:
-        """A DONT_ASK read-only ALLOW remains direct."""
-        evaluation = await self.engine.evaluate_permission(
-            Bash(),
-            {"command": "ls"},
-        )
-        assert evaluation.resolution == PermissionResolution.DIRECT
-        assert evaluation.candidate_decision is None
-        assert (
-            evaluation.effective_decision.behavior == PermissionBehavior.ALLOW
-        )
+    async def test_read_only_tool_allowed_in_every_mode(self) -> None:
+        """Read (a statically read-only tool) → ALLOW in all five modes."""
+        for mode in PermissionMode:
+            context = PermissionContext(mode=mode)
+            engine = PermissionEngine(context)
+            decision = await engine.check_permission(
+                Read(),
+                {"file_path": "/anywhere/file.txt"},
+            )
+            self.assertEqual(
+                decision.behavior,
+                PermissionBehavior.ALLOW,
+                f"Expected ALLOW for read-only Read in mode {mode.value}",
+            )
 
     @unittest.skipIf(
         sys.platform == "win32",
         "Bash tool is not supported on Windows",
     )
-    async def test_default_is_direct_deny(self) -> None:
-        """The DONT_ASK fallback DENY is direct."""
-        # Non-read-only, no rule, no safety ASK -> default DENY (no user).
-        evaluation = await self.engine.evaluate_permission(
-            Bash(),
-            {"command": "npm install"},
-        )
-        assert evaluation.resolution == PermissionResolution.DIRECT
-        assert evaluation.candidate_decision is None
-        assert (
-            evaluation.effective_decision.behavior == PermissionBehavior.DENY
-        )
-
-
-class PermissionEvaluationExploreModeTest(IsolatedAsyncioTestCase):
-    """evaluate_permission for EXPLORE mode (all DIRECT — no transformation).
-
-    EXPLORE never transforms a candidate — read-only verdicts are final.
-    """
-
-    async def asyncSetUp(self) -> None:
-        self.context = PermissionContext(mode=PermissionMode.EXPLORE)
-        self.engine = PermissionEngine(self.context)
-
-    async def test_read_tool_is_direct_allow(self) -> None:
-        """EXPLORE reports a read-only ALLOW directly."""
-        evaluation = await self.engine.evaluate_permission(
-            Read(),
-            {"file_path": "/tmp/file.txt"},
-        )
-        assert evaluation.resolution == PermissionResolution.DIRECT
-        assert evaluation.candidate_decision is None
-        assert (
-            evaluation.effective_decision.behavior == PermissionBehavior.ALLOW
-        )
-
-    async def test_write_tool_is_direct_deny(self) -> None:
-        """EXPLORE reports a write DENY directly."""
-        evaluation = await self.engine.evaluate_permission(
-            Write(),
-            {"file_path": "/tmp/file.txt"},
-        )
-        assert evaluation.resolution == PermissionResolution.DIRECT
-        assert evaluation.candidate_decision is None
-        assert (
-            evaluation.effective_decision.behavior == PermissionBehavior.DENY
-        )
-
-
-class PermissionEvaluationAcceptEditsModeTest(IsolatedAsyncioTestCase):
-    """Direct ACCEPT_EDITS evaluation paths."""
-
-    async def asyncSetUp(self) -> None:
-        self.context = PermissionContext(
-            mode=PermissionMode.ACCEPT_EDITS,
-            working_directories={
-                "/tmp/project": AdditionalWorkingDirectory(
-                    path="/tmp/project",
-                    source="test",
-                ),
-            },
-        )
-        self.engine = PermissionEngine(self.context)
-
-    async def test_deny_rule_is_direct(self) -> None:
-        """ACCEPT_EDITS reports a deny-rule result directly."""
-        self.engine.add_rule(
-            PermissionRule(
-                tool_name="Write",
-                rule_content="*.env",
-                behavior=PermissionBehavior.DENY,
-                source="test",
-            ),
-        )
-        evaluation = await self.engine.evaluate_permission(
-            Write(),
-            {"file_path": "/tmp/secret.env"},
-        )
-        assert evaluation.resolution == PermissionResolution.DIRECT
-        assert evaluation.candidate_decision is None
-        assert (
-            evaluation.effective_decision.behavior == PermissionBehavior.DENY
-        )
-
-    async def test_allowed_edit_within_working_directory_is_direct(
-        self,
-    ) -> None:
-        """ACCEPT_EDITS reports an allowed workspace edit directly."""
-        # Write/Edit within a configured working directory is auto-allowed
-        # by the tool's own check_permissions — ACCEPT_EDITS surfaces it
-        # directly (no mode transformation).
-        for tool in (Write(), Edit()):
-            evaluation = await self.engine.evaluate_permission(
-                tool,
-                {"file_path": "/tmp/project/file.txt"},
+    async def test_read_only_bash_command_allowed_in_every_mode(self) -> None:
+        """A statically read-only bash command → ALLOW in all five modes."""
+        for mode in PermissionMode:
+            context = PermissionContext(mode=mode)
+            engine = PermissionEngine(context)
+            decision = await engine.check_permission(
+                Bash(),
+                {"command": "git status"},
             )
-            assert evaluation.resolution == PermissionResolution.DIRECT
-            assert evaluation.candidate_decision is None
-            assert (
-                evaluation.effective_decision.behavior
-                == PermissionBehavior.ALLOW
+            self.assertEqual(
+                decision.behavior,
+                PermissionBehavior.ALLOW,
+                f"Expected ALLOW for read-only bash in mode {mode.value}",
             )
-
-
-class PermissionEvaluationAskTransitionTest(IsolatedAsyncioTestCase):
-    """Behavior-changing ordinary ASK transitions retain their candidate."""
-
-    @staticmethod
-    def _allow_all_rule(tool_name: str) -> PermissionRule:
-        """Build a tool-level ALLOW rule for a deterministic test tool."""
-        return PermissionRule(
-            tool_name=tool_name,
-            rule_content=None,
-            behavior=PermissionBehavior.ALLOW,
-            source="test",
-        )
-
-    async def test_default_allow_rule_preserves_overridden_ask(self) -> None:
-        """Preserve a tool ASK overridden by a DEFAULT allow rule.
-
-        Scenario:
-            A credential-transfer tool requests confirmation, while a
-            matching user-configured allow rule permits the operation.
-
-        Expected evaluation:
-            candidate=ASK, effective=ALLOW, and
-            resolution=ASK_OVERRIDDEN_BY_ALLOW_RULE.
-
-        Audit significance:
-            The candidate distinguishes an explicit policy override from a
-            tool decision that considered the transfer safe.
-        """
-        engine = PermissionEngine(
-            PermissionContext(mode=PermissionMode.DEFAULT),
-        )
-        engine.add_rule(self._allow_all_rule(_AlwaysAskTool.name))
-
-        evaluation = await engine.evaluate_permission(
-            _AlwaysAskTool(),
-            {"value": "credential payload"},
-        )
-
-        assert evaluation.candidate_decision is not None
-        assert evaluation.candidate_decision.behavior == PermissionBehavior.ASK
-        assert (
-            evaluation.effective_decision.behavior == PermissionBehavior.ALLOW
-        )
-        assert (
-            evaluation.resolution
-            == PermissionResolution.ASK_OVERRIDDEN_BY_ALLOW_RULE
-        )
-
-    async def test_accept_edits_allow_rule_preserves_overridden_ask(
-        self,
-    ) -> None:
-        """Preserve a tool ASK overridden in ACCEPT_EDITS.
-
-        Scenario:
-            An edit-capable session invokes a sensitive transfer tool whose
-            ordinary ASK is covered by a user-configured allow rule.
-
-        Expected evaluation:
-            candidate=ASK, effective=ALLOW, and
-            resolution=ASK_OVERRIDDEN_BY_ALLOW_RULE.
-
-        Audit significance:
-            The record shows that ACCEPT_EDITS did not independently consider
-            the transfer safe; an explicit allow rule overrode the tool ASK.
-        """
-        engine = PermissionEngine(
-            PermissionContext(mode=PermissionMode.ACCEPT_EDITS),
-        )
-        engine.add_rule(self._allow_all_rule(_AlwaysAskTool.name))
-
-        evaluation = await engine.evaluate_permission(
-            _AlwaysAskTool(),
-            {"value": "credential payload"},
-        )
-
-        assert evaluation.candidate_decision is not None
-        assert evaluation.candidate_decision.behavior == PermissionBehavior.ASK
-        assert (
-            evaluation.effective_decision.behavior == PermissionBehavior.ALLOW
-        )
-        assert (
-            evaluation.resolution
-            == PermissionResolution.ASK_OVERRIDDEN_BY_ALLOW_RULE
-        )
-
-    async def test_dont_ask_allow_rule_preserves_overridden_ask(self) -> None:
-        """Preserve a tool ASK overridden by a DONT_ASK allow rule.
-
-        Scenario:
-            An unattended task reaches a sensitive transfer that requests
-            confirmation, but a preconfigured allow rule authorizes it.
-
-        Expected evaluation:
-            candidate=ASK, effective=ALLOW, and
-            resolution=ASK_OVERRIDDEN_BY_ALLOW_RULE.
-
-        Audit significance:
-            Operators can distinguish preauthorization from a tool-level
-            safety approval during unattended execution.
-        """
-        engine = PermissionEngine(
-            PermissionContext(mode=PermissionMode.DONT_ASK),
-        )
-        engine.add_rule(self._allow_all_rule(_AlwaysAskTool.name))
-
-        evaluation = await engine.evaluate_permission(
-            _AlwaysAskTool(),
-            {"value": "credential payload"},
-        )
-
-        assert evaluation.candidate_decision is not None
-        assert evaluation.candidate_decision.behavior == PermissionBehavior.ASK
-        assert (
-            evaluation.effective_decision.behavior == PermissionBehavior.ALLOW
-        )
-        assert (
-            evaluation.resolution
-            == PermissionResolution.ASK_OVERRIDDEN_BY_ALLOW_RULE
-        )
-
-    async def test_dont_ask_fallback_preserves_converted_ask(self) -> None:
-        """Preserve a tool ASK converted by the DONT_ASK fallback.
-
-        Scenario:
-            An unattended task requests a sensitive transfer and has no
-            matching allow rule or available user to confirm it.
-
-        Expected evaluation:
-            candidate=ASK, effective=DENY, and
-            resolution=ASK_CONVERTED_TO_DENY.
-
-        Audit significance:
-            The DENY can be diagnosed as unavailable human confirmation
-            instead of being mistaken for an explicit deny rule.
-        """
-        engine = PermissionEngine(
-            PermissionContext(mode=PermissionMode.DONT_ASK),
-        )
-
-        evaluation = await engine.evaluate_permission(
-            _AlwaysAskTool(),
-            {"value": "credential payload"},
-        )
-
-        assert evaluation.candidate_decision is not None
-        assert evaluation.candidate_decision.behavior == PermissionBehavior.ASK
-        assert (
-            evaluation.effective_decision.behavior == PermissionBehavior.DENY
-        )
-        assert (
-            evaluation.resolution == PermissionResolution.ASK_CONVERTED_TO_DENY
-        )
-
-    async def test_passthrough_allow_rule_remains_direct(self) -> None:
-        """Keep PASSTHROUGH outside the security-candidate contract.
-
-        Scenario:
-            A tool delegates permission policy without expressing an ASK,
-            and a tool-level allow rule authorizes the call.
-
-        Expected evaluation:
-            candidate=None, effective=ALLOW, and resolution=DIRECT.
-
-        Audit significance:
-            Candidate records remain reserved for actual security judgments,
-            avoiding noisy traces for tools that expressed no opinion.
-        """
-        engine = PermissionEngine(
-            PermissionContext(mode=PermissionMode.DEFAULT),
-        )
-        engine.add_rule(self._allow_all_rule(_PassthroughTool.name))
-
-        evaluation = await engine.evaluate_permission(
-            _PassthroughTool(),
-            {"value": "ordinary payload"},
-        )
-
-        assert evaluation.candidate_decision is None
-        assert (
-            evaluation.effective_decision.behavior == PermissionBehavior.ALLOW
-        )
-        assert evaluation.resolution == PermissionResolution.DIRECT

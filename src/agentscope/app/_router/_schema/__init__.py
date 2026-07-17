@@ -31,7 +31,6 @@ from ._knowledge_base import (
     CreateKnowledgeBaseResponse,
     KbEmbeddingProvider,
     KbMiddlewareParametersSchemaResponse,
-    KnowledgeBaseView,
     KnowledgeDocumentView,
     ListKbEmbeddingModelsResponse,
     ListKnowledgeBasesResponse,
@@ -46,6 +45,7 @@ from ._knowledge_base import (
 from ._session import (
     CreateSessionRequest,
     CreateSessionResponse,
+    InterruptSessionResponse,
     UpdateSessionRequest,
     ListSessionsResponse,
     ListMessagesResponse,
@@ -79,7 +79,6 @@ __all__ = [
     "CreateKnowledgeBaseResponse",
     "KbEmbeddingProvider",
     "KbMiddlewareParametersSchemaResponse",
-    "KnowledgeBaseView",
     "KnowledgeDocumentView",
     "ListKbEmbeddingModelsResponse",
     "ListKnowledgeBasesResponse",
@@ -105,6 +104,7 @@ __all__ = [
     # Session
     "CreateSessionRequest",
     "CreateSessionResponse",
+    "InterruptSessionResponse",
     "UpdateSessionRequest",
     "ListSessionsResponse",
     "ListMessagesResponse",

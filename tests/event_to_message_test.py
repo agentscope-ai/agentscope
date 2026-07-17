@@ -35,6 +35,7 @@ from agentscope.event import (
     ExternalExecutionResultEvent,
     ModelCallEndEvent,
     ReplyEndEvent,
+    ReplyEndReason,
     RequireExternalExecutionEvent,
     RequireUserConfirmEvent,
     TextBlockDeltaEvent,
@@ -58,6 +59,7 @@ from agentscope.message import (
     ToolResultBlock,
     ToolResultState,
 )
+from agentscope.model import FinishedReason
 
 # ---------------------------------------------------------------------------
 # Fixed IDs used throughout – hard-coded so ground-truth dicts are readable.
@@ -693,6 +695,7 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             reply_id=_REPLY_ID,
             input_tokens=10,
             output_tokens=20,
+            finished_reason=FinishedReason.COMPLETED,
         )
         gt_model_call_end_1 = _base(
             _final_content,
@@ -703,6 +706,7 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             reply_id=_REPLY_ID,
             input_tokens=5,
             output_tokens=8,
+            finished_reason=FinishedReason.COMPLETED,
         )
         gt_model_call_end_2 = _base(
             _final_content,
@@ -716,6 +720,7 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
             reply_id=_REPLY_ID,
             session_id=_SESSION_ID,
             created_at=_FIXED_END_TS,
+            finished_reason=ReplyEndReason.COMPLETED,
         )
         gt_reply_end = _base(
             _final_content,

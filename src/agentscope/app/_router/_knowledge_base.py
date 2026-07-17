@@ -18,19 +18,19 @@ from fastapi import (
     status,
 )
 
+from ..access import ResourceKind
 from ..deps import (
     get_current_user_id,
     get_knowledge_base_manager,
     get_knowledge_base_service,
     get_knowledge_parsers,
-    get_storage,
+    get_resource_access_service,
 )
 from ._schema import (
     CreateKnowledgeBaseRequest,
     CreateKnowledgeBaseResponse,
     KbEmbeddingProvider,
     KbMiddlewareParametersSchemaResponse,
-    KnowledgeBaseView,
     KnowledgeDocumentView,
     ListKbEmbeddingModelsResponse,
     ListKnowledgeBasesResponse,
@@ -44,8 +44,11 @@ from ._schema import (
 )
 from ...credential import CredentialFactory
 from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
-from ..storage import StorageBase
-from .._service import KnowledgeBaseService
+from .._service import (
+    KnowledgeBaseService,
+    KnowledgeBaseView,
+    ResourceAccessService,
+)
 from ...middleware import RAGMiddleware
 from ...rag import ParserBase
 
@@ -64,26 +67,29 @@ knowledge_base_router = APIRouter(
 )
 async def list_kb_embedding_models(
     user_id: str = Depends(get_current_user_id),
-    storage: "StorageBase" = Depends(get_storage),
+    access: "ResourceAccessService" = Depends(get_resource_access_service),
     manager: "KnowledgeBaseManagerBase" = Depends(
         get_knowledge_base_manager,
     ),
 ) -> ListKbEmbeddingModelsResponse:
     """List embedding models the user can pick at KB-creation time.
 
-    Walks the caller's credentials, looks up each provider's
-    embedding model class, gathers its model cards, and projects
-    each card through the manager's :class:`DimensionPolicy`.
-    Incompatible cards are dropped; matryoshka cards under a
-    ``FIXED`` / ``LOCKED_BY_EXISTING`` policy are narrowed to the
-    locked dimension.  Providers that end up with zero compatible
-    models are omitted from the response entirely.
+    Walks every credential visible to the caller (own + shared via the
+    resource access policy), looks up each provider's embedding model
+    class, gathers its model cards, and projects each card through the
+    manager's :class:`DimensionPolicy`. Incompatible cards are
+    dropped; matryoshka cards under a ``FIXED`` /
+    ``LOCKED_BY_EXISTING`` policy are narrowed to the locked
+    dimension.  Providers that end up with zero compatible models are
+    omitted from the response entirely.
 
     Args:
         user_id (`str`):
             Injected authenticated user ID.
-        storage (`StorageBase`):
-            Injected storage backend used to enumerate credentials.
+        access (`ResourceAccessService`):
+            Injected resource access service; enumerates visible
+            credentials (own + shared) so KB creation works against
+            shared credentials too.
         manager (`KnowledgeBaseManagerBase`):
             Injected knowledge base manager.
 
@@ -93,7 +99,7 @@ async def list_kb_embedding_models(
             embedding model, plus the policy used for filtering.
     """
     policy = await manager.get_dimension_policy()
-    credentials = await storage.list_credentials(user_id)
+    credentials = await access.list_resource(user_id, ResourceKind.CREDENTIAL)
 
     providers: list[KbEmbeddingProvider] = []
     for credential in credentials:
@@ -251,33 +257,31 @@ async def create_knowledge_base(
 )
 async def list_knowledge_bases(
     user_id: str = Depends(get_current_user_id),
-    service: "KnowledgeBaseService" = Depends(get_knowledge_base_service),
+    access: "ResourceAccessService" = Depends(get_resource_access_service),
 ) -> ListKnowledgeBasesResponse:
-    """Return all knowledge bases owned by the authenticated user.
+    """Return all knowledge bases visible to the authenticated user.
+
+    Includes the caller's own knowledge bases plus any shared to them
+    through :class:`ResourceAccessPolicyBase`. Each entry carries an
+    ``editable`` flag: ``read`` grants search + attach; ``edit`` also
+    grants document add/delete and metadata update.
 
     Args:
         user_id (`str`):
             Injected authenticated user ID.
-        service (`KnowledgeBaseService`):
-            Injected knowledge base service.
+        access (`ResourceAccessService`):
+            Injected resource access service.
 
     Returns:
         `ListKnowledgeBasesResponse`:
-            The user's knowledge bases.
+            All visible knowledge bases paired with per-viewer
+            editability.
     """
-    records = await service.list_knowledge_bases(user_id)
-    views = [
-        KnowledgeBaseView(
-            id=record.id,
-            name=record.name,
-            description=record.description,
-            embedding_model_config=record.embedding_model_config,
-            created_at=record.created_at,
-            updated_at=record.updated_at,
-        )
-        for record in records
-    ]
-    return ListKnowledgeBasesResponse(knowledge_bases=views, total=len(views))
+    entries = await access.list_resource(user_id, ResourceKind.KNOWLEDGE_BASE)
+    return ListKnowledgeBasesResponse(
+        knowledge_bases=entries,
+        total=len(entries),
+    )
 
 
 @knowledge_base_router.patch(
@@ -317,13 +321,10 @@ async def update_knowledge_base(
         name=body.name,
         description=body.description,
     )
-    return KnowledgeBaseView(
-        id=record.id,
-        name=record.name,
-        description=record.description,
-        embedding_model_config=record.embedding_model_config,
-        created_at=record.created_at,
-        updated_at=record.updated_at,
+    # Only reachable via ``_require_edit`` inside the service, so the
+    # caller definitionally has edit permission.
+    return KnowledgeBaseView.model_validate(
+        {**record.model_dump(), "editable": True},
     )
 
 

@@ -22,6 +22,7 @@ from ...tool import ToolChunk, ParamsBase
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
     from ..storage import StorageBase
+    from ..workspace_manager import WorkspaceManagerBase
 
 
 _DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
@@ -178,6 +179,7 @@ overall communication topology unnecessarily complex.
         self,
         storage: "StorageBase",
         message_bus: "MessageBus",
+        workspace_manager: "WorkspaceManagerBase",
         user_id: str,
         session_id: str,
         agent_id: str,
@@ -185,34 +187,37 @@ overall communication topology unnecessarily complex.
     ) -> None:
         """Bind request-scoped identifiers plus sub-agent templates.
 
-        Extends :meth:`_TeamToolBase.__init__` with an optional
+        Extends :meth:`_TeamToolBase.__init__` with the optional
         template registry. The built-in ``"default"`` template is
-        always present as a fallback; developers can override it by
-        registering their own template with ``type="default"``.
-
-        When more than one template type is available (i.e. custom
-        templates were registered), the tool's ``input_schema`` is
-        dynamically extended with a ``subagent_type`` enum field so
-        the leader agent can choose which type to create.
+        always injected; extra templates unlock a ``subagent_type``
+        enum in the tool's input schema.
 
         Args:
             storage (`StorageBase`):
                 Application storage backend.
             message_bus (`MessageBus`):
-                Application message bus for inter-session delivery.
+                Application message bus.
+            workspace_manager (`WorkspaceManagerBase`):
+                Workspace manager (forwarded to base for uniform
+                team-tool wiring; currently unused here).
             user_id (`str`):
-                The owner user id of the calling agent.
+                The owner user id.
             session_id (`str`):
-                The current session id of the calling agent.
+                The calling session id.
             agent_id (`str`):
-                The id of the agent invoking the tool.
+                The calling agent id.
             sub_agent_templates (`dict[str, SubAgentTemplate] | None`, \
 optional):
-                Template registry keyed by template type. The
-                built-in ``"default"`` template is injected
-                automatically if not already present.
+                Template registry keyed by type.
         """
-        super().__init__(storage, message_bus, user_id, session_id, agent_id)
+        super().__init__(
+            storage,
+            message_bus,
+            workspace_manager,
+            user_id,
+            session_id,
+            agent_id,
+        )
 
         self._sub_agent_templates: dict[str, SubAgentTemplate] = dict(
             sub_agent_templates or {},
