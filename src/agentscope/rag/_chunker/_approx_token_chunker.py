@@ -8,6 +8,8 @@ within the right order of magnitude for most LLM tokenizers.
 from bisect import bisect_right
 from itertools import accumulate
 
+from pydantic import Field, model_validator
+
 from ._base import ChunkerBase
 from .._document import Chunk, Section
 from ...message import TextBlock, DataBlock
@@ -29,6 +31,38 @@ class ApproxTokenChunker(ChunkerBase):
     .. note:: Chunks never span across two input Sections, as
         required by :class:`ChunkerBase`.
     """
+
+    chunker_type = "approx_token"
+
+    class Parameters(ChunkerBase.Parameters):
+        """Tunable parameters for the approximate-token chunker."""
+
+        chunk_size: int = Field(
+            default=512,
+            ge=1,
+            title="Chunk Size",
+            description="Maximum number of approximate tokens per chunk.",
+        )
+        overlap: int = Field(
+            default=50,
+            ge=0,
+            title="Overlap",
+            description=(
+                "Number of approximate tokens shared between "
+                "consecutive chunks."
+            ),
+        )
+
+        @model_validator(mode="after")
+        def _overlap_less_than_chunk_size(
+            self,
+        ) -> "ApproxTokenChunker.Parameters":
+            if self.overlap >= self.chunk_size:
+                raise ValueError(
+                    "overlap must be less than chunk_size, got "
+                    f"overlap={self.overlap}, chunk_size={self.chunk_size}.",
+                )
+            return self
 
     def __init__(self, chunk_size: int = 512, overlap: int = 50) -> None:
         """Initialize the approx token chunker.

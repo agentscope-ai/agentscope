@@ -36,7 +36,7 @@ Example::
     from agentscope.app.message_bus import RedisMessageBus
     from agentscope.app.storage import RedisStorage
     from agentscope.app.rag.index_worker import run_worker
-    from agentscope.rag import ApproxTokenChunker, TextParser, ...
+    from agentscope.rag import TextParser, ...
 
     async def main() -> None:
         storage = RedisStorage(url=os.environ["REDIS_URL"])
@@ -47,14 +47,12 @@ Example::
         )
         kb_manager = DefaultKnowledgeBaseManager(...)
         parsers = [TextParser()]
-        chunker = ApproxTokenChunker()
         await run_worker(
             storage=storage,
             message_bus=message_bus,
             blob_store=blob_store,
             knowledge_base_manager=kb_manager,
             parsers=parsers,
-            chunker=chunker,
         )
 
     if __name__ == "__main__":
@@ -76,7 +74,7 @@ if TYPE_CHECKING:
     from ..knowledge_base_manager import KnowledgeBaseManagerBase
     from ...message_bus import MessageBus
     from ...storage import StorageBase
-    from ....rag import ChunkerBase, ParserBase
+    from ....rag import ParserBase
 
 
 async def run_worker(
@@ -86,7 +84,6 @@ async def run_worker(
     blob_store: "BlobStoreBase",
     knowledge_base_manager: "KnowledgeBaseManagerBase",
     parsers: "list[ParserBase] | dict[str, ParserBase]",
-    chunker: "ChunkerBase",
     node_id: str | None = None,
     worker_max_concurrency: int = 4,
     consumer_max_batch: int = 32,
@@ -117,8 +114,6 @@ async def run_worker(
             ``supported_media_types`` (later entries override earlier
             ones, with a warning); dict mode is used verbatim for
             explicit routing.
-        chunker (`ChunkerBase`):
-            Shared chunker.
         node_id (`str | None`, optional):
             Stable identifier for this worker process used on the
             storage lease. Defaults to
@@ -152,7 +147,6 @@ async def run_worker(
             blob_store=blob_store,
             knowledge_base_manager=knowledge_base_manager,
             parsers=parsers,
-            chunker=chunker,
             node_id=resolved_node_id,
             max_concurrency=worker_max_concurrency,
             parser_executor=parser_executor,

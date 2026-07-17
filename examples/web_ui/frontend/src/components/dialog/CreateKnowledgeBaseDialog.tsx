@@ -1,7 +1,19 @@
 import { CircleAlert, Info, Loader2, PlusCircle } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import type { EmbeddingModelCard, EmbeddingModelConfig } from '@/api';
+import type {
+	ChunkerConfig,
+	ChunkerInfo,
+	EmbeddingModelCard,
+	EmbeddingModelConfig,
+	JSONSchema,
+} from '@/api';
+import {
+	type SchemaFormValue,
+	SchemaForm,
+	defaultValuesFromSchema,
+} from '@/components/form/SchemaForm';
+import { ChunkerSelect } from '@/components/select/ChunkerSelect';
 import { DimensionSelect } from '@/components/select/DimensionSelect';
 import { EmbeddingSelect } from '@/components/select/EmbeddingSelect';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert.tsx';
@@ -17,6 +29,7 @@ import {
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { Textarea } from '@/components/ui/textarea.tsx';
+import { useChunkers } from '@/hooks/useChunkers';
 import { useKbEmbeddingModels } from '@/hooks/useKbEmbeddingModels';
 import { useKnowledgeBases } from '@/hooks/useKnowledgeBases';
 import { useTranslation } from '@/i18n/useI18n.ts';
@@ -32,6 +45,8 @@ interface Props {
 	 */
 	credentialRefetchTrigger?: number;
 }
+
+const NO_SKIP = new Set<string>();
 
 interface SelectedEmbedding {
 	type: string;
@@ -50,13 +65,50 @@ export function CreateKnowledgeBaseDialog({
 	const { t } = useTranslation();
 	const { create } = useKnowledgeBases();
 	const { providers, policy, loading } = useKbEmbeddingModels(credentialRefetchTrigger);
+	const { chunkers } = useChunkers();
 
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
 	const [selected, setSelected] = useState<SelectedEmbedding | null>(null);
 	const [dimension, setDimension] = useState<number | null>(null);
+	const [selectedChunkerType, setSelectedChunkerType] = useState<string>('');
+	const [chunkerParams, setChunkerParams] = useState<Record<string, SchemaFormValue>>({});
 	const [submitting, setSubmitting] = useState(false);
 	const [errorKey, setErrorKey] = useState<string | null>(null);
+
+	const selectedChunker = useMemo<ChunkerInfo | null>(
+		() => chunkers.find((c) => c.type === selectedChunkerType) ?? null,
+		[chunkers, selectedChunkerType],
+	);
+
+	const chunkerParamSchema = useMemo<JSONSchema | null>(
+		() => selectedChunker?.parameter_schema ?? null,
+		[selectedChunker],
+	);
+
+	const handleSelectChunker = useCallback(
+		(type: string) => {
+			setSelectedChunkerType(type);
+			const info = chunkers.find((c) => c.type === type);
+			const schema = info?.parameter_schema;
+			setChunkerParams(schema ? defaultValuesFromSchema(schema, NO_SKIP) : {});
+		},
+		[chunkers],
+	);
+
+	const handleChunkerParamChange = useCallback((key: string, value: SchemaFormValue) => {
+		setChunkerParams((prev) => ({ ...prev, [key]: value }));
+	}, []);
+
+	useEffect(() => {
+		if (
+			chunkers.length > 0 &&
+			selectedChunkerType &&
+			!chunkers.some((c) => c.type === selectedChunkerType)
+		) {
+			setSelectedChunkerType('');
+		}
+	}, [chunkers, selectedChunkerType]);
 
 	useEffect(() => {
 		if (!open) {
@@ -64,6 +116,8 @@ export function CreateKnowledgeBaseDialog({
 			setDescription('');
 			setSelected(null);
 			setDimension(null);
+			setSelectedChunkerType('');
+			setChunkerParams({});
 			setErrorKey(null);
 			setSubmitting(false);
 		}
@@ -100,6 +154,10 @@ export function CreateKnowledgeBaseDialog({
 			setErrorKey('dialog-knowledge-base-create.errors.dimensionRequired');
 			return;
 		}
+		if (!selectedChunkerType) {
+			setErrorKey('dialog-knowledge-base-create.errors.chunkerRequired');
+			return;
+		}
 		setErrorKey(null);
 		setSubmitting(true);
 		try {
@@ -110,10 +168,19 @@ export function CreateKnowledgeBaseDialog({
 				dimensions: dimension,
 				parameters: {},
 			};
+			const params: Record<string, unknown> = {};
+			for (const [k, v] of Object.entries(chunkerParams)) {
+				if (v !== undefined && v !== null && v !== '') params[k] = v;
+			}
+			const chunkerConfig: ChunkerConfig = {
+				type: selectedChunkerType,
+				parameters: params,
+			};
 			const knowledgeBaseId = await create({
 				name: name.trim(),
 				description: description.trim(),
 				embedding_model_config: config,
+				chunker_config: chunkerConfig,
 			});
 			onCreated?.(knowledgeBaseId);
 			onOpenChange(false);
@@ -220,6 +287,49 @@ export function CreateKnowledgeBaseDialog({
 							disabled={submitting}
 						/>
 					</Field>
+
+					{chunkers.length > 0 && (
+						<>
+							<Field orientation="horizontal">
+								<FieldLabel>
+									{t('dialog-knowledge-base-create.chunker.label')}
+								</FieldLabel>
+								<ChunkerSelect
+									value={selectedChunkerType}
+									chunkers={chunkers}
+									onChange={handleSelectChunker}
+									disabled={submitting}
+								/>
+							</Field>
+
+							{chunkerParamSchema && (
+								<SchemaForm
+									schema={chunkerParamSchema}
+									values={chunkerParams}
+									onChange={handleChunkerParamChange}
+									skipFields={NO_SKIP}
+									idPrefix="chunker-param"
+									labelFor={(key, prop) =>
+										t(
+											`chunker-types.${selectedChunkerType}.params.${key}.label`,
+											{ defaultValue: '' },
+										) ||
+										prop.title ||
+										undefined
+									}
+									descriptionFor={(key, prop) =>
+										t(
+											`chunker-types.${selectedChunkerType}.params.${key}.description`,
+											{ defaultValue: '' },
+										) ||
+										prop.description ||
+										undefined
+									}
+								/>
+							)}
+						</>
+					)}
+
 					{errorKey && <p className="text-destructive text-sm">{t(errorKey)}</p>}
 				</FieldGroup>
 				<DialogFooter>

@@ -27,11 +27,13 @@ from ..deps import (
     get_resource_access_service,
 )
 from ._schema import (
+    ChunkerInfo,
     CreateKnowledgeBaseRequest,
     CreateKnowledgeBaseResponse,
     KbEmbeddingProvider,
     KbMiddlewareParametersSchemaResponse,
     KnowledgeDocumentView,
+    ListChunkersResponse,
     ListKbEmbeddingModelsResponse,
     ListKnowledgeBasesResponse,
     ListKnowledgeDocumentsResponse,
@@ -50,7 +52,7 @@ from .._service import (
     ResourceAccessService,
 )
 from ...middleware import RAGMiddleware
-from ...rag import ParserBase
+from ...rag import ParserBase, get_chunker_registry
 
 
 knowledge_base_router = APIRouter(
@@ -127,6 +129,45 @@ async def list_kb_embedding_models(
         )
 
     return ListKbEmbeddingModelsResponse(providers=providers, policy=policy)
+
+
+@knowledge_base_router.get(
+    "/chunkers",
+    response_model=ListChunkersResponse,
+    summary="List registered chunker types and their parameter schemas",
+)
+async def list_chunkers(
+    _: str = Depends(get_current_user_id),
+) -> ListChunkersResponse:
+    """List every registered chunker type with its parameter schema.
+
+    The front-end uses this to populate the chunker selector and
+    to render a dynamic parameter form when creating a knowledge
+    base.
+
+    Args:
+        _ (`str`):
+            Injected authenticated user ID; only used to gate the
+            endpoint behind authentication.
+
+    Returns:
+        `ListChunkersResponse`:
+            All registered chunker types with their JSON Schemas.
+    """
+    registry = get_chunker_registry()
+    chunkers = [
+        ChunkerInfo(
+            type=cls.chunker_type,
+            description=(cls.__doc__ or "").strip().split("\n")[0],
+            parameter_schema=cls.parameter_schema(),
+        )
+        for cls in registry.values()
+    ]
+    first_type = next(iter(registry), None)
+    return ListChunkersResponse(
+        chunkers=chunkers,
+        default_type=first_type,
+    )
 
 
 @knowledge_base_router.get(
@@ -246,6 +287,7 @@ async def create_knowledge_base(
         name=body.name,
         description=body.description,
         embedding_model_config=body.embedding_model_config,
+        chunker_config=body.chunker_config,
     )
     return CreateKnowledgeBaseResponse(knowledge_base_id=record.id)
 

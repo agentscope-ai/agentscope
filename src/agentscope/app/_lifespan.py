@@ -145,7 +145,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     blob_store=blob_store,
                     knowledge_base_manager=knowledge_base_manager,
                     parsers=app.state.knowledge_parsers,
-                    chunker=app.state.knowledge_chunker,
                     node_id=node_id,
                 )
                 await stack.enter_async_context(

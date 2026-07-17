@@ -241,6 +241,9 @@
 		"dimension": {
 			"label": "维度"
 		},
+		"chunker": {
+			"label": "分块策略"
+		},
 		"policy": {
 			"lockedTitle": "维度已锁定为 {{dimension}}d",
 			"lockedDescription": "当前实例已要求所有知识库使用 {{dimension}} 维 embedding，下面仅展示兼容的模型。",
@@ -251,7 +254,8 @@
 		"errors": {
 			"nameRequired": "请填写知识库名称。",
 			"embeddingRequired": "请选择 Embedding 模型。",
-			"dimensionRequired": "请选择 Embedding 维度。"
+			"dimensionRequired": "请选择 Embedding 维度。",
+			"chunkerRequired": "请选择分块策略。"
 		}
 	},
 	"dialog-knowledge-base-edit": {
@@ -267,6 +271,9 @@
 		},
 		"embeddingModel": {
 			"label": "Embedding 模型"
+		},
+		"chunker": {
+			"label": "分块策略"
 		},
 		"errors": {
 			"nameRequired": "请填写知识库名称。"
@@ -381,6 +388,26 @@
 		},
 		"addCredential": "添加凭证",
 		"clear": "清除选择"
+	},
+	"chunker-select": {
+		"placeholder": "选择分块策略",
+		"loading": "加载中…",
+		"empty": "暂无可用分块策略"
+	},
+	"chunker-types": {
+		"approx_token": {
+			"label": "近似 Token 分块",
+			"params": {
+				"chunk_size": {
+					"label": "块大小",
+					"description": "每个分块的最大近似 Token 数量。"
+				},
+				"overlap": {
+					"label": "重叠大小",
+					"description": "相邻分块之间共享的近似 Token 数量。"
+				}
+			}
+		}
 	},
 	"dimension-select": {
 		"placeholder": "选择维度",

@@ -4,6 +4,7 @@ import type {
 	CreateKnowledgeBaseResponse,
 	KbMiddlewareParametersSchemaResponse,
 	KnowledgeBaseView,
+	ListChunkersResponse,
 	ListKbEmbeddingModelsResponse,
 	ListKnowledgeBasesResponse,
 	ListKnowledgeDocumentsResponse,
@@ -121,6 +122,8 @@ export const knowledgeBaseApi = {
 
 	listEmbeddingModels: () =>
 		client.get<ListKbEmbeddingModelsResponse>('/knowledge_bases/embedding_models'),
+
+	listChunkers: () => client.get<ListChunkersResponse>('/knowledge_bases/chunkers'),
 
 	/** Fetch the JSON Schema describing the KB middleware's tunable params. */
 	middlewareParametersSchema: () =>

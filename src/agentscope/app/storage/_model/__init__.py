@@ -3,7 +3,7 @@
 
 from ._agent import AgentRecord, AgentData, InviteConfig
 from ._credential import CredentialRecord
-from ._knowledge_base import KnowledgeBaseRecord
+from ._knowledge_base import ChunkerConfig, KnowledgeBaseRecord
 from ._knowledge_document import (
     KnowledgeDocumentData,
     KnowledgeDocumentRecord,
@@ -25,6 +25,7 @@ from ._user import UserRecord
 __all__ = [
     "AgentData",
     "AgentRecord",
+    "ChunkerConfig",
     "CredentialRecord",
     "KnowledgeBaseRecord",
     "KnowledgeDocumentData",

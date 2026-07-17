@@ -23,12 +23,8 @@ from .message_bus import MessageBus
 from .storage import StorageBase
 from ..agent import Agent
 from ..credential import CredentialFactory, CredentialBase
-from ..rag import (
-    ApproxTokenChunker,
-    ChunkerBase,
-    ParserBase,
-    TextParser,
-)
+from ..rag import ParserBase, TextParser
+
 from .._version import __version__
 
 
@@ -46,7 +42,6 @@ def create_app(
     workspace_manager: WorkspaceManagerBase,
     knowledge_base_manager: KnowledgeBaseManagerBase | None = None,
     knowledge_parsers: list[ParserBase] | dict[str, ParserBase] | None = None,
-    knowledge_chunker: ChunkerBase | None = None,
     blob_store: BlobStoreBase | None = None,
     enable_index_worker: bool = True,
     *,
@@ -121,10 +116,6 @@ def create_app(
             **dict** ``media_type → parser`` for explicit routing
             (one parser bound to multiple types, type aliases, ...).
             Defaults to ``[TextParser()]`` when
-            ``knowledge_base_manager`` is set.
-        knowledge_chunker (`ChunkerBase | None`, optional):
-            The chunker shared across every knowledge base.  Defaults
-            to :class:`~agentscope.rag.ApproxTokenChunker()` when
             ``knowledge_base_manager`` is set.
         blob_store (`BlobStoreBase | None`, optional):
             Backend storing uploaded document bytes between the
@@ -224,7 +215,6 @@ def create_app(
             if knowledge_parsers is not None
             else [TextParser()]
         )
-        app.state.knowledge_chunker = knowledge_chunker or ApproxTokenChunker()
         app.state.blob_store = (
             blob_store
             if blob_store is not None
@@ -232,7 +222,6 @@ def create_app(
         )
     else:
         app.state.knowledge_parsers = knowledge_parsers
-        app.state.knowledge_chunker = knowledge_chunker
         app.state.blob_store = blob_store
     app.state.enable_index_worker = (
         enable_index_worker and knowledge_base_manager is not None

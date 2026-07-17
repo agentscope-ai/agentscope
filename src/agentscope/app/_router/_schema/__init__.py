@@ -27,11 +27,13 @@ from ._credential import (
     ListCredentialSchemasResponse,
 )
 from ._knowledge_base import (
+    ChunkerInfo,
     CreateKnowledgeBaseRequest,
     CreateKnowledgeBaseResponse,
     KbEmbeddingProvider,
     KbMiddlewareParametersSchemaResponse,
     KnowledgeDocumentView,
+    ListChunkersResponse,
     ListKbEmbeddingModelsResponse,
     ListKnowledgeBasesResponse,
     ListKnowledgeDocumentsResponse,
@@ -75,11 +77,13 @@ __all__ = [
     "ListCredentialsResponse",
     "ListCredentialSchemasResponse",
     # Knowledge base
+    "ChunkerInfo",
     "CreateKnowledgeBaseRequest",
     "CreateKnowledgeBaseResponse",
     "KbEmbeddingProvider",
     "KbMiddlewareParametersSchemaResponse",
     "KnowledgeDocumentView",
+    "ListChunkersResponse",
     "ListKbEmbeddingModelsResponse",
     "ListKnowledgeBasesResponse",
     "ListKnowledgeDocumentsResponse",

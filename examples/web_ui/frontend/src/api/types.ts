@@ -528,6 +528,24 @@ export interface EmbeddingModelCard {
 	parameter_overrides: Record<string, Record<string, unknown>>;
 }
 
+// ─── Chunker ──────────────────────────────────────────────────────────────────
+
+export interface ChunkerConfig {
+	type: string;
+	parameters: Record<string, unknown>;
+}
+
+export interface ChunkerInfo {
+	type: string;
+	description: string;
+	parameter_schema: JSONSchema;
+}
+
+export interface ListChunkersResponse {
+	chunkers: ChunkerInfo[];
+	default_type: string | null;
+}
+
 // ─── Knowledge Base ───────────────────────────────────────────────────────────
 
 /**
@@ -539,6 +557,7 @@ export interface KnowledgeBaseView {
 	name: string;
 	description: string;
 	embedding_model_config: EmbeddingModelConfig;
+	chunker_config?: ChunkerConfig;
 	created_at: string;
 	updated_at: string;
 	/**
@@ -558,6 +577,7 @@ export interface CreateKnowledgeBaseRequest {
 	name: string;
 	description?: string;
 	embedding_model_config: EmbeddingModelConfig;
+	chunker_config: ChunkerConfig;
 }
 
 export interface CreateKnowledgeBaseResponse {

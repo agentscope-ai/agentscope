@@ -32,7 +32,7 @@ from ..._logging import logger
 if TYPE_CHECKING:
     from ..rag.blob_store import BlobStoreBase
     from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
-    from ..storage import StorageBase
+    from ..storage import KnowledgeBaseRecord, StorageBase
     from ...rag import ChunkerBase, ParserBase, Section
 
 # Read blob bytes in chunks bounded so the worker never holds the whole
@@ -115,8 +115,7 @@ class IndexWorker:
         blob_store: "BlobStoreBase",
         knowledge_base_manager: "KnowledgeBaseManagerBase",
         parsers: "list[ParserBase] | dict[str, ParserBase]",
-        chunker: "ChunkerBase",
-        node_id: str,
+        node_id: str = "",
         max_concurrency: int = 4,
         lease_ttl: timedelta = timedelta(seconds=90),
         parser_executor: ProcessPoolExecutor | None = None,
@@ -146,8 +145,6 @@ class IndexWorker:
                   declare.
 
                 Same registry the upload service uses, passed in by DI.
-            chunker (`ChunkerBase`):
-                The shared chunker.
             node_id (`str`):
                 Stable identifier for this worker process.  Used as
                 ``processing_node`` on the lease so the sweeper can
@@ -174,7 +171,6 @@ class IndexWorker:
         self._blob_store = blob_store
         self._manager = knowledge_base_manager
         self._parsers_by_media_type = _build_parser_registry(parsers)
-        self._chunker = chunker
         self._node_id = node_id
         self._lease_ttl = lease_ttl
         self._sem = asyncio.Semaphore(max_concurrency)
@@ -350,6 +346,13 @@ class IndexWorker:
         file_bytes = await self._read_blob(data.blob_uri)
         sections = await self._parse(parser, file_bytes, data.filename)
 
+        # ---- resolve chunker from KB record ----
+        kb_record = await self._manager.get_knowledge_base(
+            user_id,
+            knowledge_base_id,
+        )
+        chunker = self._resolve_chunker_from_record(kb_record)
+
         # ---- chunking ----
         await self._storage.update_knowledge_document_status(
             user_id,
@@ -357,7 +360,7 @@ class IndexWorker:
             document_id,
             "chunking",
         )
-        chunks = await self._chunker.chunk(sections)
+        chunks = await chunker.chunk(sections)
 
         # ---- indexing ----
         await self._storage.update_knowledge_document_status(
@@ -406,6 +409,45 @@ class IndexWorker:
             file_bytes,
             filename,
         )
+
+    def _resolve_chunker_from_record(
+        self,
+        kb_record: "KnowledgeBaseRecord | None",
+    ) -> "ChunkerBase":
+        """Resolve the chunker from a pre-fetched KB record.
+
+        Instantiates the matching chunker from the registry using the
+        record's ``chunker_config``.  Falls back to
+        :class:`~agentscope.rag.ApproxTokenChunker` for legacy
+        records that predate per-KB chunker support
+        (``chunker_config`` is ``None``).
+        """
+        from pydantic import ValidationError
+
+        from ...rag import create_chunker_from_config, ApproxTokenChunker
+
+        if (
+            kb_record is not None
+            and getattr(kb_record, "chunker_config", None) is not None
+        ):
+            cfg = kb_record.chunker_config
+            try:
+                return create_chunker_from_config(cfg.type, cfg.parameters)
+            except KeyError:
+                logger.warning(
+                    "Unknown chunker type %r on KB %s — "
+                    "falling back to ApproxTokenChunker.",
+                    cfg.type,
+                    kb_record.id,
+                )
+            except (ValidationError, TypeError, ValueError) as exc:
+                logger.warning(
+                    "Invalid chunker parameters on KB %s: %s — "
+                    "falling back to ApproxTokenChunker.",
+                    kb_record.id,
+                    exc,
+                )
+        return ApproxTokenChunker()
 
     async def _read_blob(self, blob_uri: str) -> bytes:
         """Stream the blob into memory in bounded chunks.

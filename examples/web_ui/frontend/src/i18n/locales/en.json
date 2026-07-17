@@ -241,6 +241,9 @@
 		"dimension": {
 			"label": "Dimension"
 		},
+		"chunker": {
+			"label": "Chunker"
+		},
 		"policy": {
 			"lockedTitle": "Dimension is locked to {{dimension}}d",
 			"lockedDescription": "This server already pins all knowledge bases to {{dimension}}-dim embeddings. Only compatible models are listed below.",
@@ -251,7 +254,8 @@
 		"errors": {
 			"nameRequired": "Please give the knowledge base a name.",
 			"embeddingRequired": "Please pick an embedding model.",
-			"dimensionRequired": "Please pick a dimension."
+			"dimensionRequired": "Please pick a dimension.",
+			"chunkerRequired": "Please pick a chunking strategy."
 		}
 	},
 	"dialog-knowledge-base-edit": {
@@ -267,6 +271,9 @@
 		},
 		"embeddingModel": {
 			"label": "Embedding model"
+		},
+		"chunker": {
+			"label": "Chunker"
 		},
 		"errors": {
 			"nameRequired": "Please give the knowledge base a name."
@@ -381,6 +388,26 @@
 		},
 		"addCredential": "Add Credential",
 		"clear": "Clear selection"
+	},
+	"chunker-select": {
+		"placeholder": "Select a chunker",
+		"loading": "Loading…",
+		"empty": "No chunkers available"
+	},
+	"chunker-types": {
+		"approx_token": {
+			"label": "Approximate Token Chunker",
+			"params": {
+				"chunk_size": {
+					"label": "Chunk Size",
+					"description": "Maximum number of approximate tokens per chunk."
+				},
+				"overlap": {
+					"label": "Overlap",
+					"description": "Number of approximate tokens shared between consecutive chunks."
+				}
+			}
+		}
 	},
 	"dimension-select": {
 		"placeholder": "Select a dimension",

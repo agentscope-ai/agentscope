@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from types import TracebackType
 
     from ...storage import (
+        ChunkerConfig,
         EmbeddingModelConfig,
         KnowledgeBaseRecord,
         StorageBase,
@@ -127,6 +128,7 @@ class KnowledgeBaseManagerBase(ABC):
         name: str,
         description: str,
         embedding_model_config: "EmbeddingModelConfig",
+        chunker_config: "ChunkerConfig",
     ) -> "KnowledgeBaseRecord":
         """Create a new knowledge base for the given user.
 
@@ -147,6 +149,8 @@ class KnowledgeBaseManagerBase(ABC):
                 Free-form description.
             embedding_model_config (`EmbeddingModelConfig`):
                 Embedding model configuration; pinned to the record.
+            chunker_config (`ChunkerConfig`):
+                Chunker configuration; pinned to the record.
 
         Returns:
             `KnowledgeBaseRecord`:

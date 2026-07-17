@@ -1,7 +1,12 @@
 # -*- coding: utf-8 -*-
 """The retrieval-augmented generation (RAG) module in AgentScope."""
 
-from ._chunker import ApproxTokenChunker, ChunkerBase
+from ._chunker import (
+    ApproxTokenChunker,
+    ChunkerBase,
+    create_chunker_from_config,
+    get_chunker_registry,
+)
 from ._document import (
     Section,
     Chunk,
@@ -29,6 +34,8 @@ from ._knowledge import KnowledgeBase
 __all__ = [
     "ApproxTokenChunker",
     "ChunkerBase",
+    "create_chunker_from_config",
+    "get_chunker_registry",
     "Chunk",
     "DocumentSummary",
     "ImageParser",

@@ -5,6 +5,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from ...storage import (
+    ChunkerConfig,
     EmbeddingModelConfig,
     KnowledgeDocumentRecord,
     KnowledgeDocumentStatus,
@@ -28,6 +29,13 @@ class CreateKnowledgeBaseRequest(BaseModel):
             "Embedding model used both at indexing and at query time. "
             "Cannot be changed after creation — switching would "
             "invalidate every previously inserted vector."
+        ),
+    )
+    chunker_config: ChunkerConfig = Field(
+        description=(
+            "Chunker configuration determining how uploaded documents "
+            "are split into chunks.  Pinned at creation time and "
+            "cannot be changed afterwards."
         ),
     )
 
@@ -270,5 +278,37 @@ class ListSupportedContentTypesResponse(BaseModel):
             "registered parser claims to handle.  Deduplicated and "
             "sorted.  Derived from `mimetypes` by the base parser; "
             "subclasses may override the default."
+        ),
+    )
+
+
+class ChunkerInfo(BaseModel):
+    """Describes one registered chunker type and its parameter schema."""
+
+    type: str = Field(description="The chunker type identifier.")
+    description: str = Field(
+        default="",
+        description="Human-readable description of the chunker.",
+    )
+    parameter_schema: dict = Field(
+        description=(
+            "JSON Schema for the chunker's tunable parameters, "
+            "suitable for driving a dynamic form on the front-end."
+        ),
+    )
+
+
+class ListChunkersResponse(BaseModel):
+    """Response body listing all registered chunker types."""
+
+    chunkers: list[ChunkerInfo] = Field(
+        description="All registered chunker types with their schemas.",
+    )
+    default_type: str | None = Field(
+        default=None,
+        description=(
+            "The first registered chunker type, surfaced as a hint "
+            "for the front-end's default selection.  ``None`` when "
+            "the registry is empty."
         ),
     )

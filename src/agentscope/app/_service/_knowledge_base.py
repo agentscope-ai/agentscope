@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
     from ..message_bus import MessageBus
     from ..storage import (
+        ChunkerConfig,
         EmbeddingModelConfig,
         KnowledgeBaseRecord,
         StorageBase,
@@ -107,6 +108,7 @@ class KnowledgeBaseService:
         name: str,
         description: str,
         embedding_model_config: "EmbeddingModelConfig",
+        chunker_config: "ChunkerConfig",
     ) -> "KnowledgeBaseRecord":
         """Delegate creation to the manager, mapping policy errors.
 
@@ -119,6 +121,8 @@ class KnowledgeBaseService:
                 Free-form description.
             embedding_model_config (`EmbeddingModelConfig`):
                 Embedding model configuration; pinned to the record.
+            chunker_config (`ChunkerConfig`):
+                Chunker configuration; pinned to the record.
 
         Returns:
             `KnowledgeBaseRecord`:
@@ -128,13 +132,36 @@ class KnowledgeBaseService:
             `HTTPException`:
                 ``409`` when the requested embedding dimension
                 violates the manager's dimension policy.
+                ``422`` when the chunker type or parameters are
+                invalid.
         """
+        from pydantic import ValidationError
+
+        from ...rag import create_chunker_from_config
+
+        try:
+            create_chunker_from_config(
+                chunker_config.type,
+                chunker_config.parameters,
+            )
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Unknown chunker type: {chunker_config.type!r}",
+            ) from exc
+        except (TypeError, ValueError, ValidationError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid chunker parameters: {exc}",
+            ) from exc
+
         try:
             return await self._manager.create_knowledge_base(
                 user_id=user_id,
                 name=name,
                 description=description,
                 embedding_model_config=embedding_model_config,
+                chunker_config=chunker_config,
             )
         except DimensionPolicyError as exc:
             raise HTTPException(

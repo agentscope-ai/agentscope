@@ -17,6 +17,9 @@ guarantee preserves the structural metadata attached by the Parser
 (page numbers, slide indices, embedded-image isolation, etc.).
 """
 from abc import ABC, abstractmethod
+from typing import Any, ClassVar
+
+from pydantic import BaseModel, ConfigDict
 
 from .._document import Chunk, Section
 
@@ -28,6 +31,18 @@ class ChunkerBase(ABC):
     count, by token count, by semantic boundary, etc.).  The
     chunker is configured once at construction time and reused
     across many ``chunk()`` calls within the same knowledge base.
+
+    Subclasses must declare a :attr:`chunker_type` class variable
+    that uniquely identifies the strategy.  The value is persisted
+    in :class:`~agentscope.app.storage.KnowledgeBaseRecord` so the
+    index worker can reconstruct the chunker at processing time.
+
+    Subclasses should define a :class:`Parameters` inner class (a
+    Pydantic :class:`BaseModel`) to declare their tunable knobs.
+    The base class provides sensible defaults for
+    :meth:`parameter_schema` and :meth:`from_config` when the inner
+    class exists, mirroring how :class:`ModelCard` and
+    :class:`RAGMiddleware` expose their parameters.
 
     Subclasses must guarantee:
 
@@ -44,6 +59,60 @@ class ChunkerBase(ABC):
     - **Metadata inheritance**: each output Chunk's ``source`` and
       ``metadata`` are copied from its parent Section.
     """
+
+    chunker_type: ClassVar[str]
+    """Unique identifier for this chunking strategy.  Must be set
+    by every concrete subclass."""
+
+    class Parameters(BaseModel):
+        """Tunable parameters for this chunker.
+
+        Subclasses override this inner class to declare their own
+        parameters with Pydantic ``Field`` annotations.  The base
+        version is empty (no tunable parameters).
+        """
+
+        model_config = ConfigDict(extra="forbid")
+
+    @classmethod
+    def parameter_schema(cls) -> dict[str, Any]:
+        """Return a JSON Schema describing this chunker's tunable parameters.
+
+        The schema is generated from the :class:`Parameters` inner
+        class via ``model_json_schema()``, following the same pattern
+        used by :class:`~agentscope.model.ModelCard` and
+        :class:`~agentscope.middleware.RAGMiddleware`.
+
+        Returns:
+            `dict[str, Any]`:
+                A JSON Schema object derived from :class:`Parameters`.
+        """
+        return cls.Parameters.model_json_schema()
+
+    @classmethod
+    def from_config(cls, **kwargs: Any) -> "ChunkerBase":
+        """Instantiate this chunker from persisted configuration.
+
+        Validates ``kwargs`` against the :class:`Parameters` model
+        before forwarding to the constructor.  This ensures that
+        stored parameters are type-checked and constraint-validated
+        at reconstruction time.
+
+        Args:
+            **kwargs:
+                Parameter values previously stored in the knowledge
+                base record's ``chunker_config.parameters``.
+
+        Returns:
+            `ChunkerBase`:
+                A configured chunker instance.
+
+        Raises:
+            `ValidationError`:
+                If ``kwargs`` fail Pydantic validation.
+        """
+        params = cls.Parameters(**kwargs)
+        return cls(**params.model_dump())
 
     @abstractmethod
     async def chunk(self, sections: list[Section]) -> list[Chunk]:
