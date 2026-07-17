@@ -3,26 +3,35 @@
 from typing import AsyncGenerator, Awaitable, Callable, TYPE_CHECKING
 
 from ..tool import ToolBase
+from ..permission import PermissionEvaluation, PermissionRule
 
 if TYPE_CHECKING:
     from ..agent import Agent
     from ..model import ChatResponse
+    from ..message import ToolCallBlock
 
 
 class MiddlewareBase:  # pylint: disable=unused-argument
     """Base class for all middleware implementations.
 
-    Middleware provides interception mechanisms at 5 key execution points
-    in the Agent lifecycle:
+    Middleware provides interception mechanisms at several key execution
+    points in the Agent lifecycle:
 
     **Onion Pattern Hooks** (with before/after logic):
     - `on_reply`: Intercepts the entire reply process
     - `on_reasoning`: Intercepts the reasoning/model call phase
     - `on_acting`: Intercepts individual tool call execution
     - `on_model_call`: Intercepts the raw model API call
+    - `on_compress_context`: Intercepts context compression
 
     **Transformer Pattern Hook** (sequential pipeline):
     - `on_system_prompt`: Transforms the system prompt string
+
+    **Read-only Notification Hook** (no next_handler):
+    - `on_permission_decision`: Observe a permission decision before the
+      agent consumes it. Cannot modify, skip, or re-run the check.
+    - `on_permission_confirmation`: Observe a user's approval or rejection
+      before the agent consumes it.
 
     Each hook is optional - only implement the ones you need. The middleware
     system will automatically detect which hooks are implemented at runtime.
@@ -156,6 +165,84 @@ class MiddlewareBase:  # pylint: disable=unused-argument
             f"{type(self).__name__} does not implement on_acting",
         )
         yield  # pylint: disable=unreachable
+
+    async def on_permission_decision(
+        self,
+        agent: "Agent",
+        tool_call: "ToolCallBlock",
+        tool: ToolBase,
+        tool_input: dict,
+        evaluation: PermissionEvaluation,
+    ) -> None:
+        """Observe a permission decision before the agent consumes it.
+
+        Read-only notification hook, invoked after input validation and
+        permission evaluation succeed, but **before** the agent updates
+        tool-call state, emits ASK/DENY/ALLOW events, or calls
+        :meth:`_acting`. This is the only observation point for DENY,
+        ASK, and mode-suppressed decisions (BYPASS silencing a
+        bypass-immune safety ASK, DONT_ASK converting an ASK to DENY) —
+        :meth:`on_acting` only sees already-permitted executions.
+
+        Contract:
+        - **Read-only**: there is no ``next_handler``. Implementations
+          must NOT replace, skip, or re-run the permission check, and
+          must NOT mutate ``evaluation`` or ``tool_input`` in a way that
+          affects the decision.
+        - **Exceptions propagate** (fail-closed): an exception raised
+          here aborts the tool call. Wrap in try/except for best-effort
+          logging.
+
+        Args:
+            agent (`Agent`): The agent instance (provides ``name``,
+                ``state.session_id``, ``state.reply_id``).
+            tool_call (`ToolCallBlock`): The tool call block (provides
+                ``id`` and the raw model-produced input).
+            tool (`ToolBase`): The resolved tool instance.
+            tool_input (`dict`): Schema-parsed and validated input.
+                **May contain sensitive data** (shell commands, file
+                contents, API tokens) — consumers are responsible for
+                redaction / field whitelisting / truncation.
+            evaluation (`PermissionEvaluation`): The structured
+                permission evaluation, including any candidate decision
+                suppressed by the active mode.
+        """
+        raise RuntimeError(
+            f"{type(self).__name__} does not implement on_permission_decision",
+        )
+
+    async def on_permission_confirmation(
+        self,
+        agent: "Agent",
+        tool_call: "ToolCallBlock",
+        confirmed: bool,
+        rules: list[PermissionRule],
+    ) -> None:
+        """Observe a user approval or rejection before Agent consumes it.
+
+        This is a read-only notification hook with no ``next_handler``.
+        It runs before Agent changes tool-call state, applies accepted rules,
+        emits a denied result, or resumes execution. Exceptions propagate
+        (fail-closed); catch sink failures inside the middleware to implement
+        best-effort logging.
+
+        Args:
+            agent (`Agent`):
+                The agent processing the confirmation.
+            tool_call (`ToolCallBlock`):
+                The tool call submitted with the confirmation, including
+                any user-approved edits. Its input may contain sensitive
+                data and must be redacted before logging.
+            confirmed (`bool`):
+                Whether the user approved the tool call.
+            rules (`list[PermissionRule]`):
+                Rules submitted with the confirmation. Rule content may be
+                sensitive and must be redacted before logging.
+        """
+        raise RuntimeError(
+            f"{type(self).__name__} does not implement "
+            "on_permission_confirmation",
+        )
 
     async def on_model_call(
         self,

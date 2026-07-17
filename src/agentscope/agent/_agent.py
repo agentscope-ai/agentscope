@@ -85,11 +85,15 @@ from ..permission import (
     PermissionBehavior,
     PermissionEngine,
     PermissionDecision,
+    PermissionEvaluation,
+    PermissionRule,
+    PermissionResolution,
 )
 from ..workspace import Offloader, WorkspaceBase
 
 if TYPE_CHECKING:
     from ..middleware import MiddlewareBase
+    from ..tool import ToolBase
 else:
     MiddlewareBase = Any
 
@@ -126,9 +130,10 @@ class Agent:
                 sole source.
             middlewares (`list[MiddlewareBase] | None`, optional):
                 Middlewares applied to the agent to modify its behavior
-                without altering its source code. Supported hook points
-                include: reply, reasoning, acting, model call, and system
-                prompt retrieval.
+                without altering its source code. Supported hook points are
+                reply, reasoning, acting, model call, context compression,
+                system prompt retrieval, permission decisions, and user
+                permission confirmations.
             state (`AgentState | None`, optional):
                 The agent state. A new state will be created if not provided.
             offloader (`Offloader | None`, optional):
@@ -185,6 +190,16 @@ class Agent:
         ]
         self._compress_context_middlewares = [
             _ for _ in middlewares if _.is_implemented("on_compress_context")
+        ]
+        self._permission_decision_middlewares = [
+            _
+            for _ in middlewares
+            if _.is_implemented("on_permission_decision")
+        ]
+        self._permission_confirmation_middlewares = [
+            _
+            for _ in middlewares
+            if _.is_implemented("on_permission_confirmation")
         ]
 
     # =======================================================================
@@ -1248,6 +1263,11 @@ class Agent:
 
                 if tool_call.id in confirmed_tool_calls:
                     confirmation = confirmed_tool_calls[tool_call.id]
+                    await self._notify_permission_confirmation(
+                        tool_call=confirmation.tool_call,
+                        confirmed=confirmation.confirmed,
+                        rules=confirmation.rules or [],
+                    )
                     if confirmation.confirmed:
                         # Update state and wait for execution in the next step
                         self._update_tool_call_state(
@@ -1648,11 +1668,26 @@ class Agent:
                 behavior=PermissionBehavior.ALLOW,
                 message="Already allowed by user confirmation.",
             )
+            evaluation = PermissionEvaluation(
+                mode=self._engine.context.mode,
+                effective_decision=decision,
+                resolution=PermissionResolution.USER_CONFIRMED,
+            )
         else:
-            decision = await self._engine.check_permission(
+            evaluation = await self._engine.evaluate_permission(
                 tool,
                 parsed_input,
             )
+            decision = evaluation.effective_decision
+
+        # Notify read-only permission-decision observers BEFORE consuming
+        # the decision (before state updates, events, or _acting).
+        await self._notify_permission_decision(
+            tool_call=tool_call,
+            tool=tool,
+            tool_input=parsed_input,
+            evaluation=evaluation,
+        )
 
         # ===================================================================
         # Step 3: Handle the permission and execute the tool call if allowed
@@ -1815,6 +1850,61 @@ class Agent:
         raise ValueError(
             f"Invalid permission decision behavior: {decision.behavior}",
         )
+
+    async def _notify_permission_decision(
+        self,
+        tool_call: ToolCallBlock,
+        tool: "ToolBase",
+        tool_input: dict[str, Any],
+        evaluation: PermissionEvaluation,
+    ) -> None:
+        """Notify on_permission_decision observers (read-only, fail-closed).
+
+        Called after permission evaluation and before the decision is
+        consumed. When no observer middleware is attached, no copying or
+        observer invocation occurs. Exceptions propagate per the hook
+        contract.
+
+        Each observer receives deep copies of ``evaluation``,
+        ``tool_input``, and ``tool_call`` so it cannot mutate the
+        effective/candidate decisions, the parsed input, or the tool
+        call the agent will execute (id/name/input/state/suggested_rules)
+        — the "read-only notification" contract is enforced by
+        isolation, not by convention. ``agent`` and ``tool`` are passed
+        as-is: ``agent`` is the live runtime context (every middleware
+        hook receives it read-only by convention) and ``tool`` is the
+        toolkit's shared instance.
+        """
+        for mw in self._permission_decision_middlewares:
+            await mw.on_permission_decision(
+                agent=self,
+                tool_call=deepcopy(tool_call),
+                tool=tool,
+                tool_input=deepcopy(tool_input),
+                evaluation=deepcopy(evaluation),
+            )
+
+    async def _notify_permission_confirmation(
+        self,
+        tool_call: ToolCallBlock,
+        confirmed: bool,
+        rules: list[PermissionRule],
+    ) -> None:
+        """Notify confirmation observers before consuming the user result.
+
+        Each observer receives deep copies of ``tool_call`` and ``rules``
+        so it cannot mutate the confirmed tool call or the rules the agent
+        will apply via ``add_rule`` — the read-only contract is enforced
+        by isolation, not by convention. ``agent`` is passed as-is (live
+        runtime context, matching every middleware hook's convention).
+        """
+        for middleware in self._permission_confirmation_middlewares:
+            await middleware.on_permission_confirmation(
+                agent=self,
+                tool_call=deepcopy(tool_call),
+                confirmed=confirmed,
+                rules=deepcopy(rules),
+            )
 
     async def _acting(
         self,
