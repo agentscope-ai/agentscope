@@ -17,7 +17,12 @@ from agentscope.permission import (
     PermissionBehavior,
     PermissionContext,
 )
-from agentscope.message import TextBlock, ToolCallBlock, UserMsg
+from agentscope.message import (
+    TextBlock,
+    ThinkingBlock,
+    ToolCallBlock,
+    UserMsg,
+)
 
 
 class MockSequentialTool(ToolBase):
@@ -562,6 +567,30 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         ]
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
         self.assertListEqual(context_dicts, expected_context_after_reply)
+
+    async def test_thinking_only_response_continues_reasoning(self) -> None:
+        """A thinking-only response should not end with an empty reply."""
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[ThinkingBlock(thinking="Working on it")],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="Final answer")],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        msg = await self.agent.reply(UserMsg(name="user", content="Think"))
+
+        self.assertEqual(self.model.cnt, 2)
+        self.assertEqual(msg.get_text_content(), "Final answer")
+        assistant_blocks = self.agent.state.context[-1].get_content_blocks()
+        self.assertEqual(len(assistant_blocks), 2)
+        self.assertIsInstance(assistant_blocks[0], ThinkingBlock)
+        self.assertIsInstance(assistant_blocks[1], TextBlock)
 
     async def test_streaming_sequential_tool_calls(self) -> None:
         """Test the streaming model inference with tool calls generated.

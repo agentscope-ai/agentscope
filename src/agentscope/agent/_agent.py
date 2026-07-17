@@ -1095,6 +1095,14 @@ class Agent:
             completed_response.usage,
         )
 
+        # A thinking-only response is an intermediate reasoning step rather
+        # than a user-visible final answer. Keep the ReAct loop running so the
+        # model can produce text, data, or a tool call on the next iteration.
+        has_only_thinking_blocks = bool(completed_response.content) and all(
+            isinstance(block, ThinkingBlock)
+            for block in completed_response.content
+        )
+
         # If no tool call is generated, return the final message directly
         if (
             completed_response.finished_reason != FinishedReason.INTERRUPTED
@@ -1102,6 +1110,7 @@ class Agent:
                 isinstance(_, ToolCallBlock)
                 for _ in completed_response.content
             )
+            and not has_only_thinking_blocks
         ):
             last_ctx = self._get_last_msg()
             final_usage = (
