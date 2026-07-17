@@ -224,7 +224,7 @@ class OpenAIChatModel(ChatModelBase):
         }
 
         if self.parameters.max_tokens is not None:
-            kwargs["max_tokens"] = self.parameters.max_tokens
+            kwargs["max_completion_tokens"] = self.parameters.max_tokens
 
         if self.parameters.temperature is not None:
             kwargs["temperature"] = self.parameters.temperature

@@ -36,7 +36,7 @@
 		"react-resizable-panels": "^4.11.2",
 		"react-router-dom": "^7.15.1",
 		"remark-gfm": "^4.0.1",
-		"shadcn": "^4.7.0",
+		"shadcn": "^4.13.0",
 		"shadcn-prose": "^1.2.1",
 		"sonner": "^2.0.7",
 		"tailwind-merge": "^3.6.0",

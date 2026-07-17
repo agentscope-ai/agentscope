@@ -5,11 +5,11 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from ...storage import (
-    CredentialRecord,
     EmbeddingModelConfig,
     KnowledgeDocumentRecord,
     KnowledgeDocumentStatus,
 )
+from ..._service import CredentialView, KnowledgeBaseView
 from ....embedding import EmbeddingModelCard
 from ....rag import VectorSearchResult
 from ...rag.knowledge_base_manager._dimension_policy import DimensionPolicy
@@ -56,24 +56,6 @@ class UpdateKnowledgeBaseRequest(BaseModel):
         default=None,
         description="New free-form description; omit to leave unchanged.",
     )
-
-
-class KnowledgeBaseView(BaseModel):
-    """A knowledge base record as exposed to API clients.
-
-    Mirrors :class:`KnowledgeBaseRecord` with the internal
-    ``user_id`` / ``collection_name`` fields stripped — clients have
-    no business introspecting either.
-    """
-
-    id: str = Field(description="The knowledge base identifier.")
-    name: str = Field(description="Display name of the knowledge base.")
-    description: str = Field(description="Free-form description.")
-    embedding_model_config: EmbeddingModelConfig = Field(
-        description="Embedding model configuration pinned at creation.",
-    )
-    created_at: datetime = Field(description="Creation timestamp.")
-    updated_at: datetime = Field(description="Last-update timestamp.")
 
 
 class ListKnowledgeBasesResponse(BaseModel):
@@ -212,7 +194,7 @@ class KbEmbeddingProvider(BaseModel):
     cards are narrowed to the locked dimension when applicable.
     """
 
-    credential: CredentialRecord = Field(
+    credential: CredentialView = Field(
         description="The credential record exposing these models.",
     )
     models: list[EmbeddingModelCard] = Field(

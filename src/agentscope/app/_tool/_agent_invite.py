@@ -36,6 +36,7 @@ from ..._utils._common import _generate_id
 if TYPE_CHECKING:
     from ..message_bus import MessageBus
     from ..storage import AgentRecord, StorageBase
+    from ..workspace_manager import WorkspaceManagerBase
 
 
 def _display_handle(agent_id: str) -> str:
@@ -163,6 +164,7 @@ class AgentInvite(_TeamToolBase):
         self,
         storage: "StorageBase",
         message_bus: "MessageBus",
+        workspace_manager: "WorkspaceManagerBase",
         user_id: str,
         session_id: str,
         agent_id: str,
@@ -174,20 +176,28 @@ class AgentInvite(_TeamToolBase):
             storage (`StorageBase`):
                 Application storage backend.
             message_bus (`MessageBus`):
-                Application message bus for inter-session delivery.
+                Application message bus.
+            workspace_manager (`WorkspaceManagerBase`):
+                Used to mint the workspace id for freshly-invited
+                agents (see :meth:`__call__`).
             user_id (`str`):
-                The owner user id of the calling agent.
+                The owner user id.
             session_id (`str`):
-                The current session id of the calling agent.
+                The calling session id.
             agent_id (`str`):
-                The id of the agent invoking the tool.
+                The calling agent id.
             invitable_pool (`list[AgentRecord]`):
-                Snapshot of the user's currently-invitable agents,
-                resolved at toolkit assembly time. Non-empty — the
-                caller is responsible for skipping construction when
-                there is nothing to invite.
+                Snapshot of currently-invitable agents. Must be
+                non-empty — the caller skips construction otherwise.
         """
-        super().__init__(storage, message_bus, user_id, session_id, agent_id)
+        super().__init__(
+            storage,
+            message_bus,
+            workspace_manager,
+            user_id,
+            session_id,
+            agent_id,
+        )
 
         self._pool_by_id: dict[str, "AgentRecord"] = {
             a.id: a for a in invitable_pool
@@ -359,7 +369,13 @@ class AgentInvite(_TeamToolBase):
                     or leader_session.config.fallback_chat_model_config
                 )
             else:
-                borrowed_workspace_id = _generate_id()
+                borrowed_workspace_id = (
+                    self._workspace_manager.assign_workspace_id(
+                        user_id=self._user_id,
+                        agent_id=invited.id,
+                        session_id=_generate_id(),
+                    )
+                )
                 borrowed_chat_model = leader_session.config.chat_model_config
                 borrowed_fallback_model = (
                     leader_session.config.fallback_chat_model_config

@@ -5,9 +5,11 @@ from typing import Any, AsyncGenerator, Type
 
 from pydantic import BaseModel
 
+from agentscope.app.workspace_manager import WorkspaceManagerBase
 from agentscope.credential import CredentialBase
 from agentscope.message import Msg
 from agentscope.model import ChatModelBase, ChatResponse, StructuredResponse
+from agentscope.workspace import WorkspaceBase
 
 
 class AnyString(str):
@@ -149,3 +151,37 @@ def compare_by_printing(a: Any, b: Any) -> None:
     """Compare the expected output with the actual output by printing them."""
     print(json.dumps(a, indent=4))
     print(json.dumps(b, indent=4))
+
+
+class FakeWorkspaceManager(WorkspaceManagerBase):
+    """Minimal :class:`WorkspaceManagerBase` for tests.
+
+    Inherits the real :meth:`assign_workspace_id` (drives the
+    isolation policy under test) and stubs the abstract async
+    methods with no-ops. Not backed by any real workspace.
+    """
+
+    async def get_workspace(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        workspace_id: str | None = None,
+    ) -> WorkspaceBase:
+        """Not implemented — team-tool tests never touch this."""
+        raise NotImplementedError
+
+    async def create_workspace(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+    ) -> WorkspaceBase:
+        """Not implemented — team-tool tests never touch this."""
+        raise NotImplementedError
+
+    async def close(self, workspace_id: str) -> None:
+        """No-op."""
+
+    async def close_all(self) -> None:
+        """No-op."""

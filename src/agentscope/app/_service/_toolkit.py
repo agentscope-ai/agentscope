@@ -19,6 +19,7 @@ from .._tool import (
 )
 from .._types import AgentToolFactory, SubAgentTemplate
 from ..storage import AgentRecord, SessionRecord, StorageBase
+from ..workspace_manager import WorkspaceManagerBase
 from ...middleware import MiddlewareBase
 from ...tool import (
     TaskCreate,
@@ -29,12 +30,15 @@ from ...tool import (
     ToolGroup,
 )
 from ...workspace import WorkspaceBase
+from ..access import ResourceKind
+from ._access import ResourceAccessService
 
 
 async def get_toolkit(
     *,
     storage: StorageBase,
     workspace: WorkspaceBase,
+    workspace_manager: WorkspaceManagerBase,
     scheduler_manager: SchedulerManager,
     background_task_manager: BackgroundTaskManager,
     message_bus: MessageBus,
@@ -42,6 +46,7 @@ async def get_toolkit(
     user_id: str,
     agent_record: AgentRecord,
     session_record: SessionRecord,
+    resource_access_service: ResourceAccessService,
     extra_factory: AgentToolFactory | None = None,
     sub_agent_templates: dict[str, SubAgentTemplate] | None = None,
 ) -> Toolkit:
@@ -173,6 +178,7 @@ time or interval"
     team_tool_kwargs: dict[str, Any] = {
         "storage": storage,
         "message_bus": message_bus,
+        "workspace_manager": workspace_manager,
         "user_id": user_id,
         "session_id": session_record.id,
         "agent_id": agent_record.id,
@@ -203,11 +209,19 @@ time or interval"
         # targets). Team-tool base is safe to call for either team or
         # non-team sessions — AgentInvite rechecks the leader
         # precondition at call time.
+        #
+        # Walk agents *visible* to the caller (own + shared through the
+        # resource access policy) so a leader can invite a partner's
+        # agent when the policy grants access.
+        visible_agents = await resource_access_service.list_resource(
+            user_id,
+            ResourceKind.AGENT,
+        )
         invitable_pool = [
-            a
-            for a in await storage.list_agents(user_id)
-            if a.data.invite_config.invitable
-            and (a.data.invite_config.invite_description or "").strip()
+            view
+            for view in visible_agents
+            if view.data.invite_config.invitable
+            and (view.data.invite_config.invite_description or "").strip()
         ]
         if invitable_pool:
             tools.append(

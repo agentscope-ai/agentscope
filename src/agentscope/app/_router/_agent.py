@@ -7,7 +7,13 @@ from pydantic import ValidationError
 
 from ...agent import ContextConfig, ReActConfig
 from ..._utils._common import _flatten_json_schema
-from ..deps import get_current_user_id, get_session_service, get_storage
+from ..access import ResourceKind
+from ..deps import (
+    get_current_user_id,
+    get_resource_access_service,
+    get_session_service,
+    get_storage,
+)
 from ._schema import (
     AgentSchemaResponse,
     AgentSchemaV2Response,
@@ -16,7 +22,7 @@ from ._schema import (
     CreateAgentResponse,
     UpdateAgentRequest,
 )
-from .._service import SessionService
+from .._service import AgentView, ResourceAccessService, SessionService
 from ..storage import StorageBase, AgentData, AgentRecord
 
 agent_router = APIRouter(
@@ -133,22 +139,27 @@ async def get_agent_schema_v2() -> AgentSchemaV2Response:
 )
 async def list_agents(
     user_id: str = Depends(get_current_user_id),
-    storage: StorageBase = Depends(get_storage),
+    access: ResourceAccessService = Depends(get_resource_access_service),
 ) -> ListAgentsResponse:
-    """Return all agent records belonging to the authenticated user.
+    """Return all agent records visible to the authenticated user.
+
+    Includes the caller's own ``source == "user"`` agents plus any agents
+    shared to them through :class:`ResourceAccessPolicyBase`. Each entry
+    carries an ``editable`` flag indicating whether the caller may
+    PATCH/DELETE it.
 
     Args:
         user_id (`str`):
             Injected authenticated user ID.
-        storage (`StorageBase`):
-            Injected storage backend.
+        access (`ResourceAccessService`):
+            Injected resource access service.
 
     Returns:
         `ListAgentsResponse`:
-            All agent records and their total count.
+            All visible agent records paired with per-viewer editability.
     """
-    agents = await storage.list_agents(user_id)
-    return ListAgentsResponse(agents=agents, total=len(agents))
+    entries = await access.list_resource(user_id, ResourceKind.AGENT)
+    return ListAgentsResponse(agents=entries, total=len(entries))
 
 
 @agent_router.post(
@@ -204,7 +215,7 @@ async def create_agent(
 
 @agent_router.patch(
     "/{agent_id}",
-    response_model=AgentRecord,
+    response_model=AgentView,
     summary="Update an agent",
 )
 async def update_agent(
@@ -212,7 +223,8 @@ async def update_agent(
     body: UpdateAgentRequest,
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
-) -> AgentRecord:
+    access: ResourceAccessService = Depends(get_resource_access_service),
+) -> AgentView:
     """Partially update an existing agent configuration.
 
     Only the fields present in the request body are updated; all other fields
@@ -223,21 +235,20 @@ async def update_agent(
         body (`UpdateAgentRequest`): Fields to update.
         user_id (`str`): Injected authenticated user ID.
         storage (`StorageBase`): Injected storage backend.
+        access (`ResourceAccessService`): Injected access service.
 
     Returns:
-        `AgentRecord`: The full agent record after the update.
+        `AgentView`: The full agent record after the update.
 
     Raises:
-        `HTTPException`: 404 if the agent does not exist or does not belong
-            to the authenticated user.
+        `HTTPException`: 404 if the agent is not visible to the caller;
+            403 if visible but only readable.
     """
-    agents = await storage.list_agents(user_id)
-    existing = next((a for a in agents if a.id == agent_id), None)
-    if existing is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Agent '{agent_id}' not found.",
-        )
+    owner_id, existing = await access.resolve_for_edit(
+        user_id,
+        ResourceKind.AGENT,
+        agent_id,
+    )
 
     updates = body.model_dump(exclude_none=True)
     # ``model_copy(update=...)`` skips validators; re-run
@@ -257,8 +268,12 @@ async def update_agent(
     updated_agent = existing.model_copy(
         update={"data": updated_data, "updated_at": datetime.now()},
     )
-    await storage.upsert_agent(user_id, updated_agent)
-    return updated_agent
+    await storage.upsert_agent(owner_id, updated_agent)
+    # Only reachable via ``resolve_for_edit``, so the caller has edit
+    # permission by construction.
+    return AgentView.model_validate(
+        {**updated_agent.model_dump(), "editable": True},
+    )
 
 
 @agent_router.delete(
@@ -270,6 +285,7 @@ async def delete_agent(
     agent_id: str,
     user_id: str = Depends(get_current_user_id),
     session_service: SessionService = Depends(get_session_service),
+    access: ResourceAccessService = Depends(get_resource_access_service),
 ) -> None:
     """Permanently delete an agent configuration.
 
@@ -281,12 +297,20 @@ async def delete_agent(
         agent_id (`str`): The agent to delete.
         user_id (`str`): Injected authenticated user ID.
         session_service (`SessionService`): Injected session service.
+        access (`ResourceAccessService`): Injected access service — used
+            to resolve the owning user and enforce the edit permission
+            when a shared editor deletes the agent.
 
     Raises:
-        `HTTPException`: 404 if the agent does not exist or does not belong
-            to the authenticated user.
+        `HTTPException`: 404 if the agent is not visible to the caller;
+            403 if visible but only readable.
     """
-    deleted = await session_service.delete_agent(user_id, agent_id)
+    owner_id, _ = await access.resolve_for_edit(
+        user_id,
+        ResourceKind.AGENT,
+        agent_id,
+    )
+    deleted = await session_service.delete_agent(owner_id, agent_id)
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

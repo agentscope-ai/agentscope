@@ -587,13 +587,30 @@ class ChatModelBase:
 
         completed_response: ChatResponse | None = None
         if self.stream:
+            # ``_call_api`` yields raw incremental chunks whose ``is_last``
+            # is always ``False``; subclasses rely on the ``__call__``
+            # wrapper to accumulate them and emit a final ``is_last=True``
+            # chunk. Since this method calls ``_call_api`` directly (to
+            # avoid duplicating the retry logic in ``__call__``), we must
+            # replicate that accumulation here, otherwise the stream may
+            # end without ever producing an ``is_last=True`` chunk.
+            acc_res = ChatResponse(
+                content=[],
+                is_last=True,
+                finished_reason=FinishedReason.COMPLETED,
+            )
             async for chunk in res:
                 if chunk.is_last:
                     completed_response = chunk
+                    break
+                acc_res.append_chat_response(chunk)
+                acc_res.id = chunk.id
+            if completed_response is None:
+                completed_response = acc_res
         else:
             completed_response = res
 
-        if completed_response is None:
+        if completed_response is None or not completed_response.content:
             raise RuntimeError(
                 f"Failed to get the completed response from model "
                 f"{model_name}.",

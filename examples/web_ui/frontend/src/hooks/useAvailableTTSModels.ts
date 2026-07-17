@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 
 import { credentialApi, ttsModelApi } from '@/api';
-import type { CredentialRecord, TTSModelCard } from '@/api';
+import type { CredentialView, TTSModelCard } from '@/api';
 
 export interface CredentialWithTTSModels {
-	credential: CredentialRecord;
+	credential: CredentialView;
 	models: TTSModelCard[];
 }
 

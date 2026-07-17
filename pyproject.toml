@@ -26,7 +26,7 @@ dependencies = [
     "filetype",
     "json5",
     "json_repair",
-    "mcp",
+    "mcp<2.0.0",
     "httpx",
     "numpy",
     "openai",
@@ -75,9 +75,13 @@ sql = [
     "alembic>=1.13",
 ]
 # ------------ Workspace -----------
+k8s = ["kubernetes-asyncio"]
 workspace = [
     "aiodocker",
     "e2b",
+    "agentscope[k8s]",
+    "daytona",
+    "opensandbox",
 ]
 # ------------ Tools ------------
 tools = [
@@ -88,10 +92,18 @@ rag = [
     "qdrant-client",
     "pypdf",
     "python-pptx",
+    "python-docx",
+    "openpyxl>=3.1.5",
+    "xlrd>=2.0",
+    "pandas",
 ]
 milvuslite = [
-    "pymilvus[milvus-lite]>=2.4.0",
-    "milvus-lite>=3.0; sys_platform == 'win32'",
+    "pymilvus>=2.4.0",
+    "milvus-lite>=3.1.0",
+]
+# ------------ MongoDB vector store ------------
+mongodb = [
+    "pymongo>=4.7",
 ]
 
 # ------------ S3-compatible blob store ------------
@@ -120,6 +132,7 @@ full = [
     "agentscope[tools]",
     "agentscope[rag]",
     "agentscope[milvuslite]",
+    "agentscope[mongodb]",
     "agentscope[s3]",
     "agentscope[mem0]",
     "agentscope[reme]",
@@ -161,7 +174,7 @@ include-package-data = true
 # ``"*"`` applies to every discovered package. Patterns:
 # - ``py.typed`` marks the typed package per PEP 561.
 # - ``_models/*.yaml`` reaches into the data-only ``_models/``
-#   subdirs that ship with each model provider (they have no
+#  subdirs that ship with each model provider (they have no
 #   ``__init__.py`` and are not packages, but the files still
 #   live alongside the parent package's source on disk).
 "*" = [

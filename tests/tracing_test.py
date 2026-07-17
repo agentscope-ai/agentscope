@@ -84,7 +84,10 @@ class HitlWeatherTool(ToolBase):
         "required": ["city"],
     }
     is_concurrency_safe: bool = True
-    is_read_only: bool = True
+    # A tool requiring confirmation is not read-only: the read-only fast
+    # path auto-allows read-only invocations in every mode (ahead of
+    # ``check_permissions``), which would otherwise bypass the ASK below.
+    is_read_only: bool = False
     is_external_tool: bool = False
     is_mcp: bool = False
 

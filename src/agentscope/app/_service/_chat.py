@@ -34,6 +34,7 @@ from .._types import (
     EventProjector,
     SubAgentTemplate,
 )
+from ._access import ResourceAccessService
 from ._model import get_model
 from ._tts_model import get_tts_model
 from ._toolkit import get_toolkit
@@ -75,6 +76,7 @@ class ChatService:
         scheduler_manager: SchedulerManager,
         background_task_manager: BackgroundTaskManager,
         message_bus: MessageBus,
+        resource_access_service: ResourceAccessService,
         knowledge_base_manager: KnowledgeBaseManagerBase | None = None,
         extra_agent_middlewares: AgentMiddlewareFactory | None = None,
         extra_agent_tools: AgentToolFactory | None = None,
@@ -103,6 +105,11 @@ class ChatService:
                 distributed locking (via :meth:`session_run`), event
                 replay + live fan-out (via :meth:`session_publish_event`),
                 and inbox delivery (via :class:`InboxMiddleware`).
+            resource_access_service (`ResourceAccessService`):
+                Resolves cross-owner resources at runtime. Agent
+                assembly and model / TTS construction all route
+                through this service so shared credentials, agents,
+                and knowledge bases work uniformly.
             knowledge_base_manager (`KnowledgeBaseManagerBase | None`, \
              optional):
                 The application's knowledge base manager.  When
@@ -140,6 +147,7 @@ class ChatService:
         self._scheduler_manager = scheduler_manager
         self._background_task_manager = background_task_manager
         self._message_bus = message_bus
+        self._access = resource_access_service
         self._knowledge_base_manager = knowledge_base_manager
         self._extra_agent_middlewares = extra_agent_middlewares
         self._extra_agent_tools = extra_agent_tools
@@ -291,13 +299,19 @@ class ChatService:
         # 1. Load records + resolve workspace ONCE here, reused below.
         # Reject missing records up front with a clear error so the
         # downstream assembly code can rely on non-None values.
+        #
+        # ``resolve_agent`` covers own agents (including team workers,
+        # which the owner runs directly) and cross-owner shared agents
+        # (viewer runs a shared user-source agent). It raises 404 when
+        # the agent is not visible to the caller.
         # ----------------------------------------------------------------
-        agent_record = await self._storage.get_agent(user_id, agent_id)
-        if agent_record is None:
+        try:
+            agent_record = await self._access.resolve_agent(user_id, agent_id)
+        except HTTPException as exc:
             raise HTTPException(
                 status_code=404,
                 detail=f"Agent {agent_id!r} not found.",
-            )
+            ) from exc
         session_record = await self._storage.get_session(
             user_id,
             agent_id,
@@ -367,7 +381,7 @@ class ChatService:
             tts_model = await get_tts_model(
                 user_id,
                 tts_cfg,
-                self._storage,
+                self._access,
             )
             middlewares.append(TTSMiddleware(tts_model))
 
@@ -376,6 +390,12 @@ class ChatService:
         # attached.  Each KB resolves to its own :class:`KnowledgeBase` handle
         # (own embedding model + vector store), so the middleware can
         # retrieve across heterogeneous KBs in one fan-out.
+        #
+        # Each KB may be either owned by the caller or shared to them
+        # via the resource access policy. We resolve the owner through
+        # ``resolve_knowledge_base`` first and hand the KB manager the
+        # true owner id — its own storage lookups stay owner-scoped
+        # and unaware of sharing.
         # ----------------------------------------------------------------
         kb_cfg = session_record.config.knowledge_config
         if (
@@ -386,16 +406,21 @@ class ChatService:
             knowledges: list[KnowledgeBase] = []
             for kb_id in kb_cfg.knowledge_base_ids:
                 try:
+                    kb_record = await self._access.resolve_knowledge_base(
+                        user_id,
+                        kb_id,
+                    )
                     knowledge = (
                         await self._knowledge_base_manager.get_knowledge(
-                            user_id,
+                            kb_record.user_id,
                             kb_id,
                         )
                     )
                 except Exception:  # pylint: disable=broad-except
-                    # A KB the session referenced was deleted (or its
-                    # credential revoked) — log and skip so the chat
-                    # turn can still run with the remaining KBs.
+                    # A KB the session referenced was deleted, its
+                    # sharing revoked, or its credential is gone —
+                    # log and skip so the chat turn can still run
+                    # with the remaining KBs.
                     logger.exception(
                         "Skipping knowledge base %r for session %r: "
                         "failed to resolve runtime handle.",
@@ -421,6 +446,7 @@ class ChatService:
         toolkit = await get_toolkit(
             storage=self._storage,
             workspace=workspace,
+            workspace_manager=self._workspace_manager,
             scheduler_manager=self._scheduler_manager,
             background_task_manager=self._background_task_manager,
             message_bus=self._message_bus,
@@ -428,6 +454,7 @@ class ChatService:
             user_id=user_id,
             agent_record=agent_record,
             session_record=session_record,
+            resource_access_service=self._access,
             extra_factory=self._extra_agent_tools,
             sub_agent_templates=self._sub_agent_templates,
         )
@@ -441,11 +468,11 @@ class ChatService:
                 status_code=404,
                 detail=f"No model configuration found for agent {agent_id}",
             )
-        model = await get_model(user_id, model_cfg, self._storage)
+        model = await get_model(user_id, model_cfg, self._access)
 
         fallback_cfg = session_record.config.fallback_chat_model_config
         fallback_model = (
-            await get_model(user_id, fallback_cfg, self._storage)
+            await get_model(user_id, fallback_cfg, self._access)
             if fallback_cfg is not None
             else None
         )
@@ -531,17 +558,9 @@ class ChatService:
                             )
 
                     async for event in agent.reply_stream(inputs=input_msg):
-                        await publish_session_event(
-                            self._message_bus,
-                            session_id,
-                            event.model_dump(mode="json"),
-                        )
-                        await self._project_event(
-                            user_id,
-                            session_record,
-                            agent_record,
-                            event,
-                        )
+                        # Apply to reply_msg FIRST (sync — never
+                        # interrupted), so an interrupt in the awaits below
+                        # can't lose this event.
                         if isinstance(event, ReplyStartEvent):
                             reply_msg = AssistantMsg(
                                 id=event.reply_id,
@@ -550,6 +569,27 @@ class ChatService:
                             )
                         elif reply_msg is not None:
                             reply_msg.append_event(event)
+                        try:
+                            await publish_session_event(
+                                self._message_bus,
+                                session_id,
+                                event.model_dump(mode="json"),
+                            )
+                            await self._project_event(
+                                user_id,
+                                session_record,
+                                agent_record,
+                                event,
+                            )
+                        except asyncio.CancelledError:
+                            # Interrupt landed here, not at ``__anext__``.
+                            # Re-arm it so it's redelivered into the agent at
+                            # the next ``__anext__`` (which runs its
+                            # interruption cleanup) instead of abandoning the
+                            # generator and dropping that cleanup.
+                            current = asyncio.current_task()
+                            if current is not None:
+                                current.cancel()
 
                 else:
                     # Case B: continuation (UserConfirmResult
@@ -572,19 +612,28 @@ class ChatService:
                         reply_msg.append_event(input_msg)
 
                     async for event in agent.reply_stream(inputs=input_msg):
-                        await publish_session_event(
-                            self._message_bus,
-                            session_id,
-                            event.model_dump(mode="json"),
-                        )
-                        await self._project_event(
-                            user_id,
-                            session_record,
-                            agent_record,
-                            event,
-                        )
+                        # Apply to the persisted reply FIRST (synchronous),
+                        # then publish/project — see Case A above.
                         if reply_msg is not None:
                             reply_msg.append_event(event)
+                        try:
+                            await publish_session_event(
+                                self._message_bus,
+                                session_id,
+                                event.model_dump(mode="json"),
+                            )
+                            await self._project_event(
+                                user_id,
+                                session_record,
+                                agent_record,
+                                event,
+                            )
+                        except asyncio.CancelledError:
+                            # See Case A: redirect an interrupt landing here
+                            # back into the agent via the next ``__anext__``.
+                            current = asyncio.current_task()
+                            if current is not None:
+                                current.cancel()
 
             finally:
                 # All persistence in a single coroutine, shielded from

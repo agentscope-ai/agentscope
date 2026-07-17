@@ -2,6 +2,7 @@
 # pylint: disable=too-many-public-methods
 """The Redis storage implementation."""
 
+import warnings
 from datetime import datetime, timedelta
 from typing import Any, TYPE_CHECKING, Self
 
@@ -988,17 +989,95 @@ class RedisStorage(StorageBase):
                     return msg
         return None
 
+    async def _find_message_index(
+        self,
+        key: str,
+        message_id: str,
+        chunk_size: int = 100,
+    ) -> int | None:
+        """Return the index of a message in the Redis list, or ``None``.
+
+        Scans backwards from the tail (most recent) in chunks, since
+        ``before`` cursors are typically near the end.
+
+        Args:
+            key (`str`): The Redis list key.
+            message_id (`str`): The message ID to locate.
+            chunk_size (`int`, optional): Number of entries fetched per
+                round trip. Defaults to 100.
+
+        Returns:
+            `int | None`: Zero-based index, or ``None`` if not found.
+        """
+        end = await self._client.llen(key) - 1
+        while end >= 0:
+            start = max(end - chunk_size + 1, 0)
+            raw_list = await self._client.lrange(key, start, end)
+            for offset, raw in enumerate(reversed(raw_list)):
+                if Msg.model_validate_json(raw).id == message_id:
+                    return end - offset
+            end = start - 1
+        return None
+
     async def list_messages(
         self,
         user_id: str,
         session_id: str,
-        offset: int = 0,
         limit: int = 50,
-    ) -> list[Msg]:
-        """Return messages for a session with pagination."""
+        before: str | None = None,
+        **kwargs: Any,
+    ) -> tuple[list[Msg], bool]:
+        """Return the most recent messages with cursor-based pagination.
+
+        Messages are returned in chronological order.
+
+        Args:
+            user_id (`str`): The owner user id.
+            session_id (`str`): The session id.
+            limit (`int`, optional): Maximum number of messages to
+                return. Defaults to 50.
+            before (`str | None`, optional): A message ID used as the
+                cursor. When provided, returns messages created before
+                this message. Omit to get the latest page.
+            **kwargs: Reserved for backward compatibility. Passing
+                ``offset`` will emit a ``DeprecationWarning`` and be
+                ignored.
+
+        Returns:
+            `tuple[list[Msg], bool]`: A tuple of (messages in
+            chronological order, has_more). ``has_more`` is ``True``
+            when older messages exist before the returned page.
+        """
+        if "offset" in kwargs:
+            warnings.warn(
+                "The 'offset' parameter is deprecated and will be "
+                "removed in a future version. Use 'before' for "
+                "cursor-based pagination instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         key = self._message_key(user_id, session_id)
-        raw_list = await self._client.lrange(key, offset, offset + limit - 1)
-        return [Msg.model_validate_json(raw) for raw in raw_list]
+        total = await self._client.llen(key)
+
+        if total == 0:
+            return [], False
+
+        if before is None:
+            end = total - 1
+        else:
+            idx = await self._find_message_index(key, before)
+            if idx is None:
+                return [], False
+            end = idx - 1
+
+        start = max(end - limit + 1, 0)
+        if end < 0:
+            return [], False
+
+        raw_list = await self._client.lrange(key, start, end)
+        has_more = start > 0
+        return [Msg.model_validate_json(raw) for raw in raw_list], has_more
 
     # ------------------------------------------------------------------
     # Team persistence

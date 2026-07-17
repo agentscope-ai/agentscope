@@ -116,6 +116,10 @@ class _UserConfirmConcurrentTool(_TimeoutConcurrentTool):
     """Concurrent tool that always asks for user confirmation."""
 
     name: str = "user_confirm_concurrent"
+    # A tool that requires confirmation is not read-only: the read-only
+    # fast path auto-allows read-only invocations in every mode (ahead of
+    # ``check_permissions``), which would otherwise bypass the ASK below.
+    is_read_only: bool = False
 
     async def check_permissions(
         self,
