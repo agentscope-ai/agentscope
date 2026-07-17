@@ -11,11 +11,16 @@ Every record type maps to one table with the layout:
   so no field is ever stored in both places (see the design doc in
   ``_mappers.py`` for the round-trip contract).
 
-Portability constraints — the module intentionally sticks to the
+Portability constraints — the *schema* intentionally sticks to the
 subset of SQLAlchemy that works on every async-capable dialect we
 target (SQLite / Postgres / MySQL): plain :class:`~sqlalchemy.JSON`
-(never JSONB), no generated columns, no dialect-specific ``ON
-CONFLICT``, no ``FOR UPDATE``.  The messages table sidesteps the
+(never JSONB), no generated columns, no ``FOR UPDATE``.  Atomic
+upserts *are* emitted with dialect-native ``ON CONFLICT`` /
+``ON DUPLICATE KEY UPDATE`` syntax, but through the explicit
+per-dialect dispatch in
+:meth:`~agentscope.app.storage._sql._storage.SqlStorage._upsert_stmt`
+rather than leaking into the table definitions here.  The messages
+table sidesteps the
 JSON-record shape because it is inherently list-like — see
 :class:`MessageRow` for the shape and the write path in
 :class:`~agentscope.app.storage._sql._storage.SqlStorage.upsert_message`.
@@ -26,6 +31,7 @@ from typing import Any, ClassVar
 from sqlalchemy import (
     JSON,
     DateTime,
+    ForeignKey,
     Index,
     String,
 )
@@ -234,6 +240,9 @@ class KnowledgeDocumentRow(_JsonRecordMixin):
     )
     knowledge_base_id: Mapped[str] = mapped_column(
         String(64),
+        # Documents are structurally owned by their KB — let the DB
+        # cascade-delete them natively (atomic, no application loop).
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

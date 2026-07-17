@@ -208,6 +208,27 @@ class SqlStorageTest(IsolatedAsyncioTestCase):
             await self.storage.get_schedule("user-1", schedule.id),
         )
 
+    async def test_upsert_replaces_in_place_and_keeps_created_at(self) -> None:
+        """Re-upserting the same id updates via the atomic upsert path.
+
+        Exercises the ``ON CONFLICT DO UPDATE`` branch: the second
+        write must overwrite the mutable columns, preserve the original
+        ``created_at``, and never create a duplicate row.
+        """
+        agent = _agent_record("user-1", "v1")
+        await self.storage.upsert_agent("user-1", agent)
+        first = await self.storage.get_agent("user-1", agent.id)
+
+        agent.data.name = "v2"
+        await self.storage.upsert_agent("user-1", agent)
+        second = await self.storage.get_agent("user-1", agent.id)
+
+        self.assertEqual(second.data.name, "v2")
+        self.assertEqual(second.created_at, first.created_at)
+        self.assertGreaterEqual(second.updated_at, first.updated_at)
+        # Exactly one row — the conflict updated rather than inserted.
+        self.assertEqual(len(await self.storage.list_agents("user-1")), 1)
+
     # ------------------------------------------------------------------
     # Sessions
     # ------------------------------------------------------------------
@@ -481,6 +502,33 @@ class SqlStorageTest(IsolatedAsyncioTestCase):
             await self.storage.list_knowledge_documents("user-1", kb.id),
             [],
         )
+
+    async def test_document_kb_foreign_key_is_enforced(self) -> None:
+        """The document→KB FK is live (PRAGMA on): cascade + rejection.
+
+        ``delete_knowledge_base`` no longer deletes documents in Python
+        — it relies on ``ON DELETE CASCADE``. This only passes if SQLite
+        foreign-key enforcement is actually enabled, so the test doubles
+        as a guard that the ``PRAGMA foreign_keys=ON`` wiring works.
+        """
+        from sqlalchemy.exc import IntegrityError
+
+        kb = _kb_record("user-1")
+        await self.storage.upsert_knowledge_base("user-1", kb)
+        doc = _kd_record("user-1", kb.id)
+        await self.storage.upsert_knowledge_document("user-1", doc)
+
+        # Native cascade: dropping the KB row removes the document row.
+        await self.storage.delete_knowledge_base("user-1", kb.id)
+        self.assertEqual(
+            await self.storage.list_knowledge_documents("user-1", kb.id),
+            [],
+        )
+
+        # Enforcement: a document pointing at a missing KB is rejected.
+        orphan = _kd_record("user-1", "no-such-kb")
+        with self.assertRaises(IntegrityError):
+            await self.storage.upsert_knowledge_document("user-1", orphan)
 
     async def test_document_status_and_lease_cas(self) -> None:
         """``update_knowledge_document_status`` + lease CAS semantics."""

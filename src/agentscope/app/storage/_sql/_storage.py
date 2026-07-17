@@ -171,6 +171,18 @@ class SqlStorage(StorageBase):
                 **self._engine_kwargs,
             )
             self._owns_engine = True
+            # SQLite ignores foreign keys unless enabled per connection,
+            # so ``ON DELETE CASCADE`` would silently not fire. Turn it
+            # on for every pooled connection.
+            if self._engine.sync_engine.dialect.name == "sqlite":
+                from sqlalchemy import event
+
+                @event.listens_for(self._engine.sync_engine, "connect")
+                def _enable_sqlite_fk(dbapi_conn: Any, _rec: Any) -> None:
+                    cursor = dbapi_conn.cursor()
+                    cursor.execute("PRAGMA foreign_keys=ON")
+                    cursor.close()
+
         # ``expire_on_commit=False`` keeps mapper-returned rows readable
         # after commit — :class:`SqlStorage` immediately projects rows
         # back into pydantic records outside the session scope, which
@@ -241,6 +253,74 @@ class SqlStorage(StorageBase):
             )
         return self._session_factory()
 
+    def _upsert_stmt(
+        self,
+        row_cls: type,
+        values: dict[str, Any],
+        conflict_cols: list[str],
+        update_cols: tuple[str, ...],
+    ) -> Any:
+        """Build a dialect-native atomic upsert statement.
+
+        A single ``INSERT ... ON CONFLICT DO UPDATE`` (Postgres /
+        SQLite) or ``INSERT ... ON DUPLICATE KEY UPDATE`` (MySQL /
+        MariaDB) makes the insert-or-update decision **inside the
+        database**, so concurrent writers on the same key can no longer
+        race between a separate read and write (the failure mode of the
+        classic read-then-write upsert).  ``conflict_cols`` name the
+        key that triggers the "update instead" branch; ``update_cols``
+        are the columns overwritten on conflict — deliberately
+        excluding ``id`` / ``created_at`` so an upsert refreshes the
+        mutable columns while keeping the original creation time.
+
+        Args:
+            row_cls (`type`):
+                The concrete ``*Row`` class whose table is targeted.
+            values (`dict[str, Any]`):
+                Full column → value mapping for the INSERT branch.
+            conflict_cols (`list[str]`):
+                Column names forming the conflict target (the primary
+                key, or the composite key for messages).
+            update_cols (`tuple[str, ...]`):
+                Column names to overwrite on conflict.
+
+        Returns:
+            `Any`:
+                A dialect-specific insert construct ready to execute.
+
+        Raises:
+            `NotImplementedError`:
+                For dialects without a supported native upsert
+                (e.g. Oracle / SQL Server, which would need ``MERGE``).
+        """
+        assert self._engine is not None
+        dialect = self._engine.sync_engine.dialect.name
+        table = row_cls.__table__
+
+        if dialect in ("postgresql", "sqlite"):
+            if dialect == "postgresql":
+                from sqlalchemy.dialects.postgresql import insert as _insert
+            else:
+                from sqlalchemy.dialects.sqlite import insert as _insert
+            stmt = _insert(table).values(**values)
+            return stmt.on_conflict_do_update(
+                index_elements=conflict_cols,
+                set_={c: getattr(stmt.excluded, c) for c in update_cols},
+            )
+
+        if dialect in ("mysql", "mariadb"):
+            from sqlalchemy.dialects.mysql import insert as _insert
+
+            stmt = _insert(table).values(**values)
+            return stmt.on_duplicate_key_update(
+                **{c: getattr(stmt.inserted, c) for c in update_cols},
+            )
+
+        raise NotImplementedError(
+            f"Atomic upsert is unsupported for the {dialect!r} dialect; "
+            "supported dialects are postgresql, sqlite, mysql, mariadb.",
+        )
+
     async def _write_row(
         self,
         row_cls: type,
@@ -248,14 +328,16 @@ class SqlStorage(StorageBase):
         *,
         preserve_created_at: bool = True,
     ) -> Any:
-        """Insert or update *record* via *row_cls*.
+        """Atomically insert-or-update *record* via *row_cls*.
 
-        Reads the existing row (if any) to preserve ``created_at``
-        (mirrors the Redis backend's semantics — an upsert refreshes
-        ``updated_at`` but keeps the original creation time), stamps
-        ``updated_at`` to the current UTC time, and writes.  Returns
-        the (possibly-updated) record so callers can propagate the
-        stamped timestamps.
+        Issues a single dialect-native upsert (see :meth:`_upsert_stmt`)
+        so the insert-or-update decision is made inside the database —
+        an upsert refreshes ``updated_at`` / ``payload`` / the indexed
+        columns but keeps the original ``created_at`` (mirroring the
+        Redis backend's semantics).  Because the statement is atomic
+        there is no read-then-write window for concurrent writers on
+        the same id to race through.  Returns the (mutated) record so
+        callers can propagate the stamped timestamps.
 
         Args:
             row_cls (`type`):
@@ -264,37 +346,309 @@ class SqlStorage(StorageBase):
                 The pydantic record to write.  Mutated in place —
                 ``created_at`` / ``updated_at`` are refreshed.
             preserve_created_at (`bool`, defaults to `True`):
-                When `False`, the caller's ``created_at`` is written
-                verbatim.  Used by the very first insert paths where
-                no prior row can exist.
+                When `True`, the DB-authoritative ``created_at`` (the
+                original one on an update) is read back into the
+                returned record.  Set `False` on pure-create paths
+                where no prior row can exist, to skip that read.
 
         Returns:
             `Any`:
                 The (mutated) record.
         """
+        from sqlalchemy import select
+
+        record.updated_at = _utcnow()
+        # The record default uses machine-local ``datetime.now()``;
+        # anchor it to UTC for the INSERT branch.  On conflict the DB
+        # keeps its stored ``created_at`` and we read it back below.
+        record.created_at = _to_naive_utc(record.created_at)
+        new_row = _from_record(row_cls, record)
+        indexed = tuple(row_cls.get_indexed_fields())
+        values = {
+            col: getattr(new_row, col)
+            for col in ("id", "created_at", "updated_at", "payload") + indexed
+        }
+        update_cols = ("updated_at", "payload") + indexed
+
         async with self._session() as sess:
-            existing = None
+            await sess.execute(
+                self._upsert_stmt(row_cls, values, ["id"], update_cols),
+            )
             if preserve_created_at:
-                existing = await sess.get(row_cls, record.id)
-            record.updated_at = _utcnow()
-            if existing is not None:
-                # Preserve the original creation time on update.
-                record.created_at = existing.created_at
-                new_row = _from_record(row_cls, record)
-                # Overwrite every mutable column in place so the SA
-                # session tracks the update.
-                for col in ("updated_at", "payload") + tuple(
-                    row_cls.get_indexed_fields(),
-                ):
-                    setattr(existing, col, getattr(new_row, col))
-            else:
-                # First insert — anchor created_at to UTC too (the
-                # record default uses machine-local ``datetime.now()``).
-                record.created_at = _to_naive_utc(record.created_at)
-                new_row = _from_record(row_cls, record)
-                sess.add(new_row)
+                # Reflect the creation time the DB kept on conflict
+                # back into the returned record.
+                record.created_at = (
+                    await sess.execute(
+                        select(row_cls.created_at).where(
+                            row_cls.id == record.id,
+                        ),
+                    )
+                ).scalar_one()
             await sess.commit()
         return record
+
+    # ------------------------------------------------------------------
+    # Cascade-delete internals — every ``_delete_*_impl`` runs on the
+    # caller-supplied ``sess`` WITHOUT committing, so the public
+    # ``delete_*`` wrapper can run the whole (mutually recursive)
+    # cascade inside a single transaction and commit once. That makes
+    # the compound deletes atomic: a mid-cascade failure rolls the
+    # whole thing back instead of leaving a half-deleted graph.
+    #
+    # Reads use ``select`` (not ``session.get``) so they see the
+    # transaction's own uncommitted deletes instead of stale
+    # identity-map rows.
+    # ------------------------------------------------------------------
+
+    async def _delete_session_impl(
+        self,
+        sess: "AsyncSession",
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+    ) -> bool:
+        """Delete a session (+ its messages, + leader-team) on *sess*."""
+        from sqlalchemy import delete, select
+
+        _ = agent_id  # scoping enforced by caller
+        row = (
+            await sess.execute(
+                select(SessionRow).where(SessionRow.id == session_id),
+            )
+        ).scalar_one_or_none()
+        if row is None or row.user_id != user_id:
+            return False
+        record = _to_record(row, SessionRecord)
+
+        # If this session leads a team, dissolve the team first.
+        if record.team_id:
+            team_row = (
+                await sess.execute(
+                    select(TeamRow).where(TeamRow.id == record.team_id),
+                )
+            ).scalar_one_or_none()
+            if (
+                team_row is not None
+                and _to_record(team_row, TeamRecord).session_id == session_id
+            ):
+                await self._delete_team_impl(sess, user_id, record.team_id)
+
+        await sess.execute(
+            delete(SessionRow).where(
+                SessionRow.id == session_id,
+                SessionRow.user_id == user_id,
+            ),
+        )
+        await sess.execute(
+            delete(MessageRow).where(MessageRow.session_id == session_id),
+        )
+        return True
+
+    async def _delete_schedule_impl(
+        self,
+        sess: "AsyncSession",
+        user_id: str,
+        schedule_id: str,
+    ) -> bool:
+        """Delete a schedule + cascade its execution sessions on *sess*."""
+        from sqlalchemy import delete, select
+
+        row = (
+            await sess.execute(
+                select(ScheduleRow).where(ScheduleRow.id == schedule_id),
+            )
+        ).scalar_one_or_none()
+        if row is None or row.user_id != user_id:
+            return False
+
+        sessions = (
+            (
+                await sess.execute(
+                    select(SessionRow).where(
+                        SessionRow.user_id == user_id,
+                        SessionRow.source_schedule_id == schedule_id,
+                    ),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for s in sessions:
+            await self._delete_session_impl(sess, user_id, s.agent_id, s.id)
+
+        await sess.execute(
+            delete(ScheduleRow).where(
+                ScheduleRow.id == schedule_id,
+                ScheduleRow.user_id == user_id,
+            ),
+        )
+        return True
+
+    async def _delete_agent_impl(
+        self,
+        sess: "AsyncSession",
+        user_id: str,
+        agent_id: str,
+    ) -> bool:
+        """Delete an agent + cascade sessions/schedules/team refs on *sess*."""
+        from sqlalchemy import delete, select, update
+
+        # Cascade: sessions owned by this agent.
+        sessions = (
+            (
+                await sess.execute(
+                    select(SessionRow).where(
+                        SessionRow.user_id == user_id,
+                        SessionRow.agent_id == agent_id,
+                    ),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for s in sessions:
+            await self._delete_session_impl(sess, user_id, agent_id, s.id)
+
+        # Cascade: schedules owned by this agent.
+        schedules = (
+            (
+                await sess.execute(
+                    select(ScheduleRow).where(
+                        ScheduleRow.user_id == user_id,
+                        ScheduleRow.agent_id == agent_id,
+                    ),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for sch in schedules:
+            await self._delete_schedule_impl(sess, user_id, sch.id)
+
+        # Defensive: scrub the agent from every surviving team roster
+        # (both the legacy ``member_ids`` list and the ``members`` list).
+        teams = (
+            (
+                await sess.execute(
+                    select(TeamRow).where(TeamRow.user_id == user_id),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for team_row in teams:
+            team_rec = _to_record(team_row, TeamRecord)
+            dirty = False
+            if agent_id in team_rec.data.member_ids:
+                team_rec.data.member_ids = [
+                    m for m in team_rec.data.member_ids if m != agent_id
+                ]
+                dirty = True
+            filtered = [
+                m for m in team_rec.data.members if m.agent_id != agent_id
+            ]
+            if len(filtered) != len(team_rec.data.members):
+                team_rec.data.members = filtered
+                dirty = True
+            if dirty:
+                team_rec.updated_at = _utcnow()
+                new_row = _from_record(TeamRow, team_rec)
+                await sess.execute(
+                    update(TeamRow)
+                    .where(TeamRow.id == team_rec.id)
+                    .values(
+                        payload=new_row.payload,
+                        updated_at=new_row.updated_at,
+                    ),
+                )
+
+        result = await sess.execute(
+            delete(AgentRow).where(
+                AgentRow.id == agent_id,
+                AgentRow.user_id == user_id,
+            ),
+        )
+        return result.rowcount > 0
+
+    async def _delete_team_impl(
+        self,
+        sess: "AsyncSession",
+        user_id: str,
+        team_id: str,
+    ) -> bool:
+        """Role-aware team cleanup + leader-detach + delete, on *sess*."""
+        from sqlalchemy import delete, select, update
+
+        from .._model._team import TeamMember
+
+        row = (
+            await sess.execute(
+                select(TeamRow).where(TeamRow.id == team_id),
+            )
+        ).scalar_one_or_none()
+        if row is None or row.user_id != user_id:
+            return False
+        team = _to_record(row, TeamRecord)
+
+        # Materialise the roster. Modern records carry ``members``;
+        # legacy ``member_ids``-only records are migrated inline on
+        # *sess* (no writeback — the team is being deleted anyway).
+        members = list(team.data.members)
+        if not members and team.data.member_ids:
+            for aid in team.data.member_ids:
+                worker = (
+                    (
+                        await sess.execute(
+                            select(SessionRow).where(
+                                SessionRow.user_id == user_id,
+                                SessionRow.agent_id == aid,
+                            ),
+                        )
+                    )
+                    .scalars()
+                    .first()
+                )
+                if worker is not None:
+                    members.append(
+                        TeamMember(
+                            owner_id=user_id,
+                            agent_id=aid,
+                            session_id=worker.id,
+                            role="created",
+                        ),
+                    )
+
+        for member in members:
+            if member.role == "created":
+                await self._delete_agent_impl(
+                    sess,
+                    member.owner_id,
+                    member.agent_id,
+                )
+            else:  # invited — only the borrowed session goes
+                await self._delete_session_impl(
+                    sess,
+                    member.owner_id,
+                    member.agent_id,
+                    member.session_id,
+                )
+
+        # Detach the leader session (idempotent — it may already be gone).
+        await sess.execute(
+            update(SessionRow)
+            .where(
+                SessionRow.id == team.session_id,
+                SessionRow.user_id == user_id,
+            )
+            .values(team_id=None, updated_at=_utcnow()),
+        )
+        await sess.execute(
+            delete(TeamRow).where(
+                TeamRow.id == team_id,
+                TeamRow.user_id == user_id,
+            ),
+        )
+        return True
 
     # ------------------------------------------------------------------
     # Credentials
@@ -473,48 +827,15 @@ class SqlStorage(StorageBase):
     async def delete_agent(self, user_id: str, agent_id: str) -> bool:
         """Delete an agent + cascade sessions, schedules, team refs.
 
-        Mirrors the cascade order of
-        :meth:`RedisStorage.delete_agent`.  Runs the cascade in the
-        Python layer (no ``ON DELETE CASCADE`` foreign keys) so
-        semantics are identical across backends and tests can exercise
-        the same code path.
+        Mirrors the cascade order of :meth:`RedisStorage.delete_agent`.
+        The whole cascade runs in a **single transaction** (see
+        :meth:`_delete_agent_impl`) so it is atomic — a mid-cascade
+        failure rolls back rather than leaving orphans.
         """
-        # Cascade: sessions
-        for session in await self.list_sessions(user_id, agent_id):
-            await self.delete_session(user_id, agent_id, session.id)
-
-        # Cascade: schedules owned by this agent
-        for schedule in await self.list_schedules(user_id):
-            if schedule.agent_id == agent_id:
-                await self.delete_schedule(user_id, schedule.id)
-
-        # Defensive: scrub the agent from every team roster (both the
-        # legacy ``member_ids`` list and the modern ``members`` list).
-        for team in await self.list_teams(user_id):
-            dirty = False
-            if agent_id in team.data.member_ids:
-                team.data.member_ids = [
-                    m for m in team.data.member_ids if m != agent_id
-                ]
-                dirty = True
-            filtered = [m for m in team.data.members if m.agent_id != agent_id]
-            if len(filtered) != len(team.data.members):
-                team.data.members = filtered
-                dirty = True
-            if dirty:
-                await self.upsert_team(user_id, team)
-
-        from sqlalchemy import delete
-
         async with self._session() as sess:
-            result = await sess.execute(
-                delete(AgentRow).where(
-                    AgentRow.id == agent_id,
-                    AgentRow.user_id == user_id,
-                ),
-            )
+            ok = await self._delete_agent_impl(sess, user_id, agent_id)
             await sess.commit()
-        return result.rowcount > 0
+        return ok
 
     # ------------------------------------------------------------------
     # Sessions
@@ -646,36 +967,21 @@ class SqlStorage(StorageBase):
         agent_id: str,
         session_id: str,
     ) -> bool:
-        """Delete a session + cascade (message log, leader-team)."""
+        """Delete a session + cascade (message log, leader-team).
+
+        Atomic: the session row, its message log, and any team it leads
+        are removed inside one transaction (see
+        :meth:`_delete_session_impl`).
+        """
         async with self._session() as sess:
-            row = await sess.get(SessionRow, session_id)
-        if row is None or row.user_id != user_id:
-            return False
-        record = _to_record(row, SessionRecord)
-
-        # If this session leads a team, dissolve the team first.
-        if record.team_id:
-            team = await self.get_team(user_id, record.team_id)
-            if team is not None and team.session_id == session_id:
-                await self.delete_team(user_id, record.team_id)
-
-        from sqlalchemy import delete
-
-        async with self._session() as sess:
-            await sess.execute(
-                delete(SessionRow).where(
-                    SessionRow.id == session_id,
-                    SessionRow.user_id == user_id,
-                ),
-            )
-            await sess.execute(
-                delete(MessageRow).where(
-                    MessageRow.session_id == session_id,
-                ),
+            ok = await self._delete_session_impl(
+                sess,
+                user_id,
+                agent_id,
+                session_id,
             )
             await sess.commit()
-        _ = agent_id
-        return True
+        return ok
 
     async def list_sessions_by_schedule(
         self,
@@ -754,28 +1060,15 @@ class SqlStorage(StorageBase):
         user_id: str,
         schedule_id: str,
     ) -> bool:
-        """Delete a schedule + cascade its execution sessions."""
-        record = await self.get_schedule(user_id, schedule_id)
-        if record is None:
-            return False
+        """Delete a schedule + cascade its execution sessions.
 
-        for session in await self.list_sessions_by_schedule(
-            user_id,
-            schedule_id,
-        ):
-            await self.delete_session(user_id, record.agent_id, session.id)
-
-        from sqlalchemy import delete
-
+        Atomic: the schedule and every session it spawned are removed
+        in one transaction (see :meth:`_delete_schedule_impl`).
+        """
         async with self._session() as sess:
-            await sess.execute(
-                delete(ScheduleRow).where(
-                    ScheduleRow.id == schedule_id,
-                    ScheduleRow.user_id == user_id,
-                ),
-            )
+            ok = await self._delete_schedule_impl(sess, user_id, schedule_id)
             await sess.commit()
-        return True
+        return ok
 
     async def list_all_schedules(self) -> list[ScheduleRecord]:
         """Every schedule across every user (used on startup)."""
@@ -804,29 +1097,27 @@ class SqlStorage(StorageBase):
         never reuse a message id across turns.
         """
         _ = user_id  # scoping enforced by caller
-        from sqlalchemy import update
-
         now = _utcnow()
         payload = msg.model_dump(mode="json")
 
+        # Atomic upsert on the composite key: insert a new event, or
+        # replace the payload of an existing ``(session_id, msg_id)``
+        # while keeping its original ``created_at``.
+        values = {
+            "session_id": session_id,
+            "msg_id": msg.id,
+            "created_at": now,
+            "payload": payload,
+        }
         async with self._session() as sess:
-            result = await sess.execute(
-                update(MessageRow)
-                .where(
-                    MessageRow.session_id == session_id,
-                    MessageRow.msg_id == msg.id,
-                )
-                .values(payload=payload),
+            await sess.execute(
+                self._upsert_stmt(
+                    MessageRow,
+                    values,
+                    ["session_id", "msg_id"],
+                    ("payload",),
+                ),
             )
-            if result.rowcount == 0:
-                sess.add(
-                    MessageRow(
-                        session_id=session_id,
-                        msg_id=msg.id,
-                        payload=payload,
-                        created_at=now,
-                    ),
-                )
             await sess.commit()
 
     async def get_message(
@@ -925,40 +1216,17 @@ class SqlStorage(StorageBase):
         return [_to_record(r, TeamRecord) for r in rows]
 
     async def delete_team(self, user_id: str, team_id: str) -> bool:
-        """Delete a team + role-aware member cleanup."""
-        # Local import mirrors :meth:`RedisStorage.delete_team` — the
-        # helper walks storage recursively so we resolve it lazily to
-        # avoid a top-level import cycle.
-        from .._utils import _ensure_team_members
+        """Delete a team + role-aware member cleanup.
 
-        team = await self.get_team(user_id, team_id)
-        if team is None:
-            return False
-
-        for member in await _ensure_team_members(self, user_id, team):
-            if member.role == "created":
-                await self.delete_agent(member.owner_id, member.agent_id)
-            else:  # invited
-                await self.delete_session(
-                    member.owner_id,
-                    member.agent_id,
-                    member.session_id,
-                )
-
-        # Detach the leader session (idempotent).
-        await self.set_session_team_id(user_id, team.session_id, None)
-
-        from sqlalchemy import delete
-
+        Atomic: the role-aware member teardown (``created`` members
+        deleted whole, ``invited`` members losing only their borrowed
+        session), the leader detach, and the team-record delete all run
+        in one transaction (see :meth:`_delete_team_impl`).
+        """
         async with self._session() as sess:
-            await sess.execute(
-                delete(TeamRow).where(
-                    TeamRow.id == team_id,
-                    TeamRow.user_id == user_id,
-                ),
-            )
+            ok = await self._delete_team_impl(sess, user_id, team_id)
             await sess.commit()
-        return True
+        return ok
 
     # ------------------------------------------------------------------
     # Knowledge bases
@@ -1015,18 +1283,13 @@ class SqlStorage(StorageBase):
         user_id: str,
         knowledge_base_id: str,
     ) -> bool:
-        """Delete a KB + cascade its document rows."""
+        """Delete a KB; its document rows cascade natively via the
+        ``knowledge_documents.knowledge_base_id`` foreign key
+        (``ON DELETE CASCADE``) — one atomic statement, no app loop.
+        """
         from sqlalchemy import delete
 
         async with self._session() as sess:
-            # Cascade document rows for this KB in one shot.
-            await sess.execute(
-                delete(KnowledgeDocumentRow).where(
-                    KnowledgeDocumentRow.user_id == user_id,
-                    KnowledgeDocumentRow.knowledge_base_id
-                    == knowledge_base_id,
-                ),
-            )
             result = await sess.execute(
                 delete(KnowledgeBaseRow).where(
                     KnowledgeBaseRow.id == knowledge_base_id,
