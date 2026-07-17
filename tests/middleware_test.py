@@ -1314,10 +1314,10 @@ class TestCheckPermissionMiddleware(IsolatedAsyncioTestCase):
                 self,
                 agent: Agent,
                 input_kwargs: dict,
-                next_handler: Callable[[], Awaitable[PermissionDecision]],
+                next_handler: Callable[..., Awaitable[PermissionDecision]],
             ) -> PermissionDecision:
                 """Delegate permission checking unchanged."""
-                return await next_handler()
+                return await next_handler(**input_kwargs)
 
         self.assertFalse(
             MiddlewareBase().is_implemented("on_check_permission"),
@@ -1327,6 +1327,33 @@ class TestCheckPermissionMiddleware(IsolatedAsyncioTestCase):
                 "on_check_permission",
             ),
         )
+
+    async def test_on_check_permission_without_middleware_calls_engine(
+        self,
+    ) -> None:
+        """The no-middleware path preserves the direct engine call."""
+        agent = Agent(
+            name="test_agent",
+            system_prompt="test prompt",
+            model=self.mock_model,
+        )
+        tool = AsyncMock(spec=ToolBase)
+        tool_input = {"value": "original"}
+        expected = PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message="allowed",
+        )
+        engine = AsyncMock(return_value=expected)
+
+        with patch.object(agent._engine, "check_permission", new=engine):
+            actual = await agent._check_permission(
+                ToolCallBlock(id="call_permission", name="tool", input="{}"),
+                tool,
+                tool_input,
+            )
+
+        self.assertIs(actual, expected)
+        engine.assert_awaited_once_with(tool, tool_input)
 
     async def test_on_check_permission_follows_onion_order(self) -> None:
         """Permission middleware wraps the engine in registration order."""
@@ -1365,14 +1392,14 @@ class TestCheckPermissionMiddleware(IsolatedAsyncioTestCase):
                 self,
                 agent: Agent,
                 input_kwargs: dict,
-                next_handler: Callable[[], Awaitable[PermissionDecision]],
+                next_handler: Callable[..., Awaitable[PermissionDecision]],
             ) -> PermissionDecision:
                 self_outer.execution_log.append(f"{self.name}_pre")
                 self_outer.assertEqual(
                     set(input_kwargs),
                     {"tool_call", "tool", "tool_input"},
                 )
-                decision = await next_handler()
+                decision = await next_handler(**input_kwargs)
                 self_outer.execution_log.append(f"{self.name}_post")
                 return decision
 
@@ -1433,9 +1460,9 @@ class TestCheckPermissionMiddleware(IsolatedAsyncioTestCase):
                 self,
                 agent: Agent,
                 input_kwargs: dict,
-                next_handler: Callable[[], Awaitable[PermissionDecision]],
+                next_handler: Callable[..., Awaitable[PermissionDecision]],
             ) -> PermissionDecision:
-                decision = await next_handler()
+                decision = await next_handler(**input_kwargs)
                 observed.append(decision.behavior)
                 return decision
 
@@ -1498,9 +1525,9 @@ class TestCheckPermissionMiddleware(IsolatedAsyncioTestCase):
                 self,
                 agent: Agent,
                 input_kwargs: dict,
-                next_handler: Callable[[], Awaitable[PermissionDecision]],
+                next_handler: Callable[..., Awaitable[PermissionDecision]],
             ) -> PermissionDecision:
-                await next_handler()
+                await next_handler(**input_kwargs)
                 return replacement
 
         agent = Agent(
@@ -1544,7 +1571,7 @@ class TestCheckPermissionMiddleware(IsolatedAsyncioTestCase):
                 self,
                 agent: Agent,
                 input_kwargs: dict,
-                next_handler: Callable[[], Awaitable[PermissionDecision]],
+                next_handler: Callable[..., Awaitable[PermissionDecision]],
             ) -> PermissionDecision:
                 return short_circuit
 
@@ -1569,27 +1596,43 @@ class TestCheckPermissionMiddleware(IsolatedAsyncioTestCase):
         engine.assert_not_awaited()
         self.assertIs(decision, short_circuit)
 
-    async def test_on_check_permission_isolates_request_metadata(self) -> None:
-        """Middleware mutations cannot change the engine's bound request."""
+    async def test_on_check_permission_forwards_modified_evaluation_input(
+        self,
+    ) -> None:
+        """Request changes flow through the permission middleware chain."""
+
+        seen_by_inner: list[str] = []
 
         class MutatingMiddleware(MiddlewareBase):
-            """Mutate observer-owned request metadata before delegating."""
+            """Normalize permission input before delegating."""
 
             async def on_check_permission(
                 self,
                 agent: Agent,
                 input_kwargs: dict,
-                next_handler: Callable[[], Awaitable[PermissionDecision]],
+                next_handler: Callable[..., Awaitable[PermissionDecision]],
             ) -> PermissionDecision:
                 input_kwargs["tool_call"].input = '{"value": "mutated"}'
                 input_kwargs["tool_input"]["value"] = "mutated"
-                return await next_handler()
+                return await next_handler(**input_kwargs)
+
+        class ObserveInnerMiddleware(MiddlewareBase):
+            """Record the input forwarded by the outer middleware."""
+
+            async def on_check_permission(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., Awaitable[PermissionDecision]],
+            ) -> PermissionDecision:
+                seen_by_inner.append(input_kwargs["tool_input"]["value"])
+                return await next_handler(**input_kwargs)
 
         agent = Agent(
             name="test_agent",
             system_prompt="test prompt",
             model=self.mock_model,
-            middlewares=[MutatingMiddleware()],
+            middlewares=[MutatingMiddleware(), ObserveInnerMiddleware()],
         )
         tool = AsyncMock(spec=ToolBase)
         tool_call = ToolCallBlock(
@@ -1617,7 +1660,8 @@ class TestCheckPermissionMiddleware(IsolatedAsyncioTestCase):
 
         self.assertEqual(tool_call.input, '{"value": "original"}')
         self.assertEqual(tool_input, {"value": "original"})
-        engine.assert_awaited_once_with(tool, {"value": "original"})
+        self.assertListEqual(seen_by_inner, ["mutated"])
+        engine.assert_awaited_once_with(tool, {"value": "mutated"})
 
     async def test_on_check_permission_exception_propagates(self) -> None:
         """Permission middleware failures propagate to the caller."""
@@ -1629,7 +1673,7 @@ class TestCheckPermissionMiddleware(IsolatedAsyncioTestCase):
                 self,
                 agent: Agent,
                 input_kwargs: dict,
-                next_handler: Callable[[], Awaitable[PermissionDecision]],
+                next_handler: Callable[..., Awaitable[PermissionDecision]],
             ) -> PermissionDecision:
                 raise RuntimeError("policy service unavailable")
 
@@ -1695,7 +1739,7 @@ class TestCheckPermissionMiddleware(IsolatedAsyncioTestCase):
                 self,
                 agent: Agent,
                 input_kwargs: dict,
-                next_handler: Callable[[], Awaitable[PermissionDecision]],
+                next_handler: Callable[..., Awaitable[PermissionDecision]],
             ) -> PermissionDecision:
                 return PermissionDecision(
                     behavior=PermissionBehavior.DENY,
@@ -1724,8 +1768,12 @@ class TestCheckPermissionMiddleware(IsolatedAsyncioTestCase):
         self.assertTrue(events)
         self.assertListEqual(executed, [])
 
-    async def test_confirmed_tool_call_skips_on_check_permission(self) -> None:
-        """A user-confirmed call keeps the existing no-recheck behavior."""
+    async def test_confirmed_tool_call_runs_hook_without_rechecking_engine(
+        self,
+    ) -> None:
+        """Application policy can override a user-confirmed ALLOW."""
+
+        executed: list[bool] = []
 
         class PermissionTool(ToolBase):
             """Minimal allowed tool for the confirmation-resume path."""
@@ -1745,19 +1793,24 @@ class TestCheckPermissionMiddleware(IsolatedAsyncioTestCase):
                 raise AssertionError("permission should not be rechecked")
 
             async def call(self) -> ToolChunk:
+                executed.append(True)
                 return ToolChunk(content=[TextBlock(text="executed")])
 
         class ObserveMiddleware(MiddlewareBase):
-            """Record permission checks if invoked."""
+            """Record the confirmed decision returned by the inner handler."""
 
             async def on_check_permission(
                 self,
                 agent: Agent,
                 input_kwargs: dict,
-                next_handler: Callable[[], Awaitable[PermissionDecision]],
+                next_handler: Callable[..., Awaitable[PermissionDecision]],
             ) -> PermissionDecision:
-                self_outer.execution_log.append("checked")
-                return await next_handler()
+                decision = await next_handler(**input_kwargs)
+                self_outer.execution_log.append(decision.behavior.value)
+                return PermissionDecision(
+                    behavior=PermissionBehavior.DENY,
+                    message="application policy changed while awaiting user",
+                )
 
         self_outer = self
         tool = PermissionTool()
@@ -1783,7 +1836,8 @@ class TestCheckPermissionMiddleware(IsolatedAsyncioTestCase):
         ]
 
         self.assertTrue(events)
-        self.assertListEqual(self.execution_log, [])
+        self.assertListEqual(self.execution_log, ["allow"])
+        self.assertListEqual(executed, [])
 
     async def asyncTearDown(self) -> None:
         """Clean up test fixtures."""

@@ -64,10 +64,10 @@ class PermissionAuditMiddleware(MiddlewareBase):
         self,
         agent: "Agent",
         input_kwargs: dict,
-        next_handler: Callable[[], Awaitable[PermissionDecision]],
+        next_handler: Callable[..., Awaitable[PermissionDecision]],
     ) -> PermissionDecision:
         """Record and return the final decision without changing it."""
-        decision = await next_handler()
+        decision = await next_handler(**input_kwargs)
         tool_call = input_kwargs["tool_call"]
         tool = input_kwargs["tool"]
         record = {

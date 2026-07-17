@@ -10,8 +10,8 @@ the final permission decision for a tool call. It reuses the existing
 
 - `on_check_permission` runs after tool lookup and input validation, and before
   Agent consumes the returned permission decision.
-- The audit middleware calls `next_handler()` once, records the final
-  ASK/DENY/ALLOW decision, and returns that same object unchanged.
+- The audit middleware calls `next_handler(**input_kwargs)` once, records the
+  final ASK/DENY/ALLOW decision, and returns that same object unchanged.
 - Audit records carry application identity and correlation fields but exclude
   raw tool input.
 - A side-effect-free demo tool deterministically exercises all three final
@@ -76,23 +76,28 @@ JSON audit record is written to the service console for each checked call.
 
 The record represents the decision returned by the complete middleware chain.
 It does not expose the permission engine's internal rule-evaluation trace or a
-suppressed intermediate candidate. User confirmation input is a separate
-lifecycle stage and can be observed through `on_reply` when an application
-needs it.
+suppressed intermediate candidate. Raw user confirmation input is a separate
+lifecycle stage and can be observed through `on_reply`. When an approved call
+resumes, it skips built-in engine re-evaluation but still traverses
+`on_check_permission`, so application policy and final-decision auditing remain
+in effect.
 
 ## Scenarios
 
 1. **ASK** — use `decision=ask` in DEFAULT mode. The console record contains
-   the final ASK before Agent emits a confirmation request.
+   the final ASK before Agent emits a confirmation request. If the user
+   approves it, the resumed call produces a second record for the confirmed
+   ALLOW before execution.
 2. **DENY** — use `decision=deny`. The record contains DENY before Agent writes
    the denied tool result; the demo tool body is not executed.
 3. **ALLOW** — use `decision=allow`. The record contains ALLOW before Agent
    executes the side-effect-free demo tool.
 
-The built-in engine remains authoritative when the audit middleware calls
-`next_handler()`. Depending on mode and configured rules, its final result may
-differ from a tool's initial suggestion; this example records only that final
-result.
+For an unconfirmed request, the audit middleware delegates to the built-in
+engine through `next_handler(**input_kwargs)`. Depending on mode and configured
+rules, that result may differ from a tool's initial suggestion. Other
+middleware may further replace or short-circuit the result; this example
+records the decision returned by the complete chain.
 
 ## Privacy and failure behavior
 

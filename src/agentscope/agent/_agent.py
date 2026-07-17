@@ -1596,10 +1596,11 @@ class Agent:
     ) -> PermissionDecision:
         """Run permission checking through the middleware onion.
 
-        The innermost handler invokes the built-in permission engine with the
-        original resolved tool and validated input. Each middleware receives
-        isolated copies of request metadata, while its argument-free
-        ``next_handler`` stays bound to that original request.
+        Middleware inputs are copied once at the chain boundary, so forwarded
+        changes are visible to downstream permission middleware and the
+        built-in engine without rewriting the actual tool invocation. A call
+        already allowed by user confirmation still traverses the middleware
+        chain, but skips re-evaluation by the built-in engine.
 
         Args:
             tool_call (`ToolCallBlock`):
@@ -1613,22 +1614,47 @@ class Agent:
             `PermissionDecision`:
                 The decision that the agent should consume.
         """
-        if not self._check_permission_middlewares:
+
+        async def check_permission_impl(
+            tool_call: ToolCallBlock,
+            tool: ToolBase,
+            tool_input: dict[str, Any],
+        ) -> PermissionDecision:
+            if tool_call.state == ToolCallState.ALLOWED:
+                return PermissionDecision(
+                    behavior=PermissionBehavior.ALLOW,
+                    message="Already allowed by user confirmation.",
+                )
             return await self._engine.check_permission(tool, tool_input)
 
-        async def execute_chain(index: int = 0) -> PermissionDecision:
+        if not self._check_permission_middlewares:
+            return await check_permission_impl(tool_call, tool, tool_input)
+
+        async def execute_chain(
+            index: int = 0,
+            tool_call: ToolCallBlock = tool_call,
+            tool: ToolBase = tool,
+            tool_input: dict[str, Any] = tool_input,
+        ) -> PermissionDecision:
             if index >= len(self._check_permission_middlewares):
-                return await self._engine.check_permission(tool, tool_input)
+                return await check_permission_impl(
+                    tool_call,
+                    tool,
+                    tool_input,
+                )
 
             middleware = self._check_permission_middlewares[index]
             input_kwargs = {
-                "tool_call": deepcopy(tool_call),
+                "tool_call": tool_call,
                 "tool": tool,
-                "tool_input": deepcopy(tool_input),
+                "tool_input": tool_input,
             }
 
-            async def next_handler() -> PermissionDecision:
-                return await execute_chain(index + 1)
+            async def next_handler(**kwargs: Any) -> PermissionDecision:
+                return await execute_chain(
+                    index + 1,
+                    **{**input_kwargs, **kwargs},
+                )
 
             return await middleware.on_check_permission(
                 agent=self,
@@ -1636,7 +1662,11 @@ class Agent:
                 next_handler=next_handler,
             )
 
-        return await execute_chain()
+        return await execute_chain(
+            tool_call=deepcopy(tool_call),
+            tool=tool,
+            tool_input=deepcopy(tool_input),
+        )
 
     async def _execute_tool_call(
         self,
@@ -1728,18 +1758,11 @@ class Agent:
         # ===================================================================
         # Step 2: Check permission by toolkit and permission engine
         # ===================================================================
-        if tool_call.state == ToolCallState.ALLOWED:
-            # Already allowed by user confirmation, skip permission checking
-            decision = PermissionDecision(
-                behavior=PermissionBehavior.ALLOW,
-                message="Already allowed by user confirmation.",
-            )
-        else:
-            decision = await self._check_permission(
-                tool_call,
-                tool,
-                parsed_input,
-            )
+        decision = await self._check_permission(
+            tool_call,
+            tool,
+            parsed_input,
+        )
 
         # ===================================================================
         # Step 3: Handle the permission and execute the tool call if allowed

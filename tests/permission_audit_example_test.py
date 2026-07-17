@@ -91,20 +91,24 @@ class PermissionAuditMiddlewareTest(IsolatedAsyncioTestCase):
             decision_reason="allow rule matched",
         )
         calls = 0
+        forwarded_kwargs: dict[str, Any] = {}
 
-        async def next_handler() -> PermissionDecision:
+        async def next_handler(**kwargs: Any) -> PermissionDecision:
             nonlocal calls
             calls += 1
+            forwarded_kwargs.update(kwargs)
             return decision
 
+        input_kwargs = _input_kwargs()
         returned = await middleware.on_check_permission(
             agent=_agent(reply_id="reply-9"),
-            input_kwargs=_input_kwargs(),
+            input_kwargs=input_kwargs,
             next_handler=next_handler,
         )
 
         self.assertIs(returned, decision)
         self.assertEqual(calls, 1)
+        self.assertDictEqual(forwarded_kwargs, input_kwargs)
         self.assertEqual(len(sink.records), 1)
         record = sink.records[0]
         self.assertEqual(record["event"], "permission_decision")
@@ -122,7 +126,7 @@ class PermissionAuditMiddlewareTest(IsolatedAsyncioTestCase):
         sink = _CollectSink()
         middleware = PermissionAuditMiddleware("u", "a", "s", sink)
 
-        async def next_handler() -> PermissionDecision:
+        async def next_handler(**_kwargs: Any) -> PermissionDecision:
             return PermissionDecision(
                 behavior=PermissionBehavior.ASK,
                 message="confirmation required",
@@ -147,7 +151,7 @@ class PermissionAuditMiddlewareTest(IsolatedAsyncioTestCase):
 
         middleware = PermissionAuditMiddleware("u", "a", "s", failing_sink)
 
-        async def next_handler() -> PermissionDecision:
+        async def next_handler(**_kwargs: Any) -> PermissionDecision:
             return PermissionDecision(
                 behavior=PermissionBehavior.ALLOW,
                 message="allowed",

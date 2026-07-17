@@ -164,29 +164,22 @@ class MiddlewareBase:  # pylint: disable=unused-argument
         self,
         agent: "Agent",
         input_kwargs: dict,
-        next_handler: Callable[[], Awaitable["PermissionDecision"]],
+        next_handler: Callable[..., Awaitable["PermissionDecision"]],
     ) -> "PermissionDecision":
         """Hook for intercepting permission checking for one tool call.
 
         This onion-pattern hook runs after the tool has been resolved and its
         input has been parsed and validated, but before the resulting decision
-        is consumed by the agent. Calling ``next_handler()`` delegates to the
-        next middleware and, at the innermost layer, to
+        is consumed by the agent. Calling ``next_handler(**input_kwargs)``
+        delegates to the next middleware and, at the innermost layer, to
         ``PermissionEngine.check_permission``.
 
-        A middleware can inspect the returned decision, replace it, or return
-        a decision without calling ``next_handler``. Short-circuiting bypasses
-        the built-in permission engine for that call, so middleware using this
-        capability becomes part of the application's trusted authorization
+        A middleware can change inputs forwarded for downstream permission
+        evaluation, inspect or replace the returned decision, or return a
+        decision without calling ``next_handler``. Forwarded input changes do
+        not rewrite the actual tool invocation. Middleware using these
+        capabilities becomes part of the application's trusted authorization
         boundary.
-
-        The ``tool_call`` and ``tool_input`` values are isolated copies for
-        this middleware. ``next_handler`` is intentionally argument-free and
-        remains bound to the original validated request, preventing metadata
-        mutations from changing the request evaluated by the engine or later
-        executed by the agent. The ``agent`` and ``tool`` values are live
-        framework objects and should be treated as read-only unless mutation
-        is explicitly intended.
 
         Args:
             agent (`Agent`):
@@ -194,14 +187,13 @@ class MiddlewareBase:  # pylint: disable=unused-argument
             input_kwargs (`dict`):
                 Dictionary containing:
 
-                - ``tool_call`` (``ToolCallBlock``): an isolated copy of the
-                  validated tool call metadata.
+                - ``tool_call`` (``ToolCallBlock``): validated call metadata
+                  used to correlate the permission decision.
                 - ``tool`` (``ToolBase``): the resolved live tool instance.
-                - ``tool_input`` (``dict``): an isolated copy of the parsed,
-                  validated tool input.
-            next_handler (`Callable[[], Awaitable[PermissionDecision]]`):
-                Argument-free callable that executes the next middleware or
-                the built-in permission engine.
+                - ``tool_input`` (``dict``): the parsed and validated input.
+            next_handler (`Callable[..., Awaitable[PermissionDecision]]`):
+                Callable that executes the next middleware or the built-in
+                permission engine.
 
         Returns:
             `PermissionDecision`:
