@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for the permission audit example (demo tool + middleware).
-
-The example modules live under ``examples/permission_audit_service/``,
-which is not a Python package, so tests load them via ``importlib``.
-"""
+"""Tests for the permission audit service example."""
 import importlib.util
 import json
 from pathlib import Path
@@ -14,11 +10,10 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from agentscope.message import TextBlock, ToolCallBlock
 from agentscope.permission import (
     PermissionBehavior,
+    PermissionContext,
     PermissionDecision,
-    PermissionEvaluation,
+    PermissionEngine,
     PermissionMode,
-    PermissionResolution,
-    PermissionRule,
 )
 
 _EXAMPLE_DIR = (
@@ -45,43 +40,27 @@ audit_middleware_module = _load_example_module("audit_middleware")
 PermissionAuditMiddleware = audit_middleware_module.PermissionAuditMiddleware
 
 
-def _evaluation(
-    behavior: PermissionBehavior = PermissionBehavior.ALLOW,
-    resolution: PermissionResolution = PermissionResolution.DIRECT,
-    candidate: PermissionDecision | None = None,
-    bypass_immune: bool = False,
-) -> PermissionEvaluation:
-    return PermissionEvaluation(
-        mode=PermissionMode.BYPASS,
-        effective_decision=PermissionDecision(
-            behavior=behavior,
-            message="m",
-            decision_reason="r",
-            bypass_immune=bypass_immune,
-        ),
-        candidate_decision=candidate,
-        resolution=resolution,
-    )
-
-
-def _tool_call(
-    tool_name: str = "PermissionAuditDemoTool",
-    call_id: str = "call-1",
-) -> ToolCallBlock:
-    return ToolCallBlock(
-        id=call_id,
-        name=tool_name,
-        input='{"risk": "safety", "label": "x"}',
-    )
-
-
 def _agent(reply_id: str = "reply-1") -> SimpleNamespace:
-    return SimpleNamespace(state=SimpleNamespace(reply_id=reply_id))
+    """Build the agent state fields consumed by the example middleware."""
+    permission_context = SimpleNamespace(mode=PermissionMode.DEFAULT)
+    state = SimpleNamespace(
+        reply_id=reply_id,
+        permission_context=permission_context,
+    )
+    return SimpleNamespace(state=state)
 
 
-def json_module_dumps(obj: Any) -> str:
-    """Serialize ``obj`` to JSON with ``str`` fallback."""
-    return json.dumps(obj, default=str)
+def _input_kwargs(secret: str = "secret-token-123") -> dict[str, Any]:
+    """Build permission-hook metadata containing a sensitive test value."""
+    return {
+        "tool_call": ToolCallBlock(
+            id="call-1",
+            name="PermissionAuditDemoTool",
+            input=json.dumps({"decision": "allow", "label": secret}),
+        ),
+        "tool": PermissionAuditDemoTool(),
+        "tool_input": {"decision": "allow", "label": secret},
+    }
 
 
 class _CollectSink:
@@ -94,245 +73,131 @@ class _CollectSink:
         self.records.append(record)
 
 
-class PermissionAuditDecisionRecordTest(IsolatedAsyncioTestCase):
-    """Spec §Validation 1-5: decision records."""
+class PermissionAuditMiddlewareTest(IsolatedAsyncioTestCase):
+    """The example observes the final decision without altering it."""
 
-    async def test_direct_decision_emits_candidate_null(self) -> None:
-        """Test that a direct decision emits a record with candidate=null."""
-        # 1. direct decision emits candidate=null
+    async def test_records_and_returns_final_decision(self) -> None:
+        """The middleware delegates once and returns the same decision."""
         sink = _CollectSink()
-        mw = PermissionAuditMiddleware("u", "a", "s", sink)
-        await mw.on_permission_decision(
-            agent=_agent(),
-            tool_call=_tool_call(),
-            tool=PermissionAuditDemoTool(),
-            tool_input={"risk": "ordinary", "label": "x"},
-            evaluation=_evaluation(),
+        middleware = PermissionAuditMiddleware(
+            "user-1",
+            "agent-1",
+            "s-1",
+            sink,
         )
-        assert len(sink.records) == 1
-        assert sink.records[0]["candidate"] is None
+        decision = PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message="allowed",
+            decision_reason="allow rule matched",
+        )
+        calls = 0
 
-    async def test_candidate_and_effective_serialize(self) -> None:
-        """Test candidate/effective decisions and resolution serialize."""
-        # 2. candidate/effective decisions and resolution serialize correctly
-        sink = _CollectSink()
-        mw = PermissionAuditMiddleware("u", "a", "s", sink)
-        candidate = PermissionDecision(
-            behavior=PermissionBehavior.ASK,
-            message="dangerous",
-            decision_reason="safety",
-            bypass_immune=True,
-        )
-        await mw.on_permission_decision(
-            agent=_agent(),
-            tool_call=_tool_call(),
-            tool=PermissionAuditDemoTool(),
-            tool_input={"risk": "safety", "label": "x"},
-            evaluation=_evaluation(
-                behavior=PermissionBehavior.ALLOW,
-                resolution=PermissionResolution.BYPASS_ASK_SUPPRESSED,
-                candidate=candidate,
-            ),
-        )
-        rec = sink.records[0]
-        assert rec["resolution"] == "bypass_ask_suppressed"
-        assert rec["effective"]["behavior"] == "allow"
-        assert rec["candidate"]["behavior"] == "ask"
-        assert rec["candidate"]["bypass_immune"] is True
+        async def next_handler() -> PermissionDecision:
+            nonlocal calls
+            calls += 1
+            return decision
 
-    async def test_raw_tool_input_never_in_record(self) -> None:
-        """Test that raw tool input never appears in the record."""
-        # 3. raw tool input and raw model input never appear in the record
-        sink = _CollectSink()
-        mw = PermissionAuditMiddleware("u", "a", "s", sink)
-        sensitive_input = {"risk": "safety", "label": "secret-token-123"}
-        await mw.on_permission_decision(
-            agent=_agent(),
-            tool_call=_tool_call(),
-            tool=PermissionAuditDemoTool(),
-            tool_input=sensitive_input,
-            evaluation=_evaluation(),
-        )
-        rec = sink.records[0]
-        # The sensitive value must not leak into any record field.
-        assert "secret-token-123" not in json_module_dumps(rec)
-        # tool_input and the raw model input (tool_call.input) are absent.
-        assert "tool_input" not in rec
-        assert "input" not in rec
-
-    async def test_factory_binds_identifiers(self) -> None:
-        """Test that the factory binds user/agent/session identifiers."""
-        # 4. factory binds user, agent, and session identifiers correctly
-        sink = _CollectSink()
-        mw = PermissionAuditMiddleware("user-1", "agent-1", "session-1", sink)
-        await mw.on_permission_decision(
+        returned = await middleware.on_check_permission(
             agent=_agent(reply_id="reply-9"),
-            tool_call=_tool_call(),
-            tool=PermissionAuditDemoTool(),
-            tool_input={"risk": "ordinary", "label": "x"},
-            evaluation=_evaluation(),
+            input_kwargs=_input_kwargs(),
+            next_handler=next_handler,
         )
-        rec = sink.records[0]
-        assert rec["user_id"] == "user-1"
-        assert rec["agent_id"] == "agent-1"
-        assert rec["session_id"] == "session-1"
-        assert rec["reply_id"] == "reply-9"
-        assert rec["tool_call_id"] == "call-1"
+
+        self.assertIs(returned, decision)
+        self.assertEqual(calls, 1)
+        self.assertEqual(len(sink.records), 1)
+        record = sink.records[0]
+        self.assertEqual(record["event"], "permission_decision")
+        self.assertEqual(record["user_id"], "user-1")
+        self.assertEqual(record["agent_id"], "agent-1")
+        self.assertEqual(record["session_id"], "s-1")
+        self.assertEqual(record["reply_id"], "reply-9")
+        self.assertEqual(record["tool_call_id"], "call-1")
+        self.assertEqual(record["tool_name"], "PermissionAuditDemoTool")
+        self.assertEqual(record["mode"], "default")
+        self.assertEqual(record["decision"]["behavior"], "allow")
+
+    async def test_record_excludes_raw_tool_input(self) -> None:
+        """The audit record does not copy raw model or parsed tool input."""
+        sink = _CollectSink()
+        middleware = PermissionAuditMiddleware("u", "a", "s", sink)
+
+        async def next_handler() -> PermissionDecision:
+            return PermissionDecision(
+                behavior=PermissionBehavior.ASK,
+                message="confirmation required",
+            )
+
+        await middleware.on_check_permission(
+            agent=_agent(),
+            input_kwargs=_input_kwargs(),
+            next_handler=next_handler,
+        )
+
+        serialized = json.dumps(sink.records[0], default=str)
+        self.assertNotIn("secret-token-123", serialized)
+        self.assertNotIn("tool_input", sink.records[0])
+        self.assertNotIn("input", sink.records[0])
 
     async def test_sink_exception_propagates(self) -> None:
-        """Test that sink exceptions propagate (fail-closed contract)."""
+        """The example intentionally stops the call if its sink fails."""
 
-        # 5. sink exceptions propagate (fail-closed contract)
-        class _FailingSink:
-            async def __call__(self, record: dict) -> None:
-                raise RuntimeError("sink down")
+        async def failing_sink(record: dict) -> None:
+            raise RuntimeError("sink unavailable")
 
-        mw = PermissionAuditMiddleware("u", "a", "s", _FailingSink())
-        with self.assertRaises(RuntimeError):
-            await mw.on_permission_decision(
+        middleware = PermissionAuditMiddleware("u", "a", "s", failing_sink)
+
+        async def next_handler() -> PermissionDecision:
+            return PermissionDecision(
+                behavior=PermissionBehavior.ALLOW,
+                message="allowed",
+            )
+
+        with self.assertRaisesRegex(RuntimeError, "sink unavailable"):
+            await middleware.on_check_permission(
                 agent=_agent(),
-                tool_call=_tool_call(),
-                tool=PermissionAuditDemoTool(),
-                tool_input={"risk": "ordinary", "label": "x"},
-                evaluation=_evaluation(),
+                input_kwargs=_input_kwargs(),
+                next_handler=next_handler,
             )
 
 
 class PermissionAuditDemoToolTest(IsolatedAsyncioTestCase):
-    """The demo tool emits the right ASK for each risk level."""
+    """The side-effect-free demo emits all final permission behaviors."""
 
-    async def test_ordinary_risk_emits_plain_ask(self) -> None:
-        """Test that an ordinary risk emits a plain (non-bypass-immune) ASK."""
-        decision = await PermissionAuditDemoTool().check_permissions(
-            {"risk": "ordinary", "label": "x"},
-            context=None,
-        )
-        assert decision.behavior == PermissionBehavior.ASK
-        assert decision.bypass_immune is False
-
-    async def test_safety_risk_emits_bypass_immune_ask(self) -> None:
-        """Test that a safety risk emits a bypass-immune ASK."""
-        decision = await PermissionAuditDemoTool().check_permissions(
-            {"risk": "safety", "label": "x"},
-            context=None,
-        )
-        assert decision.behavior == PermissionBehavior.ASK
-        assert decision.bypass_immune is True
+    async def test_engine_returns_selected_final_behavior(self) -> None:
+        """DEFAULT mode resolves ALLOW, ASK, and DENY as demonstrated."""
+        tool = PermissionAuditDemoTool()
+        engine = PermissionEngine(PermissionContext())
+        for behavior in (
+            PermissionBehavior.ALLOW,
+            PermissionBehavior.ASK,
+            PermissionBehavior.DENY,
+        ):
+            decision = await engine.check_permission(
+                tool,
+                {"decision": behavior.value, "label": "example"},
+            )
+            self.assertEqual(decision.behavior, behavior)
 
     async def test_call_has_no_side_effects(self) -> None:
-        """Test that invoking the demo tool returns the labelled chunk."""
-        chunk = await PermissionAuditDemoTool()(
-            risk="ordinary",
+        """Executing the demo tool only returns an acknowledgement."""
+        chunk = await PermissionAuditDemoTool().call(
+            decision="allow",
             label="hello",
         )
-        assert isinstance(chunk.content[0], TextBlock)
-        assert "ordinary" in chunk.content[0].text
-
-
-class PermissionAuditConfirmationRecordTest(IsolatedAsyncioTestCase):
-    """Spec §Validation 6-8: confirmation records."""
-
-    async def test_approval_and_rejection_serialize_separately(self) -> None:
-        """Test that approval and rejection serialize as separate records."""
-        # 6. approval and rejection serialize as separate confirmation records
-        sink = _CollectSink()
-        mw = PermissionAuditMiddleware("u", "a", "s", sink)
-        rule = PermissionRule(
-            tool_name="PermissionAuditDemoTool",
-            rule_content=None,
-            behavior=PermissionBehavior.ALLOW,
-            source="user",
-        )
-        await mw.on_permission_confirmation(
-            agent=_agent(),
-            tool_call=_tool_call(),
-            confirmed=True,
-            rules=[rule],
-        )
-        await mw.on_permission_confirmation(
-            agent=_agent(),
-            tool_call=_tool_call(),
-            confirmed=False,
-            rules=[],
-        )
-        assert len(sink.records) == 2
-        assert sink.records[0]["confirmed"] is True
-        assert sink.records[1]["confirmed"] is False
-
-    async def test_confirmation_exposes_rule_count_not_content(self) -> None:
-        """Test that confirmation records expose rule count, not content."""
-        # 7. confirmation records expose rule count but never raw rule content
-        sink = _CollectSink()
-        mw = PermissionAuditMiddleware("u", "a", "s", sink)
-        rules = [
-            PermissionRule(
-                tool_name="PermissionAuditDemoTool",
-                rule_content="secret-pattern",
-                behavior=PermissionBehavior.ALLOW,
-                source="user",
-            ),
-            PermissionRule(
-                tool_name="PermissionAuditDemoTool",
-                rule_content=None,
-                behavior=PermissionBehavior.ALLOW,
-                source="user",
-            ),
-        ]
-        await mw.on_permission_confirmation(
-            agent=_agent(),
-            tool_call=_tool_call(),
-            confirmed=True,
-            rules=rules,
-        )
-        rec = sink.records[0]
-        assert rec["accepted_rule_count"] == 2
-        # Raw rule content must not leak.
-        assert "secret-pattern" not in json_module_dumps(rec)
-        assert "rules" not in rec
-
-    async def test_confirmation_and_decision_share_correlation(self) -> None:
-        """Test that confirmation and decision records share correlation."""
-        # 8. confirmation and decision records share correlation identifiers
-        sink = _CollectSink()
-        mw = PermissionAuditMiddleware("user-1", "agent-1", "session-1", sink)
-        await mw.on_permission_decision(
-            agent=_agent(reply_id="reply-1"),
-            tool_call=_tool_call(call_id="call-1"),
-            tool=PermissionAuditDemoTool(),
-            tool_input={"risk": "safety", "label": "x"},
-            evaluation=_evaluation(resolution=PermissionResolution.DIRECT),
-        )
-        await mw.on_permission_confirmation(
-            agent=_agent(reply_id="reply-1"),
-            tool_call=_tool_call(call_id="call-1"),
-            confirmed=True,
-            rules=[],
-        )
-        decision_rec, confirm_rec = sink.records
-        for field in (
-            "user_id",
-            "agent_id",
-            "session_id",
-            "reply_id",
-            "tool_call_id",
-        ):
-            assert decision_rec[field] == confirm_rec[field], field
-        assert decision_rec["event"] == "permission_decision"
-        assert confirm_rec["event"] == "permission_confirmation"
+        self.assertIsInstance(chunk.content[0], TextBlock)
+        self.assertIn("decision=allow", chunk.content[0].text)
 
 
 class PermissionAuditServiceSmokeTest(IsolatedAsyncioTestCase):
-    """Importing main:app should not error (smoke). Requires Redis."""
+    """The runnable service module imports when optional services exist."""
 
     async def test_import_main_app(self) -> None:
-        """Test that importing ``main:app`` succeeds without error."""
-        # Skip only on environment-dependent failures (missing optional
-        # deps / Redis connection). Real code errors (SyntaxError, etc.)
-        # must propagate so the example does not silently break.
+        """Importing ``main:app`` should not hide code errors."""
         try:
             main_module = _load_example_module("main")
         except (ImportError, ConnectionError, OSError) as exc:
             self.skipTest(f"cannot import example main (deps/Redis?): {exc}")
-        assert hasattr(main_module, "app")
-        assert main_module.permission_audit_factory is not None
-        assert main_module.permission_audit_demo_tools is not None
+        self.assertTrue(hasattr(main_module, "app"))
+        self.assertIsNotNone(main_module.permission_audit_factory)
+        self.assertIsNotNone(main_module.permission_audit_demo_tools)

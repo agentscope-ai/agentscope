@@ -3,10 +3,9 @@
 """Start the permission audit example agent service.
 
 Follows ``examples/agent_service/main.py`` but omits RAG/MCP and adds a
-``PermissionAuditMiddleware`` factory plus the demo tool, so the full
-permission lifecycle (model tool call → permission engine → audit
-middleware → confirmation UI → tool execution) is real and observable
-in the service console while the existing Web UI is reused unchanged.
+``PermissionAuditMiddleware`` factory plus the demo tool, so final permission
+decisions are observable in the service console while the existing Web UI is
+reused unchanged.
 """
 import os
 import sys
