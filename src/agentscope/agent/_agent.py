@@ -99,6 +99,18 @@ else:
     MiddlewareBase = Any
 
 
+class _SummaryFormatDict(dict):
+    """Format mapping that leaves missing summary fields empty."""
+
+    def __missing__(self, key: str) -> str:
+        """Return an empty value for optional/missing summary fields."""
+        logger.warning(
+            "Compression summary is missing field %r; using an empty value.",
+            key,
+        )
+        return ""
+
+
 class Agent:
     """The agent class."""
 
@@ -522,7 +534,9 @@ class Agent:
         # Update the summary
         async def _apply_change() -> None:
             """Apply the context change with interruption protection."""
-            new_summary = cfg.summary_template.format(**res.content)
+            new_summary = cfg.summary_template.format_map(
+                _SummaryFormatDict(res.content),
+            )
             if self.offloader:
                 path = await self.offloader.offload_context(
                     self.state.session_id,
