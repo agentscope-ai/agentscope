@@ -6,6 +6,7 @@ from ._response import ToolResponse, ToolChunk
 from ._toolkit import Toolkit
 from ._base import ToolBase, ParamsBase, ToolMiddlewareBase
 from ._adapters import MCPTool, FunctionTool
+from ._constants import MCP_CALL_META_KEY
 from ._builtin import (
     ResetTools,
     Bash,
@@ -40,6 +41,7 @@ __all__ = [
     "ToolChunk",
     "ToolResponse",
     "RegisteredTool",
+    "MCP_CALL_META_KEY",
     # Builtin tools
     "BackendBase",
     "LocalBackend",

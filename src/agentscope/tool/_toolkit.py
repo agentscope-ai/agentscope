@@ -18,6 +18,7 @@ from pydantic import (
     create_model,
 )
 
+from ._constants import MCP_CALL_META_KEY
 from ._builtin import ResetTools, SkillViewer
 from ._base import ToolBase
 from ._response import ToolResponse, ToolChunk
@@ -222,6 +223,13 @@ class Toolkit:
 
         return function_schemas
 
+    def _extract_mcp_call_meta(self, state: AgentState) -> dict | None:
+        """Return the MCP call meta dict from the most recent user message."""
+        for msg in reversed(state.context):
+            if msg.role == "user":
+                return msg.metadata.get(MCP_CALL_META_KEY)
+        return None
+
     async def call_tool(
         self,
         tool_call: ToolCallBlock,
@@ -305,6 +313,12 @@ class Toolkit:
                 and not tool_func.is_external_tool
             ):
                 kwargs["_agent_state"] = state
+
+            # MCP call meta injection, symmetric with `_agent_state` above
+            if tool_func.is_mcp and not tool_func.is_external_tool:
+                mcp_call_meta = self._extract_mcp_call_meta(state)
+                if mcp_call_meta is not None:
+                    kwargs["_meta"] = mcp_call_meta
 
             if inspect.iscoroutinefunction(tool_func.__call__):
                 res = await tool_func(**kwargs)

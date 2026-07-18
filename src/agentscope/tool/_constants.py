@@ -108,3 +108,20 @@ DANGEROUS_NODE_TYPES = {
 #
 # Note: simple_expansion ($VAR) is handled separately with allowlist
 # for known-safe environment variables ($HOME, $PWD, etc.)
+
+MCP_CALL_META_KEY = "__tool_call_meta__"
+# Reserved key under `Msg.metadata` for per-request meta forwarded to MCP.
+#
+# Flow:
+# 1. Caller stores a dict at `UserMsg.metadata[MCP_CALL_META_KEY]`.
+# 2. `Toolkit.call_tool` walks `state.context` in reverse, picks the most
+#    recent user message, and injects that dict as `kwargs["_meta"]`
+#    (only when the target tool is an MCP tool).
+# 3. `MCPTool.__call__` pops `_meta` from kwargs and passes it as the
+#    `meta` kwarg of `session.call_tool(...)`.
+# 4. The MCP server reads it from `CallToolRequestParams.meta`, surfaced
+#    to tool handlers via `ctx.request_context.meta`.
+#
+# The dict stays out of LLM sight (the tool schema is unchanged) and
+# out of tool args (`_meta` is popped before `session.call_tool`
+# receives `arguments=kwargs`).
