@@ -59,7 +59,6 @@ async def publish_session_event(
     entry_id = await bus.log_append(
         key,
         event,
-        ttl_secs=MessageBusKeys.SESSION_REPLAY_TTL_SECS,
         max_len=MessageBusKeys.SESSION_REPLAY_MAX_LEN,
     )
     await bus.publish(key, {**event, "_entry_id": entry_id})

@@ -114,9 +114,6 @@ class MessageBusKeys:
     SESSION_REPLAY_MAX_LEN = 1000
     """Replay log length cap; older events are trimmed on append."""
 
-    SESSION_REPLAY_TTL_SECS = 86400
-    """Sliding replay retention after the latest session event."""
-
     @classmethod
     def session_events(cls, session_id: str) -> str:
         """Replay log + live pub/sub channel key for a session."""
