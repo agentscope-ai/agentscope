@@ -9,6 +9,7 @@ import { buildChatTour } from '@/components/tour/chatTourSteps';
 import { TourCard } from '@/components/tour/TourCard';
 import { UploadProvider } from '@/context/UploadContext';
 import { useTranslation } from '@/i18n/useI18n';
+import { ChannelPage } from '@/pages/channel';
 import { ChatPage } from '@/pages/chat';
 import { CredentialPage } from '@/pages/credential';
 import { KnowledgePage } from '@/pages/knowledge';
@@ -45,6 +46,7 @@ const router = createBrowserRouter([
 						element: <ChatPage />,
 					},
 					{ path: '/schedule', element: <SchedulePage /> },
+					{ path: '/channel', element: <ChannelPage /> },
 					{ path: '/credential', element: <CredentialPage /> },
 					{ path: '/knowledge', element: <KnowledgePage /> },
 					{ path: '/knowledge/:kbId', element: <KnowledgePage /> },

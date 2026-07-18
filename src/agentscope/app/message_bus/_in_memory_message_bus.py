@@ -460,6 +460,26 @@ class InMemoryMessageBus(MessageBus):
         """
         return dict(self._registries.get(namespace, {}))
 
+    async def registry_get(
+        self,
+        namespace: str,
+        field: str,
+    ) -> str | None:
+        """Return a single field value from the registry at
+        ``namespace``, or ``None`` if absent.
+
+        Args:
+            namespace (`str`):
+                Registry key.
+            field (`str`):
+                Field to retrieve.
+
+        Returns:
+            `str | None`:
+                The stored value, or ``None`` if missing.
+        """
+        return self._registries.get(namespace, {}).get(field)
+
     async def registry_drop(self, namespace: str) -> None:
         """Delete the entire registry at ``namespace``.
 

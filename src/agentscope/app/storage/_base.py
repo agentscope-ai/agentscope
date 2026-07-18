@@ -8,6 +8,7 @@ from typing import Any, Self
 
 from ._model import (
     AgentRecord,
+    ChannelRecord,
     CredentialRecord,
     KnowledgeBaseRecord,
     KnowledgeDocumentRecord,
@@ -391,6 +392,117 @@ class StorageBase(ABC):
 
         Returns:
             `list[ScheduleRecord]`: All schedule records in the store.
+        """
+
+    # ------------------------------------------------------------------
+    # Channel persistence
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    async def upsert_channel(
+        self,
+        user_id: str,
+        record: ChannelRecord,
+    ) -> str:
+        """Persist a channel record and register it in the user's index.
+
+        Args:
+            user_id (`str`): The owner user id.
+            record (`ChannelRecord`): The channel record to store.
+
+        Returns:
+            `str`: The channel_id of the stored record.
+        """
+
+    @abstractmethod
+    async def get_channel(
+        self,
+        user_id: str,
+        channel_id: str,
+    ) -> ChannelRecord | None:
+        """Fetch a single channel record by id.
+
+        Args:
+            user_id (`str`): The owner user id.
+            channel_id (`str`): The channel id.
+
+        Returns:
+            `ChannelRecord | None`: The record, or ``None`` if not found.
+        """
+
+    @abstractmethod
+    async def list_channels(
+        self,
+        user_id: str,
+    ) -> list[ChannelRecord]:
+        """Return all channel records belonging to the given user.
+
+        Args:
+            user_id (`str`): The owner user id.
+
+        Returns:
+            `list[ChannelRecord]`: All channel records for the user.
+        """
+
+    @abstractmethod
+    async def delete_channel(
+        self,
+        user_id: str,
+        channel_id: str,
+    ) -> bool:
+        """Delete a channel record and remove it from indexes.
+
+        Args:
+            user_id (`str`): The owner user id.
+            channel_id (`str`): The id of the channel to delete.
+
+        Returns:
+            `bool`: ``True`` if deleted, ``False`` if not found.
+        """
+
+    @abstractmethod
+    async def get_channel_by_id(
+        self,
+        channel_id: str,
+    ) -> ChannelRecord | None:
+        """Fetch a channel record by channel_id without requiring user_id.
+
+        Uses a reverse index (channel_id → user_id) for O(1) lookup.
+        This is the primary lookup method used by the channel runtime
+        (Gateway, Manager) where only a channel_id is available.
+
+        Args:
+            channel_id (`str`): The channel id.
+
+        Returns:
+            `ChannelRecord | None`: The record, or ``None`` if not found.
+        """
+
+    @abstractmethod
+    async def list_all_channels(self) -> list[ChannelRecord]:
+        """Return every channel record across all users.
+
+        Used on startup to restore channel instances from persisted state.
+
+        Returns:
+            `list[ChannelRecord]`: All channel records in the store.
+        """
+
+    @abstractmethod
+    async def get_channel_by_platform_bot_id(
+        self,
+        platform_bot_id: str,
+    ) -> ChannelRecord | None:
+        """Find a channel by its platform bot identifier.
+
+        Used for uniqueness validation — no two channels may share
+        the same platform_bot_id.
+
+        Args:
+            platform_bot_id (`str`): The platform-side bot identifier.
+
+        Returns:
+            `ChannelRecord | None`: The matching record, or ``None``.
         """
 
     # ------------------------------------------------------------------

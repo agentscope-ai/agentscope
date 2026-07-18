@@ -715,6 +715,75 @@ export interface ListSupportedContentTypesResponse {
 	extensions: string[];
 }
 
+// ─── Channel ──────────────────────────────────────────────────────────────────
+
+export type DmScope = 'MAIN' | 'PER_PEER' | 'PER_CHAT' | 'PER_CHANNEL_PEER';
+
+export interface RoutingRule {
+	metadata_key: string;
+	metadata_value: string;
+	agent_id: string;
+	priority: number;
+}
+
+export interface ChannelRecord {
+	channel_id: string;
+	channel_type: string;
+	platform_bot_id: string;
+	default_agent_id: string;
+	chat_model_config: ChatModelConfig | null;
+	fallback_chat_model_config: ChatModelConfig | null;
+	routing_rules: RoutingRule[];
+	dm_scope: DmScope;
+	permission_mode: PermissionMode;
+	enabled: boolean;
+	config: Record<string, unknown>;
+	filter_tool_messages: boolean;
+	filter_thinking_messages: boolean;
+}
+
+export interface CreateChannelRequest {
+	channel_id: string;
+	channel_type: string;
+	credentials: Record<string, unknown>;
+	default_agent_id: string;
+	chat_model_config?: ChatModelConfig | null;
+	fallback_chat_model_config?: ChatModelConfig | null;
+	routing_rules?: RoutingRule[];
+	dm_scope?: DmScope;
+	permission_mode?: PermissionMode;
+	config?: Record<string, unknown>;
+	filter_tool_messages?: boolean;
+	filter_thinking_messages?: boolean;
+	enabled?: boolean;
+}
+
+export interface UpdateChannelRequest {
+	default_agent_id?: string;
+	chat_model_config?: ChatModelConfig | null;
+	fallback_chat_model_config?: ChatModelConfig | null;
+	routing_rules?: RoutingRule[];
+	dm_scope?: DmScope;
+	permission_mode?: PermissionMode;
+	config?: Record<string, unknown>;
+	filter_tool_messages?: boolean;
+	filter_thinking_messages?: boolean;
+	enabled?: boolean;
+}
+
+export interface ChannelTypeSchema {
+	channel_type: string;
+	display_name: string;
+	description: string;
+	credentials_schema: Record<string, unknown>;
+	config_schema: Record<string, unknown>;
+}
+
+export interface ChannelStatusResponse {
+	status: 'running' | 'stopped' | 'error';
+	error?: string | null;
+}
+
 // ─── TTS ──────────────────────────────────────────────────────────────────────
 
 export interface TTSModelCard {

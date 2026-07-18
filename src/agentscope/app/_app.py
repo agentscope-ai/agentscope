@@ -9,6 +9,7 @@ from .rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from .workspace_manager import WorkspaceManagerBase
 from ._router import (
     agent_router,
+    channel_router,
     chat_router,
     credential_router,
     knowledge_base_router,
@@ -264,6 +265,7 @@ def create_app(
         workspace_router,
         model_router,
         tts_model_router,
+        channel_router,
     ):
         app.include_router(router)
 

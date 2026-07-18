@@ -445,6 +445,26 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
         """
 
     @abstractmethod
+    async def registry_get(
+        self,
+        namespace: str,
+        field: str,
+    ) -> str | None:
+        """Return the value of a single ``field`` in the registry at
+        ``namespace``, or ``None`` if absent.
+
+        Args:
+            namespace (`str`):
+                Registry key.
+            field (`str`):
+                Field to retrieve.
+
+        Returns:
+            `str | None`:
+                The stored value, or ``None`` if missing.
+        """
+
+    @abstractmethod
     async def registry_drop(self, namespace: str) -> None:
         """Delete the entire registry at ``namespace``.
 

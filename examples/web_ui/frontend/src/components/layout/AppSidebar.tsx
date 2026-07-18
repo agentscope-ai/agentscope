@@ -1,5 +1,6 @@
 import {
 	BotMessageSquare,
+	Cable,
 	Calendars,
 	Compass,
 	KeyRound,
@@ -80,6 +81,16 @@ export function AppSidebar() {
 									className="px-2"
 								>
 									<Calendars />
+								</SidebarMenuButton>
+							</SidebarMenuItem>
+							<SidebarMenuItem>
+								<SidebarMenuButton
+									tooltip={{ children: t('common.channel'), hidden: false }}
+									isActive={location.pathname === '/channel'}
+									onClick={() => navigate('/channel')}
+									className="px-2"
+								>
+									<Cable />
 								</SidebarMenuButton>
 							</SidebarMenuItem>
 						</SidebarMenu>

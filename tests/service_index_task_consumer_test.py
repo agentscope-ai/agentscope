@@ -154,6 +154,13 @@ class _FakeBus(MessageBus):
     async def registry_getall(self, namespace: str) -> dict[str, str]:
         raise NotImplementedError
 
+    async def registry_get(
+        self,
+        namespace: str,
+        field: str,
+    ) -> str | None:
+        raise NotImplementedError
+
     async def registry_drop(self, namespace: str) -> None:
         raise NotImplementedError
 

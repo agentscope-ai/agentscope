@@ -611,6 +611,26 @@ class ChatService:
                     elif input_msg:
                         reply_msg.append_event(input_msg)
 
+                    # Emit a synthetic REPLY_START so SSE subscribers
+                    # (frontend, channel gateway) can detect the
+                    # continuation without requiring special handling.
+                    #
+                    # IMPORTANT: The frontend SSE handler must NOT clear
+                    # its accumulated message buffer upon receiving a
+                    # REPLY_START with the same reply_id as the current
+                    # message. This event signals a continuation (e.g.
+                    # after an approval flow), not a fresh reply.
+                    continuation_start = ReplyStartEvent(
+                        session_id=session_id,
+                        reply_id=agent.state.reply_id,
+                        name=agent_record.data.name,
+                    )
+                    await publish_session_event(
+                        self._message_bus,
+                        session_id,
+                        continuation_start.model_dump(mode="json"),
+                    )
+
                     async for event in agent.reply_stream(inputs=input_msg):
                         # Apply to the persisted reply FIRST (synchronous),
                         # then publish/project — see Case A above.

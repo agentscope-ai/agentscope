@@ -449,6 +449,25 @@ class RedisMessageBus(MessageBus):
         """
         return await self._client.hgetall(namespace) or {}
 
+    async def registry_get(
+        self,
+        namespace: str,
+        field: str,
+    ) -> str | None:
+        """Return a single field value from the Hash at ``namespace``.
+
+        Args:
+            namespace (`str`):
+                Hash key.
+            field (`str`):
+                Field to retrieve.
+
+        Returns:
+            `str | None`:
+                The stored value, or ``None`` if absent.
+        """
+        return await self._client.hget(namespace, field)
+
     async def registry_drop(self, namespace: str) -> None:
         """Delete the entire Hash at ``namespace``.
 

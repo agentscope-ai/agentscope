@@ -67,6 +67,10 @@ service = [
 storage = [
     "redis",
 ]
+# ------------ Channel ------------
+channel = [
+    "lark-oapi>=1.4.0",
+]
 # ------------ Workspace -----------
 k8s = ["kubernetes-asyncio"]
 workspace = [
@@ -120,6 +124,7 @@ full = [
     "agentscope[models]",
     "agentscope[service]",
     "agentscope[storage]",
+    "agentscope[channel]",
     "agentscope[workspace]",
     "agentscope[tools]",
     "agentscope[rag]",

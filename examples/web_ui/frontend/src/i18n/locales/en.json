@@ -3,6 +3,7 @@
 		"add": "Add",
 		"agent": "Agent",
 		"cancel": "Cancel",
+		"channel": "Channels",
 		"chat": "Chat",
 		"close": "Close",
 		"confirm": "Confirm",
@@ -587,5 +588,53 @@
 		"running": "Running",
 		"idle": "Idle",
 		"missingSession": "(no session)"
+	},
+	"channel": {
+		"title": "Channels",
+		"type": "Type",
+		"dmScope": "Session Scope",
+		"status": "Status",
+		"connected": "Connected",
+		"enable": "Enable",
+		"disable": "Disable",
+		"deleteEntity": "channel",
+		"empty": {
+			"title": "No channels",
+			"description": "Create a channel to connect your agent to external platforms like Feishu, DingTalk, etc."
+		},
+		"create": {
+			"title": "Create Channel",
+			"description": "Connect an agent to an external messaging platform.",
+			"channelId": "Channel ID",
+			"channelIdPlaceholder": "e.g. my-feishu-bot",
+			"channelType": "Platform",
+			"appIdPlaceholder": "Enter App ID",
+			"appSecretPlaceholder": "Enter App Secret",
+			"dmScope": "Session Scope",
+			"permissionMode": "Permission Mode",
+			"showToolMessages": "Show Tool Messages",
+			"showToolMessagesDesc": "Display tool call/result messages in the channel.",
+			"showThinking": "Show Thinking",
+			"showThinkingDesc": "Display model reasoning process in the channel."
+		},
+		"dmScopeOptions": {
+			"perPeer": "Per Peer",
+			"perPeerDesc": "Each user gets an independent session (private 1v1)",
+			"perChat": "Per Chat",
+			"perChatDesc": "Each group chat shares one session (group context)",
+			"main": "Main (Shared)",
+			"mainDesc": "All users and chats share a single session",
+			"perChannelPeer": "Per Channel Peer",
+			"perChannelPeerDesc": "Like Per Peer but scoped to this channel instance"
+		},
+		"routingRules": "Routing Rules",
+		"routingRules.valuePlaceholder": "Match value (e.g. group chat_id)",
+		"routingRules.selectChatType": "Select message type",
+		"routingRules.chatTypeP2p": "Direct Message (p2p)",
+		"routingRules.chatTypeGroup": "Group Chat (group)",
+		"routingRules.chatIdDesc": "Match by chat ID to route a specific group to a designated Agent",
+		"routingRules.chatTypeDesc": "Match by message type (DM/group) to assign different Agents per scenario",
+		"routingRules.selectChatId": "Select known chat",
+		"routingRules.customValue": "Custom input…"
 	}
 }

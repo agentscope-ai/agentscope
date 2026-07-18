@@ -403,7 +403,10 @@ const ChatPageInner = () => {
 				onOpenChange={setDeleteSessionOpen}
 				title={t('common.deleteTitle', {
 					entity: t('dialog-session-delete.entity'),
-					name: sessionToDelete?.config.name || sessionToDelete?.id || '',
+					name: (() => {
+						const raw = sessionToDelete?.config.name || sessionToDelete?.id || '';
+						return raw.length > 30 ? `${raw.slice(0, 30)}…` : raw;
+					})(),
 				})}
 				description={t('common.deleteDescription')}
 				confirmLabel={t('dialog-session-delete.confirm')}

@@ -141,6 +141,13 @@ class _FakeBus(MessageBus):
     async def registry_getall(self, namespace: str) -> dict[str, str]:
         return dict(self._registries.get(namespace, {}))
 
+    async def registry_get(
+        self,
+        namespace: str,
+        field: str,
+    ) -> str | None:
+        return self._registries.get(namespace, {}).get(field)
+
     async def registry_drop(self, namespace: str) -> None:
         self._registries.pop(namespace, None)
 

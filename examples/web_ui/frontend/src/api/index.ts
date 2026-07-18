@@ -7,3 +7,4 @@ export { workspaceApi } from './workspace';
 export { scheduleApi } from './schedule';
 export { modelApi, ttsModelApi } from './model';
 export { knowledgeBaseApi } from './knowledgeBase';
+export { channelApi } from './channel';

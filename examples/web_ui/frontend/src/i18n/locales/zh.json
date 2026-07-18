@@ -3,6 +3,7 @@
 		"add": "添加",
 		"agent": "Agent",
 		"cancel": "取消",
+		"channel": "频道",
 		"chat": "聊天",
 		"close": "关闭",
 		"confirm": "确认",
@@ -587,5 +588,53 @@
 		"running": "运行中",
 		"idle": "空闲",
 		"missingSession": "（无会话）"
+	},
+	"channel": {
+		"title": "频道",
+		"type": "类型",
+		"dmScope": "会话隔离",
+		"status": "状态",
+		"connected": "已连接",
+		"enable": "启用",
+		"disable": "停用",
+		"deleteEntity": "频道",
+		"empty": {
+			"title": "暂无频道",
+			"description": "创建一个频道，将 Agent 连接到飞书、钉钉等外部平台。"
+		},
+		"create": {
+			"title": "创建频道",
+			"description": "将 Agent 连接到外部消息平台。",
+			"channelId": "频道 ID",
+			"channelIdPlaceholder": "例如 my-feishu-bot",
+			"channelType": "平台",
+			"appIdPlaceholder": "输入 App ID",
+			"appSecretPlaceholder": "输入 App Secret",
+			"dmScope": "会话隔离策略",
+			"permissionMode": "权限模式",
+			"showToolMessages": "显示工具消息",
+			"showToolMessagesDesc": "在频道中展示工具调用和返回消息。",
+			"showThinking": "显示思维过程",
+			"showThinkingDesc": "在频道中展示模型推理过程。"
+		},
+		"dmScopeOptions": {
+			"perPeer": "按用户隔离",
+			"perPeerDesc": "同一用户的私聊和群聊 @机器人共享同一会话",
+			"perChat": "按群隔离",
+			"perChatDesc": "每个群聊/私聊各有独立会话，群内所有人共享上下文",
+			"main": "全局共享",
+			"mainDesc": "所有用户、所有群聊共享同一个会话",
+			"perChannelPeer": "按群+用户隔离",
+			"perChannelPeerDesc": "每个用户在每个群聊中各有独立会话（群内用户互不共享，私聊与群聊也互不共享）"
+		},
+		"routingRules": "路由规则",
+		"routingRules.valuePlaceholder": "匹配值（如群 chat_id）",
+		"routingRules.selectChatType": "选择消息类型",
+		"routingRules.chatTypeP2p": "私聊 (p2p)",
+		"routingRules.chatTypeGroup": "群聊 (group)",
+		"routingRules.chatIdDesc": "按会话 ID 匹配，用于将特定私聊/群聊路由到指定 Agent",
+		"routingRules.chatTypeDesc": "按消息类型匹配（私聊/群聊），用于按场景分配不同 Agent",
+		"routingRules.selectChatId": "选择已知会话",
+		"routingRules.customValue": "手动输入…"
 	}
 }
