@@ -534,7 +534,6 @@ class ChatService:
         # 7. Run the agent inside the distributed session lock
         # ----------------------------------------------------------------
         lock_key = MessageBusKeys.session_lock(session_id)
-        events_key = MessageBusKeys.session_events(session_id)
         async with self._message_bus.acquire_lock(
             lock_key,
             ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
@@ -654,7 +653,6 @@ class ChatService:
                         session_id=session_id,
                         state=agent.state,
                     )
-                    await self._message_bus.log_trim(events_key)
 
                 persist_task = asyncio.create_task(_persist())
                 try:

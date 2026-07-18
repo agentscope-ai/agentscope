@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The Redis-backed message bus implementation."""
+
 import asyncio
 import json
 import uuid
@@ -516,12 +517,10 @@ class RedisMessageBus(MessageBus):
         pubsub = self._client.pubsub()
         try:
             await pubsub.subscribe(key)
-            if on_ready is not None:
-                on_ready()
             while True:
                 try:
                     message = await pubsub.get_message(
-                        ignore_subscribe_messages=True,
+                        ignore_subscribe_messages=False,
                         timeout=self._SUBSCRIBE_POLL_TIMEOUT_SECS,
                     )
                 except redis_exceptions.TimeoutError:
@@ -532,6 +531,11 @@ class RedisMessageBus(MessageBus):
                     continue
                 if message is None:
                     # No payload within the poll window — keep waiting.
+                    continue
+                if message.get("type") == "subscribe":
+                    if on_ready is not None:
+                        on_ready()
+                        on_ready = None
                     continue
                 if message.get("type") != "message":
                     # Skip ``subscribe`` ack and similar control frames.

@@ -756,88 +756,70 @@ async def stream_session_events(
         )
 
     async def _sse_generator() -> AsyncGenerator[str, None]:
-        # 1. Replay buffered events from the current run (if any).
-        for _entry_id, event in await message_bus.log_read(
-            MessageBusKeys.session_events(session_id),
-            max_count=MessageBusKeys.SESSION_REPLAY_MAX_LEN,
-        ):
-            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-
-        # 1b. Inject pending subagent HITL cards projected onto this
-        #     session as a team leader (design §3.5). These live in a
-        #     durable Redis hash — NOT in the replay log (trimmed per
-        #     run) nor in the leader's own Msg history — so a fresh
-        #     reconnect after the worker parked still surfaces them.
-        #
-        #     Reconcile-on-read: the worker session's own context is the
-        #     SSOT. Inject only when the worker is still ASKING; drop and
-        #     delete ghosts (worker resolved/cancelled without clearing).
-        projection = SessionProjection(message_bus)
-        for payload in await projection.list(
-            session_id,
-            SubagentHitlProjector.KIND,
-        ):
-            if not await _worker_still_asking(
-                storage,
-                user_id,
-                payload["worker_agent_id"],
-                payload["worker_session_id"],
-                payload["reply_id"],
-            ):
-                await projection.delete(
-                    session_id,
-                    SubagentHitlProjector.KIND,
-                    SubagentHitlProjector.entry_id(
-                        payload["worker_session_id"],
-                        payload["reply_id"],
-                    ),
-                )
-                continue
-            custom = CustomEvent(
-                name=SubagentHitlProjector.EVT_REQUIRE,
-                value=payload,
-            )
-            data = json.dumps(
-                custom.model_dump(mode="json"),
-                ensure_ascii=False,
-            )
-
-            yield f"data: {data}\n\n"
-
-        # 2. Live subscribe via a background feeder task that pushes
-        #    events into a queue. The main loop reads from the queue
-        #    with a timeout so we can interleave heartbeat frames.
-        #
-        #    We avoid calling ``wait_for(__anext__())`` on the async
-        #    generator directly because cancelling a suspended
-        #    ``__anext__`` leaves the generator in a "running" state
-        #    that prevents ``aclose()`` from working.
+        key = MessageBusKeys.session_events(session_id)
         queue: asyncio.Queue[dict | None] = asyncio.Queue()
+        ready = asyncio.Event()
 
         async def _feeder() -> None:
-            """Read from the bus subscription and forward to the queue.
-
-            Pushes ``None`` as a sentinel when the subscription ends
-            (which in practice only happens if the bus shuts down).
-            """
             try:
-                async for evt in message_bus.subscribe(
-                    MessageBusKeys.session_events(session_id),
+                async for event in message_bus.subscribe(
+                    key,
+                    on_ready=ready.set,
                 ):
-                    await queue.put(
-                        {k: v for k, v in evt.items() if k != "_entry_id"},
-                    )
+                    await queue.put(event)
             except asyncio.CancelledError:
                 pass
             finally:
+                ready.set()
                 await queue.put(None)
 
         feeder_task = asyncio.create_task(
             _feeder(),
             name=f"sse-feeder:{session_id}",
         )
-
+        # Subscribe first; replayed ids suppress the overlap while events
+        # published during replay/projection stay queued for live delivery.
+        replayed_ids: set[str] = set()
         try:
+            await ready.wait()
+            for entry_id, event in await message_bus.log_read(
+                key,
+                max_count=MessageBusKeys.SESSION_REPLAY_MAX_LEN,
+            ):
+                replayed_ids.add(entry_id)
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+            projection = SessionProjection(message_bus)
+            for payload in await projection.list(
+                session_id,
+                SubagentHitlProjector.KIND,
+            ):
+                if not await _worker_still_asking(
+                    storage,
+                    user_id,
+                    payload["worker_agent_id"],
+                    payload["worker_session_id"],
+                    payload["reply_id"],
+                ):
+                    await projection.delete(
+                        session_id,
+                        SubagentHitlProjector.KIND,
+                        SubagentHitlProjector.entry_id(
+                            payload["worker_session_id"],
+                            payload["reply_id"],
+                        ),
+                    )
+                    continue
+                custom = CustomEvent(
+                    name=SubagentHitlProjector.EVT_REQUIRE,
+                    value=payload,
+                )
+                data = json.dumps(
+                    custom.model_dump(mode="json"),
+                    ensure_ascii=False,
+                )
+                yield f"data: {data}\n\n"
+
             while True:
                 try:
                     item = await asyncio.wait_for(
@@ -846,7 +828,11 @@ async def stream_session_events(
                     )
                     if item is None:
                         break
-                    yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+                    entry_id = item.get("_entry_id")
+                    if entry_id in replayed_ids:
+                        continue
+                    event = {k: v for k, v in item.items() if k != "_entry_id"}
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                 except asyncio.TimeoutError:
                     yield ":\n\n"
         finally:
