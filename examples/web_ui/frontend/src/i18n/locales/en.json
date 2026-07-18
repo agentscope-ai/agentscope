@@ -120,6 +120,9 @@
 		"noSessions": "No sessions yet",
 		"noMessages": "No Messages Yet",
 		"noMessagesDesc": "Start your conversation by sending a message",
+		"runFailed": "Model response failed. Check the server logs and try again.",
+		"connectionLost": "Connection to the model service was lost. Refresh to reconnect.",
+		"refresh": "Refresh",
 		"agent": {
 			"selectPlaceholder": "Select an agent",
 			"emptyTitle": "No agents",

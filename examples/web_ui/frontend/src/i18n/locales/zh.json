@@ -120,6 +120,9 @@
 		"noSessions": "暂无会话",
 		"noMessages": "暂无消息",
 		"noMessagesDesc": "发送一条消息开始新的对话",
+		"runFailed": "模型响应失败。请检查服务器日志后重试。",
+		"connectionLost": "与模型服务的连接已断开，请刷新页面后重试。",
+		"refresh": "刷新",
 		"agent": {
 			"selectPlaceholder": "选择 Agent",
 			"emptyTitle": "暂无 Agent",

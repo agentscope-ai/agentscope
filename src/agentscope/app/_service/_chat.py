@@ -45,6 +45,7 @@ from ..._logging import logger
 from ...agent import Agent, ModelConfig
 from ...event import (
     AgentEvent,
+    CustomEvent,
     ReplyStartEvent,
     UserConfirmResultEvent,
     ExternalExecutionResultEvent,
@@ -52,6 +53,9 @@ from ...event import (
 )
 from ...message import AssistantMsg, Msg, ToolCallState
 from ...permission import AdditionalWorkingDirectory
+
+
+_CHAT_RUN_ERROR_EVENT = "chat_run_error"
 
 
 class ChatService:
@@ -183,8 +187,9 @@ class ChatService:
         (:meth:`MessageBus.session_run`); events are simultaneously
         persisted to the replay log and fanned out on the live channel
         via :meth:`MessageBus.session_publish_event`. Exceptions are
-        logged and swallowed so a single failed fire does not tear
-        down its trigger (HTTP request task, wakeup dispatcher, …).
+        logged and reported to session subscribers with a generic error
+        event, then swallowed so a single failed fire does not tear down
+        its trigger (HTTP request task, wakeup dispatcher, …).
 
         Args:
             user_id (`str`):
@@ -219,6 +224,21 @@ class ChatService:
                 agent_id,
                 str(e),
             )
+            try:
+                error_event = CustomEvent(
+                    name=_CHAT_RUN_ERROR_EVENT,
+                    value={},
+                )
+                await publish_session_event(
+                    self._message_bus,
+                    session_id,
+                    error_event.model_dump(mode="json"),
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to publish chat run error for session_id=%s.",
+                    session_id,
+                )
 
     async def interrupt(
         self,

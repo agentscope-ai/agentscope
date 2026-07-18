@@ -12,6 +12,8 @@ import { appendEvent, AssistantMsg, UserMsg } from '@agentscope-ai/agentscope/me
 import type { Msg, ContentBlock } from '@agentscope-ai/agentscope/message';
 import type { ToolCallBlock } from '@agentscope-ai/agentscope/message';
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 
 import { sessionApi } from '@/api';
 import { chatApi } from '@/api';
@@ -94,7 +96,8 @@ const INTERRUPT_TIMEOUT_MS = 10_000;
  *
  * ``phase`` is driven by event content, not HTTP lifecycle: it moves
  * to ``streaming`` on ``ReplyStartEvent`` and back to ``idle`` on
- * ``ReplyEndEvent``. Calling ``interrupt()`` moves it to
+ * ``ReplyEndEvent`` or a service-level ``chat_run_error``. Calling
+ * ``interrupt()`` moves it to
  * ``interrupting`` until the terminating ``ReplyEndEvent`` arrives (or
  * a 10s safety timeout fires).
  *
@@ -124,6 +127,7 @@ export function useMessages(
 		onStateUpdated?: (value: Record<string, unknown>) => void;
 	},
 ) {
+	const { t } = useTranslation();
 	const [msgs, setMsgs] = useState<Msg[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [phase, setPhase] = useState<ReplyPhase>('idle');
@@ -147,6 +151,27 @@ export function useMessages(
 	}, []);
 
 	const audioManager = useAudioManager();
+	const reportReplyFailure = useCallback(
+		(message: string, offerRefresh = false) => {
+			const failure = new Error(message);
+			clearInterruptTimer();
+			audioManager?.stopLivePlayback();
+			currentReplyRef.current = null;
+			setPhase('idle');
+			setError(failure);
+			if (offerRefresh) {
+				toast.error(message, {
+					action: {
+						label: t('chat.refresh'),
+						onClick: () => window.location.reload(),
+					},
+				});
+			} else {
+				toast.error(message);
+			}
+		},
+		[audioManager, clearInterruptTimer, t],
+	);
 
 	const optionsRef = useRef(options);
 	useEffect(() => {
@@ -167,7 +192,9 @@ export function useMessages(
 			// reply content — route them to callbacks and skip appendEvent.
 			if (event.type === EventType.CUSTOM) {
 				const custom = event as CustomEvent;
-				if (custom.name === 'team_updated') {
+				if (custom.name === 'chat_run_error') {
+					reportReplyFailure(t('chat.runFailed'));
+				} else if (custom.name === 'team_updated') {
 					optionsRef.current?.onTeamUpdated?.();
 				} else if (custom.name === 'state_updated' && custom.value) {
 					optionsRef.current?.onStateUpdated?.(custom.value as Record<string, unknown>);
@@ -189,6 +216,7 @@ export function useMessages(
 			}
 			if (event.type === EventType.REPLY_START) {
 				audioManager?.stopAllPlayback();
+				setError(null);
 				const e = event as ReplyStartEvent;
 				const msg = AssistantMsg({ id: e.reply_id, name: e.name, content: [] });
 				msgsRef.current = [...msgsRef.current, msg];
@@ -231,7 +259,7 @@ export function useMessages(
 
 			scheduleUpdate();
 		},
-		[scheduleUpdate, audioManager, clearInterruptTimer],
+		[scheduleUpdate, audioManager, clearInterruptTimer, reportReplyFailure, t],
 	);
 
 	// ── Lifecycle: fetch history + open SSE stream ──────────────────
@@ -293,9 +321,12 @@ export function useMessages(
 					if (cancelled) break;
 					processEvent(event);
 				}
+				if (!cancelled) {
+					reportReplyFailure(t('chat.connectionLost'), true);
+				}
 			} catch (e) {
 				if ((e as Error).name !== 'AbortError' && !cancelled) {
-					setError(e as Error);
+					reportReplyFailure(t('chat.connectionLost'), true);
 				}
 			}
 		})();
@@ -306,7 +337,16 @@ export function useMessages(
 			abortRef.current = null;
 			clearInterruptTimer();
 		};
-	}, [agentId, sessionId, scheduleUpdate, processEvent, audioManager, clearInterruptTimer]);
+	}, [
+		agentId,
+		sessionId,
+		scheduleUpdate,
+		processEvent,
+		audioManager,
+		clearInterruptTimer,
+		reportReplyFailure,
+		t,
+	]);
 
 	/**
 	 * Send a user message. Appends the message to the local list
