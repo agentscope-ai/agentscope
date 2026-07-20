@@ -156,11 +156,21 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		}
 	}, []);
 
-	const { msgs, phase, send, onUserConfirm, onSubagentConfirm, subagentHitl, interrupt } =
-		useMessages(agentId, sessionId, {
-			onTeamUpdated: handleTeamUpdated,
-			onStateUpdated: handleStateUpdated,
-		});
+	const {
+		msgs,
+		phase,
+		send,
+		deferredInput,
+		deferSend,
+		cancelDefer,
+		onUserConfirm,
+		onSubagentConfirm,
+		subagentHitl,
+		interrupt,
+	} = useMessages(agentId, sessionId, {
+		onTeamUpdated: handleTeamUpdated,
+		onStateUpdated: handleStateUpdated,
+	});
 	const {
 		mcps,
 		loading: mcpsLoading,
@@ -205,7 +215,25 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	 *
 	 * @param config - New attachment, or `null` to detach all.
 	 */
-	const handleKnowledgeConfigChange = useCallback(
+	/**
+	 * Deferred send wrapper: when the agent is actively replying
+	 * (``phase === 'streaming'``) and the user sends input, cache it
+	 * locally for auto-flush on ReplyEndEvent. Otherwise send immediately.
+	 *
+	 * @param blocks - The content blocks to send (now or later).
+	 */
+	const handleSend = useCallback(
+		(blocks: import('@agentscope-ai/agentscope/message').ContentBlock[]) => {
+			if (phase === 'streaming') {
+				deferSend(blocks);
+			} else {
+				send(blocks);
+			}
+		},
+		[phase, deferSend, send],
+	);
+
+		const handleKnowledgeConfigChange = useCallback(
 		async (config: SessionKnowledgeConfig | null) => {
 			if (!sessionId || !agentId) return;
 			setSelectedKnowledgeConfig(config);
@@ -617,9 +645,11 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 									msgs={msgs}
 									phase={phase}
 									disabled={selectedModel === null}
-									onSend={send}
+									onSend={handleSend}
 									onUserConfirm={onUserConfirm}
 									onInterrupt={interrupt}
+									deferredInput={deferredInput}
+									onCancelDefer={cancelDefer}
 									footerSlot={
 										subagentHitl.length > 0 ? (
 											<div className="space-y-2 pb-2">

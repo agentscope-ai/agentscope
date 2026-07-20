@@ -130,6 +130,11 @@ export function useMessages(
 	const [error, setError] = useState<Error | null>(null);
 	// Pending subagent HITL cards projected onto this (leader) session.
 	const [subagentHitl, setSubagentHitl] = useState<SubagentHitlEntry[]>([]);
+	// Deferred input: user typed while agent is replying, queued for
+	// auto-send once the current reply ends (ReplyEndEvent).
+	const [deferredInput, setDeferredInput] = useState<ContentBlock[] | null>(
+		null,
+	);
 
 	const msgsRef = useRef<Msg[]>([]);
 	const currentReplyRef = useRef<Msg | null>(null);
@@ -138,6 +143,17 @@ export function useMessages(
 	// Timer that reverts ``interrupting`` back to ``idle`` if the
 	// terminating REPLY_END never arrives (dropped SSE frame, etc.).
 	const interruptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// Stable reference to the ``send`` callback so that ``processEvent``
+	// can access it without a stale closure when auto-flushing deferred
+	// input on REPLY_END.
+	const sendRef = useRef<(content: ContentBlock[]) => Promise<void>>(
+		async () => {},
+	);
+	// Hold the deferred input in a ref so the REPLY_END handler can
+	// atomically read-and-clear it, preventing double-flush under
+	// React StrictMode which double-invokes state updater functions
+	// in development.
+	const deferredRef = useRef<ContentBlock[] | null>(null);
 
 	const clearInterruptTimer = useCallback(() => {
 		if (interruptTimerRef.current !== null) {
@@ -202,6 +218,18 @@ export function useMessages(
 				clearInterruptTimer();
 				setPhase('idle');
 				currentReplyRef.current = null;
+				// Flush any deferred user input that was queued during
+				// the just-completed reply.  Read-and-clear via a ref
+				// so React StrictMode (which double-invokes state
+				// updaters) cannot schedule the send twice.
+				if (deferredRef.current) {
+					const toSend = deferredRef.current;
+					deferredRef.current = null;
+					setDeferredInput(null);
+					setTimeout(() => {
+						sendRef.current(toSend);
+					}, 0);
+				}
 			} else if (currentReplyRef.current) {
 				appendEvent(currentReplyRef.current, event);
 			}
@@ -304,6 +332,7 @@ export function useMessages(
 			cancelled = true;
 			controller.abort();
 			abortRef.current = null;
+			deferredRef.current = null;
 			clearInterruptTimer();
 		};
 	}, [agentId, sessionId, scheduleUpdate, processEvent, audioManager, clearInterruptTimer]);
@@ -335,6 +364,10 @@ export function useMessages(
 		},
 		[agentId, sessionId, scheduleUpdate],
 	);
+	// Keep the send ref in sync so processEvent can auto-flush.
+	useEffect(() => {
+		sendRef.current = send;
+	}, [send]);
 
 	/**
 	 * Confirm or deny a tool call (human-in-the-loop). Fires a
@@ -476,12 +509,36 @@ export function useMessages(
 		[agentId, sessionId],
 	);
 
+	/**
+	 * Cache user input for deferred send while the agent is
+	 * generating a reply. The input is held locally until the current
+	 * reply ends (ReplyEndEvent), at which point it is automatically
+	 * flushed to the backend.
+	 *
+	 * @param content - The message content blocks to hold.
+	 */
+	const deferSend = useCallback((content: ContentBlock[]) => {
+		deferredRef.current = content;
+		setDeferredInput(content);
+	}, []);
+
+	/**
+	 * Cancel a deferred send before it is auto-flushed.
+	 */
+	const cancelDefer = useCallback(() => {
+		deferredRef.current = null;
+		setDeferredInput(null);
+	}, []);
+
 	return {
 		msgs,
 		loading,
 		phase,
 		error,
 		send,
+		deferredInput,
+		deferSend,
+		cancelDefer,
 		onUserConfirm,
 		onSubagentConfirm,
 		subagentHitl,

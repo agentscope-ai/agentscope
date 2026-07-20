@@ -42,6 +42,10 @@ interface ChatContentProps {
 	allowedInputTypes: string[];
 	/** @see TextInputProps.fileProcessor */
 	fileProcessor: (file: File) => Promise<ContentBlock | null>;
+	/** @see TextInputProps.deferredInput */
+	deferredInput?: ContentBlock[] | null;
+	/** @see TextInputProps.onCancelDefer */
+	onCancelDefer?: () => void;
 }
 
 const ChatContentComponent: React.FC<ChatContentProps> = ({
@@ -56,6 +60,8 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	footerSlot,
 	allowedInputTypes,
 	fileProcessor,
+	deferredInput,
+	onCancelDefer,
 }) => {
 	const scrollAreaRef = useRef<HTMLDivElement>(null);
 	const prevMsgCountRef = useRef<number>(0);
@@ -161,6 +167,8 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 				fileProcessor={fileProcessor}
 				phase={phase}
 				onInterrupt={onInterrupt}
+				deferredInput={deferredInput}
+				onCancelDefer={onCancelDefer}
 			/>
 		</div>
 	);
