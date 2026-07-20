@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from .._document import Chunk
 from ._vector_store import (
@@ -35,6 +35,7 @@ class ElasticsearchStore(VectorStoreBase):
         hosts: str | list[str],
         *,
         num_candidates: int = 100,
+        refresh: bool | Literal["wait_for"] = "wait_for",
         client_kwargs: dict[str, Any] | None = None,
     ) -> None:
         """Initialize the Elasticsearch vector store.
@@ -45,6 +46,12 @@ class ElasticsearchStore(VectorStoreBase):
             num_candidates (`int`, defaults to ``100``):
                 Minimum HNSW candidates considered per shard.  The effective
                 value is raised to ``top_k`` when necessary.
+            refresh (`bool | Literal["wait_for"]`, defaults to \
+            ``"wait_for"``):
+                Refresh policy for writes. Set to ``False`` for higher
+                indexing throughput when immediate search visibility is not
+                required. Elasticsearch's delete-by-query API only accepts a
+                boolean, so ``"wait_for"`` maps to ``True`` for deletes.
             client_kwargs (`dict[str, Any] | None`, optional):
                 Extra arguments forwarded to ``AsyncElasticsearch`` such as
                 ``api_key``, ``basic_auth`` or ``ca_certs``.
@@ -53,6 +60,7 @@ class ElasticsearchStore(VectorStoreBase):
             raise ValueError("num_candidates must be between 1 and 10000")
         self._hosts = hosts
         self._num_candidates = num_candidates
+        self._refresh = refresh
         self._client_kwargs = client_kwargs or {}
         self._client: "AsyncElasticsearch | None" = None
 
@@ -95,7 +103,7 @@ class ElasticsearchStore(VectorStoreBase):
                     },
                     "document_id": {"type": "keyword"},
                     "chunk": {"type": "object", "enabled": False},
-                    "metadata": {"type": "flattened"},
+                    "metadata": {"type": "object", "dynamic": "runtime"},
                 },
             },
         )
@@ -138,7 +146,7 @@ class ElasticsearchStore(VectorStoreBase):
 
         response = await self.get_client().bulk(
             operations=operations,
-            refresh="wait_for",
+            refresh=self._refresh,
         )
         if response.get("errors"):
             failures = [
@@ -157,7 +165,7 @@ class ElasticsearchStore(VectorStoreBase):
             index=collection,
             query={"term": {"document_id": document_id}},
             conflicts="proceed",
-            refresh=True,
+            refresh=self._refresh is not False,
         )
 
     async def search(

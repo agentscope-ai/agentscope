@@ -168,6 +168,9 @@ store = ElasticsearchStore(
     # Number of HNSW candidates considered per shard. Higher values can
     # improve recall at the cost of additional search work.
     num_candidates=100,
+    # Use False for higher write throughput during large imports when
+    # immediate search visibility is not required.
+    refresh="wait_for",
     client_kwargs=client_kwargs,
 )
 
@@ -212,6 +215,10 @@ store = ElasticsearchStore(
 - Writes use a stable ID derived from `document_id` and `chunk_index`, so
   retrying the same indexing operation replaces existing chunks instead of
   creating duplicates.
+- Writes default to `refresh="wait_for"`, making indexed chunks searchable
+  before the operation returns. For large imports, set `refresh=False` and
+  allow Elasticsearch's normal refresh interval (or an explicit index
+  refresh) to make changes visible with higher throughput.
 - Elasticsearch transforms cosine similarity into a positive `_score`.
   `ElasticsearchStore` converts it back to raw cosine similarity so score
   thresholds behave consistently with the other vector backends.

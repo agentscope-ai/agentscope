@@ -119,6 +119,21 @@ class ElasticsearchStoreTest(IsolatedAsyncioTestCase):
         await self.store.insert("kb-1", [])
         self.client.bulk.assert_not_awaited()
 
+    async def test_refresh_policy_can_disable_write_refreshes(self) -> None:
+        store = ElasticsearchStore(
+            hosts="http://localhost:9200",
+            refresh=False,
+        )
+
+        await store.insert("kb-1", [_record("doc-1", 0)])
+        await store.delete("kb-1", "doc-1")
+
+        self.assertIs(self.client.bulk.await_args.kwargs["refresh"], False)
+        self.assertIs(
+            self.client.delete_by_query.await_args.kwargs["refresh"],
+            False,
+        )
+
     async def test_insert_surfaces_bulk_item_failures(self) -> None:
         self.client.bulk.return_value = {
             "errors": True,
