@@ -5,6 +5,7 @@ import json
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Self, TYPE_CHECKING
 
 import shortuuid
@@ -24,6 +25,19 @@ if TYPE_CHECKING:
     from ..message_bus import MessageBus
 
 
+class TaskStatus(str, Enum):
+    """Status of a background task throughout its lifecycle."""
+
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+_MAX_RETAINED_TASKS = 50
+# Maximum number of terminal-state tasks to keep for frontend polling.
+
+
 @dataclass
 class BackgroundTask:
     """Metadata for a single background task.
@@ -41,6 +55,19 @@ class BackgroundTask:
             The name of the tool that was offloaded.
         id (`str`):
             Auto-generated unique task identifier.
+        summary (`str`):
+            A short human-readable summary of the tool invocation
+            for frontend display (at most 128 characters).
+        started_at (`float`):
+            Unix epoch (UTC) when the task was registered.
+        completed_at (`float | None`):
+            Unix epoch (UTC) when the task reached a terminal state,
+            or ``None`` while still running.
+        status (`TaskStatus`):
+            Current lifecycle status of the task.
+        error_summary (`str | None`):
+            Brief description of the failure reason when
+            ``status == FAILED``.
     """
 
     asyncio_task: asyncio.Task
@@ -60,6 +87,21 @@ class BackgroundTask:
 
     id: str = field(default_factory=shortuuid.uuid)
     """The background task id."""
+
+    summary: str = ""
+    """Short human-readable summary for frontend display."""
+
+    started_at: float = field(default_factory=time.time)
+    """Unix epoch (UTC) when the task was registered."""
+
+    completed_at: float | None = None
+    """Unix epoch (UTC) when the task finished, or None if running."""
+
+    status: TaskStatus = TaskStatus.RUNNING
+    """Current lifecycle status."""
+
+    error_summary: str | None = None
+    """Brief failure description (populated only for FAILED tasks)."""
 
 
 class _ToolStopParams(BaseModel):
@@ -253,12 +295,15 @@ class BackgroundTaskManager:
         agent_id: str,
         user_id: str,
         tool_name: str = "",
+        *,
+        summary: str = "",
     ) -> str:
         """Register an already-running asyncio task.
 
         Writes to both the local handle cache and the global Redis
-        registry. The task auto-removes from both when it finishes
-        (via ``add_done_callback``).
+        registry. On completion, updates the task status (rather than
+        removing immediately) so frontends can observe terminal states
+        via polling.
 
         Args:
             asyncio_task (`asyncio.Task`):
@@ -271,6 +316,9 @@ class BackgroundTaskManager:
                 The user id of the originating request.
             tool_name (`str`, optional):
                 The name of the offloaded tool.
+            summary (`str`, optional):
+                Short human-readable summary of the tool invocation
+                for frontend display.
 
         Returns:
             `str`:
@@ -282,6 +330,7 @@ class BackgroundTaskManager:
             agent_id=agent_id,
             user_id=user_id,
             tool_name=tool_name,
+            summary=summary,
         )
         task_id = bg_task.id
         self.tasks[task_id] = bg_task
@@ -291,7 +340,7 @@ class BackgroundTaskManager:
             {
                 "tool_name": tool_name,
                 "agent_id": agent_id,
-                "started_at": time.time(),
+                "started_at": bg_task.started_at,
             },
             ensure_ascii=False,
         )
@@ -312,11 +361,20 @@ class BackgroundTaskManager:
         )
 
         def _on_done(_t: asyncio.Task) -> None:
-            self.tasks.pop(task_id, None)
-            # Schedule async Redis cleanup (fire-and-forget). Wrap in a
-            # coroutine that logs failures so the bus error (e.g. Redis
-            # connection drop) does not surface as
-            # ``Task exception was never retrieved``.
+            bg = self.tasks.get(task_id)
+            if bg is None:
+                return
+
+            bg.completed_at = time.time()
+            if _t.cancelled():
+                bg.status = TaskStatus.CANCELLED
+            elif _t.exception() is not None:
+                bg.status = TaskStatus.FAILED
+                bg.error_summary = str(_t.exception())[:512]
+            else:
+                bg.status = TaskStatus.COMPLETED
+
+            # Unregister from the global Redis registry.
             try:
                 asyncio.ensure_future(
                     self._safe_bg_task_unregister(session_id, task_id),
@@ -324,6 +382,8 @@ class BackgroundTaskManager:
             except RuntimeError:
                 # Event loop already closed during shutdown.
                 pass
+
+            self._evict_completed()
 
         asyncio_task.add_done_callback(_on_done)
         return task_id
@@ -354,6 +414,80 @@ class BackgroundTaskManager:
                 session_id,
                 str(e),
             )
+
+    def _evict_completed(self) -> None:
+        """Remove the oldest terminal-state tasks when capacity is exceeded.
+
+        Keeps at most :data:`_MAX_RETAINED_TASKS` completed/failed/cancelled
+        tasks in the local registry so memory usage stays bounded while
+        still giving frontends a window to observe terminal states.
+        """
+        completed = [
+            tid
+            for tid, t in self.tasks.items()
+            if t.status != TaskStatus.RUNNING
+        ]
+        while len(completed) > _MAX_RETAINED_TASKS:
+            oldest = completed.pop(0)
+            self.tasks.pop(oldest, None)
+
+    # ------------------------------------------------------------------
+    # Task querying (for REST endpoints)
+    # ------------------------------------------------------------------
+
+    def list_tasks(
+        self,
+        *,
+        user_id: str,
+        session_id: str | None = None,
+    ) -> list[BackgroundTask]:
+        """List tasks visible to a given user.
+
+        Returns both running and recently-completed tasks that are
+        still within the retention window.
+
+        Args:
+            user_id (`str`):
+                Only return tasks belonging to this user.
+            session_id (`str | None`, optional):
+                If provided, further filter by session.
+
+        Returns:
+            `list[BackgroundTask]`:
+                Matching tasks ordered by registration time.
+        """
+        return [
+            t
+            for t in self.tasks.values()
+            if t.user_id == user_id
+            and (session_id is None or t.session_id == session_id)
+        ]
+
+    def get_task(
+        self,
+        task_id: str,
+        *,
+        user_id: str,
+    ) -> BackgroundTask | None:
+        """Get a single task by id, scoped to the requesting user.
+
+        Returns ``None`` when the task does not exist or belongs to a
+        different user (no information leakage about task existence).
+
+        Args:
+            task_id (`str`):
+                The task identifier.
+            user_id (`str`):
+                The requesting user's id.
+
+        Returns:
+            `BackgroundTask | None`:
+                The task if found and owned by *user_id*, else ``None``.
+        """
+        t = self.tasks.get(task_id)
+        if t is None or t.user_id != user_id:
+            return None
+        return t
 
     # ------------------------------------------------------------------
     # Tool listing
