@@ -15,7 +15,8 @@ from ._utils import DEFAULT_WORKSPACE_INSTRUCTIONS
 from .._logging import logger
 from ..mcp import MCPClient
 from ..skill import Skill
-from ..tool._builtin._backend import LocalBackend
+from ..tool import ToolBase
+from ..tool._builtin._backend import BackendBase, LocalBackend
 from ._base import WorkspaceBase
 
 
@@ -117,6 +118,14 @@ class LocalWorkspace(WorkspaceBase):
 
         self._skill_lock = asyncio.Lock()
         self._mcp_lock = asyncio.Lock()
+
+    def _create_shell_tool(self, backend: BackendBase) -> ToolBase:
+        """Create a shell tool matching the local host platform."""
+        if os.name == "nt":
+            from ..tool import PowerShell
+
+            return PowerShell(cwd=self.workdir, backend=backend)
+        return super()._create_shell_tool(backend)
 
     async def initialize(self) -> None:
         """Initialise the workspace.

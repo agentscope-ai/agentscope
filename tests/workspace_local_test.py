@@ -7,8 +7,10 @@ import base64
 import hashlib
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import patch
 from dataclasses import asdict
 from urllib.parse import urlparse
 from urllib.request import url2pathname
@@ -24,6 +26,7 @@ from agentscope.tool import (
     Glob,
     Grep,
     LocalBackend,
+    PowerShell,
     Read,
     Toolkit,
     ToolBase,
@@ -31,7 +34,7 @@ from agentscope.tool import (
     Write,
 )
 from agentscope.permission import PermissionDecision, PermissionBehavior
-from agentscope.workspace import LocalWorkspace
+from agentscope.workspace import LocalWorkspace, WorkspaceBase
 from agentscope.mcp import MCPClient, StdioMCPConfig
 from agentscope.message import (
     Msg,
@@ -95,13 +98,27 @@ class _LongResultTool(ToolBase):
 class TestLocalWorkspaceTools(IsolatedAsyncioTestCase):
     """Test cases for LocalWorkspace builtin tools."""
 
-    async def test_list_tools_builtin(self) -> None:
-        """Return all six builtin tools backed by LocalBackend."""
+    def test_base_shell_factory_uses_bash(self) -> None:
+        """The shared workspace shell factory remains POSIX-oriented."""
+        workspace = LocalWorkspace(workdir="workspace")
+        backend = LocalBackend()
+
+        tool = WorkspaceBase._create_shell_tool(workspace, backend)
+
+        self.assertIsInstance(tool, Bash)
+        self.assertIs(tool._backend, backend)
+
+    async def test_list_tools_builtin_posix_uses_bash(self) -> None:
+        """A POSIX local workspace returns Bash and filesystem tools."""
         with tempfile.TemporaryDirectory() as workdir:
             workspace = LocalWorkspace(workdir=workdir)
             await workspace.initialize()
             try:
-                tools = await workspace.list_tools()
+                with patch(
+                    "agentscope.workspace._local_workspace.os",
+                    SimpleNamespace(name="posix"),
+                ):
+                    tools = await workspace.list_tools()
             finally:
                 await workspace.close()
 
@@ -109,6 +126,28 @@ class TestLocalWorkspaceTools(IsolatedAsyncioTestCase):
         self.assertSetEqual(
             {type(tool) for tool in tools},
             {Bash, Edit, Glob, Grep, Read, Write},
+        )
+        for tool in tools:
+            self.assertIsInstance(tool._backend, LocalBackend)
+
+    async def test_list_tools_builtin_windows_uses_powershell(self) -> None:
+        """A Windows local workspace returns PowerShell, not Bash."""
+        with tempfile.TemporaryDirectory() as workdir:
+            workspace = LocalWorkspace(workdir=workdir)
+            await workspace.initialize()
+            try:
+                with patch(
+                    "agentscope.workspace._local_workspace.os",
+                    SimpleNamespace(name="nt"),
+                ):
+                    tools = await workspace.list_tools()
+            finally:
+                await workspace.close()
+
+        self.assertEqual(len(tools), 6)
+        self.assertSetEqual(
+            {type(tool) for tool in tools},
+            {PowerShell, Edit, Glob, Grep, Read, Write},
         )
         for tool in tools:
             self.assertIsInstance(tool._backend, LocalBackend)
