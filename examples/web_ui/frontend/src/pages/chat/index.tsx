@@ -2,6 +2,7 @@ import {
 	BotMessageSquare,
 	CalendarClock,
 	Ellipsis,
+	GitFork,
 	MessageSquareDashed,
 	Pencil,
 	Plus,
@@ -96,6 +97,7 @@ const ChatPageInner = () => {
 		create: createSession,
 		update: updateSession,
 		remove: removeSession,
+		fork: forkSession,
 	} = useSessions(urlAgentId ?? null);
 
 	const { isMobile, setOpen, setOpenMobile } = useSidebar();
@@ -105,6 +107,7 @@ const ChatPageInner = () => {
 	const [renameSession, setRenameSession] = useState<SessionRecord | null>(null);
 	const [deleteSessionOpen, setDeleteSessionOpen] = useState(false);
 	const [sessionToDelete, setSessionToDelete] = useState<SessionRecord | null>(null);
+	const [forkingSessionId, setForkingSessionId] = useState<string | null>(null);
 
 	const selectedAgent = agents.find((a) => a.id === urlAgentId) ?? null;
 	const currentView = sessions.find((v) => v.session.id === urlSessionId) ?? null;
@@ -191,6 +194,17 @@ const ChatPageInner = () => {
 	const handleRenameConfirm = async (name: string) => {
 		if (!renameSession) return;
 		await updateSession(renameSession.id, { name });
+	};
+
+	const handleForkSession = async (session: SessionRecord) => {
+		if (!urlAgentId || forkingSessionId !== null) return;
+		setForkingSessionId(session.id);
+		try {
+			const newSessionId = await forkSession(session.id);
+			navigate(`/chat/${urlAgentId}/${newSessionId}`);
+		} finally {
+			setForkingSessionId(null);
+		}
 	};
 
 	return (
@@ -319,6 +333,16 @@ const ChatPageInner = () => {
 															side="right"
 															align="start"
 														>
+															<DropdownMenuItem
+																disabled={forkingSessionId !== null}
+																onClick={(event) => {
+																	event.stopPropagation();
+																	void handleForkSession(session);
+																}}
+															>
+																<GitFork />
+																{t('session-menu.fork')}
+															</DropdownMenuItem>
 															<DropdownMenuItem
 																onClick={() => {
 																	setRenameSession(session);

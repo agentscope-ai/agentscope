@@ -49,7 +49,11 @@ import asyncio
 from enum import StrEnum
 
 from ..message_bus import MessageBus, MessageBusKeys
-from ..storage import StorageBase
+from ..storage import SessionRecord, StorageBase
+from ..storage._exceptions import (
+    SessionForkConflictError,
+    SessionForkNotFoundError,
+)
 from ..storage._utils import _ensure_team_members
 from ._session_projection import SessionProjection
 from ._projectors import SubagentHitlProjector
@@ -200,6 +204,87 @@ class SessionService:
             return None
 
         return self._derive_parked_status(session.state.context)
+
+    async def fork_session(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+    ) -> SessionRecord:
+        """Fork an owned, idle Session through the Storage backend.
+
+        Ownership is checked before consulting the MessageBus so an
+        unauthorized caller cannot learn whether another user's Session is
+        currently running. Team leader member checks are best-effort; the
+        Storage backend remains responsible for re-reading and validating the
+        complete graph.
+        """
+        source_session = await self._storage.get_session(
+            user_id,
+            agent_id,
+            session_id,
+        )
+        if (
+            source_session is None
+            or source_session.id != session_id
+            or source_session.user_id != user_id
+            or source_session.agent_id != agent_id
+        ):
+            raise SessionForkNotFoundError(
+                "The session does not exist or is not accessible.",
+            )
+
+        await self._ensure_fork_session_idle(
+            user_id,
+            agent_id,
+            session_id,
+            root=True,
+        )
+
+        if source_session.team_id is not None:
+            team = await self._storage.get_team(
+                user_id,
+                source_session.team_id,
+            )
+            if team is not None and team.session_id == source_session.id:
+                for member in team.data.members:
+                    await self._ensure_fork_session_idle(
+                        member.owner_id,
+                        member.agent_id,
+                        member.session_id,
+                        root=False,
+                    )
+
+        return await self._storage.fork_session(
+            user_id,
+            agent_id,
+            session_id,
+        )
+
+    async def _ensure_fork_session_idle(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        *,
+        root: bool,
+    ) -> None:
+        """Reject a fork target unless its current status is IDLE."""
+        session_status = await self.get_session_status(
+            user_id,
+            agent_id,
+            session_id,
+        )
+        if session_status is None:
+            if root:
+                raise SessionForkNotFoundError(
+                    "The session does not exist or is not accessible.",
+                )
+            return
+        if session_status is not SessionStatus.IDLE:
+            raise SessionForkConflictError(
+                "Only idle sessions can be forked.",
+            )
 
     @staticmethod
     def _derive_parked_status(context: list) -> SessionStatus:

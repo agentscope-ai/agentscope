@@ -209,6 +209,7 @@
 		"placeholder": "Session name"
 	},
 	"session-menu": {
+		"fork": "Fork",
 		"rename": "Rename",
 		"delete": "Delete"
 	},

@@ -9,6 +9,11 @@ from ._base import _RecordBase
 from ....state import AgentState
 
 
+def default_session_name() -> str:
+    """Return the default display name used for new sessions."""
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
 class SessionSource(str, Enum):
     """The source that created the session."""
 
@@ -125,7 +130,7 @@ class SessionConfig(BaseModel):
     :meth:`WorkspaceManagerBase.get_workspace`."""
 
     name: str = Field(
-        default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        default_factory=default_session_name,
         description="Display name for the session.",
     )
     """The session display name."""

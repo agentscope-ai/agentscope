@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
 from ..._utils._common import _generate_id
+from ..._logging import logger
 from ..access import ResourceKind
 from ..deps import (
     get_chat_service,
@@ -47,6 +48,11 @@ from ..storage import (
     SessionRecord,
     StorageBase,
     TeamRecord,
+)
+from ..storage._exceptions import (
+    SessionForkConflictError,
+    SessionForkCorruptedGraphError,
+    SessionForkNotFoundError,
 )
 from ...message import ToolCallState
 from ..storage._utils import _ensure_team_members
@@ -333,6 +339,49 @@ async def create_session(
         ),
     )
     return CreateSessionResponse(session_id=session_record.id)
+
+
+@session_router.post(
+    "/{session_id}/fork",
+    response_model=CreateSessionResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Fork an existing session",
+)
+async def fork_session(
+    session_id: str,
+    agent_id: str = Query(description="Agent the session belongs to."),
+    user_id: str = Depends(get_current_user_id),
+    session_service: SessionService = Depends(get_session_service),
+) -> CreateSessionResponse:
+    """Create a fork through :class:`SessionService`.
+
+    The service owns authorization, status checks, and the Storage call.
+    This router only translates the service exceptions into the public HTTP
+    contract.
+    """
+    try:
+        forked_session = await session_service.fork_session(
+            user_id,
+            agent_id,
+            session_id,
+        )
+    except SessionForkNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="The session does not exist or is not accessible.",
+        ) from error
+    except SessionForkConflictError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The session cannot be forked in its current state.",
+        ) from error
+    except SessionForkCorruptedGraphError as error:
+        logger.exception("Failed to fork a corrupted session graph.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to fork the session.",
+        ) from error
+    return CreateSessionResponse(session_id=forked_session.id)
 
 
 @session_router.delete(

@@ -292,12 +292,14 @@ class AgentInvite(_TeamToolBase):
 
             # Re-fetch fresh — the snapshot could be stale if the user
             # just toggled the invite off.
+            member_owner_lookup_id = invited.user_id
             fresh = await self._storage.get_agent(
-                self._user_id,
+                member_owner_lookup_id,
                 invited.id,
             )
             if (
                 fresh is None
+                or fresh.user_id != member_owner_lookup_id
                 or not fresh.data.invite_config.invitable
                 or not (
                     fresh.data.invite_config.invite_description or ""
@@ -308,6 +310,7 @@ class AgentInvite(_TeamToolBase):
                     f"longer invitable.",
                 )
             invited = fresh
+            member_owner_id = invited.user_id
 
             # Duplicate-borrow guard — one team, one borrow per agent.
             existing_members = await _ensure_team_members(
@@ -354,7 +357,7 @@ class AgentInvite(_TeamToolBase):
             # lazily by the workspace manager on first chat, so a bare
             # id is enough.
             invited_sessions = await self._storage.list_sessions(
-                self._user_id,
+                member_owner_id,
                 invited.id,
             )
             if invited_sessions:
@@ -371,7 +374,7 @@ class AgentInvite(_TeamToolBase):
             else:
                 borrowed_workspace_id = (
                     self._workspace_manager.assign_workspace_id(
-                        user_id=self._user_id,
+                        user_id=member_owner_id,
                         agent_id=invited.id,
                         session_id=_generate_id(),
                     )
@@ -407,7 +410,7 @@ class AgentInvite(_TeamToolBase):
             )
             invited_handle = _display_handle(invited.id)
             borrowed = await self._storage.upsert_session(
-                user_id=self._user_id,
+                user_id=member_owner_id,
                 agent_id=invited.id,
                 config=SessionConfig(
                     workspace_id=borrowed_workspace_id,
@@ -418,7 +421,7 @@ class AgentInvite(_TeamToolBase):
                 state=worker_state,
             )
             await self._storage.set_session_team_id(
-                self._user_id,
+                member_owner_id,
                 borrowed.id,
                 team.id,
             )
@@ -426,7 +429,7 @@ class AgentInvite(_TeamToolBase):
             team.data.members = [
                 *existing_members,
                 TeamMember(
-                    owner_id=self._user_id,
+                    owner_id=member_owner_id,
                     agent_id=invited.id,
                     session_id=borrowed.id,
                     role="invited",
@@ -461,7 +464,7 @@ class AgentInvite(_TeamToolBase):
             )
             await enqueue_run_trigger(
                 self._message_bus,
-                user_id=self._user_id,
+                user_id=member_owner_id,
                 session_id=borrowed.id,
                 agent_id=invited.id,
             )

@@ -206,6 +206,22 @@ class StorageBase(ABC):
             `SessionRecord`: The created or updated record.
         """
 
+    async def fork_session(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+    ) -> SessionRecord:
+        """Fork a session using the storage backend's native semantics.
+
+        Backends that do not implement session forking fail explicitly while
+        remaining instantiable during the phased rollout.
+        """
+        del user_id, agent_id, session_id
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support session forking.",
+        )
+
     @abstractmethod
     async def set_session_team_id(
         self,

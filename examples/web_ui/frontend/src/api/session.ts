@@ -21,6 +21,11 @@ export const sessionApi = {
 
 	create: (body: CreateSessionRequest) => client.post<CreateSessionResponse>('/sessions/', body),
 
+	fork: (sessionId: string, agentId: string) =>
+		client.post<CreateSessionResponse>(`/sessions/${sessionId}/fork`, undefined, {
+			agent_id: agentId,
+		}),
+
 	update: (sessionId: string, agentId: string, body: UpdateSessionRequest) =>
 		client.patch<SessionRecord>(`/sessions/${sessionId}`, body, { agent_id: agentId }),
 
