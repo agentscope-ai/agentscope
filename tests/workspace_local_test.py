@@ -15,7 +15,7 @@ from urllib.request import url2pathname
 
 import aiofiles
 from utils import AnyString, MockModel
-from agentscope.agent import Agent, ContextConfig
+from agentscope.agent import Agent, ContextConfig, InjectionConfig
 from agentscope.model import ChatResponse, StructuredResponse
 from agentscope.state import AgentState
 from agentscope.tool import (
@@ -866,6 +866,10 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 context_config=ContextConfig(
                     tool_result_limit=50,
                 ),
+                # The runtime state injection is covered by
+                # agent_injection_test, turn it off to keep the assertions
+                # focused.
+                injection_config=InjectionConfig(inject_runtime_state=False),
                 offloader=LocalWorkspace(
                     workdir=workdir,
                 ),
@@ -1013,6 +1017,10 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 model=model,
                 toolkit=Toolkit(),
                 offloader=LocalWorkspace(workdir=workdir),
+                # The runtime state injection is covered by
+                # agent_injection_test, turn it off to keep the assertions
+                # focused.
+                injection_config=InjectionConfig(inject_runtime_state=False),
                 state=AgentState(session_id=session_id),
             )
 

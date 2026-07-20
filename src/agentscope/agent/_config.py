@@ -190,19 +190,57 @@ class InjectionConfig(BaseModel):
 
     template: str = Field(
         title="Template",
-        default="""<system-reminder>The current status information, which \
-maybe helpful:
+        default="""<system-reminder>Treat the following as the ground truth \
+at this point of the conversation. Anything stated earlier is outdated, and a \
+later reminder, if any, supersedes this one:
 {runtime_state}
 </system-reminder>""",
+        description=(
+            "The template to wrap the injected runtime state, where the "
+            "'{runtime_state}' placeholder will be replaced by the injected "
+            "fields."
+        ),
     )
+    """The template to wrap the injected runtime state, which must contain the
+    ``{runtime_state}`` placeholder."""
 
-    extra_fields: list[str] = Field(
+    injection_source: str = Field(
+        title="Injection Source",
+        default='{"label": "System", "sublabel": "Runtime State"}',
+        description=(
+            "The source of the injected hint block, which is also used to "
+            "identify the previous injections within the context."
+        ),
+    )
+    """The source of the injected hint block, used to identify the agent's own
+    injections when scanning the context."""
+
+    task_tool_names: list[str] = Field(
+        title="Task Tool Names",
+        default_factory=lambda: [
+            "TaskCreate",
+            "TaskGet",
+            "TaskList",
+            "TaskUpdate",
+        ],
+        description=(
+            "The names of the task related tools. Their presence in the "
+            "context suppresses the tasks injection."
+        ),
+    )
+    """The names of the task related tools, whose tool calls in the context
+    indicate the agent is already aware of the tasks."""
+
+    extra_fields: dict[str, str] = Field(
+        title="Extra Fields",
         default_factory=dict,
         description=(
             "The extra fields to inject, which will be wrapped into the "
             "'<{key}>{value}</{key}>' format."
         ),
     )
+    """The user defined fields to inject, which are attached to the injection
+    without triggering one by themselves."""
 
     emit_hint_event: bool = Field(
         title="Emit Hint Event",

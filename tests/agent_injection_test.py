@@ -53,6 +53,11 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
         self.agent.state.reply_id = "reply-1"
         self.agent.state.cur_iter = 0
 
+        # Freeze the wall-clock time for all the test cases
+        patcher = patch("agentscope.agent._agent.datetime", _FrozenDatetime)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     # ------------------------------------------------------------------ utils
     async def _run_injection(self) -> list:
         """Drive the async generator and collect the yielded events."""
@@ -62,8 +67,9 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
             async for evt in self.agent._inject_runtime_state()
         ]
 
-    def _add_injection(self, time_str: str) -> None:
-        """Append an existing runtime-state injection carrying ``time_str``."""
+    def _add_injection(self, time_str: str, timezone: str = "UTC") -> None:
+        """Append an existing runtime-state injection carrying ``time_str``,
+        which is the wall-clock time of ``timezone``."""
         self.agent.state.append_context(
             self.agent.name,
             [
@@ -71,7 +77,7 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
                     source=INJECTION_SOURCE,
                     hint=(
                         f"<current-time>{time_str}</current-time>\n"
-                        "<timezone>UTC</timezone>"
+                        f"<timezone>{timezone}</timezone>"
                     ),
                 ),
             ],
@@ -105,14 +111,16 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
     async def test_first_reply_triggers_time_injection(self) -> None:
         """The first reply (empty context) should trigger a time injection."""
         expected_hint = (
-            "<system-reminder>Treat the following as current ground truth:\n"
+            "<system-reminder>Treat the following as the ground truth at this "
+            "point of the conversation. Anything stated earlier is outdated, "
+            "and a later reminder, if any, supersedes this one:\n"
             "<current-session>You're in a conversation with session ID: "
             f"{self.agent.state.session_id}</current-session>\n"
             "<current-time>2026-07-01T12:00:00</current-time>\n"
-            "<timezone>UTC</timezone></system-reminder>"
+            "<timezone>UTC</timezone>\n"
+            "</system-reminder>"
         )
-        with patch("agentscope.agent._agent.datetime", _FrozenDatetime):
-            events = await self._run_injection()
+        events = await self._run_injection()
 
         self.assertEqual(
             [self._expected_event(expected_hint)],
@@ -127,19 +135,21 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
         """A stale last injection (long elapsed time) should re-inject, while a
         recent one should not."""
         expected_hint = (
-            "<system-reminder>Treat the following as current ground truth:\n"
+            "<system-reminder>Treat the following as the ground truth at this "
+            "point of the conversation. Anything stated earlier is outdated, "
+            "and a later reminder, if any, supersedes this one:\n"
             "<current-session>You're in a conversation with session ID: "
             f"{self.agent.state.session_id}</current-session>\n"
             "<current-time>2026-07-01T12:00:00</current-time>\n"
-            "<timezone>UTC</timezone></system-reminder>"
+            "<timezone>UTC</timezone>\n"
+            "</system-reminder>"
         )
         # Avoid the context-length branch, which only runs on the first iter.
         self.agent.state.cur_iter = 1
 
         # Case 1: last injection was 6 hours ago -> re-inject.
         self._add_injection("2026-07-01T06:00:00")
-        with patch("agentscope.agent._agent.datetime", _FrozenDatetime):
-            events = await self._run_injection()
+        events = await self._run_injection()
         self.assertEqual(
             [self._expected_event(expected_hint)],
             [evt.model_dump() for evt in events],
@@ -148,33 +158,33 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
         # Case 2: last injection was 10 minutes ago (< time_interval) -> skip.
         self.agent.state.context = []
         self._add_injection("2026-07-01T11:50:00")
-        with patch("agentscope.agent._agent.datetime", _FrozenDatetime):
-            events = await self._run_injection()
+        events = await self._run_injection()
         self.assertEqual([], events)
 
     async def test_injection_after_compression(self) -> None:
         """A recent injection should not re-inject, but once the context is
         compressed away, the next call should inject again."""
         expected_hint = (
-            "<system-reminder>Treat the following as current ground truth:\n"
+            "<system-reminder>Treat the following as the ground truth at this "
+            "point of the conversation. Anything stated earlier is outdated, "
+            "and a later reminder, if any, supersedes this one:\n"
             "<current-session>You're in a conversation with session ID: "
             f"{self.agent.state.session_id}</current-session>\n"
             "<current-time>2026-07-01T12:00:00</current-time>\n"
-            "<timezone>UTC</timezone></system-reminder>"
+            "<timezone>UTC</timezone>\n"
+            "</system-reminder>"
         )
         self.agent.state.cur_iter = 1
 
         # There is a recent injection before compression -> no new injection.
         self._add_injection("2026-07-01T12:00:00")
-        with patch("agentscope.agent._agent.datetime", _FrozenDatetime):
-            events = await self._run_injection()
+        events = await self._run_injection()
         self.assertEqual([], events)
 
         # Simulate a compression that drops the old context (and injection).
         self.agent.state.context = []
         self.agent.state.summary = "A summary of the previous work."
-        with patch("agentscope.agent._agent.datetime", _FrozenDatetime):
-            events = await self._run_injection()
+        events = await self._run_injection()
         self.assertEqual(
             [self._expected_event(expected_hint)],
             [evt.model_dump() for evt in events],
@@ -184,11 +194,13 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
         """Pending tasks without task-related tool calls in the context should
         trigger a tasks injection."""
         expected_hint = (
-            "<system-reminder>Treat the following as current ground truth:\n"
+            "<system-reminder>Treat the following as the ground truth at this "
+            "point of the conversation. Anything stated earlier is outdated, "
+            "and a later reminder, if any, supersedes this one:\n"
             "<current-session>You're in a conversation with session ID: "
             f"{self.agent.state.session_id}</current-session>\n"
             "<tasks>You have 0 in-progress tasks and 1 pending tasks. "
-            "Use `TaskList` to view them if you don't know.</tasks>"
+            "Use `TaskList` to view them if you don't know.</tasks>\n"
             "</system-reminder>"
         )
         self.agent.state.cur_iter = 1
@@ -202,24 +214,94 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
                 state="pending",
             ),
         ]
-        with patch("agentscope.agent._agent.datetime", _FrozenDatetime):
-            events = await self._run_injection()
+        events = await self._run_injection()
 
         self.assertEqual(
             [self._expected_event(expected_hint)],
             [evt.model_dump() for evt in events],
         )
 
+        # The tasks reminder is already in the context -> no repeated injection
+        events = await self._run_injection()
+        self.assertEqual([], events)
+
+    async def test_recorded_timezone_is_honored(self) -> None:
+        """The recorded timezone should be used to restore the recorded time,
+        so a changed ``timezone`` config doesn't distort the elapsed time."""
+        self.agent.state.cur_iter = 1
+
+        # The frozen now is 12:00 UTC, i.e. 20:00 in Shanghai. An injection
+        # recorded 10 minutes ago in Shanghai -> within the interval, skip.
+        self._add_injection("2026-07-01T19:50:00", timezone="Asia/Shanghai")
+        events = await self._run_injection()
+        self.assertEqual([], events)
+
+        # The same wall-clock time read as UTC would be 7h50m in the future,
+        # so a negative elapsed time must trigger an injection instead of
+        # being silently swallowed.
+        self.agent.state.context = []
+        self._add_injection("2026-07-01T19:50:00")
+        events = await self._run_injection()
+        self.assertEqual(1, len(events))
+
+    async def test_extra_fields_are_attached(self) -> None:
+        """The extra fields should be attached to a triggered injection."""
+        expected_hint = (
+            "<system-reminder>Treat the following as the ground truth at this "
+            "point of the conversation. Anything stated earlier is outdated, "
+            "and a later reminder, if any, supersedes this one:\n"
+            "<current-session>You're in a conversation with session ID: "
+            f"{self.agent.state.session_id}</current-session>\n"
+            "<current-time>2026-07-01T12:00:00</current-time>\n"
+            "<timezone>UTC</timezone>\n"
+            "<workspace>/home/friday</workspace>\n"
+            "</system-reminder>"
+        )
+        self.agent.injection_config = InjectionConfig(
+            extra_fields={"workspace": "/home/friday"},
+        )
+        events = await self._run_injection()
+
+        self.assertEqual(
+            [self._expected_event(expected_hint)],
+            [evt.model_dump() for evt in events],
+        )
+
+    async def test_extra_fields_do_not_trigger_injection(self) -> None:
+        """The extra fields alone should not trigger an injection."""
+        self.agent.injection_config = InjectionConfig(
+            extra_fields={"workspace": "/home/friday"},
+        )
+        self.agent.state.cur_iter = 1
+        # A recent injection so the time branch is not triggered.
+        self._add_injection("2026-07-01T12:00:00")
+        events = await self._run_injection()
+
+        self.assertEqual([], events)
+
+    async def test_disabled_injection(self) -> None:
+        """Nothing should be injected when the injection is turned off."""
+        self.agent.injection_config = InjectionConfig(
+            inject_runtime_state=False,
+        )
+        events = await self._run_injection()
+
+        self.assertEqual([], events)
+        self.assertEqual([], self.agent.state.context)
+
     async def test_context_size_triggers_injection(self) -> None:
         """When the input tokens are close to the compression threshold, a
         context-length injection should be triggered."""
         expected_hint = (
-            "<system-reminder>Treat the following as current ground truth:\n"
+            "<system-reminder>Treat the following as the ground truth at this "
+            "point of the conversation. Anything stated earlier is outdated, "
+            "and a later reminder, if any, supersedes this one:\n"
             "<current-session>You're in a conversation with session ID: "
             f"{self.agent.state.session_id}</current-session>\n"
             "<context-length>Your current context contains 700 tokens. "
-            "When reaching 800.0 tokens, your context will be compressed."
-            "</context-length></system-reminder>"
+            "When reaching 800 tokens, your context will be compressed."
+            "</context-length>\n"
+            "</system-reminder>"
         )
         # First iteration is required for the context-length branch.
         self.agent.state.cur_iter = 0
@@ -228,8 +310,7 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
         # 700 > max(0, 0.8 - 0.2) * 1000 == 600 -> triggers the injection.
         self.model.count_tokens = AsyncMock(return_value=700)
 
-        with patch("agentscope.agent._agent.datetime", _FrozenDatetime):
-            events = await self._run_injection()
+        events = await self._run_injection()
 
         self.assertEqual(
             [self._expected_event(expected_hint)],

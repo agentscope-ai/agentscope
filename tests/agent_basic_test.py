@@ -5,7 +5,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString, MockModel
 
-from agentscope.agent import Agent
+from agentscope.agent import Agent, InjectionConfig
 from agentscope.model import ChatResponse
 from agentscope.tool import (
     ToolBase,
@@ -110,6 +110,9 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             system_prompt="You are a helpful assistant.",
             model=self.model,
             toolkit=Toolkit(),
+            # The runtime state injection is covered by agent_injection_test,
+            # turn it off here to keep the event assertions focused.
+            injection_config=InjectionConfig(inject_runtime_state=False),
         )
 
     def _get_event_base(self, reply_id: str) -> dict:
@@ -151,10 +154,12 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         self.assertIsNot(agent_1.model_config, agent_2.model_config)
         self.assertIsNot(agent_1.context_config, agent_2.context_config)
         self.assertIsNot(agent_1.react_config, agent_2.react_config)
+        self.assertIsNot(agent_1.injection_config, agent_2.injection_config)
 
         agent_1.model_config.max_retries = 3
         agent_1.context_config.tool_result_limit = 123
         agent_1.react_config.max_iters = 2
+        agent_1.injection_config.timezone = "Asia/Shanghai"
 
         self.assertNotEqual(
             agent_1.model_config.max_retries,
@@ -167,6 +172,10 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         self.assertNotEqual(
             agent_1.react_config.max_iters,
             agent_2.react_config.max_iters,
+        )
+        self.assertNotEqual(
+            agent_1.injection_config.timezone,
+            agent_2.injection_config.timezone,
         )
 
     async def test_streaming_reasoning(self) -> None:

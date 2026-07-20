@@ -9,7 +9,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 from pydantic import BaseModel
 from utils import AnyString, AnyValue, MockModel
 
-from agentscope.agent import Agent
+from agentscope.agent import Agent, InjectionConfig
 from agentscope.message import (
     HintBlock,
     Msg,
@@ -335,6 +335,10 @@ class AgenticMemoryMiddlewareTest(IsolatedAsyncioTestCase):
             model=model,
             toolkit=toolkit or Toolkit(),
             middlewares=[middleware],
+            # The runtime state injection is covered by
+            # agent_injection_test, turn it off to keep the assertions
+            # focused.
+            injection_config=InjectionConfig(inject_runtime_state=False),
         )
 
     async def test_agent_reply_creates_layout_and_injects_memory_prompt(

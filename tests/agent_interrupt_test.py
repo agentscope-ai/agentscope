@@ -17,7 +17,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString, MockModel
 
-from agentscope.agent import Agent
+from agentscope.agent import Agent, InjectionConfig
 from agentscope.event import (
     ReplyEndEvent,
     UserInterruptEvent,
@@ -279,6 +279,10 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
             system_prompt="You are a test agent.",
             model=model,
             toolkit=Toolkit(tools=tools),
+            # The runtime state injection is covered by
+            # agent_injection_test, turn it off to keep the assertions
+            # focused.
+            injection_config=InjectionConfig(inject_runtime_state=False),
         )
         return agent, model
 
@@ -719,6 +723,10 @@ class AgentInterruptEventTest(IsolatedAsyncioTestCase):
             system_prompt="You are a test agent.",
             model=model,
             toolkit=Toolkit(tools=tools),
+            # The runtime state injection is covered by
+            # agent_injection_test, turn it off to keep the assertions
+            # focused.
+            injection_config=InjectionConfig(inject_runtime_state=False),
         )
         return agent, model
 
