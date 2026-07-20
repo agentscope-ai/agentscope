@@ -31,9 +31,9 @@ def upgrade() -> None:
     """Create every table at the first-shipped schema."""
     op.create_table(
         "agents",
-        sa.Column("user_id", sa.String(length=64), nullable=False),
+        sa.Column("user_id", sa.String(length=255), nullable=False),
         sa.Column("source", sa.String(length=16), nullable=False),
-        sa.Column("id", sa.String(length=64), nullable=False),
+        sa.Column("id", sa.String(length=255), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.Column("payload", sa.JSON(), nullable=False),
@@ -68,8 +68,8 @@ def upgrade() -> None:
 
     op.create_table(
         "credentials",
-        sa.Column("user_id", sa.String(length=64), nullable=False),
-        sa.Column("id", sa.String(length=64), nullable=False),
+        sa.Column("user_id", sa.String(length=255), nullable=False),
+        sa.Column("id", sa.String(length=255), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.Column("payload", sa.JSON(), nullable=False),
@@ -94,8 +94,8 @@ def upgrade() -> None:
 
     op.create_table(
         "knowledge_bases",
-        sa.Column("user_id", sa.String(length=64), nullable=False),
-        sa.Column("id", sa.String(length=64), nullable=False),
+        sa.Column("user_id", sa.String(length=255), nullable=False),
+        sa.Column("id", sa.String(length=255), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.Column("payload", sa.JSON(), nullable=False),
@@ -120,8 +120,8 @@ def upgrade() -> None:
 
     op.create_table(
         "messages",
-        sa.Column("session_id", sa.String(length=64), nullable=False),
-        sa.Column("msg_id", sa.String(length=64), nullable=False),
+        sa.Column("session_id", sa.String(length=255), nullable=False),
+        sa.Column("msg_id", sa.String(length=255), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("payload", sa.JSON(), nullable=False),
         sa.PrimaryKeyConstraint("session_id", "msg_id"),
@@ -135,9 +135,9 @@ def upgrade() -> None:
 
     op.create_table(
         "schedules",
-        sa.Column("user_id", sa.String(length=64), nullable=False),
-        sa.Column("agent_id", sa.String(length=64), nullable=False),
-        sa.Column("id", sa.String(length=64), nullable=False),
+        sa.Column("user_id", sa.String(length=255), nullable=False),
+        sa.Column("agent_id", sa.String(length=255), nullable=False),
+        sa.Column("id", sa.String(length=255), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.Column("payload", sa.JSON(), nullable=False),
@@ -167,16 +167,16 @@ def upgrade() -> None:
 
     op.create_table(
         "sessions",
-        sa.Column("user_id", sa.String(length=64), nullable=False),
-        sa.Column("agent_id", sa.String(length=64), nullable=False),
+        sa.Column("user_id", sa.String(length=255), nullable=False),
+        sa.Column("agent_id", sa.String(length=255), nullable=False),
         sa.Column("source", sa.String(length=16), nullable=False),
         sa.Column(
             "source_schedule_id",
-            sa.String(length=64),
+            sa.String(length=255),
             nullable=True,
         ),
-        sa.Column("team_id", sa.String(length=64), nullable=True),
-        sa.Column("id", sa.String(length=64), nullable=False),
+        sa.Column("team_id", sa.String(length=255), nullable=True),
+        sa.Column("id", sa.String(length=255), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.Column("payload", sa.JSON(), nullable=False),
@@ -226,9 +226,9 @@ def upgrade() -> None:
 
     op.create_table(
         "teams",
-        sa.Column("user_id", sa.String(length=64), nullable=False),
-        sa.Column("session_id", sa.String(length=64), nullable=False),
-        sa.Column("id", sa.String(length=64), nullable=False),
+        sa.Column("user_id", sa.String(length=255), nullable=False),
+        sa.Column("session_id", sa.String(length=255), nullable=False),
+        sa.Column("id", sa.String(length=255), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.Column("payload", sa.JSON(), nullable=False),
@@ -253,10 +253,10 @@ def upgrade() -> None:
 
     op.create_table(
         "knowledge_documents",
-        sa.Column("user_id", sa.String(length=64), nullable=False),
+        sa.Column("user_id", sa.String(length=255), nullable=False),
         sa.Column(
             "knowledge_base_id",
-            sa.String(length=64),
+            sa.String(length=255),
             nullable=False,
         ),
         sa.Column(
@@ -266,7 +266,7 @@ def upgrade() -> None:
         ),
         sa.Column("status", sa.String(length=16), nullable=False),
         sa.Column("lease_expires_at", sa.DateTime(), nullable=True),
-        sa.Column("id", sa.String(length=64), nullable=False),
+        sa.Column("id", sa.String(length=255), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.Column("payload", sa.JSON(), nullable=False),

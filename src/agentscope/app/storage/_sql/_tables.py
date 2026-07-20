@@ -38,6 +38,10 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
+# Every id column is sized uniformly
+_ID_LEN = 255
+
+
 class _Base(DeclarativeBase):
     """Declarative base shared by every table in :mod:`_sql`.
 
@@ -67,7 +71,7 @@ class _JsonRecordMixin(_Base):
 
     __abstract__ = True
 
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    id: Mapped[str] = mapped_column(String(_ID_LEN), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(),
         index=True,
@@ -96,7 +100,7 @@ class CredentialRow(_JsonRecordMixin):
     __tablename__ = "credentials"
 
     user_id: Mapped[str] = mapped_column(
-        String(64),
+        String(_ID_LEN),
         nullable=False,
         index=True,
     )
@@ -110,7 +114,7 @@ class AgentRow(_JsonRecordMixin):
     __tablename__ = "agents"
 
     user_id: Mapped[str] = mapped_column(
-        String(64),
+        String(_ID_LEN),
         nullable=False,
         index=True,
     )
@@ -131,12 +135,12 @@ class SessionRow(_JsonRecordMixin):
     __tablename__ = "sessions"
 
     user_id: Mapped[str] = mapped_column(
-        String(64),
+        String(_ID_LEN),
         nullable=False,
         index=True,
     )
     agent_id: Mapped[str] = mapped_column(
-        String(64),
+        String(_ID_LEN),
         nullable=False,
         index=True,
     )
@@ -146,12 +150,12 @@ class SessionRow(_JsonRecordMixin):
         index=True,
     )
     source_schedule_id: Mapped[str | None] = mapped_column(
-        String(64),
+        String(_ID_LEN),
         nullable=True,
         index=True,
     )
     team_id: Mapped[str | None] = mapped_column(
-        String(64),
+        String(_ID_LEN),
         nullable=True,
         index=True,
     )
@@ -173,12 +177,12 @@ class ScheduleRow(_JsonRecordMixin):
     __tablename__ = "schedules"
 
     user_id: Mapped[str] = mapped_column(
-        String(64),
+        String(_ID_LEN),
         nullable=False,
         index=True,
     )
     agent_id: Mapped[str] = mapped_column(
-        String(64),
+        String(_ID_LEN),
         nullable=False,
         index=True,
     )
@@ -192,12 +196,12 @@ class TeamRow(_JsonRecordMixin):
     __tablename__ = "teams"
 
     user_id: Mapped[str] = mapped_column(
-        String(64),
+        String(_ID_LEN),
         nullable=False,
         index=True,
     )
     session_id: Mapped[str] = mapped_column(
-        String(64),
+        String(_ID_LEN),
         nullable=False,
     )
 
@@ -210,7 +214,7 @@ class KnowledgeBaseRow(_JsonRecordMixin):
     __tablename__ = "knowledge_bases"
 
     user_id: Mapped[str] = mapped_column(
-        String(64),
+        String(_ID_LEN),
         nullable=False,
         index=True,
     )
@@ -234,12 +238,12 @@ class KnowledgeDocumentRow(_JsonRecordMixin):
     __tablename__ = "knowledge_documents"
 
     user_id: Mapped[str] = mapped_column(
-        String(64),
+        String(_ID_LEN),
         nullable=False,
         index=True,
     )
     knowledge_base_id: Mapped[str] = mapped_column(
-        String(64),
+        String(_ID_LEN),
         # Documents are structurally owned by their KB — let the DB
         # cascade-delete them natively (atomic, no application loop).
         ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
@@ -298,8 +302,8 @@ class MessageRow(_Base):
 
     __tablename__ = "messages"
 
-    session_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    msg_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(_ID_LEN), primary_key=True)
+    msg_id: Mapped[str] = mapped_column(String(_ID_LEN), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(),
         nullable=False,
