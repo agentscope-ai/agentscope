@@ -100,7 +100,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
         self,
         url: str,
         *,
-        create_tables: bool = False,
+        create_tables: bool = True,
         auto_migrate: bool = False,
         engine: "AsyncEngine | None" = None,
         engine_kwargs: dict[str, Any] | None = None,
@@ -114,7 +114,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
                 ``sqlite+aiosqlite:///./as.db``,
                 ``postgresql+asyncpg://user:pw@host/db``).  Ignored
                 when ``engine`` is provided.
-            create_tables (`bool`, defaults to `False`):
+            create_tables (`bool`, defaults to `True`):
                 When `True`, run ``Base.metadata.create_all`` on the
                 engine at ``__aenter__`` — convenient for tests and
                 single-node dev deployments where Alembic overhead is
