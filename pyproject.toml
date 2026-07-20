@@ -98,6 +98,10 @@ milvuslite = [
 mongodb = [
     "pymongo>=4.7",
 ]
+# ------------ Elasticsearch vector store ------------
+elasticsearch = [
+    "elasticsearch[async]>=8.12,<9",
+]
 
 # ------------ S3-compatible blob store ------------
 s3 = [
@@ -125,6 +129,7 @@ full = [
     "agentscope[rag]",
     "agentscope[milvuslite]",
     "agentscope[mongodb]",
+    "agentscope[elasticsearch]",
     "agentscope[s3]",
     "agentscope[mem0]",
     "agentscope[reme]",
