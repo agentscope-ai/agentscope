@@ -16,7 +16,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import type { ReplyPhase } from '@/hooks/useMessages';
 import { useTranslation } from '@/i18n/useI18n.ts';
 import { cn } from '@/lib/utils';
-import { isMac } from '@/utils/platform';
 
 /**
  * Represents a file that has been selected and processed (or is being processed).
@@ -72,6 +71,20 @@ export interface TextInputRef {
 	focus: () => void;
 }
 
+/** One line box of textarea text: ``text-sm`` (14px) at a 1.5 line-height. */
+const LINE_HEIGHT_PX = 21;
+/** Height of the input in its collapsed, single-line state. */
+const COLLAPSED_HEIGHT_PX = 52;
+/**
+ * Padding rather than height: a textarea top-aligns its text, so forcing the
+ * height would leave dead space under the caret instead of centring the line.
+ */
+const TEXTAREA_PADDING_Y_PX = (COLLAPSED_HEIGHT_PX - LINE_HEIGHT_PX) / 2;
+/** Growth stops after six lines of text; the textarea scrolls beyond that. */
+const MAX_HEIGHT_PX = LINE_HEIGHT_PX * 6 + TEXTAREA_PADDING_Y_PX * 2;
+/** Horizontal padding of the textarea, mirrored by the overlay and the ghost. */
+const TEXTAREA_PADDING_X_PX = 12;
+
 /**
  * A text input component with file attachment support and autocomplete functionality.
  *
@@ -105,6 +118,9 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 		const [isFocused, setIsFocused] = useState(false);
 		const textareaRef = useRef<HTMLTextAreaElement>(null);
 		const fileInputRef = useRef<HTMLInputElement>(null);
+		const measureRef = useRef<HTMLSpanElement>(null);
+		/** ``true`` — textarea takes the full width, buttons drop to their own row. */
+		const [isStacked, setIsStacked] = useState(false);
 
 		// Derive the accept attribute for the hidden file input
 		const acceptAttr =
@@ -123,11 +139,22 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			focus: () => textareaRef.current?.focus(),
 		}));
 
+		// Grow the textarea with its content. The ``auto`` reset is what lets it
+		// shrink again — ``scrollHeight`` never reports less than the current height.
 		useLayoutEffect(() => {
 			const textarea = textareaRef.current;
 			if (!textarea) return;
 			textarea.style.height = 'auto';
 			textarea.style.height = `${textarea.scrollHeight}px`;
+			// Stacking widens the textarea, so the line count has to be redone.
+		}, [value, isStacked]);
+
+		// Measured on the ghost, not the textarea: stacking widens the textarea, so
+		// measuring it would flip-flop (wraps → stack → fits → unstack → wraps).
+		useLayoutEffect(() => {
+			const ghost = measureRef.current;
+			if (!ghost) return;
+			setIsStacked(ghost.scrollHeight > LINE_HEIGHT_PX);
 		}, [value]);
 
 		// Calculate autocomplete suggestion using useMemo
@@ -263,51 +290,78 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 		};
 
 		return (
-			<div
-				id="tour-chat-input"
-				className={cn(
-					'flex flex-col gap-2 rounded-2xl border bg-background p-3',
-					className,
-				)}
-				data-tour="chat-input"
-			>
-				{/* File list */}
-				{files.length > 0 && (
-					<div className="flex flex-wrap gap-2">
-						{files.map((file, index) => (
-							<div
-								key={index}
-								className="flex items-center gap-1 rounded bg-muted px-2 py-1 text-sm"
-							>
-								{file.status === 'processing' && (
-									<Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />
-								)}
-								<span className="max-w-[200px] truncate">{file.name}</span>
-								<button
-									onClick={() => setFiles(files.filter((_, i) => i !== index))}
-									className="text-muted-foreground hover:text-foreground"
+			<div className={cn('flex flex-col gap-1', className)}>
+				<div
+					id="tour-chat-input"
+					className="flex w-full flex-col gap-2 rounded-[28px] border bg-background px-2"
+					data-tour="chat-input"
+				>
+					{/* File list */}
+					{files.length > 0 && (
+						<div className="flex flex-wrap gap-2">
+							{files.map((file, index) => (
+								<div
+									key={index}
+									className="flex items-center gap-1 rounded bg-muted px-2 py-1 text-sm"
 								>
-									<X className="h-3 w-3" />
-								</button>
+									{file.status === 'processing' && (
+										<Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />
+									)}
+									<span className="max-w-[200px] truncate">{file.name}</span>
+									<button
+										onClick={() =>
+											setFiles(files.filter((_, i) => i !== index))
+										}
+										className="text-muted-foreground hover:text-foreground"
+									>
+										<X className="h-3 w-3" />
+									</button>
+								</div>
+							))}
+						</div>
+					)}
+
+					{/* ``items-end`` in both layouts: the buttons are then already at the
+					    bottom before stacking moves them there, so nothing jumps. */}
+					<div className="relative flex flex-wrap items-end justify-end">
+						{/* Ghost row, always laid out side-by-side, so the width it hands
+						    the text is the narrow one whichever layout is on screen. */}
+						<div
+							aria-hidden
+							className="pointer-events-none invisible absolute inset-x-0 top-0 flex h-0 items-start overflow-hidden"
+						>
+							<div className="min-w-0 flex-1">
+								{/* Padding-x and line-height decide where text wraps, so they
+								    match the textarea; padding-y is left off on purpose. */}
+								<span
+									ref={measureRef}
+									className="block text-sm"
+									style={{
+										paddingLeft: `${TEXTAREA_PADDING_X_PX}px`,
+										paddingRight: `${TEXTAREA_PADDING_X_PX}px`,
+										lineHeight: `${LINE_HEIGHT_PX}px`,
+										whiteSpace: 'pre-wrap',
+										wordWrap: 'break-word',
+									}}
+								>
+									{value}
+								</span>
 							</div>
-						))}
-					</div>
-				)}
+							{/* Stands in for the button cluster below — keep the count, the
+							    gap and the ``size-9`` footprint in step with it. */}
+							<div className="flex shrink-0 gap-2">
+								<div className="size-9" />
+								<div className="size-9" />
+							</div>
+						</div>
 
-				{/* Input area */}
-				<div className="relative">
-					<span
-						className={cn(
-							'mb-1 block px-3 text-sm text-muted-foreground',
-							!isFocused && 'invisible',
-						)}
-					>
-						<Kbd>{isMac() ? '⇧' : 'Shift'}</Kbd> + <Kbd>Enter</Kbd>{' '}
-						{t('textInput.newLine')}
-					</span>
-
-					<div className="flex items-end gap-2">
-						<div className="relative min-w-0 flex-1">
+						{/* ``min-w-0`` lets the textarea shrink instead of pushing the
+						    buttons out of the row once the text gets long. */}
+						<div
+							className={cn('relative min-w-0', isStacked ? 'basis-full' : 'flex-1')}
+						>
+							{/* ``block`` — inline-block would sit on the text baseline and
+							    leave a descender gap that makes the wrapper taller. */}
 							<textarea
 								ref={textareaRef}
 								value={value}
@@ -318,22 +372,27 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 								placeholder={defaultPlaceholder}
 								disabled={disabled}
 								rows={1}
-								className="w-full resize-none rounded-md border-0 bg-transparent px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+								className="block w-full resize-none rounded-md border-0 bg-transparent px-3 text-sm outline-none placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
 								style={{
-									minHeight: 'calc(1.5em + 1rem)',
-									maxHeight: 'calc(1.5em * 8 + 1rem)',
-									lineHeight: '1.5em',
+									minHeight: `${COLLAPSED_HEIGHT_PX}px`,
+									maxHeight: `${MAX_HEIGHT_PX}px`,
+									lineHeight: `${LINE_HEIGHT_PX}px`,
+									paddingTop: `${TEXTAREA_PADDING_Y_PX}px`,
+									paddingBottom: `${TEXTAREA_PADDING_Y_PX}px`,
 									overflowY: 'auto',
 								}}
 								autoFocus={true}
 							/>
 
-							{/* Autocomplete suggestion - using absolute positioning overlay */}
+							{/* Autocomplete overlay — its padding and line-height mirror the
+							    textarea's, or the suggestion drifts off the real text. */}
 							{suggestion && isFocused && (
 								<div
-									className="pointer-events-none absolute left-0 top-0 px-3 py-2 text-sm"
+									className="pointer-events-none absolute left-0 top-0 px-3 text-sm"
 									style={{
-										lineHeight: '1.5em',
+										lineHeight: `${LINE_HEIGHT_PX}px`,
+										paddingTop: `${TEXTAREA_PADDING_Y_PX}px`,
+										paddingBottom: `${TEXTAREA_PADDING_Y_PX}px`,
 										whiteSpace: 'pre-wrap',
 										wordWrap: 'break-word',
 									}}
@@ -350,19 +409,24 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 							)}
 						</div>
 
-						<div className="flex shrink-0 gap-2">
+						{/* Collapsed-height box centring the buttons, so a single line still
+						    reads as centred while the row bottom-aligns them. */}
+						<div
+							className="flex shrink-0 items-center gap-2"
+							style={{ height: `${COLLAPSED_HEIGHT_PX}px` }}
+						>
 							{/* Attachment button */}
 							<Tooltip>
 								<TooltipTrigger asChild>
 									<Button
 										type="button"
 										variant="ghost"
-										size="icon"
+										size="icon-lg"
 										onClick={() => fileInputRef.current?.click()}
 										disabled={attachDisabled}
 										className="shrink-0 rounded-full"
 									>
-										<Paperclip className="h-4 w-4" />
+										<Paperclip className="size-4" />
 									</Button>
 								</TooltipTrigger>
 								<TooltipContent>
@@ -379,7 +443,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 										type="button"
 										onClick={sendButton.onClick}
 										disabled={sendButton.disabled}
-										size="icon"
+										size="icon-lg"
 										className="shrink-0 rounded-full"
 									>
 										<sendButton.icon className="h-4 w-4" />
@@ -387,18 +451,18 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 								</TooltipTrigger>
 								<TooltipContent>{sendButton.tooltip}</TooltipContent>
 							</Tooltip>
+
+							{/* Hidden file input */}
+							<input
+								ref={fileInputRef}
+								type="file"
+								multiple
+								accept={acceptAttr}
+								onChange={handleFileSelect}
+								className="hidden"
+							/>
 						</div>
 					</div>
-
-					{/* Hidden file input */}
-					<input
-						ref={fileInputRef}
-						type="file"
-						multiple
-						accept={acceptAttr}
-						onChange={handleFileSelect}
-						className="hidden"
-					/>
 				</div>
 			</div>
 		);

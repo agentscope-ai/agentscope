@@ -87,7 +87,6 @@
 	},
 	"textInput": {
 		"toComplete": "to complete",
-		"newLine": "new line",
 		"attach": "Attach file",
 		"attachNotSupported": "This model does not support file attachments",
 		"send": "Send",
@@ -118,8 +117,7 @@
 		"subagentConfirmTitle": "{{name}} requests confirmation",
 		"newSession": "New Session",
 		"noSessions": "No sessions yet",
-		"noMessages": "No Messages Yet",
-		"noMessagesDesc": "Start your conversation by sending a message",
+		"greeting": "Where should we start?",
 		"agent": {
 			"selectPlaceholder": "Select an agent",
 			"emptyTitle": "No agents",

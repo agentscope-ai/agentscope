@@ -87,7 +87,6 @@
 	},
 	"textInput": {
 		"toComplete": "补全",
-		"newLine": "换行",
 		"attach": "添加附件",
 		"attachNotSupported": "当前模型不支持文件附件",
 		"send": "发送",
@@ -118,8 +117,7 @@
 		"subagentConfirmTitle": "{{name}} 请求确认",
 		"newSession": "新会话",
 		"noSessions": "暂无会话",
-		"noMessages": "暂无消息",
-		"noMessagesDesc": "发送一条消息开始新的对话",
+		"greeting": "我们从哪儿开始？",
 		"agent": {
 			"selectPlaceholder": "选择 Agent",
 			"emptyTitle": "暂无 Agent",
