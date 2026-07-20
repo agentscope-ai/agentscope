@@ -122,7 +122,7 @@ class ReplyEndEvent(EventBase):
     """The finished reason of this reply."""
     error: ErrorInfo | None = None
     """Structured error info, populated only when
-    ``finished_reason == ReplyEndReason.ERROR``."""
+    ``finished_reason == ReplyFinishedReason.ERROR``."""
 
 
 class ModelCallStartEvent(EventBase):

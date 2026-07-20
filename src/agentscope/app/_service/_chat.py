@@ -646,8 +646,11 @@ class ChatService:
                 # error for refresh), then re-raise for logging + the
                 # finally-persist. CancelledError is a BaseException, so
                 # interrupts are unaffected; reply_msg is None only when we
-                # failed before REPLY_START (nothing to close).
-                if reply_msg is not None:
+                # failed before REPLY_START (nothing to close). The
+                # finished_reason guard skips the case where the agent
+                # already closed the reply and the failure is downstream
+                # (publish/projection) — don't overwrite a completed reply.
+                if reply_msg is not None and reply_msg.finished_reason is None:
                     end_event = ReplyEndEvent(
                         session_id=session_id,
                         reply_id=reply_msg.id,
