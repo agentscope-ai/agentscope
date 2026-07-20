@@ -20,7 +20,11 @@ from ._config import ContextConfig, ReActConfig, ModelConfig
 from ..state import AgentState
 from ._utils import _ToolCallBatch
 from .._logging import logger
-from .._utils._common import _generate_id, _json_loads_with_repair
+from .._utils._common import (
+    _generate_id,
+    _json_loads_with_repair,
+    _execute_async_or_sync_func,
+)
 from ..event import (
     AgentEvent,
     ModelCallEndEvent,
@@ -85,6 +89,7 @@ from ..permission import (
     PermissionBehavior,
     PermissionEngine,
     PermissionDecision,
+    PermissionRule,
 )
 from ..workspace import Offloader, WorkspaceBase
 
@@ -1090,6 +1095,14 @@ class Agent:
             completed_response.usage,
         )
 
+        # A thinking-only response is an intermediate reasoning step rather
+        # than a user-visible final answer. Keep the ReAct loop running so the
+        # model can produce text, data, or a tool call on the next iteration.
+        has_only_thinking_blocks = bool(completed_response.content) and all(
+            isinstance(block, ThinkingBlock)
+            for block in completed_response.content
+        )
+
         # If no tool call is generated, return the final message directly
         if (
             completed_response.finished_reason != FinishedReason.INTERRUPTED
@@ -1097,6 +1110,7 @@ class Agent:
                 isinstance(_, ToolCallBlock)
                 for _ in completed_response.content
             )
+            and not has_only_thinking_blocks
         ):
             last_ctx = self._get_last_msg()
             final_usage = (
@@ -1486,6 +1500,14 @@ class Agent:
         # Create a queue to collect events from all concurrent workers.
         queue: Queue = Queue()
 
+        # Batch-shared accumulator for confirmation de-duplication: the
+        # suggested rules of every confirmation surfaced by this batch are
+        # collected here so a later call already covered by an earlier
+        # call's rule is not prompted a second time. Mutated only from
+        # synchronous sections of the workers, so no lock is needed on the
+        # single-threaded event loop.
+        kept_rules: list[PermissionRule] = []
+
         async def _run_all() -> list[BaseException | None]:
             """Run all tool calls concurrently and push the sentinel when done.
 
@@ -1497,7 +1519,10 @@ class Agent:
             # return_exceptions=True keeps all tasks running even when some
             # fail, and returns exceptions as values instead of re-raising.
             results = await asyncio.gather(
-                *[self._into_queue(tc, queue) for tc in tool_calls],
+                *[
+                    self._into_queue(tc, queue, kept_rules)
+                    for tc in tool_calls
+                ],
                 return_exceptions=True,
             )
             # The sentinel is placed AFTER gather returns, which guarantees
@@ -1550,6 +1575,7 @@ class Agent:
         self,
         tool_call: ToolCallBlock,
         queue: Queue,
+        kept_rules: list[PermissionRule] | None = None,
     ) -> None:
         """Execute a single tool call and forward every event into *queue*.
 
@@ -1559,13 +1585,18 @@ class Agent:
             queue (`Queue`):
                 The shared async queue that collects events from all
                 concurrent workers.
+            kept_rules (`list[PermissionRule] | None`, defaults to `None`):
+                The batch-shared accumulator of already-surfaced suggested
+                rules, forwarded to :meth:`_execute_tool_call` for
+                confirmation de-duplication within the concurrent batch.
         """
-        async for evt in self._execute_tool_call(tool_call):
+        async for evt in self._execute_tool_call(tool_call, kept_rules):
             await queue.put(evt)
 
     async def _execute_tool_call(
         self,
         tool_call: ToolCallBlock,
+        kept_rules: list[PermissionRule] | None = None,
     ) -> AsyncGenerator[
         RequireUserConfirmEvent
         | RequireExternalExecutionEvent
@@ -1587,6 +1618,16 @@ class Agent:
         Args:
             tool_call (`ToolCallBlock`):
                 The tool call block to be executed.
+            kept_rules (`list[PermissionRule] | None`, defaults to `None`):
+                A batch-scoped, shared accumulator of the suggested rules
+                already surfaced by earlier confirmations in the same
+                concurrent batch. Passed only by
+                :meth:`_execute_concurrent_tool_calls`; when provided, a
+                non-safety ASK whose invocation is already covered by an
+                accumulated rule is de-duplicated (left ``PENDING`` and
+                not surfaced again). ``None`` disables de-duplication
+                (e.g. sequential execution, which already parks at the
+                first ASK).
 
         Yields:
             `RequireUserConfirmEvent \
@@ -1663,6 +1704,36 @@ class Agent:
             PermissionBehavior.ASK,
             PermissionBehavior.PASSTHROUGH,
         ]:
+            # Batch de-duplication (concurrent batches only): if an earlier
+            # confirmation in this same batch already suggested an allow rule
+            # that matches this invocation, do not surface a second prompt.
+            # Leave the call PENDING so the next reply run re-evaluates it
+            # against the engine once the user answers the first prompt (and
+            # its rule has been added). Safety ASKs (bypass-immune) are never
+            # de-duplicated — an allow rule cannot clear them, so each must
+            # surface its own prompt.
+            is_safety_ask = (
+                decision.behavior == PermissionBehavior.ASK
+                and decision.bypass_immune
+            )
+            if kept_rules is not None and not is_safety_ask:
+                for rule in kept_rules:
+                    if rule.tool_name != tool.name:
+                        continue
+                    if await _execute_async_or_sync_func(
+                        tool.match_rule,
+                        rule.rule_content,
+                        parsed_input,
+                    ):
+                        # Covered by an earlier call's rule; stay PENDING and
+                        # do not yield — re-evaluated on the next reply run.
+                        return
+
+            if kept_rules is not None:
+                # Register this prompt's suggested rules so later calls in the
+                # batch can be de-duplicated against them.
+                kept_rules.extend(decision.suggested_rules or [])
+
             # Set the state of the tool call to "ask"
             # **Note** the update must be done before yielding the event
             self._update_tool_call_state(
@@ -2045,21 +2116,30 @@ class Agent:
                 break
             block_index -= 1
 
-        # Adjust the block_index to avoid splitting tool call and result pairs
+        # Adjust the block_index to avoid splitting tool call and result pairs.
+        # Moving the boundary can bring another tool call into the compressed
+        # part while leaving its result reserved, so repeat until it is stable.
+        while True:
+            # Check if the reserved part has tool results that don't have the
+            # corresponding tool calls
+            remain_result_ids = {}
+            for i in range(
+                len(boundary_msg_content) - 1,
+                block_index,
+                -1,
+            ):
+                block = boundary_msg_content[i]
+                if isinstance(block, ToolResultBlock):
+                    remain_result_ids[block.id] = i
+                elif isinstance(block, ToolCallBlock):
+                    remain_result_ids.pop(block.id, None)
 
-        # Check if the reserved part has tool results that don't have the
-        # corresponding tool calls
-        remain_result_ids = {}
-        for i in range(len(boundary_msg_content) - 1, block_index, -1):
-            block = boundary_msg_content[i]
-            if isinstance(block, ToolResultBlock):
-                remain_result_ids[block.id] = i
-            elif isinstance(block, ToolCallBlock):
-                remain_result_ids.pop(block.id, None)
+            # All tool result blocks in the reserved part are paired.
+            if not remain_result_ids:
+                break
 
-        # Find the largest index of the remaining tool results, which doesn't
-        # have the corresponding tool calls in the reserved parts
-        if remain_result_ids:
+            # Move unmatched results into the compressed part and recheck,
+            # because this move can split another tool call/result pair.
             block_index = max(remain_result_ids.values())
 
         # Split the boundary msg content

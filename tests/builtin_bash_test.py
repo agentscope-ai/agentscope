@@ -217,12 +217,43 @@ class BashToolInjectionCheckTest(IsolatedAsyncioTestCase):
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
         self.assertIn("command_substitution", decision.message)
 
+    async def test_mutating_find_commands_not_auto_allowed(self) -> None:
+        """Test mutating find commands are not auto-allowed as read-only."""
+        test_cases = [
+            "find . -delete",
+            "find . -name '*.tmp' -delete",
+            "find . -daystart -delete",
+            "find . -nogroup -delete",
+            "find . -nouser -delete",
+            "find . -exec rm {} \\;",
+            "find . -execdir rm {} \\;",
+            "find . -fls results.txt",
+            "find . -fprint results.txt",
+            "find . -fprint0 results.txt",
+            "find . -fprintf results.txt '%p\\n'",
+            "find . -ok rm {} \\;",
+            "find . -okdir rm {} \\;",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                decision = await self.bash_tool.check_permissions(
+                    {"command": cmd},
+                    self.context,
+                )
+                self.assertNotEqual(
+                    decision.behavior,
+                    PermissionBehavior.ALLOW,
+                )
+
     async def test_safe_commands_pass(self) -> None:
         """Test that safe commands pass injection check."""
 
         safe_commands = [
             "ls -la",
             "cat file.txt",
+            "find . -name '-delete'",
+            "find . -path './-fprint'",
+            "find . -regex '.*-exec.*'",
             "git status",
             "echo 'hello world'",
         ]
