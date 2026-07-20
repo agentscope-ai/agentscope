@@ -159,6 +159,36 @@ class SqlStorageTest(IsolatedAsyncioTestCase):
         self.assertTrue(await self.storage.delete_credential("user-1", cid))
         self.assertFalse(await self.storage.delete_credential("user-1", cid))
 
+    async def test_upsert_credential_is_owner_scoped(self) -> None:
+        """A preset id owned by another user is never read or clobbered."""
+        import sqlalchemy.exc
+
+        victim = DashScopeCredential(api_key=SecretStr("victim-key"))
+        cid = await self.storage.upsert_credential("user-1", victim)
+        before = await self.storage.get_credential("user-1", cid)
+
+        # Same owner + preset id → in-place update, created_at preserved.
+        rotated = DashScopeCredential(api_key=SecretStr("rotated"), id=cid)
+        self.assertEqual(
+            await self.storage.upsert_credential("user-1", rotated),
+            cid,
+        )
+        after = await self.storage.get_credential("user-1", cid)
+        self.assertEqual(after.data["api_key"], "rotated")
+        self.assertEqual(after.created_at, before.created_at)
+
+        # Attacker (user-2) presenting the victim's id must not touch the
+        # victim's row: the global-id INSERT collides and raises, and the
+        # victim's data + ownership stay intact.
+        attack = DashScopeCredential(api_key=SecretStr("attacker"), id=cid)
+        with self.assertRaises(sqlalchemy.exc.IntegrityError):
+            await self.storage.upsert_credential("user-2", attack)
+
+        victim_now = await self.storage.get_credential("user-1", cid)
+        self.assertEqual(victim_now.data["api_key"], "rotated")
+        self.assertIsNone(await self.storage.get_credential("user-2", cid))
+        self.assertEqual(await self.storage.list_credentials("user-2"), [])
+
     # ------------------------------------------------------------------
     # Agents
     # ------------------------------------------------------------------
@@ -329,21 +359,54 @@ class SqlStorageTest(IsolatedAsyncioTestCase):
         m1_updated = UserMsg(id=m1.id, name="u", content="hola")
         await self.storage.upsert_message("user-1", "sess-1", m1_updated)
 
-        listed = await self.storage.list_messages("user-1", "sess-1")
+        listed, has_more = await self.storage.list_messages(
+            "user-1",
+            "sess-1",
+        )
         self.assertEqual([m.id for m in listed], [m1.id, m2.id])
+        self.assertFalse(has_more)
         self.assertEqual(listed[0].content, m1_updated.content)
 
         fetched = await self.storage.get_message("user-1", "sess-1", m2.id)
         self.assertEqual(fetched.id, m2.id)
 
-        # Pagination
-        paged = await self.storage.list_messages(
+        # Cursor-based pagination: the latest page of one message is the
+        # newest (m2), with older messages still available.
+        latest, has_more = await self.storage.list_messages(
             "user-1",
             "sess-1",
-            offset=1,
             limit=1,
         )
-        self.assertEqual([m.id for m in paged], [m2.id])
+        self.assertEqual([m.id for m in latest], [m2.id])
+        self.assertTrue(has_more)
+
+        # Walking backwards with ``before`` yields the previous page.
+        older, has_more = await self.storage.list_messages(
+            "user-1",
+            "sess-1",
+            limit=1,
+            before=m2.id,
+        )
+        self.assertEqual([m.id for m in older], [m1.id])
+        self.assertFalse(has_more)
+
+        # An unknown cursor yields an empty page.
+        self.assertEqual(
+            await self.storage.list_messages(
+                "user-1",
+                "sess-1",
+                before="does-not-exist",
+            ),
+            ([], False),
+        )
+
+        # The legacy ``offset`` keyword is ignored but warns.
+        with self.assertWarns(DeprecationWarning):
+            await self.storage.list_messages(
+                "user-1",
+                "sess-1",
+                offset=1,
+            )
 
     async def test_messages_max_width_ids(self) -> None:
         """Composite key stores ids a concatenated key couldn't hold.
@@ -365,16 +428,11 @@ class SqlStorageTest(IsolatedAsyncioTestCase):
         )
         self.assertIsNotNone(fetched)
         self.assertEqual(fetched.id, long_msg_id)
-        self.assertEqual(
-            [
-                m.id
-                for m in await self.storage.list_messages(
-                    "user-1",
-                    long_session,
-                )
-            ],
-            [long_msg_id],
+        listed, _has_more = await self.storage.list_messages(
+            "user-1",
+            long_session,
         )
+        self.assertEqual([m.id for m in listed], [long_msg_id])
 
     # ------------------------------------------------------------------
     # Teams

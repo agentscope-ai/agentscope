@@ -705,25 +705,55 @@ class SqlStorage(StorageBase):
 
         data_dump = _dump_with_secrets(credential_data)
 
+        # Scope the create-or-update to *user_id*. The Redis backend
+        # namespaces its keys by user, so a preset id can only ever
+        # address the caller's own record; the SQL table keys on a
+        # global primary id, so an unscoped lookup — or the id-keyed
+        # upsert in ``_write_row`` — would let a caller read or clobber
+        # another tenant's credential. Only a row the caller already
+        # owns may be updated in place; any other preset id is created
+        # fresh under the caller via a plain INSERT that fails loudly on
+        # a global collision instead of overwriting the holder.
         if credential_data.id:
+            from sqlalchemy import select
+
             async with self._session() as sess:
-                existing = await sess.get(CredentialRow, credential_data.id)
+                existing = (
+                    await sess.execute(
+                        select(CredentialRow).where(
+                            CredentialRow.id == credential_data.id,
+                            CredentialRow.user_id == user_id,
+                        ),
+                    )
+                ).scalar_one_or_none()
             if existing is not None:
+                # The caller's own credential: the id-keyed upsert can
+                # only touch this row, so update it in place.
                 record = _to_record(existing, CredentialRecord)
                 record.data = data_dump
-            else:
-                record = CredentialRecord(
-                    id=credential_data.id,
-                    user_id=user_id,
-                    data=data_dump,
-                )
+                await self._write_row(CredentialRow, record)
+                return record.id
+            record = CredentialRecord(
+                id=credential_data.id,
+                user_id=user_id,
+                data=data_dump,
+            )
         else:
             record = CredentialRecord(
                 user_id=user_id,
                 data=data_dump,
             )
 
-        await self._write_row(CredentialRow, record)
+        # A fresh record — either a server-generated id (never collides)
+        # or a caller-preset id proven not to belong to the caller. Use
+        # a plain INSERT rather than the id-conflict upsert so that a
+        # preset id already held by another tenant raises IntegrityError
+        # instead of silently overwriting them and stealing ownership.
+        record.created_at = _to_naive_utc(record.created_at)
+        record.updated_at = _utcnow()
+        async with self._session() as sess:
+            sess.add(_from_record(CredentialRow, record))
+            await sess.commit()
         return record.id
 
     async def list_credentials(self, user_id: str) -> list[CredentialRecord]:
@@ -1147,31 +1177,89 @@ class SqlStorage(StorageBase):
         self,
         user_id: str,
         session_id: str,
-        offset: int = 0,
         limit: int = 50,
-    ) -> list[Msg]:
-        """Paginated message list, chronological order."""
-        _ = user_id
-        from sqlalchemy import select
+        before: str | None = None,
+        **kwargs: Any,
+    ) -> tuple[list[Msg], bool]:
+        """Most-recent page of messages with cursor-based pagination.
+
+        Mirrors :meth:`RedisStorage.list_messages`: returns up to
+        *limit* messages in chronological order together with a
+        ``has_more`` flag that is ``True`` when older messages exist
+        before the returned page. ``before`` is a message-id cursor —
+        when set, the page ends just before that message; when ``None``
+        the latest page is returned. An unknown ``before`` cursor
+        yields ``([], False)``. The legacy ``offset`` keyword is
+        accepted only to emit a ``DeprecationWarning`` and is ignored.
+        """
+        _ = user_id  # scoping enforced by caller
+        if "offset" in kwargs:
+            import warnings
+
+            warnings.warn(
+                "The 'offset' parameter is deprecated and will be "
+                "removed in a future version. Use 'before' for "
+                "cursor-based pagination instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        from sqlalchemy import and_, or_, select
 
         async with self._session() as sess:
-            rows = (
+            cond = MessageRow.session_id == session_id
+            if before is not None:
+                cursor = (
+                    await sess.execute(
+                        select(
+                            MessageRow.created_at,
+                            MessageRow.msg_id,
+                        ).where(
+                            MessageRow.session_id == session_id,
+                            MessageRow.msg_id == before,
+                        ),
+                    )
+                ).one_or_none()
+                if cursor is None:
+                    return [], False
+                c_created, c_msg = cursor
+                # Strictly older than the cursor in the
+                # ``(created_at, msg_id)`` total order (spelled out
+                # rather than a row-value comparison so every dialect
+                # can plan it).
+                cond = and_(
+                    cond,
+                    or_(
+                        MessageRow.created_at < c_created,
+                        and_(
+                            MessageRow.created_at == c_created,
+                            MessageRow.msg_id < c_msg,
+                        ),
+                    ),
+                )
+
+            # Fetch newest-first with one extra row to detect whether
+            # older messages remain, then flip back to chronological.
+            rows = list(
                 (
                     await sess.execute(
                         select(MessageRow)
-                        .where(MessageRow.session_id == session_id)
+                        .where(cond)
                         .order_by(
-                            MessageRow.created_at.asc(),
-                            MessageRow.msg_id.asc(),
+                            MessageRow.created_at.desc(),
+                            MessageRow.msg_id.desc(),
                         )
-                        .offset(offset)
-                        .limit(limit),
+                        .limit(limit + 1),
                     )
                 )
                 .scalars()
-                .all()
+                .all(),
             )
-        return [Msg.model_validate(r.payload) for r in rows]
+
+        has_more = len(rows) > limit
+        page = rows[:limit]
+        page.reverse()
+        return [Msg.model_validate(r.payload) for r in page], has_more
 
     # ------------------------------------------------------------------
     # Teams
