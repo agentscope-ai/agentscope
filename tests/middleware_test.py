@@ -6,11 +6,20 @@ from unittest.mock import AsyncMock, patch
 from typing import Any, AsyncGenerator, Callable, Union
 
 from utils import MockModel
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from agentscope.event import AgentEvent
 from agentscope.agent import Agent, ContextConfig
-from agentscope.middleware import MiddlewareBase
-from agentscope.model import ChatResponse
+from agentscope.middleware import (
+    ModelScaffoldController,
+    MiddlewareBase,
+    ScaffoldCompiler,
+    ScaffoldPolicy,
+    ScaffoldMiddleware,
+    ScaffoldSection,
+    ScaffoldSpec,
+    StaticScaffoldController,
+)
+from agentscope.model import ChatResponse, StructuredResponse
 from agentscope.message import (
     TextBlock,
     HintBlock,
@@ -394,6 +403,250 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             "mw2_executed",  # Second call during reasoning
         ]
         self.assertListEqual(self.execution_log, expected)
+
+    async def test_scaffold_middleware_appends_ornith_prompt(self) -> None:
+        """ScaffoldMiddleware appends the built-in scaffold instructions."""
+        agent = Agent(
+            name="test_agent",
+            system_prompt="base prompt",
+            model=self.mock_model,
+            toolkit=self.toolkit,
+            middlewares=[ScaffoldMiddleware()],
+        )
+
+        prompt = await agent._get_system_prompt()
+
+        self.assertIn("base prompt", prompt)
+        self.assertIn('<scaffold name="ornith-1.0"', prompt)
+        self.assertIn("Orient", prompt)
+        self.assertIn("Terminate", prompt)
+
+    async def test_scaffold_middleware_can_be_disabled(self) -> None:
+        """Disabled scaffold middleware leaves the prompt unchanged."""
+        agent = Agent(
+            name="test_agent",
+            system_prompt="base prompt",
+            model=self.mock_model,
+            toolkit=self.toolkit,
+            middlewares=[
+                ScaffoldMiddleware(
+                    ScaffoldMiddleware.Parameters(enabled=False),
+                ),
+            ],
+        )
+
+        self.assertEqual(await agent._get_system_prompt(), "base prompt")
+
+    async def test_scaffold_middleware_accepts_custom_config(self) -> None:
+        """ScaffoldMiddleware supports custom sections and templates."""
+        middleware = ScaffoldMiddleware(
+            ScaffoldMiddleware.Parameters(
+                name="custom",
+                intensity="strict",
+                sections=(
+                    ScaffoldSection(
+                        name="Check",
+                        instruction="Verify the required condition.",
+                    ),
+                ),
+                template="SCF[{name}|{intensity}]\n{sections}",
+            ),
+        )
+        agent = Agent(
+            name="test_agent",
+            system_prompt="base prompt",
+            model=self.mock_model,
+            toolkit=self.toolkit,
+            middlewares=[middleware],
+        )
+
+        prompt = await agent._get_system_prompt()
+
+        self.assertEqual(
+            prompt,
+            "base prompt\n\n"
+            "SCF[custom|strict]\n"
+            "- Check: Verify the required condition.",
+        )
+
+    async def test_scaffold_template_requires_placeholders(self) -> None:
+        """Scaffold template validation catches invalid config early."""
+        with self.assertRaises(ValidationError):
+            ScaffoldMiddleware.Parameters(template="{name} {sections}")
+
+    async def test_scaffold_compiler_emits_runtime_policy(self) -> None:
+        """ScaffoldCompiler turns a spec into prompt and runtime policies."""
+        spec = ScaffoldSpec(
+            name="custom",
+            intensity="strict",
+            sections=(
+                ScaffoldSection(name="Plan", instruction="Pick a route."),
+            ),
+            tool_subset=("read", "edit"),
+            memory_policy="Keep only task-relevant facts.",
+            retry_policy="Retry once after checking the error.",
+            step_budget=3,
+            verify_policy="Run focused checks before final answer.",
+            reward_policy="Prefer verified completion.",
+        )
+
+        policy = ScaffoldCompiler().compile(spec)
+
+        self.assertIsInstance(policy, ScaffoldPolicy)
+        self.assertIn('<scaffold name="custom"', policy.system_prompt)
+        self.assertIn("Memory Policy", policy.system_prompt)
+        self.assertEqual(policy.tool_subset, ("read", "edit"))
+        self.assertEqual(policy.step_budget, 3)
+        self.assertEqual(
+            policy.verify_policy,
+            "Run focused checks before final answer.",
+        )
+
+    async def test_model_scaffold_controller_generates_spec(self) -> None:
+        """ModelScaffoldController can use structured output for a spec."""
+        controller_model = MockModel()
+        controller_model.set_structured_response(
+            StructuredResponse(
+                content={
+                    "name": "custom",
+                    "intensity": "light",
+                    "sections": [
+                        {
+                            "name": "Focus",
+                            "instruction": "Use the shortest safe path.",
+                        },
+                    ],
+                    "step_budget": 2,
+                    "verify_policy": "Check the observable result.",
+                },
+            ),
+        )
+        middleware = ScaffoldMiddleware(
+            controller=ModelScaffoldController(controller_model),
+        )
+        agent = Agent(
+            name="test_agent",
+            system_prompt="base prompt",
+            model=self.mock_model,
+            toolkit=self.toolkit,
+            middlewares=[middleware],
+        )
+
+        prompt = await agent._get_system_prompt()
+
+        self.assertIn('<scaffold name="custom" intensity="light">', prompt)
+        self.assertIn("Focus", prompt)
+        self.assertIn("Step Budget", prompt)
+        self.assertIn("Verify Policy", prompt)
+
+    async def test_scaffold_tool_subset_filters_model_tools(self) -> None:
+        """Scaffold tool_subset limits tools visible to the model call."""
+        received_tools: list[list[dict]] = []
+
+        class _Params(BaseModel):
+            value: str
+
+        class _BaseTool(ToolBase):
+            description: str = "A test tool."
+            input_schema: dict = _Params.model_json_schema()
+            is_concurrency_safe: bool = True
+            is_read_only: bool = True
+            is_state_injected: bool = False
+            is_external_tool: bool = False
+            is_mcp: bool = False
+            mcp_name: str | None = None
+
+            async def check_permissions(
+                self,
+                tool_input: dict[str, Any],
+                context: PermissionContext,
+            ) -> PermissionDecision:
+                return PermissionDecision(
+                    behavior=PermissionBehavior.ALLOW,
+                    message="allowed",
+                )
+
+            async def __call__(self, value: str) -> ToolChunk:
+                return ToolChunk(content=[TextBlock(text=value)])
+
+        class EchoTool(_BaseTool):
+            name: str = "echo"
+
+        class OtherTool(_BaseTool):
+            name: str = "other"
+
+        class TrackingModel(MockModel):
+            async def _call_api(
+                self,
+                *args: Any,
+                **kwargs: Any,
+            ) -> ChatResponse:
+                received_tools.append(kwargs.get("tools", []))
+                return await super()._call_api(*args, **kwargs)
+
+        tracking_model = TrackingModel()
+        tracking_model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="done")],
+                    is_last=True,
+                ),
+            ],
+        )
+        middleware = ScaffoldMiddleware(
+            ScaffoldMiddleware.Parameters(tool_subset=("echo",)),
+        )
+        agent = Agent(
+            name="test_agent",
+            system_prompt="base prompt",
+            model=tracking_model,
+            toolkit=Toolkit(tools=[EchoTool(), OtherTool()]),
+            middlewares=[middleware],
+        )
+
+        await agent.reply(UserMsg("user", "use a tool if needed"))
+
+        self.assertEqual(len(received_tools), 1)
+        tool_names = [
+            tool.get("function", {}).get("name", tool.get("name"))
+            for tool in received_tools[0]
+        ]
+        self.assertEqual(tool_names, ["echo"])
+
+    async def test_scaffold_step_budget_forces_no_tool_choice(self) -> None:
+        """Step budget switches later reasoning to tool_choice none."""
+        middleware = ScaffoldMiddleware(
+            controller=StaticScaffoldController(
+                ScaffoldSpec(step_budget=1),
+            ),
+        )
+        agent = Agent(
+            name="test_agent",
+            system_prompt="base prompt",
+            model=self.mock_model,
+            toolkit=self.toolkit,
+            middlewares=[middleware],
+        )
+        agent.state.cur_iter = 1
+        key = await middleware.get_middleware_key()
+        agent.state.middle_context[key] = {
+            "policy": ScaffoldPolicy(step_budget=1),
+        }
+        received_tool_choices = []
+
+        async def next_handler(**kwargs: Any) -> AsyncGenerator:
+            received_tool_choices.append(kwargs.get("tool_choice"))
+            if False:
+                yield None
+
+        async for _ in middleware.on_reasoning(
+            agent,
+            {"tool_choice": None},
+            next_handler,
+        ):
+            pass
+
+        self.assertEqual(received_tool_choices[0].mode, "none")
 
     async def test_multiple_middleware_types(self) -> None:
         """Test multiple middleware types working together."""
