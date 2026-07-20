@@ -25,7 +25,9 @@ _GENERIC_MESSAGE: dict[ErrorType, str] = {
         "model or endpoint."
     ),
     ErrorType.RATE_LIMIT: "Rate limit or quota exceeded — try again later.",
-    ErrorType.INVALID_REQUEST: "The request to the model was rejected as invalid.",
+    ErrorType.INVALID_REQUEST: (
+        "The request to the model was rejected as invalid."
+    ),
     ErrorType.UPSTREAM: "The upstream model service returned an error.",
     ErrorType.CONNECTION: (
         "Could not reach the model service — network error or timeout."

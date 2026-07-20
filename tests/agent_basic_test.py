@@ -615,6 +615,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "id": AnyString(),
                 "created_at": AnyString(),
                 "finished_at": None,
+                "finished_reason": None,
+                "error": None,
                 "metadata": {},
                 "name": "Friday",
                 "role": "assistant",
