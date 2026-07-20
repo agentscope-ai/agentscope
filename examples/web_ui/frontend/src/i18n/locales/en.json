@@ -108,6 +108,17 @@
 			"tool_output": "Tool Output",
 			"team_message": "Team Message",
 			"schedule": "Schedule"
+		},
+		"error": {
+			"title": "Reply failed",
+			"authentication": "Authentication failed — check the model's API key or credential.",
+			"permission": "Request not allowed — the credential lacks permission for this model or endpoint.",
+			"rate_limit": "Rate limit or quota exceeded — please try again later.",
+			"invalid_request": "The request to the model was rejected as invalid.",
+			"upstream": "The upstream model service returned an error.",
+			"connection": "Could not reach the model service — network error or timeout.",
+			"internal": "An unexpected internal error occurred.",
+			"unknown": "The reply failed with an unknown error."
 		}
 	},
 	"chat": {

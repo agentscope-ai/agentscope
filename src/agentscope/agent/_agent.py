@@ -48,7 +48,7 @@ from ..event import (
     DataBlockDeltaEvent,
     DataBlockEndEvent,
     ExceedMaxItersEvent,
-    ReplyEndReason,
+    ReplyFinishedReason,
     UserInterruptEvent,
 )
 from ..exception import AgentOrientedException
@@ -710,7 +710,7 @@ class Agent:
                     end_event = ReplyEndEvent(
                         session_id=self.state.session_id,
                         reply_id=self.state.reply_id,
-                        finished_reason=ReplyEndReason.INTERRUPTED,
+                        finished_reason=ReplyFinishedReason.INTERRUPTED,
                     )
                 return
 
@@ -770,7 +770,7 @@ class Agent:
                             end_event = ReplyEndEvent(
                                 session_id=self.state.session_id,
                                 reply_id=self.state.reply_id,
-                                finished_reason=ReplyEndReason.COMPLETED,
+                                finished_reason=ReplyFinishedReason.COMPLETED,
                             )
                             yield evt
                             return
@@ -787,7 +787,7 @@ class Agent:
                         end_event = ReplyEndEvent(
                             session_id=self.state.session_id,
                             reply_id=self.state.reply_id,
-                            finished_reason=ReplyEndReason.INTERRUPTED,
+                            finished_reason=ReplyFinishedReason.INTERRUPTED,
                         )
                         return
 
@@ -841,7 +841,7 @@ class Agent:
                         end_event = ReplyEndEvent(
                             session_id=self.state.session_id,
                             reply_id=self.state.reply_id,
-                            finished_reason=ReplyEndReason.INTERRUPTED,
+                            finished_reason=ReplyFinishedReason.INTERRUPTED,
                         )
                         return
 
@@ -878,7 +878,7 @@ class Agent:
             end_event = ReplyEndEvent(
                 session_id=self.state.session_id,
                 reply_id=self.state.reply_id,
-                finished_reason=ReplyEndReason.EXCEED_MAX_ITERS,
+                finished_reason=ReplyFinishedReason.EXCEED_MAX_ITERS,
             )
 
             yield AssistantMsg(
@@ -894,7 +894,7 @@ class Agent:
             end_event = ReplyEndEvent(
                 session_id=self.state.session_id,
                 reply_id=self.state.reply_id,
-                finished_reason=ReplyEndReason.INTERRUPTED,
+                finished_reason=ReplyFinishedReason.INTERRUPTED,
             )
 
             if self.react_config.interruption_raise_cancelled_error:
@@ -902,7 +902,10 @@ class Agent:
 
         finally:
             if end_event is not None:
-                if end_event.finished_reason == ReplyEndReason.INTERRUPTED:
+                if (
+                    end_event.finished_reason
+                    == ReplyFinishedReason.INTERRUPTED
+                ):
                     # Handle the context when interruption
                     async for _ in self._close_unfinished_tool_calls():
                         yield _

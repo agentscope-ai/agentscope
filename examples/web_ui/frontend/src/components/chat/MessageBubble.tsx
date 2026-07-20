@@ -17,6 +17,7 @@ import {
 	Copy,
 	Loader2,
 	MessageSquareQuote,
+	TriangleAlert,
 	Wrench,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -28,6 +29,7 @@ import { FileAttachment } from './FileAttachment';
 import { renderToolCall } from './tool-renderers';
 import { countDiffStats, DiffStats, getResultDiff } from './tool-renderers/_shared';
 import type { TFunction, ToolCallWithResult } from './tool-renderers/types';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -629,6 +631,15 @@ export function MessageBubble({ message, onUserConfirm }: MessageBubbleProps) {
 	const showBody = hasBodyContent;
 	const showFooter = !isUser;
 
+	// A fatal error terminated this reply. ``finished_reason`` / ``error``
+	// are reply-level fields set by ``appendEvent`` on a ``REPLY_END`` with
+	// ``finished_reason === 'error'`` — they are NOT content blocks, so the
+	// body above is always genuine agent output. Rendered as a separate
+	// alert below the body.
+	const errorInfo = (message as { error?: { type?: string; message?: string } | null }).error;
+	const isError =
+		(message as { finished_reason?: string }).finished_reason === 'error' || !!errorInfo;
+
 	const startMs = new Date(message.created_at).getTime();
 	const endMs = isRunning ? now : new Date(message.finished_at!).getTime();
 	const elapsedSeconds = Math.max(0, (endMs - startMs) / 1000);
@@ -661,6 +672,17 @@ export function MessageBubble({ message, onUserConfirm }: MessageBubbleProps) {
 					)}
 				</div>
 			)}
+			{isError && (
+				<Alert variant="destructive" className="my-1 w-full">
+					<TriangleAlert />
+					<AlertTitle>{t('messageBubble.error.title')}</AlertTitle>
+					<AlertDescription>
+						{t(`messageBubble.error.${errorInfo?.type ?? 'unknown'}`, {
+							defaultValue: errorInfo?.message ?? t('messageBubble.error.unknown'),
+						})}
+					</AlertDescription>
+				</Alert>
+			)}
 			{showFooter && (
 				<div className="flex flex-row items-center text-muted-foreground gap-x-4 px-2 w-full">
 					<Badge
@@ -669,6 +691,8 @@ export function MessageBubble({ message, onUserConfirm }: MessageBubbleProps) {
 					>
 						{isRunning ? (
 							<Loader2 data-icon="inline-start" className="animate-spin" />
+						) : isError ? (
+							<TriangleAlert data-icon="inline-start" className="text-destructive" />
 						) : (
 							<CheckCircle data-icon="inline-start" />
 						)}

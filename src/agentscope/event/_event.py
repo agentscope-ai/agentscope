@@ -14,6 +14,10 @@ from ..message import (
     ToolResultBlock,
     ToolResultState,
 )
+from ..types import (
+    ReplyFinishedReason,
+    ErrorInfo,
+)
 from ..model import FinishedReason
 from ..permission import PermissionRule
 
@@ -90,14 +94,6 @@ class ReplyStartEvent(EventBase):
     """Role of the agent."""
 
 
-class ReplyEndReason(StrEnum):
-    """The reason for reply ended."""
-
-    COMPLETED = "completed"
-    INTERRUPTED = "interrupted"
-    EXCEED_MAX_ITERS = "exceed_max_iters"
-
-
 class ReplyEndEvent(EventBase):
     """Reply end event."""
 
@@ -107,8 +103,11 @@ class ReplyEndEvent(EventBase):
     """ID of the session this reply belongs to."""
     reply_id: str
     """ID of the reply message produced by this reply."""
-    finished_reason: ReplyEndReason = ReplyEndReason.COMPLETED
+    finished_reason: ReplyFinishedReason = ReplyFinishedReason.COMPLETED
     """The finished reason of this reply."""
+    error: ErrorInfo | None = None
+    """Structured error info, populated only when
+    ``finished_reason == ReplyEndReason.ERROR``."""
 
 
 class ModelCallStartEvent(EventBase):

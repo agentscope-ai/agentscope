@@ -976,6 +976,8 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "created_at": AnyString(),
                 "finished_at": None,
+                "finished_reason": None,
+                "error": None,
                 "usage": None,
             }
             self.assertListEqual(
@@ -1116,7 +1118,8 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 '"id":"text_block_a"}'
                 '],"role":"user","id":"msg_a","metadata":{},'
                 '"created_at":"2026-01-01T00:00:00",'
-                '"finished_at":"2026-01-01T00:00:00","usage":null}'
+                '"finished_at":"2026-01-01T00:00:00",'
+                '"finished_reason":null,"error":null,"usage":null}'
             )
             self.assertEqual(
                 content_after_first,
@@ -1159,7 +1162,8 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 + '"}'
                 '],"role":"assistant","id":"' + assistant_1.id + '",'
                 '"metadata":{},"created_at":"' + assistant_1.created_at + '",'
-                '"finished_at":null,"usage":null}'
+                '"finished_at":null,'
+                '"finished_reason":null,"error":null,"usage":null}'
             )
             expected_user_msg_b_json = (
                 '{"name":"user","content":['
@@ -1167,7 +1171,8 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 '"id":"text_block_b"}'
                 '],"role":"user","id":"msg_b","metadata":{},'
                 '"created_at":"2026-01-02T00:00:00",'
-                '"finished_at":"2026-01-02T00:00:00","usage":null}'
+                '"finished_at":"2026-01-02T00:00:00",'
+                '"finished_reason":null,"error":null,"usage":null}'
             )
             self.assertEqual(
                 content_after_second,
@@ -1216,6 +1221,8 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "created_at": AnyString(),
                 "finished_at": None,
+                "finished_reason": None,
+                "error": None,
                 "usage": None,
             }
             self.assertListEqual(

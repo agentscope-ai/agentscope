@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """The event module of agentscope."""
 
+from ..types import ReplyFinishedReason, ReplyEndReason, ErrorType
 from ._event import (
     EventType,
     EventBase,
     ReplyStartEvent,
-    ReplyEndReason,
     ReplyEndEvent,
+    ErrorInfo,
     ModelCallStartEvent,
     ModelCallEndEvent,
     TextBlockStartEvent,
@@ -42,8 +43,11 @@ __all__ = [
     "EventType",
     "EventBase",
     "ReplyStartEvent",
+    "ReplyFinishedReason",
     "ReplyEndReason",
     "ReplyEndEvent",
+    "ErrorType",
+    "ErrorInfo",
     "ModelCallStartEvent",
     "ModelCallEndEvent",
     "TextBlockStartEvent",

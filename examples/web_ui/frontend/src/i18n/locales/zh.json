@@ -108,6 +108,17 @@
 			"tool_output": "工具输出",
 			"team_message": "团队消息",
 			"schedule": "定时任务"
+		},
+		"error": {
+			"title": "回复失败",
+			"authentication": "鉴权失败 —— 请检查模型的 API key 或凭证。",
+			"permission": "请求被拒绝 —— 当前凭证没有访问该模型或端点的权限。",
+			"rate_limit": "触发限流或额度用尽 —— 请稍后重试。",
+			"invalid_request": "发往模型的请求被判定为非法。",
+			"upstream": "上游模型服务返回了错误。",
+			"connection": "无法连接模型服务 —— 网络错误或超时。",
+			"internal": "发生了未预期的内部错误。",
+			"unknown": "回复因未知错误失败。"
 		}
 	},
 	"chat": {

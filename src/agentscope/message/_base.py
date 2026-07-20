@@ -21,6 +21,7 @@ from ._block import (
     ContentBlock,
     ContentBlockTypes,
 )
+from ..types import ReplyFinishedReason, ErrorInfo
 from .._logging import logger
 
 if TYPE_CHECKING:
@@ -81,6 +82,12 @@ class Msg(BaseModel):
     """The creation time of the message"""
     finished_at: str | None = Field(default=None)
     """The finished time of the message"""
+    finished_reason: ReplyFinishedReason | None = Field(default=None)
+    """Terminal reason of this reply (error / interrupted /
+    exceed_max_iters). ``None`` until a ``REPLY_END`` event is applied."""
+    error: ErrorInfo | None = Field(default=None)
+    """Structured error info, populated only when
+    ``finished_reason == ReplyFinishedReason.ERROR``."""
     usage: Usage | None = Field(default=None)
     """The token usage information of the message"""
 
@@ -238,6 +245,13 @@ class Msg(BaseModel):
         match event.type:
             case EventType.REPLY_END:
                 self.finished_at = event.created_at
+                # ``event.finished_reason`` is a bare string (EventBase sets
+                # ``use_enum_values``); coerce back to the enum so this
+                # field serializes cleanly.
+                self.finished_reason = ReplyFinishedReason(
+                    event.finished_reason,
+                )
+                self.error = event.error
 
             case EventType.MODEL_CALL_END:
                 if self.usage is None:

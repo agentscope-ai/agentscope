@@ -226,6 +226,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "1",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
@@ -242,6 +244,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "2",
                     "created_at": AnyString(),
                     "finished_at": None,
+                    "finished_reason": None,
+                    "error": None,
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -263,6 +267,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "2",
                     "created_at": AnyString(),
                     "finished_at": None,
+                    "finished_reason": None,
+                    "error": None,
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -279,6 +285,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "3",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
@@ -325,6 +333,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "1",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
@@ -341,6 +351,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "2",
                     "created_at": AnyString(),
                     "finished_at": None,
+                    "finished_reason": None,
+                    "error": None,
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -367,6 +379,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "3",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
@@ -412,6 +426,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "1",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
@@ -428,6 +444,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "2",
                     "created_at": AnyString(),
                     "finished_at": None,
+                    "finished_reason": None,
+                    "error": None,
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -449,6 +467,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "2",
                     "created_at": AnyString(),
                     "finished_at": None,
+                    "finished_reason": None,
+                    "error": None,
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -465,6 +485,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "3",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
@@ -510,6 +532,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "1",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
@@ -531,6 +555,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "2",
                     "created_at": AnyString(),
                     "finished_at": None,
+                    "finished_reason": None,
+                    "error": None,
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -552,6 +578,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "3",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
@@ -600,6 +628,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "2",
                     "created_at": AnyString(),
                     "finished_at": None,
+                    "finished_reason": None,
+                    "error": None,
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -621,6 +651,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "3",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
@@ -706,6 +738,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "old-user",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
@@ -722,6 +756,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "multi-tool-msg",
                     "created_at": AnyString(),
                     "finished_at": None,
+                    "finished_reason": None,
+                    "error": None,
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -782,6 +818,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "multi-tool-msg",
                     "created_at": AnyString(),
                     "finished_at": None,
+                    "finished_reason": None,
+                    "error": None,
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -798,6 +836,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "latest-user",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [
@@ -887,6 +927,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "2",
                     "created_at": AnyString(),
                     "finished_at": None,
+                    "finished_reason": None,
+                    "error": None,
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -903,6 +945,8 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                     "id": "3",
                     "created_at": AnyString(),
                     "finished_at": AnyString(),
+                    "finished_reason": None,
+                    "error": None,
                     "name": "User",
                     "role": "user",
                     "content": [

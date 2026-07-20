@@ -181,6 +181,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             "id": AnyString(),
             "created_at": AnyString(),
             "finished_at": None,
+            "finished_reason": None,
+            "error": None,
             "metadata": {},
             "name": "Friday",
             "role": "assistant",
@@ -365,6 +367,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "error": None,
             },
             {
                 "content": [
@@ -414,6 +418,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             *self.final_text_events,
             {
                 "type": "REPLY_END",
+                "error": None,
                 "session_id": session_id,
                 "finished_reason": "completed",
             },
@@ -436,6 +441,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "error": None,
             },
             {
                 "content": [
@@ -599,6 +606,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "error": None,
             },
             {
                 "content": [
@@ -696,6 +705,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             *self.final_text_events,
             {
                 "type": "REPLY_END",
+                "error": None,
                 "session_id": session_id,
                 "finished_reason": "completed",
             },
@@ -719,6 +729,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "error": None,
             },
             {
                 "content": [
@@ -910,6 +922,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "error": None,
             },
             {
                 "content": [
@@ -999,6 +1013,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             *self.final_text_events,
             {
                 "type": "REPLY_END",
+                "error": None,
                 "session_id": session_id,
                 "finished_reason": "completed",
             },
@@ -1022,6 +1037,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "error": None,
             },
             {
                 "content": [
@@ -1207,6 +1224,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "error": None,
             },
             {
                 "content": [
@@ -1273,6 +1292,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             *self.final_text_events,
             {
                 "type": "REPLY_END",
+                "error": None,
                 "session_id": session_id,
                 "finished_reason": "completed",
             },
@@ -1294,6 +1314,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "error": None,
             },
             {
                 "content": [

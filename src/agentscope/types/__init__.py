@@ -10,6 +10,12 @@ from ._json import (
     JSONPrimitive,
     JSONSerializableObject,
 )
+from ._reply import (
+    ReplyFinishedReason,
+    ReplyEndReason,
+    ErrorType,
+    ErrorInfo,
+)
 
 __all__ = [
     "AgentHookTypes",
@@ -17,4 +23,8 @@ __all__ = [
     "Embedding",
     "JSONPrimitive",
     "JSONSerializableObject",
+    "ReplyFinishedReason",
+    "ReplyEndReason",
+    "ErrorType",
+    "ErrorInfo",
 ]
