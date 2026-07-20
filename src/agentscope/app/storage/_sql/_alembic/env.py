@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Alembic environment for :class:`SqlStorage` schema migrations.
+"""Alembic environment for :class:`AsyncSQLAlchemyStorage` schema migrations.
 
 Runs migrations in async mode against a SQLAlchemy URL. The URL is
 picked up (in order of precedence) from:

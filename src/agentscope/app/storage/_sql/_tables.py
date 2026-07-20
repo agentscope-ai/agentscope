@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""SQLAlchemy 2.0 declarative tables backing :class:`SqlStorage`.
+"""SQLAlchemy 2.0 declarative tables backing :class:`AsyncSQLAlchemyStorage`.
 
 Every record type maps to one table with the layout:
 
@@ -18,12 +18,12 @@ target (SQLite / Postgres / MySQL): plain :class:`~sqlalchemy.JSON`
 upserts *are* emitted with dialect-native ``ON CONFLICT`` /
 ``ON DUPLICATE KEY UPDATE`` syntax, but through the explicit
 per-dialect dispatch in
-:meth:`~agentscope.app.storage._sql._storage.SqlStorage._upsert_stmt`
+:meth:`~agentscope.app.storage.AsyncSQLAlchemyStorage._upsert_stmt`
 rather than leaking into the table definitions here.  The messages
 table sidesteps the
 JSON-record shape because it is inherently list-like — see
 :class:`MessageRow` for the shape and the write path in
-:class:`~agentscope.app.storage._sql._storage.SqlStorage.upsert_message`.
+:class:`~agentscope.app.storage.AsyncSQLAlchemyStorage.upsert_message`.
 """
 from datetime import datetime
 from typing import Any, ClassVar
@@ -42,7 +42,7 @@ class _Base(DeclarativeBase):
     """Declarative base shared by every table in :mod:`_sql`.
 
     Kept private because it is an implementation detail: users of
-    :class:`~agentscope.app.storage.SqlStorage` never see it.
+    :class:`~agentscope.app.storage.AsyncSQLAlchemyStorage` never see it.
     """
 
 
@@ -222,7 +222,7 @@ class KnowledgeDocumentRow(_JsonRecordMixin):
     """One row per :class:`KnowledgeDocumentRecord`.
 
     Promotes every lifecycle / sweeper field to a dedicated column so
-    :meth:`SqlStorage.list_knowledge_documents_with_expired_lease`
+    :meth:`AsyncSQLAlchemyStorage.list_knowledge_documents_with_expired_lease`
     can filter without deserialising :attr:`payload`. The composite
     ``(status, lease_expires_at)`` index serves both the expired-lease
     sweep (``WHERE status NOT IN (…) AND lease_expires_at < :now``)

@@ -80,7 +80,7 @@ def _to_naive_utc(dt: datetime) -> datetime:
     return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
 
-class SqlStorage(StorageBase):
+class AsyncSQLAlchemyStorage(StorageBase):
     """Async SQLAlchemy-backed :class:`StorageBase` implementation.
 
     Instantiate with any SQLAlchemy async URL (the concrete driver is
@@ -88,7 +88,7 @@ class SqlStorage(StorageBase):
 
     .. code-block:: python
 
-        storage = SqlStorage("sqlite+aiosqlite:///./as.db")
+        storage = AsyncSQLAlchemyStorage("sqlite+aiosqlite:///./as.db")
         async with storage:
             ...
 
@@ -184,9 +184,9 @@ class SqlStorage(StorageBase):
                     cursor.close()
 
         # ``expire_on_commit=False`` keeps mapper-returned rows readable
-        # after commit — :class:`SqlStorage` immediately projects rows
-        # back into pydantic records outside the session scope, which
-        # would otherwise trigger a detached-load error.
+        # after commit — :class:`AsyncSQLAlchemyStorage` immediately
+        # projects rows back into pydantic records outside the session
+        # scope, which would otherwise trigger a detached-load error.
         self._session_factory = async_sessionmaker(
             self._engine,
             expire_on_commit=False,
@@ -249,7 +249,8 @@ class SqlStorage(StorageBase):
         """
         if self._session_factory is None:
             raise RuntimeError(
-                "SqlStorage is not initialised — use `async with storage:`.",
+                "AsyncSQLAlchemyStorage is not initialised — use "
+                "`async with storage:`.",
             )
         return self._session_factory()
 

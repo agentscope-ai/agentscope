@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=too-many-public-methods
-"""Round-trip and semantic tests for :class:`SqlStorage`.
+"""Round-trip and semantic tests for :class:`AsyncSQLAlchemyStorage`.
 
 Runs against an in-memory SQLite database via ``sqlite+aiosqlite``
 so the whole suite is self-contained — no external server needed.
@@ -28,13 +28,13 @@ from agentscope.app.storage import (
     ScheduleRecord,
     SessionConfig,
     SessionSource,
-    SqlStorage,
+    AsyncSQLAlchemyStorage,
     TeamData,
     TeamMember,
     TeamRecord,
 )
 from agentscope.agent import ContextConfig, ReActConfig
-from agentscope.credential._dashscope import DashScopeCredential
+from agentscope.credential import DashScopeCredential
 from agentscope.message import AssistantMsg, UserMsg
 
 
@@ -117,8 +117,9 @@ def _schedule_record(user_id: str, agent_id: str) -> ScheduleRecord:
     )
 
 
-class SqlStorageTest(IsolatedAsyncioTestCase):
-    """End-to-end tests for :class:`SqlStorage` over in-memory SQLite."""
+class AsyncSQLAlchemyStorageTest(IsolatedAsyncioTestCase):
+    """End-to-end tests for :class:`AsyncSQLAlchemyStorage` over
+    in-memory SQLite."""
 
     async def asyncSetUp(self) -> None:
         # ``:memory:`` gives a private DB per connection; using a
@@ -126,7 +127,7 @@ class SqlStorageTest(IsolatedAsyncioTestCase):
         # we want here.
         self._stack = AsyncExitStack()
         self.storage = await self._stack.enter_async_context(
-            SqlStorage(
+            AsyncSQLAlchemyStorage(
                 "sqlite+aiosqlite:///:memory:",
                 create_tables=True,
             ),
@@ -778,11 +779,12 @@ class SqlStorageTest(IsolatedAsyncioTestCase):
         )
 
 
-class SqlStorageAutoMigrateTest(IsolatedAsyncioTestCase):
+class AsyncSQLAlchemyStorageAutoMigrateTest(IsolatedAsyncioTestCase):
     """Boot via ``auto_migrate=True`` and confirm the schema is live.
 
     Uses a file-backed SQLite database (not ``:memory:``) so the
-    Alembic-driven ``upgrade head`` run inside :meth:`SqlStorage.__aenter__`
+    Alembic-driven ``upgrade head`` run inside
+    :meth:`AsyncSQLAlchemyStorage.__aenter__`
     and the subsequent record-write use the same physical database —
     ``:memory:`` gives a private DB per connection, which would let
     Alembic build tables that the storage's engine can't see.
@@ -797,7 +799,10 @@ class SqlStorageAutoMigrateTest(IsolatedAsyncioTestCase):
             db_path = os.path.join(tmp, "as.db")
             url = f"sqlite+aiosqlite:///{db_path}"
 
-            async with SqlStorage(url, auto_migrate=True) as storage:
+            async with AsyncSQLAlchemyStorage(
+                url,
+                auto_migrate=True,
+            ) as storage:
                 agent = _agent_record("user-1")
                 await storage.upsert_agent("user-1", agent)
                 fetched = await storage.get_agent("user-1", agent.id)
