@@ -1,3 +1,4 @@
+import { ReplyFinishedReason } from '@agentscope-ai/agentscope/event';
 import type {
 	ContentBlock,
 	DataBlock,
@@ -631,14 +632,13 @@ export function MessageBubble({ message, onUserConfirm }: MessageBubbleProps) {
 	const showBody = hasBodyContent;
 	const showFooter = !isUser;
 
-	// A fatal error terminated this reply. ``finished_reason`` / ``error``
-	// are reply-level fields set by ``appendEvent`` on a ``REPLY_END`` with
-	// ``finished_reason === 'error'`` — they are NOT content blocks, so the
-	// body above is always genuine agent output. Rendered as a separate
-	// alert below the body.
-	const errorInfo = (message as { error?: { type?: string; message?: string } | null }).error;
-	const isError =
-		(message as { finished_reason?: string }).finished_reason === 'error' || !!errorInfo;
+	// A fatal error terminated this reply. ``finished_reason`` / ``error`` are
+	// reply-level fields set by ``appendEvent`` on a ``REPLY_END`` with
+	// ``finished_reason === ReplyFinishedReason.ERROR`` — they are NOT content
+	// blocks, so the body above is always genuine agent output. Rendered as a
+	// separate alert below the body.
+	const errorInfo = message.error;
+	const isError = message.finished_reason === ReplyFinishedReason.ERROR || !!errorInfo;
 
 	const startMs = new Date(message.created_at).getTime();
 	const endMs = isRunning ? now : new Date(message.finished_at!).getTime();
