@@ -7,8 +7,9 @@ from ._vector_store import (
     VectorSearchResult,
     VectorStoreBase,
 )
-from ._milvus_lite import MilvusLiteStore
 from ._qdrant import QdrantStore
+from ._mongodb import MongoDBStore
+from ._milvus_lite import MilvusLiteStore
 
 __all__ = [
     "DocumentSummary",
@@ -17,4 +18,5 @@ __all__ = [
     "VectorRecord",
     "VectorSearchResult",
     "QdrantStore",
+    "MongoDBStore",
 ]

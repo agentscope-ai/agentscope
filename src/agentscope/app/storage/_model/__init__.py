@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """Storage models for persisted resources."""
 
-from ._agent import AgentRecord, AgentData
+from ._agent import AgentRecord, AgentData, InviteConfig
 from ._credential import CredentialRecord
-from ._knowledge_base import KnowledgeBaseRecord
+from ._knowledge_base import KnowledgeBaseData, KnowledgeBaseRecord
 from ._knowledge_document import (
     KnowledgeDocumentData,
     KnowledgeDocumentRecord,
@@ -19,13 +19,14 @@ from ._session import (
     EmbeddingModelConfig,
     SessionSource,
 )
-from ._team import TeamRecord, TeamData
+from ._team import TeamRecord, TeamData, TeamMember
 from ._user import UserRecord
 
 __all__ = [
     "AgentData",
     "AgentRecord",
     "CredentialRecord",
+    "KnowledgeBaseData",
     "KnowledgeBaseRecord",
     "KnowledgeDocumentData",
     "KnowledgeDocumentRecord",
@@ -42,5 +43,7 @@ __all__ = [
     "EmbeddingModelConfig",
     "TeamData",
     "TeamRecord",
+    "TeamMember",
     "UserRecord",
+    "InviteConfig",
 ]

@@ -2,7 +2,7 @@ import { Eye, EyeOff, Plus, Pencil, Trash2 } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 
 import { credentialApi, modelApi, ttsModelApi } from '@/api';
-import type { CredentialRecord, CredentialSchema, ModelCard, TTSModelCard } from '@/api';
+import type { CredentialView, CredentialSchema, ModelCard, TTSModelCard } from '@/api';
 import { InputTypeBadges } from '@/components/badge/InputTypeBadges';
 import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDialog';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog';
@@ -152,7 +152,7 @@ function TTSModelCardItem({ model }: { model: TTSModelCard }) {
 // ─── Detail panel ─────────────────────────────────────────────────────────────
 
 interface DetailPanelProps {
-	credential: CredentialRecord;
+	credential: CredentialView;
 	schema: CredentialSchema | null;
 	onEdit: () => void;
 	onDelete: () => void;
@@ -207,15 +207,32 @@ function DetailPanel({ credential, schema, onEdit, onDelete }: DetailPanelProps)
 		<div className="flex flex-col gap-y-6 p-6 overflow-y-auto h-full">
 			{/* Header */}
 			<div className="flex items-start justify-between gap-x-4">
-				<div>
+				<div className="flex flex-col gap-y-1">
 					<h2 className="text-lg font-semibold">{name}</h2>
 					<p className="text-muted-foreground text-sm">{type}</p>
+					{!credential.editable && (
+						<Badge variant="secondary" title={t('common.readOnlyTooltip')}>
+							{t('common.readOnly')}
+						</Badge>
+					)}
 				</div>
 				<div className="flex items-center gap-x-2 shrink-0">
-					<Button size="icon-sm" variant="outline" onClick={onEdit}>
+					<Button
+						size="icon-sm"
+						variant="outline"
+						onClick={onEdit}
+						disabled={!credential.editable}
+						tooltip={credential.editable ? undefined : t('common.readOnlyTooltip')}
+					>
 						<Pencil />
 					</Button>
-					<Button size="icon-sm" variant="destructive" onClick={onDelete}>
+					<Button
+						size="icon-sm"
+						variant="destructive"
+						onClick={onDelete}
+						disabled={!credential.editable}
+						tooltip={credential.editable ? undefined : t('common.readOnlyTooltip')}
+					>
 						<Trash2 />
 					</Button>
 				</div>
@@ -333,7 +350,7 @@ export const CredentialPage = () => {
 		: null;
 
 	// Group credentials by type, then list all schema types (even empty ones)
-	const groupedByType: Array<{ type: string; title: string; records: CredentialRecord[] }> =
+	const groupedByType: Array<{ type: string; title: string; records: CredentialView[] }> =
 		schemas.map((s) => {
 			const type = s.properties.type?.const as string;
 			return {
@@ -411,6 +428,17 @@ export const CredentialPage = () => {
 																	<span className="min-w-0 flex-1 truncate">
 																		{name}
 																	</span>
+																	{!rec.editable && (
+																		<Badge
+																			variant="secondary"
+																			className="text-[10px] px-1 py-0"
+																			title={t(
+																				'common.readOnlyTooltip',
+																			)}
+																		>
+																			{t('common.readOnly')}
+																		</Badge>
+																	)}
 																</SidebarMenuButton>
 															</SidebarMenuItem>
 														);

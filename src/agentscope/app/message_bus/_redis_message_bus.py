@@ -219,7 +219,7 @@ class RedisMessageBus(MessageBus):
         """
         entry_id = await self._client.xadd(
             key,
-            {"payload": json.dumps(payload)},
+            {"payload": json.dumps(payload, ensure_ascii=False)},
         )
         if ttl_secs is not None:
             await self._client.expire(key, ttl_secs)
@@ -316,7 +316,7 @@ class RedisMessageBus(MessageBus):
             kwargs["approximate"] = True
         entry_id = await self._client.xadd(
             key,
-            {"payload": json.dumps(payload)},
+            {"payload": json.dumps(payload, ensure_ascii=False)},
             **kwargs,
         )
         if ttl_secs is not None:
@@ -483,7 +483,10 @@ class RedisMessageBus(MessageBus):
                 JSON-serializable dict; encoded as the channel
                 message body.
         """
-        await self._client.publish(key, json.dumps(payload))
+        await self._client.publish(
+            key,
+            json.dumps(payload, ensure_ascii=False),
+        )
 
     async def subscribe(
         self,

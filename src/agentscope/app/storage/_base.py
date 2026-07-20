@@ -439,19 +439,29 @@ class StorageBase(ABC):
         self,
         user_id: str,
         session_id: str,
-        offset: int = 0,
         limit: int = 50,
-    ) -> list[Msg]:
-        """Return messages for a session with pagination.
+        before: str | None = None,
+        **kwargs: Any,
+    ) -> tuple[list[Msg], bool]:
+        """Return the most recent messages for a session with
+        cursor-based pagination.
 
         Args:
             user_id (`str`): The owner user id.
             session_id (`str`): The session id.
-            offset (`int`): Starting index (0-based). Defaults to 0.
-            limit (`int`): Maximum number of messages to return.
+            limit (`int`, optional): Maximum number of messages to
+                return. Defaults to 50.
+            before (`str | None`, optional): A message ID used as the
+                cursor. When provided, returns messages created before
+                this message. Omit to get the latest page.
+            **kwargs: Reserved for backward compatibility. Passing
+                ``offset`` will emit a ``DeprecationWarning`` and be
+                ignored.
 
         Returns:
-            `list[Msg]`: Messages in chronological order.
+            `tuple[list[Msg], bool]`: A tuple of (messages in
+            chronological order, has_more). ``has_more`` is ``True``
+            when older messages exist before the returned page.
         """
 
     # ------------------------------------------------------------------
@@ -505,16 +515,28 @@ class StorageBase(ABC):
 
     @abstractmethod
     async def delete_team(self, user_id: str, team_id: str) -> bool:
-        """Delete a team record and cascade-delete all of its workers.
+        """Delete a team record and cascade-clean its members by role.
 
-        The cascade mirrors SQL's ``ON DELETE CASCADE`` semantics:
+        The cascade is role-aware — the two team-membership modes
+        (created vs invited, see :class:`TeamMember`) must be handled
+        differently:
 
-        1. For each ``member_id`` in :attr:`TeamData.member_ids`, call
-           :meth:`delete_agent` (which cascades that worker's session).
+        1. For each :class:`TeamMember` in the team's roster (resolved
+           via the ``ensure_team_members`` helper so legacy
+           ``member_ids``-only records are migrated on first read):
+
+           - ``role == "created"`` — call :meth:`delete_agent`
+             (which cascades that worker's session). The agent record
+             is fully removed because it was spawned solely for this
+             team.
+           - ``role == "invited"`` — call :meth:`delete_session` for
+             the borrowed team-scoped session only. The invited
+             agent's :class:`AgentRecord` and any other sessions it
+             owns survive the team's dissolution.
         2. Clear ``team_id`` on the leader session referenced by
-           :attr:`TeamRecord.session_id` (``ON DELETE SET NULL`` for the
-           leader's back-reference to the team). Idempotent if the
-           session has already been deleted.
+           :attr:`TeamRecord.session_id` (``ON DELETE SET NULL`` for
+           the leader's back-reference). Idempotent if the session has
+           already been deleted.
         3. Delete the :class:`TeamRecord` key and the per-user team
            index entry.
 

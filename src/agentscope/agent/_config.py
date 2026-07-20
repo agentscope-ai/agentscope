@@ -44,8 +44,8 @@ class SummarySchema(BaseModel):
             "Any promises made to the user"
         ),
     )
-    """Whether to execute multiple tool calls in parallel within one
-    reasoning step."""
+    """The important context to preserve across compression, e.g. user
+    preferences, domain-specific details and promises made to the user."""
 
 
 class ContextConfig(BaseModel):
@@ -70,7 +70,26 @@ class ContextConfig(BaseModel):
             "Now write a continuation summary that will allow you to resume "
             "work efficiently in a future context window where the "
             "conversation history will be replaced with this summary. "
-            "Your summary should be structured, concise, and actionable."
+            "Your summary should be structured, concise, and actionable.\n"
+            "The current time is {current_time}.\n"
+            "This summary may itself be summarized again later, and the "
+            "conversation history it refers to will be gone, so every "
+            "reference must be self-contained — resolve anything that "
+            "depends on the vanished context into an absolute, "
+            "fully-qualified form:\n"
+            "- Time: convert relative expressions ('today', 'now', "
+            "'yesterday', 'tomorrow', 'recently') to absolute dates using "
+            "the current time above; re-anchor them even if an earlier "
+            "summary already wrote them relatively.\n"
+            "- Names & pointers: use file paths, symbol names, PR/issue "
+            "numbers, IDs, URLs, and exact commands/error strings verbatim "
+            "instead of 'this file', 'the above', 'the second approach', "
+            "'the 5 failing tests'.\n"
+            "- In-flight work: record everything still pending, especially "
+            "tools launched in the background whose results you are still "
+            "waiting on — give each one's id and a short note of what it is "
+            "doing — and mark each item's owner (user request vs your own "
+            "decision) and status (done / pending / blocked).\n"
             "</system-hint>"
         ),
         # ``format: textarea`` is a hint for schema-driven UI renderers
@@ -101,7 +120,7 @@ class ContextConfig(BaseModel):
     )
     """The string template to present the compressed summary to the agent,
     which will be formatted with the fields from the
-    `compression_summary_model`."""
+    `summary_schema`."""
 
     summary_schema: dict = Field(
         default_factory=SummarySchema.model_json_schema,
@@ -214,6 +233,25 @@ class ReActConfig(BaseModel):
     """If stop reasoning when tool call(s) are rejected. If `True`, the agent
     won't continue reasoning and wait for outside interaction from the user.
     """
+
+    interruption_message: str = Field(
+        title="Interruption Message",
+        default="I notice the interruption. How can I help you?",
+        description="The quick reply message when interrupted.",
+    )
+    """The interruption message."""
+
+    interruption_raise_cancelled_error: bool = Field(
+        title="Raise CancelledError on Interruption",
+        default=False,
+        description="Whether to re-raise ``asyncio.CancelledError`` after "
+        "handling the interruption. When ``False``, the ``CancelledError`` "
+        "is swallowed once the interruption context has been produced.",
+    )
+    """Whether to re-raise the ``asyncio.CancelledError`` after the
+    interruption has been handled. When ``False``, the ``CancelledError``
+    is swallowed once the fallback interruption message and
+    ``ReplyEndEvent`` have been emitted."""
 
 
 class ModelConfig(BaseModel):

@@ -17,7 +17,12 @@ from agentscope.permission import (
     PermissionBehavior,
     PermissionContext,
 )
-from agentscope.message import TextBlock, ToolCallBlock, UserMsg
+from agentscope.message import (
+    TextBlock,
+    ThinkingBlock,
+    ToolCallBlock,
+    UserMsg,
+)
 
 
 class MockSequentialTool(ToolBase):
@@ -240,10 +245,12 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
             {
                 "type": "REPLY_END",
                 "session_id": session_id,
+                "finished_reason": "completed",
             },
         ]
 
@@ -422,10 +429,12 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
             {
                 "type": "REPLY_END",
                 "session_id": session_id,
+                "finished_reason": "completed",
             },
         ]
 
@@ -558,6 +567,83 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         ]
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
         self.assertListEqual(context_dicts, expected_context_after_reply)
+
+    async def test_thinking_only_response_continues_reasoning(self) -> None:
+        """A thinking-only response should not end with an empty reply."""
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[ThinkingBlock(thinking="Working on it")],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="Final answer")],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        msg = await self.agent.reply(UserMsg(name="user", content="Think"))
+
+        # The thinking-only turn must trigger a second reasoning round
+        self.assertEqual(self.model.cnt, 2)
+
+        # The final reply message only carries the visible text answer
+        self.assertDictEqual(
+            msg.model_dump(),
+            {
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": None,
+                "metadata": {},
+                "name": "Friday",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": "Final answer",
+                    },
+                ],
+                "usage": None,
+            },
+        )
+
+        # The context keeps the thinking block and the final answer in a
+        # single assistant message following the user turn
+        msg_base = self._get_msg_base()
+        expected_context = [
+            {
+                **msg_base,
+                "name": "user",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": "Think",
+                    },
+                ],
+                "finished_at": AnyString(),
+            },
+            {
+                **msg_base,
+                "content": [
+                    {
+                        "type": "thinking",
+                        "id": AnyString(),
+                        "thinking": "Working on it",
+                    },
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": "Final answer",
+                    },
+                ],
+            },
+        ]
+        context_dicts = [msg.model_dump() for msg in self.agent.state.context]
+        self.assertListEqual(context_dicts, expected_context)
 
     async def test_streaming_sequential_tool_calls(self) -> None:
         """Test the streaming model inference with tool calls generated.
@@ -692,6 +778,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
             {
                 "type": "TOOL_RESULT_START",
@@ -735,8 +822,13 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
-            {"type": "REPLY_END", "session_id": session_id},
+            {
+                "type": "REPLY_END",
+                "session_id": session_id,
+                "finished_reason": "completed",
+            },
         ]
 
         basic_dict = self._get_event_base(reply_id)
@@ -909,6 +1001,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
         ]
 
@@ -960,8 +1053,13 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
-            {"type": "REPLY_END", "session_id": session_id},
+            {
+                "type": "REPLY_END",
+                "session_id": session_id,
+                "finished_reason": "completed",
+            },
         ]
 
         # Assert prefix events (fixed order)
@@ -1155,6 +1253,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
         ]
 
@@ -1227,8 +1326,13 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
-            {"type": "REPLY_END", "session_id": session_id},
+            {
+                "type": "REPLY_END",
+                "session_id": session_id,
+                "finished_reason": "completed",
+            },
         ]
 
         # Assert prefix events (fixed order)

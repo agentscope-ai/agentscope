@@ -439,7 +439,10 @@ class Msg(BaseModel):
             case EventType.USER_CONFIRM_RESULT:
                 for result in event.confirm_results:
                     b = self._find_block("tool_call", result.tool_call.id)
-                    if b is not None:
+                    # Only ASKING calls can transition; skip stale results
+                    # (e.g. arriving after an interrupt already resolved the
+                    # tool call).
+                    if b is not None and b.state == ToolCallState.ASKING:
                         assert isinstance(b, ToolCallBlock)
                         b.state = (
                             ToolCallState.ALLOWED
@@ -455,7 +458,16 @@ class Msg(BaseModel):
                         b.state = ToolCallState.SUBMITTED
 
             case EventType.EXTERNAL_EXECUTION_RESULT:
+                # Skip results whose tool_call already has a tool_result
+                # (e.g. late arrival after an interrupt).
+                existing_ids = {
+                    b.id
+                    for b in self.content
+                    if isinstance(b, ToolResultBlock)
+                }
                 for result in event.execution_results:
+                    if result.id in existing_ids:
+                        continue
                     self.content.append(result)
 
         return self

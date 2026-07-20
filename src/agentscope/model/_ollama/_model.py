@@ -247,79 +247,52 @@ class OllamaChatModel(ChatModelBase):
                 Incremental ``ChatResponse`` objects with ``is_last=False``
                 followed by a final one with ``is_last=True``.
         """
-        # All delta should have the same block identifier.
-        # Ollama does not return a request id, so we generate one upfront
-        # to keep it stable.
-        response_id = getattr(response, "id", None) or _generate_id()
-        acc_text = TextBlock(text="")
-        acc_thinking = ThinkingBlock(thinking="")
-        acc_tool_calls: dict = {}
-        usage = None
+        response_id: str = _generate_id()
+        text_id: str = _generate_id()
+        thinking_id: str = _generate_id()
 
         async for chunk in response:
-            delta_content: list = []
+            delta_res = ChatResponse(
+                content=[],
+                is_last=False,
+                id=response_id,
+            )
+
             msg = chunk.message
 
-            chunk_thinking = getattr(msg, "thinking", None)
-            if chunk_thinking:
-                acc_thinking.thinking += chunk_thinking
-                delta_content.append(
-                    ThinkingBlock(id=acc_thinking.id, thinking=chunk_thinking),
+            # Thinking
+            if getattr(msg, "thinking", None):
+                delta_res.append_thinking(
+                    block_id=thinking_id,
+                    thinking=msg.thinking,
                 )
 
+            # Text
             if msg.content:
-                acc_text.text += msg.content
-                delta_content.append(
-                    TextBlock(id=acc_text.id, text=msg.content),
+                delta_res.append_text(
+                    block_id=text_id,
+                    text=msg.content,
                 )
 
+            # Tool call
             for idx, tool_call in enumerate(msg.tool_calls or []):
-                function = tool_call.function
-                tool_id = f"{idx}_{function.name}"
-                input_str = json.dumps(function.arguments)
-                acc_tool_calls[tool_id] = {
-                    "name": function.name,
-                    "input": input_str,
-                }
-                delta_content.append(
-                    ToolCallBlock(
-                        id=tool_id,
-                        name=function.name,
-                        input=input_str,
+                delta_res.append_tool_call(
+                    block_id=f"{idx}_{tool_call.function.name}",
+                    name=tool_call.function.name,
+                    input=json.dumps(
+                        tool_call.function.arguments,
+                        ensure_ascii=False,
                     ),
                 )
 
             current_time = (datetime.now() - start_datetime).total_seconds()
-            usage = ChatUsage(
+            delta_res.usage = ChatUsage(
                 input_tokens=getattr(chunk, "prompt_eval_count", 0) or 0,
                 output_tokens=getattr(chunk, "eval_count", 0) or 0,
                 time=current_time,
             )
 
-            if delta_content:
-                yield ChatResponse(
-                    id=response_id,
-                    content=delta_content,
-                    is_last=False,
-                    usage=usage,
-                )
-
-        final_content: list = []
-        if acc_thinking.thinking:
-            final_content.append(acc_thinking)
-        if acc_text.text:
-            final_content.append(acc_text)
-        for tool_id, tc in acc_tool_calls.items():
-            final_content.append(
-                ToolCallBlock(id=tool_id, name=tc["name"], input=tc["input"]),
-            )
-
-        yield ChatResponse(
-            id=response_id,
-            content=final_content,
-            is_last=True,
-            usage=usage,
-        )
+            yield delta_res
 
     async def _parse_completion_response(
         self,
@@ -352,7 +325,10 @@ class OllamaChatModel(ChatModelBase):
                 ToolCallBlock(
                     id=f"{idx}_{tool_call.function.name}",
                     name=tool_call.function.name,
-                    input=json.dumps(tool_call.function.arguments),
+                    input=json.dumps(
+                        tool_call.function.arguments,
+                        ensure_ascii=False,
+                    ),
                 ),
             )
 

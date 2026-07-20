@@ -18,6 +18,8 @@ from agentscope.message import (
     AssistantMsg,
     TextBlock,
     ToolCallBlock,
+    ToolResultBlock,
+    ToolResultState,
     HintBlock,
     Msg,
 )
@@ -626,6 +628,183 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                             "id": AnyString(),
                             "type": "text",
                             "text": "d" * 40,
+                        },
+                    ],
+                    "metadata": {},
+                    "usage": None,
+                },
+            ],
+        )
+
+    async def test_split_multi_tool_pairs_reaches_stable_boundary(
+        self,
+    ) -> None:
+        """The boundary is rechecked after moving an unmatched result."""
+        agent = Agent(
+            name="Friday",
+            system_prompt="",
+            model=MockModel(context_size=1_000),
+            state=AgentState(
+                session_id="multi-tool-compression",
+                context=[
+                    UserMsg("User", "old" * 80, id="old-user"),
+                    AssistantMsg(
+                        "Friday",
+                        [
+                            ToolCallBlock(
+                                id="tc1",
+                                name="first_tool",
+                                input=json.dumps({"value": "a" * 80}),
+                            ),
+                            ToolCallBlock(
+                                id="tc2",
+                                name="second_tool",
+                                input=json.dumps({"value": "b" * 80}),
+                            ),
+                            ToolResultBlock(
+                                id="tc1",
+                                name="first_tool",
+                                output=[
+                                    TextBlock(text="first result " * 8),
+                                ],
+                                state=ToolResultState.SUCCESS,
+                            ),
+                            ToolResultBlock(
+                                id="tc2",
+                                name="second_tool",
+                                output=[
+                                    TextBlock(text="second result " * 8),
+                                ],
+                                state=ToolResultState.SUCCESS,
+                            ),
+                            TextBlock(
+                                text="Both tools completed.",
+                                id="final-text",
+                            ),
+                        ],
+                        id="multi-tool-msg",
+                    ),
+                    UserMsg(
+                        "User",
+                        "latest question",
+                        id="latest-user",
+                    ),
+                ],
+            ),
+            toolkit=Toolkit(),
+        )
+
+        to_compress, to_reserve = await agent._split_context_for_compression(
+            to_reserved_tokens=86,
+            tools=[],
+        )
+
+        self.assertListEqual(
+            [msg.model_dump() for msg in to_compress],
+            [
+                {
+                    "id": "old-user",
+                    "created_at": AnyString(),
+                    "finished_at": AnyString(),
+                    "name": "User",
+                    "role": "user",
+                    "content": [
+                        {
+                            "id": AnyString(),
+                            "type": "text",
+                            "text": "old" * 80,
+                        },
+                    ],
+                    "metadata": {},
+                    "usage": None,
+                },
+                {
+                    "id": "multi-tool-msg",
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                    "name": "Friday",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "id": "tc1",
+                            "type": "tool_call",
+                            "name": "first_tool",
+                            "input": json.dumps({"value": "a" * 80}),
+                            "state": "pending",
+                            "suggested_rules": [],
+                        },
+                        {
+                            "id": "tc2",
+                            "type": "tool_call",
+                            "name": "second_tool",
+                            "input": json.dumps({"value": "b" * 80}),
+                            "state": "pending",
+                            "suggested_rules": [],
+                        },
+                        {
+                            "id": "tc1",
+                            "type": "tool_result",
+                            "name": "first_tool",
+                            "output": [
+                                {
+                                    "id": AnyString(),
+                                    "type": "text",
+                                    "text": "first result " * 8,
+                                },
+                            ],
+                            "state": "success",
+                            "metadata": {},
+                        },
+                        {
+                            "id": "tc2",
+                            "type": "tool_result",
+                            "name": "second_tool",
+                            "output": [
+                                {
+                                    "id": AnyString(),
+                                    "type": "text",
+                                    "text": "second result " * 8,
+                                },
+                            ],
+                            "state": "success",
+                            "metadata": {},
+                        },
+                    ],
+                    "metadata": {},
+                    "usage": None,
+                },
+            ],
+        )
+        self.assertListEqual(
+            [msg.model_dump() for msg in to_reserve],
+            [
+                {
+                    "id": "multi-tool-msg",
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                    "name": "Friday",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "id": "final-text",
+                            "type": "text",
+                            "text": "Both tools completed.",
+                        },
+                    ],
+                    "metadata": {},
+                    "usage": None,
+                },
+                {
+                    "id": "latest-user",
+                    "created_at": AnyString(),
+                    "finished_at": AnyString(),
+                    "name": "User",
+                    "role": "user",
+                    "content": [
+                        {
+                            "id": AnyString(),
+                            "type": "text",
+                            "text": "latest question",
                         },
                     ],
                     "metadata": {},

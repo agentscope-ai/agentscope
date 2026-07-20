@@ -2,7 +2,6 @@
 """The Ollama formatter module."""
 import base64
 import fnmatch
-import json
 from abc import ABC
 from typing import Any
 
@@ -11,6 +10,7 @@ from pydantic import Field
 
 from ._formatter_base import FormatterBase
 from .._logging import logger
+from .._utils._common import _json_loads_with_repair
 from ..message import (
     Msg,
     TextBlock,
@@ -197,8 +197,12 @@ class OllamaChatFormatter(_OllamaFormatterBase):
                                     "function": {
                                         "name": block.name,
                                         # Ollama SDK expects a dict, not a
-                                        # JSON string.
-                                        "arguments": json.loads(
+                                        # JSON string. Use the repair helper
+                                        # so a truncated input (from
+                                        # interrupted streaming or context
+                                        # compression) degrades to {} instead
+                                        # of raising JSONDecodeError.
+                                        "arguments": _json_loads_with_repair(
                                             block.input or "{}",
                                         ),
                                     },
@@ -228,9 +232,15 @@ class OllamaChatFormatter(_OllamaFormatterBase):
 
                     # Ollama expects tool results as a separate "tool" role
                     # message, regardless of the containing Msg's role.
+                    # Per the Ollama tool-calling spec, the "tool" message
+                    # must carry a "tool_name" field (not the OpenAI-style
+                    # "tool_call_id") so the model can correlate the result
+                    # with the function that produced it — see
+                    # https://docs.ollama.com/capabilities/tool-calling
                     messages.append(
                         {
                             "role": "tool",
+                            "tool_name": block.name,
                             "content": textual_output,
                         },
                     )
