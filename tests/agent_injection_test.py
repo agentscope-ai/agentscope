@@ -105,8 +105,11 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
     async def test_first_reply_triggers_time_injection(self) -> None:
         """The first reply (empty context) should trigger a time injection."""
         expected_hint = (
+            "<system-reminder>Treat the following as current ground truth:\n"
+            "<current-session>You're in a conversation with session ID: "
+            f"{self.agent.state.session_id}</current-session>\n"
             "<current-time>2026-07-01T12:00:00</current-time>\n"
-            "<timezone>UTC</timezone>"
+            "<timezone>UTC</timezone></system-reminder>"
         )
         with patch("agentscope.agent._agent.datetime", _FrozenDatetime):
             events = await self._run_injection()
@@ -124,8 +127,11 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
         """A stale last injection (long elapsed time) should re-inject, while a
         recent one should not."""
         expected_hint = (
+            "<system-reminder>Treat the following as current ground truth:\n"
+            "<current-session>You're in a conversation with session ID: "
+            f"{self.agent.state.session_id}</current-session>\n"
             "<current-time>2026-07-01T12:00:00</current-time>\n"
-            "<timezone>UTC</timezone>"
+            "<timezone>UTC</timezone></system-reminder>"
         )
         # Avoid the context-length branch, which only runs on the first iter.
         self.agent.state.cur_iter = 1
@@ -150,8 +156,11 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
         """A recent injection should not re-inject, but once the context is
         compressed away, the next call should inject again."""
         expected_hint = (
+            "<system-reminder>Treat the following as current ground truth:\n"
+            "<current-session>You're in a conversation with session ID: "
+            f"{self.agent.state.session_id}</current-session>\n"
             "<current-time>2026-07-01T12:00:00</current-time>\n"
-            "<timezone>UTC</timezone>"
+            "<timezone>UTC</timezone></system-reminder>"
         )
         self.agent.state.cur_iter = 1
 
@@ -177,10 +186,10 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
         expected_hint = (
             "<system-reminder>Treat the following as current ground truth:\n"
             "<current-session>You're in a conversation with session ID: "
-            f"{self.agent.state.session_id}</current-session>\n",
+            f"{self.agent.state.session_id}</current-session>\n"
             "<tasks>You have 0 in-progress tasks and 1 pending tasks. "
             "Use `TaskList` to view them if you don't know.</tasks>"
-            "</system-reminder>",
+            "</system-reminder>"
         )
         self.agent.state.cur_iter = 1
         # A recent injection so the time branch is not triggered.
@@ -205,9 +214,12 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
         """When the input tokens are close to the compression threshold, a
         context-length injection should be triggered."""
         expected_hint = (
+            "<system-reminder>Treat the following as current ground truth:\n"
+            "<current-session>You're in a conversation with session ID: "
+            f"{self.agent.state.session_id}</current-session>\n"
             "<context-length>Your current context contains 700 tokens. "
             "When reaching 800.0 tokens, your context will be compressed."
-            "</context-length>"
+            "</context-length></system-reminder>"
         )
         # First iteration is required for the context-length branch.
         self.agent.state.cur_iter = 0

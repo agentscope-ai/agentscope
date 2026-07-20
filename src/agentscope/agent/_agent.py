@@ -1117,7 +1117,7 @@ class Agent:
                     "context-length": (
                         f"Your current context contains {input_tokens} "
                         f"tokens. When reaching {trigger_tokens} tokens, "
-                        f"your context will be compressed.",
+                        f"your context will be compressed."
                     ),
                 }
 
@@ -1126,7 +1126,7 @@ class Agent:
             injections = {
                 "current-session": (
                     "You're in a conversation with session ID: "
-                    f"{self.state.session_id}",
+                    f"{self.state.session_id}"
                 ),
                 **injections,
             }
