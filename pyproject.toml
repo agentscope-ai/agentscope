@@ -98,6 +98,10 @@ milvuslite = [
 mongodb = [
     "pymongo>=4.7",
 ]
+# ------------ RAGFlow vector store ------------
+ragflow = [
+    "ragflow-sdk",
+]
 
 # ------------ S3-compatible blob store ------------
 s3 = [
@@ -125,6 +129,7 @@ full = [
     "agentscope[rag]",
     "agentscope[milvuslite]",
     "agentscope[mongodb]",
+    "agentscope[ragflow]",
     "agentscope[s3]",
     "agentscope[mem0]",
     "agentscope[reme]",

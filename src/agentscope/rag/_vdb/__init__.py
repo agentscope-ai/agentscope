@@ -10,10 +10,12 @@ from ._vector_store import (
 from ._qdrant import QdrantStore
 from ._mongodb import MongoDBStore
 from ._milvus_lite import MilvusLiteStore
+from ._ragflow import RAGFlowStore
 
 __all__ = [
     "DocumentSummary",
     "MilvusLiteStore",
+    "RAGFlowStore",
     "VectorStoreBase",
     "VectorRecord",
     "VectorSearchResult",
