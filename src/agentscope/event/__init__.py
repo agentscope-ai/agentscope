@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """The event module of agentscope."""
 
-from ..types import ReplyFinishedReason, ReplyEndReason, ErrorType
+from ..types import ReplyFinishedReason, ErrorType
 from ._event import (
     EventType,
     EventBase,
     ReplyStartEvent,
+    ReplyEndReason,
     ReplyEndEvent,
     ErrorInfo,
     ModelCallStartEvent,

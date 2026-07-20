@@ -5,6 +5,7 @@ from enum import StrEnum
 from typing import Any, Dict, Literal, List, TypeAlias
 
 from pydantic import BaseModel, Field, ConfigDict
+from typing_extensions import deprecated
 
 from .._utils._common import _generate_id
 from ..message import (
@@ -92,6 +93,20 @@ class ReplyStartEvent(EventBase):
     """Name of the agent."""
     role: Literal["user", "assistant", "system"] = "assistant"
     """Role of the agent."""
+
+
+@deprecated(
+    "ReplyEndReason is deprecated and will be removed; "
+    "use agentscope.types.ReplyFinishedReason instead.",
+)
+class ReplyEndReason(StrEnum):
+    """Deprecated alias of :class:`~agentscope.types.ReplyFinishedReason`,
+    kept for backward compatibility. Value-compatible (both ``StrEnum``),
+    so existing code that constructs or compares against it keeps working."""
+
+    COMPLETED = "completed"
+    INTERRUPTED = "interrupted"
+    EXCEED_MAX_ITERS = "exceed_max_iters"
 
 
 class ReplyEndEvent(EventBase):

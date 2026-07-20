@@ -5,26 +5,10 @@ without an import cycle."""
 from enum import StrEnum
 
 from pydantic import BaseModel
-from typing_extensions import deprecated
 
 
 class ReplyFinishedReason(StrEnum):
     """The reason a reply finished."""
-
-    COMPLETED = "completed"
-    INTERRUPTED = "interrupted"
-    EXCEED_MAX_ITERS = "exceed_max_iters"
-    ERROR = "error"
-
-
-@deprecated(
-    "ReplyEndReason is deprecated and will be removed; "
-    "use ReplyFinishedReason instead.",
-)
-class ReplyEndReason(StrEnum):
-    """Deprecated alias of :class:`ReplyFinishedReason`, kept for backward
-    compatibility. Value-compatible (both ``StrEnum``), so existing code
-    that constructs or compares against it keeps working."""
 
     COMPLETED = "completed"
     INTERRUPTED = "interrupted"

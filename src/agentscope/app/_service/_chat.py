@@ -52,7 +52,7 @@ from ...event import (
     ExternalExecutionResultEvent,
     UserInterruptEvent,
 )
-from ._errors import classify_error
+from ._errors import _classify_error
 from ...message import AssistantMsg, Msg, ToolCallState
 from ...permission import AdditionalWorkingDirectory
 
@@ -652,7 +652,7 @@ class ChatService:
                         session_id=session_id,
                         reply_id=reply_msg.id,
                         finished_reason=ReplyFinishedReason.ERROR,
-                        error=classify_error(e),
+                        error=_classify_error(e),
                     )
                     reply_msg.append_event(end_event)
                     await publish_session_event(

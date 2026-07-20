@@ -12,7 +12,6 @@ from ._json import (
 )
 from ._reply import (
     ReplyFinishedReason,
-    ReplyEndReason,
     ErrorType,
     ErrorInfo,
 )
@@ -24,7 +23,6 @@ __all__ = [
     "JSONPrimitive",
     "JSONSerializableObject",
     "ReplyFinishedReason",
-    "ReplyEndReason",
     "ErrorType",
     "ErrorInfo",
 ]

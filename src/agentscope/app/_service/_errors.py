@@ -56,7 +56,7 @@ def _classify_type(e: Exception) -> ErrorType:
     return ErrorType.INTERNAL
 
 
-def classify_error(e: Exception) -> ErrorInfo:
+def _classify_error(e: Exception) -> ErrorInfo:
     """Classify a fatal reply exception into a structured
     :class:`ErrorInfo` for the frontend.
 
