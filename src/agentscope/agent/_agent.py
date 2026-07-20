@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
 """The unified agent class in AgentScope library."""
 import asyncio
+import collections
 import inspect
+import re
 
 from asyncio import Queue
 from copy import deepcopy
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import (
     Any,
     AsyncGenerator,
@@ -16,7 +20,7 @@ from typing import (
 
 import jsonschema
 
-from ._config import ContextConfig, ReActConfig, ModelConfig
+from ._config import ContextConfig, ReActConfig, ModelConfig, InjectionConfig
 from ..state import AgentState
 from ._utils import _ToolCallBatch
 from .._logging import logger
@@ -48,6 +52,7 @@ from ..event import (
     DataBlockDeltaEvent,
     DataBlockEndEvent,
     ExceedMaxItersEvent,
+    HintBlockEvent,
 )
 from ..exception import AgentOrientedException
 from ..model import (
@@ -107,6 +112,7 @@ class Agent:
         model_config: ModelConfig | None = None,
         context_config: ContextConfig | None = None,
         react_config: ReActConfig | None = None,
+        injection_config: InjectionConfig | None = None,
     ) -> None:
         """Initialize the agent class in AgentScope.
 
@@ -139,6 +145,10 @@ class Agent:
                 compression.
             react_config (`ReActConfig`):
                 The config for the reasoning-acting loop.
+            injection_config (`InjectionConfig`):
+                The runtime state injection config that injects the time,
+                (plan) tasks, context information into the context to help
+                agent better reason and act.
         """
         self.name = name
         self._system_prompt = system_prompt
@@ -148,6 +158,7 @@ class Agent:
         self.model_config = model_config or ModelConfig()
         self.context_config = context_config or ContextConfig()
         self.react_config = react_config or ReActConfig()
+        self.injection_config = injection_config or InjectionConfig()
 
         # The permission engine
         self._engine = PermissionEngine(self.state.permission_context)
@@ -640,6 +651,11 @@ class Agent:
             if action == "reasoning":
                 # Compressed the memory if needed before reasoning
                 await self.compress_context()
+
+                # Inject runtime state if needed before reasoning
+                async for evt in self._inject_runtime_state():
+                    yield evt
+
                 # Perform reasoning
                 async for evt in self._reasoning():
                     # Exit the loop when no tool calls generated and the reply
@@ -730,6 +746,220 @@ class Agent:
             content="Executed maximum iterations of reasoning-acting loop"
             "without finishing the task.",
         )
+
+    async def _inject_runtime_state(
+        self,
+    ) -> AsyncGenerator[HintBlockEvent, None]:
+        """Inject the current runtime state (time, plan tasks and context
+        usage) into the conversation context as a ``HintBlock``, so the agent
+        stays aware of the information that changes across turns/replies.
+
+        .. note:: The injection is **not** ephemeral. It is appended to the
+            persistent context on purpose, so the agent can perceive how time
+            elapses and what it did at each step, building a sense of time.
+
+        .. note:: We attach a ``HintBlock`` instead of mutating the system
+            prompt, so that prompt caching still works while the agent remains
+            aware of the changing time / tasks / context.
+
+        .. note:: Only information that *changes* within a conversation is
+            injected here. Fixed information should live in the system prompt.
+
+        The injection timing is decided per dimension:
+
+        - **Time**: injected when (1) no previous injection exists in the
+          context (i.e. the first reply or right after a context compression),
+          or (2) the elapsed time since the last injection exceeds
+          ``injection_config.time_interval`` hours.
+        - **Plan tasks**: injected when there are pending or in-progress tasks
+          while the context contains no task-related tool calls (e.g. they
+          have been compressed away).
+        - **Context**: injected when the current input tokens are within
+          ``injection_config.context_buffer_ratio`` of the compression
+          threshold, letting the agent perceive that a compression is near.
+
+        Yields:
+            `HintBlockEvent`:
+                Emitted when a runtime-state hint is injected and
+                ``injection_config.emit_hint_event`` is enabled.
+        """
+        injections: dict = {}
+
+        # The wall-clock time in the configured timezone, kept naive so it
+        # round-trips through ``time_format`` which carries no timezone token.
+        now = datetime.now(
+            ZoneInfo(self.injection_config.timezone),
+        ).replace(tzinfo=None)
+
+        # A fixed source used to detect existing injection
+        injection_source = "|<system-injection>|"
+
+        # The last runtime state injection
+        last_injection: HintBlock | None = None
+
+        # If the current context contains the task related tool calls
+        has_task_tools: bool = False
+
+        # =====================================================================
+        # Step 1: Analyze the current context
+        #  - The last injection (if any)
+        #  - The tasks related tool use
+        # =====================================================================
+        for msg in reversed(self.state.context):
+            if msg.role != "assistant":
+                continue
+            for block in msg.content:
+                if (
+                    not last_injection
+                    and isinstance(block, HintBlock)
+                    and block.source == injection_source
+                ):
+                    last_injection = block
+                elif isinstance(block, ToolCallBlock) and block.name in [
+                    "TaskCreate",
+                    "TaskGet",
+                    "TaskList",
+                    "TaskUpdate",
+                ]:
+                    has_task_tools = True
+
+                # Early exit
+                if has_task_tools and last_injection is not None:
+                    break
+
+            # Early exit
+            if has_task_tools and last_injection is None:
+                break
+
+        # =====================================================================
+        # Step 2: Check Time Injection
+        # =====================================================================
+        inject_time = False
+        if last_injection is None:
+            inject_time = True
+        else:
+            injected_text = ""
+            # Check the last injection time
+            if isinstance(last_injection.hint, str):
+                injected_text = last_injection.hint
+            elif isinstance(last_injection.hint, list):
+                for block in last_injection.hint:
+                    if isinstance(block, TextBlock):
+                        injected_text += block.text
+
+            # Extract the recorded time from the last injection, e.g.
+            # <current-time>2026-07-01T12:00:00</current-time>
+            match = re.search(
+                r"<current-time>(.*?)</current-time>",
+                injected_text,
+                re.DOTALL,
+            )
+            if match is None:
+                # No time recorded in the last injection, inject again
+                inject_time = True
+            else:
+                try:
+                    last_time = datetime.strptime(
+                        match.group(1).strip(),
+                        self.injection_config.time_format,
+                    )
+                    elapsed_hours = (now - last_time).total_seconds() / 3600
+                    inject_time = (
+                        elapsed_hours > self.injection_config.time_interval
+                    )
+                except ValueError:
+                    # Fail to parse the recorded time, inject again to be safe
+                    inject_time = True
+
+        if inject_time:
+            injections = {
+                **injections,
+                "current-time": now.strftime(
+                    self.injection_config.time_format,
+                ),
+                "timezone": self.injection_config.timezone,
+            }
+
+        # =====================================================================
+        # Step 3: Check Plan Tasks
+        # =====================================================================
+        task_status = collections.defaultdict(int)
+        for task in self.state.tasks_context.tasks:
+            task_status[task.state] += 1
+
+        # If exists uncompleted tasks and the context doesn't have any
+        # related tool calls (maybe compressed)
+        if (
+            task_status["pending"] > 0 or task_status["in_progress"] > 0
+        ) and not has_task_tools:
+            injections = {
+                **injections,
+                "tasks": (
+                    f"You have {task_status['in_progress']} in-progress tasks "
+                    f"and {task_status['pending']} pending tasks. "
+                    f"Use `TaskList` to view them if you don't know.",
+                ),
+            }
+
+        # =====================================================================
+        # Step 4: Context Length
+        # =====================================================================
+        # The context size injection only occur in the beginning of the reply
+        if self.state.cur_iter == 0 and not injections:
+            # Count the current tokens
+            kwargs = await self._prepare_model_input()
+            input_tokens = await self.model.count_tokens(**kwargs)
+
+            trigger_tokens = (
+                self.context_config.trigger_ratio * self.model.context_size
+            )
+
+            if input_tokens > (
+                max(
+                    0.0,
+                    self.context_config.trigger_ratio
+                    - self.injection_config.context_buffer_ratio,
+                )
+                * self.model.context_size
+            ):
+                # To trigger memory compress
+                injections = {
+                    **injections,
+                    "context-length": (
+                        f"Your current context contains {input_tokens} "
+                        f"tokens. When reaching {trigger_tokens} tokens, "
+                        f"your context will be compressed.",
+                    ),
+                }
+
+        if injections:
+            # Attach the session id into the injection
+            injections["current-session"] = (
+                "You're in a conversation with session ID: "
+                f"{self.state.session_id}"
+            )
+
+            injected_text = "\n".join(
+                [f"<{k}>{v}</{k}>" for k, v in injections.items()],
+            )
+            hint_block = HintBlock(
+                source=injection_source,
+                hint=(
+                    "<system-reminder>Treat the following as current ground "
+                    "truth:\n{injected_text}</system-reminder>"
+                ),
+            )
+            self.state.append_context(
+                self.name,
+                [hint_block],
+            )
+            if self.injection_config.emit_hint_event:
+                yield HintBlockEvent(
+                    reply_id=self.state.reply_id,
+                    block_id=hint_block.id,
+                    source=hint_block.source,
+                    hint=hint_block.hint,
+                )
 
     async def _reasoning(
         self,

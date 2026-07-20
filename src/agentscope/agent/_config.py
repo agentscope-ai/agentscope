@@ -120,6 +120,80 @@ class ContextConfig(BaseModel):
     """The tool result limit to avoid tool result bursting."""
 
 
+class InjectionConfig(BaseModel):
+    """The state injection related configuration in AgentScope."""
+
+    inject_runtime_state: bool = Field(
+        title="Inject Runtime State",
+        description=(
+            "Inject the runtime state to context, including current time,"
+            "tasks state, context length, etc."
+        ),
+        default=True,
+    )
+    """Whether to inject the runtime state to context, including current time,
+    tasks state, context length, etc."""
+
+    timezone: str = Field(
+        title="Timezone",
+        default="UTC",
+        description=(
+            "The injected timezone. e.g. 'America/New_York' or "
+            "'Asia/Shanghai'."
+        ),
+    )
+    """The timezone to inject into the context, follow the standard timezone
+    database format, e.g. 'America/New_York' or 'Asia/Shanghai'."""
+
+    time_format: str = Field(
+        title="Time Format",
+        default="%Y-%m-%dT%H:%M:%S",
+        description="The format to inject and parse the time information",
+    )
+
+    time_interval: float = Field(
+        title="Time Interval",
+        default=0.5,
+        description=(
+            "The minimum time interval from the last injection to trigger "
+            "new time injection"
+        ),
+    )
+
+    context_buffer_ratio: float = Field(
+        title="Context Buffer",
+        default=0.2,
+        description=(
+            "The buffer that will activate context length injection before "
+            "context compression."
+        ),
+    )
+
+    template: str = Field(
+        title="Template",
+        default="""<system-reminder>The current status information, which \
+maybe helpful:
+{runtime_state}
+</system-reminder>""",
+    )
+
+    extra_fields: list[str] = Field(
+        default_factory=dict,
+        description=(
+            "The extra fields to inject, which will be wrapped into the "
+            "'<{key}>{value}</{key}>' format."
+        ),
+    )
+
+    emit_hint_event: bool = Field(
+        title="Emit Hint Event",
+        default=True,
+        description=(
+            "If emit the HintBlockEvent when runtime state injection happens."
+        ),
+    )
+
+
 class ReActConfig(BaseModel):
     """The reasoning related configuration"""
 
