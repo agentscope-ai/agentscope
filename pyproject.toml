@@ -100,7 +100,7 @@ mongodb = [
 ]
 # ------------ Elasticsearch vector store ------------
 elasticsearch = [
-    "elasticsearch[async]>=8.12,<9",
+    "elasticsearch[async]>=8.12",
 ]
 
 # ------------ S3-compatible blob store ------------
