@@ -22,7 +22,9 @@ from agentscope.app._manager import (
     CancelDispatcher,
     ChatRunRegistry,
 )
+from agentscope.app._manager._background_task_manager import ToolStop
 from agentscope.app.message_bus import MessageBus
+from agentscope.message import ToolResultState
 
 
 class _FakeBus(MessageBus):
@@ -35,6 +37,7 @@ class _FakeBus(MessageBus):
     def __init__(self) -> None:
         self._channels: dict[str, asyncio.Queue] = {}
         self._locks: set[str] = set()
+        self._registries: dict[str, dict[str, str]] = {}
 
     def _channel(self, key: str) -> asyncio.Queue:
         return self._channels.setdefault(key, asyncio.Queue())
@@ -117,6 +120,30 @@ class _FakeBus(MessageBus):
     async def is_locked(self, key: str) -> bool:
         return key in self._locks
 
+    # Mode F — registry (in-memory dict)
+    async def registry_set(
+        self,
+        namespace: str,
+        field: str,
+        value: str,
+        *,
+        ttl_secs: int | None = None,
+    ) -> None:
+        self._registries.setdefault(namespace, {})[field] = value
+
+    async def registry_del(self, namespace: str, field: str) -> None:
+        if namespace in self._registries:
+            self._registries[namespace].pop(field, None)
+
+    async def registry_exists(self, namespace: str, field: str) -> bool:
+        return field in self._registries.get(namespace, {})
+
+    async def registry_getall(self, namespace: str) -> dict[str, str]:
+        return dict(self._registries.get(namespace, {}))
+
+    async def registry_drop(self, namespace: str) -> None:
+        self._registries.pop(namespace, None)
+
 
 async def _yield_a_few_times(ticks: int = 8) -> None:
     """Yield the event loop a few times so spawned tasks make progress."""
@@ -141,7 +168,7 @@ class TestCancelDispatcher(IsolatedAsyncioTestCase):
         cancels the registered asyncio task."""
         bus = _FakeBus()
         registry = ChatRunRegistry()
-        bg_manager = BackgroundTaskManager()
+        bg_manager = BackgroundTaskManager(message_bus=bus)
 
         async with bg_manager, registry, CancelDispatcher(
             message_bus=bus,
@@ -167,7 +194,7 @@ class TestCancelDispatcher(IsolatedAsyncioTestCase):
         cancels each of them; tasks for other sessions are untouched."""
         bus = _FakeBus()
         registry = ChatRunRegistry()
-        bg_manager = BackgroundTaskManager()
+        bg_manager = BackgroundTaskManager(message_bus=bus)
 
         async with bg_manager, registry, CancelDispatcher(
             message_bus=bus,
@@ -215,7 +242,7 @@ class TestCancelDispatcher(IsolatedAsyncioTestCase):
         ignored — no exception, no spurious cancel."""
         bus = _FakeBus()
         registry = ChatRunRegistry()
-        bg_manager = BackgroundTaskManager()
+        bg_manager = BackgroundTaskManager(message_bus=bus)
 
         async with bg_manager, registry, CancelDispatcher(
             message_bus=bus,
@@ -252,7 +279,7 @@ class TestCancelDispatcher(IsolatedAsyncioTestCase):
         and the local BG task(s) for the session, not just one."""
         bus = _FakeBus()
         registry = ChatRunRegistry()
-        bg_manager = BackgroundTaskManager()
+        bg_manager = BackgroundTaskManager(message_bus=bus)
 
         async with bg_manager, registry, CancelDispatcher(
             message_bus=bus,
@@ -288,7 +315,7 @@ class TestBackgroundTaskManagerCancelSessionTasks(IsolatedAsyncioTestCase):
     async def test_cancels_only_matching_session(self) -> None:
         """Only tasks whose ``session_id`` matches are cancelled; the
         return value reports the local count."""
-        bg_manager = BackgroundTaskManager()
+        bg_manager = BackgroundTaskManager(message_bus=_FakeBus())
         async with bg_manager:
             task_a = asyncio.create_task(_NeverEndingCoro.run())
             task_b = asyncio.create_task(_NeverEndingCoro.run())
@@ -319,7 +346,7 @@ class TestBackgroundTaskManagerCancelSessionTasks(IsolatedAsyncioTestCase):
     async def test_no_matches_returns_zero(self) -> None:
         """A session with no locally-registered tasks returns 0 and
         does no work."""
-        bg_manager = BackgroundTaskManager()
+        bg_manager = BackgroundTaskManager(message_bus=_FakeBus())
         async with bg_manager:
             task = asyncio.create_task(_NeverEndingCoro.run())
             await bg_manager.register_task(
@@ -334,3 +361,103 @@ class TestBackgroundTaskManagerCancelSessionTasks(IsolatedAsyncioTestCase):
                 0,
             )
             self.assertFalse(task.cancelled())
+
+
+class TestToolStopRemoteCancel(IsolatedAsyncioTestCase):
+    """Verifies the cross-worker cancel path of :class:`ToolStop`.
+
+    A "worker A" registers a BG task in the shared bus registry, and a
+    "worker B" — which has the task only in the global registry, not in
+    its local cache — issues ``ToolStop``. The dispatcher on worker A
+    must receive the broadcast and cancel the task locally.
+    """
+
+    async def test_remote_cancel_via_toolstop_broadcast(self) -> None:
+        """ToolStop on a worker without the task publishes a task-level
+        cancel; the owning worker's CancelDispatcher cancels the task."""
+        bus = _FakeBus()
+
+        # Worker A — owns the task and runs CancelDispatcher.
+        bg_manager_owner = BackgroundTaskManager(message_bus=bus)
+        registry_owner = ChatRunRegistry()
+
+        # Worker B — only sees the task via the shared registry.
+        bg_manager_caller = BackgroundTaskManager(message_bus=bus)
+
+        async with bg_manager_owner, registry_owner, CancelDispatcher(
+            message_bus=bus,
+            registry=registry_owner,
+            bg_manager=bg_manager_owner,
+        ), bg_manager_caller:
+            owned_task = asyncio.create_task(_NeverEndingCoro.run())
+            task_id = await bg_manager_owner.register_task(
+                owned_task,
+                session_id="sess-shared",
+                agent_id="agent",
+                user_id="u",
+                tool_name="LongRunningTool",
+            )
+
+            # Worker B's ToolStop: task_id is in the global registry but
+            # not in worker B's local cache, so the remote-cancel path
+            # is taken.
+            tool_stop = ToolStop(
+                background_tasks=bg_manager_caller.tasks,
+                message_bus=bus,
+                session_id="sess-shared",
+            )
+            chunk = await tool_stop(task_id=task_id)
+
+            self.assertEqual(chunk.state, ToolResultState.SUCCESS)
+            self.assertIn(
+                "Cancel request sent",
+                chunk.content[0].text,
+            )
+
+            for _ in range(50):
+                if owned_task.cancelled() or owned_task.done():
+                    break
+                await asyncio.sleep(0.01)
+
+            self.assertTrue(owned_task.cancelled() or owned_task.done())
+
+    async def test_toolstop_does_not_cancel_other_session_locally(
+        self,
+    ) -> None:
+        """A ToolStop instance bound to session A must not cancel a
+        locally-tracked task that belongs to session B, even if the
+        guessed task_id is correct."""
+        bus = _FakeBus()
+        bg_manager = BackgroundTaskManager(message_bus=bus)
+
+        async with bg_manager:
+            victim_task = asyncio.create_task(_NeverEndingCoro.run())
+            victim_task_id = await bg_manager.register_task(
+                victim_task,
+                session_id="sess-victim",
+                agent_id="agent-v",
+                user_id="u",
+            )
+
+            # ToolStop is bound to a *different* session; it should not
+            # cancel ``victim_task`` directly. The shared registry is
+            # also keyed by the bound session id, so the lookup misses
+            # and we fall through to "not found".
+            tool_stop = ToolStop(
+                background_tasks=bg_manager.tasks,
+                message_bus=bus,
+                session_id="sess-attacker",
+            )
+            chunk = await tool_stop(task_id=victim_task_id)
+
+            await _yield_a_few_times()
+
+            self.assertEqual(chunk.state, ToolResultState.ERROR)
+            self.assertIn(
+                "TaskNotFoundError",
+                chunk.content[0].text,
+            )
+            self.assertFalse(victim_task.cancelled())
+            self.assertIn(victim_task_id, bg_manager.tasks)
+
+            victim_task.cancel()

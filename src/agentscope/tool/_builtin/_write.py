@@ -1,13 +1,11 @@
 # -*- coding: utf-8 -*-
 """The write tool in agentscope."""
+import difflib
 import fnmatch
-import os
 from pathlib import Path
 from typing import Any, List
 
-import aiofiles
-
-from .._base import ToolBase
+from .._base import ToolBase, ToolMiddlewareBase
 from .._constants import (
     DEFAULT_DANGEROUS_FILES,
     DEFAULT_DANGEROUS_DIRECTORIES,
@@ -22,6 +20,7 @@ from ...permission import (
 from .._response import ToolChunk
 from ...message import TextBlock, ToolResultState
 from ...state import AgentState
+from ._backend import BackendBase
 
 
 class Write(ToolBase):
@@ -67,6 +66,8 @@ Usage:
         self,
         dangerous_files: list[str] = DEFAULT_DANGEROUS_FILES,
         dangerous_directories: list[str] = DEFAULT_DANGEROUS_DIRECTORIES,
+        middlewares: List[ToolMiddlewareBase] | None = None,
+        backend: BackendBase | None = None,
     ) -> None:
         """Initialize the write tool.
 
@@ -84,9 +85,19 @@ Usage:
                 `DEFAULT_DANGEROUS_DIRECTORIES`. Pass a custom list to
                 fully replace the defaults, or `[]` to disable the
                 directory check.
+            middlewares (`List[ToolMiddlewareBase] | None`, optional):
+                Tool middlewares wrapping the tool execution.
+            backend (`BackendBase | None`, optional):
+                The sandbox backend to use for file I/O. When ``None``,
+                a :class:`LocalBackend` is created.
         """
+        from ._backend import LocalBackend
+
+        super().__init__(middlewares=middlewares)
         self.dangerous_files = list(dangerous_files)
         self.dangerous_directories = list(dangerous_directories)
+
+        self._backend = backend or LocalBackend()
 
     async def check_permissions(
         self,
@@ -128,13 +139,19 @@ Usage:
                 bypass_immune=True,
             )
 
-        # 2. Check ACCEPT_EDITS mode for files in working directories
-        if context.mode == PermissionMode.ACCEPT_EDITS:
+        # 2. Auto-allow edits within a working directory. This applies to
+        # ACCEPT_EDITS (interactive) and DONT_ASK (its unattended
+        # counterpart), which trusts in-working-directory edits without a
+        # prompt because no user is available to grant one.
+        if context.mode in (
+            PermissionMode.ACCEPT_EDITS,
+            PermissionMode.DONT_ASK,
+        ):
             if self._path_in_allowed_working_path(file_path, context):
                 return PermissionDecision(
                     behavior=PermissionBehavior.ALLOW,
                     message=f"Permission granted for writing {file_path} "
-                    f"(accept edits mode - in working directory)",
+                    f"(in working directory)",
                     decision_reason="File is in working directory and not "
                     "a dangerous path",
                 )
@@ -146,7 +163,7 @@ Usage:
             message="",
         )
 
-    def match_rule(
+    async def match_rule(
         self,
         rule_content: str | None,
         tool_input: dict[str, Any],
@@ -176,7 +193,7 @@ Usage:
             return False
         return fnmatch.fnmatch(file_path, rule_content)
 
-    def generate_suggestions(
+    async def generate_suggestions(
         self,
         tool_input: dict[str, Any],
     ) -> List[PermissionRule]:
@@ -198,8 +215,10 @@ Usage:
         if not file_path:
             return []
 
-        parent = os.path.dirname(file_path)
-        pattern = (parent.rstrip("/") + "/**") if parent else "**"
+        parent = self._backend.dirname(file_path)
+        # Glob patterns are POSIX-style strings (matched by fnmatch),
+        # not real filesystem paths — do NOT use backend.join_path here.
+        pattern = (parent.rstrip("/\\") + "/**") if parent else "**"
 
         return [
             PermissionRule(
@@ -210,7 +229,7 @@ Usage:
             ),
         ]
 
-    async def __call__(  # type: ignore[override]
+    async def call(  # type: ignore[override]
         self,
         file_path: str,
         content: str,
@@ -218,7 +237,7 @@ Usage:
     ) -> ToolChunk:
         """Write content to a file and return the result."""
         # Validate that file_path is absolute
-        if not os.path.isabs(file_path):
+        if not self._backend.isabs(file_path):
             return ToolChunk(
                 content=[
                     TextBlock(
@@ -231,7 +250,10 @@ Usage:
             )
 
         # Check if file exists, it must be read first if it exists
-        if os.path.exists(file_path) and _agent_state is not None:
+        if (
+            await self._backend.file_exists(file_path)
+            and _agent_state is not None
+        ):
             cache = await _agent_state.tool_context.get_cache(file_path)
             if cache is None:
                 return ToolChunk(
@@ -246,16 +268,53 @@ Usage:
                     is_last=True,
                 )
 
+        # Capture the pre-write content (if any) so we can compute a unified
+        # diff for the web UI. For brand-new files this stays as an empty
+        # string, which produces a clean "new file" diff (``--- /dev/null``).
+        # Track ``file_existed`` separately from ``previous_content`` because
+        # an *existing* empty file overwrite is not the same as creating a
+        # new file — the diff header must reflect that.
+        file_existed = await self._backend.file_exists(file_path)
+        previous_content = ""
+        if file_existed:
+            try:
+                previous_content = (
+                    await self._backend.read_file(file_path)
+                ).decode("utf-8")
+            except Exception:  # pylint: disable=broad-except
+                # Binary or unreadable file — fall back to empty so we still
+                # render a best-effort "add" diff in the UI.
+                previous_content = ""
+
         # Create parent directories if they don't exist
         parent_dir = Path(file_path).parent
-        os.makedirs(parent_dir, exist_ok=True)
+        await self._backend.exec_shell(
+            ["mkdir", "-p", str(parent_dir)],
+        )
 
-        # Write content to file
-        async with aiofiles.open(file_path, mode="w", encoding="utf-8") as f:
-            await f.write(content)
+        # Write content to file (backend handles parent dir creation)
+        await self._backend.write_file(
+            file_path,
+            content.encode("utf-8"),
+        )
 
         # Count lines in content
         line_count = len(content.split("\n"))
+
+        # Build the unified diff between previous and new content. When the
+        # file is brand new, ``unified_diff`` over an empty old side naturally
+        # produces a single "all add" hunk starting at line 1.
+        diff_text = "".join(
+            difflib.unified_diff(
+                previous_content.splitlines(keepends=True),
+                content.splitlines(keepends=True),
+                fromfile=(
+                    "/dev/null" if not file_existed else f"a/{file_path}"
+                ),
+                tofile=f"b/{file_path}",
+                n=3,
+            ),
+        )
 
         # Return success message
         return ToolChunk(
@@ -267,4 +326,9 @@ Usage:
             ],
             state=ToolResultState.RUNNING,
             is_last=True,
+            metadata={
+                "diff": diff_text,
+                "file_path": file_path,
+                "occurrences": 1,
+            },
         )

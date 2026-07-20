@@ -244,6 +244,9 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
             "tail -f log.txt",
             "grep pattern file.txt",
             "find . -name '*.py'",
+            "find . -name '-delete'",
+            "find . -path './-fprint'",
+            "find . -regex '.*-exec.*'",
             "tree",
             "pwd",
             "which python",
@@ -253,6 +256,30 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
                 self.assertTrue(
                     self.parser.is_read_only_command(cmd),
                     f"Expected '{cmd}' to be read-only",
+                )
+
+    async def test_mutating_find_commands_are_not_read_only(self) -> None:
+        """Test find predicates that can modify files are not read-only."""
+        mutating_find_commands = [
+            "find . -delete",
+            "find . -name '*.tmp' -delete",
+            "find . -daystart -delete",
+            "find . -nogroup -delete",
+            "find . -nouser -delete",
+            "find . -exec rm {} \\;",
+            "find . -execdir rm {} \\;",
+            "find . -fls results.txt",
+            "find . -fprint results.txt",
+            "find . -fprint0 results.txt",
+            "find . -fprintf results.txt '%p\\n'",
+            "find . -ok rm {} \\;",
+            "find . -okdir rm {} \\;",
+        ]
+        for cmd in mutating_find_commands:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(
+                    self.parser.is_read_only_command(cmd),
+                    f"Expected '{cmd}' to be non-read-only",
                 )
 
     async def test_single_read_only_docker_commands(self) -> None:
@@ -975,7 +1002,7 @@ class BashWildcardMatchingTest(IsolatedAsyncioTestCase):
         ]
         for pattern, command, expected in test_cases:
             with self.subTest(pattern=pattern, command=command):
-                result = self.bash_tool.match_rule(
+                result = await self.bash_tool.match_rule(
                     pattern,
                     {"command": command},
                 )
@@ -990,7 +1017,7 @@ class BashWildcardMatchingTest(IsolatedAsyncioTestCase):
         ]
         for pattern, command, expected in test_cases:
             with self.subTest(pattern=pattern, command=command):
-                result = self.bash_tool.match_rule(
+                result = await self.bash_tool.match_rule(
                     pattern,
                     {"command": command},
                 )
@@ -1006,7 +1033,7 @@ class BashWildcardMatchingTest(IsolatedAsyncioTestCase):
         ]
         for pattern, command, expected in test_cases:
             with self.subTest(pattern=pattern, command=command):
-                result = self.bash_tool.match_rule(
+                result = await self.bash_tool.match_rule(
                     pattern,
                     {"command": command},
                 )
@@ -1023,7 +1050,7 @@ class BashWildcardMatchingTest(IsolatedAsyncioTestCase):
         ]
         for pattern, command, expected in test_cases:
             with self.subTest(pattern=pattern, command=command):
-                result = self.bash_tool.match_rule(
+                result = await self.bash_tool.match_rule(
                     pattern,
                     {"command": command},
                 )
@@ -1039,7 +1066,7 @@ class BashWildcardMatchingTest(IsolatedAsyncioTestCase):
         ]
         for pattern, command, expected in test_cases:
             with self.subTest(pattern=pattern, command=command):
-                result = self.bash_tool.match_rule(
+                result = await self.bash_tool.match_rule(
                     pattern,
                     {"command": command},
                 )

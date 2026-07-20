@@ -2,6 +2,7 @@
 """The common utilities for agentscope library."""
 import asyncio
 import base64
+import copy
 import functools
 import inspect
 import json
@@ -11,11 +12,49 @@ import uuid
 from datetime import datetime
 from typing import Any, Callable
 
-import requests
-from json_repair import repair_json
-
 from .._logging import logger
 from ..exception import ToolJSONDecodeError
+
+
+def _default_id_factory() -> str:
+    return uuid.uuid4().hex
+
+
+_id_factory: Callable[[], str] = _default_id_factory
+
+
+def set_id_factory(factory: Callable[[], str]) -> None:
+    """Override the global ID factory used by all AgentScope entities.
+
+    Entity IDs default to ``uuid.uuid4().hex``. Call this once at
+    startup to substitute a different strategy.
+
+    .. note::
+        Security-sensitive tokens (gateway tokens, Redis lock tokens)
+        are **not** affected and always use ``uuid.uuid4().hex``.
+
+    Args:
+        factory (`Callable[[], str]`):
+            A no-arg callable returning a string ID.
+
+    Raises:
+        TypeError: If ``factory`` is not callable.
+
+    Example:
+        >>> from agentscope import set_id_factory
+        >>> set_id_factory(lambda: uuid7().hex)
+    """
+    if not callable(factory):
+        raise TypeError(
+            f"factory must be a callable, got {type(factory).__name__}",
+        )
+    global _id_factory
+    _id_factory = factory
+
+
+def _generate_id() -> str:
+    """Generate an ID string using the current global ID factory."""
+    return _id_factory()
 
 
 def _json_loads_with_repair(
@@ -60,6 +99,8 @@ def _json_loads_with_repair(
 
     try:
         # Try to repair with json_repair
+        from json_repair import repair_json
+
         repaired = repair_json(json_str, stream_stable=True, schema=schema)
         res = json.loads(repaired)
         if isinstance(res, dict):
@@ -162,6 +203,8 @@ def _get_bytes_from_web_url(
         max_retries (`int`, defaults to `3`):
             The maximum number of retries.
     """
+    import requests
+
     for _ in range(max_retries):
         try:
             response = requests.get(url)
@@ -195,3 +238,104 @@ def _map_text_to_uuid(text: str) -> str:
             A deterministic UUID string derived from the input text.
     """
     return str(uuid.uuid3(uuid.NAMESPACE_DNS, text))
+
+
+def _flatten_json_schema(schema: dict) -> dict:
+    """Flatten a JSON schema by resolving all local ``$ref`` references.
+
+    Some LLM providers (e.g. Gemini, GLM-5.x via OpenCode Go) cannot
+    process ``$defs`` / ``$ref`` patterns in tool parameter schemas.
+    When Pydantic generates schemas for complex nested types it emits a
+    ``$defs`` block (or the legacy ``definitions`` block) and refers to
+    it with ``{"$ref": "#/$defs/TypeName"}``.
+
+    This function resolves every such reference by substituting the full
+    definition inline, then drops the ``$defs`` / ``definitions``
+    sections so the output is a flat, self-contained schema.
+
+    Circular references are detected and replaced with a fallback object
+    schema to avoid infinite recursion.  Only local references of the
+    form ``#/$defs/<name>`` or ``#/definitions/<name>`` are expanded;
+    external ``$ref`` URLs are left unchanged.
+
+    Args:
+        schema (`dict`):
+            The JSON schema that may contain ``$defs`` and ``$ref``
+            references.
+
+    Returns:
+        `dict`:
+            A flattened JSON schema with all references resolved inline.
+    """
+    has_defs = isinstance(schema.get("$defs"), dict) or isinstance(
+        schema.get("definitions"),
+        dict,
+    )
+    if not has_defs:
+        return schema
+
+    schema = copy.deepcopy(schema)
+    defs: dict[str, Any] = {}
+    if isinstance(schema.get("$defs"), dict):
+        defs.update(schema.pop("$defs"))
+    if isinstance(schema.get("definitions"), dict):
+        defs.update(schema.pop("definitions"))
+
+    if not defs:
+        return schema
+
+    def _resolve_ref(obj: Any, visited: frozenset = frozenset()) -> Any:
+        if isinstance(obj, list):
+            return [_resolve_ref(item, visited) for item in obj]
+        if not isinstance(obj, dict):
+            return obj
+        if "$ref" in obj:
+            ref_path = obj["$ref"]
+            if isinstance(ref_path, str) and (
+                ref_path.startswith("#/$defs/")
+                or ref_path.startswith("#/definitions/")
+            ):
+                def_name = ref_path.split("/")[-1]
+                if def_name in visited:
+                    logger.warning(
+                        "Circular reference detected for '%s' in tool "
+                        "schema",
+                        def_name,
+                    )
+                    return {
+                        "type": "object",
+                        "description": f"(circular: {def_name})",
+                    }
+                if def_name in defs:
+                    resolved = _resolve_ref(
+                        defs[def_name],
+                        visited | {def_name},
+                    )
+                    for key, value in obj.items():
+                        if key != "$ref":
+                            resolved[key] = _resolve_ref(
+                                value,
+                                visited | {def_name},
+                            )
+                    return resolved
+            return obj
+        result: dict[str, Any] = {}
+        for key, value in obj.items():
+            if key in ("$defs", "definitions"):
+                continue
+            result[key] = _resolve_ref(value, visited)
+        return result
+
+    return _resolve_ref(schema)
+
+
+def _estimate_tokens(text: str) -> int:
+    """Estimate the number of tokens in a given text."""
+
+    return int(len(text.encode("utf-8")) / 4 + 0.5)
+
+
+def _estimate_bytes(tokens: int) -> int:
+    """Estimate the number of bytes with given tokens."""
+
+    return int(tokens * 4)

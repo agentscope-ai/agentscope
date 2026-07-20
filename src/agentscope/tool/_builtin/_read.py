@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
 """The read tool in agentscope."""
 import fnmatch
-import os
 from typing import Any, List
 
-import aiofiles
-
-from .._base import ToolBase
+from .._base import ToolBase, ToolMiddlewareBase
 from ...permission import (
     PermissionContext,
     PermissionDecision,
@@ -16,6 +13,7 @@ from ...permission import (
 from .._response import ToolChunk
 from ...message import TextBlock, ToolResultState
 from ...state import AgentState
+from ._backend import BackendBase, _normalize_newlines
 
 
 class Read(ToolBase):
@@ -72,6 +70,8 @@ Usage:
     def __init__(
         self,
         max_line_characters: int = 2000,
+        middlewares: List[ToolMiddlewareBase] | None = None,
+        backend: BackendBase | None = None,
     ) -> None:
         """Initialize the read tool.
 
@@ -82,9 +82,17 @@ Usage:
                 a "[truncated]" suffix. This prevents overwhelming the agent
                 with excessively long lines while still providing useful
                 content.
+            middlewares (`List[ToolMiddlewareBase] | None`, optional):
+                Tool middlewares wrapping the tool execution.
+            backend (`BackendBase | None`, optional):
+                The sandbox backend to use for file I/O. When ``None``,
+                a :class:`LocalBackend` is created.
         """
+        from ._backend import LocalBackend
 
+        super().__init__(middlewares=middlewares)
         self._max_line_characters = max_line_characters
+        self._backend = backend or LocalBackend()
 
     async def check_permissions(
         self,
@@ -102,7 +110,7 @@ Usage:
             message="File reading is read-only.",
         )
 
-    def match_rule(
+    async def match_rule(
         self,
         rule_content: str | None,
         tool_input: dict[str, Any],
@@ -133,7 +141,7 @@ Usage:
             return False
         return fnmatch.fnmatch(file_path, rule_content)
 
-    def generate_suggestions(
+    async def generate_suggestions(
         self,
         tool_input: dict[str, Any],
     ) -> List[PermissionRule]:
@@ -155,8 +163,10 @@ Usage:
         if not file_path:
             return []
 
-        parent = os.path.dirname(file_path)
-        pattern = (parent.rstrip("/") + "/**") if parent else "**"
+        parent = self._backend.dirname(file_path)
+        # Glob patterns are POSIX-style strings (matched by fnmatch),
+        # not real filesystem paths — do NOT use backend.join_path here.
+        pattern = (parent.rstrip("/\\") + "/**") if parent else "**"
 
         return [
             PermissionRule(
@@ -167,7 +177,7 @@ Usage:
             ),
         ]
 
-    async def __call__(  # type: ignore[override]
+    async def call(  # type: ignore[override]
         self,
         file_path: str,
         offset: int = 1,
@@ -177,7 +187,7 @@ Usage:
         """Read the file and return the content with line numbers."""
 
         # Validate file_path is absolute
-        if not os.path.isabs(file_path):
+        if not self._backend.isabs(file_path):
             return ToolChunk(
                 content=[
                     TextBlock(
@@ -190,7 +200,7 @@ Usage:
             )
 
         # Check file exists
-        if not os.path.exists(file_path):
+        if not await self._backend.file_exists(file_path):
             return ToolChunk(
                 content=[
                     TextBlock(text=f"Error: File does not exist: {file_path}"),
@@ -200,7 +210,7 @@ Usage:
             )
 
         # Check it's not a directory
-        if os.path.isdir(file_path):
+        if await self._backend.is_dir(file_path):
             return ToolChunk(
                 content=[
                     TextBlock(
@@ -213,7 +223,7 @@ Usage:
             )
 
         try:
-            # Read file content with aiofiles
+            # Read file content via backend
             lines = None
             if _agent_state is not None:
                 cache = await _agent_state.tool_context.get_cache(file_path)
@@ -221,13 +231,13 @@ Usage:
                     lines = cache.lines
 
             if lines is None:
-                async with aiofiles.open(
-                    file_path,
-                    mode="r",
-                    encoding="utf-8",
-                    errors="replace",
-                ) as f:
-                    lines = await f.readlines()
+                raw = await self._backend.read_file(file_path)
+                content_str = raw.decode("utf-8", errors="replace")
+                # Normalize CRLF/CR so cached lines end in "\n" regardless
+                # of the platform the file was written on (Windows text
+                # files use "\r\n").
+                content_str = _normalize_newlines(content_str)
+                lines = content_str.splitlines(keepends=True)
 
                 # Cache file if state is provided
                 if _agent_state is not None:

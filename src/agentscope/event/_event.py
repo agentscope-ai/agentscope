@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """Event types for agent execution."""
-import uuid
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Dict, Literal, List, TypeAlias
 
 from pydantic import BaseModel, Field, ConfigDict
+from typing_extensions import deprecated
 
+from .._utils._common import _generate_id
 from ..message import (
     DataBlock,
     TextBlock,
@@ -14,6 +15,11 @@ from ..message import (
     ToolResultBlock,
     ToolResultState,
 )
+from ..types import (
+    ReplyFinishedReason,
+    ErrorInfo,
+)
+from ..model import FinishedReason
 from ..permission import PermissionRule
 
 
@@ -55,6 +61,7 @@ class EventType(StrEnum):
     REQUIRE_EXTERNAL_EXECUTION = "REQUIRE_EXTERNAL_EXECUTION"
 
     USER_CONFIRM_RESULT = "USER_CONFIRM_RESULT"
+    USER_INTERRUPT = "USER_INTERRUPT"
     EXTERNAL_EXECUTION_RESULT = "EXTERNAL_EXECUTION_RESULT"
 
     CUSTOM = "CUSTOM"
@@ -65,7 +72,7 @@ class EventBase(BaseModel):
 
     model_config = ConfigDict(use_enum_values=True)
 
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    id: str = Field(default_factory=_generate_id)
     """Unique event identifier."""
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     """ISO 8601 timestamp of when the event was created."""
@@ -88,6 +95,20 @@ class ReplyStartEvent(EventBase):
     """Role of the agent."""
 
 
+@deprecated(
+    "ReplyEndReason is deprecated and will be removed; "
+    "use agentscope.types.ReplyFinishedReason instead.",
+)
+class ReplyEndReason(StrEnum):
+    """Deprecated alias of :class:`~agentscope.types.ReplyFinishedReason`,
+    kept for backward compatibility. Value-compatible (both ``StrEnum``),
+    so existing code that constructs or compares against it keeps working."""
+
+    COMPLETED = "completed"
+    INTERRUPTED = "interrupted"
+    EXCEED_MAX_ITERS = "exceed_max_iters"
+
+
 class ReplyEndEvent(EventBase):
     """Reply end event."""
 
@@ -97,6 +118,11 @@ class ReplyEndEvent(EventBase):
     """ID of the session this reply belongs to."""
     reply_id: str
     """ID of the reply message produced by this reply."""
+    finished_reason: ReplyFinishedReason = ReplyFinishedReason.COMPLETED
+    """The finished reason of this reply."""
+    error: ErrorInfo | None = None
+    """Structured error info, populated only when
+    ``finished_reason == ReplyFinishedReason.ERROR``."""
 
 
 class ModelCallStartEvent(EventBase):
@@ -121,6 +147,10 @@ class ModelCallEndEvent(EventBase):
     """Number of input tokens consumed."""
     output_tokens: int
     """Number of output tokens generated."""
+    finished_reason: FinishedReason = Field(
+        default=FinishedReason.COMPLETED,
+    )
+    """The finished reason of this model call."""
 
 
 class TextBlockStartEvent(EventBase):
@@ -337,7 +367,7 @@ class ToolResultDataDeltaEvent(EventBase):
     """ID of the reply message this tool result belongs to."""
     tool_call_id: str
     """ID of the corresponding tool call."""
-    block_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    block_id: str = Field(default_factory=_generate_id)
     """Unique identifier of the data block created by this event."""
     media_type: str
     """MIME type of the binary content."""
@@ -360,6 +390,8 @@ class ToolResultEndEvent(EventBase):
     """ID of the corresponding tool call."""
     state: ToolResultState
     """Final execution state of the tool call."""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    """Optional metadata attached to the tool result event."""
 
 
 class ExceedMaxItersEvent(EventBase):
@@ -424,6 +456,31 @@ class UserConfirmResultEvent(EventBase):
     """ID of the reply message associated with this run."""
     confirm_results: list[ConfirmResult]
     """Confirmation results for each pending tool call."""
+
+
+class UserInterruptEvent(EventBase):
+    """User-initiated interrupt targeting a parked reply.
+
+    Delivered to :meth:`Agent.reply_stream` (or :meth:`Agent.reply`) to
+    abort a reply that is currently waiting on external input — either
+    user confirmation (:class:`RequireUserConfirmEvent`) or external
+    execution (:class:`RequireExternalExecutionEvent`).
+
+    On receipt, the agent closes every pending tool call with an
+    interrupted tool result, emits a fallback assistant message, ends
+    the reply with :attr:`ReplyEndReason.INTERRUPTED`, and does **not**
+    enter the reasoning-acting loop.
+
+    .. note:: This event is only meaningful for parked replies. To
+        interrupt a running (actively-generating) reply, cancel the
+        underlying task instead — the agent handles that path via its
+        own ``CancelledError`` cleanup.
+    """
+
+    type: Literal[EventType.USER_INTERRUPT] = EventType.USER_INTERRUPT
+    """Event type."""
+    reply_id: str
+    """ID of the reply message this interrupt targets."""
 
 
 class ExternalExecutionResultEvent(EventBase):
@@ -499,6 +556,7 @@ AgentEvent: TypeAlias = (
     | ToolResultDataDeltaEvent
     | ToolResultEndEvent
     | UserConfirmResultEvent
+    | UserInterruptEvent
     | ExternalExecutionResultEvent
     | CustomEvent
 )

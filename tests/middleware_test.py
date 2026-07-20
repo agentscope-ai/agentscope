@@ -8,8 +8,8 @@ from typing import Any, AsyncGenerator, Callable, Union
 from utils import MockModel
 from pydantic import BaseModel
 from agentscope.app.middleware import TeamReportMiddleware
-from agentscope.event import AgentEvent, EventType
-from agentscope.agent import Agent, ContextConfig
+from agentscope.event import AgentEvent, EventType, HintBlockEvent
+from agentscope.agent import Agent, ContextConfig, InjectionConfig
 from agentscope.middleware import MiddlewareBase
 from agentscope.model import ChatResponse
 from agentscope.message import (
@@ -79,7 +79,9 @@ class _FakeTeamSay(ToolBase):
         )
 
 
-class TestMiddleware(IsolatedAsyncioTestCase):
+class TestMiddleware(  # pylint: disable=too-many-public-methods
+    IsolatedAsyncioTestCase,
+):
     """Test cases for middleware system."""
 
     async def asyncSetUp(self) -> None:
@@ -138,6 +140,10 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             model=self.mock_model,
             toolkit=self.toolkit,
             middlewares=[middleware1, middleware2],
+            # The runtime state injection is covered by
+            # agent_injection_test, turn it off to keep the assertions
+            # focused.
+            injection_config=InjectionConfig(inject_runtime_state=False),
         )
 
         await agent.reply(UserMsg("user", "test message"))
@@ -158,10 +164,10 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             "mw1_TEXT_BLOCK_END",
             "mw2_MODEL_CALL_END",
             "mw1_MODEL_CALL_END",
-            "mw2_REPLY_END",
-            "mw1_REPLY_END",
             "mw2_msg",
             "mw1_msg",
+            "mw2_REPLY_END",
+            "mw1_REPLY_END",
             "mw2_post",
             "mw1_post",
         ]
@@ -432,6 +438,9 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             model=self.mock_model,
             toolkit=self.toolkit,
             middlewares=[middleware1, middleware2],
+            # The runtime state injection is covered by agent_injection_test,
+            # turn it off to keep the assertions focused.
+            injection_config=InjectionConfig(inject_runtime_state=False),
         )
 
         await agent.reply(UserMsg("user", "test message"))
@@ -525,6 +534,9 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             model=self.mock_model,
             toolkit=self.toolkit,
             middlewares=[middleware],
+            # The runtime state injection is covered by agent_injection_test,
+            # turn it off to keep the assertions focused.
+            injection_config=InjectionConfig(inject_runtime_state=False),
         )
 
         await agent.reply(UserMsg("user", "test message"))
@@ -610,6 +622,81 @@ class TestMiddleware(IsolatedAsyncioTestCase):
         self.assertTrue(len(user_messages) > 0)
         self.assertIn(
             "MODIFIED: original message",
+            user_messages[-1].get_text_content(),
+        )
+
+    async def test_on_reply_keeps_outer_input_when_inner_omits_kwargs(
+        self,
+    ) -> None:
+        """Argumentless next_handler() keeps outer reply input changes."""
+
+        class ModifyInputMiddleware(MiddlewareBase):
+            """Middleware that replaces the reply input."""
+
+            async def on_reply(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., AsyncGenerator],
+            ) -> AsyncGenerator:
+                inputs = input_kwargs["inputs"]
+                modified = UserMsg(
+                    name=inputs.name,
+                    content="MODIFIED by outer middleware",
+                )
+                async for item in next_handler(inputs=modified):
+                    yield item
+
+        class TransparentMiddleware(MiddlewareBase):
+            """Middleware that calls next_handler() without passing kwargs."""
+
+            async def on_reply(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., AsyncGenerator],
+            ) -> AsyncGenerator:
+                assert (
+                    "MODIFIED by outer middleware"
+                    in input_kwargs["inputs"].get_text_content()
+                )
+                async for item in next_handler():
+                    yield item
+
+        received_messages = []
+
+        class TrackingModel(MockModel):
+            """Model that tracks received messages."""
+
+            async def _call_api(
+                self,
+                *args: Any,
+                **kwargs: Any,
+            ) -> ChatResponse:
+                received_messages.extend(kwargs.get("messages", []))
+                return await super()._call_api(*args, **kwargs)
+
+        tracking_model = TrackingModel()
+        tracking_model.set_responses(
+            [ChatResponse(content=[TextBlock(text="response")], is_last=True)],
+        )
+
+        agent_instance = Agent(
+            name="test_agent",
+            system_prompt="test prompt",
+            model=tracking_model,
+            toolkit=self.toolkit,
+            middlewares=[
+                ModifyInputMiddleware(),
+                TransparentMiddleware(),
+            ],
+        )
+
+        await agent_instance.reply(UserMsg("user", "original message"))
+
+        user_messages = [m for m in received_messages if m.role == "user"]
+        self.assertIn(
+            "MODIFIED by outer middleware",
             user_messages[-1].get_text_content(),
         )
 
@@ -869,15 +956,177 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             ),
         )
 
+    async def test_on_model_call_keeps_outer_messages_when_inner_omits_kwargs(
+        self,
+    ) -> None:
+        """Transparent inner model-call middleware keeps outer messages."""
+
+        class ModifyMessagesMiddleware(MiddlewareBase):
+            """Middleware that changes the messages."""
+
+            async def on_model_call(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., Any],
+            ) -> Union[ChatResponse, AsyncGenerator[ChatResponse, None]]:
+                modified_messages = [
+                    SystemMsg(
+                        name="system",
+                        content="INJECTED SYSTEM MESSAGE",
+                    ),
+                ] + input_kwargs["messages"]
+                return await next_handler(messages=modified_messages)
+
+        class TransparentMiddleware(MiddlewareBase):
+            """Middleware that calls next_handler() without passing kwargs."""
+
+            async def on_model_call(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., Any],
+            ) -> Union[ChatResponse, AsyncGenerator[ChatResponse, None]]:
+                system_messages = [
+                    m for m in input_kwargs["messages"] if m.role == "system"
+                ]
+                assert any(
+                    "INJECTED SYSTEM MESSAGE" in m.get_text_content()
+                    for m in system_messages
+                )
+                return await next_handler()
+
+        received_messages = []
+
+        class TrackingModel(MockModel):
+            """Model that tracks received messages."""
+
+            async def _call_api(
+                self,
+                *args: Any,
+                **kwargs: Any,
+            ) -> ChatResponse:
+                received_messages.extend(kwargs.get("messages", []))
+                return await super()._call_api(*args, **kwargs)
+
+        tracking_model = TrackingModel()
+        tracking_model.set_responses(
+            [ChatResponse(content=[TextBlock(text="response")], is_last=True)],
+        )
+
+        agent_instance = Agent(
+            name="test_agent",
+            system_prompt="test prompt",
+            model=tracking_model,
+            toolkit=self.toolkit,
+            middlewares=[
+                ModifyMessagesMiddleware(),
+                TransparentMiddleware(),
+            ],
+        )
+
+        await agent_instance.reply(UserMsg("user", "test message"))
+
+        system_messages = [m for m in received_messages if m.role == "system"]
+        self.assertTrue(
+            any(
+                "INJECTED SYSTEM MESSAGE" in m.get_text_content()
+                for m in system_messages
+            ),
+        )
+
+    async def test_on_model_call_keeps_outer_messages_with_partial_kwargs(
+        self,
+    ) -> None:
+        """Partial next_handler kwargs keep outer model-call changes."""
+        injected_text = "INJECTED SYSTEM MESSAGE FROM OUTER MIDDLEWARE"
+        inner_saw_injected_message = False
+
+        class ModifyMessagesMiddleware(MiddlewareBase):
+            """Middleware that changes the messages."""
+
+            async def on_model_call(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., Any],
+            ) -> Union[ChatResponse, AsyncGenerator[ChatResponse, None]]:
+                modified_messages = [
+                    SystemMsg(
+                        name="system",
+                        content=injected_text,
+                    ),
+                ] + input_kwargs["messages"]
+                return await next_handler(messages=modified_messages)
+
+        class PartialForwardMiddleware(MiddlewareBase):
+            """Middleware that forwards only one of the current kwargs."""
+
+            async def on_model_call(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., Any],
+            ) -> Union[ChatResponse, AsyncGenerator[ChatResponse, None]]:
+                nonlocal inner_saw_injected_message
+                inner_saw_injected_message = any(
+                    injected_text in m.get_text_content()
+                    for m in input_kwargs["messages"]
+                )
+                return await next_handler(
+                    tool_choice=input_kwargs["tool_choice"],
+                )
+
+        received_messages = []
+
+        class TrackingModel(MockModel):
+            """Model that tracks received messages."""
+
+            async def _call_api(
+                self,
+                *args: Any,
+                **kwargs: Any,
+            ) -> ChatResponse:
+                received_messages.extend(kwargs.get("messages", []))
+                return await super()._call_api(*args, **kwargs)
+
+        tracking_model = TrackingModel()
+        tracking_model.set_responses(
+            [ChatResponse(content=[TextBlock(text="response")], is_last=True)],
+        )
+
+        agent_instance = Agent(
+            name="test_agent",
+            system_prompt="test prompt",
+            model=tracking_model,
+            toolkit=self.toolkit,
+            middlewares=[
+                ModifyMessagesMiddleware(),
+                PartialForwardMiddleware(),
+            ],
+        )
+
+        await agent_instance.reply(UserMsg("user", "test message"))
+
+        self.assertTrue(inner_saw_injected_message)
+        self.assertTrue(
+            any(
+                injected_text in m.get_text_content()
+                for m in received_messages
+            ),
+        )
+
     async def test_on_compress_context_middleware(self) -> None:
         """Test on_compress_context middleware follows the onion chain pattern.
 
         Verifies that:
         - Multiple middlewares are chained in onion order (mw1 wraps mw2).
-        - ``input_kwargs`` carries the correct ``context_config``.
+        - ``input_kwargs`` carries the correct ``context_config`` and
+          ``instructions``.
         - The ``next_handler`` ultimately calls ``_compress_context_impl``.
         - A middleware can short-circuit and skip the actual implementation.
         """
+        seen_instructions = []
 
         # ------------------------------------------------------------------ #
         # Middleware that records pre/post and forwards to next_handler.      #
@@ -905,6 +1154,7 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             ) -> None:
                 """Forward to next handler, recording pre and post."""
                 self.log.append(f"{self.name}_pre")
+                seen_instructions.append(input_kwargs.get("instructions"))
                 await next_handler(**input_kwargs)
                 self.log.append(f"{self.name}_post")
 
@@ -931,20 +1181,86 @@ class TestMiddleware(IsolatedAsyncioTestCase):
         )
 
         # Patch _compress_context_impl to avoid real token counting.
+        instructions = HintBlock(
+            hint="Keep user requirements while compressing.",
+            source="user",
+        )
         with patch.object(
             agent,
             "_compress_context_impl",
             new_callable=AsyncMock,
         ) as mock_impl:
-            await agent.compress_context(context_config=context_config)
+            await agent.compress_context(
+                context_config=context_config,
+                instructions=instructions,
+            )
 
             # _compress_context_impl must have been called exactly once.
-            mock_impl.assert_awaited_once_with(context_config=context_config)
+            mock_impl.assert_awaited_once_with(
+                context_config=context_config,
+                instructions=instructions,
+            )
 
         # Verify onion execution order: mw1_pre -> mw2_pre -> mw2_post ->
         # mw1_post
         expected = ["mw1_pre", "mw2_pre", "mw2_post", "mw1_post"]
         self.assertListEqual(self.execution_log, expected)
+        self.assertListEqual(seen_instructions, [instructions, instructions])
+
+    async def test_on_compress_context_middleware_modify_instructions(
+        self,
+    ) -> None:
+        """Test that middleware can replace compress_context instructions."""
+
+        class ReplaceInstructionsMiddleware(MiddlewareBase):
+            """Middleware that replaces the compression instructions."""
+
+            def __init__(self, replacement: HintBlock) -> None:
+                """Initialize the middleware with replacement instructions."""
+                self.replacement = replacement
+
+            async def on_compress_context(
+                self,
+                agent: Agent,
+                input_kwargs: dict,
+                next_handler: Callable[..., Any],
+            ) -> None:
+                """Replace instructions before forwarding."""
+                input_kwargs["instructions"] = self.replacement
+                await next_handler(**input_kwargs)
+
+        original = HintBlock(
+            hint="Keep all requirements.",
+            source="user",
+        )
+        replacement = HintBlock(
+            hint="Keep only unresolved requirements.",
+            source="middleware",
+        )
+        context_config = ContextConfig(trigger_ratio=0.8, reserve_ratio=0.1)
+        agent = Agent(
+            name="test_agent",
+            system_prompt="test prompt",
+            model=self.mock_model,
+            toolkit=self.toolkit,
+            middlewares=[ReplaceInstructionsMiddleware(replacement)],
+            context_config=context_config,
+        )
+
+        with patch.object(
+            agent,
+            "_compress_context_impl",
+            new_callable=AsyncMock,
+        ) as mock_impl:
+            await agent.compress_context(
+                context_config=context_config,
+                instructions=original,
+            )
+
+            mock_impl.assert_awaited_once_with(
+                context_config=context_config,
+                instructions=replacement,
+            )
 
     async def test_on_compress_context_middleware_short_circuit(
         self,
@@ -1033,7 +1349,10 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             new_callable=AsyncMock,
         ) as mock_impl:
             await agent.compress_context(context_config=context_config)
-            mock_impl.assert_awaited_once_with(context_config=context_config)
+            mock_impl.assert_awaited_once_with(
+                context_config=context_config,
+                instructions=None,
+            )
 
     async def test_team_report_middleware_reminds_on_silent_finish(
         self,
@@ -1068,7 +1387,14 @@ class TestMiddleware(IsolatedAsyncioTestCase):
 
         self.assertEqual(self.mock_model.cnt, 2)
         self.assertEqual(
-            len([_ for _ in events if _.type == EventType.HINT_BLOCK]),
+            len(
+                [
+                    _
+                    for _ in events
+                    if isinstance(_, HintBlockEvent)
+                    and _.source == "team_report_middleware"
+                ],
+            ),
             1,
         )
         self.assertEqual(
@@ -1123,7 +1449,14 @@ class TestMiddleware(IsolatedAsyncioTestCase):
 
         self.assertEqual(self.mock_model.cnt, 2)
         self.assertEqual(
-            len([_ for _ in events if _.type == EventType.HINT_BLOCK]),
+            len(
+                [
+                    _
+                    for _ in events
+                    if isinstance(_, HintBlockEvent)
+                    and _.source == "team_report_middleware"
+                ],
+            ),
             0,
         )
         self.assertEqual(
@@ -1174,7 +1507,14 @@ class TestMiddleware(IsolatedAsyncioTestCase):
 
         self.assertEqual(self.mock_model.cnt, 3)
         self.assertEqual(
-            len([_ for _ in events if _.type == EventType.HINT_BLOCK]),
+            len(
+                [
+                    _
+                    for _ in events
+                    if isinstance(_, HintBlockEvent)
+                    and _.source == "team_report_middleware"
+                ],
+            ),
             1,
         )
         self.assertEqual(
@@ -1235,11 +1575,25 @@ class TestMiddleware(IsolatedAsyncioTestCase):
 
         self.assertEqual(self.mock_model.cnt, 4)
         self.assertEqual(
-            len([_ for _ in first_events if _.type == EventType.HINT_BLOCK]),
+            len(
+                [
+                    _
+                    for _ in first_events
+                    if isinstance(_, HintBlockEvent)
+                    and _.source == "team_report_middleware"
+                ],
+            ),
             0,
         )
         self.assertEqual(
-            len([_ for _ in second_events if _.type == EventType.HINT_BLOCK]),
+            len(
+                [
+                    _
+                    for _ in second_events
+                    if isinstance(_, HintBlockEvent)
+                    and _.source == "team_report_middleware"
+                ],
+            ),
             1,
         )
 

@@ -1,8 +1,8 @@
 import { Eye, EyeOff, Plus, Pencil, Trash2 } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 
-import { credentialApi, modelApi } from '@/api';
-import type { CredentialRecord, CredentialSchema, ModelCard } from '@/api';
+import { credentialApi, modelApi, ttsModelApi } from '@/api';
+import type { CredentialView, CredentialSchema, ModelCard, TTSModelCard } from '@/api';
 import { InputTypeBadges } from '@/components/badge/InputTypeBadges';
 import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDialog';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog';
@@ -16,7 +16,6 @@ import {
 	Sidebar,
 	SidebarContent,
 	SidebarGroup,
-	SidebarGroupAction,
 	SidebarGroupContent,
 	SidebarGroupLabel,
 	SidebarHeader,
@@ -104,10 +103,56 @@ function ModelCardItem({ model }: { model: ModelCard }) {
 	);
 }
 
+// ─── TTS Model Card ──────────────────────────────────────────────────────────
+
+function TTSModelCardItem({ model }: { model: TTSModelCard }) {
+	const { t } = useTranslation();
+
+	const statusVariant =
+		model.status === 'active'
+			? 'default'
+			: model.status === 'deprecated'
+				? 'secondary'
+				: 'outline';
+
+	return (
+		<Card className="shadow">
+			<CardHeader>
+				<CardTitle
+					className="text-sm font-semibold leading-tight truncate"
+					title={model.name}
+				>
+					{model.label || model.name}
+				</CardTitle>
+				{model.realtime && (
+					<CardAction>
+						<Badge variant="outline">Realtime</Badge>
+					</CardAction>
+				)}
+			</CardHeader>
+			<CardContent className="flex flex-col">
+				{model.status !== 'active' && (
+					<Badge variant={statusVariant} className="text-xs">
+						{model.status}
+					</Badge>
+				)}
+				<div className="flex justify-between items-center text-[14px]">
+					<span className="text-muted-foreground">{t('credential.inputTypes')}</span>
+					<InputTypeBadges inputTypes={model.input_types} />
+				</div>
+				<div className="flex justify-between items-center text-[14px]">
+					<span className="text-muted-foreground">{t('credential.outputTypes')}</span>
+					<InputTypeBadges inputTypes={model.output_types} />
+				</div>
+			</CardContent>
+		</Card>
+	);
+}
+
 // ─── Detail panel ─────────────────────────────────────────────────────────────
 
 interface DetailPanelProps {
-	credential: CredentialRecord;
+	credential: CredentialView;
 	schema: CredentialSchema | null;
 	onEdit: () => void;
 	onDelete: () => void;
@@ -116,6 +161,7 @@ interface DetailPanelProps {
 function DetailPanel({ credential, schema, onEdit, onDelete }: DetailPanelProps) {
 	const { t } = useTranslation();
 	const [models, setModels] = useState<ModelCard[]>([]);
+	const [ttsModels, setTtsModels] = useState<TTSModelCard[]>([]);
 	const [modelsLoading, setModelsLoading] = useState(false);
 
 	const type = credential.data.type as string | undefined;
@@ -123,10 +169,20 @@ function DetailPanel({ credential, schema, onEdit, onDelete }: DetailPanelProps)
 	useEffect(() => {
 		if (!type) return;
 		setModelsLoading(true);
-		modelApi
-			.list(type)
-			.then((res) => setModels(res.models))
-			.catch(() => setModels([]))
+		Promise.all([
+			modelApi
+				.list(type)
+				.then((res) => res.models)
+				.catch(() => [] as ModelCard[]),
+			ttsModelApi
+				.list(type)
+				.then((res) => res.models)
+				.catch(() => [] as TTSModelCard[]),
+		])
+			.then(([chatModels, tts]) => {
+				setModels(chatModels);
+				setTtsModels(tts);
+			})
 			.finally(() => setModelsLoading(false));
 	}, [credential.id, type]);
 
@@ -151,15 +207,32 @@ function DetailPanel({ credential, schema, onEdit, onDelete }: DetailPanelProps)
 		<div className="flex flex-col gap-y-6 p-6 overflow-y-auto h-full">
 			{/* Header */}
 			<div className="flex items-start justify-between gap-x-4">
-				<div>
+				<div className="flex flex-col gap-y-1">
 					<h2 className="text-lg font-semibold">{name}</h2>
 					<p className="text-muted-foreground text-sm">{type}</p>
+					{!credential.editable && (
+						<Badge variant="secondary" title={t('common.readOnlyTooltip')}>
+							{t('common.readOnly')}
+						</Badge>
+					)}
 				</div>
 				<div className="flex items-center gap-x-2 shrink-0">
-					<Button size="icon-sm" variant="outline" onClick={onEdit}>
+					<Button
+						size="icon-sm"
+						variant="outline"
+						onClick={onEdit}
+						disabled={!credential.editable}
+						tooltip={credential.editable ? undefined : t('common.readOnlyTooltip')}
+					>
 						<Pencil />
 					</Button>
-					<Button size="icon-sm" variant="destructive" onClick={onDelete}>
+					<Button
+						size="icon-sm"
+						variant="destructive"
+						onClick={onDelete}
+						disabled={!credential.editable}
+						tooltip={credential.editable ? undefined : t('common.readOnlyTooltip')}
+					>
 						<Trash2 />
 					</Button>
 				</div>
@@ -223,6 +296,23 @@ function DetailPanel({ credential, schema, onEdit, onDelete }: DetailPanelProps)
 					</div>
 				)}
 			</div>
+
+			{/* Available TTS Models */}
+			{ttsModels.length > 0 && (
+				<>
+					<Separator />
+					<div className="flex flex-col gap-y-4">
+						<h3 className="text-sm font-semibold">
+							{t('credential.availableTTSModels')}({ttsModels.length})
+						</h3>
+						<div className="grid grid-cols-2 xl:grid-cols-3 gap-3">
+							{ttsModels.map((m) => (
+								<TTSModelCardItem key={m.name} model={m} />
+							))}
+						</div>
+					</div>
+				</>
+			)}
 		</div>
 	);
 }
@@ -260,7 +350,7 @@ export const CredentialPage = () => {
 		: null;
 
 	// Group credentials by type, then list all schema types (even empty ones)
-	const groupedByType: Array<{ type: string; title: string; records: CredentialRecord[] }> =
+	const groupedByType: Array<{ type: string; title: string; records: CredentialView[] }> =
 		schemas.map((s) => {
 			const type = s.properties.type?.const as string;
 			return {
@@ -269,6 +359,11 @@ export const CredentialPage = () => {
 				records: credentials.filter((c) => c.data.type === type),
 			};
 		});
+
+	// Split providers so the user's actual configuration leads, and the
+	// (mostly empty) "add a provider" entries don't drown it out.
+	const configuredGroups = groupedByType.filter((g) => g.records.length > 0);
+	const totalConfigured = configuredGroups.reduce((n, g) => n + g.records.length, 0);
 
 	const handleOpenCreate = useCallback((type?: string) => {
 		setCreateDefaultType(type);
@@ -284,7 +379,7 @@ export const CredentialPage = () => {
 	return (
 		<div className="flex h-full w-full">
 			{/* Left sidebar */}
-			<Sidebar collapsible="none" className="w-72 border-r">
+			<Sidebar collapsible="none" className="border-r">
 				<SidebarHeader className={'flex flex-col mt-5 gap-y-1'}>
 					<div className="text-lg font-semibold">{t('common.credential')}</div>
 					<div className="text-muted-foreground text-xs">{t('credential.subtitle')}</div>
@@ -304,39 +399,79 @@ export const CredentialPage = () => {
 							</EmptyHeader>
 						</Empty>
 					) : (
-						groupedByType.map(({ type, title, records }) => (
-							<SidebarGroup key={type}>
-								<SidebarGroupLabel>{title}</SidebarGroupLabel>
-								<SidebarGroupAction
-									title={t('credential.addConfig')}
-									onClick={() => handleOpenCreate(type)}
-								>
-									<Button variant="ghost" size={'icon-sm'}>
-										<Plus />
-									</Button>
-								</SidebarGroupAction>
+						<>
+							{/* Configured credentials lead — this is what the user actually set up. */}
+							{configuredGroups.length > 0 && (
+								<SidebarGroup>
+									<SidebarGroupLabel>
+										{t('credential.configured')} ({totalConfigured})
+									</SidebarGroupLabel>
+									<SidebarGroupContent className="flex flex-col gap-y-4">
+										{configuredGroups.map(({ type, title, records }) => (
+											<div key={type}>
+												<div className="px-2 pb-1.5 text-xs font-semibold text-foreground/70">
+													{title}
+												</div>
+												<SidebarMenu className="pl-4">
+													{records.map((rec) => {
+														const name =
+															(rec.data.name as string | undefined) ??
+															rec.id;
+														return (
+															<SidebarMenuItem key={rec.id}>
+																<SidebarMenuButton
+																	isActive={selectedId === rec.id}
+																	onClick={() =>
+																		setSelectedId(rec.id)
+																	}
+																>
+																	<span className="min-w-0 flex-1 truncate">
+																		{name}
+																	</span>
+																	{!rec.editable && (
+																		<Badge
+																			variant="secondary"
+																			className="text-[10px] px-1 py-0"
+																			title={t(
+																				'common.readOnlyTooltip',
+																			)}
+																		>
+																			{t('common.readOnly')}
+																		</Badge>
+																	)}
+																</SidebarMenuButton>
+															</SidebarMenuItem>
+														);
+													})}
+												</SidebarMenu>
+											</div>
+										))}
+									</SidebarGroupContent>
+								</SidebarGroup>
+							)}
+
+							{/* Add credential — every provider is an entry point (including
+							    configured ones, to add more under the same provider). */}
+							<SidebarGroup>
+								<SidebarGroupLabel>{t('credential.addProvider')}</SidebarGroupLabel>
 								<SidebarGroupContent>
-									{records.length > 0 && (
-										<SidebarMenu>
-											{records.map((rec) => {
-												const name =
-													(rec.data.name as string | undefined) ?? rec.id;
-												return (
-													<SidebarMenuItem key={rec.id}>
-														<SidebarMenuButton
-															isActive={selectedId === rec.id}
-															onClick={() => setSelectedId(rec.id)}
-														>
-															<span className="truncate">{name}</span>
-														</SidebarMenuButton>
-													</SidebarMenuItem>
-												);
-											})}
-										</SidebarMenu>
-									)}
+									<SidebarMenu>
+										{groupedByType.map(({ type, title }) => (
+											<SidebarMenuItem key={type}>
+												<SidebarMenuButton
+													onClick={() => handleOpenCreate(type)}
+												>
+													<Plus />
+													<span className="min-w-0 flex-1 truncate">
+														{title}
+													</span>
+												</SidebarMenuButton>
+											</SidebarMenuItem>
+										))}
+									</SidebarMenu>
 								</SidebarGroupContent>
 							</SidebarGroup>
-						))
+						</>
 					)}
 				</SidebarContent>
 			</Sidebar>

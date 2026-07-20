@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """The message class in agentscope."""
 import base64
-import uuid
 from datetime import datetime
 from typing import Literal, List, overload, Sequence, Self, TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field, model_validator
 
+from .._utils._common import _generate_id
 from ._block import (
     TextBlock,
     ThinkingBlock,
@@ -21,6 +21,7 @@ from ._block import (
     ContentBlock,
     ContentBlockTypes,
 )
+from ..types import ReplyFinishedReason, ErrorInfo
 from .._logging import logger
 
 if TYPE_CHECKING:
@@ -73,7 +74,7 @@ class Msg(BaseModel):
     """The message content as a list of content blocks."""
     role: Literal["user", "assistant", "system"]
     """The role of the sender."""
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    id: str = Field(default_factory=_generate_id)
     """The message identifier."""
     metadata: dict = Field(default_factory=dict)
     """The metadata of the message"""
@@ -81,6 +82,12 @@ class Msg(BaseModel):
     """The creation time of the message"""
     finished_at: str | None = Field(default=None)
     """The finished time of the message"""
+    finished_reason: ReplyFinishedReason | None = Field(default=None)
+    """Terminal reason of this reply (error / interrupted /
+    exceed_max_iters). ``None`` until a ``REPLY_END`` event is applied."""
+    error: ErrorInfo | None = Field(default=None)
+    """Structured error info, populated only when
+    ``finished_reason == ReplyFinishedReason.ERROR``."""
     usage: Usage | None = Field(default=None)
     """The token usage information of the message"""
 
@@ -238,6 +245,13 @@ class Msg(BaseModel):
         match event.type:
             case EventType.REPLY_END:
                 self.finished_at = event.created_at
+                # ``event.finished_reason`` is a bare string (EventBase sets
+                # ``use_enum_values``); coerce back to the enum so this
+                # field serializes cleanly.
+                self.finished_reason = ReplyFinishedReason(
+                    event.finished_reason,
+                )
+                self.error = event.error
 
             case EventType.MODEL_CALL_END:
                 if self.usage is None:
@@ -416,6 +430,7 @@ class Msg(BaseModel):
                 else:
                     assert isinstance(block, ToolResultBlock)
                     block.state = event.state
+                    block.metadata = event.metadata
                 # The paired ToolCallBlock's lifecycle ends with its
                 # result — flip it to FINISHED here so the SSE-rebuilt
                 # reply_msg matches ``agent.state.context``, which
@@ -438,7 +453,10 @@ class Msg(BaseModel):
             case EventType.USER_CONFIRM_RESULT:
                 for result in event.confirm_results:
                     b = self._find_block("tool_call", result.tool_call.id)
-                    if b is not None:
+                    # Only ASKING calls can transition; skip stale results
+                    # (e.g. arriving after an interrupt already resolved the
+                    # tool call).
+                    if b is not None and b.state == ToolCallState.ASKING:
                         assert isinstance(b, ToolCallBlock)
                         b.state = (
                             ToolCallState.ALLOWED
@@ -454,7 +472,16 @@ class Msg(BaseModel):
                         b.state = ToolCallState.SUBMITTED
 
             case EventType.EXTERNAL_EXECUTION_RESULT:
+                # Skip results whose tool_call already has a tool_result
+                # (e.g. late arrival after an interrupt).
+                existing_ids = {
+                    b.id
+                    for b in self.content
+                    if isinstance(b, ToolResultBlock)
+                }
                 for result in event.execution_results:
+                    if result.id in existing_ids:
+                        continue
                     self.content.append(result)
 
         return self
@@ -504,7 +531,7 @@ def UserMsg(
         metadata=metadata or {},
         created_at=created_at,
         finished_at=finished_at,
-        id=id or uuid.uuid4().hex,
+        id=id or _generate_id(),
     )
 
 
@@ -552,7 +579,7 @@ def AssistantMsg(
         metadata=metadata or {},
         created_at=created_at or datetime.now().isoformat(),
         finished_at=finished_at,
-        id=id or uuid.uuid4().hex,
+        id=id or _generate_id(),
         usage=usage,
     )
 
@@ -601,5 +628,5 @@ def SystemMsg(
         metadata=metadata or {},
         created_at=created_at,
         finished_at=finished_at,
-        id=id or uuid.uuid4().hex,
+        id=id or _generate_id(),
     )

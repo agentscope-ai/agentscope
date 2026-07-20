@@ -5,9 +5,11 @@ from typing import Any, AsyncGenerator, Type
 
 from pydantic import BaseModel
 
+from agentscope.app.workspace_manager import WorkspaceManagerBase
 from agentscope.credential import CredentialBase
 from agentscope.message import Msg
 from agentscope.model import ChatModelBase, ChatResponse, StructuredResponse
+from agentscope.workspace import WorkspaceBase
 
 
 class AnyString(str):
@@ -20,6 +22,20 @@ class AnyString(str):
     def __repr__(self) -> str:
         """Return a string representation for debugging purposes."""
         return "<AnyString>"
+
+
+class AnyValue:
+    """A helper class for asserting any value (str, int, float, etc.)
+    in unit tests.  Useful for dynamic fields like timestamps, tokens,
+    or durations where the exact value is unpredictable."""
+
+    def __eq__(self, other: object) -> bool:
+        """Override equality check to match any value."""
+        return True
+
+    def __repr__(self) -> str:
+        """Return a string representation for debugging purposes."""
+        return "<AnyValue>"
 
 
 class MockCredential(CredentialBase):
@@ -59,11 +75,28 @@ class MockModel(ChatModelBase):
 
     def set_responses(
         self,
-        mock_responses: list[ChatResponse | list[ChatResponse]],
+        mock_responses: list[
+            ChatResponse | BaseException | list[ChatResponse | BaseException]
+        ],
     ) -> None:
-        """Set the mock responses."""
+        """Set the mock responses.
+
+        Each item in ``mock_responses`` may be:
+
+        - ``ChatResponse`` — returned directly by the next non-stream call.
+        - ``BaseException`` — raised from inside the next non-stream call
+          (use e.g. ``asyncio.CancelledError()`` to simulate an
+          interrupted API call).
+        - ``list[ChatResponse | BaseException]`` — returned as an async
+          generator by the next stream call, where each element is
+          either yielded (``ChatResponse``) or raised (``BaseException``)
+          at that position in the stream.
+        """
         self.mock_chat_responses = mock_responses
-        if all(isinstance(_, ChatResponse) for _ in mock_responses):
+        if all(
+            isinstance(_, (ChatResponse, BaseException))
+            for _ in mock_responses
+        ):
             self.stream = False
         else:
             self.stream = True
@@ -77,10 +110,16 @@ class MockModel(ChatModelBase):
         """Mock the API call."""
         mock_responses = self.mock_chat_responses[self.cnt]
         self.cnt += 1
+
+        if isinstance(mock_responses, BaseException):
+            raise mock_responses
+
         if isinstance(mock_responses, list):
 
             async def _stream() -> AsyncGenerator[ChatResponse, None]:
                 for response in mock_responses:
+                    if isinstance(response, BaseException):
+                        raise response
                     yield response
 
             return _stream()
@@ -112,3 +151,37 @@ def compare_by_printing(a: Any, b: Any) -> None:
     """Compare the expected output with the actual output by printing them."""
     print(json.dumps(a, indent=4))
     print(json.dumps(b, indent=4))
+
+
+class FakeWorkspaceManager(WorkspaceManagerBase):
+    """Minimal :class:`WorkspaceManagerBase` for tests.
+
+    Inherits the real :meth:`assign_workspace_id` (drives the
+    isolation policy under test) and stubs the abstract async
+    methods with no-ops. Not backed by any real workspace.
+    """
+
+    async def get_workspace(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        workspace_id: str | None = None,
+    ) -> WorkspaceBase:
+        """Not implemented — team-tool tests never touch this."""
+        raise NotImplementedError
+
+    async def create_workspace(
+        self,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+    ) -> WorkspaceBase:
+        """Not implemented — team-tool tests never touch this."""
+        raise NotImplementedError
+
+    async def close(self, workspace_id: str) -> None:
+        """No-op."""
+
+    async def close_all(self) -> None:
+        """No-op."""

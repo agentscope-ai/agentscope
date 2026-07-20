@@ -312,6 +312,18 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
                         ),
                     ],
                 ),
+                # ``signature_delta`` is emitted as its own delta chunk
+                # carrying the signature but no additional thinking text.
+                (
+                    False,
+                    [
+                        ThinkingBlock.model_construct(
+                            id=A,
+                            thinking="",
+                            signature="sig_abc",
+                        ),
+                    ],
+                ),
                 (False, [TextBlock.model_construct(id=A, text="Result")]),
                 (
                     True,
@@ -378,6 +390,19 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [(r.is_last, r.content) for r in responses],
             [
+                # Anthropic emits a ``content_block_start`` event before the
+                # first delta, which surfaces as an initial empty-input
+                # ``ToolCallBlock`` delta.
+                (
+                    False,
+                    [
+                        ToolCallBlock(
+                            id="toolu_1",
+                            name="get_weather",
+                            input="",
+                        ),
+                    ],
+                ),
                 (
                     False,
                     [

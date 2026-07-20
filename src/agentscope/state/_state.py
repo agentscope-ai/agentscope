@@ -1,13 +1,22 @@
 # -*- coding: utf-8 -*-
 """The agent state class."""
-import uuid
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 import aiofiles.os
 
+from .._utils._common import _generate_id
 from ._task import Task
-from ..message import TextBlock, DataBlock, Msg
+from ..message import (
+    TextBlock,
+    DataBlock,
+    Msg,
+    ToolCallBlock,
+    ToolCallState,
+    ToolResultBlock,
+    HintBlock,
+)
 from ..permission import PermissionContext
 
 
@@ -140,16 +149,16 @@ class TaskContext(BaseModel):
 class AgentState(BaseModel):
     """The agent state that should be saved and loaded from storage."""
 
-    session_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    session_id: str = Field(default_factory=_generate_id)
     """The session id of the agent. Normally, each session will maintain one
     independent agent state for each agent."""
 
     summary: str | list[TextBlock | DataBlock] = ""
     """The compressed summary of the context, which will be prepended to the
-    context when feed into the LLM."""
+    context when fed into the LLM."""
     context: list[Msg] = Field(default_factory=list)
-    """The uncompressed conversation context, that will be feed into the LLM"""
-    reply_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    """The uncompressed conversation context, which will be fed into the LLM"""
+    reply_id: str = Field(default_factory=_generate_id)
     """The id of the current reply, which is also used as the id of the
     final message of the reply."""
     cur_iter: int = 0
@@ -174,3 +183,69 @@ class AgentState(BaseModel):
     # =================================================================
     tasks_context: TaskContext = Field(default_factory=TaskContext)
     """The task context that records the agent tasks."""
+
+    # =================================================================
+    # The middleware context
+    # =================================================================
+    middle_context: dict[str, Any] = Field(default_factory=dict)
+    """The context that allow the middlewares to store/get data across
+    different replies."""
+
+    def append_context(
+        self,
+        name: str,
+        blocks: list[
+            TextBlock | DataBlock | HintBlock | ToolCallBlock | ToolResultBlock
+        ],
+    ) -> None:
+        """Append the given blocks to the agent's own message with the current
+        `reply_id`. If such message doesn't exist, a new assistant message
+        with agent's name and current reply ID will be created.
+        """
+        # If append to the latest message
+        if (
+            self.context
+            and self.context[-1].role == "assistant"
+            and self.context[-1].name == name
+            and self.context[-1].id == self.reply_id
+        ):
+            self.context[-1].content.extend(blocks)
+        else:
+            # Create a new assistant message with the current reply ID
+            self.context.append(
+                Msg(
+                    id=self.reply_id,
+                    role="assistant",
+                    name=name,
+                    content=blocks,
+                ),
+            )
+
+    def has_awaiting_tool_calls(self, name: str) -> bool:
+        """Whether the tail assistant message written by ``name`` has
+        any tool call still awaiting an outside response — an
+        ``ASKING`` user confirmation or a ``SUBMITTED`` external
+        execution with no matching tool result yet.
+
+        Args:
+            name (`str`):
+                Only messages authored by this agent name are inspected;
+                observed messages from other agents are ignored.
+
+        Returns:
+            `bool`:
+                ``True`` when at least one such tool call is pending.
+        """
+        if not self.context:
+            return False
+        last_msg = self.context[-1]
+        if last_msg.role != "assistant" or last_msg.name != name:
+            return False
+        result_ids = {b.id for b in last_msg.get_content_blocks("tool_result")}
+        return any(
+            tc.state == ToolCallState.ASKING
+            or (
+                tc.state == ToolCallState.SUBMITTED and tc.id not in result_ids
+            )
+            for tc in last_msg.get_content_blocks("tool_call")
+        )

@@ -2,19 +2,17 @@
 """The OpenAI Chat Completions model implementation."""
 import warnings
 import base64
-import io
-import uuid
-import wave
 from collections import OrderedDict
 from datetime import datetime
 from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, List, Type
 
 from pydantic import BaseModel, Field
 
+from ..._utils._audio import _build_streaming_wav_header
+from ..._utils._common import _generate_id, _flatten_json_schema
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from .._model_response import ChatResponse, StructuredResponse
 from .._model_usage import ChatUsage
-from ..._utils._audio import _build_streaming_wav_header
 from ...credential import OpenAICredential
 from ...formatter import FormatterBase, OpenAIChatFormatter
 from ...message import (
@@ -122,6 +120,7 @@ class OpenAIChatModel(ChatModelBase):
         context_size: int = 128000,
         formatter: FormatterBase | None = None,
         client_kwargs: dict[str, Any] | None = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> None:
         """Initialize the OpenAI chat model.
 
@@ -149,6 +148,9 @@ class OpenAIChatModel(ChatModelBase):
             client_kwargs (`dict[str, Any] | None`, defaults to `None`):
                 Extra keyword arguments forwarded to ``openai.AsyncClient``
                 (e.g. ``timeout``, ``default_headers``, ``http_client``).
+            extra_body (`dict[str, Any] | None`, defaults to `None`):
+                Additional request body fields forwarded to
+                OpenAI-compatible APIs.
         """
         super().__init__(
             credential=credential,
@@ -161,6 +163,7 @@ class OpenAIChatModel(ChatModelBase):
         )
         self.formatter = formatter or OpenAIChatFormatter()
         self.client_kwargs = client_kwargs or {}
+        self.extra_body = dict(extra_body) if extra_body is not None else None
 
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
@@ -221,7 +224,7 @@ class OpenAIChatModel(ChatModelBase):
         }
 
         if self.parameters.max_tokens is not None:
-            kwargs["max_tokens"] = self.parameters.max_tokens
+            kwargs["max_completion_tokens"] = self.parameters.max_tokens
 
         if self.parameters.temperature is not None:
             kwargs["temperature"] = self.parameters.temperature
@@ -246,6 +249,9 @@ class OpenAIChatModel(ChatModelBase):
                 "format": "pcm16",
             }
             kwargs["modalities"] = ["text", "audio"]
+
+        if self.extra_body is not None:
+            kwargs["extra_body"] = dict(self.extra_body)
 
         kwargs.update(generate_kwargs)
 
@@ -296,8 +302,8 @@ class OpenAIChatModel(ChatModelBase):
         Upstream sends raw PCM16 (24kHz, 16-bit mono — OpenAI's only
         streaming-supported audio format). We prefix the first audio
         chunk with a streaming WAV header so the frontend can start
-        playback immediately, and assemble a fixed-size WAV on the
-        final chunk for non-streaming consumers.
+        playback immediately; downstream accumulation is handled by
+        ``ChatResponse.append_data_block``.
 
         Args:
             start_datetime (`datetime`):
@@ -307,27 +313,34 @@ class OpenAIChatModel(ChatModelBase):
 
         Yields:
             `ChatResponse`:
-                Incremental ``ChatResponse`` objects with ``is_last=False``
-                followed by a final one with ``is_last=True``.
+                Incremental ``ChatResponse`` objects with ``is_last=False``.
+                The base class ``__call__`` accumulates them and emits the
+                final ``is_last=True`` chunk.
         """
-        usage = None
-        response_id: str | None = None
-        # All delta should have the same block identifier
-        acc_text = TextBlock(text="")
-        acc_thinking = ThinkingBlock(thinking="")
-        acc_tool_calls: OrderedDict = OrderedDict()
-        # Raw audio bytes accumulated across chunks. Storing the decoded
-        # form (rather than concatenated base64 strings) avoids corrupting
-        # the byte stream when an intermediate chunk happens to carry
-        # base64 padding (``=``).
-        acc_audio_data: bytearray = bytearray()
-        audio_block_id: str | None = None
         # ``True`` once the first audio chunk has been prefixed with a
         # streaming WAV header and yielded.
         audio_header_sent: bool = False
 
+        usage = None
+        response_id: str = _generate_id()
+        text_id: str = _generate_id()
+        thinking_id: str = _generate_id()
+        audio_id: str = _generate_id()
+        # The mapping from index to (tool call id, tool call name)
+        tool_call_mapping: dict = OrderedDict()
+
         async with response as stream:
             async for chunk in stream:
+                delta_res = ChatResponse(
+                    content=[],
+                    is_last=False,
+                    id=response_id,
+                )
+
+                # Update the response ID if exists
+                response_id = getattr(chunk, "id", None) or response_id
+                delta_res.id = response_id
+
                 if chunk.usage:
                     u = chunk.usage
                     details = getattr(u, "prompt_tokens_details", None)
@@ -344,158 +357,97 @@ class OpenAIChatModel(ChatModelBase):
                         else 0,
                     )
 
-                # Capture response_id from the first chunk that carries it
-                response_id = response_id or getattr(chunk, "id", None)
-
                 if not chunk.choices:
+                    if delta_res.content or usage:
+                        delta_res.usage = usage
+                        yield delta_res
                     continue
 
                 choice = chunk.choices[0]
                 delta = choice.delta
 
+                # Thinking
                 delta_thinking = getattr(delta, "reasoning_content", None)
                 if not isinstance(delta_thinking, str):
                     delta_thinking = getattr(delta, "reasoning", None)
-                if not isinstance(delta_thinking, str):
-                    delta_thinking = ""
+                if isinstance(delta_thinking, str) and delta_thinking:
+                    delta_res.append_thinking(
+                        block_id=thinking_id,
+                        thinking=delta_thinking,
+                    )
 
+                # Text
                 delta_text = getattr(delta, "content", None) or ""
 
-                # Collect audio output (delta.audio.data /
-                # delta.audio.transcript)
-                delta_audio_block: DataBlock | None = None
-                transcript_chunk: str = ""
+                # Audio (delta.audio.data / delta.audio.transcript). Omni
+                # models deliver text via ``delta.audio.transcript`` rather
+                # than ``delta.content``; fold it into ``delta_text`` so the
+                # agent's streaming pipeline emits ``TextBlockDelta`` events
+                # alongside the audio chunks.
                 delta_audio = getattr(delta, "audio", None)
                 if delta_audio is not None:
                     if isinstance(delta_audio, dict):
-                        audio_chunk = delta_audio.get("data", "")
-                        transcript_chunk = delta_audio.get("transcript", "")
+                        audio_chunk = delta_audio.get("data", "") or ""
+                        transcript_chunk = (
+                            delta_audio.get("transcript", "") or ""
+                        )
                     else:
                         audio_chunk = getattr(delta_audio, "data", "") or ""
                         transcript_chunk = (
                             getattr(delta_audio, "transcript", "") or ""
                         )
+                    if transcript_chunk:
+                        delta_text += transcript_chunk
                     if audio_chunk:
-                        if audio_block_id is None:
-                            audio_block_id = uuid.uuid4().hex
                         pcm_bytes = base64.b64decode(audio_chunk)
-                        acc_audio_data += pcm_bytes
                         if not audio_header_sent:
                             payload = _build_streaming_wav_header() + pcm_bytes
                             audio_header_sent = True
                         else:
                             payload = pcm_bytes
-                        delta_audio_block = DataBlock(
-                            id=audio_block_id,
-                            source=Base64Source(
-                                data=base64.b64encode(payload).decode(
-                                    "ascii",
-                                ),
-                                media_type="audio/wav",
-                            ),
+                        # ``append_data_block`` expects the raw incremental
+                        # media bytes and handles base64 encoding internally
+                        # (see ``ChatResponse.append_data_block``); passing an
+                        # already base64-encoded string here would result in
+                        # double-encoding.
+                        delta_res.append_data_block(
+                            block_id=audio_id,
+                            data=payload,
+                            media_type="audio/wav",
                         )
-                # Omni models deliver text via ``delta.audio.transcript``
-                # (not ``delta.content``); fold it into ``delta_text`` so
-                # the agent's streaming pipeline emits ``TextBlockDelta``
-                # events alongside the audio chunks.
-                if transcript_chunk:
-                    delta_text += transcript_chunk
 
-                acc_thinking.thinking += delta_thinking
-                acc_text.text += delta_text
-
-                delta_tool_call_blocks: List[ToolCallBlock] = []
-                for tool_call in getattr(delta, "tool_calls", None) or []:
-                    idx = tool_call.index
-                    args = tool_call.function.arguments or ""
-                    if idx in acc_tool_calls:
-                        acc_tool_calls[idx]["input"] += args
-                    else:
-                        acc_tool_calls[idx] = {
-                            "id": tool_call.id,
-                            "name": tool_call.function.name,
-                            "input": args,
-                        }
-                    tc = acc_tool_calls[idx]
-                    delta_tool_call_blocks.append(
-                        ToolCallBlock(
-                            id=tc["id"],
-                            name=tc["name"],
-                            input=args,
-                        ),
-                    )
-
-                delta_contents: List[
-                    TextBlock | ToolCallBlock | ThinkingBlock | DataBlock
-                ] = []
-                if delta_thinking:
-                    delta_contents.append(
-                        ThinkingBlock(
-                            id=acc_thinking.id,
-                            thinking=delta_thinking,
-                        ),
-                    )
                 if delta_text:
-                    delta_contents.append(
-                        TextBlock(id=acc_text.id, text=delta_text),
+                    delta_res.append_text(
+                        block_id=text_id,
+                        text=delta_text,
                     )
-                delta_contents.extend(delta_tool_call_blocks)
-                if delta_audio_block is not None:
-                    delta_contents.append(delta_audio_block)
 
-                if delta_contents:
-                    _kwargs: dict[str, Any] = {
-                        "content": delta_contents,
-                        "usage": usage,
-                        "is_last": False,
-                    }
-                    if response_id:
-                        _kwargs["id"] = response_id
-                    yield ChatResponse(**_kwargs)
+                # Tool call
+                for tool_call in getattr(delta, "tool_calls", None) or []:
+                    index = tool_call.index
+                    fn = getattr(tool_call, "function", None)
+                    delta_name = getattr(fn, "name", None) if fn else None
+                    delta_args = getattr(fn, "arguments", None) if fn else None
 
-        final_contents: List[
-            TextBlock | ToolCallBlock | ThinkingBlock | DataBlock
-        ] = []
-        if acc_thinking.thinking:
-            final_contents.append(acc_thinking)
-        if acc_text.text:
-            final_contents.append(acc_text)
-        for tc in acc_tool_calls.values():
-            final_contents.append(
-                ToolCallBlock(id=tc["id"], name=tc["name"], input=tc["input"]),
-            )
-        if acc_audio_data:
-            # PCM bytes were already streamed incrementally above (first
-            # chunk prefixed with a WAV header). Here we also assemble a
-            # standalone fixed-size WAV and attach it to the ``is_last``
-            # chunk so callers that consume the model directly (i.e.
-            # without going through ``Agent``, which filters audio blocks
-            # out of context) get a self-contained audio block for
-            # downstream serialization / display.
-            buf = io.BytesIO()
-            with wave.open(buf, "wb") as wav:
-                wav.setnchannels(1)
-                wav.setsampwidth(2)
-                wav.setframerate(24000)
-                wav.writeframes(bytes(acc_audio_data))
-            final_contents.append(
-                DataBlock(
-                    id=audio_block_id,
-                    source=Base64Source(
-                        data=base64.b64encode(buf.getvalue()).decode("ascii"),
-                        media_type="audio/wav",
-                    ),
-                ),
-            )
+                    # Record the id and name in case following deltas
+                    # don't provide them
+                    if index not in tool_call_mapping:
+                        tool_call_mapping[index] = (
+                            tool_call.id,
+                            delta_name or "unknown",
+                        )
 
-        _final_kwargs: dict[str, Any] = {
-            "content": final_contents,
-            "usage": usage,
-            "is_last": True,
-        }
-        if response_id:
-            _final_kwargs["id"] = response_id
-        yield ChatResponse(**_final_kwargs)
+                    stored_id, stored_name = tool_call_mapping[index]
+
+                    delta_res.append_tool_call(
+                        block_id=tool_call.id or stored_id,
+                        name=delta_name or stored_name,
+                        input=delta_args or "",
+                    )
+
+                if delta_res.content or usage:
+                    delta_res.usage = usage
+                    yield delta_res
 
     def _parse_completion_response(
         self,
@@ -649,6 +601,10 @@ class OpenAIChatModel(ChatModelBase):
         (str) the model is forced to call exactly that tool without needing to
         filter the list, preserving prompt-cache efficiency.
 
+        Tool parameter schemas are flattened (``$ref`` / ``$defs`` resolved
+        inline) so that providers which do not support JSON Schema references
+        (e.g. GLM-5.x via OpenCode Go) receive a self-contained schema.
+
         Args:
             tools (`list[dict] | None`, optional):
                 The raw tool schemas.
@@ -665,6 +621,9 @@ class OpenAIChatModel(ChatModelBase):
                 allowed = set(tool_choice.tools)
                 tools = [t for t in tools if t["function"]["name"] in allowed]
 
+        if tools:
+            tools = self._flatten_tool_schemas(tools)
+
         if not tool_choice:
             return tools, None
 
@@ -674,3 +633,38 @@ class OpenAIChatModel(ChatModelBase):
             return tools, {"type": "function", "function": {"name": mode}}
 
         return tools, mode
+
+    @staticmethod
+    def _flatten_tool_schemas(
+        tools: list[dict],
+    ) -> list[dict]:
+        """Inline ``$ref`` / ``$defs`` in each tool's parameter schema.
+
+        Args:
+            tools (`list[dict]`):
+                The list of tool dicts, each with a ``"function"`` key
+                containing the tool name, description and ``"parameters"``
+                JSON schema.
+
+        Returns:
+            `list[dict]`:
+                A new list where each tool's ``parameters`` schema has all
+                local ``$ref`` / ``$defs`` resolved inline.  Tools whose
+                schema contained no references are returned unchanged (same
+                object identity).
+        """
+        result = []
+        for tool in tools:
+            func = tool.get("function")
+            if not isinstance(func, dict):
+                result.append(tool)
+                continue
+            params = func.get("parameters")
+            if not isinstance(params, dict):
+                result.append(tool)
+                continue
+            flat = _flatten_json_schema(params)
+            if flat is not params:
+                tool = {**tool, "function": {**func, "parameters": flat}}
+            result.append(tool)
+        return result

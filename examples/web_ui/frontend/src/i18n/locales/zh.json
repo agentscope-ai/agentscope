@@ -17,11 +17,14 @@
 		"error": "出错了",
 		"information": "信息",
 		"interrupted": "已中断",
+		"knowledge": "知识库",
 		"loading": "加载中...",
 		"model": "模型",
 		"name": "名称",
 		"no": "否",
 		"noData": "暂无数据",
+		"readOnly": "只读",
+		"readOnlyTooltip": "该资源以只读方式共享给你，编辑和删除均被禁用。",
 		"completed": "已完成",
 		"failed": "已失败",
 		"running": "运行中",
@@ -41,8 +44,13 @@
 		"deleteTitle": "删除{{entity}} \"{{name}}\"？",
 		"deleteDescription": "此操作无法撤销。"
 	},
+	"error": {
+		"description": "页面遇到意外错误。你可以重试或返回首页。",
+		"retry": "重试",
+		"home": "返回首页"
+	},
 	"tool": {
-		"moreLines": "... 还有 {{count}} 行",
+		"callGeneric": "调用工具",
 		"read": {
 			"name": "读取",
 			"fileCount_one": "{{count}} 个文件",
@@ -54,21 +62,36 @@
 			"name": "Glob"
 		},
 		"taskCreate": {
-			"name": "TaskCreate",
-			"label": "创建",
-			"count_one": "{{count}} 个任务",
-			"count_other": "{{count}} 个任务"
+			"name": "TaskCreate"
 		},
 		"grep": {
 			"name": "Grep"
+		},
+		"summary": {
+			"separator": "，",
+			"bash_one": "执行 {{count}} 次脚本",
+			"bash_other": "执行 {{count}} 次脚本",
+			"read_one": "读取 {{count}} 个文件",
+			"read_other": "读取 {{count}} 个文件",
+			"edit_one": "编辑 {{count}} 个文件",
+			"edit_other": "编辑 {{count}} 个文件",
+			"search_one": "搜索 {{count}} 个模式",
+			"search_other": "搜索 {{count}} 个模式",
+			"todo_one": "更新 {{count}} 项待办",
+			"todo_other": "更新 {{count}} 项待办",
+			"mcp_one": "调用 {{count}} 次 MCP",
+			"mcp_other": "调用 {{count}} 次 MCP",
+			"fallback_one": "调用 {{count}} 次工具",
+			"fallback_other": "调用 {{count}} 次工具"
 		}
 	},
 	"textInput": {
 		"toComplete": "补全",
-		"newLine": "换行",
 		"attach": "添加附件",
 		"attachNotSupported": "当前模型不支持文件附件",
-		"send": "发送"
+		"send": "发送",
+		"stop": "停止生成",
+		"stopping": "停止中 ..."
 	},
 	"confirmCard": {
 		"toConfirm": "确认",
@@ -84,6 +107,17 @@
 			"tool_output": "工具输出",
 			"team_message": "团队消息",
 			"schedule": "定时任务"
+		},
+		"error": {
+			"title": "回复失败",
+			"authentication": "鉴权失败 —— 请检查模型的 API key 或凭证。",
+			"permission": "请求被拒绝 —— 当前凭证没有访问该模型或端点的权限。",
+			"rate_limit": "触发限流或额度用尽 —— 请稍后重试。",
+			"invalid_request": "发往模型的请求被判定为非法。",
+			"upstream": "上游模型服务返回了错误。",
+			"connection": "无法连接模型服务 —— 网络错误或超时。",
+			"internal": "发生了未预期的内部错误。",
+			"unknown": "回复因未知错误失败。"
 		}
 	},
 	"chat": {
@@ -91,14 +125,16 @@
 		"placeholder": "输入消息...",
 		"send": "发送",
 		"confirmToolCall": "允许此操作？",
+		"subagentConfirmTitle": "{{name}} 请求确认",
 		"newSession": "新会话",
 		"noSessions": "暂无会话",
-		"noMessages": "暂无消息",
-		"noMessagesDesc": "发送一条消息开始新的对话",
+		"greeting": "我们从哪儿开始？",
 		"agent": {
 			"selectPlaceholder": "选择 Agent",
 			"emptyTitle": "暂无 Agent",
-			"emptyDescription": "创建一个 Agent 开始使用。"
+			"emptyDescription": "创建一个 Agent 开始使用。",
+			"groupYours": "我的",
+			"groupShared": "共享给我"
 		},
 		"session": {
 			"label": "会话",
@@ -116,23 +152,53 @@
 		"identity": {
 			"legend": "Agent 身份",
 			"description": "定义此 Agent 行为的名称和指令。",
-			"name": { "label": "名称", "placeholder": "我的 Agent" },
-			"system-prompt": { "label": "系统提示词" }
+			"name": {
+				"label": "名称",
+				"placeholder": "我的 Agent"
+			},
+			"system-prompt": {
+				"label": "系统提示词"
+			}
 		},
 		"context-config": {
 			"legend": "上下文配置",
 			"description": "控制上下文窗口的管理和压缩方式。",
-			"trigger-ratio": { "label": "触发比例" },
-			"reserve-ratio": { "label": "保留比例" },
-			"tool-result-limit": { "label": "工具结果限制" },
-			"compression-prompt": { "label": "压缩提示词" },
-			"summary-template": { "label": "摘要模板" }
+			"trigger-ratio": {
+				"label": "触发比例"
+			},
+			"reserve-ratio": {
+				"label": "保留比例"
+			},
+			"tool-result-limit": {
+				"label": "工具结果限制"
+			},
+			"compression-prompt": {
+				"label": "压缩提示词"
+			},
+			"summary-template": {
+				"label": "摘要模板"
+			}
 		},
 		"react-config": {
 			"legend": "ReAct 配置",
 			"description": "控制推理和行动循环的行为。",
-			"max-iters": { "label": "最大迭代次数" },
-			"stop-on-reject": { "label": "拒绝时停止" }
+			"max-iters": {
+				"label": "最大迭代次数"
+			},
+			"stop-on-reject": {
+				"label": "拒绝时停止"
+			}
+		},
+		"invite-config": {
+			"legend": "邀请配置",
+			"description": "控制此 Agent 是否可被其他 Agent 通过 AgentInvite 邀请。",
+			"invitable": {
+				"label": "允许被邀请"
+			},
+			"invite-description": {
+				"label": "邀请说明",
+				"placeholder": "简要描述此 Agent 的专长；允许被邀请时必填。"
+			}
 		}
 	},
 	"dialog-agent-edit": {
@@ -167,8 +233,59 @@
 		"title": "编辑凭证",
 		"description": "更新该提供商已保存的凭证。"
 	},
+	"dialog-knowledge-base-create": {
+		"title": "创建知识库",
+		"description": "使用 Embedding 模型创建新的知识库。",
+		"name": {
+			"label": "名称",
+			"placeholder": "我的知识库"
+		},
+		"descriptionField": {
+			"label": "描述",
+			"placeholder": "描述知识库用途"
+		},
+		"embeddingModel": {
+			"label": "Embedding 模型"
+		},
+		"dimension": {
+			"label": "维度"
+		},
+		"policy": {
+			"lockedTitle": "维度已锁定为 {{dimension}}d",
+			"lockedDescription": "当前实例已要求所有知识库使用 {{dimension}} 维 embedding，下面仅展示兼容的模型。",
+			"noCompatibleTitle": "暂无可用 Embedding 模型",
+			"noCompatibleAny": "你的凭证中没有任何可用的 Embedding 模型，请先添加凭证。",
+			"noCompatibleLocked": "你的凭证中没有任何模型支持 {{dimension}} 维 embedding。"
+		},
+		"errors": {
+			"nameRequired": "请填写知识库名称。",
+			"embeddingRequired": "请选择 Embedding 模型。",
+			"dimensionRequired": "请选择 Embedding 维度。"
+		}
+	},
+	"dialog-knowledge-base-edit": {
+		"title": "编辑知识库",
+		"description": "修改知识库的名称与描述。",
+		"name": {
+			"label": "名称",
+			"placeholder": "我的知识库"
+		},
+		"descriptionField": {
+			"label": "描述",
+			"placeholder": "描述知识库用途"
+		},
+		"embeddingModel": {
+			"label": "Embedding 模型"
+		},
+		"errors": {
+			"nameRequired": "请填写知识库名称。"
+		}
+	},
+	"dialog-knowledge-base-delete": {
+		"title": "删除知识库",
+		"description": "此操作将永久删除知识库 \"{{name}}\" 及其所有已索引文档，且无法撤销。"
+	},
 	"credential": {
-		"addConfig": "添加配置",
 		"noProviders": "暂无可用提供商",
 		"noConfigs": "暂无配置",
 		"selectHint": "未选择凭证",
@@ -178,11 +295,78 @@
 		"noModelsDescription": "该提供商未返回任何模型。",
 		"deleteEntity": "凭证",
 		"subtitle": "模型 API 授权配置",
+		"configured": "已配置",
+		"addProvider": "添加凭证",
 		"reasoning": "推理模型",
 		"maxContext": "最大上下文",
 		"maxOutput": "最大输出",
 		"inputTypes": "输入模态",
-		"outputTypes": "输出模态"
+		"outputTypes": "输出模态",
+		"availableTTSModels": "语音合成模型"
+	},
+	"knowledge": {
+		"subtitle": "管理 Agent 使用的知识库",
+		"selectHint": "未选择知识库",
+		"selectHintDescription": "从左侧选择一个知识库以查看详情。",
+		"deleteEntity": "知识库",
+		"list": {
+			"label": "知识库",
+			"emptyTitle": "暂无知识库",
+			"emptyDescription": "创建知识库以开始索引文档。",
+			"createButton": "创建知识库"
+		},
+		"document": {
+			"label": "文档",
+			"emptyTitle": "暂无文档",
+			"emptyDescription": "上传文档以索引到该知识库中。",
+			"uploadButton": "上传文档",
+			"uploadButtonShort": "上传",
+			"countLabel": "文档（{{count}}）",
+			"size": "大小",
+			"chunks": "分块",
+			"chunkCount_one": "{{count}} 个分块",
+			"chunkCount_other": "{{count}} 个分块",
+			"uploadedAt": "{{when}} 上传",
+			"deleteEntity": "文档",
+			"deleteConfirmTitle": "删除文档",
+			"deleteConfirmDescription": "确认删除 \"{{name}}\"？该操作将一并移除文档及其全部已索引分块，且不可撤销。",
+			"deleteError": "删除文档失败。",
+			"dropHint": "拖拽文件到此处上传",
+			"dropHintIdle": "或拖拽文件到此处",
+			"invalidFile": "\"{{name}}\" 添加失败。",
+			"unsupportedExtension": "\"{{name}}\" 已跳过——不支持该文件类型。",
+			"status": {
+				"queued": "排队中",
+				"uploading": "上传中",
+				"pending": "等待处理",
+				"parsing": "解析中",
+				"chunking": "分块中",
+				"indexing": "建立索引",
+				"ready": "已就绪",
+				"error": "失败",
+				"cancelled": "已取消"
+			},
+			"actions": {
+				"cancel": "取消",
+				"retry": "重试",
+				"dismiss": "关闭",
+				"remove": "删除",
+				"clearFinished": "清除已完成"
+			}
+		},
+		"test": {
+			"button": "测试",
+			"title": "检索测试",
+			"description": "在 \"{{name}}\" 上发起一次临时检索。",
+			"queryLabel": "查询",
+			"queryPlaceholder": "输入自然语言问题…",
+			"topKLabel": "Top K",
+			"searchButton": "搜索",
+			"score": "分值",
+			"chunkPosition": "第 {{index}} / {{total}} 段",
+			"emptyTitle": "无匹配",
+			"emptyDescription": "本次查询没有返回任何分块。"
+		}
 	},
 	"llm-select": {
 		"placeholder": "选择模型",
@@ -196,6 +380,20 @@
 		"addCredential": "添加凭证",
 		"clear": "清除选择",
 		"noFallback": "无兜底模型"
+	},
+	"embedding-select": {
+		"placeholder": "选择 Embedding 模型",
+		"loading": "加载中…",
+		"empty": {
+			"title": "暂无可用的 Embedding 模型",
+			"description": "请先添加支持 Embedding 的凭证。"
+		},
+		"addCredential": "添加凭证",
+		"clear": "清除选择"
+	},
+	"dimension-select": {
+		"placeholder": "选择维度",
+		"pickModelFirst": "请先选择 Embedding 模型"
 	},
 	"permission-mode": {
 		"placeholder": "选择权限模式",
@@ -285,7 +483,12 @@
 		"empty": "暂无可配置参数。",
 		"fallbackLabel": "兜底模型",
 		"fallbackLabelWithModel": "兜底模型（{{model}}）",
-		"parametersLabel": "参数"
+		"parametersLabel": "参数",
+		"ttsLabel": "语音合成",
+		"ttsEmpty": "暂无可用的语音合成模型。",
+		"ttsParameters": "参数",
+		"ttsParametersDescription": "调整所选语音合成模型的参数。",
+		"noTts": "不使用语音合成"
 	},
 	"setup": {
 		"title": "连接到服务器",
@@ -332,6 +535,60 @@
 		"inProgress": "进行中",
 		"completed": "已完成",
 		"blockedBy": "依赖"
+	},
+	"panel": {
+		"plan": {
+			"title": "计划",
+			"completed": "已完成：{{count}}",
+			"total": "总计：{{count}}",
+			"emptyTitle": "暂无任务",
+			"emptyDescription": "智能体规划的任务会显示在这里。"
+		},
+		"mcp": {
+			"title": "MCP",
+			"description": "工作区中配置的 MCP 服务器。",
+			"searchPlaceholder": "在工作区中搜索 MCP",
+			"add": "添加 MCP",
+			"tools": "{{count}} 个工具",
+			"emptyTitle": "暂无 MCP 服务器",
+			"emptyDescription": "添加 MCP 服务器为工作区配备工具。"
+		},
+		"skill": {
+			"title": "技能",
+			"description": "工作区中配置的技能。",
+			"searchPlaceholder": "在工作区中搜索技能",
+			"add": "添加技能",
+			"emptyTitle": "暂无技能",
+			"emptyDescription": "添加技能为工作区配备能力。"
+		},
+		"knowledge": {
+			"title": "知识库",
+			"description": "智能体可检索的知识库。",
+			"searchPlaceholder": "搜索知识库",
+			"emptyTitle": "暂无知识库",
+			"emptyDescription": "请先在「知识库」页面创建一个。",
+			"parametersTitle": "检索配置",
+			"parametersDescription": "知识库检索参数设置",
+			"selectedCount": "已挂载 {{count}} 个"
+		},
+		"permission": {
+			"title": "权限",
+			"description": "本会话应用的权限。",
+			"mode": "模式：{{mode}}",
+			"workingDirectories": "工作目录",
+			"noWorkingDirectories": "暂无工作目录。",
+			"allow": "允许",
+			"deny": "拒绝",
+			"ask": "询问",
+			"anyInvocation": "任意调用",
+			"emptyTitle": "暂无规则",
+			"emptyDescription": "允许 / 拒绝 / 询问规则会在添加后显示在这里。"
+		},
+		"search": {
+			"emptyTitle": "无结果",
+			"emptyDescription": "没有匹配 “{{query}}” 的结果。"
+		},
+		"loading": "加载中…"
 	},
 	"team-sidebar": {
 		"membersHeading": "成员",

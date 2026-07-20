@@ -4,6 +4,7 @@ import os
 import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
 
+from utils import AnyString
 from agentscope.tool import Glob
 from agentscope.permission import (
     PermissionContext,
@@ -101,6 +102,34 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         self.assertIn("test2.py", content)
         self.assertIn("test3.py", content)
 
+    async def test_windows_style_separator_pattern(self) -> None:
+        """Test glob patterns that use backslashes as path separators."""
+        chunk = await self.glob_tool(
+            pattern=r"subdir\*.py",
+            path=self.temp_dir,
+        )
+
+        self.assertDictEqual(
+            chunk.model_dump(),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": os.path.join(
+                            self.temp_dir,
+                            "subdir",
+                            "test3.py",
+                        ),
+                        "id": AnyString(),
+                    },
+                ],
+                "state": "running",
+                "is_last": True,
+                "metadata": {},
+                "id": AnyString(),
+            },
+        )
+
     async def test_no_matches(self) -> None:
         """Test pattern with no matches."""
         chunk = await self.glob_tool(
@@ -115,7 +144,7 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         """Test match_rule with path patterns."""
         # Test matching explicit path
         self.assertTrue(
-            self.glob_tool.match_rule(
+            await self.glob_tool.match_rule(
                 self.temp_dir,
                 {"path": self.temp_dir, "pattern": "*.py"},
             ),
@@ -124,7 +153,7 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         # Test wildcard pattern matching path
         parent_dir = os.path.dirname(self.temp_dir)
         self.assertTrue(
-            self.glob_tool.match_rule(
+            await self.glob_tool.match_rule(
                 parent_dir + "/**",
                 {"path": self.temp_dir, "pattern": "*.py"},
             ),
@@ -132,7 +161,7 @@ class GlobToolTest(IsolatedAsyncioTestCase):
 
         # Test non-matching path
         self.assertFalse(
-            self.glob_tool.match_rule(
+            await self.glob_tool.match_rule(
                 "/some/other/path/**",
                 {"path": self.temp_dir, "pattern": "*.py"},
             ),
@@ -142,7 +171,7 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         """Test match_rule with pattern matching."""
         # Test matching against the pattern itself
         self.assertTrue(
-            self.glob_tool.match_rule(
+            await self.glob_tool.match_rule(
                 "*.py",
                 {"pattern": "*.py"},
             ),
@@ -150,7 +179,7 @@ class GlobToolTest(IsolatedAsyncioTestCase):
 
         # Test wildcard pattern matching
         self.assertTrue(
-            self.glob_tool.match_rule(
+            await self.glob_tool.match_rule(
                 "**/*.py",
                 {"pattern": "src/**/*.py"},
             ),
@@ -158,7 +187,7 @@ class GlobToolTest(IsolatedAsyncioTestCase):
 
         # Test non-matching pattern
         self.assertFalse(
-            self.glob_tool.match_rule(
+            await self.glob_tool.match_rule(
                 "*.txt",
                 {"pattern": "*.py"},
             ),
@@ -168,7 +197,7 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         """Test that path matching takes priority over pattern matching."""
         # If path matches, should return True even if pattern doesn't
         self.assertTrue(
-            self.glob_tool.match_rule(
+            await self.glob_tool.match_rule(
                 self.temp_dir,
                 {"path": self.temp_dir, "pattern": "*.txt"},
             ),
@@ -177,7 +206,7 @@ class GlobToolTest(IsolatedAsyncioTestCase):
     async def test_generate_suggestions_with_path(self) -> None:
         """Test generate_suggestions for glob with explicit path."""
 
-        suggestions = self.glob_tool.generate_suggestions(
+        suggestions = await self.glob_tool.generate_suggestions(
             {"path": self.temp_dir, "pattern": "*.py"},
         )
 
@@ -194,7 +223,7 @@ class GlobToolTest(IsolatedAsyncioTestCase):
     async def test_generate_suggestions_defaults_to_cwd(self) -> None:
         """Test generate_suggestions defaults to cwd when no path provided."""
 
-        suggestions = self.glob_tool.generate_suggestions(
+        suggestions = await self.glob_tool.generate_suggestions(
             {"pattern": "*.py"},
         )
 

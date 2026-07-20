@@ -2,7 +2,7 @@
 """Middleware that keeps team workers from finishing without reporting."""
 from typing import Any, AsyncGenerator, Callable
 
-from .._tools import TeamSay
+from .._tool import TeamSay
 from ..._logging import logger
 from ...agent import Agent
 from ...event import (

@@ -17,11 +17,14 @@
 		"error": "Something went wrong",
 		"information": "Information",
 		"interrupted": "Interrupted",
+		"knowledge": "Knowledge Bases",
 		"loading": "Loading...",
 		"model": "Model",
 		"name": "Name",
 		"no": "No",
 		"noData": "No data",
+		"readOnly": "Read-only",
+		"readOnlyTooltip": "Shared with you as read-only; editing and deletion are disabled.",
 		"completed": "Completed",
 		"failed": "Failed",
 		"running": "Running",
@@ -41,8 +44,13 @@
 		"deleteTitle": "Delete {{entity}} \"{{name}}\"?",
 		"deleteDescription": "This action cannot be undone."
 	},
+	"error": {
+		"description": "The page hit an unexpected error. You can retry or go back home.",
+		"retry": "Retry",
+		"home": "Back to home"
+	},
 	"tool": {
-		"moreLines": "... {{count}} more lines",
+		"callGeneric": "Call tool",
 		"read": {
 			"name": "Read",
 			"fileCount_one": "{{count}} file",
@@ -54,21 +62,36 @@
 			"name": "Glob"
 		},
 		"taskCreate": {
-			"name": "TaskCreate",
-			"label": "Create",
-			"count_one": "{{count}} task",
-			"count_other": "{{count}} tasks"
+			"name": "TaskCreate"
 		},
 		"grep": {
 			"name": "Grep"
+		},
+		"summary": {
+			"separator": ", ",
+			"bash_one": "ran {{count}} shell command",
+			"bash_other": "ran {{count}} shell commands",
+			"read_one": "read {{count}} file",
+			"read_other": "read {{count}} files",
+			"edit_one": "edited {{count}} file",
+			"edit_other": "edited {{count}} files",
+			"search_one": "searched {{count}} pattern",
+			"search_other": "searched {{count}} patterns",
+			"todo_one": "updated todos {{count}} item",
+			"todo_other": "updated todos {{count}} items",
+			"mcp_one": "called {{count}} MCP tool",
+			"mcp_other": "called {{count}} MCP tools",
+			"fallback_one": "called {{count}} tool",
+			"fallback_other": "called {{count}} tools"
 		}
 	},
 	"textInput": {
 		"toComplete": "to complete",
-		"newLine": "new line",
 		"attach": "Attach file",
 		"attachNotSupported": "This model does not support file attachments",
-		"send": "Send"
+		"send": "Send",
+		"stop": "Stop generating",
+		"stopping": "Stopping ..."
 	},
 	"confirmCard": {
 		"toConfirm": "to confirm",
@@ -84,6 +107,17 @@
 			"tool_output": "Tool Output",
 			"team_message": "Team Message",
 			"schedule": "Schedule"
+		},
+		"error": {
+			"title": "Reply failed",
+			"authentication": "Authentication failed — check the model's API key or credential.",
+			"permission": "Request not allowed — the credential lacks permission for this model or endpoint.",
+			"rate_limit": "Rate limit or quota exceeded — please try again later.",
+			"invalid_request": "The request to the model was rejected as invalid.",
+			"upstream": "The upstream model service returned an error.",
+			"connection": "Could not reach the model service — network error or timeout.",
+			"internal": "An unexpected internal error occurred.",
+			"unknown": "The reply failed with an unknown error."
 		}
 	},
 	"chat": {
@@ -91,14 +125,16 @@
 		"placeholder": "Type a message...",
 		"send": "Send",
 		"confirmToolCall": "Allow this action?",
+		"subagentConfirmTitle": "{{name}} requests confirmation",
 		"newSession": "New Session",
 		"noSessions": "No sessions yet",
-		"noMessages": "No Messages Yet",
-		"noMessagesDesc": "Start your conversation by sending a message",
+		"greeting": "Where should we start?",
 		"agent": {
 			"selectPlaceholder": "Select an agent",
 			"emptyTitle": "No agents",
-			"emptyDescription": "Create an agent to get started."
+			"emptyDescription": "Create an agent to get started.",
+			"groupYours": "Yours",
+			"groupShared": "Shared with you"
 		},
 		"session": {
 			"label": "Session",
@@ -116,23 +152,53 @@
 		"identity": {
 			"legend": "Agent Identity",
 			"description": "Name and instructions that define this agent's behaviour.",
-			"name": { "label": "Name", "placeholder": "My agent" },
-			"system-prompt": { "label": "System prompt" }
+			"name": {
+				"label": "Name",
+				"placeholder": "My agent"
+			},
+			"system-prompt": {
+				"label": "System prompt"
+			}
 		},
 		"context-config": {
 			"legend": "Context Config",
 			"description": "Controls how the context window is managed and compressed.",
-			"trigger-ratio": { "label": "Trigger ratio" },
-			"reserve-ratio": { "label": "Reserve ratio" },
-			"tool-result-limit": { "label": "Tool result limit" },
-			"compression-prompt": { "label": "Compression prompt" },
-			"summary-template": { "label": "Summary template" }
+			"trigger-ratio": {
+				"label": "Trigger ratio"
+			},
+			"reserve-ratio": {
+				"label": "Reserve ratio"
+			},
+			"tool-result-limit": {
+				"label": "Tool result limit"
+			},
+			"compression-prompt": {
+				"label": "Compression prompt"
+			},
+			"summary-template": {
+				"label": "Summary template"
+			}
 		},
 		"react-config": {
 			"legend": "ReAct Config",
 			"description": "Controls the reasoning and action loop behaviour.",
-			"max-iters": { "label": "Max iterations" },
-			"stop-on-reject": { "label": "Stop on reject" }
+			"max-iters": {
+				"label": "Max iterations"
+			},
+			"stop-on-reject": {
+				"label": "Stop on reject"
+			}
+		},
+		"invite-config": {
+			"legend": "Invite Config",
+			"description": "Controls whether other agents can borrow this one via AgentInvite.",
+			"invitable": {
+				"label": "Invitable"
+			},
+			"invite-description": {
+				"label": "Invite description",
+				"placeholder": "Briefly describe this agent's expertise; required when invitable is on."
+			}
 		}
 	},
 	"dialog-agent-edit": {
@@ -167,8 +233,59 @@
 		"title": "Edit Credential",
 		"description": "Update the saved credential for this provider."
 	},
+	"dialog-knowledge-base-create": {
+		"title": "Create knowledge base",
+		"description": "Create a new knowledge base using an embedding model.",
+		"name": {
+			"label": "Name",
+			"placeholder": "My knowledge base"
+		},
+		"descriptionField": {
+			"label": "Description",
+			"placeholder": "Describe what this knowledge base is for."
+		},
+		"embeddingModel": {
+			"label": "Embedding model"
+		},
+		"dimension": {
+			"label": "Dimension"
+		},
+		"policy": {
+			"lockedTitle": "Dimension is locked to {{dimension}}d",
+			"lockedDescription": "This server already pins all knowledge bases to {{dimension}}-dim embeddings. Only compatible models are listed below.",
+			"noCompatibleTitle": "No compatible embedding models",
+			"noCompatibleAny": "None of your credentials expose an embedding model. Add a credential first.",
+			"noCompatibleLocked": "None of your credentials expose a model that can produce {{dimension}}-dim embeddings."
+		},
+		"errors": {
+			"nameRequired": "Please give the knowledge base a name.",
+			"embeddingRequired": "Please pick an embedding model.",
+			"dimensionRequired": "Please pick a dimension."
+		}
+	},
+	"dialog-knowledge-base-edit": {
+		"title": "Edit knowledge base",
+		"description": "Update the knowledge base name and description.",
+		"name": {
+			"label": "Name",
+			"placeholder": "My knowledge base"
+		},
+		"descriptionField": {
+			"label": "Description",
+			"placeholder": "Describe what this knowledge base is for."
+		},
+		"embeddingModel": {
+			"label": "Embedding model"
+		},
+		"errors": {
+			"nameRequired": "Please give the knowledge base a name."
+		}
+	},
+	"dialog-knowledge-base-delete": {
+		"title": "Delete knowledge base",
+		"description": "This will permanently delete the knowledge base \"{{name}}\" and all of its indexed documents. This action cannot be undone."
+	},
 	"credential": {
-		"addConfig": "Add configuration",
 		"noProviders": "No providers available",
 		"noConfigs": "No configurations",
 		"selectHint": "No credential selected",
@@ -178,11 +295,78 @@
 		"noModelsDescription": "This provider returned no models.",
 		"deleteEntity": "credential",
 		"subtitle": "Model API credential configuration",
+		"configured": "Configured",
+		"addProvider": "Add credential",
 		"reasoning": "Reasoning",
 		"maxContext": "Max. Context",
 		"maxOutput": "Max. Output",
 		"inputTypes": "Input",
-		"outputTypes": "Output"
+		"outputTypes": "Output",
+		"availableTTSModels": "TTS Models"
+	},
+	"knowledge": {
+		"subtitle": "Manage knowledge bases used by your agents",
+		"selectHint": "No knowledge base selected",
+		"selectHintDescription": "Select a knowledge base from the sidebar to view its details.",
+		"deleteEntity": "knowledge base",
+		"list": {
+			"label": "Knowledge bases",
+			"emptyTitle": "No knowledge bases",
+			"emptyDescription": "Create a knowledge base to start indexing documents.",
+			"createButton": "Create knowledge base"
+		},
+		"document": {
+			"label": "Documents",
+			"emptyTitle": "No documents",
+			"emptyDescription": "Upload a document to index it into this knowledge base.",
+			"uploadButton": "Upload document",
+			"uploadButtonShort": "Upload",
+			"countLabel": "Documents ({{count}})",
+			"size": "Size",
+			"chunks": "Chunks",
+			"chunkCount_one": "{{count}} chunk",
+			"chunkCount_other": "{{count}} chunks",
+			"uploadedAt": "Uploaded {{when}}",
+			"deleteEntity": "document",
+			"deleteConfirmTitle": "Delete document",
+			"deleteConfirmDescription": "Delete \"{{name}}\"? This removes the document and every indexed chunk. This action cannot be undone.",
+			"deleteError": "Could not delete document.",
+			"dropHint": "Drop files here to upload",
+			"dropHintIdle": "or drop files here",
+			"invalidFile": "\"{{name}}\" could not be added.",
+			"unsupportedExtension": "\"{{name}}\" was skipped — file type not supported.",
+			"status": {
+				"queued": "Queued",
+				"uploading": "Uploading",
+				"pending": "Awaiting worker",
+				"parsing": "Parsing",
+				"chunking": "Chunking",
+				"indexing": "Indexing",
+				"ready": "Ready",
+				"error": "Error",
+				"cancelled": "Cancelled"
+			},
+			"actions": {
+				"cancel": "Cancel",
+				"retry": "Retry",
+				"dismiss": "Dismiss",
+				"remove": "Remove",
+				"clearFinished": "Clear finished"
+			}
+		},
+		"test": {
+			"button": "Test",
+			"title": "Test retrieval",
+			"description": "Probe \"{{name}}\" with an ad-hoc query.",
+			"queryLabel": "Query",
+			"queryPlaceholder": "Type a natural-language question…",
+			"topKLabel": "Top K",
+			"searchButton": "Search",
+			"score": "score",
+			"chunkPosition": "Chunk {{index}} of {{total}}",
+			"emptyTitle": "No matches",
+			"emptyDescription": "No chunks scored above the threshold for this query."
+		}
 	},
 	"llm-select": {
 		"placeholder": "Select a model",
@@ -196,6 +380,20 @@
 		"addCredential": "Add Credential",
 		"clear": "Clear selection",
 		"noFallback": "No fallback"
+	},
+	"embedding-select": {
+		"placeholder": "Select an embedding model",
+		"loading": "Loading…",
+		"empty": {
+			"title": "No embedding models available",
+			"description": "Add a credential that supports embedding to get started."
+		},
+		"addCredential": "Add Credential",
+		"clear": "Clear selection"
+	},
+	"dimension-select": {
+		"placeholder": "Select a dimension",
+		"pickModelFirst": "Pick a model first"
 	},
 	"permission-mode": {
 		"placeholder": "Select permission mode",
@@ -285,7 +483,12 @@
 		"empty": "No configurable parameters.",
 		"fallbackLabel": "Fallback model",
 		"fallbackLabelWithModel": "Fallback model ({{model}})",
-		"parametersLabel": "Parameters"
+		"parametersLabel": "Parameters",
+		"ttsLabel": "TTS",
+		"ttsEmpty": "No TTS models available.",
+		"ttsParameters": "Parameters",
+		"ttsParametersDescription": "Adjust parameters for the selected TTS model.",
+		"noTts": "No TTS"
 	},
 	"setup": {
 		"title": "Connect to Service",
@@ -332,6 +535,60 @@
 		"inProgress": "In Progress",
 		"completed": "Completed",
 		"blockedBy": "blocked by"
+	},
+	"panel": {
+		"plan": {
+			"title": "Plan",
+			"completed": "Completed: {{count}}",
+			"total": "Total: {{count}}",
+			"emptyTitle": "No tasks yet",
+			"emptyDescription": "Tasks the agent plans will show up here."
+		},
+		"mcp": {
+			"title": "MCP",
+			"description": "The MCP servers equipped in the workspace.",
+			"searchPlaceholder": "Search MCP in the workspace",
+			"add": "Add MCP",
+			"tools": "{{count}} tools",
+			"emptyTitle": "No MCP servers",
+			"emptyDescription": "Add an MCP server to equip the workspace with tools."
+		},
+		"skill": {
+			"title": "Skills",
+			"description": "The skills equipped in the workspace.",
+			"searchPlaceholder": "Search skills in the workspace",
+			"add": "Add Skill",
+			"emptyTitle": "No skills",
+			"emptyDescription": "Add a skill to equip the workspace."
+		},
+		"knowledge": {
+			"title": "Knowledge Bases",
+			"description": "Knowledge bases the agent can retrieve from.",
+			"searchPlaceholder": "Search knowledge bases",
+			"emptyTitle": "No knowledge bases",
+			"emptyDescription": "Create one on the Knowledge Bases page first.",
+			"parametersTitle": "Retrieval settings",
+			"parametersDescription": "Knowledge base retrieval settings.",
+			"selectedCount": "{{count}} attached"
+		},
+		"permission": {
+			"title": "Permissions",
+			"description": "The permissions applied in this session.",
+			"mode": "Mode: {{mode}}",
+			"workingDirectories": "Working Directories",
+			"noWorkingDirectories": "No working directories.",
+			"allow": "Allow",
+			"deny": "Deny",
+			"ask": "Ask",
+			"anyInvocation": "any invocation",
+			"emptyTitle": "No rules configured",
+			"emptyDescription": "Allow / deny / ask rules will appear here as they are added."
+		},
+		"search": {
+			"emptyTitle": "No results",
+			"emptyDescription": "Nothing matches “{{query}}”."
+		},
+		"loading": "Loading…"
 	},
 	"team-sidebar": {
 		"membersHeading": "Members",

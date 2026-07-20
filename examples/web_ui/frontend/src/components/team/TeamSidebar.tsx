@@ -1,7 +1,7 @@
 import { Bot, Crown } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
-import type { TeamDetailResponse, TeamMemberInfo, AgentRecord } from '@/api';
+import type { TeamDetailResponse, TeamMemberInfo, AgentView } from '@/api';
 import {
 	Sidebar,
 	SidebarContent,
@@ -70,7 +70,7 @@ export function TeamSidebar({ team, currentSessionId }: TeamSidebarProps) {
 		navigate(`/chat/${leaderAgentId}/${leaderSessionId}/${memberAgentId}`);
 	};
 
-	const renderLeader = (leader: AgentRecord) => (
+	const renderLeader = (leader: AgentView) => (
 		<SidebarMenuItem>
 			<SidebarMenuButton isActive={currentSessionId === leaderSessionId} onClick={goToLeader}>
 				<Crown />

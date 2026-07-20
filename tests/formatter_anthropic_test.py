@@ -666,11 +666,6 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
                                 {"type": "text", "text": "result_1"},
                             ],
                         },
-                    ],
-                },
-                {
-                    "role": "user",
-                    "content": [
                         {
                             "type": "tool_result",
                             "tool_use_id": "call_2",
@@ -824,6 +819,346 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
                                 "media_type": "image/png",
                                 "data": self.image_b64,
                             },
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_chat_formatter_parallel_tool_results_merged(
+        self,
+    ) -> None:
+        """Parallel tool_results must be grouped into ONE user message.
+
+        Regression test for Issue #1892: AnthropicChatFormatter was flushing
+        content_blocks on every ToolResultBlock, which split N parallel results
+        into N separate user messages. Strict endpoints such as DeepSeek's
+        Anthropic-compatible API reject this with HTTP 400.
+        """
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            UserMsg(
+                name="user",
+                content="Get weather for Beijing, Shanghai, and Guangzhou.",
+            ),
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    TextBlock(text="Let me check all three cities."),
+                    ToolCallBlock(
+                        id="call_01",
+                        name="get_weather",
+                        input='{"city": "Beijing"}',
+                    ),
+                    ToolCallBlock(
+                        id="call_02",
+                        name="get_weather",
+                        input='{"city": "Shanghai"}',
+                    ),
+                    ToolCallBlock(
+                        id="call_03",
+                        name="get_weather",
+                        input='{"city": "Guangzhou"}',
+                    ),
+                    ToolResultBlock(
+                        id="call_01",
+                        name="get_weather",
+                        output="Sunny, 28\u00b0C",
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ToolResultBlock(
+                        id="call_02",
+                        name="get_weather",
+                        output="Cloudy, 24\u00b0C",
+                        state=ToolResultState.SUCCESS,
+                    ),
+                    ToolResultBlock(
+                        id="call_03",
+                        name="get_weather",
+                        output="Rainy, 22\u00b0C",
+                        state=ToolResultState.SUCCESS,
+                    ),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+
+        # Expected: 3 messages total
+        #   [0] user  -> original question
+        #   [1] assistant -> text + 3x tool_use
+        #   [2] user  -> ALL 3 tool_results in ONE message  (the fix)
+        self.assertListEqual(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Get weather for Beijing, Shanghai, "
+                            "and Guangzhou.",
+                        },
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Let me check all three cities.",
+                        },
+                        {
+                            "type": "tool_use",
+                            "id": "call_01",
+                            "name": "get_weather",
+                            "input": {"city": "Beijing"},
+                        },
+                        {
+                            "type": "tool_use",
+                            "id": "call_02",
+                            "name": "get_weather",
+                            "input": {"city": "Shanghai"},
+                        },
+                        {
+                            "type": "tool_use",
+                            "id": "call_03",
+                            "name": "get_weather",
+                            "input": {"city": "Guangzhou"},
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_01",
+                            "content": [
+                                {"type": "text", "text": "Sunny, 28\u00b0C"},
+                            ],
+                        },
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_02",
+                            "content": [
+                                {"type": "text", "text": "Cloudy, 24\u00b0C"},
+                            ],
+                        },
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_03",
+                            "content": [
+                                {"type": "text", "text": "Rainy, 22\u00b0C"},
+                            ],
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_tool_call_with_incomplete_input_does_not_crash(
+        self,
+    ) -> None:
+        """A truncated ``block.input`` must not crash the formatter.
+
+        Context compression or interrupted streaming can leave a
+        ``ToolCallBlock.input`` as an incomplete JSON fragment (e.g.
+        ``'{"key'``). The formatter must repair it into a dict (here
+        ``{}``) instead of raising ``JSONDecodeError``.
+        """
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_1",
+                        name="get_weather",
+                        input='{"city": "Tok',
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        tool_use = [
+            b for b in res[0]["content"] if b.get("type") == "tool_use"
+        ][0]
+        # Repaired to a dict rather than crashing.
+        self.assertIsInstance(tool_use["input"], dict)
+
+    async def test_empty_text_block_is_dropped(self) -> None:
+        """Empty ``TextBlock`` must be skipped, not forwarded.
+
+        Anthropic rejects ``{"type": "text", "text": ""}`` with a 400
+        ("text blocks must be non-empty"). Empty text blocks arise in
+        practice after a tool-call-only assistant turn whose streamed text
+        block is empty. The formatter must drop them rather than emit them.
+        """
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    TextBlock(text=""),
+                    ToolCallBlock(
+                        id="call_1",
+                        name="get_weather",
+                        input='{"city": "Tokyo"}',
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        # The empty TextBlock is dropped — the assistant message contains
+        # only the tool_use block, nothing else.
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call_1",
+                            "name": "get_weather",
+                            "input": {"city": "Tokyo"},
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_empty_tool_result_text_is_dropped(self) -> None:
+        """Empty text inside a tool result is skipped too.
+
+        A ``ToolResultBlock`` whose only output is an empty TextBlock must
+        not produce an empty text content entry, which Anthropic would
+        reject. The formatter falls back to a non-empty placeholder so the
+        tool_result content list stays valid.
+        """
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_1",
+                        name="get_weather",
+                        input='{"city": "Tokyo"}',
+                    ),
+                ],
+            ),
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolResultBlock(
+                        id="call_1",
+                        name="get_weather",
+                        output=[TextBlock(text="")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call_1",
+                            "name": "get_weather",
+                            "input": {"city": "Tokyo"},
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_1",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "(empty tool output)",
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_empty_string_tool_output_uses_placeholder(self) -> None:
+        """An empty-string tool output becomes a placeholder text block.
+
+        Anthropic rejects both empty text blocks and a tool_result whose
+        content list is empty, so a wholly-empty output must be replaced
+        with a non-empty placeholder.
+        """
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_1",
+                        name="noop",
+                        input="{}",
+                    ),
+                ],
+            ),
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolResultBlock(
+                        id="call_1",
+                        name="noop",
+                        output="",
+                        state=ToolResultState.SUCCESS,
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call_1",
+                            "name": "noop",
+                            "input": {},
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_1",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "(empty tool output)",
+                                },
+                            ],
                         },
                     ],
                 },

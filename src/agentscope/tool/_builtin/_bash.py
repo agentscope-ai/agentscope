@@ -3,10 +3,9 @@
 import os
 from typing import AsyncGenerator, Any, List
 import re
-import asyncio
 
 from ._bash_parser import BashCommandParser
-from .._base import ToolBase
+from .._base import ToolBase, ToolMiddlewareBase
 from .._constants import (
     DEFAULT_DANGEROUS_FILES,
     DEFAULT_DANGEROUS_DIRECTORIES,
@@ -18,24 +17,9 @@ from ...permission import (
     PermissionMode,
     PermissionRule,
 )
-from ...message import TextBlock
+from ...message import TextBlock, ToolResultState
 from .._response import ToolChunk
-
-
-def _subprocess_creation_kwargs() -> dict[str, Any]:
-    """Return platform-specific subprocess creation options."""
-    if os.name != "nt":
-        return {}
-
-    import subprocess
-
-    return {
-        "creationflags": getattr(
-            subprocess,
-            "CREATE_NO_WINDOW",
-            0x08000000,
-        ),
-    }
+from ._backend import BackendBase
 
 
 class Bash(ToolBase):
@@ -155,6 +139,8 @@ easier to review tool calls and give permission.
         dangerous_files: list[str] = DEFAULT_DANGEROUS_FILES,
         dangerous_directories: list[str] = DEFAULT_DANGEROUS_DIRECTORIES,
         cwd: str | os.PathLike[str] | None = None,
+        middlewares: List[ToolMiddlewareBase] | None = None,
+        backend: BackendBase | None = None,
     ) -> None:
         """Initialize the bash tool.
 
@@ -174,13 +160,21 @@ easier to review tool calls and give permission.
                 directory check.
             cwd (`str | os.PathLike[str] | None`, optional):
                 The working directory used when executing bash commands.
+            middlewares (`List[ToolMiddlewareBase] | None`, optional):
+                Tool middlewares wrapping the tool execution.
+            backend (`BackendBase | None`, optional):
+                The sandbox backend to use for shell execution. When
+                ``None``, a :class:`LocalBackend` is created.
         """
+        from ._backend import LocalBackend
 
+        super().__init__(middlewares=middlewares)
         self._bash_parser = BashCommandParser()
 
         self.dangerous_files = list(dangerous_files)
         self.dangerous_directories = list(dangerous_directories)
         self._cwd = os.fspath(cwd) if cwd is not None else None
+        self._backend = backend or LocalBackend()
 
     async def check_read_only(
         self,
@@ -197,6 +191,14 @@ easier to review tool calls and give permission.
         command = tool_input.get("command", "")
         if not command:
             return self.is_read_only
+        # A command with dynamic / unanalyzable structure (command
+        # substitution, control flow, ...) cannot be *proven* read-only —
+        # e.g. ``ls $(rm -rf /)`` looks read-only but embeds a mutation.
+        # Report it as non-read-only so the engine's read-only fast path
+        # does not short-circuit it; ``check_permissions`` then surfaces the
+        # bypass-immune injection safety ASK.
+        if self._bash_parser.check_injection_risk(command):
+            return False
         return self._bash_parser.is_read_only_command(command)
 
     async def check_permissions(
@@ -317,7 +319,7 @@ easier to review tool calls and give permission.
         # Checked separately from step 4 because these paths are not in the
         # dangerous_files/directories lists — they are system-level paths
         # that should never be removed regardless of user configuration.
-        removal_path = self._check_dangerous_removal_path(command)
+        removal_path = await self._check_dangerous_removal_path(command)
         if removal_path:
             return PermissionDecision(
                 behavior=PermissionBehavior.ASK,
@@ -330,13 +332,17 @@ easier to review tool calls and give permission.
                 bypass_immune=True,
             )
 
-        # 6. ACCEPT_EDITS auto-allow for filesystem commands whose targets
-        # all live inside a working directory. Mirrors Write/Edit's strict
+        # 6. Auto-allow filesystem commands whose targets all live inside a
+        # working directory. Applies to ACCEPT_EDITS (interactive) and
+        # DONT_ASK (its unattended counterpart). Mirrors Write/Edit's strict
         # working-directory check — we never auto-allow a bash command that
         # would touch a path outside the configured working set (e.g.
         # ``cp /etc/hosts /tmp/x`` must not pass even though ``cp`` is in
         # the auto-allow list).
-        if context.mode == PermissionMode.ACCEPT_EDITS:
+        if context.mode in (
+            PermissionMode.ACCEPT_EDITS,
+            PermissionMode.DONT_ASK,
+        ):
             filesystem_commands = {
                 "mkdir",
                 "touch",
@@ -372,13 +378,12 @@ easier to review tool calls and give permission.
                     return PermissionDecision(
                         behavior=PermissionBehavior.ALLOW,
                         message=f"Permission granted for '{base_command}' "
-                        f"command (accept edits mode - filesystem command, "
-                        f"all targets in working directory)",
+                        f"command (filesystem command, all targets in "
+                        f"working directory)",
                         decision_reason=(
                             f"Filesystem command '{base_command}' is "
-                            f"auto-allowed in accept edits mode because "
-                            f"all target paths are within a working "
-                            f"directory"
+                            f"auto-allowed because all target paths are "
+                            f"within a working directory"
                         ),
                     )
 
@@ -388,7 +393,7 @@ easier to review tool calls and give permission.
             message=f"Execute bash command: {command}",
         )
 
-    def match_rule(
+    async def match_rule(
         self,
         rule_content: str | None,
         tool_input: dict[str, Any],
@@ -485,7 +490,7 @@ easier to review tool calls and give permission.
             # Invalid regex, fall back to substring matching
             return rule_content.replace("*", "") in command
 
-    def generate_suggestions(
+    async def generate_suggestions(
         self,
         tool_input: dict[str, Any],
     ) -> List["PermissionRule"]:
@@ -560,8 +565,8 @@ easier to review tool calls and give permission.
 
         return dangerous_paths
 
-    def _check_dangerous_removal_path(self, command: str) -> str | None:
-        """Check if an rm/rmdir command targets a critical system path.
+    async def _check_dangerous_removal_path(self, command: str) -> str | None:
+        """Check if a rm/rmdir command targets a critical system path.
 
         Detects commands like `rm -rf /`, `rm -rf /usr`, `rmdir ~` that
         would destroy critical system directories. Unlike _is_dangerous_path
@@ -615,15 +620,19 @@ easier to review tool calls and give permission.
                     i += 1
                     continue
                 path = tok.strip("'\"")
-                if self._is_dangerous_removal_path(path):
+                if await self._is_dangerous_removal_path(path):
                     return path
                 i += 1
 
         return None
 
-    def _is_dangerous_removal_path(self, path: str) -> bool:
+    async def _is_dangerous_removal_path(self, path: str) -> bool:
         """Check if a path is a critical system directory that must not be
         removed.
+
+        All path resolution is performed via the backend so that the
+        check operates on the **backend environment's** ``$HOME`` /
+        ``cwd`` / path semantics, not the host process's.
 
         Args:
             path (`str`):
@@ -641,29 +650,35 @@ easier to review tool calls and give permission.
         if path.endswith("/*") or path.endswith("\\*"):
             return True
 
-        # Expand tilde and resolve to absolute path
-        expanded = os.path.expanduser(path)
-        # Don't resolve symlinks — /tmp is a symlink on macOS but is
-        # still a root-child and should be flagged
-        abs_path = os.path.normpath(os.path.abspath(expanded))
+        # Expand tilde and resolve to an absolute path inside the
+        # backend environment.  Don't resolve symlinks — ``/tmp`` is a
+        # symlink on macOS but is still a root-child and should be
+        # flagged.
+        expanded = await self._backend.expanduser(path)
+        backend_cwd = await self._backend.getcwd()
+        abs_path = self._backend.abspath(expanded, cwd=backend_cwd)
 
         # Home directory
-        home = os.path.expanduser("~")
+        home = await self._backend.expanduser("~")
         if abs_path == home:
             return True
 
-        # Root itself
-        if abs_path == "/":
+        # Root itself: ``dirname(root) == root`` on both POSIX
+        # (``"/"``) and Windows (``"C:\\"``), so this check is
+        # path-flavor agnostic.
+        parent = self._backend.dirname(abs_path)
+        if abs_path == parent:
             return True
 
-        # Direct children of root: /usr, /etc, /tmp, /var, /bin, etc.
-        parent = os.path.dirname(abs_path)
-        if parent == "/":
+        # Direct children of root (e.g. ``/usr``, ``/etc``, ``/tmp``):
+        # the *parent* of these is the root, where
+        # ``dirname(parent) == parent``.
+        if self._backend.dirname(parent) == parent:
             return True
 
         return False
 
-    async def __call__(  # type: ignore[override]
+    async def call(  # type: ignore[override] # pylint: disable=unused-argument
         self,
         command: str,
         description: str = "",
@@ -685,32 +700,44 @@ easier to review tool calls and give permission.
         timeout_sec = timeout_ms / 1000.0
 
         try:
-            # Create subprocess
-            subprocess_kwargs = _subprocess_creation_kwargs()
-            if self._cwd is not None:
-                subprocess_kwargs["cwd"] = self._cwd
-            process = await asyncio.create_subprocess_shell(
-                command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                **subprocess_kwargs,
-            )
-
-            # Wait for completion with timeout
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                process.communicate(),
+            # ``command`` is a full shell command line (it may contain
+            # pipes, redirects, ``&&``, …), so wrap it in a shell — the
+            # backend primitive runs the argv directly without one. Pick
+            # the platform's native shell so the Windows experience that
+            # ``main`` had (commands interpreted by ``cmd.exe``) is
+            # preserved; POSIX hosts use ``/bin/sh``.
+            if os.name == "nt":
+                shell_command = ["cmd", "/c", command]
+            else:
+                shell_command = ["/bin/sh", "-c", command]
+            result = await self._backend.exec_shell(
+                shell_command,
+                cwd=self._cwd,
                 timeout=timeout_sec,
             )
 
             # Decode and normalize line endings
-            stdout = stdout_bytes.decode("utf-8", errors="replace").replace(
-                "\r\n",
-                "\n",
-            )
-            stderr = stderr_bytes.decode("utf-8", errors="replace").replace(
-                "\r\n",
-                "\n",
-            )
+            stdout = result.stdout.decode(
+                "utf-8",
+                errors="replace",
+            ).replace("\r\n", "\n")
+            stderr = result.stderr.decode(
+                "utf-8",
+                errors="replace",
+            ).replace("\r\n", "\n")
+
+            # Check for timeout (backend returns exit_code=-1,
+            # stderr=b"timed out")
+            if result.exit_code == -1 and result.stderr == b"timed out":
+                error_msg = (
+                    f"Command timed out after {timeout_ms}ms: {command}"
+                )
+                yield ToolChunk(
+                    content=[TextBlock(text=error_msg)],
+                    state=ToolResultState.ERROR,
+                    is_last=True,
+                )
+                return
 
             # Combine output
             output = stdout
@@ -724,21 +751,23 @@ easier to review tool calls and give permission.
                 output = output[:30000] + "\n... (output truncated)"
 
             # Check exit code
-            if process.returncode != 0:
+            if not result.ok():
                 # Command failed
-                result = f"Command failed: {command}\n"
+                error_result = f"Command failed: {command}\n"
                 if stdout:
-                    result += f"\nStdout:\n{stdout}"
+                    error_result += f"\nStdout:\n{stdout}"
                 if stderr:
-                    result += f"\nStderr:\n{stderr}"
+                    error_result += f"\nStderr:\n{stderr}"
 
                 # Truncate error message if needed
-                if len(result) > 30000:
-                    result = result[:30000] + "\n... (output truncated)"
+                if len(error_result) > 30000:
+                    error_result = (
+                        error_result[:30000] + "\n... (output truncated)"
+                    )
 
                 yield ToolChunk(
-                    content=[TextBlock(text=result)],
-                    state="error",
+                    content=[TextBlock(text=error_result)],
+                    state=ToolResultState.ERROR,
                     is_last=True,
                 )
             else:
@@ -746,24 +775,15 @@ easier to review tool calls and give permission.
                 # which will be converted to "finished" in ToolResponse
                 yield ToolChunk(
                     content=[TextBlock(text=output)],
-                    state="running",
+                    state=ToolResultState.RUNNING,
                     is_last=True,
                 )
-
-        except asyncio.TimeoutError:
-            # Timeout occurred
-            error_msg = f"Command timed out after {timeout_ms}ms: {command}"
-            yield ToolChunk(
-                content=[TextBlock(text=error_msg)],
-                state="error",
-                is_last=True,
-            )
 
         except Exception as e:
             # Other errors
             error_msg = f"Command failed: {command}\nError: {str(e)}"
             yield ToolChunk(
                 content=[TextBlock(text=error_msg)],
-                state="error",
+                state=ToolResultState.ERROR,
                 is_last=True,
             )
