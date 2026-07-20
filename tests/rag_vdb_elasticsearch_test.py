@@ -91,7 +91,7 @@ class ElasticsearchStoreTest(IsolatedAsyncioTestCase):
                     },
                     "document_id": {"type": "keyword"},
                     "chunk": {"type": "object", "enabled": False},
-                    "metadata": {"type": "flattened"},
+                    "metadata": {"type": "object", "dynamic": "runtime"},
                 },
             },
         )
