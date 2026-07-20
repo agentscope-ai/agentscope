@@ -1634,7 +1634,7 @@ class RedisStorage(StorageBase):
         if not raw:
             return
         record = KnowledgeDocumentRecord.model_validate_json(raw)
-        record.data.status = status
+        record.status = status
         if error is not None:
             record.data.error = error
         if chunk_count is not None:
@@ -1678,7 +1678,7 @@ class RedisStorage(StorageBase):
                         return False
                     record = KnowledgeDocumentRecord.model_validate_json(raw)
                     holder = record.processing_node
-                    deadline = record.data.lease_expires_at
+                    deadline = record.lease_expires_at
                     if (
                         holder is not None
                         and deadline is not None
@@ -1687,7 +1687,7 @@ class RedisStorage(StorageBase):
                         await pipe.unwatch()
                         return False
                     record.processing_node = processing_node
-                    record.data.lease_expires_at = new_deadline
+                    record.lease_expires_at = new_deadline
                     record.updated_at = now
                     pipe.multi()
                     pipe.set(key, record.model_dump_json())
@@ -1731,7 +1731,7 @@ class RedisStorage(StorageBase):
                     if record.processing_node != processing_node:
                         await pipe.unwatch()
                         return False
-                    record.data.lease_expires_at = new_deadline
+                    record.lease_expires_at = new_deadline
                     record.updated_at = now
                     pipe.multi()
                     pipe.set(key, record.model_dump_json())
@@ -1769,7 +1769,7 @@ class RedisStorage(StorageBase):
                         await pipe.unwatch()
                         return
                     record.processing_node = None
-                    record.data.lease_expires_at = None
+                    record.lease_expires_at = None
                     record.updated_at = datetime.now()
                     pipe.multi()
                     pipe.set(key, record.model_dump_json())
@@ -1811,13 +1811,13 @@ class RedisStorage(StorageBase):
             if not raw:
                 continue
             record = KnowledgeDocumentRecord.model_validate_json(raw)
-            if record.data.status in terminal:
+            if record.status in terminal:
                 continue
             if record.processing_node is None:
                 continue
             if (
-                record.data.lease_expires_at is not None
-                and record.data.lease_expires_at < now
+                record.lease_expires_at is not None
+                and record.lease_expires_at < now
             ):
                 records.append(record)
         return records
@@ -1842,7 +1842,7 @@ class RedisStorage(StorageBase):
             if not raw:
                 continue
             record = KnowledgeDocumentRecord.model_validate_json(raw)
-            if record.data.status != "pending":
+            if record.status != "pending":
                 continue
             if record.created_at < threshold:
                 records.append(record)

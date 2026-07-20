@@ -3,11 +3,11 @@ import { ArrowDown } from 'lucide-react';
 import React from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { EmptyMessage } from './Empty';
 import { MessageBubble } from '@/components/chat/MessageBubble';
 import { TextInput } from '@/components/chat/TextInput.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import type { ReplyPhase } from '@/hooks/useMessages';
+import { useTranslation } from '@/i18n/useI18n';
 import { cn } from '@/lib/utils';
 
 interface ChatContentProps {
@@ -57,9 +57,11 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	allowedInputTypes,
 	fileProcessor,
 }) => {
+	const { t } = useTranslation();
 	const scrollAreaRef = useRef<HTMLDivElement>(null);
 	const prevMsgCountRef = useRef<number>(0);
 	const wasNearBottomRef = useRef<boolean>(true);
+	const isEmpty = msgs.length === 0;
 	const [showScrollToBottom, setShowScrollToBottom] = useState(false);
 
 	const updateScrollState = useCallback(() => {
@@ -107,15 +109,38 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 		return () => scrollArea.removeEventListener('scroll', updateScrollState);
 	}, [updateScrollState]);
 
+	// On an empty session the prompt and the input centre together, so every box
+	// down to the message list shrinks to its content instead of filling.
 	return (
-		<div className={cn('flex flex-col h-full w-full items-center p-2 gap-4', className)}>
-			<div className="relative flex-1 min-h-0 w-full max-w-full">
+		<div
+			className={cn(
+				'flex flex-col h-full w-full items-center p-2 gap-4',
+				isEmpty && 'justify-center',
+				className,
+			)}
+		>
+			<div
+				className={cn(
+					'relative min-h-0 w-full max-w-full',
+					isEmpty ? 'flex-none' : 'flex-1',
+				)}
+			>
 				<div
 					ref={scrollAreaRef}
-					className="size-full overflow-auto no-scrollbar overflow-x-hidden"
+					className={cn(
+						'overflow-auto no-scrollbar overflow-x-hidden',
+						isEmpty ? 'w-full' : 'size-full',
+					)}
 				>
-					<div className="flex flex-col gap-4 size-full max-w-full">
-						{msgs.length > 0 ? (
+					<div
+						className={cn(
+							'flex flex-col gap-4 max-w-full',
+							isEmpty ? 'w-full' : 'size-full',
+						)}
+					>
+						{isEmpty ? (
+							<p className="text-center text-lg mb-2">{t('chat.greeting')}</p>
+						) : (
 							msgs.map((message) => (
 								<MessageBubble
 									key={message.id}
@@ -123,8 +148,6 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 									onUserConfirm={onUserConfirm}
 								/>
 							))
-						) : (
-							<EmptyMessage />
 						)}
 					</div>
 				</div>
