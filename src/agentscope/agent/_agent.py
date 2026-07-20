@@ -981,7 +981,7 @@ class Agent:
         ).replace(tzinfo=None)
 
         # A fixed source used to detect existing injection
-        injection_source = "|<system-injection>|"
+        injection_source = '{"label": "System", "sublabel": "Runtime State"}'
 
         # The last runtime state injection
         last_injection: HintBlock | None = None
@@ -1086,7 +1086,7 @@ class Agent:
                 "tasks": (
                     f"You have {task_status['in_progress']} in-progress tasks "
                     f"and {task_status['pending']} pending tasks. "
-                    f"Use `TaskList` to view them if you don't know.",
+                    f"Use `TaskList` to view them if you don't know."
                 ),
             }
 
@@ -1123,10 +1123,13 @@ class Agent:
 
         if injections:
             # Attach the session id into the injection
-            injections["current-session"] = (
-                "You're in a conversation with session ID: "
-                f"{self.state.session_id}"
-            )
+            injections = {
+                "current-session": (
+                    "You're in a conversation with session ID: "
+                    f"{self.state.session_id}",
+                ),
+                **injections,
+            }
 
             injected_text = "\n".join(
                 [f"<{k}>{v}</{k}>" for k, v in injections.items()],
@@ -1135,7 +1138,7 @@ class Agent:
                 source=injection_source,
                 hint=(
                     "<system-reminder>Treat the following as current ground "
-                    "truth:\n{injected_text}</system-reminder>"
+                    f"truth:\n{injected_text}</system-reminder>"
                 ),
             )
             self.state.append_context(

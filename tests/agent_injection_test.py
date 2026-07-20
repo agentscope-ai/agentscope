@@ -175,8 +175,12 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
         """Pending tasks without task-related tool calls in the context should
         trigger a tasks injection."""
         expected_hint = (
+            "<system-reminder>Treat the following as current ground truth:\n"
+            "<current-session>You're in a conversation with session ID: "
+            f"{self.agent.state.session_id}</current-session>\n",
             "<tasks>You have 0 in-progress tasks and 1 pending tasks. "
             "Use `TaskList` to view them if you don't know.</tasks>"
+            "</system-reminder>",
         )
         self.agent.state.cur_iter = 1
         # A recent injection so the time branch is not triggered.
