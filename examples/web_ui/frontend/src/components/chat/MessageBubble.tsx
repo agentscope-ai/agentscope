@@ -673,7 +673,10 @@ export function MessageBubble({ message, onUserConfirm }: MessageBubbleProps) {
 				</div>
 			)}
 			{isError && (
-				<Alert variant="destructive" className="my-1 w-full">
+				<Alert
+					variant="destructive"
+					className="m-2 w-[calc(100%-1rem)] border-red-200 bg-red-50 text-destructive dark:border-red-900 dark:bg-red-950 dark:text-red-50"
+				>
 					<TriangleAlert />
 					<AlertTitle>{t('messageBubble.error.title')}</AlertTitle>
 					<AlertDescription>
@@ -691,8 +694,6 @@ export function MessageBubble({ message, onUserConfirm }: MessageBubbleProps) {
 					>
 						{isRunning ? (
 							<Loader2 data-icon="inline-start" className="animate-spin" />
-						) : isError ? (
-							<TriangleAlert data-icon="inline-start" className="text-destructive" />
 						) : (
 							<CheckCircle data-icon="inline-start" />
 						)}
