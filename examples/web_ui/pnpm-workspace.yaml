@@ -9,3 +9,8 @@ allowBuilds:
 
 ignoredBuiltDependencies:
     - msw
+
+# Exempt our own first-party package from pnpm's minimumReleaseAge
+# supply-chain gate, so freshly published versions install immediately.
+minimumReleaseAgeExclude:
+    - '@agentscope-ai/agentscope'
