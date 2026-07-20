@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The agent config classes."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from ..model import ChatModelBase
 
@@ -167,26 +167,43 @@ class InjectionConfig(BaseModel):
     time_format: str = Field(
         title="Time Format",
         default="%Y-%m-%dT%H:%M:%S",
-        description="The format to inject and parse the time information",
+        description=(
+            "The format to inject and parse the time information, which must "
+            "round-trip a full timestamp, i.e. carry the date part. A "
+            "time-only format such as '%H:%M:%S' makes the parsed time fall "
+            "back to year 1900, so that the time is injected in every "
+            "iteration."
+        ),
     )
+    """The format to inject and parse the time information, which must carry
+    the date part to round-trip a full timestamp."""
 
     time_interval: float = Field(
         title="Time Interval",
         default=0.5,
+        ge=0,
         description=(
-            "The minimum time interval from the last injection to trigger "
-            "new time injection"
+            "The minimum time interval in hours from the last injection to "
+            "trigger new time injection"
         ),
     )
+    """The minimum elapsed time in **hours** from the recorded time to trigger
+    a new time injection."""
 
     context_buffer_ratio: float = Field(
         title="Context Buffer",
         default=0.2,
+        ge=0,
+        le=1,
         description=(
             "The buffer that will activate context length injection before "
-            "context compression."
+            "context compression, which should be smaller than the "
+            "'trigger_ratio' of the context config."
         ),
     )
+    """The buffer ahead of the compression threshold, e.g. with a trigger ratio
+    of 0.8 and a buffer of 0.2, the context length is injected once the input
+    tokens exceed 60% of the model context size."""
 
     template: str = Field(
         title="Template",
@@ -203,6 +220,17 @@ later reminder, if any, supersedes this one:
     )
     """The template to wrap the injected runtime state, which must contain the
     ``{runtime_state}`` placeholder."""
+
+    @field_validator("template")
+    @classmethod
+    def _check_template(cls, value: str) -> str:
+        """Ensure the template won't silently drop the injected fields."""
+        if "{runtime_state}" not in value:
+            raise ValueError(
+                "The injection template must contain the '{runtime_state}' "
+                f"placeholder, got {value!r}.",
+            )
+        return value
 
     injection_source: str = Field(
         title="Injection Source",

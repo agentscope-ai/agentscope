@@ -384,6 +384,9 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             model=self.mock_model,
             toolkit=self.toolkit,
             middlewares=[middleware1, middleware2],
+            # The runtime state injection is covered by agent_injection_test,
+            # turn it off to keep the assertions focused.
+            injection_config=InjectionConfig(inject_runtime_state=False),
         )
 
         await agent.reply(UserMsg("user", "test message"))
@@ -477,6 +480,9 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             model=self.mock_model,
             toolkit=self.toolkit,
             middlewares=[middleware],
+            # The runtime state injection is covered by agent_injection_test,
+            # turn it off to keep the assertions focused.
+            injection_config=InjectionConfig(inject_runtime_state=False),
         )
 
         await agent.reply(UserMsg("user", "test message"))

@@ -5,6 +5,7 @@ from datetime import datetime, tzinfo
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 
+from pydantic import ValidationError
 
 from utils import AnyString, MockModel
 
@@ -114,8 +115,6 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
             "<system-reminder>Treat the following as the ground truth at this "
             "point of the conversation. Anything stated earlier is outdated, "
             "and a later reminder, if any, supersedes this one:\n"
-            "<current-session>You're in a conversation with session ID: "
-            f"{self.agent.state.session_id}</current-session>\n"
             "<current-time>2026-07-01T12:00:00</current-time>\n"
             "<timezone>UTC</timezone>\n"
             "</system-reminder>"
@@ -138,8 +137,6 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
             "<system-reminder>Treat the following as the ground truth at this "
             "point of the conversation. Anything stated earlier is outdated, "
             "and a later reminder, if any, supersedes this one:\n"
-            "<current-session>You're in a conversation with session ID: "
-            f"{self.agent.state.session_id}</current-session>\n"
             "<current-time>2026-07-01T12:00:00</current-time>\n"
             "<timezone>UTC</timezone>\n"
             "</system-reminder>"
@@ -168,8 +165,6 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
             "<system-reminder>Treat the following as the ground truth at this "
             "point of the conversation. Anything stated earlier is outdated, "
             "and a later reminder, if any, supersedes this one:\n"
-            "<current-session>You're in a conversation with session ID: "
-            f"{self.agent.state.session_id}</current-session>\n"
             "<current-time>2026-07-01T12:00:00</current-time>\n"
             "<timezone>UTC</timezone>\n"
             "</system-reminder>"
@@ -197,8 +192,6 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
             "<system-reminder>Treat the following as the ground truth at this "
             "point of the conversation. Anything stated earlier is outdated, "
             "and a later reminder, if any, supersedes this one:\n"
-            "<current-session>You're in a conversation with session ID: "
-            f"{self.agent.state.session_id}</current-session>\n"
             "<tasks>You have 0 in-progress tasks and 1 pending tasks. "
             "Use `TaskList` to view them if you don't know.</tasks>\n"
             "</system-reminder>"
@@ -250,8 +243,6 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
             "<system-reminder>Treat the following as the ground truth at this "
             "point of the conversation. Anything stated earlier is outdated, "
             "and a later reminder, if any, supersedes this one:\n"
-            "<current-session>You're in a conversation with session ID: "
-            f"{self.agent.state.session_id}</current-session>\n"
             "<current-time>2026-07-01T12:00:00</current-time>\n"
             "<timezone>UTC</timezone>\n"
             "<workspace>/home/friday</workspace>\n"
@@ -296,8 +287,6 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
             "<system-reminder>Treat the following as the ground truth at this "
             "point of the conversation. Anything stated earlier is outdated, "
             "and a later reminder, if any, supersedes this one:\n"
-            "<current-session>You're in a conversation with session ID: "
-            f"{self.agent.state.session_id}</current-session>\n"
             "<context-length>Your current context contains 700 tokens. "
             "When reaching 800 tokens, your context will be compressed."
             "</context-length>\n"
@@ -310,6 +299,78 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
         # 700 > max(0, 0.8 - 0.2) * 1000 == 600 -> triggers the injection.
         self.model.count_tokens = AsyncMock(return_value=700)
 
+        events = await self._run_injection()
+
+        self.assertEqual(
+            [self._expected_event(expected_hint)],
+            [evt.model_dump() for evt in events],
+        )
+
+    async def test_context_size_is_independent_of_the_other_fields(
+        self,
+    ) -> None:
+        """The context length should be reported even when the other
+        dimensions are triggered in the same injection."""
+        expected_hint = (
+            "<system-reminder>Treat the following as the ground truth at this "
+            "point of the conversation. Anything stated earlier is outdated, "
+            "and a later reminder, if any, supersedes this one:\n"
+            "<current-time>2026-07-01T12:00:00</current-time>\n"
+            "<timezone>UTC</timezone>\n"
+            "<context-length>Your current context contains 700 tokens. "
+            "When reaching 800 tokens, your context will be compressed."
+            "</context-length>\n"
+            "</system-reminder>"
+        )
+        # The first reply, where the time injection is always triggered.
+        self.agent.state.cur_iter = 0
+        self.model.count_tokens = AsyncMock(return_value=700)
+
+        events = await self._run_injection()
+
+        self.assertEqual(
+            [self._expected_event(expected_hint)],
+            [evt.model_dump() for evt in events],
+        )
+
+    async def test_template_without_placeholder_is_rejected(self) -> None:
+        """A template that would silently drop the injected fields should be
+        rejected at the config level."""
+        with self.assertRaises(ValidationError):
+            InjectionConfig(template="<system-reminder></system-reminder>")
+
+    async def test_template_with_curly_braces_is_kept(self) -> None:
+        """The curly braces other than the placeholder should survive."""
+        self.agent.injection_config = InjectionConfig(
+            template='{"reminder": "{runtime_state}"}',
+        )
+        events = await self._run_injection()
+
+        self.assertEqual(
+            [
+                self._expected_event(
+                    '{"reminder": "'
+                    "<current-time>2026-07-01T12:00:00</current-time>\n"
+                    "<timezone>UTC</timezone>"
+                    '"}',
+                ),
+            ],
+            [evt.model_dump() for evt in events],
+        )
+
+    async def test_invalid_timezone_falls_back_to_utc(self) -> None:
+        """An unresolvable timezone shouldn't break the reply loop."""
+        expected_hint = (
+            "<system-reminder>Treat the following as the ground truth at this "
+            "point of the conversation. Anything stated earlier is outdated, "
+            "and a later reminder, if any, supersedes this one:\n"
+            "<current-time>2026-07-01T12:00:00</current-time>\n"
+            "<timezone>Mars/Olympus_Mons</timezone>\n"
+            "</system-reminder>"
+        )
+        self.agent.injection_config = InjectionConfig(
+            timezone="Mars/Olympus_Mons",
+        )
         events = await self._run_injection()
 
         self.assertEqual(

@@ -5,7 +5,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString, MockModel
 
-from agentscope.agent import Agent, InjectionConfig
+from agentscope.agent import Agent, ContextConfig, InjectionConfig
 from agentscope.model import ChatResponse
 from agentscope.tool import (
     ToolBase,
@@ -177,6 +177,29 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             agent_1.injection_config.timezone,
             agent_2.injection_config.timezone,
         )
+
+    async def test_inconsistent_ratios_are_rejected(self) -> None:
+        """The ratios across the context and injection configs must leave room
+        ahead of the compression threshold."""
+        with self.assertRaises(ValueError):
+            Agent(
+                name="agent",
+                system_prompt="You are an agent.",
+                model=MockModel(),
+                context_config=ContextConfig(
+                    trigger_ratio=0.5,
+                    reserve_ratio=0.6,
+                ),
+            )
+
+        with self.assertRaises(ValueError):
+            Agent(
+                name="agent",
+                system_prompt="You are an agent.",
+                model=MockModel(),
+                context_config=ContextConfig(trigger_ratio=0.5),
+                injection_config=InjectionConfig(context_buffer_ratio=0.5),
+            )
 
     async def test_streaming_reasoning(self) -> None:
         """Test the streaming model inference without tool calls generated,

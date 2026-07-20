@@ -7,8 +7,8 @@ import re
 
 from asyncio import Queue
 from copy import deepcopy
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from datetime import datetime, timezone, tzinfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import (
     Any,
     AsyncGenerator,
@@ -104,6 +104,21 @@ else:
     MiddlewareBase = Any
 
 
+def _resolve_timezone(name: str) -> tzinfo:
+    """Resolve the given timezone name, falling back to UTC when the name is
+    invalid or the timezone database is unavailable, e.g. on Windows or slim
+    images without the ``tzdata`` package."""
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        logger.warning(
+            "Failed to resolve the timezone %s, fallback to UTC. Install the "
+            "'tzdata' package if the timezone database is missing.",
+            repr(name),
+        )
+        return timezone.utc
+
+
 class Agent:
     """The agent class."""
 
@@ -167,6 +182,7 @@ class Agent:
         self.context_config = context_config or ContextConfig()
         self.react_config = react_config or ReActConfig()
         self.injection_config = injection_config or InjectionConfig()
+        self._validate_configs()
 
         # The permission engine
         self._engine = PermissionEngine(self.state.permission_context)
@@ -202,6 +218,39 @@ class Agent:
         self._compress_context_middlewares = [
             _ for _ in middlewares if _.is_implemented("on_compress_context")
         ]
+
+    def _validate_configs(self) -> None:
+        """Validate the config combinations that a single config class cannot
+        check by itself.
+
+        Raises:
+            `ValueError`:
+                If the reserved/buffer ratios don't leave room ahead of the
+                context compression threshold.
+        """
+        if (
+            self.context_config.reserve_ratio
+            >= self.context_config.trigger_ratio
+        ):
+            raise ValueError(
+                "The 'reserve_ratio' of the context config must be smaller "
+                "than its 'trigger_ratio', got "
+                f"{self.context_config.reserve_ratio} and "
+                f"{self.context_config.trigger_ratio}.",
+            )
+
+        if (
+            self.injection_config.inject_runtime_state
+            and self.injection_config.context_buffer_ratio
+            >= self.context_config.trigger_ratio
+        ):
+            raise ValueError(
+                "The 'context_buffer_ratio' of the injection config must be "
+                "smaller than the 'trigger_ratio' of the context config, so "
+                "that the context length is injected before the compression, "
+                f"got {self.injection_config.context_buffer_ratio} and "
+                f"{self.context_config.trigger_ratio}.",
+            )
 
     # =======================================================================
     # Agent public methods
@@ -966,9 +1015,11 @@ class Agent:
         - **Plan tasks**: injected when there are pending or in-progress tasks
           while the context contains neither task-related tool calls (e.g.
           they have been compressed away) nor a previous tasks injection.
-        - **Context**: injected when the current input tokens are within
+        - **Context**: injected at the first iteration of a reply when the
+          current input tokens are within
           ``injection_config.context_buffer_ratio`` of the compression
           threshold, letting the agent perceive that a compression is near.
+          This dimension is evaluated independently of the two above.
 
         The user defined ``injection_config.extra_fields`` are attached to
         every injection, but never trigger one by themselves.
@@ -986,48 +1037,67 @@ class Agent:
         # The wall-clock time in the configured timezone. It's kept timezone
         # aware for the elapsed time calculation, while ``time_format`` decides
         # whether the timezone is carried in the injected text.
-        now = datetime.now(ZoneInfo(self.injection_config.timezone))
+        now = datetime.now(_resolve_timezone(self.injection_config.timezone))
 
         # A fixed source used to detect existing injection
         injection_source = self.injection_config.injection_source
 
-        # The text of the previous runtime state injections, newest first. An
-        # injection only carries the fields that were triggered at that time,
-        # so each field must be checked against all of them rather than the
-        # latest one only.
-        injected_texts: list[str] = []
-
-        # If the current context contains the task related tool calls
-        has_task_tools: bool = False
-
         # =====================================================================
         # Step 1: Analyze the current context
-        #  - The previous injections (if any)
-        #  - The tasks related tool use
+        #  - The latest injection that records a time (if any)
+        #  - If the agent is already aware of the uncompleted tasks
         # =====================================================================
+        task_status: dict = collections.defaultdict(int)
+        for task in self.state.tasks_context.tasks:
+            task_status[task.state] += 1
+
+        has_uncompleted_tasks = (
+            task_status["pending"] > 0 or task_status["in_progress"] > 0
+        )
+
+        # The text of the newest injection that records a time. An injection
+        # only carries the fields triggered at that moment, so the newest one
+        # doesn't necessarily record a time.
+        last_time_text: str | None = None
+
+        # The agent is aware of the tasks when the context contains the task
+        # related tool calls or a previous tasks injection. Without uncompleted
+        # tasks the flag is never used, so skip the detection entirely.
+        aware_of_tasks = not has_uncompleted_tasks
+
         for msg in reversed(self.state.context):
+            if last_time_text is not None and aware_of_tasks:
+                # Both dimensions are settled, no need to scan the older
+                # context
+                break
+
             if msg.role != "assistant":
                 continue
+
             for block in reversed(msg.content):
                 if (
                     isinstance(block, HintBlock)
                     and block.source == injection_source
                 ):
                     if isinstance(block.hint, str):
-                        injected_texts.append(block.hint)
+                        text = block.hint
                     else:
-                        injected_texts.append(
-                            "".join(
-                                _.text
-                                for _ in block.hint
-                                if isinstance(_, TextBlock)
-                            ),
+                        text = "".join(
+                            _.text
+                            for _ in block.hint
+                            if isinstance(_, TextBlock)
                         )
+
+                    if last_time_text is None and "<current-time>" in text:
+                        last_time_text = text
+                    if not aware_of_tasks and "<tasks>" in text:
+                        aware_of_tasks = True
+
                 elif (
                     isinstance(block, ToolCallBlock)
                     and block.name in self.injection_config.task_tool_names
                 ):
-                    has_task_tools = True
+                    aware_of_tasks = True
 
         # =====================================================================
         # Step 2: Check Time Injection
@@ -1035,44 +1105,51 @@ class Agent:
         # No time recorded in the context, e.g. the first reply or right after
         # a context compression, so inject to be safe
         inject_time = True
-        for text in injected_texts:
+        if last_time_text is not None:
             # Extract the recorded time from the injection, e.g.
             # <current-time>2026-07-01T12:00:00</current-time>
-            match = re.search(r"<current-time>(.*?)</current-time>", text)
-            if match is None:
-                continue
+            match = re.search(
+                r"<current-time>(.*?)</current-time>",
+                last_time_text,
+            )
+            last_time = None
+            if match is not None:
+                try:
+                    last_time = datetime.strptime(
+                        match.group(1).strip(),
+                        self.injection_config.time_format,
+                    )
+                except ValueError:
+                    # Fail to parse the recorded time, e.g. the time format has
+                    # changed, so inject again to be safe
+                    last_time = None
 
-            try:
-                last_time = datetime.strptime(
-                    match.group(1).strip(),
-                    self.injection_config.time_format,
-                )
+            if last_time is not None:
                 if last_time.tzinfo is None:
                     # The recorded time is the wall-clock time of the timezone
                     # recorded next to it, e.g.
                     # <timezone>Asia/Shanghai</timezone>. Restore it so that
                     # the comparison holds even if the configured timezone has
                     # changed since then.
-                    match_tz = re.search(r"<timezone>(.*?)</timezone>", text)
+                    match_tz = re.search(
+                        r"<timezone>(.*?)</timezone>",
+                        last_time_text,
+                    )
                     last_time = last_time.replace(
-                        tzinfo=ZoneInfo(
+                        tzinfo=_resolve_timezone(
                             match_tz.group(1).strip()
                             if match_tz
                             else self.injection_config.timezone,
                         ),
                     )
-            except (ValueError, KeyError):
-                # Fail to parse the recorded time or timezone, inject again to
-                # be safe
-                break
 
-            elapsed_hours = (now - last_time).total_seconds() / 3600
-            # A negative elapsed time means the recorded time is in the future,
-            # e.g. the machine clock went backwards, so inject again to be safe
-            inject_time = not (
-                0 <= elapsed_hours <= self.injection_config.time_interval
-            )
-            break
+                elapsed_hours = (now - last_time).total_seconds() / 3600
+                # A negative elapsed time means the recorded time is in the
+                # future, e.g. the machine clock went backwards, so inject
+                # again to be safe
+                inject_time = not (
+                    0 <= elapsed_hours <= self.injection_config.time_interval
+                )
 
         if inject_time:
             injections["current-time"] = now.strftime(
@@ -1083,18 +1160,10 @@ class Agent:
         # =====================================================================
         # Step 3: Check Plan Tasks
         # =====================================================================
-        task_status = collections.defaultdict(int)
-        for task in self.state.tasks_context.tasks:
-            task_status[task.state] += 1
-
-        # If exists uncompleted tasks and the context doesn't have any related
-        # tool calls (maybe compressed) nor a previous tasks injection, so that
-        # the same reminder isn't repeated on every iteration
-        if (
-            (task_status["pending"] > 0 or task_status["in_progress"] > 0)
-            and not has_task_tools
-            and not any("<tasks>" in _ for _ in injected_texts)
-        ):
+        # If exists uncompleted tasks and the agent isn't aware of them, e.g.
+        # the task related tool calls have been compressed away, so that the
+        # same reminder isn't repeated on every iteration
+        if has_uncompleted_tasks and not aware_of_tasks:
             injections["tasks"] = (
                 f"You have {task_status['in_progress']} in-progress tasks "
                 f"and {task_status['pending']} pending tasks. "
@@ -1104,8 +1173,10 @@ class Agent:
         # =====================================================================
         # Step 4: Context Length
         # =====================================================================
-        # The context size injection only occur in the beginning of the reply
-        if self.state.cur_iter == 0 and not injections:
+        # The context length is checked independently of the dimensions above,
+        # and only at the beginning of a reply, where the context has just
+        # grown by the new input
+        if self.state.cur_iter == 0:
             # Count the current tokens
             kwargs = await self._prepare_model_input()
             input_tokens = await self.model.count_tokens(**kwargs)
@@ -1130,22 +1201,17 @@ class Agent:
                 )
 
         if injections:
-            # Attach the session id into the injection
-            injections = {
-                "current-session": (
-                    "You're in a conversation with session ID: "
-                    f"{self.state.session_id}"
-                ),
-                **injections,
-                # The user defined fields, which don't trigger an injection by
-                # themselves
-                **self.injection_config.extra_fields,
-            }
+            # The user defined fields, which don't trigger an injection by
+            # themselves
+            injections.update(self.injection_config.extra_fields)
 
             hint_block = HintBlock(
                 source=injection_source,
-                hint=self.injection_config.template.format(
-                    runtime_state="\n".join(
+                # Use replace instead of format, so that the other curly
+                # braces in the template are kept as-is
+                hint=self.injection_config.template.replace(
+                    "{runtime_state}",
+                    "\n".join(
                         f"<{k}>{v}</{k}>" for k, v in injections.items()
                     ),
                 ),
