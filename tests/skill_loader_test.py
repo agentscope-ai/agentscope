@@ -120,8 +120,25 @@ This skill is loaded through a tilde path.
                 self.assertEqual(loader.directory, os.path.abspath(skill_dir))
                 skills = await loader.list_skills()
 
-            self.assertEqual(len(skills), 1)
-            self.assertEqual(skills[0].name, "tilde_skill")
+            self.assertListEqual(
+                [
+                    {
+                        "name": skill.name,
+                        "description": skill.description,
+                        "dir": skill.dir,
+                    }
+                    for skill in skills
+                ],
+                [
+                    {
+                        "name": "tilde_skill",
+                        "description": (
+                            "A skill under the user home directory"
+                        ),
+                        "dir": os.path.abspath(skill_dir),
+                    },
+                ],
+            )
 
     async def test_scan_subdir_flag_controls_subdirectory_scanning(
         self,

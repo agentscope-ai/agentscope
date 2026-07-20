@@ -738,6 +738,7 @@ class LocalWorkspace(WorkspaceBase):
             ValueError: If the skill at ``skill_path`` is invalid (missing or
                 malformed ``SKILL.md``).
         """
+        skill_path = _normalize_local_path(skill_path)
         skills_dir = os.path.join(self.workdir, "skills")
         async with self._skill_lock:
             os.makedirs(skills_dir, exist_ok=True)
