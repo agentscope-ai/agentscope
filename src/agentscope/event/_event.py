@@ -502,6 +502,8 @@ class CustomEvent(EventBase):
               changed during a tool call.
             - ``"team_updated"`` — team membership changed (member
               added / team created or dissolved).
+            - ``"chat_run_error"`` — a service-level chat run failure;
+              details remain in server logs.
 
         value (`dict`):
             Arbitrary JSON-serializable payload whose schema depends
