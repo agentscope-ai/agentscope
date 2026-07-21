@@ -108,6 +108,14 @@ class AnthropicChatModel(ChatModelBase):
         self.formatter = formatter or AnthropicChatFormatter()
         self.client_kwargs = client_kwargs or {}
 
+        import anthropic
+
+        self.client: anthropic.AsyncAnthropic = anthropic.AsyncAnthropic(
+            api_key=self.credential.api_key.get_secret_value(),
+            base_url=self.credential.base_url,
+            **self.client_kwargs,
+        )
+
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
         import anthropic
@@ -150,15 +158,7 @@ class AnthropicChatModel(ChatModelBase):
                 enabled.
         """
 
-        import anthropic
-
-        client = anthropic.AsyncAnthropic(
-            **{
-                "api_key": self.credential.api_key.get_secret_value(),
-                "base_url": self.credential.base_url,
-                **self.client_kwargs,
-            },
-        )
+        client = self.client
 
         # Anthropic requires max_tokens; fall back to a safe default when
         # the user hasn't configured one explicitly.

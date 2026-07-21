@@ -10,7 +10,7 @@ Tests cover both non-streaming and streaming modes, verifying that:
 from typing import Any
 import unittest
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from utils import AnyString
 
@@ -156,14 +156,15 @@ class TestDeepSeekNonStream(IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self.model = _make_model(stream=False)
+        self.mock_client = MagicMock()
+        self.model.client = self.mock_client
 
-    @patch("openai.AsyncClient")
-    async def test_text_response(self, mock_client_cls: MagicMock) -> None:
+    async def test_text_response(self) -> None:
         """Non-stream text response returns a single ChatResponse."""
         mock_create = AsyncMock(
             return_value=_mock_completion(text="Hello world!"),
         )
-        mock_client_cls.return_value.chat.completions.create = mock_create
+        self.mock_client.chat.completions.create = mock_create
 
         result = await self.model([])
 
@@ -173,10 +174,8 @@ class TestDeepSeekNonStream(IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.id, "deepseek-1")
 
-    @patch("openai.AsyncClient")
     async def test_tool_call_response(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Non-stream tool call response creates ToolCallBlocks."""
         mock_create = AsyncMock(
@@ -195,7 +194,7 @@ class TestDeepSeekNonStream(IsolatedAsyncioTestCase):
                 ],
             ),
         )
-        mock_client_cls.return_value.chat.completions.create = mock_create
+        self.mock_client.chat.completions.create = mock_create
 
         result = await self.model([])
 
@@ -218,10 +217,8 @@ class TestDeepSeekNonStream(IsolatedAsyncioTestCase):
             ),
         )
 
-    @patch("openai.AsyncClient")
     async def test_thinking_response(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Non-stream response with reasoning creates ThinkingBlock."""
         mock_create = AsyncMock(
@@ -230,7 +227,7 @@ class TestDeepSeekNonStream(IsolatedAsyncioTestCase):
                 reasoning="Let me think step by step...",
             ),
         )
-        mock_client_cls.return_value.chat.completions.create = mock_create
+        self.mock_client.chat.completions.create = mock_create
 
         result = await self.model([])
 
@@ -259,11 +256,11 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self.model = _make_model(stream=True)
+        self.mock_client = MagicMock()
+        self.model.client = self.mock_client
 
-    @patch("openai.AsyncClient")
     async def test_stream_text_response(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Stream text yields n deltas (is_last=False) + 1 final
         (is_last=True) with full content."""
@@ -277,7 +274,7 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
             ),
         ]
         mock_create = AsyncMock(return_value=_MockAsyncStream(chunks))
-        mock_client_cls.return_value.chat.completions.create = mock_create
+        self.mock_client.chat.completions.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]
@@ -293,10 +290,8 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
         )
         self.assertEqual(responses[-1].id, "deepseek-1")
 
-    @patch("openai.AsyncClient")
     async def test_stream_thinking_and_text(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Stream with thinking + text yields deltas then final with both."""
         chunks = [
@@ -310,7 +305,7 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
             ),
         ]
         mock_create = AsyncMock(return_value=_MockAsyncStream(chunks))
-        mock_client_cls.return_value.chat.completions.create = mock_create
+        self.mock_client.chat.completions.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]
@@ -341,10 +336,8 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
             ],
         )
 
-    @patch("openai.AsyncClient")
     async def test_stream_tool_calls(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Stream tool calls accumulate across chunks into final response."""
         chunks = [
@@ -366,7 +359,7 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
             ),
         ]
         mock_create = AsyncMock(return_value=_MockAsyncStream(chunks))
-        mock_client_cls.return_value.chat.completions.create = mock_create
+        self.mock_client.chat.completions.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]
@@ -407,10 +400,8 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
             ],
         )
 
-    @patch("openai.AsyncClient")
     async def test_stream_text_then_tool_call(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Stream with text followed by tool call accumulates both."""
         chunks = [
@@ -433,7 +424,7 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
             ),
         ]
         mock_create = AsyncMock(return_value=_MockAsyncStream(chunks))
-        mock_client_cls.return_value.chat.completions.create = mock_create
+        self.mock_client.chat.completions.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]
@@ -485,10 +476,8 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
             ],
         )
 
-    @patch("openai.AsyncClient")
     async def test_stream_usage_in_final(
         self,
-        mock_client_cls: MagicMock,
     ) -> None:
         """Usage information is captured and present in final response."""
         chunks = [
@@ -503,7 +492,7 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
             ),
         ]
         mock_create = AsyncMock(return_value=_MockAsyncStream(chunks))
-        mock_client_cls.return_value.chat.completions.create = mock_create
+        self.mock_client.chat.completions.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]

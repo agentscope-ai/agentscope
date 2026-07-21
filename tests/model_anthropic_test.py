@@ -10,7 +10,7 @@ import json
 from typing import Any
 import unittest
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from utils import AnyString
 
@@ -112,14 +112,17 @@ class TestAnthropicNonStream(IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self.model = _make_model(stream=False)
+        # Client is built eagerly in __init__; inject a mock onto the
+        # instance so messages.create() hits it instead of the network.
+        self.mock_client = MagicMock()
+        self.model.client = self.mock_client
 
-    @patch("anthropic.AsyncAnthropic")
-    async def test_text_response(self, mock_client_cls: MagicMock) -> None:
+    async def test_text_response(self) -> None:
         """Non-stream text response returns a single ChatResponse."""
         mock_create = AsyncMock(
             return_value=_mock_completion(text="Hello!"),
         )
-        mock_client_cls.return_value.messages.create = mock_create
+        self.mock_client.messages.create = mock_create
 
         result = await self.model([])
 
@@ -129,11 +132,7 @@ class TestAnthropicNonStream(IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.id, "msg-1")
 
-    @patch("anthropic.AsyncAnthropic")
-    async def test_tool_call_response(
-        self,
-        mock_client_cls: MagicMock,
-    ) -> None:
+    async def test_tool_call_response(self) -> None:
         """Non-stream tool call response creates ToolCallBlocks."""
         mock_create = AsyncMock(
             return_value=_mock_completion(
@@ -146,7 +145,7 @@ class TestAnthropicNonStream(IsolatedAsyncioTestCase):
                 ],
             ),
         )
-        mock_client_cls.return_value.messages.create = mock_create
+        self.mock_client.messages.create = mock_create
 
         result = await self.model([])
 
@@ -164,11 +163,7 @@ class TestAnthropicNonStream(IsolatedAsyncioTestCase):
             ),
         )
 
-    @patch("anthropic.AsyncAnthropic")
-    async def test_thinking_response(
-        self,
-        mock_client_cls: MagicMock,
-    ) -> None:
+    async def test_thinking_response(self) -> None:
         """Non-stream response with reasoning creates ThinkingBlock."""
         mock_create = AsyncMock(
             return_value=_mock_completion(
@@ -176,7 +171,7 @@ class TestAnthropicNonStream(IsolatedAsyncioTestCase):
                 text="Answer",
             ),
         )
-        mock_client_cls.return_value.messages.create = mock_create
+        self.mock_client.messages.create = mock_create
 
         result = await self.model([])
 
@@ -206,9 +201,12 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self.model = _make_model(stream=True)
+        # Client is built eagerly in __init__; inject a mock onto the
+        # instance so messages.create() hits it instead of the network.
+        self.mock_client = MagicMock()
+        self.model.client = self.mock_client
 
-    @patch("anthropic.AsyncAnthropic")
-    async def test_stream_text(self, mock_client_cls: MagicMock) -> None:
+    async def test_stream_text(self) -> None:
         """Stream text yields n deltas + 1 final with full content."""
         msg_usage = MagicMock()
         msg_usage.input_tokens = 10
@@ -243,7 +241,7 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
         mock_create = AsyncMock(
             return_value=_MockAsyncEventStream(events),
         )
-        mock_client_cls.return_value.messages.create = mock_create
+        self.mock_client.messages.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]
@@ -258,11 +256,7 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
         )
         self.assertEqual(responses[-1].id, "msg-1")
 
-    @patch("anthropic.AsyncAnthropic")
-    async def test_stream_thinking_and_text(
-        self,
-        mock_client_cls: MagicMock,
-    ) -> None:
+    async def test_stream_thinking_and_text(self) -> None:
         """Stream thinking + text yields deltas then final with signature."""
         msg_usage = MagicMock()
         msg_usage.input_tokens = 10
@@ -295,7 +289,7 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
         mock_create = AsyncMock(
             return_value=_MockAsyncEventStream(events),
         )
-        mock_client_cls.return_value.messages.create = mock_create
+        self.mock_client.messages.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]
@@ -339,11 +333,7 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
             ],
         )
 
-    @patch("anthropic.AsyncAnthropic")
-    async def test_stream_tool_call(
-        self,
-        mock_client_cls: MagicMock,
-    ) -> None:
+    async def test_stream_tool_call(self) -> None:
         """Stream tool call yields partial deltas then full accumulated
         input."""
         msg_usage = MagicMock()
@@ -382,7 +372,7 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
         mock_create = AsyncMock(
             return_value=_MockAsyncEventStream(events),
         )
-        mock_client_cls.return_value.messages.create = mock_create
+        self.mock_client.messages.create = mock_create
 
         gen = await self.model([])
         responses = [r async for r in gen]

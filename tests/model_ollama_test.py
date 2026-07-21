@@ -9,7 +9,7 @@ import json
 from typing import Any
 import unittest
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from utils import AnyString
 
@@ -119,11 +119,14 @@ class TestOllamaNonStream(IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self.model = _make_model(stream=False)
+        # Client is built eagerly in __init__; inject a mock onto the
+        # instance so chat() hits it instead of the network.
+        self.mock_client = MagicMock()
+        self.model.client = self.mock_client
 
-    @patch("ollama.AsyncClient")
-    async def test_text_response(self, mock_client_cls: MagicMock) -> None:
+    async def test_text_response(self) -> None:
         """Non-stream text response returns a single ChatResponse."""
-        mock_client_cls.return_value.chat = AsyncMock(
+        self.mock_client.chat = AsyncMock(
             return_value=_mock_completion(content="Hello!"),
         )
 
@@ -134,13 +137,9 @@ class TestOllamaNonStream(IsolatedAsyncioTestCase):
             (True, [TextBlock.model_construct(id=A, text="Hello!")]),
         )
 
-    @patch("ollama.AsyncClient")
-    async def test_tool_call_response(
-        self,
-        mock_client_cls: MagicMock,
-    ) -> None:
+    async def test_tool_call_response(self) -> None:
         """Parsing a tool-call response creates a ToolCallBlock."""
-        mock_client_cls.return_value.chat = AsyncMock(
+        self.mock_client.chat = AsyncMock(
             return_value=_mock_completion(
                 tool_calls=[
                     {"name": "get_weather", "args": {"city": "SH"}},
@@ -164,14 +163,10 @@ class TestOllamaNonStream(IsolatedAsyncioTestCase):
             ),
         )
 
-    @patch("ollama.AsyncClient")
-    async def test_thinking_response(
-        self,
-        mock_client_cls: MagicMock,
-    ) -> None:
+    async def test_thinking_response(self) -> None:
         """Non-stream thinking plus text returns ThinkingBlock then
         TextBlock."""
-        mock_client_cls.return_value.chat = AsyncMock(
+        self.mock_client.chat = AsyncMock(
             return_value=_mock_completion(
                 content="Answer",
                 thinking="Let me think...",
@@ -205,15 +200,18 @@ class TestOllamaStream(IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self.model = _make_model(stream=True)
+        # Client is built eagerly in __init__; inject a mock onto the
+        # instance so chat() hits it instead of the network.
+        self.mock_client = MagicMock()
+        self.model.client = self.mock_client
 
-    @patch("ollama.AsyncClient")
-    async def test_stream_text(self, mock_client_cls: MagicMock) -> None:
-        """Stream text yields deltas then final with full content."""
+    async def test_stream_text(self) -> None:
+        """Stream text yields deltas then full content."""
         chunks = [
             _make_stream_chunk(content="Hi"),
             _make_stream_chunk(content=" there"),
         ]
-        mock_client_cls.return_value.chat = AsyncMock(
+        self.mock_client.chat = AsyncMock(
             return_value=_MockAsyncStream(chunks),
         )
 
@@ -229,18 +227,14 @@ class TestOllamaStream(IsolatedAsyncioTestCase):
             ],
         )
 
-    @patch("ollama.AsyncClient")
-    async def test_stream_thinking_and_text(
-        self,
-        mock_client_cls: MagicMock,
-    ) -> None:
+    async def test_stream_thinking_and_text(self) -> None:
         """Stream thinking and text deltas then final with accumulated
         content."""
         chunks = [
             _make_stream_chunk(thinking="Think step"),
             _make_stream_chunk(content="Result"),
         ]
-        mock_client_cls.return_value.chat = AsyncMock(
+        self.mock_client.chat = AsyncMock(
             return_value=_MockAsyncStream(chunks),
         )
 
@@ -273,11 +267,7 @@ class TestOllamaStream(IsolatedAsyncioTestCase):
             ],
         )
 
-    @patch("ollama.AsyncClient")
-    async def test_stream_tool_call(
-        self,
-        mock_client_cls: MagicMock,
-    ) -> None:
+    async def test_stream_tool_call(self) -> None:
         """Stream tool-call chunk yields delta then final with same
         ToolCallBlock."""
         chunks = [
@@ -287,7 +277,7 @@ class TestOllamaStream(IsolatedAsyncioTestCase):
                 ],
             ),
         ]
-        mock_client_cls.return_value.chat = AsyncMock(
+        self.mock_client.chat = AsyncMock(
             return_value=_MockAsyncStream(chunks),
         )
 
