@@ -315,39 +315,29 @@ class WorkspaceBase:
 
     # ── for Agent: tool & MCP discovery ────────────────────────────
 
-    def _create_shell_tool(self, backend: BackendBase) -> ToolBase:
-        """Create the shell tool appropriate for this workspace.
-
-        Sandboxed workspaces expose POSIX environments by default. Local
-        workspaces may override this factory to match the host platform.
-        """
-        from ..tool import Bash
-
-        return Bash(cwd=self.workdir, backend=backend)
-
     async def list_tools(self) -> list[ToolBase]:
         """Built-in tools scoped to this workspace.
 
-        Returns a platform-appropriate shell plus the five filesystem tools
-        (:class:`Edit`, :class:`Glob`, :class:`Grep`, :class:`Read`, and
-        :class:`Write`), each bound to the workspace's active backend so that
-        all filesystem and process I/O happens inside the workspace's
-        execution environment. The shell is rooted at :attr:`workdir`;
-        :class:`Glob` receives the optional :attr:`_glob_helper_path` when the
-        backend ships one.
+        Returns the six builtin tools (:class:`Bash`, :class:`Edit`,
+        :class:`Glob`, :class:`Grep`, :class:`Read`, :class:`Write`),
+        each bound to the workspace's active backend so that all
+        filesystem and process I/O happens inside the workspace's
+        execution environment. :class:`Bash` is rooted at
+        :attr:`workdir`; :class:`Glob` receives the optional
+        :attr:`_glob_helper_path` when the backend ships one.
 
         Raises:
             RuntimeError:
                 If the workspace has not been initialised yet.
         """
-        from ..tool import Edit, Glob, Grep, Read, Write
+        from ..tool import Bash, Edit, Glob, Grep, Read, Write
 
         backend = self.get_backend()
         glob_kwargs: dict = {"backend": backend}
         if self._glob_helper_path is not None:
             glob_kwargs["glob_helper_path"] = self._glob_helper_path
         return [
-            self._create_shell_tool(backend),
+            Bash(cwd=self.workdir, backend=backend),
             Edit(backend=backend),
             Glob(**glob_kwargs),
             Grep(backend=backend),

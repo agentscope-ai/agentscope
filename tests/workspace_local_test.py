@@ -10,7 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from dataclasses import asdict
 from urllib.parse import urlparse
 from urllib.request import url2pathname
@@ -98,16 +98,6 @@ class _LongResultTool(ToolBase):
 class TestLocalWorkspaceTools(IsolatedAsyncioTestCase):
     """Test cases for LocalWorkspace builtin tools."""
 
-    def test_base_shell_factory_uses_bash(self) -> None:
-        """The shared workspace shell factory remains POSIX-oriented."""
-        workspace = LocalWorkspace(workdir="workspace")
-        backend = LocalBackend()
-
-        tool = WorkspaceBase._create_shell_tool(workspace, backend)
-
-        self.assertIsInstance(tool, Bash)
-        self.assertIs(tool._backend, backend)
-
     async def test_list_tools_builtin_posix_uses_bash(self) -> None:
         """A POSIX local workspace returns Bash and filesystem tools."""
         with tempfile.TemporaryDirectory() as workdir:
@@ -151,6 +141,31 @@ class TestLocalWorkspaceTools(IsolatedAsyncioTestCase):
         )
         for tool in tools:
             self.assertIsInstance(tool._backend, LocalBackend)
+
+    async def test_windows_shell_switch_is_local_workspace_behavior(
+        self,
+    ) -> None:
+        """Replace the inherited Bash tool only in LocalWorkspace."""
+        workspace = LocalWorkspace(workdir="workspace")
+        backend = workspace.get_backend()
+        inherited_tools = [Bash(cwd="workspace", backend=backend)]
+
+        with (
+            patch.object(
+                WorkspaceBase,
+                "list_tools",
+                new=AsyncMock(return_value=inherited_tools),
+            ),
+            patch(
+                "agentscope.workspace._local_workspace.os",
+                SimpleNamespace(name="nt"),
+            ),
+        ):
+            tools = await workspace.list_tools()
+
+        self.assertIsNot(tools, inherited_tools)
+        self.assertIsInstance(tools[0], PowerShell)
+        self.assertIs(tools[0]._backend, backend)
 
 
 class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):

@@ -2,6 +2,7 @@
 # pylint: disable=protected-access
 """PowerShell tool test cases."""
 
+import base64
 import sys
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
@@ -26,6 +27,10 @@ class PowerShellInterfaceTest(IsolatedAsyncioTestCase):
         self.assertEqual(tool.input_schema["required"], ["command"])
         self.assertEqual(tool._cwd, "workspace")
         self.assertIs(tool._backend, backend)
+        self.assertIn("Glob", tool.description)
+        self.assertIn("Read", tool.description)
+        self.assertIn("Write", tool.description)
+        self.assertIn("600000", tool.description)
 
         decision = await tool.check_permissions(
             {"command": "Get-Location"},
@@ -46,10 +51,13 @@ class PowerShellInterfaceTest(IsolatedAsyncioTestCase):
 class PowerShellExecutionTest(IsolatedAsyncioTestCase):
     """Test PowerShell command execution through the backend."""
 
-    async def test_call_uses_noninteractive_powershell_and_cwd(self) -> None:
-        """Wrap commands for PowerShell and pass cwd to the backend."""
+    async def test_call_uses_encoded_command_and_cwd(self) -> None:
+        """Encode commands for PowerShell and pass cwd to the backend."""
         backend = AsyncMock()
-        backend.exec_shell.return_value = ExecResult(0, b"ok\r\n", b"")
+        backend.exec_shell.side_effect = [
+            ExecResult(0, b"", b""),
+            ExecResult(0, b"ok\r\n", b""),
+        ]
         tool = PowerShell(cwd="workspace", backend=backend)
 
         chunks = [
@@ -59,25 +67,72 @@ class PowerShellExecutionTest(IsolatedAsyncioTestCase):
             )
         ]
 
-        argv = backend.exec_shell.await_args.args[0]
+        argv = backend.exec_shell.await_args_list[1].args[0]
         self.assertEqual(
             argv[:-1],
             [
-                "powershell.exe",
+                "pwsh",
                 "-NoLogo",
                 "-NoProfile",
                 "-NonInteractive",
-                "-Command",
+                "-EncodedCommand",
             ],
         )
-        self.assertIn("[Console]::OutputEncoding", argv[-1])
-        self.assertTrue(argv[-1].endswith("Get-Location"))
+        decoded_command = base64.b64decode(argv[-1]).decode("utf-16-le")
+        encoded_user_command = base64.b64encode(
+            "Get-Location".encode("utf-16-le"),
+        ).decode("ascii")
+        self.assertIn("[Console]::OutputEncoding", decoded_command)
+        self.assertIn(
+            f"FromBase64String('{encoded_user_command}')",
+            decoded_command,
+        )
+        self.assertIn("[ScriptBlock]::Create", decoded_command)
         self.assertEqual(
-            backend.exec_shell.await_args.kwargs,
+            backend.exec_shell.await_args_list[1].kwargs,
             {"cwd": "workspace", "timeout": 120.0},
         )
         self.assertEqual(chunks[0].content[0].text, "ok\n")
         self.assertEqual(chunks[0].state, "running")
+
+    async def test_prefers_pwsh_and_caches_resolution(self) -> None:
+        """Probe modern PowerShell once and reuse it for later calls."""
+        backend = AsyncMock()
+        backend.exec_shell.side_effect = [
+            ExecResult(0, b"", b""),
+            ExecResult(0, b"first", b""),
+            ExecResult(0, b"second", b""),
+        ]
+        tool = PowerShell(backend=backend)
+
+        first = [chunk async for chunk in await tool(command="'first'")]
+        second = [chunk async for chunk in await tool(command="'second'")]
+
+        self.assertEqual(first[0].content[0].text, "first")
+        self.assertEqual(second[0].content[0].text, "second")
+        self.assertEqual(backend.exec_shell.await_count, 3)
+        self.assertEqual(
+            [call.args[0][0] for call in backend.exec_shell.await_args_list],
+            ["pwsh", "pwsh", "pwsh"],
+        )
+
+    async def test_falls_back_to_windows_powershell(self) -> None:
+        """Use powershell.exe when pwsh is unavailable."""
+        backend = AsyncMock()
+        backend.exec_shell.side_effect = [
+            ExecResult(127, b"", b"not found"),
+            ExecResult(0, b"", b""),
+            ExecResult(0, b"legacy", b""),
+        ]
+        tool = PowerShell(backend=backend)
+
+        chunks = [chunk async for chunk in await tool(command="'legacy'")]
+
+        self.assertEqual(chunks[0].content[0].text, "legacy")
+        self.assertEqual(
+            [call.args[0][0] for call in backend.exec_shell.await_args_list],
+            ["pwsh", "powershell.exe", "powershell.exe"],
+        )
 
     async def test_nonzero_exit_returns_error_with_both_streams(self) -> None:
         """Report stdout and stderr when PowerShell exits unsuccessfully."""
@@ -282,6 +337,44 @@ class PowerShellWindowsIntegrationTest(IsolatedAsyncioTestCase):
             chunks[0].content[0].text.strip(),
             "你好 AgentScope",
         )
+
+    async def test_real_powershell_handles_script_preamble(self) -> None:
+        """Preserve param blocks, comments, and quoted arguments."""
+        tool = PowerShell()
+
+        chunks = [
+            chunk
+            async for chunk in await tool(
+                command=(
+                    "param()\n"
+                    "# A leading script comment must not swallow the command\n"
+                    'Write-Output "a b"'
+                ),
+            )
+        ]
+
+        self.assertEqual(chunks[0].state, "running")
+        self.assertEqual(chunks[0].content[0].text.strip(), "a b")
+
+    async def test_real_powershell_preserves_user_line_numbers(self) -> None:
+        """Report line numbers relative to the user's command text."""
+        tool = PowerShell()
+
+        chunks = [
+            chunk
+            async for chunk in await tool(
+                command=(
+                    "try {\n"
+                    "    throw 'boom'\n"
+                    "} catch {\n"
+                    "    Write-Output $_.InvocationInfo.ScriptLineNumber\n"
+                    "}"
+                ),
+            )
+        ]
+
+        self.assertEqual(chunks[0].state, "running")
+        self.assertEqual(chunks[0].content[0].text.strip(), "2")
 
 
 if __name__ == "__main__":
