@@ -99,6 +99,8 @@ from ..permission import (
     PermissionDecision,
     PermissionRule,
 )
+from ..tool._builtin._generate_structured_output import \
+    GenerateStructuredOutput
 from ..workspace import Offloader, WorkspaceBase
 
 if TYPE_CHECKING:
@@ -809,6 +811,10 @@ class Agent:
                 self.state.reply_context.reply_id = _generate_id()
                 self.state.reply_context.cur_iter = 0
                 self.state.reply_context.structured_output = structured_output
+                if structured_output:
+                    await self._equip_structure_output_tool(
+                        structured_output
+                    )
 
                 yield ReplyStartEvent(
                     session_id=self.state.session_id,
@@ -944,6 +950,7 @@ class Agent:
                             id=self.state.reply_id,
                             name=self.name,
                             content=break_message,
+                            finished_reason=ReplyFinishedReason.INTERRUPTED,
                         )
                         return
 
@@ -978,6 +985,7 @@ class Agent:
                 name=self.name,
                 content="Executed maximum iterations of reasoning-acting loop "
                 "without finishing the task.",
+                finished_reason=ReplyFinishedReason.EXCEED_MAX_ITERS,
             )
 
         except asyncio.CancelledError:
@@ -1007,6 +1015,7 @@ class Agent:
                         id=self.state.reply_id,
                         name=self.name,
                         content=self.react_config.interruption_message,
+                        finished_reason=ReplyFinishedReason.INTERRUPTED,
                     )
 
                 yield end_event
@@ -1460,6 +1469,7 @@ class Agent:
                 # Text only response message
                 content=list(completed_response.content),
                 usage=final_usage,
+                finished_reason=completed_response.completed_reason,
             )
 
     async def _check_incoming_event(
@@ -3255,50 +3265,7 @@ class Agent:
         """Equip the agent with the structured output tool so that it could
         generate the required output."""
         await self.toolkit.add_tool(
-            FunctionTool(
-                self._generate_structured_output,
-                "generate_structured_output",
-                description="""""",
-                is_concurrency_safe=True,
-                is_read_only=True,
+            GenerateStructuredOutput(
+                schema=self.structured_output,
             )
         )
-
-
-    async def _generate_structured_output(self, output: dict) -> ToolChunk:
-        """Generate a structured output from the given value."""
-
-        if not self.state.reply_context.structured_output:
-            return ToolChunk(
-                content=[
-                    TextBlock(
-                        text="No structured output is required for now."
-                    )
-                ],
-                state=ToolResultState.SUCCESS,
-            )
-
-        try:
-            res = self.state.reply_context.structured_output.output_schema.model_validate(
-                output
-            )
-            self.state.reply_context.cur_structured_output = res
-
-            return ToolChunk(
-                content=[
-                    TextBlock(
-                        text="Structured output generated successfully."
-                    )
-                ],
-                state=ToolResultState.SUCCESS,
-            )
-
-        except ValidationError as e:
-            return ToolChunk(
-                content=[
-                    TextBlock(
-                        text=f"ValidationError: Structured output validation failed with error: {e}"
-                    )
-                ],
-                state=ToolResultState.ERROR,
-            )

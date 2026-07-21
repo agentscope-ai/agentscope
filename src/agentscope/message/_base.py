@@ -493,6 +493,7 @@ def UserMsg(
     metadata: dict | None = None,
     created_at: str | None = None,
     finished_at: str | None = None,
+    finished_reason: str | None = None,
     id: str | None = None,  # pylint: disable=redefined-builtin
 ) -> Msg:
     """Create a user message with role ``"user"``.
@@ -513,6 +514,9 @@ def UserMsg(
         finished_at (`str | None`, optional):
             ISO-format timestamp for when the message was finished. Defaults to
             the same value as ``created_at`` when not provided.
+        finished_reason (`str | None`, optional):
+            The reason the message was finished. Defaults to ``None`` when not
+            provided.
         id (`str | None`, optional):
             A unique identifier for the message. A random UUID hex string is
             generated when not provided.
@@ -531,6 +535,7 @@ def UserMsg(
         metadata=metadata or {},
         created_at=created_at,
         finished_at=finished_at,
+        finished_reason=finished_reason,
         id=id or _generate_id(),
     )
 
@@ -541,6 +546,7 @@ def AssistantMsg(
     metadata: dict | None = None,
     created_at: str | None = None,
     finished_at: str | None = None,
+    finished_reason: ReplyFinishedReason | None = None,
     id: str | None = None,  # pylint: disable=redefined-builtin
     usage: Usage | None = None,
 ) -> Msg:
@@ -562,6 +568,8 @@ def AssistantMsg(
         finished_at (`str | None`, optional):
             ISO-format timestamp for when the message was finished. Not set by
             default for assistant messages.
+        finished_reason (`ReplyFinishedReason | None`, optional):
+            The finished reason for the assistant message.
         id (`str | None`, optional):
             A unique identifier for the message. A random UUID hex string is
             generated when not provided.
@@ -579,6 +587,7 @@ def AssistantMsg(
         metadata=metadata or {},
         created_at=created_at or datetime.now().isoformat(),
         finished_at=finished_at,
+        finished_reason=finished_reason,
         id=id or _generate_id(),
         usage=usage,
     )
@@ -590,6 +599,7 @@ def SystemMsg(
     metadata: dict | None = None,
     created_at: str | None = None,
     finished_at: str | None = None,
+    finished_reason: ReplyFinishedReason | None = None,
     id: str | None = None,  # pylint: disable=redefined-builtin
 ) -> Msg:
     """Create a system message with role ``"system"``.
@@ -610,6 +620,8 @@ def SystemMsg(
         finished_at (`str | None`, optional):
             ISO-format timestamp for when the message was finished. Defaults to
             the same value as ``created_at`` when not provided.
+        finished_reason (`ReplyFinishedReason | None`, optional):
+            The finished reason for the assistant message.
         id (`str | None`, optional):
             A unique identifier for the message. A random UUID hex string is
             generated when not provided.
@@ -628,5 +640,6 @@ def SystemMsg(
         metadata=metadata or {},
         created_at=created_at,
         finished_at=finished_at,
+        finished_reason=finished_reason,
         id=id or _generate_id(),
     )
