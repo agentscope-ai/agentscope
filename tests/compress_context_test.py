@@ -10,8 +10,9 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import MockModel, AnyString
 
-from agentscope.model import StructuredResponse
+from agentscope.model import ChatResponse, StructuredResponse
 from agentscope.agent import Agent, ContextConfig
+from agentscope.event import CustomEvent, ModelCallStartEvent
 from agentscope.state import AgentState
 from agentscope.message import (
     UserMsg,
@@ -1300,6 +1301,177 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                 model.recorded_structured_messages[-1],
                 instructions,
             ),
+        )
+
+    async def test_context_compression_emits_status_events(self) -> None:
+        """Compression emits started and completed lifecycle events."""
+        model = RecordingStructuredMockModel(context_size=100)
+        agent = Agent(
+            name="Friday",
+            system_prompt="0" * 80,
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.7,
+                reserve_ratio=0.4,
+            ),
+            state=AgentState(
+                session_id="session-1",
+                reply_id="reply-1",
+                context=[
+                    UserMsg("User", "1" * 120, id="1"),
+                    AssistantMsg("Friday", "2" * 40, id="2"),
+                    UserMsg("User", "3" * 40, id="3"),
+                ],
+            ),
+            toolkit=Toolkit(),
+        )
+        model.set_structured_response(
+            StructuredResponse(
+                content={
+                    "task_overview": "1",
+                    "current_state": "2",
+                    "important_discoveries": "3",
+                    "next_steps": "4",
+                    "context_to_preserve": "5",
+                },
+            ),
+        )
+
+        events = [
+            event
+            async for event in agent._compress_context_with_status_events()
+        ]
+
+        self.assertTrue(
+            all(isinstance(event, CustomEvent) for event in events),
+        )
+        self.assertEqual(
+            [event.value["status"] for event in events],
+            ["started", "completed"],
+        )
+        self.assertEqual(
+            [event.value["reply_id"] for event in events],
+            ["reply-1", "reply-1"],
+        )
+
+    async def test_reply_stream_emits_compression_before_model_call(
+        self,
+    ) -> None:
+        """The public reply stream exposes compression before reasoning."""
+        model = RecordingStructuredMockModel(context_size=100)
+        agent = Agent(
+            name="Friday",
+            system_prompt="0" * 80,
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.7,
+                reserve_ratio=0.4,
+            ),
+            state=AgentState(
+                session_id="session-1",
+                context=[
+                    UserMsg("User", "1" * 120, id="1"),
+                    AssistantMsg("Friday", "2" * 40, id="2"),
+                    UserMsg("User", "3" * 40, id="3"),
+                ],
+            ),
+            toolkit=Toolkit(),
+        )
+        model.set_structured_response(
+            StructuredResponse(
+                content={
+                    "task_overview": "1",
+                    "current_state": "2",
+                    "important_discoveries": "3",
+                    "next_steps": "4",
+                    "context_to_preserve": "5",
+                },
+            ),
+        )
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="done")],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        events = [event async for event in agent.reply_stream()]
+        compression_events = [
+            event
+            for event in events
+            if isinstance(event, CustomEvent)
+            and event.name == "context_compression"
+        ]
+        model_call_index = next(
+            index
+            for index, event in enumerate(events)
+            if isinstance(event, ModelCallStartEvent)
+        )
+
+        self.assertEqual(
+            [event.value["status"] for event in compression_events],
+            ["started", "completed"],
+        )
+        self.assertLess(
+            events.index(compression_events[-1]),
+            model_call_index,
+        )
+
+    async def test_context_compression_emits_no_event_when_skipped(
+        self,
+    ) -> None:
+        """No lifecycle event is emitted below the compression threshold."""
+        agent = Agent(
+            name="Friday",
+            system_prompt="short",
+            model=RecordingStructuredMockModel(context_size=1000),
+            state=AgentState(
+                session_id="session-1",
+                reply_id="reply-1",
+                context=[UserMsg("User", "hello", id="1")],
+            ),
+            toolkit=Toolkit(),
+        )
+
+        events = [
+            event
+            async for event in agent._compress_context_with_status_events()
+        ]
+
+        self.assertEqual(events, [])
+
+    async def test_context_compression_emits_failed_event(self) -> None:
+        """A started compression reports failure before re-raising."""
+        model = RecordingStructuredMockModel(
+            context_size=1000,
+            fail_structured_output_times=2,
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="0" * 80,
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.3,
+                reserve_ratio=0.1,
+            ),
+            state=AgentState(
+                session_id="session-1",
+                reply_id="reply-1",
+                context=[UserMsg("User", "1" * 1600, id="1")],
+            ),
+            toolkit=Toolkit(),
+        )
+        events: list[CustomEvent] = []
+
+        with self.assertRaisesRegex(RuntimeError, "simulated compression"):
+            async for event in agent._compress_context_with_status_events():
+                events.append(event)
+
+        self.assertEqual(
+            [event.value["status"] for event in events],
+            ["started", "failed"],
         )
 
     async def asyncTearDown(self) -> None:
