@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Type
 
+from pydantic import Field
+
 from .._embedding_response import EmbeddingResponse
 from .._embedding_usage import EmbeddingUsage
 from .._cache_base import EmbeddingCacheBase
@@ -28,6 +30,18 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
     #: the constraint is on total tokens.  We use a conservative
     #: default that works well in practice.
     _TEXT_BATCH_SIZE: int = 2048
+
+    class Parameters(EmbeddingModelBase.Parameters):
+        """Parameters for OpenAI and OpenAI-compatible embedding models."""
+
+        pass_dimensions: bool = Field(
+            default=True,
+            title="Pass Dimensions",
+            description=(
+                "Whether to send the dimensions parameter to the "
+                "OpenAI-compatible embedding API."
+            ),
+        )
 
     def __init__(
         self,
@@ -59,8 +73,10 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
                 persisted ``dimensions`` inside ``parameters``.
             parameters (`OpenAIEmbeddingModel.Parameters | None`, \
             defaults to ``None``):
-                Provider-specific non-dimensional parameters.  Currently
-                empty for OpenAI.
+                Provider-specific parameters.  Set
+                ``pass_dimensions=False`` for OpenAI-compatible
+                providers that expose a fixed native output dimension
+                and reject the API ``dimensions`` parameter.
             pass_dimensions (`bool`, defaults to `True`):
                 Whether to pass the ``dimensions`` parameter to the API.
                 Some OpenAI-compatible providers do not support it.
@@ -97,7 +113,11 @@ class OpenAIEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
             api_key=credential.api_key.get_secret_value(),
             **client_kwargs,
         )
-        self.pass_dimensions = pass_dimensions
+        self.pass_dimensions = (
+            parameters.pass_dimensions
+            if parameters is not None
+            else pass_dimensions
+        )
         self.embedding_cache: EmbeddingCacheBase | None = embedding_cache
 
     @classmethod

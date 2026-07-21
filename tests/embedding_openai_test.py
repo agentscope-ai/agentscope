@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from utils import AnyValue
 
+from agentscope.app._service._embedding import get_embedding_model
+from agentscope.app.storage import CredentialRecord, EmbeddingModelConfig
 from agentscope.credential import OpenAICredential
 from agentscope.embedding import OpenAIEmbeddingModel
 
@@ -52,7 +54,18 @@ class OpenAIListModelsTest(IsolatedAsyncioTestCase):
                 "context_size": 8191,
                 "parameter_schema": {
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "pass_dimensions": {
+                            "default": True,
+                            "description": (
+                                "Whether to send the dimensions "
+                                "parameter to the OpenAI-compatible "
+                                "embedding API."
+                            ),
+                            "title": "Pass Dimensions",
+                            "type": "boolean",
+                        },
+                    },
                     "required": [],
                 },
                 "parameter_overrides": {},
@@ -89,6 +102,68 @@ class OpenAIEmbeddingCallTest(IsolatedAsyncioTestCase):
                 "usage": {"tokens": 8, "time": A, "type": "embedding"},
                 "source": "api",
             },
+        )
+        mock_client.embeddings.create.assert_awaited_once_with(
+            input=["hello", "world"],
+            model="text-embedding-3-small",
+            encoding_format="float",
+            dimensions=2,
+        )
+
+    @patch("openai.AsyncClient")
+    async def test_pass_dimensions_parameter_omits_dimensions(
+        self,
+        mock_client_cls: Any,
+    ) -> None:
+        """``pass_dimensions=False`` omits the API dimensions payload."""
+        mock_client = MagicMock()
+        mock_client.embeddings.create = AsyncMock(
+            return_value=_make_response([[0.1, 0.2]], 2),
+        )
+        mock_client_cls.return_value = mock_client
+
+        model = OpenAIEmbeddingModel(
+            credential=OpenAICredential(api_key="k"),
+            model="Qwen3-Embedding-0.6B",
+            dimensions=1024,
+            parameters=OpenAIEmbeddingModel.Parameters(
+                pass_dimensions=False,
+            ),
+        )
+        result = await model(["hello"])
+
+        self.assertEqual(result["embeddings"], [[0.1, 0.2]])
+        mock_client.embeddings.create.assert_awaited_once_with(
+            input=["hello"],
+            model="Qwen3-Embedding-0.6B",
+            encoding_format="float",
+        )
+
+    @patch("openai.AsyncClient")
+    async def test_constructor_pass_dimensions_omits_dimensions(
+        self,
+        mock_client_cls: Any,
+    ) -> None:
+        """The constructor flag remains supported for direct use."""
+        mock_client = MagicMock()
+        mock_client.embeddings.create = AsyncMock(
+            return_value=_make_response([[0.1, 0.2]], 2),
+        )
+        mock_client_cls.return_value = mock_client
+
+        model = OpenAIEmbeddingModel(
+            credential=OpenAICredential(api_key="k"),
+            model="Qwen3-Embedding-0.6B",
+            dimensions=1024,
+            pass_dimensions=False,
+        )
+        result = await model(["hello"])
+
+        self.assertEqual(result["embeddings"], [[0.1, 0.2]])
+        mock_client.embeddings.create.assert_awaited_once_with(
+            input=["hello"],
+            model="Qwen3-Embedding-0.6B",
+            encoding_format="float",
         )
 
     @patch("openai.AsyncClient")
@@ -181,3 +256,41 @@ class OpenAIEmbeddingCallTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(result["embeddings"], [[0.1]])
         self.assertEqual(mock_client.embeddings.create.await_count, 2)
+
+
+class OpenAIEmbeddingServiceTest(IsolatedAsyncioTestCase):
+    """Test app-service construction of OpenAI embedding models."""
+
+    @patch("openai.AsyncClient")
+    async def test_config_parameters_disable_dimensions_payload(
+        self,
+        mock_client_cls: Any,
+    ) -> None:
+        """Stored parameters should flow into ``OpenAIEmbeddingModel``."""
+        mock_client_cls.return_value = MagicMock()
+        storage = MagicMock()
+        storage.get_credential = AsyncMock(
+            return_value=CredentialRecord(
+                id="cred-1",
+                user_id="user-1",
+                data=OpenAICredential(api_key="k").model_dump(
+                    mode="json",
+                ),
+            ),
+        )
+
+        model = await get_embedding_model(
+            user_id="user-1",
+            config=EmbeddingModelConfig(
+                type="openai_credential",
+                credential_id="cred-1",
+                model="Qwen3-Embedding-0.6B",
+                dimensions=1024,
+                parameters={"pass_dimensions": False},
+            ),
+            storage=storage,
+        )
+
+        self.assertIsInstance(model, OpenAIEmbeddingModel)
+        self.assertEqual(model.dimensions, 1024)
+        self.assertFalse(model.pass_dimensions)
