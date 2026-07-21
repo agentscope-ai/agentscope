@@ -733,6 +733,9 @@ class Agent:
             ],
             structured_model=SELF_COMPACT_DECISION_SCHEMA,
         )
+        if response.finished_reason == FinishedReason.INTERRUPTED:
+            raise asyncio.CancelledError()
+
         decision = str(response.content.get("decision", "")).upper()
         return decision == "COMPRESS"
 
