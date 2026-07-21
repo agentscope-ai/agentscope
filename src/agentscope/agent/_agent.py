@@ -748,31 +748,23 @@ class Agent:
 
         context_size = self.model.context_size
         usage_ratio = estimated_tokens / context_size
-        return (
-            prompt.replace(
-                "{context_usage_percent}",
-                f"{100 * usage_ratio:.1f}",
-            )
-            .replace(
-                "{self_compact_min_percent}",
-                f"{100 * context_config.self_compact_min_ratio:.1f}",
-            )
-            .replace(
-                "{trigger_percent}",
-                f"{100 * context_config.trigger_ratio:.1f}",
-            )
-            .replace("{context_usage_ratio}", f"{usage_ratio:.3f}")
-            .replace(
-                "{self_compact_min_ratio}",
-                f"{context_config.self_compact_min_ratio:.3f}",
-            )
-            .replace(
-                "{trigger_ratio}",
-                f"{context_config.trigger_ratio:.3f}",
-            )
-            .replace("{estimated_tokens}", str(int(estimated_tokens)))
-            .replace("{context_size}", str(int(context_size)))
-        )
+        replacements = {
+            "context_usage_percent": f"{100 * usage_ratio:.1f}",
+            "self_compact_min_percent": (
+                f"{100 * context_config.self_compact_min_ratio:.1f}"
+            ),
+            "trigger_percent": f"{100 * context_config.trigger_ratio:.1f}",
+            "context_usage_ratio": f"{usage_ratio:.3f}",
+            "self_compact_min_ratio": (
+                f"{context_config.self_compact_min_ratio:.3f}"
+            ),
+            "trigger_ratio": f"{context_config.trigger_ratio:.3f}",
+            "estimated_tokens": str(int(estimated_tokens)),
+            "context_size": str(int(context_size)),
+        }
+        for name, value in replacements.items():
+            prompt = prompt.replace(f"{{{name}}}", value)
+        return prompt
 
     # ======================================================================
     # Agent core methods, including _reply, _reasoning, _acting, etc.
@@ -788,12 +780,8 @@ class Agent:
         | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Reply entry point (maybe wrapped by middleware)."""
-        finished_reason: ReplyFinishedReason | str | None = None
         if not self._reply_middlewares:
-            async for item in self._reply_impl(inputs=inputs):
-                if isinstance(item, ReplyEndEvent):
-                    finished_reason = item.finished_reason
-                yield item
+            reply_generator = self._reply_impl(inputs=inputs)
         else:
 
             async def execute_chain(
@@ -828,16 +816,22 @@ class Agent:
                     ):
                         yield item
 
-            async for item in execute_chain():
-                if isinstance(item, ReplyEndEvent):
-                    finished_reason = item.finished_reason
-                yield item
+            reply_generator = execute_chain()
 
-        if (
-            self.context_config.self_compact_enabled
-            and finished_reason == ReplyFinishedReason.COMPLETED
-        ):
-            await self.self_compact_context()
+        self_compacted = False
+        async for item in reply_generator:
+            if (
+                isinstance(item, ReplyEndEvent)
+                and item.finished_reason == ReplyFinishedReason.COMPLETED
+                and self.context_config.self_compact_enabled
+                and not self_compacted
+            ):
+                # Complete optional compaction before exposing the terminal
+                # event. Consumers may legitimately stop iterating as soon as
+                # they receive ReplyEndEvent.
+                self_compacted = True
+                await self.self_compact_context()
+            yield item
 
     async def _close_unfinished_tool_calls(
         self,
