@@ -6,15 +6,16 @@ This module tests that when one MCP client fails to list tools,
 other MCP clients can still be loaded successfully.
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from agentscope.tool import Toolkit
+import pytest
+
 from agentscope.mcp import MCPClient
+from agentscope.tool import Toolkit
 
 
 @pytest.mark.asyncio
-async def test_toolkit_with_single_mcp_failure():
+async def test_toolkit_with_single_mcp_failure() -> None:
     """Test that other MCP tools can still be loaded when one MCP fails."""
 
     # Create a normal MCP client
@@ -36,7 +37,7 @@ async def test_toolkit_with_single_mcp_failure():
     failed_mcp.is_stateful = False
     failed_mcp.is_connected = True
     failed_mcp.list_tools = AsyncMock(
-        side_effect=Exception("Connection failed")
+        side_effect=Exception("Connection failed"),
     )
 
     # Create Toolkit with both normal and faulty MCP
@@ -46,6 +47,7 @@ async def test_toolkit_with_single_mcp_failure():
     )
 
     # Get available tools - should not raise exception
+    # pylint: disable=protected-access
     available_tools = await toolkit._get_available_tools(groups=[])
 
     # Verify: normal MCP tools should be available
@@ -60,7 +62,7 @@ async def test_toolkit_with_single_mcp_failure():
 
 
 @pytest.mark.asyncio
-async def test_toolkit_with_all_mcp_failure():
+async def test_toolkit_with_all_mcp_failure() -> None:
     """Test that Agent can still respond when all MCPs fail."""
 
     # Create multiple faulty MCP clients
@@ -69,7 +71,7 @@ async def test_toolkit_with_all_mcp_failure():
     failed_mcp1.is_stateful = False
     failed_mcp1.is_connected = True
     failed_mcp1.list_tools = AsyncMock(
-        side_effect=Exception("Connection failed")
+        side_effect=Exception("Connection failed"),
     )
 
     failed_mcp2 = MagicMock(spec=MCPClient)
@@ -85,6 +87,7 @@ async def test_toolkit_with_all_mcp_failure():
     )
 
     # Get available tools - should not raise exception
+    # pylint: disable=protected-access
     available_tools = await toolkit._get_available_tools(groups=[])
 
     # Verify: no external tools available (only builtin meta/skill tools),
@@ -97,7 +100,7 @@ async def test_toolkit_with_all_mcp_failure():
 
 
 @pytest.mark.asyncio
-async def test_toolkit_with_no_mcp():
+async def test_toolkit_with_no_mcp() -> None:
     """Test normal case when no MCP is configured."""
 
     # Create Toolkit without MCP
@@ -107,6 +110,7 @@ async def test_toolkit_with_no_mcp():
     )
 
     # Get available tools - basic group only, no MCP tools
+    # pylint: disable=protected-access
     available_tools = await toolkit._get_available_tools(groups=[])
 
     # Should not have any tools (no builtin tools, no MCP tools)
@@ -114,7 +118,7 @@ async def test_toolkit_with_no_mcp():
 
 
 @pytest.mark.asyncio
-async def test_toolkit_with_mixed_tools_and_mcp_failure():
+async def test_toolkit_with_mixed_tools_and_mcp_failure() -> None:
     """Test case with builtin tools and MCP failure."""
 
     # Create builtin tool
@@ -129,7 +133,7 @@ async def test_toolkit_with_mixed_tools_and_mcp_failure():
     failed_mcp.is_stateful = False
     failed_mcp.is_connected = True
     failed_mcp.list_tools = AsyncMock(
-        side_effect=Exception("Connection failed")
+        side_effect=Exception("Connection failed"),
     )
 
     # Create Toolkit
@@ -139,6 +143,7 @@ async def test_toolkit_with_mixed_tools_and_mcp_failure():
     )
 
     # Get available tools
+    # pylint: disable=protected-access
     available_tools = await toolkit._get_available_tools(groups=[])
 
     # Verify: builtin tool should be available
