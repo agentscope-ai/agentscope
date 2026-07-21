@@ -204,9 +204,7 @@ _APPLE_CONTAINER_LIVE = os.getenv("APPLE_CONTAINER_LIVE", "")
 
 
 #: Sandbox-side path of the gateway venv Python interpreter.
-_GATEWAY_PYTHON = (
-    f"{GATEWAY_HOME}/{DEFAULT_GATEWAY_VENV}/bin/python"
-)
+_GATEWAY_PYTHON = f"{GATEWAY_HOME}/{DEFAULT_GATEWAY_VENV}/bin/python"
 
 #: Minimal MCP echo server script (uploaded into the container on demand).
 _ECHO_MCP_SERVER_SCRIPT = '''\
