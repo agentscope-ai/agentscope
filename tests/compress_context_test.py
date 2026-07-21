@@ -21,6 +21,8 @@ from agentscope.message import (
     ToolResultBlock,
     ToolResultState,
     HintBlock,
+    DataBlock,
+    Base64Source,
     Msg,
 )
 from agentscope.tool import Toolkit
@@ -1234,6 +1236,142 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
         )
         self.assertFalse(
             any(msg.get_content_blocks("hint") for msg in agent.state.context),
+        )
+
+    async def test_context_compression_replaces_data_blocks(self) -> None:
+        """Compression omits binary data without mutating source messages."""
+        model = RecordingStructuredMockModel(context_size=100)
+        source_message = AssistantMsg(
+            name="Friday",
+            content=[
+                TextBlock(text="Please remember this attachment."),
+                DataBlock(
+                    source=Base64Source(
+                        data="aW1hZ2UtZGF0YQ==",
+                        media_type="image/png",
+                    ),
+                ),
+                ToolResultBlock(
+                    id="call-1",
+                    name="inspect_attachment",
+                    output=[
+                        TextBlock(text="Tool returned an attachment."),
+                        DataBlock(
+                            source=Base64Source(
+                                data="dG9vbC1kYXRh",
+                                media_type="application/pdf",
+                            ),
+                        ),
+                    ],
+                    state=ToolResultState.SUCCESS,
+                ),
+                HintBlock(
+                    hint=[
+                        TextBlock(text="Review this attachment."),
+                        DataBlock(
+                            source=Base64Source(
+                                data="aGludC1kYXRh",
+                                media_type="image/jpeg",
+                            ),
+                        ),
+                    ],
+                ),
+            ],
+            id="data-message",
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="Summarize the conversation.",
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.7,
+                reserve_ratio=0.01,
+            ),
+            state=AgentState(
+                session_id="123",
+                context=[source_message],
+            ),
+            toolkit=Toolkit(),
+        )
+        model.set_structured_response(
+            StructuredResponse(
+                content={
+                    "task_overview": "1",
+                    "current_state": "2",
+                    "important_discoveries": "3",
+                    "next_steps": "4",
+                    "context_to_preserve": "5",
+                },
+            ),
+        )
+
+        await agent.compress_context()
+
+        compressed_message = next(
+            msg
+            for msg in model.recorded_structured_messages[0]
+            if msg.id == source_message.id
+        )
+        self.assertFalse(compressed_message.get_content_blocks("data"))
+        self.assertEqual(
+            [
+                block.text
+                for block in compressed_message.get_content_blocks("text")
+            ],
+            [
+                "Please remember this attachment.",
+                "[Non-text attachment omitted during context compression]",
+            ],
+        )
+        compressed_tool_result = compressed_message.get_content_blocks(
+            "tool_result",
+        )[0]
+        self.assertTrue(
+            all(
+                isinstance(block, TextBlock)
+                for block in compressed_tool_result.output
+            ),
+        )
+        self.assertEqual(
+            [
+                block.text
+                for block in compressed_tool_result.output
+                if isinstance(block, TextBlock)
+            ],
+            [
+                "Tool returned an attachment.",
+                "[Non-text attachment omitted during context compression]",
+            ],
+        )
+        compressed_hint = compressed_message.get_content_blocks("hint")[0]
+        self.assertTrue(
+            all(
+                isinstance(block, TextBlock) for block in compressed_hint.hint
+            ),
+        )
+        self.assertEqual(
+            [
+                block.text
+                for block in compressed_hint.hint
+                if isinstance(block, TextBlock)
+            ],
+            [
+                "Review this attachment.",
+                "[Non-text attachment omitted during context compression]",
+            ],
+        )
+        self.assertEqual(len(source_message.get_content_blocks("data")), 1)
+        source_tool_result = next(
+            iter(source_message.get_content_blocks("tool_result")),
+        )
+        self.assertIsInstance(
+            source_tool_result.output[1],
+            DataBlock,
+        )
+        source_hint = next(iter(source_message.get_content_blocks("hint")))
+        self.assertIsInstance(
+            source_hint.hint[1],
+            DataBlock,
         )
 
     async def test_context_compression_overflow_retry_keeps_instructions(
