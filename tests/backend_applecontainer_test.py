@@ -12,7 +12,7 @@ import shutil
 import sys
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import ANY, AsyncMock, patch
+from unittest.mock import AsyncMock, patch
 
 from agentscope.tool import ExecResult
 from agentscope.workspace import AppleContainerBackend

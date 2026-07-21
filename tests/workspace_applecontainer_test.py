@@ -78,7 +78,8 @@ class TestImageRefNormalization(unittest.TestCase):
     def test_short_ref_unchanged(self) -> None:
         """Short references pass through unchanged."""
         self.assertEqual(
-            self._normalize("python:3.11-slim"), "python:3.11-slim"
+            self._normalize("python:3.11-slim"),
+            "python:3.11-slim",
         )
         self.assertEqual(self._normalize("ubuntu:latest"), "ubuntu:latest")
 
@@ -307,8 +308,6 @@ class TestAppleContainerWorkspaceLive(IsolatedAsyncioTestCase):
 
             chunk = await read.call(file_path=tool_path)
             text = "".join(
-                c.text
-                for c in chunk.content
-                if hasattr(c, "text") and c.text
+                c.text for c in chunk.content if hasattr(c, "text") and c.text
             )
             self.assertIn("tool written data", text)
