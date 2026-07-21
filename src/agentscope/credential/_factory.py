@@ -45,6 +45,32 @@ class CredentialFactory:
     ]
     _adapter: TypeAdapter[CredentialBase] | None = None
 
+    @staticmethod
+    def _get_discriminator_values(
+        credential_cls: Type[CredentialBase],
+    ) -> tuple[str, ...]:
+        """Return the ``type`` literal values declared by a credential.
+
+        Args:
+            credential_cls: The credential class to inspect.
+
+        Returns:
+            The string discriminator values declared in the ``type`` field.
+
+        Raises:
+            ValueError: If the class does not declare a valid literal
+                ``type`` field.
+        """
+        hints = get_type_hints(credential_cls)
+        type_hint = hints.get("type")
+        values = get_args(type_hint) if type_hint is not None else ()
+        if not values or not all(isinstance(value, str) for value in values):
+            raise ValueError(
+                f"{credential_cls.__name__} must define a `type` field "
+                "annotated as `Literal['your_credential_type']`.",
+            )
+        return values
+
     @classmethod
     def _get_adapter(cls) -> TypeAdapter[CredentialBase]:
         if cls._adapter is None:
@@ -65,8 +91,45 @@ class CredentialFactory:
         Args:
             credential_cls: The subclass to register.
         """
+        if not issubclass(credential_cls, CredentialBase):
+            raise TypeError(
+                "credential_cls must be a CredentialBase subclass.",
+            )
+
         if credential_cls in cls._classes:
             return
+
+        values = cls._get_discriminator_values(credential_cls)
+        type_field = credential_cls.model_fields.get("type")
+        if type_field is None:
+            raise ValueError(
+                f"{credential_cls.__name__} must define a `type` field.",
+            )
+
+        default = type_field.default
+        if default not in values:
+            expected = ", ".join(repr(value) for value in values)
+            raise ValueError(
+                f"{credential_cls.__name__}.type default must match its "
+                f"Literal discriminator. Expected one of {expected}, got "
+                f"{default!r}.",
+            )
+
+        registered: dict[str, str] = {}
+        for existing_cls in cls._classes:
+            for value in cls._get_discriminator_values(existing_cls):
+                registered[value] = existing_cls.__name__
+        duplicates = [value for value in values if value in registered]
+        if duplicates:
+            details = ", ".join(
+                f"{value!r} already registered by {registered[value]}"
+                for value in duplicates
+            )
+            raise ValueError(
+                f"{credential_cls.__name__} declares duplicate credential "
+                f"type discriminator(s): {details}.",
+            )
+
         cls._classes.append(credential_cls)
         cls._adapter = None  # invalidate so it's rebuilt on next use
 
@@ -97,13 +160,7 @@ class CredentialFactory:
             found.
         """
         for c in cls._classes:
-            hints = get_type_hints(c)
-            type_hint = hints.get("type")
-            if type_hint is None:
-                continue
-            args = get_args(type_hint)
-
-            if args and args[0] == provider:
+            if provider in cls._get_discriminator_values(c):
                 return c
         return None
 
