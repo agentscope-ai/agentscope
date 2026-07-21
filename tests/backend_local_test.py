@@ -2,9 +2,10 @@
 """Test cases for :class:`LocalBackend` and the backend helpers.
 
 Exercises the three abstract primitives (``exec_shell``, ``read_file``,
-``write_file``) plus the derived filesystem helpers (``file_exists``,
-``is_dir``, ``list_dir``, ``stat_mtime``, ``delete_path``) of the
-host-local backend, and the module-level ``normalize_newlines`` helper.
+``write_file``) plus the derived filesystem helpers (``iter_file``,
+``file_exists``, ``is_dir``, ``list_dir``, ``stat_mtime``,
+``stat_size``, ``delete_path``) of the host-local backend, and the
+module-level ``normalize_newlines`` helper.
 
 ``LocalBackend`` is designed to run on every platform (it spawns
 programs from an argv list without a shell and implements the
@@ -264,6 +265,28 @@ class TestLocalBackendFilesystemHelpers(IsolatedAsyncioTestCase):
                 os.path.join(self.temp_dir.name, "missing"),
             ),
         )
+
+    async def test_stat_size(self) -> None:
+        """``stat_size`` returns bytes for an existing path, None else."""
+        path = os.path.join(self.temp_dir.name, "f.txt")
+        await self.backend.write_file(path, b"abcdef")
+        self.assertEqual(await self.backend.stat_size(path), 6)
+        self.assertIsNone(
+            await self.backend.stat_size(
+                os.path.join(self.temp_dir.name, "missing"),
+            ),
+        )
+
+    async def test_iter_file(self) -> None:
+        """``iter_file`` yields bounded chunks in file order."""
+        path = os.path.join(self.temp_dir.name, "f.txt")
+        await self.backend.write_file(path, b"abcdef")
+
+        chunks = [
+            chunk async for chunk in self.backend.iter_file(path, chunk_size=2)
+        ]
+
+        self.assertEqual(chunks, [b"ab", b"cd", b"ef"])
 
     async def test_delete_path_file(self) -> None:
         """``delete_path`` removes a single file."""

@@ -13,11 +13,12 @@ mechanism genuinely differs per environment:
 * :meth:`BackendBase.read_file` — read raw bytes.
 * :meth:`BackendBase.write_file` — write raw bytes.
 
-All remaining filesystem operations (``file_exists``, ``is_dir``,
-``list_dir``, ``stat_mtime``, ``delete_path``) are derived on the base
-class from ``exec_shell`` and work out-of-the-box for any remote
-backend.  A backend that has a cheaper native path (e.g.
-:class:`LocalBackend` using ``os.*``) simply overrides them.
+All remaining filesystem operations (``iter_file``, ``file_exists``,
+``is_dir``, ``list_dir``, ``stat_mtime``, ``stat_size``,
+``delete_path``) are derived on the base class and work out-of-the-box
+for any remote backend. A backend that has a cheaper native path (e.g.
+:class:`LocalBackend` using ``aiofiles`` / ``os.*``) simply
+overrides them.
 
 Concrete implementations:
 
@@ -40,6 +41,7 @@ import posixpath
 import shlex
 import shutil
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from types import ModuleType
 from typing import Any
@@ -308,6 +310,34 @@ class BackendBase(ABC):
                 The raw bytes to write.
         """
 
+    async def iter_file(
+        self,
+        path: str,
+        *,
+        chunk_size: int = 64 * 1024,
+    ) -> AsyncIterator[bytes]:
+        """Yield a file in chunks.
+
+        The default implementation adapts :meth:`read_file` for remote
+        backends whose SDK only exposes whole-file reads. Backends with
+        native streaming support should override it.
+
+        Args:
+            path (`str`):
+                Path to the file inside the backend's environment.
+            chunk_size (`int`, defaults to 64 KiB):
+                Maximum number of bytes yielded per chunk.
+
+        Yields:
+            `bytes`:
+                Consecutive chunks of the file.
+        """
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be positive")
+        content = await self.read_file(path)
+        for offset in range(0, len(content), chunk_size):
+            yield content[offset : offset + chunk_size]
+
     # ── derived filesystem ops (shell-based defaults) ──────────────
 
     async def getcwd(self) -> str:
@@ -479,6 +509,36 @@ class BackendBase(ABC):
         except ValueError:
             return None
 
+    async def stat_size(self, path: str) -> int | None:
+        """Return the size of ``path`` in bytes, or ``None``.
+
+        Tries GNU ``stat -c %s`` first and falls back to BSD
+        ``stat -f %z``. Backends without a POSIX shell should override
+        this method.
+
+        Args:
+            path (`str`):
+                Path to stat inside the backend's environment.
+
+        Returns:
+            `int | None`:
+                File size in bytes, or ``None`` when it cannot be read.
+        """
+        quoted = shlex.quote(path)
+        script = (
+            f"stat -c %s {quoted} 2>/dev/null || "
+            f"stat -f %z {quoted} 2>/dev/null"
+        )
+        result = await self.exec_shell(["sh", "-c", script])
+        if not result.ok():
+            return None
+        try:
+            return int(
+                result.stdout.decode("utf-8", errors="replace").strip(),
+            )
+        except ValueError:
+            return None
+
     async def delete_path(self, path: str) -> None:
         """Delete ``path`` (file or directory tree).
 
@@ -619,6 +679,19 @@ class LocalBackend(BackendBase):
         async with aiofiles.open(path, mode="rb") as f:
             return await f.read()
 
+    async def iter_file(
+        self,
+        path: str,
+        *,
+        chunk_size: int = 64 * 1024,
+    ) -> AsyncIterator[bytes]:
+        """Yield a local file without loading it entirely into memory."""
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be positive")
+        async with aiofiles.open(path, mode="rb") as f:
+            while chunk := await f.read(chunk_size):
+                yield chunk
+
     async def write_file(self, path: str, data: bytes) -> None:
         """Write *data* to a local file, creating parent dirs.
 
@@ -727,6 +800,13 @@ class LocalBackend(BackendBase):
         """
         try:
             return os.stat(path).st_mtime
+        except (OSError, FileNotFoundError):
+            return None
+
+    async def stat_size(self, path: str) -> int | None:
+        """Return a local file's size in bytes, or ``None``."""
+        try:
+            return os.stat(path).st_size
         except (OSError, FileNotFoundError):
             return None
 

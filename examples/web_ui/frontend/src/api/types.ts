@@ -405,6 +405,21 @@ export interface AddSkillRequest {
 	skill_path: string;
 }
 
+// ─── Artifacts ────────────────────────────────────────────────────────────────
+
+export interface ArtifactEntry {
+	name: string;
+	path: string;
+	is_directory: boolean;
+	media_type: string | null;
+	modified_at: number | null;
+}
+
+export interface ListArtifactsResponse {
+	artifacts: ArtifactEntry[];
+	total: number;
+}
+
 // ─── Schedule ─────────────────────────────────────────────────────────────────
 
 export type PermissionMode =

@@ -55,6 +55,7 @@ from ._session import (
     TeamDetailResponse,
     TeamMemberView,
 )
+from ._workspace import ArtifactEntry, ListArtifactsResponse
 
 __all__ = [
     # Agent
@@ -113,4 +114,7 @@ __all__ = [
     "SessionView",
     "TeamDetailResponse",
     "TeamMemberView",
+    # Workspace
+    "ArtifactEntry",
+    "ListArtifactsResponse",
 ]

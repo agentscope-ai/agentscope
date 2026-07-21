@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """AgentScope app factory."""
+
 from typing import Type, TYPE_CHECKING, Any
 
 from ._lifespan import lifespan
@@ -30,7 +31,6 @@ from ..rag import (
     TextParser,
 )
 from .._version import __version__
-
 
 if TYPE_CHECKING:
     from fastapi import FastAPI

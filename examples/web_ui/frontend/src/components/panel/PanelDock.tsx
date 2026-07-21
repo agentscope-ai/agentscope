@@ -13,7 +13,7 @@ import { Separator } from '@/components/ui/separator';
  * Identifier for a dockable panel. Used both as the React key and to
  * look its descriptor up in {@link PanelDockProps.panels}.
  */
-export type PanelKey = 'plan' | 'mcp' | 'skill' | 'permission' | 'knowledge';
+export type PanelKey = 'plan' | 'mcp' | 'skill' | 'permission' | 'knowledge' | 'artifact';
 
 /**
  * The presentation of a single panel: header chrome plus its already

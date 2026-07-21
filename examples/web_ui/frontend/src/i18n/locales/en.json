@@ -571,6 +571,20 @@
 			"parametersDescription": "Knowledge base retrieval settings.",
 			"selectedCount": "{{count}} attached"
 		},
+		"artifact": {
+			"title": "Artifacts",
+			"workspaceFiles": "Workspace files",
+			"preview": "Preview",
+			"refresh": "Refresh artifacts",
+			"download": "Download",
+			"emptyTitle": "No artifacts",
+			"emptyDescription": "Files created in this workspace will appear here.",
+			"emptyPreviewTitle": "Select a file",
+			"emptyPreviewDescription": "Choose a file from the workspace tree to preview it.",
+			"noSessionTitle": "No session selected",
+			"noSessionDescription": "Select a session to browse its workspace.",
+			"errorTitle": "Unable to load artifact"
+		},
 		"permission": {
 			"title": "Permissions",
 			"description": "The permissions applied in this session.",

@@ -114,6 +114,8 @@ export const client = {
 	) => request<T>(path, { method: 'PATCH', body, params, silent: options?.silent }),
 	delete: <T = void>(path: string, params?: Record<string, string>) =>
 		request<T>(path, { method: 'DELETE', params }),
+	response: (path: string, params?: Record<string, string>) =>
+		streamRequest(path, { method: 'GET', params }),
 	stream: (path: string, options?: RequestOptions & { signal?: AbortSignal }) =>
 		streamRequest(path, options),
 };
