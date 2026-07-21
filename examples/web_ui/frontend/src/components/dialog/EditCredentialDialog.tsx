@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { credentialApi } from '@/api';
 import type { CredentialView, CredentialSchema } from '@/api';
 import { SchemaForm, type SchemaFormValue } from '@/components/form/SchemaForm';
+import { Alert, AlertDescription } from '@/components/ui/alert.tsx';
 import { Button } from '@/components/ui/button';
 import {
 	Dialog,
@@ -28,6 +29,7 @@ export function EditCredentialDialog({ open, onOpenChange, credential, onUpdated
 	const { t } = useTranslation();
 	const [schema, setSchema] = useState<CredentialSchema | null>(null);
 	const [loadingSchema, setLoadingSchema] = useState(false);
+	const [schemaError, setSchemaError] = useState<string | null>(null);
 	const [values, setValues] = useState<Record<string, SchemaFormValue>>({});
 	const [submitting, setSubmitting] = useState(false);
 
@@ -36,6 +38,8 @@ export function EditCredentialDialog({ open, onOpenChange, credential, onUpdated
 	useEffect(() => {
 		if (!open || !type) return;
 		setLoadingSchema(true);
+		setSchemaError(null);
+		setSchema(null);
 		credentialApi
 			.schemas()
 			.then((res) => {
@@ -57,8 +61,11 @@ export function EditCredentialDialog({ open, onOpenChange, credential, onUpdated
 					setValues(prefill);
 				}
 			})
+			.catch(() => {
+				setSchemaError(t('dialog-credential-edit.schemaLoadError'));
+			})
 			.finally(() => setLoadingSchema(false));
-	}, [open, type, credential.data]);
+	}, [open, type, credential.data, t]);
 
 	const handleSubmit = async () => {
 		if (!schema) return;
@@ -87,6 +94,11 @@ export function EditCredentialDialog({ open, onOpenChange, credential, onUpdated
 				</DialogHeader>
 				{loadingSchema ? (
 					<p className="text-muted-foreground text-sm">{t('common.loading')}</p>
+				) : schemaError ? (
+					<Alert variant="destructive">
+						<CircleAlert />
+						<AlertDescription>{schemaError}</AlertDescription>
+					</Alert>
 				) : schema ? (
 					<SchemaForm
 						schema={schema}

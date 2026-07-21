@@ -227,11 +227,13 @@
 		"title": "Add credential",
 		"description": "Add credentials for a model provider.",
 		"selectType": "Provider",
-		"selectTypePlaceholder": "Select a provider"
+		"selectTypePlaceholder": "Select a provider",
+		"schemaLoadError": "Credential provider schemas failed to load. Check that the connected server URL is reachable from this browser, then try again."
 	},
 	"dialog-credential-edit": {
 		"title": "Edit Credential",
-		"description": "Update the saved credential for this provider."
+		"description": "Update the saved credential for this provider.",
+		"schemaLoadError": "Credential provider schemas failed to load. Check that the connected server URL is reachable from this browser, then try again."
 	},
 	"dialog-knowledge-base-create": {
 		"title": "Create knowledge base",
@@ -287,6 +289,8 @@
 	},
 	"credential": {
 		"noProviders": "No providers available",
+		"providerLoadFailed": "Providers failed to load",
+		"providerLoadError": "Check that the connected server URL is reachable from this browser.",
 		"noConfigs": "No configurations",
 		"selectHint": "No credential selected",
 		"selectHintDescription": "Select a credential from the sidebar to view its details.",
@@ -494,7 +498,7 @@
 		"title": "Connect to Service",
 		"description": "Enter your server URL and username to get started.",
 		"serverUrl": "Server URL",
-		"serverUrlPlaceholder": "https://...",
+		"serverUrlPlaceholder": "http://localhost:8000",
 		"username": "Username",
 		"usernamePlaceholder": "Your username",
 		"submit": "Get Started",
