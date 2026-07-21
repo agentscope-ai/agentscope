@@ -29,17 +29,17 @@ DEFAULT_SELF_COMPACT_RUBRIC_PROMPT = (
 SELF_COMPACT_DECISION_SCHEMA = {
     "type": "object",
     "properties": {
+        "reason": {
+            "type": "string",
+            "description": "A concise reason for the decision.",
+        },
         "decision": {
             "type": "string",
             "enum": ["COMPRESS", "CONTINUE"],
             "description": "Whether to compact the current context.",
         },
-        "reason": {
-            "type": "string",
-            "description": "A concise reason for the decision.",
-        },
     },
-    "required": ["decision", "reason"],
+    "required": ["reason", "decision"],
     "additionalProperties": False,
 }
 

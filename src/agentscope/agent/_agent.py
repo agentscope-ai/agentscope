@@ -418,7 +418,17 @@ class Agent:
         ):
             return
 
-        kwargs, estimated_tokens = await self._get_context_usage()
+        try:
+            kwargs, estimated_tokens = await self._get_context_usage()
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.warning(
+                "[AGENT %s]: Failed to estimate context usage, skipping "
+                "optional reply-end compression: %s",
+                self.name,
+                e,
+            )
+            return
+
         context_size = self.model.context_size
         min_threshold = cfg.self_compact_min_ratio * context_size
         hard_threshold = cfg.trigger_ratio * context_size
@@ -456,10 +466,12 @@ class Agent:
 
         # Reuse the regular compression path, including its middlewares and
         # interruption protection, by temporarily lowering its threshold to
-        # the token usage that was just evaluated by the rubric.
+        # one token below the usage evaluated by the rubric. The one-token
+        # margin avoids floating-point roundoff making the reconstructed
+        # threshold slightly larger than ``estimated_tokens``.
         forced_cfg = cfg.model_copy(
             update={
-                "trigger_ratio": estimated_tokens / context_size,
+                "trigger_ratio": (estimated_tokens - 1) / context_size,
             },
         )
         try:

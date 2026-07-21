@@ -1369,6 +1369,10 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(len(structured_schemas), 2)
         self.assertEqual(
+            list(structured_schemas[0]["properties"]),
+            ["reason", "decision"],
+        )
+        self.assertEqual(
             structured_schemas[0]["properties"]["decision"]["enum"],
             ["COMPRESS", "CONTINUE"],
         )
@@ -1426,6 +1430,74 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(agent.state.summary, "")
         self.assertEqual([msg.id for msg in agent.state.context], ["1", "2"])
+
+    async def test_self_compaction_usage_failure_keeps_context(self) -> None:
+        """Optional compaction fails open when token estimation fails."""
+        model = MockModel(context_size=200)
+        model.generate_structured_output = AsyncMock()
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are helpful.",
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.8,
+                reserve_ratio=0.1,
+                self_compact_enabled=True,
+                self_compact_min_ratio=0.4,
+                self_compact_min_tool_rounds=0,
+            ),
+            state=AgentState(
+                session_id="123",
+                context=[UserMsg("User", "history", id="1")],
+            ),
+            toolkit=Toolkit(),
+        )
+        agent._get_context_usage = AsyncMock(
+            side_effect=RuntimeError("tokenizer unavailable"),
+        )
+
+        await agent.self_compact_context()
+
+        model.generate_structured_output.assert_not_awaited()
+        self.assertEqual(agent.state.summary, "")
+        self.assertEqual([msg.id for msg in agent.state.context], ["1"])
+
+    async def test_self_compaction_forced_threshold_has_token_margin(
+        self,
+    ) -> None:
+        """The forced threshold stays below the measured integer usage."""
+        context_size = 1_000_000
+        estimated_tokens = 125_008
+        model = MockModel(context_size=context_size)
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are helpful.",
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.8,
+                reserve_ratio=0.05,
+                self_compact_enabled=True,
+                self_compact_min_ratio=0.1,
+                self_compact_min_tool_rounds=0,
+            ),
+            state=AgentState(
+                session_id="123",
+                context=[UserMsg("User", "history")],
+            ),
+            toolkit=Toolkit(),
+        )
+        agent._get_context_usage = AsyncMock(
+            return_value=({"messages": []}, estimated_tokens),
+        )
+        agent._should_self_compact = AsyncMock(return_value=True)
+        agent.compress_context = AsyncMock()
+
+        await agent.self_compact_context()
+
+        forced_cfg = agent.compress_context.await_args.kwargs["context_config"]
+        forced_threshold = forced_cfg.trigger_ratio * context_size
+        self.assertEqual(forced_threshold, estimated_tokens - 1)
+        self.assertLess(forced_threshold, estimated_tokens)
 
     async def test_self_compaction_requires_minimum_tool_rounds(self) -> None:
         """Reply-end probing respects the completed tool-round minimum."""
