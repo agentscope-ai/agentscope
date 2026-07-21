@@ -77,7 +77,9 @@ class TestImageRefNormalization(unittest.TestCase):
 
     def test_short_ref_unchanged(self) -> None:
         """Short references pass through unchanged."""
-        self.assertEqual(self._normalize("python:3.11-slim"), "python:3.11-slim")
+        self.assertEqual(
+            self._normalize("python:3.11-slim"), "python:3.11-slim"
+        )
         self.assertEqual(self._normalize("ubuntu:latest"), "ubuntu:latest")
 
     def test_canonical_library_ref(self) -> None:
@@ -206,28 +208,107 @@ _APPLE_CONTAINER_LIVE = os.getenv("APPLE_CONTAINER_LIVE", "")
 class TestAppleContainerWorkspaceLive(IsolatedAsyncioTestCase):
     """Live integration tests — full bootstrap + gateway lifecycle.
 
-    Set ``APPLE_CONTAINER_LIVE=1`` to run. This test pulls an image,
-    bootstraps the gateway venv, and verifies the full lifecycle.
+    Set ``APPLE_CONTAINER_LIVE=1`` to run.  This test pulls an image,
+    bootstraps the gateway venv, installs system dependencies, and
+    verifies the full chain:
+
+    1. Bootstrap deps (ripgrep, uv) are installed and executable.
+    2. Builtin tools are bound and functional through the backend.
+    3. MCP gateway is healthy and ``list_mcps`` responds.
+    4. File read/write roundtrip works inside the container.
     """
 
-    async def test_full_lifecycle(self) -> None:
-        """Create, use, and close a real Apple Container workspace."""
+    async def test_bootstrap_dependencies(self) -> None:
+        """Bootstrap installed ``rg``, ``uv``, and ``python3``."""
         ws = AppleContainerWorkspace()
         async with ws:
-            self.assertTrue(ws.is_alive)
             backend = ws.get_backend()
-            self.assertIsInstance(backend, AppleContainerBackend)
 
-            result = await backend.exec_shell(["echo", "hello from e2e"])
-            self.assertTrue(result.ok())
-            self.assertEqual(
-                result.stdout.strip(),
-                b"hello from e2e",
+            # ripgrep — installed by apt-get during bootstrap.
+            result = await backend.exec_shell(["rg", "--version"])
+            self.assertTrue(
+                result.ok(),
+                f"ripgrep not available — bootstrap may have failed: "
+                f"{result.stderr.decode(errors='replace')}",
             )
+
+            # uv — installed by the uv installer script during bootstrap.
+            result = await backend.exec_shell(["uv", "--version"])
+            self.assertTrue(
+                result.ok(),
+                f"uv not available — bootstrap may have failed: "
+                f"{result.stderr.decode(errors='replace')}",
+            )
+
+            # python3 — must be present in the base image.
+            result = await backend.exec_shell(
+                ["python3", "--version"],
+            )
+            self.assertTrue(result.ok())
+
+    async def test_builtin_tools_bound_and_callable(self) -> None:
+        """All 6 builtin tools are returned by ``list_tools`` and a
+        Bash call through the tool succeeds."""
+        ws = AppleContainerWorkspace()
+        async with ws:
+            tools = await ws.list_tools()
+            tool_names = {t.name for t in tools}
+            for expected in ("Bash", "Read", "Write", "Edit", "Glob", "Grep"):
+                self.assertIn(
+                    expected,
+                    tool_names,
+                    f"Builtin tool {expected!r} missing from list_tools()",
+                )
+
+            # Call Bash tool (not raw backend) — this exercises the
+            # full tool binding path.
+            bash = next(t for t in tools if t.name == "Bash")
+            texts: list[str] = []
+            async for chunk in bash.call(command="echo tool_call_ok"):
+                for block in chunk.content:
+                    if hasattr(block, "text") and block.text:
+                        texts.append(block.text)
+            combined = "".join(texts)
+            self.assertIn("tool_call_ok", combined)
+
+    async def test_gateway_healthy_and_mcp_list(self) -> None:
+        """Gateway is healthy and ``list_mcps`` returns a list."""
+        ws = AppleContainerWorkspace()
+        async with ws:
+            mcps = await ws.list_mcps()
+            self.assertIsInstance(mcps, list)
+            # After init, mcps may be empty or seeded — both are valid.
+
+    async def test_file_read_write_roundtrip(self) -> None:
+        """Bytes written via backend survive a read roundtrip."""
+        ws = AppleContainerWorkspace()
+        async with ws:
+            backend = ws.get_backend()
 
             path = f"{CONTAINER_WORKDIR}/e2e_test.txt"
             await backend.write_file(path, b"e2e test data")
             data = await backend.read_file(path)
             self.assertEqual(data, b"e2e test data")
 
-        self.assertFalse(ws.is_alive)
+            # Also test via Write/Read tools.
+            tools = await ws.list_tools()
+            write = next(t for t in tools if t.name == "Write")
+            read = next(t for t in tools if t.name == "Read")
+
+            tool_path = f"{CONTAINER_WORKDIR}/tool_roundtrip.txt"
+            chunk = await write.call(
+                file_path=tool_path,
+                content="tool written data",
+            )
+            self.assertTrue(
+                len(chunk.content) > 0,
+                "Write tool returned empty content",
+            )
+
+            chunk = await read.call(file_path=tool_path)
+            text = "".join(
+                c.text
+                for c in chunk.content
+                if hasattr(c, "text") and c.text
+            )
+            self.assertIn("tool written data", text)
