@@ -1452,7 +1452,10 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             ),
             toolkit=Toolkit(),
         )
-        agent._get_context_usage = AsyncMock(
+        agent._prepare_model_input = AsyncMock(
+            return_value={"messages": []},
+        )
+        model.count_tokens = AsyncMock(
             side_effect=RuntimeError("tokenizer unavailable"),
         )
 
@@ -1486,9 +1489,10 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             ),
             toolkit=Toolkit(),
         )
-        agent._get_context_usage = AsyncMock(
-            return_value=({"messages": []}, estimated_tokens),
+        agent._prepare_model_input = AsyncMock(
+            return_value={"messages": []},
         )
+        model.count_tokens = AsyncMock(return_value=estimated_tokens)
         agent._should_self_compact = AsyncMock(return_value=True)
         agent.compress_context = AsyncMock()
 

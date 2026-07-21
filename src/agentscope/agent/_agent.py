@@ -419,7 +419,8 @@ class Agent:
             return
 
         try:
-            kwargs, estimated_tokens = await self._get_context_usage()
+            kwargs = await self._prepare_model_input()
+            estimated_tokens = await self.model.count_tokens(**kwargs)
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.warning(
                 "[AGENT %s]: Failed to estimate context usage, skipping "
@@ -504,7 +505,8 @@ class Agent:
         cfg: ContextConfig = context_config or self.context_config
 
         # Count the current tokens
-        kwargs, estimated_tokens = await self._get_context_usage()
+        kwargs = await self._prepare_model_input()
+        estimated_tokens = await self.model.count_tokens(**kwargs)
 
         # Skip if no compression is needed
         threshold = cfg.trigger_ratio * self.model.context_size
@@ -1352,7 +1354,8 @@ class Agent:
         # grown by the new input
         if self.state.cur_iter == 0:
             # Count the current tokens
-            _, input_tokens = await self._get_context_usage()
+            kwargs = await self._prepare_model_input()
+            input_tokens = await self.model.count_tokens(**kwargs)
 
             trigger_tokens = int(
                 self.context_config.trigger_ratio * self.model.context_size,
@@ -2879,17 +2882,6 @@ class Agent:
             "messages": messages,
             "tools": tools,
         }
-
-    async def _get_context_usage(self) -> tuple[dict[str, Any], int]:
-        """Prepare the current model input and estimate its token usage.
-
-        Returns:
-            `tuple[dict[str, Any], int]`:
-                The prepared model input and its estimated token count.
-        """
-        kwargs = await self._prepare_model_input()
-        estimated_tokens = await self.model.count_tokens(**kwargs)
-        return kwargs, estimated_tokens
 
     async def _call_model(
         self,
