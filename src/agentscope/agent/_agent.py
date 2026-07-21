@@ -6,8 +6,6 @@ import inspect
 import re
 
 from asyncio import Queue
-from contextlib import suppress
-from contextvars import ContextVar
 from copy import deepcopy
 from datetime import datetime, timezone, tzinfo
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -105,12 +103,6 @@ if TYPE_CHECKING:
     from ..middleware import MiddlewareBase
 else:
     MiddlewareBase = Any
-
-
-_COMPRESSION_STARTED_EVENT: ContextVar[asyncio.Event | None] = ContextVar(
-    "compression_started_event",
-    default=None,
-)
 
 
 def _resolve_timezone(name: str) -> tzinfo:
@@ -403,80 +395,71 @@ class Agent:
     ) -> AsyncGenerator[CustomEvent, None]:
         """Compress context and report lifecycle events when it actually runs.
 
-        ``compress_context`` remains an awaitable public API. This private
-        adapter runs it in a child task so the reply stream can emit a start
-        event as soon as ``_compress_context_impl`` crosses the configured
-        threshold, rather than after the blocking compression call finishes.
+        The threshold check runs in the current reply task to preserve the
+        existing scheduling semantics. Without compression middleware, its
+        prepared model input and token estimate are reused by the core
+        implementation so token counting still happens exactly once.
 
         Yields:
             `CustomEvent`:
                 Context-compression lifecycle events with ``started``,
                 ``completed``, or ``failed`` status.
         """
-        compression_started = asyncio.Event()
-        token = _COMPRESSION_STARTED_EVENT.set(compression_started)
+        cfg = self.context_config
+        prepared_input = await self._prepare_model_input()
+        estimated_tokens = await self.model.count_tokens(**prepared_input)
+        compression_needed = (
+            estimated_tokens >= cfg.trigger_ratio * self.model.context_size
+        )
+
+        # Preserve custom compression middleware behavior even when the
+        # default configuration does not currently require compression.
+        if not compression_needed:
+            if self._compress_context_middlewares:
+                await self.compress_context()
+            return
+
+        event_value = {
+            "reply_id": self.state.reply_id,
+            "status": "started",
+        }
+        yield CustomEvent(
+            name="context_compression",
+            value=event_value,
+        )
+
         try:
-            compression_task = asyncio.create_task(self.compress_context())
-        finally:
-            _COMPRESSION_STARTED_EVENT.reset(token)
-
-        started_waiter = asyncio.create_task(compression_started.wait())
-        try:
-            await asyncio.wait(
-                (compression_task, started_waiter),
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-
-            # The compression task can finish without setting the event when
-            # the current token count is still below the trigger threshold.
-            if not compression_started.is_set():
-                await compression_task
-                return
-
-            event_value = {
-                "reply_id": self.state.reply_id,
-                "status": "started",
-            }
-            yield CustomEvent(
-                name="context_compression",
-                value=event_value,
-            )
-
-            try:
-                await compression_task
-            except Exception:
-                yield CustomEvent(
-                    name="context_compression",
-                    value={
-                        **event_value,
-                        "status": "failed",
-                    },
+            if self._compress_context_middlewares:
+                await self.compress_context()
+            else:
+                await self._compress_context_impl(
+                    _prepared_input=prepared_input,
+                    _estimated_tokens=estimated_tokens,
                 )
-                raise
-
+        except Exception:
             yield CustomEvent(
                 name="context_compression",
                 value={
                     **event_value,
-                    "status": "completed",
+                    "status": "failed",
                 },
             )
-        finally:
-            started_waiter.cancel()
-            if not compression_task.done():
-                compression_task.cancel()
-            with suppress(BaseException):
-                await started_waiter
-            # Always retrieve the result so a consumer closing the reply
-            # stream immediately after the start event cannot leak a task or
-            # an unhandled task exception.
-            with suppress(BaseException):
-                await compression_task
+            raise
+
+        yield CustomEvent(
+            name="context_compression",
+            value={
+                **event_value,
+                "status": "completed",
+            },
+        )
 
     async def _compress_context_impl(
         self,
         context_config: ContextConfig | None = None,
         instructions: HintBlock | None = None,
+        _prepared_input: dict[str, Any] | None = None,
+        _estimated_tokens: int | None = None,
     ) -> None:
         """Compress the agent's context if the token count exceeds the
         threshold.
@@ -489,21 +472,26 @@ class Agent:
             instructions (`HintBlock | None`, optional):
                 Optional hints or instructions injected into the compression
                 context to guide the summarization behavior.
+            _prepared_input (`dict[str, Any] | None`, optional):
+                Precomputed model input from the reply-stream threshold check.
+            _estimated_tokens (`int | None`, optional):
+                Precomputed token count for ``_prepared_input``.
         """
         cfg: ContextConfig = context_config or self.context_config
 
         # Count the current tokens
-        kwargs = await self._prepare_model_input()
-        estimated_tokens = await self.model.count_tokens(**kwargs)
+        if _prepared_input is None:
+            kwargs = await self._prepare_model_input()
+        else:
+            kwargs = _prepared_input
+        estimated_tokens = _estimated_tokens
+        if estimated_tokens is None:
+            estimated_tokens = await self.model.count_tokens(**kwargs)
 
         # Skip if no compression is needed
         threshold = cfg.trigger_ratio * self.model.context_size
         if estimated_tokens < threshold:
             return
-
-        compression_started = _COMPRESSION_STARTED_EVENT.get()
-        if compression_started is not None:
-            compression_started.set()
 
         logger.info(
             "[AGENT %s]: Current token count %d exceeds the threshold %d, "
