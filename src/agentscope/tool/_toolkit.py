@@ -612,3 +612,26 @@ class Toolkit:
     def clear(self) -> None:
         """Clear the registered tools, skills and MCPs."""
         self.tool_groups.clear()
+
+    async def add_tool(self, tool: ToolBase | list[ToolBase], group_name: str = "basic") -> None:
+        """Add tool to the toolkit on-the-fly.
+
+        Args:
+            tool (`ToolBase | list[ToolBase]`):
+                The tool to be added.
+            group_name (`str`):
+                The group name of the tool to be added.
+        """
+
+        for group in self.tool_groups:
+            if group.name == group_name:
+                group.tools.append(tool)
+                return
+
+        logger.warning(
+            "Cannot find group '%s' in toolkit, only %s are available.",
+            group_name,
+            [_.name for _ in self.tool_groups],
+        )
+
+

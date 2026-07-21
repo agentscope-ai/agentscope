@@ -11,10 +11,11 @@ from typing import (
     Sequence,
     Literal,
     List,
-    TYPE_CHECKING,
+    TYPE_CHECKING, Type,
 )
 
 import jsonschema
+from pydantic import BaseModel, ValidationError
 
 from ._config import ContextConfig, ReActConfig, ModelConfig
 from ..state import AgentState
@@ -75,11 +76,12 @@ from ..message import (
     Usage,
     HintBlock,
 )
+from ..state._state import StructuredOutput
 from ..tool import (
     Toolkit,
     ToolChunk,
     ToolChoice,
-    ToolResponse,
+    ToolResponse, FunctionTool,
 )
 from ..permission import (
     PermissionBehavior,
@@ -199,6 +201,7 @@ class Agent:
         | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
+        structured_output: StructuredOutput | None = None,
     ) -> AsyncGenerator[AgentEvent, None]:
         """Reply to the given inputs and stream agent events.
 
@@ -208,6 +211,8 @@ class Agent:
             optional):
                 The inputs that trigger this reply. See :meth:`reply` for
                 the full list of accepted variants.
+            structured_output (`StructuredOutput | None`, optional):
+                The required structured output for this reply.
 
         Yields:
             `AgentEvent`:
@@ -230,6 +235,7 @@ class Agent:
         | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
+        structured_output: StructuredOutput | None = None,
     ) -> Msg:
         """Reply to the given inputs, consuming all streamed events.
 
@@ -560,10 +566,11 @@ class Agent:
         | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
+        structured_output: StructuredOutput | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Reply entry point (maybe wrapped by middleware)."""
         if not self._reply_middlewares:
-            async for item in self._reply_impl(inputs=inputs):
+            async for item in self._reply_impl(inputs=inputs, structured_output=structured_output):
                 yield item
         else:
 
@@ -577,11 +584,11 @@ class Agent:
                 | None = inputs,
             ) -> AsyncGenerator[AgentEvent | Msg, None]:
                 if index >= len(self._reply_middlewares):
-                    async for item in self._reply_impl(inputs=inputs):
+                    async for item in self._reply_impl(inputs=inputs, structured_output=structured_output):
                         yield item
                 else:
                     mw = self._reply_middlewares[index]
-                    input_kwargs = {"inputs": inputs}
+                    input_kwargs = {"inputs": inputs, "structured_output": structured_output}
 
                     async def next_handler(
                         **kwargs: Any,
@@ -669,6 +676,7 @@ class Agent:
         | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
+        structured_output: StructuredOutput | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Core reply logic."""
 
@@ -729,8 +737,9 @@ class Agent:
             else:
                 await self._handle_incoming_messages(msgs)
                 # Update the context with the incoming message and state
-                self.state.reply_id = _generate_id()
-                self.state.cur_iter = 0
+                self.state.reply_context.reply_id = _generate_id()
+                self.state.reply_context.cur_iter = 0
+                self.state.reply_context.structured_output = structured_output
 
                 yield ReplyStartEvent(
                     session_id=self.state.session_id,
@@ -764,13 +773,26 @@ class Agent:
                         # Exit the loop when no tool calls generated and the
                         # reply message is generated
                         if isinstance(evt, Msg):
-                            end_event = ReplyEndEvent(
-                                session_id=self.state.session_id,
-                                reply_id=self.state.reply_id,
-                                finished_reason=ReplyEndReason.COMPLETED,
+                            # Text if structured output is already satisfied
+                            if self.state.reply_context.structured_output and self.state.reply_context.cur_structured_output:
+                                end_event = ReplyEndEvent(
+                                    session_id=self.state.session_id,
+                                    reply_id=self.state.reply_id,
+                                    finished_reason=ReplyEndReason.COMPLETED,
+                                )
+                                yield evt
+                                return
+
+                            # Remind the agent to generate structured output
+                            self.state.append_context(
+                                self.name,
+                                [
+                                    HintBlock(
+                                        hint="<system-reminder>You're required to generate a structured output via the `generate_structured_output` tool. Call it when you're ready to generate.</system-reminder>"
+                                    )
+                                ]
                             )
-                            yield evt
-                            return
+
 
                         elif isinstance(evt, ModelCallEndEvent):
                             interrupted = (
@@ -2834,3 +2856,55 @@ class Agent:
                         media_type=block.source.media_type,
                         url=str(block.source.url),
                     )
+
+    async def _equip_structure_output_tool(self) -> None:
+        """Equip the agent with the structured output tool so that it could
+        generate the required output."""
+        await self.toolkit.add_tool(
+            FunctionTool(
+                self._generate_structured_output,
+                "generate_structured_output",
+                description="""""",
+                is_concurrency_safe=True,
+                is_read_only=True,
+            )
+        )
+
+
+    async def _generate_structured_output(self, output: dict) -> ToolChunk:
+        """Generate a structured output from the given value."""
+
+        if not self.state.reply_context.structured_output:
+            return ToolChunk(
+                content=[
+                    TextBlock(
+                        text="No structured output is required for now."
+                    )
+                ],
+                state=ToolResultState.SUCCESS,
+            )
+
+        try:
+            res = self.state.reply_context.structured_output.output_schema.model_validate(
+                output
+            )
+            self.state.reply_context.cur_structured_output = res
+
+            return ToolChunk(
+                content=[
+                    TextBlock(
+                        text="Structured output generated successfully."
+                    )
+                ],
+                state=ToolResultState.SUCCESS,
+            )
+
+        except ValidationError as e:
+            return ToolChunk(
+                content=[
+                    TextBlock(
+                        text=f"ValidationError: Structured output validation failed with error: {e}"
+                    )
+                ],
+                state=ToolResultState.ERROR,
+            )

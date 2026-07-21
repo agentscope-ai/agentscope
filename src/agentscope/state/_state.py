@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """The agent state class."""
-from typing import Any
+from typing import Any, Type
 
 from pydantic import BaseModel, Field
 
@@ -145,6 +145,35 @@ class TaskContext(BaseModel):
     tasks: list[Task] = Field(default_factory=lambda: [])
     """The task context."""
 
+class StructuredOutput(BaseModel):
+    """The agent structured output requirements."""
+
+    allow_failure: bool = False
+    """If allow this agent fail to generate structured output, e.g. if the 
+    iteration exceeds the max_iters and still cannot generate structured 
+    output, whether to force generate a structured output result 
+    (may be incomplete or incorrect)
+    """
+
+    output_schema: Type[BaseModel]
+    """The schema of the required structured output."""
+
+class ReplyContext(BaseModel):
+    """The context of the current agent reply."""
+
+    reply_id: str = Field(default_factory=_generate_id)
+    """The id of the current reply, which is also used as the id of the
+    final message of the reply."""
+
+    cur_iter: int = 0
+    """The current iteration of the agent's reasoning-acting loop in this reply."""
+
+    structured_output: StructuredOutput | None = None
+    """The current required structured output of the reply."""
+
+    cur_structured_output: dict | None = None
+    """The current structured output generated within this reply."""
+
 
 class AgentState(BaseModel):
     """The agent state that should be saved and loaded from storage."""
@@ -156,13 +185,38 @@ class AgentState(BaseModel):
     summary: str | list[TextBlock | DataBlock] = ""
     """The compressed summary of the context, which will be prepended to the
     context when fed into the LLM."""
+
     context: list[Msg] = Field(default_factory=list)
     """The uncompressed conversation context, which will be fed into the LLM"""
-    reply_id: str = Field(default_factory=_generate_id)
-    """The id of the current reply, which is also used as the id of the
-    final message of the reply."""
-    cur_iter: int = 0
-    """The current iteration of the agent's reasoning-acting loop."""
+
+    # =================================================================
+    # For backword compatibility
+    # =================================================================
+    @property
+    def reply_id(self) -> str:
+        """The reply id of the current reply."""
+        return self.reply_context.reply_id
+
+    @reply_id.setter
+    def reply_id(self, value: str) -> None:
+        """Set the reply id of the current reply."""
+        self.reply_context.reply_id = value
+
+    @property
+    def cur_iter(self) -> int:
+        """The current iteration of the agent's reasoning-acting loop in this reply."""
+        return self.cur_iter
+
+    @cur_iter.setter
+    def cur_iter(self, value: int) -> None:
+        """Set the current iteration of the agent's reasoning-acting loop in this reply."""
+        self.cur_iter = value
+
+    # =================================================================
+    # The reply context
+    # =================================================================
+    reply_context: ReplyContext = Field(default_factory=ReplyContext)
+    """The reply related context."""
 
     # =================================================================
     # The permission context
