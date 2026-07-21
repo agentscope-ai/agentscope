@@ -2,7 +2,7 @@ import { CircleAlert, Loader2, Save } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
 import { credentialApi } from '@/api';
-import type { CredentialRecord, CredentialSchema } from '@/api';
+import type { CredentialView, CredentialSchema } from '@/api';
 import { SchemaForm, type SchemaFormValue } from '@/components/form/SchemaForm';
 import { Button } from '@/components/ui/button';
 import {
@@ -19,7 +19,7 @@ import { useTranslation } from '@/i18n/useI18n';
 interface Props {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
-	credential: CredentialRecord;
+	credential: CredentialView;
 	onUpdated?: () => void;
 }
 

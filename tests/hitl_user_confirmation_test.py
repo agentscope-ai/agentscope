@@ -5,7 +5,7 @@ from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 from utils import AnyString, MockModel
 
-from agentscope.agent import Agent
+from agentscope.agent import Agent, InjectionConfig
 from agentscope.model import ChatResponse
 from agentscope.tool import (
     ToolBase,
@@ -16,6 +16,7 @@ from agentscope.permission import (
     PermissionDecision,
     PermissionBehavior,
     PermissionContext,
+    PermissionRule,
 )
 from agentscope.message import (
     TextBlock,
@@ -101,6 +102,49 @@ class MockUserConfirmConcurrentTool(ToolBase):
         )
 
 
+class MockUserConfirmConcurrentToolB(ToolBase):
+    """A second concurrent confirm tool with a distinct name.
+
+    Used to exercise concurrent confirmations that are NOT de-duplicated:
+    two calls to *different* tools never share a suggested rule, so both
+    surface their own confirmation prompt.
+    """
+
+    name: str = "mock_user_confirm_concurrent_tool_b"
+    description: str = "A second mock user confirm concurrent tool"
+    input_schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "input": {"type": "string", "description": "Input string"},
+        },
+        "required": ["input"],
+    }
+    is_concurrency_safe: bool = True
+    is_read_only: bool = False
+    is_external_tool: bool = False
+    is_mcp: bool = False
+
+    async def check_permissions(
+        self,
+        tool_input: dict[str, Any],
+        context: PermissionContext,
+    ) -> PermissionDecision:
+        """Check permissions for the tool usage."""
+        return PermissionDecision(
+            behavior=PermissionBehavior.ASK,
+            decision_reason="Mock tool requires user confirmation",
+            message="Mock tool requires user confirmation",
+        )
+
+    async def __call__(self, input: str, **kwargs: Any) -> ToolChunk:
+        """Execute the tool."""
+        return ToolChunk(
+            content=[
+                TextBlock(text=f"User confirm concurrent result B: {input}"),
+            ],
+        )
+
+
 class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
     """Test the user confirmation events in the agent class."""
 
@@ -161,6 +205,10 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             system_prompt="You are a helpful assistant.",
             model=self.model,
             toolkit=Toolkit(),
+            # The runtime state injection is covered by
+            # agent_injection_test, turn it off to keep the assertions
+            # focused.
+            injection_config=InjectionConfig(inject_runtime_state=False),
         )
         self.tool_call_id_1 = "tool_call_1"
         self.tool_call_id_2 = "tool_call_2"
@@ -230,6 +278,8 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             "id": AnyString(),
             "created_at": AnyString(),
             "finished_at": None,
+            "finished_reason": None,
+            "error": None,
             "metadata": {},
             "name": "Friday",
             "role": "assistant",
@@ -353,6 +403,8 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "error": None,
             },
             {
                 "content": [
@@ -408,6 +460,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             *self.final_text_events,
             {
                 "type": "REPLY_END",
+                "error": None,
                 "session_id": session_id,
                 "finished_reason": "completed",
             },
@@ -431,6 +484,8 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "error": None,
             },
             {
                 "content": [
@@ -617,6 +672,8 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "error": None,
             },
             {
                 "content": [
@@ -733,6 +790,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             *self.final_text_events,
             {
                 "type": "REPLY_END",
+                "error": None,
                 "session_id": session_id,
                 "finished_reason": "completed",
             },
@@ -755,6 +813,8 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "error": None,
             },
             {
                 "content": [
@@ -831,14 +891,19 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         self.assertListEqual(context_dicts, expected_context_final)
 
     async def test_concurrent_user_confirmation(self) -> None:
-        """Test multiple user confirmation tool calls in concurrent execution.
+        """Concurrent confirmations, first confirmed WITHOUT a rule.
 
-        The agent should:
-        1. Generate multiple tool calls that require user confirmation
-        2. All tools have is_concurrent_safe=True (concurrent)
-        3. Emit REQUIRE_USER_CONFIRM event and pause
-        4. Resume when UserConfirmResultEvent is provided
-        5. Execute the tools and continue
+        Two concurrent calls to the same tool share one tool-name-level
+        suggested rule, so batch de-duplication surfaces only the first
+        confirmation and leaves the second PENDING. When the first is
+        confirmed WITHOUT an always-allow rule, the second is re-evaluated
+        on the next reply run and surfaces its own (deferred) prompt — it is
+        never silently skipped. The agent should:
+        1. Generate two concurrent tool calls that require confirmation
+        2. Emit ONE REQUIRE_USER_CONFIRM (for the first) and pause; the
+           second stays PENDING
+        3. On confirming the first, execute it and surface the second prompt
+        4. On confirming the second, execute it and continue
         """
         # Register user confirm concurrent tool
         confirm_tool = MockUserConfirmConcurrentTool()
@@ -907,6 +972,17 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             self.tool_input_2,
         )
 
+        suggested_rules = [
+            {
+                "tool_name": self.concurrent_tool_name,
+                "rule_content": None,
+                "behavior": PermissionBehavior.ALLOW,
+                "source": "suggested",
+            },
+        ]
+
+        # Only the first call surfaces a confirmation; the second is deduped
+        # (left PENDING) because they share one tool-name-level rule.
         expected_events = [
             {
                 "type": "REPLY_START",
@@ -935,35 +1011,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_1,
                         "state": "asking",
-                        "suggested_rules": [
-                            {
-                                "tool_name": self.concurrent_tool_name,
-                                "rule_content": None,
-                                "behavior": PermissionBehavior.ALLOW,
-                                "source": "suggested",
-                            },
-                        ],
-                    },
-                ],
-            },
-            {
-                "type": "REQUIRE_USER_CONFIRM",
-                "reply_id": reply_id,
-                "tool_calls": [
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_2,
-                        "name": self.concurrent_tool_name,
-                        "input": self.tool_input_2,
-                        "state": "asking",
-                        "suggested_rules": [
-                            {
-                                "tool_name": self.concurrent_tool_name,
-                                "rule_content": None,
-                                "behavior": PermissionBehavior.ALLOW,
-                                "source": "suggested",
-                            },
-                        ],
+                        "suggested_rules": suggested_rules,
                     },
                 ],
             },
@@ -975,7 +1023,8 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             [{**basic_dict, **_} for _ in expected_events],
         )
 
-        # Assert context after first call
+        # Assert context after first call: tool_call_1 asking, tool_call_2
+        # left PENDING with no suggested rules (never surfaced).
         msg_base = self._get_msg_base()
         expected_context = [
             {
@@ -989,6 +1038,8 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "error": None,
             },
             {
                 "content": [
@@ -998,29 +1049,15 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_1,
                         "state": "asking",
-                        "suggested_rules": [
-                            {
-                                "tool_name": self.concurrent_tool_name,
-                                "rule_content": None,
-                                "behavior": PermissionBehavior.ALLOW,
-                                "source": "suggested",
-                            },
-                        ],
+                        "suggested_rules": suggested_rules,
                     },
                     {
                         "type": "tool_call",
                         "id": self.tool_call_id_2,
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_2,
-                        "state": "asking",
-                        "suggested_rules": [
-                            {
-                                "tool_name": self.concurrent_tool_name,
-                                "rule_content": None,
-                                "behavior": PermissionBehavior.ALLOW,
-                                "source": "suggested",
-                            },
-                        ],
+                        "state": "pending",
+                        "suggested_rules": [],
                     },
                 ],
             },
@@ -1029,7 +1066,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         expected_context = [{**msg_base, **_} for _ in expected_context]
         self.assertListEqual(context_dicts, expected_context)
 
-        # Create user confirmation result event
+        # Confirm the first call WITHOUT an always-allow rule.
         user_confirm_event = UserConfirmResultEvent(
             reply_id=reply_id,
             confirm_results=[
@@ -1049,13 +1086,28 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         async for event in self.agent.reply_stream(inputs=user_confirm_event):
             events.append(event.model_dump())
 
-        # Verify events for tool call 1 after resumption
+        # The first call executes; then the second (deferred) surfaces its
+        # own confirmation now that it is re-evaluated against the engine.
         expected_events = [
             *self._get_tool_result_events(
                 self.tool_call_id_1,
                 self.concurrent_tool_name,
                 self.concurrent_result_1,
             ),
+            {
+                "type": "REQUIRE_USER_CONFIRM",
+                "reply_id": reply_id,
+                "tool_calls": [
+                    {
+                        "type": "tool_call",
+                        "id": self.tool_call_id_2,
+                        "name": self.concurrent_tool_name,
+                        "input": self.tool_input_2,
+                        "state": "asking",
+                        "suggested_rules": suggested_rules,
+                    },
+                ],
+            },
         ]
         self.assertListEqual(
             events,
@@ -1090,6 +1142,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             *self.final_text_events,
             {
                 "type": "REPLY_END",
+                "error": None,
                 "session_id": session_id,
                 "finished_reason": "completed",
             },
@@ -1112,6 +1165,8 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "error": None,
             },
             {
                 "content": [
@@ -1121,14 +1176,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_1,
                         "state": "finished",
-                        "suggested_rules": [
-                            {
-                                "tool_name": self.concurrent_tool_name,
-                                "rule_content": None,
-                                "behavior": PermissionBehavior.ALLOW,
-                                "source": "suggested",
-                            },
-                        ],
+                        "suggested_rules": suggested_rules,
                     },
                     {
                         "type": "tool_call",
@@ -1136,14 +1184,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_2,
                         "state": "finished",
-                        "suggested_rules": [
-                            {
-                                "tool_name": self.concurrent_tool_name,
-                                "rule_content": None,
-                                "behavior": PermissionBehavior.ALLOW,
-                                "source": "suggested",
-                            },
-                        ],
+                        "suggested_rules": suggested_rules,
                     },
                     {
                         "type": "tool_result",
@@ -1187,39 +1228,23 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         ]
         self.assertListEqual(context_dicts, expected_context_final)
 
-    async def test_concurrent_user_confirmation_in_single_event(self) -> None:
-        """Test concurrent user confirmation when two approvals arrive
-        together.
+    async def test_concurrent_user_confirmation_rule_dedup(self) -> None:
+        """Confirming the first deduped call WITH a rule auto-runs the second.
 
-        The agent should:
-        1. Generate multiple tool calls that require user confirmation
-        2. Pause in concurrent mode with two asking tool calls
-        3. Resume when one UserConfirmResultEvent carries both confirmations
-        4. Execute both tools and continue reasoning after both complete
+        This is the core batch-exemption-propagation fix: two concurrent
+        calls to the same tool share one tool-name-level suggested rule, so
+        only the first surfaces a confirmation. Confirming it WITH the
+        suggested (always-allow) rule adds the rule to the engine, and the
+        second (PENDING) call is then allowed on the next reply run — with
+        no second prompt.
         """
         confirm_tool = MockUserConfirmConcurrentTool()
         self.agent.toolkit = Toolkit(
             tools=[confirm_tool],
         )
-
         self.model.set_responses(
             [
                 [
-                    ChatResponse(
-                        content=[
-                            ToolCallBlock(
-                                id=self.tool_call_id_1,
-                                name=self.concurrent_tool_name,
-                                input=self.tool_input_1,
-                            ),
-                            ToolCallBlock(
-                                id=self.tool_call_id_2,
-                                name=self.concurrent_tool_name,
-                                input=self.tool_input_2,
-                            ),
-                        ],
-                        is_last=False,
-                    ),
                     ChatResponse(
                         content=[
                             ToolCallBlock(
@@ -1246,6 +1271,138 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         ):
             events.append(event.model_dump())
 
+        reply_id = self.agent.state.reply_id
+
+        # Run 1: exactly one confirmation, for the first call only.
+        confirm_events = [
+            _ for _ in events if _["type"] == "REQUIRE_USER_CONFIRM"
+        ]
+        self.assertEqual(len(confirm_events), 1)
+        self.assertEqual(
+            confirm_events[0]["tool_calls"][0]["id"],
+            self.tool_call_id_1,
+        )
+
+        # Confirm the first call WITH the always-allow rule it suggested.
+        user_confirm_event = UserConfirmResultEvent(
+            reply_id=reply_id,
+            confirm_results=[
+                ConfirmResult(
+                    confirmed=True,
+                    tool_call=ToolCallBlock(
+                        id=self.tool_call_id_1,
+                        name=self.concurrent_tool_name,
+                        input=self.tool_input_1,
+                    ),
+                    rules=[
+                        PermissionRule(
+                            tool_name=self.concurrent_tool_name,
+                            rule_content=None,
+                            behavior=PermissionBehavior.ALLOW,
+                            source="suggested",
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        events = []
+        async for event in self.agent.reply_stream(inputs=user_confirm_event):
+            events.append(event.model_dump())
+
+        # No further confirmation is required — the rule cleared the second.
+        self.assertNotIn(
+            "REQUIRE_USER_CONFIRM",
+            [_["type"] for _ in events],
+        )
+        # Both tool calls execute.
+        finished_ids = sorted(
+            _["tool_call_id"] for _ in events if _["type"] == "TOOL_RESULT_END"
+        )
+        self.assertEqual(
+            finished_ids,
+            [self.tool_call_id_1, self.tool_call_id_2],
+        )
+        self.assertEqual(events[-1]["type"], "REPLY_END")
+
+        # Both tool calls end up finished.
+        assistant_msg = self.agent.state.context[-1]
+        self.assertEqual(
+            [
+                _.model_dump()["state"]
+                for _ in assistant_msg.get_content_blocks("tool_call")
+            ],
+            ["finished", "finished"],
+        )
+
+    async def test_concurrent_user_confirmation_in_single_event(self) -> None:
+        """Two different-tool confirmations resolved by one event.
+
+        Two concurrent calls to *different* tools do not share a suggested
+        rule, so neither is de-duplicated and both surface a confirmation. A
+        single UserConfirmResultEvent then carries both approvals and both
+        tools execute on resume. The agent should:
+        1. Generate two concurrent tool calls (distinct tools) that require
+           confirmation
+        2. Emit two REQUIRE_USER_CONFIRM events and pause
+        3. Resume when one UserConfirmResultEvent carries both confirmations
+        4. Execute both tools and continue reasoning after both complete
+        """
+        name_a = self.concurrent_tool_name
+        name_b = "mock_user_confirm_concurrent_tool_b"
+        result_a = self.concurrent_result_1
+        result_b = "User confirm concurrent result B: test2"
+        self.agent.toolkit = Toolkit(
+            tools=[
+                MockUserConfirmConcurrentTool(),
+                MockUserConfirmConcurrentToolB(),
+            ],
+        )
+
+        self.model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id=self.tool_call_id_1,
+                                name=name_a,
+                                input=self.tool_input_1,
+                            ),
+                            ToolCallBlock(
+                                id=self.tool_call_id_2,
+                                name=name_b,
+                                input=self.tool_input_2,
+                            ),
+                        ],
+                        is_last=False,
+                    ),
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id=self.tool_call_id_1,
+                                name=name_a,
+                                input=self.tool_input_1,
+                            ),
+                            ToolCallBlock(
+                                id=self.tool_call_id_2,
+                                name=name_b,
+                                input=self.tool_input_2,
+                            ),
+                        ],
+                        is_last=True,
+                    ),
+                ],
+                self.final_mock_responses,
+            ],
+        )
+
+        events = []
+        async for event in self.agent.reply_stream(
+            UserMsg(name="user", content=self.user_input_text),
+        ):
+            events.append(event.model_dump())
+
         session_id = self.agent.state.session_id
         reply_id = self.agent.state.reply_id
         basic_dict = self._get_event_base(reply_id)
@@ -1253,15 +1410,33 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
 
         tool_call_1_events = self._get_tool_call_events(
             self.tool_call_id_1,
-            self.concurrent_tool_name,
+            name_a,
             self.tool_input_1,
         )
         tool_call_2_events = self._get_tool_call_events(
             self.tool_call_id_2,
-            self.concurrent_tool_name,
+            name_b,
             self.tool_input_2,
         )
 
+        rule_a = [
+            {
+                "tool_name": name_a,
+                "rule_content": None,
+                "behavior": PermissionBehavior.ALLOW,
+                "source": "suggested",
+            },
+        ]
+        rule_b = [
+            {
+                "tool_name": name_b,
+                "rule_content": None,
+                "behavior": PermissionBehavior.ALLOW,
+                "source": "suggested",
+            },
+        ]
+
+        # Distinct tools do not de-duplicate: both surface a confirmation.
         expected_events = [
             {
                 "type": "REPLY_START",
@@ -1287,17 +1462,10 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                     {
                         "type": "tool_call",
                         "id": self.tool_call_id_1,
-                        "name": self.concurrent_tool_name,
+                        "name": name_a,
                         "input": self.tool_input_1,
                         "state": "asking",
-                        "suggested_rules": [
-                            {
-                                "tool_name": self.concurrent_tool_name,
-                                "rule_content": None,
-                                "behavior": PermissionBehavior.ALLOW,
-                                "source": "suggested",
-                            },
-                        ],
+                        "suggested_rules": rule_a,
                     },
                 ],
             },
@@ -1308,17 +1476,10 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                     {
                         "type": "tool_call",
                         "id": self.tool_call_id_2,
-                        "name": self.concurrent_tool_name,
+                        "name": name_b,
                         "input": self.tool_input_2,
                         "state": "asking",
-                        "suggested_rules": [
-                            {
-                                "tool_name": self.concurrent_tool_name,
-                                "rule_content": None,
-                                "behavior": PermissionBehavior.ALLOW,
-                                "source": "suggested",
-                            },
-                        ],
+                        "suggested_rules": rule_b,
                     },
                 ],
             },
@@ -1340,38 +1501,26 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "error": None,
             },
             {
                 "content": [
                     {
                         "type": "tool_call",
                         "id": self.tool_call_id_1,
-                        "name": self.concurrent_tool_name,
+                        "name": name_a,
                         "input": self.tool_input_1,
                         "state": "asking",
-                        "suggested_rules": [
-                            {
-                                "tool_name": self.concurrent_tool_name,
-                                "rule_content": None,
-                                "behavior": PermissionBehavior.ALLOW,
-                                "source": "suggested",
-                            },
-                        ],
+                        "suggested_rules": rule_a,
                     },
                     {
                         "type": "tool_call",
                         "id": self.tool_call_id_2,
-                        "name": self.concurrent_tool_name,
+                        "name": name_b,
                         "input": self.tool_input_2,
                         "state": "asking",
-                        "suggested_rules": [
-                            {
-                                "tool_name": self.concurrent_tool_name,
-                                "rule_content": None,
-                                "behavior": PermissionBehavior.ALLOW,
-                                "source": "suggested",
-                            },
-                        ],
+                        "suggested_rules": rule_b,
                     },
                 ],
             },
@@ -1380,6 +1529,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         expected_context = [{**msg_base, **_} for _ in expected_context]
         self.assertListEqual(context_dicts, expected_context)
 
+        # A single confirmation event carrying BOTH approvals.
         user_confirm_event = UserConfirmResultEvent(
             reply_id=reply_id,
             confirm_results=[
@@ -1387,7 +1537,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                     confirmed=True,
                     tool_call=ToolCallBlock(
                         id=self.tool_call_id_1,
-                        name=self.concurrent_tool_name,
+                        name=name_a,
                         input=self.tool_input_1,
                     ),
                 ),
@@ -1395,7 +1545,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                     confirmed=True,
                     tool_call=ToolCallBlock(
                         id=self.tool_call_id_2,
-                        name=self.concurrent_tool_name,
+                        name=name_b,
                         input=self.tool_input_2,
                     ),
                 ),
@@ -1415,16 +1565,16 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                 {**basic_dict, **_}
                 for _ in self._get_tool_result_events(
                     self.tool_call_id_1,
-                    self.concurrent_tool_name,
-                    self.concurrent_result_1,
+                    name_a,
+                    result_a,
                 )
             ],
             self.tool_call_id_2: [
                 {**basic_dict, **_}
                 for _ in self._get_tool_result_events(
                     self.tool_call_id_2,
-                    self.concurrent_tool_name,
-                    self.concurrent_result_2,
+                    name_b,
+                    result_b,
                 )
             ],
         }
@@ -1442,6 +1592,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             *self.final_text_events,
             {
                 "type": "REPLY_END",
+                "error": None,
                 "session_id": session_id,
                 "finished_reason": "completed",
             },
@@ -1458,6 +1609,8 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                 "id": AnyString(),
                 "created_at": AnyString(),
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "error": None,
                 "metadata": {},
                 "name": "user",
                 "role": "user",
@@ -1497,16 +1650,8 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                 for _ in assistant_msg.get_content_blocks("tool_result")
             },
             {
-                (
-                    self.concurrent_tool_name,
-                    "success",
-                    self.concurrent_result_1,
-                ),
-                (
-                    self.concurrent_tool_name,
-                    "success",
-                    self.concurrent_result_2,
-                ),
+                (name_a, "success", result_a),
+                (name_b, "success", result_b),
             },
         )
         self.assertEqual(

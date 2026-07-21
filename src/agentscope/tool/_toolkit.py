@@ -178,8 +178,8 @@ class Toolkit:
         .. note:: The preset keyword arguments is removed from the JSON
          schema, and the extended model is applied if it is set.
 
-         Args:
-             groups (`list[str] | None`, optional):
+        Args:
+            groups (`list[str] | None`, optional):
                 A list of group names to filter the tool function. The "basic"
                 group will always be included regardless of the filter. If not
                 provided, only the "basic" group will be included.
@@ -401,7 +401,7 @@ class Toolkit:
                 provided, only the "basic" group will be included.
 
         Returns:
-            `dict[str, Skill]`
+            `dict[str, Skill]`:
                 A dictionary of skill name and their corresponding Skill
                 objects.
         """

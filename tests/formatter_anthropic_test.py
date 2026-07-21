@@ -988,3 +988,180 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
         ][0]
         # Repaired to a dict rather than crashing.
         self.assertIsInstance(tool_use["input"], dict)
+
+    async def test_empty_text_block_is_dropped(self) -> None:
+        """Empty ``TextBlock`` must be skipped, not forwarded.
+
+        Anthropic rejects ``{"type": "text", "text": ""}`` with a 400
+        ("text blocks must be non-empty"). Empty text blocks arise in
+        practice after a tool-call-only assistant turn whose streamed text
+        block is empty. The formatter must drop them rather than emit them.
+        """
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    TextBlock(text=""),
+                    ToolCallBlock(
+                        id="call_1",
+                        name="get_weather",
+                        input='{"city": "Tokyo"}',
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        # The empty TextBlock is dropped — the assistant message contains
+        # only the tool_use block, nothing else.
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call_1",
+                            "name": "get_weather",
+                            "input": {"city": "Tokyo"},
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_empty_tool_result_text_is_dropped(self) -> None:
+        """Empty text inside a tool result is skipped too.
+
+        A ``ToolResultBlock`` whose only output is an empty TextBlock must
+        not produce an empty text content entry, which Anthropic would
+        reject. The formatter falls back to a non-empty placeholder so the
+        tool_result content list stays valid.
+        """
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_1",
+                        name="get_weather",
+                        input='{"city": "Tokyo"}',
+                    ),
+                ],
+            ),
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolResultBlock(
+                        id="call_1",
+                        name="get_weather",
+                        output=[TextBlock(text="")],
+                        state=ToolResultState.SUCCESS,
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call_1",
+                            "name": "get_weather",
+                            "input": {"city": "Tokyo"},
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_1",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "(empty tool output)",
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+            res,
+        )
+
+    async def test_empty_string_tool_output_uses_placeholder(self) -> None:
+        """An empty-string tool output becomes a placeholder text block.
+
+        Anthropic rejects both empty text blocks and a tool_result whose
+        content list is empty, so a wholly-empty output must be replaced
+        with a non-empty placeholder.
+        """
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolCallBlock(
+                        id="call_1",
+                        name="noop",
+                        input="{}",
+                    ),
+                ],
+            ),
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ToolResultBlock(
+                        id="call_1",
+                        name="noop",
+                        output="",
+                        state=ToolResultState.SUCCESS,
+                    ),
+                ],
+            ),
+        ]
+
+        res = await fmt.format(msgs)
+
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call_1",
+                            "name": "noop",
+                            "input": {},
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_1",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "(empty tool output)",
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+            res,
+        )

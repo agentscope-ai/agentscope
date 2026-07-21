@@ -40,7 +40,7 @@ from agentscope.event import (
     ToolResultStartEvent,
     ToolResultTextDeltaEvent,
     UserConfirmResultEvent,
-    ReplyEndReason,
+    ReplyFinishedReason,
 )
 from agentscope.message import ToolCallBlock, ToolResultBlock, ToolResultState
 from agentscope.model import FinishedReason
@@ -214,7 +214,7 @@ class AGUIProtocolLifecycleTest(IsolatedAsyncioTestCase):
         event = ReplyEndEvent(
             session_id="sess_1",
             reply_id="reply_1",
-            finished_reason=ReplyEndReason.COMPLETED,
+            finished_reason=ReplyFinishedReason.COMPLETED,
         )
         result = self.mw._convert_to_protocol(event)
 
@@ -676,7 +676,7 @@ class AGUIProtocolCamelCaseTest(IsolatedAsyncioTestCase):
             ReplyEndEvent(
                 session_id="s",
                 reply_id="r",
-                finished_reason=ReplyEndReason.COMPLETED,
+                finished_reason=ReplyFinishedReason.COMPLETED,
             ),
             ModelCallStartEvent(reply_id="r", model_name="m"),
             ModelCallEndEvent(

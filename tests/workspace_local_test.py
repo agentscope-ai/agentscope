@@ -15,10 +15,21 @@ from urllib.request import url2pathname
 
 import aiofiles
 from utils import AnyString, MockModel
-from agentscope.agent import Agent, ContextConfig
+from agentscope.agent import Agent, ContextConfig, InjectionConfig
 from agentscope.model import ChatResponse, StructuredResponse
 from agentscope.state import AgentState
-from agentscope.tool import Toolkit, ToolBase, ToolChunk
+from agentscope.tool import (
+    Bash,
+    Edit,
+    Glob,
+    Grep,
+    LocalBackend,
+    Read,
+    Toolkit,
+    ToolBase,
+    ToolChunk,
+    Write,
+)
 from agentscope.permission import PermissionDecision, PermissionBehavior
 from agentscope.workspace import LocalWorkspace
 from agentscope.mcp import MCPClient, StdioMCPConfig
@@ -79,6 +90,28 @@ class _LongResultTool(ToolBase):
             ],
             state=ToolResultState.SUCCESS,
         )
+
+
+class TestLocalWorkspaceTools(IsolatedAsyncioTestCase):
+    """Test cases for LocalWorkspace builtin tools."""
+
+    async def test_list_tools_builtin(self) -> None:
+        """Return all six builtin tools backed by LocalBackend."""
+        with tempfile.TemporaryDirectory() as workdir:
+            workspace = LocalWorkspace(workdir=workdir)
+            await workspace.initialize()
+            try:
+                tools = await workspace.list_tools()
+            finally:
+                await workspace.close()
+
+        self.assertEqual(len(tools), 6)
+        self.assertSetEqual(
+            {type(tool) for tool in tools},
+            {Bash, Edit, Glob, Grep, Read, Write},
+        )
+        for tool in tools:
+            self.assertIsInstance(tool._backend, LocalBackend)
 
 
 class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
@@ -822,7 +855,7 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
         """
         with tempfile.TemporaryDirectory() as workdir:
             session_id = "test_session"
-            model = MockModel(stream=False)
+            model = MockModel(stream=False, context_size=100000)
             agent = Agent(
                 name="Friday",
                 system_prompt="You're a helpful assistant named Friday.",
@@ -833,6 +866,10 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 context_config=ContextConfig(
                     tool_result_limit=50,
                 ),
+                # The runtime state injection is covered by
+                # agent_injection_test, turn it off to keep the assertions
+                # focused.
+                injection_config=InjectionConfig(inject_runtime_state=False),
                 offloader=LocalWorkspace(
                     workdir=workdir,
                 ),
@@ -943,6 +980,8 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "created_at": AnyString(),
                 "finished_at": None,
+                "finished_reason": None,
+                "error": None,
                 "usage": None,
             }
             self.assertListEqual(
@@ -980,6 +1019,10 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 model=model,
                 toolkit=Toolkit(),
                 offloader=LocalWorkspace(workdir=workdir),
+                # The runtime state injection is covered by
+                # agent_injection_test, turn it off to keep the assertions
+                # focused.
+                injection_config=InjectionConfig(inject_runtime_state=False),
                 state=AgentState(session_id=session_id),
             )
 
@@ -1083,7 +1126,8 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 '"id":"text_block_a"}'
                 '],"role":"user","id":"msg_a","metadata":{},'
                 '"created_at":"2026-01-01T00:00:00",'
-                '"finished_at":"2026-01-01T00:00:00","usage":null}'
+                '"finished_at":"2026-01-01T00:00:00",'
+                '"finished_reason":null,"error":null,"usage":null}'
             )
             self.assertEqual(
                 content_after_first,
@@ -1126,7 +1170,8 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 + '"}'
                 '],"role":"assistant","id":"' + assistant_1.id + '",'
                 '"metadata":{},"created_at":"' + assistant_1.created_at + '",'
-                '"finished_at":null,"usage":null}'
+                '"finished_at":null,'
+                '"finished_reason":null,"error":null,"usage":null}'
             )
             expected_user_msg_b_json = (
                 '{"name":"user","content":['
@@ -1134,7 +1179,8 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 '"id":"text_block_b"}'
                 '],"role":"user","id":"msg_b","metadata":{},'
                 '"created_at":"2026-01-02T00:00:00",'
-                '"finished_at":"2026-01-02T00:00:00","usage":null}'
+                '"finished_at":"2026-01-02T00:00:00",'
+                '"finished_reason":null,"error":null,"usage":null}'
             )
             self.assertEqual(
                 content_after_second,
@@ -1183,6 +1229,8 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "created_at": AnyString(),
                 "finished_at": None,
+                "finished_reason": None,
+                "error": None,
                 "usage": None,
             }
             self.assertListEqual(

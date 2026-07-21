@@ -5,6 +5,7 @@ from enum import StrEnum
 from typing import Any, Dict, Literal, List, TypeAlias
 
 from pydantic import BaseModel, Field, ConfigDict
+from typing_extensions import deprecated
 
 from .._utils._common import _generate_id
 from ..message import (
@@ -13,6 +14,10 @@ from ..message import (
     ToolCallBlock,
     ToolResultBlock,
     ToolResultState,
+)
+from ..types import (
+    ReplyFinishedReason,
+    ErrorInfo,
 )
 from ..model import FinishedReason
 from ..permission import PermissionRule
@@ -90,8 +95,14 @@ class ReplyStartEvent(EventBase):
     """Role of the agent."""
 
 
+@deprecated(
+    "ReplyEndReason is deprecated and will be removed; "
+    "use agentscope.types.ReplyFinishedReason instead.",
+)
 class ReplyEndReason(StrEnum):
-    """The reason for reply ended."""
+    """Deprecated alias of :class:`~agentscope.types.ReplyFinishedReason`,
+    kept for backward compatibility. Value-compatible (both ``StrEnum``),
+    so existing code that constructs or compares against it keeps working."""
 
     COMPLETED = "completed"
     INTERRUPTED = "interrupted"
@@ -107,8 +118,11 @@ class ReplyEndEvent(EventBase):
     """ID of the session this reply belongs to."""
     reply_id: str
     """ID of the reply message produced by this reply."""
-    finished_reason: ReplyEndReason = ReplyEndReason.COMPLETED
+    finished_reason: ReplyFinishedReason = ReplyFinishedReason.COMPLETED
     """The finished reason of this reply."""
+    error: ErrorInfo | None = None
+    """Structured error info, populated only when
+    ``finished_reason == ReplyFinishedReason.ERROR``."""
 
 
 class ModelCallStartEvent(EventBase):

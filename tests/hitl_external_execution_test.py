@@ -6,7 +6,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString, MockModel
 
-from agentscope.agent import Agent
+from agentscope.agent import Agent, InjectionConfig
 from agentscope.model import ChatResponse
 from agentscope.tool import (
     ToolBase,
@@ -111,6 +111,10 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             system_prompt="You are a helpful assistant.",
             model=self.model,
             toolkit=Toolkit(),
+            # The runtime state injection is covered by
+            # agent_injection_test, turn it off to keep the assertions
+            # focused.
+            injection_config=InjectionConfig(inject_runtime_state=False),
         )
         self.tool_call_id_1 = "tool_call_1"
         self.tool_call_id_2 = "tool_call_2"
@@ -181,6 +185,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             "id": AnyString(),
             "created_at": AnyString(),
             "finished_at": None,
+            "finished_reason": None,
+            "error": None,
             "metadata": {},
             "name": "Friday",
             "role": "assistant",
@@ -365,6 +371,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "error": None,
             },
             {
                 "content": [
@@ -414,6 +422,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             *self.final_text_events,
             {
                 "type": "REPLY_END",
+                "error": None,
                 "session_id": session_id,
                 "finished_reason": "completed",
             },
@@ -436,6 +445,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "error": None,
             },
             {
                 "content": [
@@ -599,6 +610,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "error": None,
             },
             {
                 "content": [
@@ -696,6 +709,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             *self.final_text_events,
             {
                 "type": "REPLY_END",
+                "error": None,
                 "session_id": session_id,
                 "finished_reason": "completed",
             },
@@ -719,6 +733,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "error": None,
             },
             {
                 "content": [
@@ -910,6 +926,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "error": None,
             },
             {
                 "content": [
@@ -999,6 +1017,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             *self.final_text_events,
             {
                 "type": "REPLY_END",
+                "error": None,
                 "session_id": session_id,
                 "finished_reason": "completed",
             },
@@ -1022,6 +1041,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "error": None,
             },
             {
                 "content": [
@@ -1207,6 +1228,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "error": None,
             },
             {
                 "content": [
@@ -1273,6 +1296,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             *self.final_text_events,
             {
                 "type": "REPLY_END",
+                "error": None,
                 "session_id": session_id,
                 "finished_reason": "completed",
             },
@@ -1294,6 +1318,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "error": None,
             },
             {
                 "content": [

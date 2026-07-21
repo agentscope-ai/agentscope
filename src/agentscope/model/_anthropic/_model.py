@@ -285,12 +285,14 @@ class AnthropicChatModel(ChatModelBase):
                     u,
                     "cache_creation_input_tokens",
                     0,
-                ),
+                )
+                or 0,
                 cache_input_tokens=getattr(
                     u,
                     "cache_read_input_tokens",
                     0,
-                ),
+                )
+                or 0,
             )
 
         resp_kwargs: dict[str, Any] = {

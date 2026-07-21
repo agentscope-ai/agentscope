@@ -8,7 +8,7 @@ from typing import Any, AsyncGenerator, Callable, Union
 from utils import MockModel
 from pydantic import BaseModel
 from agentscope.event import AgentEvent
-from agentscope.agent import Agent, ContextConfig
+from agentscope.agent import Agent, ContextConfig, InjectionConfig
 from agentscope.middleware import MiddlewareBase
 from agentscope.model import ChatResponse
 from agentscope.message import (
@@ -86,6 +86,10 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             model=self.mock_model,
             toolkit=self.toolkit,
             middlewares=[middleware1, middleware2],
+            # The runtime state injection is covered by
+            # agent_injection_test, turn it off to keep the assertions
+            # focused.
+            injection_config=InjectionConfig(inject_runtime_state=False),
         )
 
         await agent.reply(UserMsg("user", "test message"))
@@ -380,6 +384,9 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             model=self.mock_model,
             toolkit=self.toolkit,
             middlewares=[middleware1, middleware2],
+            # The runtime state injection is covered by agent_injection_test,
+            # turn it off to keep the assertions focused.
+            injection_config=InjectionConfig(inject_runtime_state=False),
         )
 
         await agent.reply(UserMsg("user", "test message"))
@@ -473,6 +480,9 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             model=self.mock_model,
             toolkit=self.toolkit,
             middlewares=[middleware],
+            # The runtime state injection is covered by agent_injection_test,
+            # turn it off to keep the assertions focused.
+            injection_config=InjectionConfig(inject_runtime_state=False),
         )
 
         await agent.reply(UserMsg("user", "test message"))

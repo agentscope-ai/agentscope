@@ -55,6 +55,13 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
 
     schema = dict(schema)
 
+    # Gemini (and many third-party proxies) reject `null` as a standalone
+    # functionDeclaration property type. Some MCP servers emit
+    # {"type": "null"} directly (not wrapped in anyOf) for parameters that
+    # accept None — rewrite it to "object" so it round-trips through the API.
+    if schema.get("type") == "null":
+        schema["type"] = "object"
+
     # Remove additionalProperties — not supported by Gemini
     schema.pop("additionalProperties", None)
 

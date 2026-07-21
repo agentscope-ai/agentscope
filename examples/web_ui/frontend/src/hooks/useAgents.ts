@@ -1,14 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
 
 import { agentApi } from '../api';
-import type { AgentRecord, CreateAgentRequest, UpdateAgentRequest } from '../api';
+import type { AgentView, CreateAgentRequest, UpdateAgentRequest } from '../api';
 
 /**
  * Manages the full agent list with CRUD operations.
  * Fetches on mount and automatically re-fetches after each mutation.
  */
 export function useAgents() {
-	const [agents, setAgents] = useState<AgentRecord[]>([]);
+	const [agents, setAgents] = useState<AgentView[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<Error | null>(null);
 
