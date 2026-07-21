@@ -14,11 +14,14 @@ import sys
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
 
+from agentscope.mcp import MCPClient, StdioMCPConfig
 from agentscope.workspace import AppleContainerBackend, AppleContainerWorkspace
 from agentscope.workspace._applecontainer._constants import (
     CONTAINER_WORKDIR,
     DEFAULT_BASE_IMAGE,
+    GATEWAY_HOME,
 )
+from agentscope.workspace._utils import DEFAULT_GATEWAY_VENV
 
 _CONTAINER_CLI = shutil.which("container")
 _RUN_REASON = "container CLI not found — install Apple Container first"
@@ -200,6 +203,31 @@ class TestAppleContainerWorkspaceLifecycle(IsolatedAsyncioTestCase):
 _APPLE_CONTAINER_LIVE = os.getenv("APPLE_CONTAINER_LIVE", "")
 
 
+#: Sandbox-side path of the gateway venv Python interpreter.
+_GATEWAY_PYTHON = (
+    f"{GATEWAY_HOME}/{DEFAULT_GATEWAY_VENV}/bin/python"
+)
+
+#: Minimal MCP echo server script (uploaded into the container on demand).
+_ECHO_MCP_SERVER_SCRIPT = '''\
+# -*- coding: utf-8 -*-
+"""Minimal echo MCP server for live-test verification."""
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("EchoServer")
+
+
+@mcp.tool()
+def echo(message: str) -> str:
+    """Echo back the message."""
+    return f"ECHO: {message}"
+
+
+if __name__ == "__main__":
+    mcp.run(transport="stdio")
+'''
+
+
 @unittest.skipUnless(_APPLE_CONTAINER_LIVE, "APPLE_CONTAINER_LIVE not set")
 @unittest.skipUnless(_CONTAINER_CLI, _RUN_REASON)
 @unittest.skipUnless(
@@ -216,7 +244,8 @@ class TestAppleContainerWorkspaceLive(IsolatedAsyncioTestCase):
     1. Bootstrap deps (ripgrep, uv) are installed and executable.
     2. Builtin tools are bound and functional through the backend.
     3. MCP gateway is healthy and ``list_mcps`` responds.
-    4. File read/write roundtrip works inside the container.
+    4. A real MCP echo server is registered, listed, and called.
+    5. File read/write roundtrip works inside the container.
     """
 
     async def test_bootstrap_dependencies(self) -> None:
@@ -279,6 +308,51 @@ class TestAppleContainerWorkspaceLive(IsolatedAsyncioTestCase):
             mcps = await ws.list_mcps()
             self.assertIsInstance(mcps, list)
             # After init, mcps may be empty or seeded — both are valid.
+
+    async def test_mcp_server_register_and_call(self) -> None:
+        """Register a real MCP echo server, list its tools, call one."""
+        ws = AppleContainerWorkspace()
+        async with ws:
+            backend = ws.get_backend()
+
+            # Write a minimal MCP echo server into the container.
+            server_path = "/tmp/echo_mcp_server.py"
+            await backend.write_file(
+                server_path,
+                _ECHO_MCP_SERVER_SCRIPT.encode("utf-8"),
+            )
+
+            # Register it through the gateway.
+            echo_mcp = MCPClient(
+                name="echo",
+                mcp_config=StdioMCPConfig(
+                    command=_GATEWAY_PYTHON,
+                    args=[server_path],
+                ),
+                is_stateful=True,
+            )
+            await ws.add_mcp(echo_mcp)
+
+            # Verify the MCP appears in the gateway list.
+            mcps = await ws.list_mcps()
+            names = [m.name for m in mcps]
+            self.assertIn("echo", names, f"MCP 'echo' not in {names}")
+
+            # Get the gateway-managed echo client and list its tools.
+            echo_client = next(m for m in mcps if m.name == "echo")
+            tools = await echo_client.list_raw_tools()
+            tool_names = [t.name for t in tools]
+            self.assertIn("echo", tool_names)
+
+            # Call the echo tool through the gateway.
+            echo_tool = await echo_client.get_tool("echo")
+            result = await echo_tool(message="hello_mcp")
+            texts = []
+            for block in result.content:
+                if hasattr(block, "text") and block.text:
+                    texts.append(block.text)
+            combined = "".join(texts)
+            self.assertIn("ECHO: hello_mcp", combined)
 
     async def test_file_read_write_roundtrip(self) -> None:
         """Bytes written via backend survive a read roundtrip."""
