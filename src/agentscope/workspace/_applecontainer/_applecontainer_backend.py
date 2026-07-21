@@ -71,9 +71,10 @@ class AppleContainerBackend(BackendBase):
         """Run a program inside the Apple container via
         ``container exec``.
 
-        *command* is an argv list. The Apple container ``exec`` accepts
-        arguments directly, so no quoting is needed. Callers needing
-        shell features pass ``["sh", "-c", line]``.
+        *command* is an argv list passed directly after the container
+        identifier — no ``--`` separator is used (Apple Container treats
+        ``--`` as the target executable). Callers needing shell features
+        pass ``["sh", "-c", line]``.
 
         Args:
             command (`list[str]`):
@@ -96,7 +97,6 @@ class AppleContainerBackend(BackendBase):
             "--workdir",
             workdir,
             self._container_id,
-            "--",
         ] + list(command)
 
         try:
@@ -181,8 +181,9 @@ class AppleContainerBackend(BackendBase):
             suffix=".bin",
         )
         try:
-            os.write(tmp_fd, data)
-            os.close(tmp_fd)
+            # Write all bytes, handling partial writes.
+            with os.fdopen(tmp_fd, "wb") as f:
+                f.write(data)
 
             # Create parent directory inside the container first.
             parent = posixpath.dirname(path)

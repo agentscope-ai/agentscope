@@ -24,12 +24,12 @@ _CONTAINER_CLI = shutil.which("container")
 _RUN_REASON = "container CLI not found — install Apple Container first"
 
 
-@unittest.skipUnless(
-    sys.platform == "darwin",
-    "Apple Container requires macOS",
-)
 class TestAppleContainerWorkspaceConstruct(unittest.TestCase):
-    """Constructor and config tests — no container needed."""
+    """Constructor and config tests — no container needed.
+
+    These tests only exercise the constructor and string formatting;
+    they do not require macOS or the ``container`` CLI.
+    """
 
     def test_default_values(self) -> None:
         """Constructor picks up all the default constants."""
@@ -66,6 +66,67 @@ class TestAppleContainerWorkspaceConstruct(unittest.TestCase):
         ws = AppleContainerWorkspace()
         text = asyncio.run(ws.get_instructions())
         self.assertIn(CONTAINER_WORKDIR, text)
+
+
+class TestImageRefNormalization(unittest.TestCase):
+    """Unit tests for ``_normalize_image_ref`` — no container needed."""
+
+    def _normalize(self, ref: str) -> str:
+        """Delegate to the private static method under test."""
+        return AppleContainerWorkspace._normalize_image_ref(ref)
+
+    def test_short_ref_unchanged(self) -> None:
+        """Short references pass through unchanged."""
+        self.assertEqual(self._normalize("python:3.11-slim"), "python:3.11-slim")
+        self.assertEqual(self._normalize("ubuntu:latest"), "ubuntu:latest")
+
+    def test_canonical_library_ref(self) -> None:
+        """Canonical ``docker.io/library/...`` is shortened."""
+        self.assertEqual(
+            self._normalize("docker.io/library/python:3.11-slim"),
+            "python:3.11-slim",
+        )
+        self.assertEqual(
+            self._normalize("docker.io/library/ubuntu:22.04"),
+            "ubuntu:22.04",
+        )
+
+    def test_canonical_non_library_ref(self) -> None:
+        """Non-library images keep their namespace."""
+        self.assertEqual(
+            self._normalize("docker.io/bitnami/redis:7.0"),
+            "bitnami/redis:7.0",
+        )
+
+    def test_registry_only_stripped(self) -> None:
+        """Registry is stripped even without library namespace."""
+        self.assertEqual(
+            self._normalize("docker.io/myorg/myimg:v1"),
+            "myorg/myimg:v1",
+        )
+
+    def test_library_only_stripped(self) -> None:
+        """Library prefix without registry is also stripped."""
+        self.assertEqual(
+            self._normalize("library/python:3.11-slim"),
+            "python:3.11-slim",
+        )
+
+    def test_other_registry_preserved(self) -> None:
+        """Non-docker.io registries are left intact."""
+        self.assertEqual(
+            self._normalize("quay.io/prometheus/node-exporter:v1"),
+            "quay.io/prometheus/node-exporter:v1",
+        )
+
+    def test_tag_and_digest_handled(self) -> None:
+        """Tags and digests survive normalization."""
+        self.assertEqual(
+            self._normalize(
+                "docker.io/library/alpine@sha256:abc123...",
+            ),
+            "alpine@sha256:abc123...",
+        )
 
 
 @unittest.skipUnless(_CONTAINER_CLI, _RUN_REASON)

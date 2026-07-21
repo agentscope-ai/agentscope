@@ -4,10 +4,8 @@
 """Test cases for :class:`AppleContainerWorkspaceManager`."""
 
 import asyncio
-import sys
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch
-from unittest import skipUnless
 
 from agentscope.app.workspace_manager import (
     AppleContainerWorkspaceManager,
@@ -37,9 +35,12 @@ class _FakeWorkspace:
         self.closed = True
 
 
-@skipUnless(sys.platform == "darwin", "Apple Container tests require macOS")
 class TestAppleContainerWorkspaceManager(IsolatedAsyncioTestCase):
-    """Manager cache, config forwarding and TTL behavior."""
+    """Manager cache, config forwarding and TTL behavior.
+
+    Uses ``_FakeWorkspace`` so no real container is needed; these tests
+    can run on any platform.
+    """
 
     async def asyncSetUp(self) -> None:
         """Patch the workspace class used by the manager."""

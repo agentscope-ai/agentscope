@@ -267,12 +267,41 @@ class AppleContainerWorkspace(SandboxedWorkspaceBase):
 
     # ── internals: image management ─────────────────────────────
 
+    @staticmethod
+    def _normalize_image_ref(ref: str) -> str:
+        """Normalize an OCI image reference for comparison.
+
+        Strips the default registry (``docker.io``) and the default
+        namespace (``library``) so that short references like
+        ``python:3.11-slim`` match the canonical form returned by
+        ``container image list``
+        (``docker.io/library/python:3.11-slim``).
+
+        Args:
+            ref (`str`):
+                An image reference, either short or canonical.
+
+        Returns:
+            `str`:
+                The normalized form without default registry/namespace.
+        """
+        # Strip optional tag/digest for prefix normalization.
+        parts = ref.split("/")
+        if len(parts) >= 2 and parts[0] == "docker.io":
+            parts = parts[1:]
+        if len(parts) >= 2 and parts[0] == "library":
+            parts = parts[1:]
+        return "/".join(parts)
+
     async def _pull_image_if_needed(self) -> None:
         """Pull *base_image* if it is not already present locally.
 
         Uses ``container image list --format json`` to check for the
-        image.
+        image.  Both the configured image name and the canonical name
+        reported by the CLI are normalized before comparison.
         """
+        target = self._normalize_image_ref(self.base_image)
+
         # Check if the image is already available locally.
         process = await asyncio.create_subprocess_exec(
             "container",
@@ -290,15 +319,15 @@ class AppleContainerWorkspace(SandboxedWorkspaceBase):
             except (json.JSONDecodeError, UnicodeDecodeError):
                 images = []
             for img in images:
-                if (
-                    isinstance(img, dict)
-                    and img.get("name") == self.base_image
-                ):
-                    logger.info(
-                        "AppleContainerWorkspace: image %r already present",
-                        self.base_image,
-                    )
-                    return
+                if isinstance(img, dict) and img.get("name"):
+                    if self._normalize_image_ref(img["name"]) == target:
+                        logger.info(
+                            "AppleContainerWorkspace: image %r already "
+                            "present (as %r)",
+                            self.base_image,
+                            img["name"],
+                        )
+                        return
 
         # Pull the image.
         logger.info(
