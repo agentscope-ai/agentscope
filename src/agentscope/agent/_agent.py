@@ -818,20 +818,33 @@ class Agent:
 
             reply_generator = execute_chain()
 
-        self_compacted = False
+        deferred_reply_items: list[AgentEvent | Msg] = []
         async for item in reply_generator:
+            if deferred_reply_items:
+                # Preserve any middleware output after the terminal event while
+                # continuing to drain the chain so its post-yield cleanup runs.
+                deferred_reply_items.append(item)
+                continue
+
             if (
                 isinstance(item, ReplyEndEvent)
                 and item.finished_reason == ReplyFinishedReason.COMPLETED
                 and self.context_config.self_compact_enabled
-                and not self_compacted
             ):
-                # Complete optional compaction before exposing the terminal
-                # event. Consumers may legitimately stop iterating as soon as
-                # they receive ReplyEndEvent.
-                self_compacted = True
-                await self.self_compact_context()
+                # Defer the terminal event until the reply generator is fully
+                # drained. This lets on_reply middleware finish its post-yield
+                # cleanup against the uncompressed turn context while still
+                # ensuring compaction completes before consumers observe the
+                # terminal event and potentially stop iterating.
+                deferred_reply_items.append(item)
+                continue
+
             yield item
+
+        if deferred_reply_items:
+            await self.self_compact_context()
+            for item in deferred_reply_items:
+                yield item
 
     async def _close_unfinished_tool_calls(
         self,
