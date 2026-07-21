@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
 """Service layer for the AgentScope app."""
+from ._access import (
+    AgentView,
+    CredentialView,
+    KnowledgeBaseView,
+    ResourceAccessService,
+)
 from ._chat import ChatService
 from ._embedding import get_embedding_model
 from ._index_sweeper import IndexSweeper
@@ -14,11 +20,15 @@ from ._projectors import SubagentHitlProjector
 from ._toolkit import get_toolkit
 
 __all__ = [
+    "AgentView",
     "ChatService",
+    "CredentialView",
     "IndexSweeper",
     "IndexTaskConsumer",
     "IndexWorker",
     "KnowledgeBaseService",
+    "KnowledgeBaseView",
+    "ResourceAccessService",
     "SessionService",
     "SessionStatus",
     "SessionProjection",

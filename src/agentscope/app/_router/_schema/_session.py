@@ -4,25 +4,24 @@ from pydantic import BaseModel, Field
 
 from ....permission import PermissionMode
 from ...storage import (
-    AgentRecord,
     ChatModelConfig,
     SessionKnowledgeConfig,
     TTSModelConfig,
     SessionRecord,
     TeamRecord,
 )
-from ..._service import SessionStatus
+from ..._service import AgentView, SessionStatus
 
 
 class TeamMemberView(BaseModel):
     """One row in :attr:`TeamDetailResponse.members`.
 
-    Pairs each member's :class:`AgentRecord` with its single
+    Pairs each member's :class:`AgentView` with its single
     ``session_id`` so the UI can subscribe to the worker's chat
     stream without a separate lookup.
     """
 
-    agent: AgentRecord = Field(
+    agent: AgentView = Field(
         description="The worker agent record.",
     )
     session_id: str | None = Field(
@@ -38,7 +37,7 @@ class TeamDetailResponse(BaseModel):
     """Resolved team detail embedded inside :class:`SessionView.team`."""
 
     team: TeamRecord = Field(description="The team record.")
-    leader_agent: AgentRecord | None = Field(
+    leader_agent: AgentView | None = Field(
         default=None,
         description=(
             "Leader's agent record (resolved from the team's "
@@ -60,7 +59,14 @@ class CreateSessionRequest(BaseModel):
     agent_id: str = Field(description="Agent this session belongs to.")
     workspace_id: str | None = Field(
         default=None,
-        description="Workspace this session belongs to.",
+        description=(
+            "Optional explicit workspace binding. When omitted the "
+            "server calls "
+            "``WorkspaceManagerBase.assign_workspace_id`` under the "
+            "configured isolation policy. Set only to force a "
+            "specific binding (e.g. share workspace with another "
+            "existing session)."
+        ),
     )
     name: str | None = Field(
         default=None,
@@ -187,6 +193,13 @@ class ListMessagesResponse(BaseModel):
     is_running: bool = Field(
         description="Whether the session is currently running.",
     )
+    has_more: bool = Field(
+        description=(
+            "Whether there are older messages before this page. "
+            "When ``True``, pass a message ID from this response as "
+            "the ``before`` parameter to load the previous page."
+        ),
+    )
 
 
 class SessionStatusResponse(BaseModel):
@@ -208,3 +221,25 @@ class SessionStatusResponse(BaseModel):
             "on external executor)."
         ),
     )
+
+
+class InterruptSessionResponse(BaseModel):
+    """Response body for ``POST /sessions/{sid}/interrupt`` (HTTP 202).
+
+    The interrupt operation is idempotent and always succeeds for an
+    existing session (only ``404`` is raised when the session id does
+    not exist):
+
+    - If the session is **running**, an interrupt signal is published
+      so the local
+      :class:`~agentscope.app._manager.CancelDispatcher` cancels the
+      chat-run task; the agent then runs its ``CancelledError`` cleanup
+      path.
+    - If the session is **parked** on HITL / external execution, a
+      resume trigger carrying a
+      :class:`~agentscope.event.UserInterruptEvent` is enqueued so the
+      agent short-circuits into the same cleanup path.
+    - If the session is **idle**, the call is a no-op.
+    """
+
+    session_id: str = Field(description="Echo of the interrupted session id.")

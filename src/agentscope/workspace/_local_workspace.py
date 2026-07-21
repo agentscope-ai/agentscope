@@ -11,6 +11,7 @@ from typing import TypedDict
 
 import frontmatter
 
+from ._utils import DEFAULT_WORKSPACE_INSTRUCTIONS
 from .._logging import logger
 from ..mcp import MCPClient
 from ..skill import Skill
@@ -54,45 +55,6 @@ def _sanitize_dir_name(name: str) -> str:
     return re.sub(r"[^\w一-鿿-]", "_", name)
 
 
-_DEFAULT_WORKSPACE_INSTRUCTIONS = """<workspace>
-You have access to a local workspace at {workdir} with the following structure:
-
-```
-{workdir}
-├── data/        # offloaded multimodal files (images, etc.)
-├── skills/      # reusable skills, each in its own subdirectory
-└── sessions/    # session context and tool results
-```
-
-This workspace is your personal working environment for completing various tasks.
-You are responsible for keeping it clean, structured, and easy to navigate over time.
-
-### Project Directory
-- Create a dedicated subdirectory for each task or project under the workspace root.
-- Name the directory concisely and descriptively, e.g. `20240315_web-scraper`, so it remains identifiable long after creation.
-- Always create a `README.md` at the project root documenting:
-  - What the project is about
-  - When it was created
-  - Key decisions or context that would help you resume work later
-  - The changes you have made (and when)
-
-### Version Control
-- It is recommended to initialize a `git` repository in each project directory
-  to track changes and allow rollbacks.
-- Always create a `.gitignore` before the first commit to exclude unwanted files
-  (e.g. virtual environments, cache, secrets).
-
-### Python Environment
-- If a project requires Python, use `uv` to create an isolated virtual environment
-  inside the project directory:
-  ```shell
-  uv venv && uv pip install ...
-  ```
-- Never install packages into a shared or global environment — each project must
-  manage its own dependencies to avoid conflicts.
-</workspace>"""  # noqa: E501
-
-
 class LocalWorkspace(WorkspaceBase):
     """Local-directory workspace.
 
@@ -112,7 +74,7 @@ class LocalWorkspace(WorkspaceBase):
         workspace_id: str | None = None,
         default_mcps: list[MCPClient] | None = None,
         skill_paths: list[str] | None = None,
-        instructions: str = _DEFAULT_WORKSPACE_INSTRUCTIONS,
+        instructions: str = DEFAULT_WORKSPACE_INSTRUCTIONS,
     ) -> None:
         """Construct a :class:`LocalWorkspace`.
 
@@ -140,7 +102,10 @@ class LocalWorkspace(WorkspaceBase):
 
         # ── serializable config ─────────────────────────────────
         self.workdir = os.path.abspath(workdir)
-        self.instructions = instructions.format(workdir=self.workdir)
+        self.instructions = instructions.format(
+            backend="local",
+            workdir=self.workdir,
+        )
 
         # ── seed-only ───────────────────────────────────────────
         self.default_mcps: list[MCPClient] = list(default_mcps or [])

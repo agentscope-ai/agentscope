@@ -1,7 +1,7 @@
 import { client } from './client';
 import type {
 	AgentListResponse,
-	AgentRecord,
+	AgentView,
 	AgentSchemaV2Response,
 	CreateAgentRequest,
 	CreateAgentResponse,
@@ -17,7 +17,7 @@ export const agentApi = {
 		client.post<CreateAgentResponse>('/agent/', body, undefined, options),
 
 	update: (agentId: string, body: UpdateAgentRequest, options?: { silent?: boolean }) =>
-		client.patch<AgentRecord>(`/agent/${agentId}`, body, undefined, options),
+		client.patch<AgentView>(`/agent/${agentId}`, body, undefined, options),
 
 	delete: (agentId: string) => client.delete(`/agent/${agentId}`),
 };

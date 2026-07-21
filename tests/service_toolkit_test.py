@@ -19,12 +19,14 @@ Verifies the assembly rules:
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
 
+from utils import FakeWorkspaceManager
 from agentscope.agent import ContextConfig, ReActConfig
 from agentscope.app._manager import (
     BackgroundTaskManager,
     SchedulerManager,
 )
-from agentscope.app._service import get_toolkit
+from agentscope.app._service import ResourceAccessService, get_toolkit
+from agentscope.app.access import DenyAllResourceAccessPolicy
 from agentscope.app.storage import (
     AgentData,
     AgentRecord,
@@ -118,14 +120,16 @@ class _NoOpStorage:
     storage method — the team tools bind a reference for later use.
 
     Exceptions: since :class:`AgentInvite` landed, ``get_toolkit`` calls
-    ``list_agents(user_id)`` at assembly time to build the invitable
-    pool. Return an empty list — the toolkit tests care about which
-    team tools are attached, not about the pool contents; the non-empty
-    case is covered by the ``AgentInvite`` tests in
-    ``service_team_tools_test.py``. Additionally, when the session has
-    a ``team_id`` set, ``get_toolkit`` calls ``get_team`` to decide
-    leader-vs-worker; the ``team_id_map`` constructor arg lets a test
-    inject a lookup so the worker branch can be exercised.
+    ``ResourceAccessService.list_resource`` at assembly time to build
+    the invitable pool, which fans out to
+    :meth:`StorageBase.list_agents` under the hood. Return an empty
+    list — the toolkit tests care about which team tools are attached,
+    not about the pool contents; the non-empty case is covered by the
+    ``AgentInvite`` tests in ``service_team_tools_test.py``.
+    Additionally, when the session has a ``team_id`` set, ``get_toolkit``
+    calls ``get_team`` to decide leader-vs-worker; the ``team_id_map``
+    constructor arg lets a test inject a lookup so the worker branch
+    can be exercised.
     """
 
     def __init__(
@@ -146,6 +150,20 @@ class _NoOpStorage:
     ) -> TeamRecord | None:
         """Return the team record for ``team_id``."""
         return self._teams.get(team_id)
+
+
+def _make_access(storage: Any) -> ResourceAccessService:
+    """Build a :class:`ResourceAccessService` bound to ``storage`` with a
+    deny-all policy for ``get_toolkit`` tests.
+
+    ``list_resource(AGENT)`` therefore fans out to
+    ``storage.list_agents(user_id)`` alone — matching the pre-share
+    behaviour the toolkit tests were written against.
+    """
+    return ResourceAccessService(
+        storage=storage,
+        policy=DenyAllResourceAccessPolicy(),
+    )
 
 
 def _tool_names(toolkit: Any) -> list[str]:
@@ -204,6 +222,7 @@ class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
         toolkit = await get_toolkit(
             storage=_NoOpStorage(),  # type: ignore[arg-type]
             workspace=workspace,  # type: ignore[arg-type]
+            workspace_manager=FakeWorkspaceManager(),
             scheduler_manager=SchedulerManager(
                 storage=_NoOpStorage(),  # type: ignore[arg-type]
                 message_bus=_NullBus(),  # type: ignore[arg-type]
@@ -217,6 +236,7 @@ class TestGetToolkitBaseAssembly(IsolatedAsyncioTestCase):
             session_record=session,
             extra_factory=None,
             middlewares=[],
+            resource_access_service=_make_access(_NoOpStorage()),
         )
 
         names = set(_tool_names(toolkit))
@@ -273,6 +293,7 @@ class TestGetToolkitWorkerVariant(IsolatedAsyncioTestCase):
                 team_id_map={"t1": team},
             ),  # type: ignore[arg-type]
             workspace=_FakeWorkspace(),  # type: ignore[arg-type]
+            workspace_manager=FakeWorkspaceManager(),
             scheduler_manager=SchedulerManager(
                 storage=_NoOpStorage(),  # type: ignore[arg-type]
                 message_bus=_NullBus(),  # type: ignore[arg-type]
@@ -286,6 +307,7 @@ class TestGetToolkitWorkerVariant(IsolatedAsyncioTestCase):
             session_record=session,
             extra_factory=None,
             middlewares=[],
+            resource_access_service=_make_access(_NoOpStorage()),
         )
         names = set(_tool_names(toolkit))
         # Only TeamSay from the team toolset.
@@ -315,6 +337,7 @@ class TestGetToolkitSchedulingGuard(IsolatedAsyncioTestCase):
         toolkit = await get_toolkit(
             storage=_NoOpStorage(),  # type: ignore[arg-type]
             workspace=_FakeWorkspace(),  # type: ignore[arg-type]
+            workspace_manager=FakeWorkspaceManager(),
             scheduler_manager=SchedulerManager(
                 storage=_NoOpStorage(),  # type: ignore[arg-type]
                 message_bus=_NullBus(),  # type: ignore[arg-type]
@@ -328,6 +351,7 @@ class TestGetToolkitSchedulingGuard(IsolatedAsyncioTestCase):
             session_record=session,
             extra_factory=None,
             middlewares=[],
+            resource_access_service=_make_access(_NoOpStorage()),
         )
         names = set(_tool_names(toolkit))
         for missing in (
@@ -371,6 +395,7 @@ class TestGetToolkitExtraFactory(IsolatedAsyncioTestCase):
         toolkit = await get_toolkit(
             storage=_NoOpStorage(),  # type: ignore[arg-type]
             workspace=_FakeWorkspace(),  # type: ignore[arg-type]
+            workspace_manager=FakeWorkspaceManager(),
             scheduler_manager=SchedulerManager(
                 storage=_NoOpStorage(),  # type: ignore[arg-type]
                 message_bus=_NullBus(),  # type: ignore[arg-type]
@@ -384,5 +409,6 @@ class TestGetToolkitExtraFactory(IsolatedAsyncioTestCase):
             session_record=session,
             extra_factory=factory,
             middlewares=[],
+            resource_access_service=_make_access(_NoOpStorage()),
         )
         self.assertIn("my-extra", _tool_names(toolkit))

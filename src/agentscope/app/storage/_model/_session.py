@@ -114,7 +114,15 @@ class SessionConfig(BaseModel):
     """Session configuration — set at creation, updatable via PATCH."""
 
     workspace_id: str
-    """The workspace id this session is bound to."""
+    """Authoritative workspace binding for the session.
+
+    Populated at session creation — either from an explicit
+    ``workspace_id`` on ``CreateSessionRequest`` (used by team
+    invite/borrow flows) or from
+    :meth:`WorkspaceManagerBase.assign_workspace_id` under the
+    manager's isolation policy. Consumed verbatim by chat,
+    ``list_mcps``, and team tools; also the cache key for
+    :meth:`WorkspaceManagerBase.get_workspace`."""
 
     name: str = Field(
         default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

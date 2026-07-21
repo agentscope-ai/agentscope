@@ -21,6 +21,7 @@ from ._block import (
     ContentBlock,
     ContentBlockTypes,
 )
+from ..types import ReplyFinishedReason, ErrorInfo
 from .._logging import logger
 
 if TYPE_CHECKING:
@@ -81,6 +82,12 @@ class Msg(BaseModel):
     """The creation time of the message"""
     finished_at: str | None = Field(default=None)
     """The finished time of the message"""
+    finished_reason: ReplyFinishedReason | None = Field(default=None)
+    """Terminal reason of this reply (error / interrupted /
+    exceed_max_iters). ``None`` until a ``REPLY_END`` event is applied."""
+    error: ErrorInfo | None = Field(default=None)
+    """Structured error info, populated only when
+    ``finished_reason == ReplyFinishedReason.ERROR``."""
     usage: Usage | None = Field(default=None)
     """The token usage information of the message"""
 
@@ -238,6 +245,13 @@ class Msg(BaseModel):
         match event.type:
             case EventType.REPLY_END:
                 self.finished_at = event.created_at
+                # ``event.finished_reason`` is a bare string (EventBase sets
+                # ``use_enum_values``); coerce back to the enum so this
+                # field serializes cleanly.
+                self.finished_reason = ReplyFinishedReason(
+                    event.finished_reason,
+                )
+                self.error = event.error
 
             case EventType.MODEL_CALL_END:
                 if self.usage is None:
@@ -439,7 +453,10 @@ class Msg(BaseModel):
             case EventType.USER_CONFIRM_RESULT:
                 for result in event.confirm_results:
                     b = self._find_block("tool_call", result.tool_call.id)
-                    if b is not None:
+                    # Only ASKING calls can transition; skip stale results
+                    # (e.g. arriving after an interrupt already resolved the
+                    # tool call).
+                    if b is not None and b.state == ToolCallState.ASKING:
                         assert isinstance(b, ToolCallBlock)
                         b.state = (
                             ToolCallState.ALLOWED
@@ -455,7 +472,16 @@ class Msg(BaseModel):
                         b.state = ToolCallState.SUBMITTED
 
             case EventType.EXTERNAL_EXECUTION_RESULT:
+                # Skip results whose tool_call already has a tool_result
+                # (e.g. late arrival after an interrupt).
+                existing_ids = {
+                    b.id
+                    for b in self.content
+                    if isinstance(b, ToolResultBlock)
+                }
                 for result in event.execution_results:
+                    if result.id in existing_ids:
+                        continue
                     self.content.append(result)
 
         return self

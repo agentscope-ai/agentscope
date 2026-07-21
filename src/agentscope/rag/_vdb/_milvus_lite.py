@@ -406,7 +406,7 @@ class MilvusLiteStore(VectorStoreBase):
     @staticmethod
     def _build_document_filter(document_id: str) -> str:
         """Build a Milvus scalar filter for a document id."""
-        return f"document_id == {json.dumps(document_id)}"
+        return f"document_id == {json.dumps(document_id, ensure_ascii=False)}"
 
     @staticmethod
     def _build_metadata_filter(
@@ -417,7 +417,8 @@ class MilvusLiteStore(VectorStoreBase):
             return ""
 
         return " and ".join(
-            f"metadata[{json.dumps(key)}] == {json.dumps(value)}"
+            f"metadata[{json.dumps(key, ensure_ascii=False)}] == "
+            f"{json.dumps(value, ensure_ascii=False)}"
             for key, value in metadata_filter.items()
         )
 
@@ -426,12 +427,15 @@ class MilvusLiteStore(VectorStoreBase):
         hit: dict[str, Any],
         metric_type: Literal["COSINE", "IP", "L2"],
     ) -> float:
-        """Extract a score from Milvus search result shapes."""
+        """Extract a score from Milvus search result shapes.
+
+        Since milvus-lite >= 3.1.0 the ``distance`` field for COSINE
+        already carries the cosine similarity (1.0 for identical
+        vectors), so no conversion is needed.
+        """
+        # pylint: disable=unused-argument
         if "distance" in hit:
-            distance = float(hit["distance"])
-            if metric_type == "COSINE":
-                return 1.0 - distance
-            return distance
+            return float(hit["distance"])
         if "score" in hit:
             return float(hit["score"])
         return 0.0
