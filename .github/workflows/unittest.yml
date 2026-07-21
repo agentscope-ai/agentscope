@@ -26,9 +26,7 @@ jobs:
       env:
         GRPC_VERBOSITY: ERROR
       run: |
-        coverage run -m pytest tests -v \
-          --ignore=tests/backend_applecontainer_test.py \
-          --ignore=tests/workspace_applecontainer_test.py
+        coverage run -m pytest tests -v --ignore=tests/backend_applecontainer_test.py --ignore=tests/workspace_applecontainer_test.py
     - name: Generate coverage report
       run: |
         coverage report -m
@@ -84,10 +82,7 @@ jobs:
 
       - name: Run Apple Container live tests
         run: |
-          coverage run -m pytest \
-            tests/backend_applecontainer_test.py \
-            tests/workspace_applecontainer_test.py \
-            -v
+          coverage run -m pytest tests/backend_applecontainer_test.py tests/workspace_applecontainer_test.py -v
 
       - name: Generate coverage report
         run: |
