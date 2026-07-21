@@ -20,7 +20,13 @@ from typing import (
 
 import jsonschema
 
-from ._config import ContextConfig, ReActConfig, ModelConfig, InjectionConfig
+from ._config import (
+    ContextConfig,
+    ReActConfig,
+    ModelConfig,
+    InjectionConfig,
+    SELF_COMPACT_DECISION_SCHEMA,
+)
 from ..state import AgentState
 from ._utils import _ToolCallBatch
 from .._logging import logger
@@ -389,6 +395,96 @@ class Agent:
 
             await execute_chain()
 
+    async def self_compact_context(
+        self,
+        context_config: ContextConfig | None = None,
+    ) -> None:
+        """Optionally compact context after a reply has completed.
+
+        This adaptive path only runs below the hard compression threshold.
+        It asks the model for a rubric-based ``COMPRESS`` or ``CONTINUE``
+        decision and reuses :meth:`compress_context` when compaction is
+        requested.
+
+        Args:
+            context_config (`ContextConfig | None`, optional):
+                The context config to use. Defaults to the agent's config.
+        """
+        cfg = context_config or self.context_config
+        if (
+            not cfg.self_compact_enabled
+            or not self.state.context
+            or self.state.cur_iter < cfg.self_compact_min_tool_rounds
+        ):
+            return
+
+        try:
+            kwargs = await self._prepare_model_input()
+            estimated_tokens = await self.model.count_tokens(**kwargs)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.warning(
+                "[AGENT %s]: Failed to estimate context usage, skipping "
+                "optional reply-end compression: %s",
+                self.name,
+                e,
+            )
+            return
+
+        context_size = self.model.context_size
+        min_threshold = cfg.self_compact_min_ratio * context_size
+        hard_threshold = cfg.trigger_ratio * context_size
+        if (
+            estimated_tokens < min_threshold
+            or estimated_tokens >= hard_threshold
+        ):
+            return
+
+        try:
+            should_compact = await self._should_self_compact(
+                cfg,
+                kwargs["messages"],
+                estimated_tokens,
+            )
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.warning(
+                "[AGENT %s]: Self-compaction rubric failed, skipping "
+                "optional reply-end compression: %s",
+                self.name,
+                e,
+            )
+            return
+
+        if not should_compact:
+            return
+
+        logger.info(
+            "[AGENT %s]: Self-compaction rubric requested compression "
+            "at token count %d below hard threshold %d.",
+            self.name,
+            int(estimated_tokens),
+            int(hard_threshold),
+        )
+
+        # Reuse the regular compression path, including its middlewares and
+        # interruption protection, by temporarily lowering its threshold to
+        # one token below the usage evaluated by the rubric. The one-token
+        # margin avoids floating-point roundoff making the reconstructed
+        # threshold slightly larger than ``estimated_tokens``.
+        forced_cfg = cfg.model_copy(
+            update={
+                "trigger_ratio": (estimated_tokens - 1) / context_size,
+            },
+        )
+        try:
+            await self.compress_context(context_config=forced_cfg)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.warning(
+                "[AGENT %s]: Optional reply-end self-compaction failed, "
+                "keeping the original context: %s",
+                self.name,
+                e,
+            )
+
     async def _compress_context_impl(
         self,
         context_config: ContextConfig | None = None,
@@ -613,6 +709,66 @@ class Agent:
             await apply_task
             raise
 
+    async def _should_self_compact(
+        self,
+        context_config: ContextConfig,
+        messages: list[Msg],
+        estimated_tokens: int,
+    ) -> bool:
+        """Ask the model whether the completed reply should be compacted."""
+        prompt = self._render_self_compact_rubric_prompt(
+            context_config,
+            estimated_tokens,
+        )
+        if not prompt:
+            return False
+
+        response = await self.model.generate_structured_output(
+            messages=messages
+            + [
+                UserMsg(
+                    name="user",
+                    content=prompt,
+                ),
+            ],
+            structured_model=SELF_COMPACT_DECISION_SCHEMA,
+        )
+        if response.finished_reason == FinishedReason.INTERRUPTED:
+            raise asyncio.CancelledError()
+
+        decision = str(response.content.get("decision", "")).upper()
+        return decision == "COMPRESS"
+
+    def _render_self_compact_rubric_prompt(
+        self,
+        context_config: ContextConfig,
+        estimated_tokens: int,
+    ) -> str:
+        """Render the reply-end rubric with the latest context usage."""
+        prompt = context_config.self_compact_rubric_prompt
+        if not prompt:
+            return ""
+
+        context_size = self.model.context_size
+        usage_ratio = estimated_tokens / context_size
+        replacements = {
+            "context_usage_percent": f"{100 * usage_ratio:.1f}",
+            "self_compact_min_percent": (
+                f"{100 * context_config.self_compact_min_ratio:.1f}"
+            ),
+            "trigger_percent": f"{100 * context_config.trigger_ratio:.1f}",
+            "context_usage_ratio": f"{usage_ratio:.3f}",
+            "self_compact_min_ratio": (
+                f"{context_config.self_compact_min_ratio:.3f}"
+            ),
+            "trigger_ratio": f"{context_config.trigger_ratio:.3f}",
+            "estimated_tokens": str(int(estimated_tokens)),
+            "context_size": str(int(context_size)),
+        }
+        for name, value in replacements.items():
+            prompt = prompt.replace(f"{{{name}}}", value)
+        return prompt
+
     # ======================================================================
     # Agent core methods, including _reply, _reasoning, _acting, etc.
     # ======================================================================
@@ -628,8 +784,7 @@ class Agent:
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Reply entry point (maybe wrapped by middleware)."""
         if not self._reply_middlewares:
-            async for item in self._reply_impl(inputs=inputs):
-                yield item
+            reply_generator = self._reply_impl(inputs=inputs)
         else:
 
             async def execute_chain(
@@ -664,7 +819,34 @@ class Agent:
                     ):
                         yield item
 
-            async for item in execute_chain():
+            reply_generator = execute_chain()
+
+        deferred_reply_items: list[AgentEvent | Msg] = []
+        async for item in reply_generator:
+            if deferred_reply_items:
+                # Preserve any middleware output after the terminal event while
+                # continuing to drain the chain so its post-yield cleanup runs.
+                deferred_reply_items.append(item)
+                continue
+
+            if (
+                isinstance(item, ReplyEndEvent)
+                and item.finished_reason == ReplyFinishedReason.COMPLETED
+                and self.context_config.self_compact_enabled
+            ):
+                # Defer the terminal event until the reply generator is fully
+                # drained. This lets on_reply middleware finish its post-yield
+                # cleanup against the uncompressed turn context while still
+                # ensuring compaction completes before consumers observe the
+                # terminal event and potentially stop iterating.
+                deferred_reply_items.append(item)
+                continue
+
+            yield item
+
+        if deferred_reply_items:
+            await self.self_compact_context()
+            for item in deferred_reply_items:
                 yield item
 
     async def _close_unfinished_tool_calls(
@@ -1019,10 +1201,11 @@ class Agent:
           while the context contains neither task-related tool calls (e.g.
           they have been compressed away) nor a previous tasks injection.
         - **Context**: injected at the first iteration of a reply when the
-          current input tokens are within
-          ``injection_config.context_buffer_ratio`` of the compression
-          threshold, letting the agent perceive that a compression is near.
-          This dimension is evaluated independently of the two above.
+          current input tokens reach the earlier of the self-compaction
+          eligibility ratio (when enabled) and the configured buffer before
+          hard compression. This lets the agent perceive that adaptive or
+          hard compression is near. This dimension is evaluated independently
+          of the two above.
 
         The user defined ``injection_config.extra_fields`` are attached to
         every injection, but never trigger one by themselves.
@@ -1187,21 +1370,31 @@ class Agent:
             trigger_tokens = int(
                 self.context_config.trigger_ratio * self.model.context_size,
             )
+            awareness_ratio = max(
+                0.0,
+                self.context_config.trigger_ratio
+                - self.injection_config.context_buffer_ratio,
+            )
+            if self.context_config.self_compact_enabled:
+                awareness_ratio = min(
+                    awareness_ratio,
+                    self.context_config.self_compact_min_ratio,
+                )
 
-            if input_tokens > (
-                max(
-                    0.0,
-                    self.context_config.trigger_ratio
-                    - self.injection_config.context_buffer_ratio,
-                )
-                * self.model.context_size
-            ):
-                # To trigger memory compress
-                injections["context-length"] = (
-                    f"Your current context contains {input_tokens} "
-                    f"tokens. When reaching {trigger_tokens} tokens, "
-                    f"your context will be compressed."
-                )
+            if input_tokens > awareness_ratio * self.model.context_size:
+                if self.context_config.self_compact_enabled:
+                    injections["context-length"] = (
+                        f"Your current context contains {input_tokens} "
+                        "tokens. Adaptive context compaction may be "
+                        "considered after this reply. Hard threshold "
+                        f"compression occurs at {trigger_tokens} tokens."
+                    )
+                else:
+                    injections["context-length"] = (
+                        f"Your current context contains {input_tokens} "
+                        f"tokens. When reaching {trigger_tokens} tokens, "
+                        f"your context will be compressed."
+                    )
 
         if injections:
             # The user defined fields, which don't trigger an injection by

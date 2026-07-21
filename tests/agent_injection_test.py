@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from utils import AnyString, MockModel
 
-from agentscope.agent import Agent, InjectionConfig
+from agentscope.agent import Agent, ContextConfig, InjectionConfig
 from agentscope.message import HintBlock
 from agentscope.state import Task
 from agentscope.tool import Toolkit
@@ -325,6 +325,38 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
         # The first reply, where the time injection is always triggered.
         self.agent.state.cur_iter = 0
         self.model.count_tokens = AsyncMock(return_value=700)
+
+        events = await self._run_injection()
+
+        self.assertEqual(
+            [self._expected_event(expected_hint)],
+            [evt.model_dump() for evt in events],
+        )
+
+    async def test_self_compaction_advances_context_awareness(self) -> None:
+        """When self-compaction is enabled, context awareness starts at its
+        lower eligibility ratio and describes both compression layers."""
+        expected_hint = (
+            "<system-reminder>Treat the following as the ground truth at this "
+            "point of the conversation. Anything stated earlier is outdated, "
+            "and a later reminder, if any, supersedes this one:\n"
+            "<context-length>Your current context contains 550 tokens. "
+            "Adaptive context compaction may be considered after this reply. "
+            "Hard threshold compression occurs at 800 tokens."
+            "</context-length>\n"
+            "</system-reminder>"
+        )
+        self.agent.context_config = ContextConfig(
+            trigger_ratio=0.8,
+            reserve_ratio=0.1,
+            self_compact_enabled=True,
+            self_compact_min_ratio=0.5,
+        )
+        self.agent.state.cur_iter = 0
+        self._add_injection("2026-07-01T12:00:00")
+        # 550 is below the normal 60% awareness point but above the adaptive
+        # 50% eligibility ratio.
+        self.model.count_tokens = AsyncMock(return_value=550)
 
         events = await self._run_injection()
 

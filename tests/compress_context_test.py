@@ -7,11 +7,13 @@ import tempfile
 from typing import Any
 
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock
 
 from utils import MockModel, AnyString
 
-from agentscope.model import StructuredResponse
-from agentscope.agent import Agent, ContextConfig
+from agentscope.model import ChatResponse, StructuredResponse
+from agentscope.agent import Agent, ContextConfig, InjectionConfig
+from agentscope.event import ReplyEndEvent, UserInterruptEvent
 from agentscope.state import AgentState
 from agentscope.message import (
     UserMsg,
@@ -1301,6 +1303,422 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
                 instructions,
             ),
         )
+
+    async def test_reply_end_self_compaction_compresses_when_requested(
+        self,
+    ) -> None:
+        """A reply-end rubric decision can trigger the normal compression
+        path below the hard threshold."""
+        model = MockModel(context_size=200)
+        agent = Agent(
+            name="Friday",
+            system_prompt="0" * (20 * 4),
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.8,
+                reserve_ratio=0.1,
+                self_compact_enabled=True,
+                self_compact_min_ratio=0.4,
+                self_compact_min_tool_rounds=1,
+            ),
+            state=AgentState(
+                session_id="123",
+                cur_iter=1,
+                context=[
+                    UserMsg("User", "1" * (30 * 4), id="1"),
+                    UserMsg("User", "2" * (30 * 4), id="2"),
+                ],
+            ),
+            toolkit=Toolkit(),
+        )
+        structured_responses = [
+            StructuredResponse(
+                content={
+                    "decision": "COMPRESS",
+                    "reason": "The completed work can be summarized.",
+                },
+            ),
+            StructuredResponse(
+                content={
+                    "task_overview": "1",
+                    "current_state": "2",
+                    "important_discoveries": "3",
+                    "next_steps": "4",
+                    "context_to_preserve": "5",
+                },
+            ),
+        ]
+        structured_schemas = []
+        rubric_prompt = ""
+
+        async def mock_structured_output(
+            messages: list[Msg],
+            structured_model: Any,
+            **kwargs: Any,
+        ) -> StructuredResponse:
+            del kwargs
+            nonlocal rubric_prompt
+            structured_schemas.append(structured_model)
+            if len(structured_schemas) == 1:
+                rubric_prompt = messages[-1].get_text_content()
+            return structured_responses.pop(0)
+
+        model.generate_structured_output = mock_structured_output
+
+        await agent.self_compact_context()
+
+        self.assertEqual(len(structured_schemas), 2)
+        self.assertEqual(
+            list(structured_schemas[0]["properties"]),
+            ["reason", "decision"],
+        )
+        self.assertEqual(
+            structured_schemas[0]["properties"]["decision"]["enum"],
+            ["COMPRESS", "CONTINUE"],
+        )
+        self.assertIn(
+            "now that the current reply has completed",
+            rubric_prompt,
+        )
+        self.assertIn("40.0%", rubric_prompt)
+        self.assertIn("80.0%", rubric_prompt)
+        self.assertNotEqual(agent.state.summary, "")
+
+        custom_config = agent.context_config.model_copy(
+            update={
+                "self_compact_rubric_prompt": (
+                    'Usage {context_usage_percent}%; JSON: {"keep": true}; '
+                    "unknown: {custom_placeholder}."
+                ),
+            },
+        )
+        self.assertEqual(
+            agent._render_self_compact_rubric_prompt(
+                custom_config,
+                estimated_tokens=100,
+            ),
+            'Usage 50.0%; JSON: {"keep": true}; '
+            "unknown: {custom_placeholder}.",
+        )
+
+    async def test_reply_end_self_compaction_continue_keeps_context(
+        self,
+    ) -> None:
+        """A CONTINUE verdict leaves the context and summary unchanged."""
+        model = MockModel(context_size=200)
+        agent = Agent(
+            name="Friday",
+            system_prompt="0" * (20 * 4),
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.8,
+                reserve_ratio=0.1,
+                self_compact_enabled=True,
+                self_compact_min_ratio=0.4,
+                self_compact_min_tool_rounds=1,
+            ),
+            state=AgentState(
+                session_id="123",
+                cur_iter=1,
+                context=[
+                    UserMsg("User", "1" * (30 * 4), id="1"),
+                    UserMsg("User", "2" * (30 * 4), id="2"),
+                ],
+            ),
+            toolkit=Toolkit(),
+        )
+
+        async def mock_structured_output(
+            messages: list[Msg],
+            structured_model: Any,
+            **kwargs: Any,
+        ) -> StructuredResponse:
+            del messages, structured_model, kwargs
+            return StructuredResponse(
+                content={
+                    "decision": "CONTINUE",
+                    "reason": "Exact details are still needed.",
+                },
+            )
+
+        model.generate_structured_output = mock_structured_output
+
+        await agent.self_compact_context()
+
+        self.assertEqual(agent.state.summary, "")
+        self.assertEqual([msg.id for msg in agent.state.context], ["1", "2"])
+
+    async def test_self_compaction_usage_failure_keeps_context(self) -> None:
+        """Optional compaction fails open when token estimation fails."""
+        model = MockModel(context_size=200)
+        model.generate_structured_output = AsyncMock()
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are helpful.",
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.8,
+                reserve_ratio=0.1,
+                self_compact_enabled=True,
+                self_compact_min_ratio=0.4,
+                self_compact_min_tool_rounds=0,
+            ),
+            state=AgentState(
+                session_id="123",
+                context=[UserMsg("User", "history", id="1")],
+            ),
+            toolkit=Toolkit(),
+        )
+        agent._prepare_model_input = AsyncMock(
+            return_value={"messages": []},
+        )
+        model.count_tokens = AsyncMock(
+            side_effect=RuntimeError("tokenizer unavailable"),
+        )
+
+        await agent.self_compact_context()
+
+        model.generate_structured_output.assert_not_awaited()
+        self.assertEqual(agent.state.summary, "")
+        self.assertEqual([msg.id for msg in agent.state.context], ["1"])
+
+    async def test_self_compaction_forced_threshold_has_token_margin(
+        self,
+    ) -> None:
+        """The forced threshold stays below the measured integer usage."""
+        context_size = 1_000_000
+        estimated_tokens = 125_008
+        model = MockModel(context_size=context_size)
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are helpful.",
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.8,
+                reserve_ratio=0.05,
+                self_compact_enabled=True,
+                self_compact_min_ratio=0.1,
+                self_compact_min_tool_rounds=0,
+            ),
+            state=AgentState(
+                session_id="123",
+                context=[UserMsg("User", "history")],
+            ),
+            toolkit=Toolkit(),
+        )
+        agent._prepare_model_input = AsyncMock(
+            return_value={"messages": []},
+        )
+        model.count_tokens = AsyncMock(return_value=estimated_tokens)
+        agent._should_self_compact = AsyncMock(return_value=True)
+        agent.compress_context = AsyncMock()
+
+        await agent.self_compact_context()
+
+        forced_cfg = agent.compress_context.await_args.kwargs["context_config"]
+        forced_threshold = forced_cfg.trigger_ratio * context_size
+        self.assertEqual(forced_threshold, estimated_tokens - 1)
+        self.assertLess(forced_threshold, estimated_tokens)
+
+    async def test_self_compaction_requires_minimum_tool_rounds(self) -> None:
+        """Reply-end probing respects the completed tool-round minimum."""
+        model = MockModel(context_size=200)
+        model.generate_structured_output = AsyncMock()
+        agent = Agent(
+            name="Friday",
+            system_prompt="0" * (20 * 4),
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.8,
+                reserve_ratio=0.1,
+                self_compact_enabled=True,
+                self_compact_min_ratio=0.4,
+                self_compact_min_tool_rounds=2,
+            ),
+            state=AgentState(
+                session_id="123",
+                cur_iter=1,
+                context=[UserMsg("User", "1" * (70 * 4))],
+            ),
+            toolkit=Toolkit(),
+        )
+
+        await agent.self_compact_context()
+
+        model.generate_structured_output.assert_not_awaited()
+
+    async def test_self_compaction_defers_to_hard_threshold(self) -> None:
+        """At or above the hard threshold, the next reasoning step keeps
+        responsibility for mandatory compression without a rubric call."""
+        model = MockModel(context_size=200)
+        model.generate_structured_output = AsyncMock()
+        agent = Agent(
+            name="Friday",
+            system_prompt="0" * (20 * 4),
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.8,
+                reserve_ratio=0.1,
+                self_compact_enabled=True,
+                self_compact_min_ratio=0.4,
+                self_compact_min_tool_rounds=1,
+            ),
+            state=AgentState(
+                session_id="123",
+                cur_iter=1,
+                context=[UserMsg("User", "1" * (150 * 4))],
+            ),
+            toolkit=Toolkit(),
+        )
+
+        await agent.self_compact_context()
+
+        model.generate_structured_output.assert_not_awaited()
+        self.assertEqual(agent.state.summary, "")
+
+    async def test_self_compaction_failure_keeps_original_context(
+        self,
+    ) -> None:
+        """Optional summary failures fail open after a COMPRESS verdict."""
+        model = MockModel(context_size=200)
+        agent = Agent(
+            name="Friday",
+            system_prompt="0" * (20 * 4),
+            model=model,
+            context_config=ContextConfig(
+                trigger_ratio=0.8,
+                reserve_ratio=0.1,
+                self_compact_enabled=True,
+                self_compact_min_ratio=0.4,
+                self_compact_min_tool_rounds=1,
+            ),
+            state=AgentState(
+                session_id="123",
+                cur_iter=1,
+                context=[
+                    UserMsg("User", "1" * (30 * 4), id="1"),
+                    UserMsg("User", "2" * (30 * 4), id="2"),
+                ],
+            ),
+            toolkit=Toolkit(),
+        )
+        structured_calls = 0
+
+        async def mock_structured_output(
+            messages: list[Msg],
+            structured_model: Any,
+            **kwargs: Any,
+        ) -> StructuredResponse:
+            del messages, structured_model, kwargs
+            nonlocal structured_calls
+            structured_calls += 1
+            if structured_calls == 1:
+                return StructuredResponse(
+                    content={
+                        "decision": "COMPRESS",
+                        "reason": "The completed work can be summarized.",
+                    },
+                )
+            raise RuntimeError("summary unavailable")
+
+        model.generate_structured_output = mock_structured_output
+
+        await agent.self_compact_context()
+
+        # The compression path retries once after detecting that the summary
+        # prompt itself exceeds this deliberately small model context.
+        self.assertEqual(structured_calls, 3)
+        self.assertEqual(agent.state.summary, "")
+        self.assertEqual([msg.id for msg in agent.state.context], ["1", "2"])
+
+    async def test_completed_reply_runs_self_compaction_once(self) -> None:
+        """The reply wrapper probes once for a completed reply."""
+        model = MockModel(context_size=200, stream=False)
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="done")],
+                    is_last=True,
+                ),
+            ],
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are helpful.",
+            model=model,
+            context_config=ContextConfig(
+                self_compact_enabled=True,
+                self_compact_min_tool_rounds=0,
+            ),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+            toolkit=Toolkit(),
+        )
+        agent.self_compact_context = AsyncMock()
+
+        final_msg = await agent.reply(UserMsg("User", "go"))
+
+        self.assertEqual(final_msg.get_text_content(), "done")
+        agent.self_compact_context.assert_awaited_once_with()
+
+    async def test_self_compaction_precedes_completed_terminal_event(
+        self,
+    ) -> None:
+        """Consumers stopping at ReplyEndEvent cannot skip self-compaction."""
+        model = MockModel(context_size=200, stream=False)
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="done")],
+                    is_last=True,
+                ),
+            ],
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are helpful.",
+            model=model,
+            context_config=ContextConfig(
+                self_compact_enabled=True,
+                self_compact_min_tool_rounds=0,
+            ),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+            toolkit=Toolkit(),
+        )
+        agent.self_compact_context = AsyncMock()
+
+        stream = agent.reply_stream(UserMsg("User", "go"))
+        async for event in stream:
+            if isinstance(event, ReplyEndEvent):
+                agent.self_compact_context.assert_awaited_once_with()
+                break
+        await stream.aclose()
+
+        agent.self_compact_context.assert_awaited_once_with()
+
+    async def test_reply_without_completed_terminal_skips_self_compaction(
+        self,
+    ) -> None:
+        """An idle interrupt has no completed terminal event and does not
+        trigger reply-end self-compaction."""
+        agent = Agent(
+            name="Friday",
+            system_prompt="You are helpful.",
+            model=MockModel(),
+            context_config=ContextConfig(self_compact_enabled=True),
+            injection_config=InjectionConfig(inject_runtime_state=False),
+            toolkit=Toolkit(),
+        )
+        agent.self_compact_context = AsyncMock()
+
+        events = [
+            event
+            async for event in agent.reply_stream(
+                UserInterruptEvent(reply_id="not-parked"),
+            )
+        ]
+
+        self.assertEqual(events, [])
+        agent.self_compact_context.assert_not_awaited()
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""
