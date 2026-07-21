@@ -73,7 +73,8 @@ async def get_toolkit(
        that is its team's leader gets the full leader-side toolset
        (``TeamCreate / AgentCreate / TeamSay / TeamDelete``, plus
        ``AgentInvite`` when the user has at least one invitable agent).
-    6. Caller-supplied extras (``extra_factory``)
+    6. Template-scoped extras for matching created team workers
+    7. Caller-supplied extras (``extra_factory``)
 
     Plus the workspace's skills and MCPs, which become the toolkit's
     ``skills_or_loaders`` and ``mcps`` parameters.
@@ -229,6 +230,17 @@ time or interval"
                     **team_tool_kwargs,
                     invitable_pool=invitable_pool,
                 ),
+            )
+
+    if team_role == "worker" and agent_record.data.subagent_type:
+        template = (sub_agent_templates or {}).get(
+            agent_record.data.subagent_type,
+        )
+        if template is not None and template.extra_tools_factory is not None:
+            tools += await template.extra_tools_factory(
+                user_id,
+                agent_record.id,
+                session_record.id,
             )
 
     # Caller-supplied extras.
