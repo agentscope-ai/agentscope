@@ -222,6 +222,19 @@ class AGUIProtocolLifecycleTest(IsolatedAsyncioTestCase):
         self.assertEqual(result["threadId"], "sess_1")
         self.assertEqual(result["runId"], "reply_1")
 
+    async def test_error_reply_end_to_run_error(self) -> None:
+        """Test failed ReplyEndEvent -> RUN_ERROR."""
+        event = ReplyEndEvent(
+            session_id="sess_1",
+            reply_id="reply_1",
+            finished_reason=ReplyFinishedReason.ERROR,
+        )
+        result = self.mw._convert_to_protocol(event)
+
+        self.assertEqual(result["type"], "RUN_ERROR")
+        self.assertEqual(result["message"], "Agent reply failed")
+        self.assertEqual(result["code"], "agent_reply_error")
+
     async def test_exceed_max_iters_to_run_error(self) -> None:
         """Test ExceedMaxItersEvent -> RUN_ERROR."""
         event = ExceedMaxItersEvent(
