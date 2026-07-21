@@ -253,6 +253,9 @@ class Msg(BaseModel):
                 )
                 self.error = event.error
 
+            case EventType.STATUS:
+                pass
+
             case EventType.MODEL_CALL_END:
                 if self.usage is None:
                     self.usage = Usage(
