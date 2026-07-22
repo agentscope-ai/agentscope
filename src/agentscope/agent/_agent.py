@@ -252,7 +252,8 @@ class Agent:
         | ExternalExecutionResultEvent
         | None = None,
         structured_output: Type[BaseModel] | None = None,
-    ) -> AsyncGenerator[AgentEvent, None]:
+        yield_final_msg: bool = False,
+    ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Reply to the given inputs and stream agent events.
 
         Args:
@@ -263,9 +264,13 @@ class Agent:
                 the full list of accepted variants.
             structured_output (`Type[BaseModel] | None`, optional):
                 The required structured output for this reply.
+            yield_final_msg (`bool`, defaults to `False`):
+                If yield the final reply message. When requiring structured
+                output, use this option to get the final message, and access
+                it via the `structured_output` attribute.
 
         Yields:
-            `AgentEvent`:
+            `AgentEvent | Msg`:
                 Streamed events produced during the reply.
 
         .. note:: If requiring outside interaction for multiple tool calls
@@ -277,8 +282,9 @@ class Agent:
             inputs=inputs,
             structured_output=structured_output,
         ):
-            if not isinstance(chunk, Msg):
-                yield chunk
+            if isinstance(chunk, Msg) and not yield_final_msg:
+                continue
+            yield chunk
 
     async def reply(
         self,
@@ -917,7 +923,6 @@ class Agent:
 
                             break_execution_for_hitl = False
                             break_execution_for_interruption = False
-                            break_message = ""
                             async for evt in evt_generator:
                                 yield evt
                                 if isinstance(
@@ -928,11 +933,6 @@ class Agent:
                                     ),
                                 ):
                                     break_execution_for_hitl = True
-                                    break_message = (
-                                        "Waiting for tool calls to be "
-                                        "confirmed or executed from "
-                                        "outside ..."
-                                    )
 
                                 elif (
                                     isinstance(evt, ToolResultEndEvent)
@@ -952,19 +952,15 @@ class Agent:
                                 )
                                 return
 
-                            # If it requires outside interaction stop
-                            # executing the next batch and wait for outside
-                            # trigger events
                             if break_execution_for_hitl:
-                                yield AssistantMsg(
-                                    id=self.state.reply_id,
-                                    name=self.name,
-                                    content=break_message,
-                                    finished_reason=(
-                                        ReplyFinishedReason.INTERRUPTED
-                                    ),
-                                )
-                                return
+                                break
+
+                        if break_execution_for_hitl:
+                            # Stop executing the next batches, and go back to
+                            # ``_next_action``, which parks the reply on the
+                            # awaiting tool calls. The unfinished round isn't
+                            # counted into ``cur_iter``
+                            continue
 
                 # Update iteration count after each round of reasoning-acting
                 self.state.cur_iter += 1
@@ -1480,25 +1476,17 @@ class Agent:
                 the reply id and iteration count should be updated for the new
                 reply.
         """
-        awaiting_confirmations = []
-        awaiting_external_executions = []
-
-        last_msg = self._get_last_msg()
-        if last_msg:
-            # The completed tool call ids
-            tool_result_ids = [
-                _.id for _ in last_msg.get_content_blocks("tool_result")
-            ]
-
-            for tool_call in last_msg.get_content_blocks("tool_call"):
-                if tool_call.state == ToolCallState.ASKING:
-                    awaiting_confirmations.append(tool_call.id)
-                elif (
-                    tool_call.state == ToolCallState.SUBMITTED
-                    and tool_call.id not in tool_result_ids
-                ):
-                    # submitted but no result yet, i.e. external execution
-                    awaiting_external_executions.append(tool_call.id)
+        awaiting_tool_calls = self.state.get_awaiting_tool_calls(self.name)
+        awaiting_confirmations = [
+            _.id
+            for _ in awaiting_tool_calls
+            if _.state == ToolCallState.ASKING
+        ]
+        awaiting_external_executions = [
+            _.id
+            for _ in awaiting_tool_calls
+            if _.state == ToolCallState.SUBMITTED
+        ]
 
         # No incoming event but needed
         if event is None and (
@@ -2937,39 +2925,12 @@ class Agent:
         side effects are performed by the caller ``_reply_impl``."""
 
         # ===========================================================
-        # Step 1: Check executable and awaiting tool calls
+        # Step 1: Check awaiting and executable tool calls
         # ===========================================================
-        last_msg = self._get_last_msg()
-
-        executable_tool_calls: list[ToolCallBlock] = []
-        awaiting_tool_calls: list[ToolCallBlock] = []
-        if last_msg is not None:
-            # In case wrong tool call state, first filter with the results
-            finished_ids = {
-                _.id for _ in last_msg.get_content_blocks("tool_result")
-            }
-            unfinished_tool_calls = [
-                _
-                for _ in last_msg.get_content_blocks("tool_call")
-                if _.id not in finished_ids
-            ]
-
-            # Find if there are executable or awaiting tool calls
-            for _ in unfinished_tool_calls:
-                if _.state in [ToolCallState.PENDING, ToolCallState.ALLOWED]:
-                    executable_tool_calls.append(_)
-
-                elif _.state in [
-                    ToolCallState.ASKING,
-                    ToolCallState.SUBMITTED,
-                ]:
-                    awaiting_tool_calls.append(_)
-
-        if executable_tool_calls:
-            # Next execute the tool calls
-            return Acting(tool_calls=executable_tool_calls)
-
-        if awaiting_tool_calls:
+        # Awaiting goes first: once any tool call waits for an outside
+        # response, the reply parks instead of executing the remaining
+        # tool calls (e.g. the PENDING ones deduplicated in a batch)
+        if self.state.get_awaiting_tool_calls(self.name):
             # Next wait for the permission or external execution to finish
             return Exit(
                 # The reply doesn't finish yet
@@ -2982,6 +2943,22 @@ class Agent:
                     "external execution to finish.",
                 ),
             )
+
+        last_msg = self._get_last_msg()
+        if last_msg is not None:
+            # In case wrong tool call state, first filter with the results
+            finished_ids = {
+                _.id for _ in last_msg.get_content_blocks("tool_result")
+            }
+            executable_tool_calls = [
+                _
+                for _ in last_msg.get_content_blocks("tool_call")
+                if _.id not in finished_ids
+                and _.state in [ToolCallState.PENDING, ToolCallState.ALLOWED]
+            ]
+            if executable_tool_calls:
+                # Next execute the tool calls
+                return Acting(tool_calls=executable_tool_calls)
 
         # ===========================================================
         # Step 2: Check structured output if no blocked tool calls
@@ -3022,7 +2999,11 @@ class Agent:
             )
 
             # Allow extra 5 iterations for structured generation
-            if self.state.cur_iter >= self.react_config.max_iters + 5:
+            if (
+                self.state.cur_iter
+                >= self.react_config.max_iters
+                + self.react_config.structured_output_grace_iters
+            ):
                 return Exit(
                     exit_event=[
                         ExceedMaxItersEvent(

@@ -47,7 +47,7 @@ structured output is sent to the user.
         self.schema = schema
 
     @property
-    def input_schema(self) -> dict:
+    def input_schema(self) -> dict:  # type: ignore[override]
         """The input schema of this tool."""
         return _remove_title_field(self.schema.model_json_schema())
 
@@ -56,7 +56,8 @@ structured output is sent to the user.
         tool_input: dict[str, Any],
         context: PermissionContext,
     ) -> PermissionDecision:
-        """The generate structured output tool is always allowed to be called."""
+        """The generate structured output tool is always allowed
+        to be called."""
         return PermissionDecision(
             behavior=PermissionBehavior.ALLOW,
             message=f"{self.name} is always allowed.",
