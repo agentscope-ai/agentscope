@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """The builtin tool used to generate the required structured output."""
-from typing import Any, Type, List
+from copy import deepcopy
+from typing import Any, List
 
-from pydantic import ValidationError, BaseModel
+from jsonschema import validate, ValidationError
 
 from ..permission._context import PermissionContext
 from ..permission._decision import PermissionDecision
@@ -39,17 +40,17 @@ structured output is sent to the user.
 
     def __init__(
         self,
-        schema: Type[BaseModel],
+        schema: dict,
         middlewares: List[ToolMiddlewareBase] | None = None,
     ) -> None:
-        """Initialize the tool by providing a schema."""
+        """Initialize the tool by providing a JSON schema dict."""
         super().__init__(middlewares=middlewares)
         self.schema = schema
 
     @property
     def input_schema(self) -> dict:  # type: ignore[override]
         """The input schema of this tool."""
-        return _remove_title_field(self.schema.model_json_schema())
+        return _remove_title_field(deepcopy(self.schema))
 
     async def check_permissions(
         self,
@@ -72,7 +73,7 @@ structured output is sent to the user.
         state. The tool input fields (defined by the required schema) arrive
         as keyword arguments."""
 
-        if not _agent_state.reply_context.structured_output:
+        if not _agent_state.reply_context.structured_schema:
             return ToolChunk(
                 content=[
                     TextBlock(
@@ -83,10 +84,11 @@ structured output is sent to the user.
             )
 
         try:
-            res = _agent_state.reply_context.structured_output.model_validate(
-                kwargs,
+            validate(
+                instance=kwargs,
+                schema=_agent_state.reply_context.structured_schema,
             )
-            _agent_state.reply_context.cur_structured_output = res
+            _agent_state.reply_context.structured_output = kwargs
 
             return ToolChunk(
                 content=[
@@ -102,7 +104,7 @@ structured output is sent to the user.
                 content=[
                     TextBlock(
                         text="ValidationError: Structured output validation "
-                        f"failed with error: {e}",
+                        f"failed with error: {e.message}",
                     ),
                 ],
                 state=ToolResultState.ERROR,

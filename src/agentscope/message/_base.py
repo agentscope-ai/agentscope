@@ -4,7 +4,7 @@ import base64
 from datetime import datetime
 from typing import Literal, List, overload, Sequence, Self, TYPE_CHECKING, Any
 
-from pydantic import BaseModel, Field, SerializeAsAny, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from .._utils._common import _generate_id
 from ._block import (
@@ -103,15 +103,12 @@ class Msg(BaseModel):
     finished_reason: ReplyFinishedReason | None = Field(default=None)
     """Terminal reason of this reply (error / interrupted /
     exceed_max_iters). ``None`` until a ``REPLY_END`` event is applied."""
-    structured_output: dict | SerializeAsAny[BaseModel] | None = Field(
-        default=None,
-    )
+    structured_output: dict | None = Field(default=None)
     """The structured output of the reply. Populated only when a structured
-    output is requested via ``reply(..., structured_output=...)`` and
+    output is requested via ``reply(..., structured_schema=...)`` and
     successfully generated; ``None`` otherwise, e.g. not requested, or the
     reply ends (interrupted / error / exceed_max_iters) before the output
-    is generated. Note it deserializes as a plain ``dict`` since the
-    original model class cannot be recovered from JSON."""
+    is generated."""
     error: ErrorInfo | None = Field(default=None)
     """Structured error info, populated only when
     ``finished_reason == ReplyFinishedReason.ERROR``."""
@@ -518,7 +515,7 @@ def UserMsg(
     metadata: dict | None = None,
     created_at: str | None = None,
     finished_at: str | None = None,
-    finished_reason: str | None = None,
+    finished_reason: ReplyFinishedReason | None = None,
     id: str | None = None,  # pylint: disable=redefined-builtin
 ) -> Msg:
     """Create a user message with role ``"user"``.
@@ -539,7 +536,7 @@ def UserMsg(
         finished_at (`str | None`, optional):
             ISO-format timestamp for when the message was finished. Defaults to
             the same value as ``created_at`` when not provided.
-        finished_reason (`str | None`, optional):
+        finished_reason (`ReplyFinishedReason | None`, optional):
             The reason the message was finished. Defaults to ``None`` when not
             provided.
         id (`str | None`, optional):
@@ -572,7 +569,7 @@ def AssistantMsg(
     created_at: str | None = None,
     finished_at: str | None = None,
     finished_reason: ReplyFinishedReason | None = None,
-    structured_output: SerializeAsAny[BaseModel] | None = None,
+    structured_output: dict | None = None,
     id: str | None = None,  # pylint: disable=redefined-builtin
     usage: Usage | None = None,
 ) -> Msg:
@@ -594,8 +591,8 @@ def AssistantMsg(
         finished_at (`str | None`, optional):
             ISO-format timestamp for when the message was finished. Not set by
             default for assistant messages.
-        structured_output (`SerializeAsAny[BaseModel] | None`, optional):
-            The required structured output of the assistant message.
+        structured_output (`dict | None`, optional):
+            The structured output carried by the assistant message.
         finished_reason (`ReplyFinishedReason | None`, optional):
             The finished reason for the assistant message.
         id (`str | None`, optional):
@@ -650,7 +647,7 @@ def SystemMsg(
             ISO-format timestamp for when the message was finished. Defaults to
             the same value as ``created_at`` when not provided.
         finished_reason (`ReplyFinishedReason | None`, optional):
-            The finished reason for the assistant message.
+            The finished reason for the system message.
         id (`str | None`, optional):
             A unique identifier for the message. A random UUID hex string is
             generated when not provided.

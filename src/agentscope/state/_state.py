@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """The agent state class."""
-from typing import Any, Type
+from typing import Any
 
-from pydantic import BaseModel, Field, SerializeAsAny, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 import aiofiles.os
 
@@ -157,16 +157,11 @@ class ReplyContext(BaseModel):
     """The current iteration of the agent's reasoning-acting loop in this
     reply."""
 
-    structured_output: Type[BaseModel] | None = Field(
-        default=None,
-        exclude=True,
-    )
-    """The current required structured output of the reply. Excluded from
-    serialization since a class object cannot be serialized; it is
-    re-provided by the caller on each ``reply`` call."""
+    structured_schema: dict | None = None
+    """The JSON schema that the reply's structured output must conform to."""
 
-    cur_structured_output: dict | SerializeAsAny[BaseModel] | None = None
-    """The current structured output generated within this reply."""
+    structured_output: dict | None = None
+    """The structured output generated within this reply."""
 
 
 class AgentState(BaseModel):

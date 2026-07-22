@@ -251,7 +251,7 @@ class Agent:
         | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
-        structured_output: Type[BaseModel] | None = None,
+        structured_schema: Type[BaseModel] | dict | None = None,
         yield_final_msg: bool = False,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Reply to the given inputs and stream agent events.
@@ -262,8 +262,9 @@ class Agent:
             optional):
                 The inputs that trigger this reply. See :meth:`reply` for
                 the full list of accepted variants.
-            structured_output (`Type[BaseModel] | None`, optional):
-                The required structured output for this reply.
+            structured_schema (`Type[BaseModel] | dict | None`, optional):
+                The schema of the required structured output for this reply,
+                a Pydantic model class or a JSON schema dict.
             yield_final_msg (`bool`, defaults to `False`):
                 If yield the final reply message. When requiring structured
                 output, use this option to get the final message, and access
@@ -280,7 +281,7 @@ class Agent:
         """
         async for chunk in self._reply(
             inputs=inputs,
-            structured_output=structured_output,
+            structured_schema=structured_schema,
         ):
             if isinstance(chunk, Msg) and not yield_final_msg:
                 continue
@@ -294,7 +295,7 @@ class Agent:
         | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
-        structured_output: Type[BaseModel] | None = None,
+        structured_schema: Type[BaseModel] | dict | None = None,
     ) -> Msg:
         """Reply to the given inputs, consuming all streamed events.
 
@@ -315,8 +316,13 @@ class Agent:
                   reasoning-acting loop,
                 - `None` if there is nothing new to feed in (e.g. just
                   continue from the current state).
-            structured_output (`Type[BaseModel] | None`, optional):
-                The required structured output for this reply.
+            structured_schema (`Type[BaseModel] | dict | None`, optional):
+                The schema of the required structured output for this reply,
+                a Pydantic model class or a JSON schema dict. The output is
+                validated structurally against the schema (custom Pydantic
+                validators are NOT executed) and carried on the final
+                message's ``structured_output`` attribute as a dict, while
+                the message text is only a placeholder.
 
         Returns:
             `Msg`:
@@ -325,7 +331,7 @@ class Agent:
         final_msg: Msg | None = None
         async for evt_or_msg in self._reply(
             inputs=inputs,
-            structured_output=structured_output,
+            structured_schema=structured_schema,
         ):
             if isinstance(evt_or_msg, Msg):
                 final_msg = evt_or_msg
@@ -630,13 +636,20 @@ class Agent:
         | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
-        structured_output: Type[BaseModel] | None = None,
+        structured_schema: Type[BaseModel] | dict | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Reply entry point (maybe wrapped by middleware)."""
+        # Normalize the schema into a plain JSON schema dict
+        schema: dict | None = (
+            structured_schema.model_json_schema()
+            if isinstance(structured_schema, type)
+            else structured_schema
+        )
+
         if not self._reply_middlewares:
             async for item in self._reply_impl(
                 inputs=inputs,
-                structured_output=structured_output,
+                structured_schema=schema,
             ):
                 yield item
         else:
@@ -649,19 +662,19 @@ class Agent:
                 | UserInterruptEvent
                 | ExternalExecutionResultEvent
                 | None = inputs,
-                structured_output: Type[BaseModel] | None = structured_output,
+                structured_schema: dict | None = schema,
             ) -> AsyncGenerator[AgentEvent | Msg, None]:
                 if index >= len(self._reply_middlewares):
                     async for item in self._reply_impl(
                         inputs=inputs,
-                        structured_output=structured_output,
+                        structured_schema=structured_schema,
                     ):
                         yield item
                 else:
                     mw = self._reply_middlewares[index]
                     input_kwargs = {
                         "inputs": inputs,
-                        "structured_output": structured_output,
+                        "structured_schema": structured_schema,
                     }
 
                     async def next_handler(
@@ -753,7 +766,7 @@ class Agent:
         | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
-        structured_output: Type[BaseModel] | None = None,
+        structured_schema: dict | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Core reply logic."""
 
@@ -811,14 +824,19 @@ class Agent:
             if is_awaiting:
                 async for evt in self._handle_incoming_event(event):
                     yield evt
+                # An explicitly given schema overrides the parked reply's one
+                if structured_schema is not None:
+                    self.state.reply_context.structured_schema = (
+                        structured_schema
+                    )
             else:
                 await self._handle_incoming_messages(msgs)
                 # Update the context with the incoming message and state
                 self.state.reply_context = ReplyContext(
                     reply_id=_generate_id(),
                     cur_iter=0,
-                    structured_output=structured_output,
-                    cur_structured_output=None,
+                    structured_schema=structured_schema,
+                    structured_output=None,
                 )
 
                 yield ReplyStartEvent(
@@ -827,17 +845,14 @@ class Agent:
                     name=self.name,
                 )
 
-            # Update the structurted output tool for new requirements or
+            # Update the structured output tool for new requirements or
             #  from the previous reply
-            if self.state.reply_context.structured_output:
+            await self.toolkit.remove_tool(_GenerateStructuredOutput.name)
+            if self.state.reply_context.structured_schema:
                 await self.toolkit.add_tool(
                     _GenerateStructuredOutput(
-                        schema=self.state.reply_context.structured_output,
+                        schema=self.state.reply_context.structured_schema,
                     ),
-                )
-            else:
-                await self.toolkit.remove_tool(
-                    _GenerateStructuredOutput.name,
                 )
 
             # =================================================================
@@ -852,7 +867,7 @@ class Agent:
                 next_action = self._next_action(final_msg)
 
                 match next_action:
-                    case Exit(exit_msg=exit_msg, exit_event=exit_events):
+                    case Exit(exit_msg=exit_msg, exit_events=exit_events):
                         for exit_event in exit_events or []:
                             yield exit_event
                         if exit_msg:
@@ -2925,16 +2940,39 @@ class Agent:
         side effects are performed by the caller ``_reply_impl``."""
 
         # ===========================================================
-        # Step 1: Check awaiting and executable tool calls
+        # Step 1: Check executable and awaiting tool calls
         # ===========================================================
-        # Awaiting goes first: once any tool call waits for an outside
-        # response, the reply parks instead of executing the remaining
-        # tool calls (e.g. the PENDING ones deduplicated in a batch)
-        if self.state.get_awaiting_tool_calls(self.name):
+        awaiting_tool_calls = self.state.get_awaiting_tool_calls(self.name)
+
+        last_msg = self._get_last_msg()
+        if last_msg is not None:
+            # In case wrong tool call state, first filter with the results
+            finished_ids = {
+                _.id for _ in last_msg.get_content_blocks("tool_result")
+            }
+            # With awaiting tool calls, PENDING ones are blocked (e.g.
+            # deduplicated in a batch) and wait; only ALLOWED ones execute
+            executable_tool_calls = [
+                _
+                for _ in last_msg.get_content_blocks("tool_call")
+                if _.id not in finished_ids
+                and (
+                    _.state == ToolCallState.ALLOWED
+                    or (
+                        _.state == ToolCallState.PENDING
+                        and not awaiting_tool_calls
+                    )
+                )
+            ]
+            if executable_tool_calls:
+                # Next execute the tool calls
+                return Acting(tool_calls=executable_tool_calls)
+
+        if awaiting_tool_calls:
             # Next wait for the permission or external execution to finish
             return Exit(
                 # The reply doesn't finish yet
-                exit_event=None,
+                exit_events=None,
                 exit_msg=AssistantMsg(
                     id=self.state.reply_id,
                     name=self.name,
@@ -2944,34 +2982,18 @@ class Agent:
                 ),
             )
 
-        last_msg = self._get_last_msg()
-        if last_msg is not None:
-            # In case wrong tool call state, first filter with the results
-            finished_ids = {
-                _.id for _ in last_msg.get_content_blocks("tool_result")
-            }
-            executable_tool_calls = [
-                _
-                for _ in last_msg.get_content_blocks("tool_call")
-                if _.id not in finished_ids
-                and _.state in [ToolCallState.PENDING, ToolCallState.ALLOWED]
-            ]
-            if executable_tool_calls:
-                # Next execute the tool calls
-                return Acting(tool_calls=executable_tool_calls)
-
         # ===========================================================
         # Step 2: Check structured output if no blocked tool calls
         # ===========================================================
 
         # Structured output requirement and satisfaction
-        required = self.state.reply_context.structured_output is not None
-        satisfied = self.state.reply_context.cur_structured_output is not None
+        required = self.state.reply_context.structured_schema is not None
+        satisfied = self.state.reply_context.structured_output is not None
 
         if required and satisfied:
             # Next return the structured output and finish the reply
             return Exit(
-                exit_event=[
+                exit_events=[
                     ReplyEndEvent(
                         session_id=self.state.session_id,
                         reply_id=self.state.reply_id,
@@ -2984,7 +3006,7 @@ class Agent:
                     content="The required structured output is generated.",
                     finished_reason=ReplyFinishedReason.COMPLETED,
                     structured_output=deepcopy(
-                        self.state.reply_context.cur_structured_output,
+                        self.state.reply_context.structured_output,
                     ),
                 ),
             )
@@ -2998,14 +3020,14 @@ class Agent:
                 "structured output."
             )
 
-            # Allow extra 5 iterations for structured generation
+            # Allow extra grace iterations for structured generation
             if (
                 self.state.cur_iter
                 >= self.react_config.max_iters
                 + self.react_config.structured_output_grace_iters
             ):
                 return Exit(
-                    exit_event=[
+                    exit_events=[
                         ExceedMaxItersEvent(
                             reply_id=self.state.reply_id,
                             name=self.name,
@@ -3065,7 +3087,7 @@ class Agent:
         # The last reasoning produced a text-only final message
         if final_msg is not None:
             return Exit(
-                exit_event=[
+                exit_events=[
                     ReplyEndEvent(
                         session_id=self.state.session_id,
                         reply_id=self.state.reply_id,
@@ -3084,7 +3106,7 @@ class Agent:
             )
 
             return Exit(
-                exit_event=[
+                exit_events=[
                     ExceedMaxItersEvent(
                         reply_id=self.state.reply_id,
                         name=self.name,

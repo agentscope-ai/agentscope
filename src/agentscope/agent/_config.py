@@ -299,6 +299,8 @@ class ReActConfig(BaseModel):
         default=5,
         gt=0,
     )
+    """The extra iterations allowed beyond ``max_iters`` to generate the
+    required structured output."""
 
     stop_on_reject: bool = Field(
         title="Rejection Handling",

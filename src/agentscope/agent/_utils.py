@@ -40,7 +40,7 @@ class Exit(BaseModel):
     """Next action: end the reply; ``exit_event=None`` means pausing."""
 
     exit_msg: Msg
-    exit_event: list[AgentEvent] | None = None
+    exit_events: list[AgentEvent] | None = None
 
 
 def _resolve_timezone(name: str) -> tzinfo:

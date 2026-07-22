@@ -650,10 +650,9 @@ class Toolkit:
 
                 return
 
-        logger.warning(
-            "Cannot find group '%s' in toolkit, only %s are available.",
-            group_name,
-            [_.name for _ in self.tool_groups],
+        raise ValueError(
+            f"Cannot find group '{group_name}' in toolkit, only "
+            f"{[_.name for _ in self.tool_groups]} are available.",
         )
 
     async def remove_tool(self, tool_name: str | list[str]) -> None:
