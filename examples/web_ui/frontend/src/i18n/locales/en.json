@@ -424,9 +424,13 @@
 	},
 	"dialog-skill-add": {
 		"title": "Add skill",
-		"description": "Enter the path to a skill directory to add it to the workspace.",
-		"pathLabel": "Skill path",
-		"pathPlaceholder": "/path/to/skill"
+		"description": "Select a skill directory to upload to the workspace.",
+		"folderLabel": "Skill folder",
+		"selectFolder": "Select folder",
+		"noFolderSelected": "No folder selected",
+		"invalidSelection": "Select exactly one skill folder.",
+		"missingSkillMd": "The selected folder must contain SKILL.md at its root.",
+		"invalidSkillMd": "SKILL.md must have valid name and description frontmatter."
 	},
 	"schedule": {
 		"calendar": "Calendar",

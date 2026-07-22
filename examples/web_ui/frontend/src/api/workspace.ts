@@ -1,5 +1,5 @@
 import { client } from './client';
-import type { AddSkillRequest, MCPClient, MCPClientStatus, Skill } from './types';
+import type { MCPClient, MCPClientStatus, Skill } from './types';
 
 export const workspaceApi = {
 	mcp: {
@@ -23,11 +23,16 @@ export const workspaceApi = {
 		list: (agentId: string, sessionId: string) =>
 			client.get<Skill[]>('/workspace/skill', { agent_id: agentId, session_id: sessionId }),
 
-		add: (agentId: string, sessionId: string, body: AddSkillRequest) =>
-			client.post<void>('/workspace/skill', body, {
+		add: (agentId: string, sessionId: string, files: File[]) => {
+			const body = new FormData();
+			files.forEach((file) => {
+				body.append('files', file, file.webkitRelativePath || file.name);
+			});
+			return client.post<void>('/workspace/skill', body, {
 				agent_id: agentId,
 				session_id: sessionId,
-			}),
+			});
+		},
 
 		remove: (skillName: string, agentId: string, sessionId: string) =>
 			client.delete(`/workspace/skill/${skillName}`, {

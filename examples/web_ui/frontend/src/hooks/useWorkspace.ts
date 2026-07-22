@@ -82,9 +82,9 @@ export function useWorkspace(agentId: string | null, sessionId: string | null) {
 	);
 
 	const addSkill = useCallback(
-		async (skillPath: string) => {
+		async (files: File[]) => {
 			if (!agentId || !sessionId) throw new Error('No agent/session selected');
-			await workspaceApi.skill.add(agentId, sessionId, { skill_path: skillPath });
+			await workspaceApi.skill.add(agentId, sessionId, files);
 			await refetchSkills();
 		},
 		[agentId, sessionId, refetchSkills],

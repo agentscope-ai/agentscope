@@ -424,9 +424,13 @@
 	},
 	"dialog-skill-add": {
 		"title": "添加技能",
-		"description": "输入技能目录的路径以添加到工作区。",
-		"pathLabel": "技能路径",
-		"pathPlaceholder": "/path/to/skill"
+		"description": "选择一个技能目录并上传到工作区。",
+		"folderLabel": "技能目录",
+		"selectFolder": "选择目录",
+		"noFolderSelected": "尚未选择目录",
+		"invalidSelection": "请选择且仅选择一个技能目录。",
+		"missingSkillMd": "所选目录的根目录必须包含 SKILL.md。",
+		"invalidSkillMd": "SKILL.md 必须包含有效的 name 和 description 元数据。"
 	},
 	"schedule": {
 		"calendar": "日历",

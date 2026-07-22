@@ -18,9 +18,9 @@ interface SkillPanelProps {
 	/**
 	 * Add a skill to the workspace.
 	 *
-	 * @param skillPath - Path of the skill to add.
+	 * @param files - Files selected from the skill directory.
 	 */
-	onAdd: (skillPath: string) => Promise<void>;
+	onAdd: (files: File[]) => Promise<void>;
 	/**
 	 * Remove a skill by name.
 	 *

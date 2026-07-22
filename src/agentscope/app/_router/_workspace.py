@@ -1,6 +1,19 @@
 # -*- coding: utf-8 -*-
 """Workspace router — manage MCP clients and skills on a workspace."""
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+
+import io
+import tarfile
+from pathlib import PurePosixPath
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 from pydantic import BaseModel, Field
 
 from ..deps import (
@@ -13,14 +26,13 @@ from ..storage import StorageBase
 from ...mcp import MCPClient
 from ...skill import Skill
 from ...workspace import WorkspaceBase
+from ...workspace._skill import (
+    MAX_SKILL_ARCHIVE_SIZE,
+    MAX_SKILL_FILES,
+    validate_skill_archive,
+)
 
 workspace_router = APIRouter(prefix="/workspace", tags=["workspace"])
-
-
-class AddSkillRequest(BaseModel):
-    """The request to add skill."""
-
-    skill_path: str
 
 
 class ToolInfo(BaseModel):
@@ -35,6 +47,73 @@ class MCPClientStatus(MCPClient):
 
     is_healthy: bool = False
     tools: list[ToolInfo] = Field(default_factory=list)
+
+
+async def _build_uploaded_skill_archive(files: list[UploadFile]) -> bytes:
+    """Build a validated flat tar archive from one uploaded directory."""
+    if not files:
+        raise ValueError("No skill files were uploaded.")
+    if len(files) > MAX_SKILL_FILES:
+        raise ValueError("Skill upload contains too many files.")
+
+    root_name: str | None = None
+    seen: set[str] = set()
+    total_size = 0
+    buffer = io.BytesIO()
+
+    with tarfile.open(fileobj=buffer, mode="w") as tar:
+        for uploaded_file in files:
+            filename = uploaded_file.filename or ""
+            if "\x00" in filename or "\\" in filename:
+                raise ValueError(f"Unsafe uploaded skill path: {filename!r}.")
+            path = PurePosixPath(filename)
+            if path.is_absolute() or any(
+                part in ("", ".", "..") for part in path.parts
+            ):
+                raise ValueError(f"Unsafe uploaded skill path: {filename!r}.")
+            if len(path.parts) < 2:
+                raise ValueError(
+                    "Skill files must include their selected directory name.",
+                )
+
+            if root_name is None:
+                root_name = path.parts[0]
+            elif root_name != path.parts[0]:
+                raise ValueError(
+                    "Upload exactly one skill directory at a time.",
+                )
+
+            relative = PurePosixPath(*path.parts[1:]).as_posix()
+            portable_relative = relative.casefold()
+            if portable_relative in seen:
+                raise ValueError(
+                    f"Duplicate uploaded skill file: {relative!r}.",
+                )
+            seen.add(portable_relative)
+
+            content = bytearray()
+            while chunk := await uploaded_file.read(1024 * 1024):
+                total_size += len(chunk)
+                if total_size > MAX_SKILL_ARCHIVE_SIZE:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail="Skill upload exceeds the maximum size.",
+                    )
+                content.extend(chunk)
+
+            info = tarfile.TarInfo(relative)
+            info.size = len(content)
+            info.mode = 0o644
+            tar.addfile(info, io.BytesIO(content))
+
+    archive = buffer.getvalue()
+    if len(archive) > MAX_SKILL_ARCHIVE_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Skill upload exceeds the maximum size.",
+        )
+    validate_skill_archive(archive)
+    return archive
 
 
 async def _resolve_workspace(
@@ -179,14 +258,14 @@ async def list_skills(
 
 @workspace_router.post("/skill", status_code=status.HTTP_201_CREATED)
 async def add_skill(
-    body: AddSkillRequest,
+    files: list[UploadFile] = File(...),
     agent_id: str = Query(...),
     session_id: str = Query(...),
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
 ) -> None:
-    """Add a skill to the session's workspace from the given path."""
+    """Add a browser-uploaded skill directory to the workspace."""
     workspace = await _resolve_workspace(
         user_id,
         agent_id,
@@ -194,7 +273,16 @@ async def add_skill(
         storage,
         workspace_manager,
     )
-    await workspace.add_skill(body.skill_path)
+    try:
+        archive = await _build_uploaded_skill_archive(files)
+        await workspace.add_skill(archive)
+    except HTTPException:
+        raise
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
 
 
 @workspace_router.delete(
