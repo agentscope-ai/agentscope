@@ -26,6 +26,13 @@ class WeatherReport(BaseModel):
     temperature: float
 
 
+class WeatherReportWithUnit(BaseModel):
+    """The structured output schema with a defaulted field."""
+
+    city: str
+    unit: str = "celsius"
+
+
 class MockConfirmTool(ToolBase):
     """A mock tool that requires user confirmation."""
 
@@ -135,18 +142,32 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
             },
         )
 
-    async def test_dict_schema(self) -> None:
-        """A raw JSON schema dict works the same as a Pydantic class."""
-        self.model.set_responses([self.structured_tool_call])
+    async def test_defaults_and_extra_fields(self) -> None:
+        """In process the model class validates the output directly, so
+        defaults are filled and extra fields are dropped."""
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="structured_call_1",
+                            name="GenerateStructuredOutput",
+                            input='{"city": "Hangzhou", "note": "sunny"}',
+                        ),
+                    ],
+                    is_last=True,
+                ),
+            ],
+        )
 
         res = await self.agent.reply(
             UserMsg(name="user", content="Weather in Hangzhou?"),
-            structured_schema=WeatherReport.model_json_schema(),
+            structured_schema=WeatherReportWithUnit,
         )
 
         self.assertDictEqual(
             res.structured_output,
-            {"city": "Hangzhou", "temperature": 25.0},
+            {"city": "Hangzhou", "unit": "celsius"},
         )
 
     async def test_validation_error_retry(self) -> None:
@@ -330,8 +351,8 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
         )
 
     async def test_schema_survives_state_serialization(self) -> None:
-        """The structured schema persists across HITL park, state dump/load
-        and resume, without being re-provided by the caller."""
+        """The schema persists across HITL park, state dump/load and resume
+        as a JSON schema dict, which fills defaults and keeps extras."""
         self.agent.toolkit = Toolkit(tools=[MockConfirmTool()])
         self.model.set_responses(
             [
@@ -351,7 +372,7 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
         # The reply parks on the user confirmation
         res = await self.agent.reply(
             UserMsg(name="user", content="Weather in Hangzhou?"),
-            structured_schema=WeatherReport,
+            structured_schema=WeatherReportWithUnit,
         )
         self.assertIsNone(res.finished_reason)
 
@@ -361,11 +382,24 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
         )
         self.assertDictEqual(
             restored_state.reply_context.structured_schema,
-            WeatherReport.model_json_schema(),
+            WeatherReportWithUnit.model_json_schema(),
         )
 
         model = MockModel()
-        model.set_responses([self.structured_tool_call])
+        model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="structured_call_1",
+                            name="GenerateStructuredOutput",
+                            input='{"city": "Hangzhou", "note": "sunny"}',
+                        ),
+                    ],
+                    is_last=True,
+                ),
+            ],
+        )
         agent = Agent(
             name="Friday",
             system_prompt="You are a helpful assistant.",
@@ -391,6 +425,54 @@ class AgentStructuredOutputTest(IsolatedAsyncioTestCase):
                 ],
             ),
         )
+        self.assertEqual(res.finished_reason, "completed")
+        self.assertDictEqual(
+            res.structured_output,
+            {"city": "Hangzhou", "note": "sunny", "unit": "celsius"},
+        )
+
+    async def test_schema_ignored_on_resume(self) -> None:
+        """A schema given with a HITL resume event only warns, and the
+        reply continues with the parked schema."""
+        self.agent.toolkit = Toolkit(tools=[MockConfirmTool()])
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="confirm_call_1",
+                            name="mock_confirm_tool",
+                            input='{"input": "test"}',
+                        ),
+                    ],
+                    is_last=True,
+                ),
+                self.structured_tool_call,
+            ],
+        )
+        res = await self.agent.reply(
+            UserMsg(name="user", content="Weather in Hangzhou?"),
+            structured_schema=WeatherReport,
+        )
+        self.assertIsNone(res.finished_reason)
+
+        with self.assertLogs("as", "WARNING"):
+            res = await self.agent.reply(
+                UserConfirmResultEvent(
+                    reply_id=self.agent.state.reply_id,
+                    confirm_results=[
+                        ConfirmResult(
+                            confirmed=True,
+                            tool_call=ToolCallBlock(
+                                id="confirm_call_1",
+                                name="mock_confirm_tool",
+                                input='{"input": "test"}',
+                            ),
+                        ),
+                    ],
+                ),
+                structured_schema=WeatherReportWithUnit,
+            )
         self.assertEqual(res.finished_reason, "completed")
         self.assertDictEqual(
             res.structured_output,

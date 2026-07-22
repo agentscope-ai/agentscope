@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """The agent state class."""
-from typing import Any
+from typing import Any, Type
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_serializer, model_validator
 
 import aiofiles.os
 
@@ -157,8 +157,17 @@ class ReplyContext(BaseModel):
     """The current iteration of the agent's reasoning-acting loop in this
     reply."""
 
-    structured_schema: dict | None = None
-    """The JSON schema that the reply's structured output must conform to."""
+    structured_schema: Type[BaseModel] | dict | None = None
+    """The reply's structured output requirement, a pydantic model class in
+    process and serialized as its JSON schema dict."""
+
+    @field_serializer("structured_schema")
+    def _serialize_structured_schema(
+        self,
+        value: Type[BaseModel] | dict | None,
+    ) -> dict | None:
+        """Serialize a schema class into its JSON schema dict."""
+        return value.model_json_schema() if isinstance(value, type) else value
 
     structured_output: dict | None = None
     """The structured output generated within this reply."""

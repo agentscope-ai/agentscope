@@ -37,7 +37,7 @@ class Reasoning(BaseModel):
 
 
 class Exit(BaseModel):
-    """Next action: end the reply; ``exit_event=None`` means pausing."""
+    """Next action: end the reply."""
 
     exit_msg: Msg
     exit_events: list[AgentEvent] | None = None

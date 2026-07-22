@@ -251,7 +251,7 @@ class Agent:
         | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
-        structured_schema: Type[BaseModel] | dict | None = None,
+        structured_schema: Type[BaseModel] | None = None,
         yield_final_msg: bool = False,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Reply to the given inputs and stream agent events.
@@ -262,9 +262,10 @@ class Agent:
             optional):
                 The inputs that trigger this reply. See :meth:`reply` for
                 the full list of accepted variants.
-            structured_schema (`Type[BaseModel] | dict | None`, optional):
-                The schema of the required structured output for this reply,
-                a Pydantic model class or a JSON schema dict.
+            structured_schema (`Type[BaseModel] | None`, optional):
+                The Pydantic model class that the reply's structured output
+                must conform to. Ignored with a warning when resuming with
+                a HITL event; the parked reply's schema is used instead.
             yield_final_msg (`bool`, defaults to `False`):
                 If yield the final reply message. When requiring structured
                 output, use this option to get the final message, and access
@@ -295,7 +296,7 @@ class Agent:
         | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
-        structured_schema: Type[BaseModel] | dict | None = None,
+        structured_schema: Type[BaseModel] | None = None,
     ) -> Msg:
         """Reply to the given inputs, consuming all streamed events.
 
@@ -316,13 +317,16 @@ class Agent:
                   reasoning-acting loop,
                 - `None` if there is nothing new to feed in (e.g. just
                   continue from the current state).
-            structured_schema (`Type[BaseModel] | dict | None`, optional):
-                The schema of the required structured output for this reply,
-                a Pydantic model class or a JSON schema dict. The output is
-                validated structurally against the schema (custom Pydantic
-                validators are NOT executed) and carried on the final
-                message's ``structured_output`` attribute as a dict, while
-                the message text is only a placeholder.
+            structured_schema (`Type[BaseModel] | None`, optional):
+                The Pydantic model class that the reply's structured output
+                must conform to. The class itself validates the output; if
+                the reply resumes from a reloaded state, only its JSON
+                schema remains, so schema-declared defaults are filled but
+                custom validators are skipped. The result is carried on the
+                final message's ``structured_output`` attribute as a dict,
+                while the message text is only a placeholder. Ignored with
+                a warning when resuming with a HITL event; the parked
+                reply's schema is used instead.
 
         Returns:
             `Msg`:
@@ -636,20 +640,13 @@ class Agent:
         | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
-        structured_schema: Type[BaseModel] | dict | None = None,
+        structured_schema: Type[BaseModel] | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Reply entry point (maybe wrapped by middleware)."""
-        # Normalize the schema into a plain JSON schema dict
-        schema: dict | None = (
-            structured_schema.model_json_schema()
-            if isinstance(structured_schema, type)
-            else structured_schema
-        )
-
         if not self._reply_middlewares:
             async for item in self._reply_impl(
                 inputs=inputs,
-                structured_schema=schema,
+                structured_schema=structured_schema,
             ):
                 yield item
         else:
@@ -662,7 +659,7 @@ class Agent:
                 | UserInterruptEvent
                 | ExternalExecutionResultEvent
                 | None = inputs,
-                structured_schema: dict | None = schema,
+                structured_schema: Type[BaseModel] | None = structured_schema,
             ) -> AsyncGenerator[AgentEvent | Msg, None]:
                 if index >= len(self._reply_middlewares):
                     async for item in self._reply_impl(
@@ -766,7 +763,7 @@ class Agent:
         | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
-        structured_schema: dict | None = None,
+        structured_schema: Type[BaseModel] | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Core reply logic."""
 
@@ -794,6 +791,13 @@ class Agent:
             else:
                 event = None
                 msgs = inputs
+
+            if event and structured_schema:
+                logger.warning(
+                    "The given structured_schema is ignored when "
+                    "resuming with a HITL event; the parked reply's "
+                    "schema is used instead.",
+                )
 
             # Parked-interrupt short-circuit: only signal an INTERRUPTED
             # end when there is actual HITL work to close; otherwise the
@@ -824,11 +828,6 @@ class Agent:
             if is_awaiting:
                 async for evt in self._handle_incoming_event(event):
                     yield evt
-                # An explicitly given schema overrides the parked reply's one
-                if structured_schema is not None:
-                    self.state.reply_context.structured_schema = (
-                        structured_schema
-                    )
             else:
                 await self._handle_incoming_messages(msgs)
                 # Update the context with the incoming message and state
