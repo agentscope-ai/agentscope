@@ -264,8 +264,7 @@ class Agent:
                 the full list of accepted variants.
             structured_schema (`Type[BaseModel] | None`, optional):
                 The Pydantic model class that the reply's structured output
-                must conform to. Ignored with a warning when resuming with
-                a HITL event; the parked reply's schema is used instead.
+                must conform to. See :meth:`reply` for details.
             yield_final_msg (`bool`, defaults to `False`):
                 If yield the final reply message. When requiring structured
                 output, use this option to get the final message, and access
@@ -319,14 +318,8 @@ class Agent:
                   continue from the current state).
             structured_schema (`Type[BaseModel] | None`, optional):
                 The Pydantic model class that the reply's structured output
-                must conform to. The class itself validates the output; if
-                the reply resumes from a reloaded state, only its JSON
-                schema remains, so schema-declared defaults are filled but
-                custom validators are skipped. The result is carried on the
-                final message's ``structured_output`` attribute as a dict,
-                while the message text is only a placeholder. Ignored with
-                a warning when resuming with a HITL event; the parked
-                reply's schema is used instead.
+                must conform to, with the validated result carried on the
+                final message's ``structured_output`` attribute as a dict.
 
         Returns:
             `Msg`:
