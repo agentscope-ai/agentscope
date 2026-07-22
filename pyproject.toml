@@ -89,6 +89,10 @@ workspace = [
 tools = [
     "ripgrep",
 ]
+# ------------ A2A ------------
+a2a = [
+    "a2a-sdk>=1.1.1,<2.0.0",
+]
 # ------------ RAG ------------
 rag = [
     "qdrant-client",
@@ -136,6 +140,7 @@ full = [
     "agentscope[sql]",
     "agentscope[workspace]",
     "agentscope[tools]",
+    "agentscope[a2a]",
     "agentscope[rag]",
     "agentscope[milvuslite]",
     "agentscope[mongodb]",
