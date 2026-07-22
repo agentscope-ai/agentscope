@@ -4,7 +4,7 @@ import base64
 from datetime import datetime
 from typing import Literal, List, overload, Sequence, Self, TYPE_CHECKING, Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, SerializeAsAny, model_validator
 
 from .._utils._common import _generate_id
 from ._block import (
@@ -68,6 +68,10 @@ class Msg(BaseModel):
     """The message class in AgentScope, responsible for information storage
     and transmission among different agents."""
 
+    # =========================================================================
+    # The fields that will be fed into the context
+    # =========================================================================
+
     name: str
     """The name of the sender."""
     content: list[ContentBlock]
@@ -76,20 +80,41 @@ class Msg(BaseModel):
     """The role of the sender."""
     id: str = Field(default_factory=_generate_id)
     """The message identifier."""
+
+    # =========================================================================
+    # The fields that record the message metadata (creation time, current
+    #  usage and additional metadata).
+    # =========================================================================
+
     metadata: dict = Field(default_factory=dict)
     """The metadata of the message"""
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     """The creation time of the message"""
+    usage: Usage | None = Field(default=None)
+    """The token usage information of the message"""
+
+    # =========================================================================
+    # The fields used for workflow control, including the finished time,
+    #  reason, error message and structured output.
+    # =========================================================================
+
     finished_at: str | None = Field(default=None)
     """The finished time of the message"""
     finished_reason: ReplyFinishedReason | None = Field(default=None)
     """Terminal reason of this reply (error / interrupted /
     exceed_max_iters). ``None`` until a ``REPLY_END`` event is applied."""
+    structured_output: dict | SerializeAsAny[BaseModel] | None = Field(
+        default=None,
+    )
+    """The structured output of the reply. Populated only when a structured
+    output is requested via ``reply(..., structured_output=...)`` and
+    successfully generated; ``None`` otherwise, e.g. not requested, or the
+    reply ends (interrupted / error / exceed_max_iters) before the output
+    is generated. Note it deserializes as a plain ``dict`` since the
+    original model class cannot be recovered from JSON."""
     error: ErrorInfo | None = Field(default=None)
     """Structured error info, populated only when
     ``finished_reason == ReplyFinishedReason.ERROR``."""
-    usage: Usage | None = Field(default=None)
-    """The token usage information of the message"""
 
     @model_validator(mode="after")
     def validate_role_content(self) -> Self:
@@ -547,6 +572,7 @@ def AssistantMsg(
     created_at: str | None = None,
     finished_at: str | None = None,
     finished_reason: ReplyFinishedReason | None = None,
+    structured_output: SerializeAsAny[BaseModel] | None = None,
     id: str | None = None,  # pylint: disable=redefined-builtin
     usage: Usage | None = None,
 ) -> Msg:
@@ -568,6 +594,8 @@ def AssistantMsg(
         finished_at (`str | None`, optional):
             ISO-format timestamp for when the message was finished. Not set by
             default for assistant messages.
+        structured_output (`SerializeAsAny[BaseModel] | None`, optional):
+            The required structured output of the assistant message.
         finished_reason (`ReplyFinishedReason | None`, optional):
             The finished reason for the assistant message.
         id (`str | None`, optional):
@@ -588,6 +616,7 @@ def AssistantMsg(
         created_at=created_at or datetime.now().isoformat(),
         finished_at=finished_at,
         finished_reason=finished_reason,
+        structured_output=structured_output,
         id=id or _generate_id(),
         usage=usage,
     )

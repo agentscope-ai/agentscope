@@ -173,6 +173,7 @@ class EventToMessageTest(IsolatedAsyncioTestCase):
                 "created_at": _created_at,
                 "finished_at": finished_at,
                 "finished_reason": finished_reason,
+                "structured_output": None,
                 "error": None,
                 "content": content,
                 "usage": usage,

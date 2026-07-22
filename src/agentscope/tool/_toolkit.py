@@ -613,7 +613,11 @@ class Toolkit:
         """Clear the registered tools, skills and MCPs."""
         self.tool_groups.clear()
 
-    async def add_tool(self, tool: ToolBase | list[ToolBase], group_name: str = "basic") -> None:
+    async def add_tool(
+        self,
+        tool: ToolBase | list[ToolBase],
+        group_name: str = "basic",
+    ) -> None:
         """Add tool to the toolkit on-the-fly.
 
         Args:
@@ -623,9 +627,27 @@ class Toolkit:
                 The group name of the tool to be added.
         """
 
+        new_tools = tool if isinstance(tool, list) else [tool]
+
         for group in self.tool_groups:
             if group.name == group_name:
-                group.tools.append(tool)
+                existing_tools = {_.name for _ in group.tools}
+                for new_tool in new_tools:
+                    if new_tool.name in existing_tools:
+                        logger.warning(
+                            "Duplicate tool name '%s' found in group '%s', "
+                            "overwriting it.",
+                            new_tool.name,
+                            group.name,
+                        )
+                        # override the existing tool
+                        group.tools = [
+                            t for t in group.tools if t.name != new_tool.name
+                        ] + [new_tool]
+                    else:
+                        group.tools.append(new_tool)
+                        existing_tools.add(new_tool.name)
+
                 return
 
         logger.warning(
@@ -634,4 +656,17 @@ class Toolkit:
             [_.name for _ in self.tool_groups],
         )
 
+    async def remove_tool(self, tool_name: str | list[str]) -> None:
+        """Remove tool from the toolkit on-the-fly.
 
+        Args:
+            tool_name (`str | list[str]`):
+                The name of the tool to be removed.
+        """
+        if isinstance(tool_name, str):
+            tool_name = [tool_name]
+
+        for group in self.tool_groups:
+            group.tools = [
+                tool for tool in group.tools if tool.name not in tool_name
+            ]

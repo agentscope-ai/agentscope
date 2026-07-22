@@ -23,6 +23,7 @@ from agentscope.message import (
     ToolCallBlock,
     UserMsg,
 )
+from agentscope.types import ReplyFinishedReason
 
 
 class MockSequentialTool(ToolBase):
@@ -131,6 +132,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             "created_at": AnyString(),
             "finished_at": None,
             "finished_reason": None,
+            "structured_output": None,
             "error": None,
             "metadata": {},
             "name": "Friday",
@@ -311,6 +313,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -344,7 +347,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 ],
                 "created_at": AnyString(),
                 "finished_at": None,
-                "finished_reason": None,
+                "finished_reason": ReplyFinishedReason.COMPLETED,
+                "structured_output": None,
                 "error": None,
                 "id": AnyString(),
                 "metadata": {},
@@ -368,6 +372,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -397,6 +402,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -505,6 +511,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -548,7 +555,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 ],
                 "created_at": AnyString(),
                 "finished_at": None,
-                "finished_reason": None,
+                "finished_reason": ReplyFinishedReason.COMPLETED,
+                "structured_output": None,
                 "error": None,
                 "id": AnyString(),
                 "metadata": {},
@@ -572,6 +580,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -601,6 +610,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -647,7 +657,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "id": AnyString(),
                 "created_at": AnyString(),
                 "finished_at": None,
-                "finished_reason": None,
+                "finished_reason": ReplyFinishedReason.COMPLETED,
+                "structured_output": None,
                 "error": None,
                 "metadata": {},
                 "name": "Friday",
@@ -907,6 +918,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -1162,6 +1174,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -1450,6 +1463,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {

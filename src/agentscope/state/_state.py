@@ -2,7 +2,7 @@
 """The agent state class."""
 from typing import Any, Type
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SerializeAsAny, model_validator
 
 import aiofiles.os
 
@@ -145,18 +145,6 @@ class TaskContext(BaseModel):
     tasks: list[Task] = Field(default_factory=lambda: [])
     """The task context."""
 
-class StructuredOutput(BaseModel):
-    """The agent structured output requirements."""
-
-    allow_failure: bool = False
-    """If allow this agent fail to generate structured output, e.g. if the 
-    iteration exceeds the max_iters and still cannot generate structured 
-    output, whether to force generate a structured output result 
-    (may be incomplete or incorrect)
-    """
-
-    output_schema: Type[BaseModel]
-    """The schema of the required structured output."""
 
 class ReplyContext(BaseModel):
     """The context of the current agent reply."""
@@ -166,12 +154,18 @@ class ReplyContext(BaseModel):
     final message of the reply."""
 
     cur_iter: int = 0
-    """The current iteration of the agent's reasoning-acting loop in this reply."""
+    """The current iteration of the agent's reasoning-acting loop in this
+    reply."""
 
-    structured_output: StructuredOutput | None = None
-    """The current required structured output of the reply."""
+    structured_output: Type[BaseModel] | None = Field(
+        default=None,
+        exclude=True,
+    )
+    """The current required structured output of the reply. Excluded from
+    serialization since a class object cannot be serialized; it is
+    re-provided by the caller on each ``reply`` call."""
 
-    cur_structured_output: dict | None = None
+    cur_structured_output: dict | SerializeAsAny[BaseModel] | None = None
     """The current structured output generated within this reply."""
 
 
@@ -192,6 +186,23 @@ class AgentState(BaseModel):
     # =================================================================
     # For backword compatibility
     # =================================================================
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_reply_fields(cls, data: Any) -> Any:
+        """Migrate the top-level ``reply_id``/``cur_iter`` fields (the
+        pre-``reply_context`` storage format) into ``reply_context``, so
+        that the states saved by previous versions load correctly."""
+        if isinstance(data, dict) and (
+            "reply_id" in data or "cur_iter" in data
+        ):
+            data = dict(data)
+            reply_context = dict(data.get("reply_context") or {})
+            for key in ("reply_id", "cur_iter"):
+                if key in data and key not in reply_context:
+                    reply_context[key] = data.pop(key)
+            data["reply_context"] = reply_context
+        return data
+
     @property
     def reply_id(self) -> str:
         """The reply id of the current reply."""
@@ -204,13 +215,15 @@ class AgentState(BaseModel):
 
     @property
     def cur_iter(self) -> int:
-        """The current iteration of the agent's reasoning-acting loop in this reply."""
-        return self.cur_iter
+        """The current iteration of the agent's reasoning-acting loop in
+        this reply."""
+        return self.reply_context.cur_iter
 
     @cur_iter.setter
     def cur_iter(self, value: int) -> None:
-        """Set the current iteration of the agent's reasoning-acting loop in this reply."""
-        self.cur_iter = value
+        """Set the current iteration of the agent's reasoning-acting loop in
+        this reply."""
+        self.reply_context.cur_iter = value
 
     # =================================================================
     # The reply context
