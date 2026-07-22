@@ -7,6 +7,7 @@ import functools
 import inspect
 import json
 import os
+import re
 import types
 import uuid
 from datetime import datetime
@@ -79,7 +80,35 @@ def _json_loads_with_repair(
         `dict`:
             A dictionary parsed from the JSON string after repair attempts.
             Returns an empty dict if all repair attempts fail.
-    """
+    """  # noqa: line-too-long
+    # -- Sanitize model-polluted JSON arguments --
+    # Some models (e.g. GLM-5-Turbo, DeepSeek-V3) wrap tool-call
+    # arguments in markdown code fences or append stray XML closing
+    # tags (</tool_call>, </parameter>) from their training format.
+    # Strip both before attempting json.loads.
+    _stripped = json_str.strip()
+    _fence_pat = re.compile(
+        r"^```(?:json)?\s*(.*?)\s*```\s*$",
+        re.DOTALL,
+    )
+    _m = _fence_pat.match(_stripped)
+    if _m:
+        json_str = _m.group(1)
+    else:
+        json_str = re.sub(r"\s*```\s*$", "", _stripped)
+
+    # Use raw_decode to extract the first valid JSON object, ignoring
+    # any trailing garbage (XML tags, duplicate braces, etc.).
+    _decoder = json.JSONDecoder()
+    for _start in range(len(json_str)):
+        if json_str[_start] == "{":
+            try:
+                _res, _end = _decoder.raw_decode(json_str[_start:])
+                if isinstance(_res, dict):
+                    return _res
+            except json.JSONDecodeError:
+                continue
+
     try:
         # Loads directly
         res = json.loads(json_str)
