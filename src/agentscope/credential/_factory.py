@@ -5,6 +5,7 @@ from typing import Annotated, Type, Union, get_args, get_type_hints
 from pydantic import TypeAdapter, Field
 
 from ._anthropic import AnthropicCredential
+from ._atlascloud import AtlasCloudCredential
 from ._dashscope import DashScopeCredential
 from ._deepseek import DeepSeekCredential
 from ._gemini import GeminiCredential
@@ -35,6 +36,7 @@ class CredentialFactory:
 
     _classes: list[Type[CredentialBase]] = [
         AnthropicCredential,
+        AtlasCloudCredential,
         DashScopeCredential,
         DeepSeekCredential,
         GeminiCredential,
