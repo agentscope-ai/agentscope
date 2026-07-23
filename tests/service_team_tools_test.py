@@ -42,6 +42,7 @@ from agentscope.permission import (
     AdditionalWorkingDirectory,
     PermissionBehavior,
     PermissionContext,
+    PermissionEngine,
     PermissionMode,
     PermissionRule,
 )
@@ -920,7 +921,15 @@ class TestTeamSay(_TeamToolsTestBase):
                 ],
                 "state": "running",
                 "is_last": True,
-                "metadata": {},
+                "metadata": {
+                    "team_say": {
+                        "delivered": True,
+                        "recipient_count": 1,
+                        "includes_leader": False,
+                        "reports_to_leader": False,
+                        "broadcast": False,
+                    },
+                },
                 "id": AnyString(),
             },
         )
@@ -980,7 +989,15 @@ class TestTeamSay(_TeamToolsTestBase):
                 ],
                 "state": "running",
                 "is_last": True,
-                "metadata": {},
+                "metadata": {
+                    "team_say": {
+                        "delivered": True,
+                        "recipient_count": 2,
+                        "includes_leader": False,
+                        "reports_to_leader": False,
+                        "broadcast": True,
+                    },
+                },
                 "id": AnyString(),
             },
         )
@@ -1106,6 +1123,16 @@ class TestTeamSay(_TeamToolsTestBase):
             to=self.leader_agent.data.name,
         )
         self.assertEqual(chunk.state.value, "running")
+        self.assertEqual(
+            chunk.metadata["team_say"],
+            {
+                "delivered": True,
+                "recipient_count": 1,
+                "includes_leader": True,
+                "reports_to_leader": True,
+                "broadcast": False,
+            },
+        )
 
         # Leader's inbox received the worker's reply.
         leader_inbox = await self.bus.inbox_drain(
@@ -1128,6 +1155,90 @@ class TestTeamSay(_TeamToolsTestBase):
                     "input": None,
                 },
             ],
+        )
+
+    async def test_worker_team_say_allowed_in_explore_mode(self) -> None:
+        """Explore-mode workers can still report via TeamSay."""
+        worker_aid = self.worker_ids[0]
+        worker_sid = self.worker_sessions[worker_aid]
+
+        tool = TeamSay(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=worker_sid,
+            agent_id=worker_aid,
+            role="worker",
+        )
+        decision = await PermissionEngine(
+            PermissionContext(mode=PermissionMode.EXPLORE),
+        ).check_permission(
+            tool,
+            {
+                "content": "task done",
+                "to": self.leader_agent.data.name,
+            },
+        )
+
+        self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
+
+    async def test_worker_broadcast_reports_to_leader(self) -> None:
+        """A worker broadcast includes the leader and satisfies reporting."""
+        worker_aid = self.worker_ids[0]
+        worker_sid = self.worker_sessions[worker_aid]
+
+        tool = TeamSay(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=worker_sid,
+            agent_id=worker_aid,
+            role="worker",
+        )
+        chunk = await tool(content="broadcast report", to=None)
+
+        self.assertEqual(
+            chunk.metadata["team_say"],
+            {
+                "delivered": True,
+                "recipient_count": 2,
+                "includes_leader": True,
+                "reports_to_leader": True,
+                "broadcast": True,
+            },
+        )
+
+    async def test_worker_peer_message_does_not_report_to_leader(self) -> None:
+        """A worker can message a peer without satisfying leader report."""
+        worker_aid = self.worker_ids[0]
+        worker_sid = self.worker_sessions[worker_aid]
+        peer_agent = await self.storage.get_agent(
+            self.user_id,
+            self.worker_ids[1],
+        )
+
+        tool = TeamSay(
+            storage=self.storage,
+            message_bus=self.bus,
+            workspace_manager=self.workspace_manager,
+            user_id=self.user_id,
+            session_id=worker_sid,
+            agent_id=worker_aid,
+            role="worker",
+        )
+        chunk = await tool(content="peer note", to=peer_agent.data.name)
+
+        self.assertEqual(
+            chunk.metadata["team_say"],
+            {
+                "delivered": True,
+                "recipient_count": 1,
+                "includes_leader": False,
+                "reports_to_leader": False,
+                "broadcast": False,
+            },
         )
 
 

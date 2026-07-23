@@ -300,6 +300,13 @@ class TeamSay(_TeamToolBase):
                     )
                 recipients = [(target_session_id, target_agent_id)]
 
+            leader_target = (
+                leader_session.id,
+                leader_session.agent_id,
+            )
+            includes_leader = leader_target in recipients
+            reports_to_leader = includes_leader
+
             # Resolve sender display name once.
             sender_agent = await self._storage.get_agent(
                 self._user_id,
@@ -344,6 +351,15 @@ class TeamSay(_TeamToolBase):
                         ),
                     ),
                 ],
+                metadata={
+                    "team_say": {
+                        "delivered": True,
+                        "recipient_count": count,
+                        "includes_leader": includes_leader,
+                        "reports_to_leader": reports_to_leader,
+                        "broadcast": to is None,
+                    },
+                },
             )
         except Exception as e:  # pylint: disable=broad-except
             return ToolChunk(

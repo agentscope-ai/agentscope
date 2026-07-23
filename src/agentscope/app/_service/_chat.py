@@ -24,6 +24,7 @@ from ..workspace_manager import WorkspaceManagerBase
 from ..middleware import (
     InboxMiddleware,
     StateChangeMiddleware,
+    TeamReportMiddleware,
     ToolOffloadMiddleware,
 )
 from ...middleware import TTSMiddleware, RAGMiddleware
@@ -282,6 +283,32 @@ class ChatService:
             inputs=UserInterruptEvent(reply_id=session.state.reply_id),
         )
 
+    async def _get_framework_middlewares(
+        self,
+        user_id: str,
+        agent_id: str,
+        session: SessionRecord,
+    ) -> list:
+        """Build framework middlewares for one agent session."""
+        middlewares = [
+            InboxMiddleware(self._message_bus),
+            StateChangeMiddleware(
+                message_bus=self._message_bus,
+                session_id=session.id,
+            ),
+            ToolOffloadMiddleware(
+                bg_manager=self._background_task_manager,
+                message_bus=self._message_bus,
+                user_id=user_id,
+                agent_id=agent_id,
+            ),
+        ]
+        if session.team_id is not None:
+            team = await self._storage.get_team(user_id, session.team_id)
+            if team is not None and team.session_id != session.id:
+                middlewares.append(TeamReportMiddleware())
+        return middlewares
+
     async def _run_impl(
         self,
         user_id: str,
@@ -354,19 +381,11 @@ class ChatService:
         # (any process) wakes an idle session — no in-process retrigger
         # plumbing is needed here.
         # ----------------------------------------------------------------
-        middlewares: list = [
-            InboxMiddleware(self._message_bus),
-            StateChangeMiddleware(
-                message_bus=self._message_bus,
-                session_id=session_id,
-            ),
-            ToolOffloadMiddleware(
-                bg_manager=self._background_task_manager,
-                message_bus=self._message_bus,
-                user_id=user_id,
-                agent_id=agent_id,
-            ),
-        ]
+        middlewares = await self._get_framework_middlewares(
+            user_id,
+            agent_id,
+            session_record,
+        )
         if self._extra_agent_middlewares is not None:
             middlewares.extend(
                 await self._extra_agent_middlewares(

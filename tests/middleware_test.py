@@ -7,13 +7,14 @@ from typing import Any, AsyncGenerator, Callable, Union
 
 from utils import MockModel
 from pydantic import BaseModel
-from agentscope.event import AgentEvent
+from agentscope.app.middleware import TeamReportMiddleware
+from agentscope.event import AgentEvent, EventType, HintBlockEvent
 from agentscope.agent import Agent, ContextConfig, InjectionConfig
 from agentscope.middleware import MiddlewareBase
 from agentscope.model import ChatResponse
 from agentscope.message import (
-    TextBlock,
     HintBlock,
+    TextBlock,
     UserMsg,
     SystemMsg,
     Msg,
@@ -27,7 +28,60 @@ from agentscope.permission import (
 )
 
 
-class TestMiddleware(IsolatedAsyncioTestCase):
+class _FakeTeamSay(ToolBase):
+    """Minimal TeamSay-shaped tool for middleware tests."""
+
+    name = "TeamSay"
+    description = "fake team say"
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "content": {"type": "string"},
+            "to": {"type": ["string", "null"]},
+        },
+        "required": ["content"],
+    }
+    is_concurrency_safe = False
+    is_read_only = True
+
+    def __init__(self, reports_to_leader: bool) -> None:
+        """Initialize with the report metadata result."""
+        self._reports_to_leader = reports_to_leader
+
+    async def check_permissions(
+        self,
+        tool_input: dict[str, Any],
+        context: PermissionContext,
+    ) -> PermissionDecision:
+        """Always allow fake TeamSay calls."""
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message="allowed",
+        )
+
+    async def __call__(
+        self,
+        content: str,
+        to: str | None = None,
+    ) -> ToolChunk:
+        """Return a successful chunk with TeamSay metadata."""
+        return ToolChunk(
+            content=[TextBlock(text="delivered")],
+            metadata={
+                "team_say": {
+                    "delivered": True,
+                    "recipient_count": 1,
+                    "includes_leader": self._reports_to_leader,
+                    "reports_to_leader": self._reports_to_leader,
+                    "broadcast": to is None,
+                },
+            },
+        )
+
+
+class TestMiddleware(  # pylint: disable=too-many-public-methods
+    IsolatedAsyncioTestCase,
+):
     """Test cases for middleware system."""
 
     async def asyncSetUp(self) -> None:
@@ -1308,6 +1362,249 @@ class TestMiddleware(IsolatedAsyncioTestCase):
                 context_config=context_config,
                 instructions=None,
             )
+
+    async def test_team_report_middleware_reminds_on_silent_finish(
+        self,
+    ) -> None:
+        """A silent worker finish is gated by one report reminder."""
+        self.mock_model.set_responses(
+            [
+                ChatResponse(
+                    content=[TextBlock(text="private done")],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="still private")],
+                    is_last=True,
+                ),
+            ],
+        )
+        agent = Agent(
+            name="worker",
+            system_prompt="test prompt",
+            model=self.mock_model,
+            toolkit=Toolkit(),
+            middlewares=[TeamReportMiddleware(max_report_reminders=1)],
+        )
+
+        events = [
+            _
+            async for _ in agent.reply_stream(
+                UserMsg("leader", "do the task"),
+            )
+        ]
+
+        self.assertEqual(self.mock_model.cnt, 2)
+        self.assertEqual(
+            len(
+                [
+                    _
+                    for _ in events
+                    if isinstance(_, HintBlockEvent)
+                    and _.source == "team_report_middleware"
+                ],
+            ),
+            1,
+        )
+        self.assertEqual(
+            len([_ for _ in events if _.type == EventType.REPLY_END]),
+            1,
+        )
+        self.assertTrue(
+            any(
+                isinstance(block, HintBlock)
+                and block.source == "team_report_middleware"
+                for msg in agent.state.context
+                for block in msg.content
+            ),
+        )
+
+    async def test_team_report_middleware_allows_after_report(
+        self,
+    ) -> None:
+        """A successful TeamSay-to-leader lets the worker finish."""
+        self.mock_model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_1",
+                            name="TeamSay",
+                            input='{"content": "done", "to": null}',
+                        ),
+                    ],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="reported")],
+                    is_last=True,
+                ),
+            ],
+        )
+        agent = Agent(
+            name="worker",
+            system_prompt="test prompt",
+            model=self.mock_model,
+            toolkit=Toolkit(tools=[_FakeTeamSay(reports_to_leader=True)]),
+            middlewares=[TeamReportMiddleware()],
+        )
+
+        events = [
+            _
+            async for _ in agent.reply_stream(
+                UserMsg("leader", "do the task"),
+            )
+        ]
+
+        self.assertEqual(self.mock_model.cnt, 2)
+        self.assertEqual(
+            len(
+                [
+                    _
+                    for _ in events
+                    if isinstance(_, HintBlockEvent)
+                    and _.source == "team_report_middleware"
+                ],
+            ),
+            0,
+        )
+        self.assertEqual(
+            len([_ for _ in events if _.type == EventType.REPLY_END]),
+            1,
+        )
+
+    async def test_team_report_middleware_rejects_peer_only_report(
+        self,
+    ) -> None:
+        """TeamSay that does not include the leader does not satisfy gate."""
+        self.mock_model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_1",
+                            name="TeamSay",
+                            input='{"content": "peer note", "to": "peer"}',
+                        ),
+                    ],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="private final")],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="cap exhausted")],
+                    is_last=True,
+                ),
+            ],
+        )
+        agent = Agent(
+            name="worker",
+            system_prompt="test prompt",
+            model=self.mock_model,
+            toolkit=Toolkit(tools=[_FakeTeamSay(reports_to_leader=False)]),
+            middlewares=[TeamReportMiddleware(max_report_reminders=1)],
+        )
+
+        events = [
+            _
+            async for _ in agent.reply_stream(
+                UserMsg("leader", "do the task"),
+            )
+        ]
+
+        self.assertEqual(self.mock_model.cnt, 3)
+        self.assertEqual(
+            len(
+                [
+                    _
+                    for _ in events
+                    if isinstance(_, HintBlockEvent)
+                    and _.source == "team_report_middleware"
+                ],
+            ),
+            1,
+        )
+        self.assertEqual(
+            len([_ for _ in events if _.type == EventType.REPLY_END]),
+            1,
+        )
+
+    async def test_team_report_middleware_resets_between_replies(
+        self,
+    ) -> None:
+        """A previous report does not satisfy later worker replies."""
+        self.mock_model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="call_1",
+                            name="TeamSay",
+                            input='{"content": "done", "to": null}',
+                        ),
+                    ],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="reported")],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="private again")],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="cap exhausted")],
+                    is_last=True,
+                ),
+            ],
+        )
+        agent = Agent(
+            name="worker",
+            system_prompt="test prompt",
+            model=self.mock_model,
+            toolkit=Toolkit(tools=[_FakeTeamSay(reports_to_leader=True)]),
+            middlewares=[TeamReportMiddleware(max_report_reminders=1)],
+        )
+
+        first_events = [
+            _
+            async for _ in agent.reply_stream(
+                UserMsg("leader", "do the task"),
+            )
+        ]
+        second_events = [
+            _
+            async for _ in agent.reply_stream(
+                UserMsg("leader", "do another task"),
+            )
+        ]
+
+        self.assertEqual(self.mock_model.cnt, 4)
+        self.assertEqual(
+            len(
+                [
+                    _
+                    for _ in first_events
+                    if isinstance(_, HintBlockEvent)
+                    and _.source == "team_report_middleware"
+                ],
+            ),
+            0,
+        )
+        self.assertEqual(
+            len(
+                [
+                    _
+                    for _ in second_events
+                    if isinstance(_, HintBlockEvent)
+                    and _.source == "team_report_middleware"
+                ],
+            ),
+            1,
+        )
 
     async def asyncTearDown(self) -> None:
         """Clean up test fixtures."""
