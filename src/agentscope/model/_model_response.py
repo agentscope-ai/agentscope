@@ -239,7 +239,16 @@ class ChatResponse(DictMixin):
         return self
 
     def append_chat_response(self, chat_response: Self) -> Self:
-        """Append chat response to the current response."""
+        """Append chat response to the current response.
+
+        .. deprecated::
+            Internal streaming accumulation now uses fragment-based
+            collection (see ``ChatModelBase._collect_chunk_fragments``
+            and ``ChatModelBase._build_acc_response``) which avoids
+            O(n^2) string concatenation. This method is retained for
+            backward compatibility with external consumers but is no
+            longer called by AgentScope's own streaming paths.
+        """
         # Append content
         new_block_dict = {_.id: _ for _ in chat_response.content}
         for block in self.content:

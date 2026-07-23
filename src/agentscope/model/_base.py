@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """The base class for the chat models."""
 import asyncio
+import base64
 import inspect
 import json
 from abc import abstractmethod
+from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
 from typing import Type, Any, AsyncGenerator
@@ -24,6 +26,7 @@ from ..message import (
     ThinkingBlock,
     ToolResultBlock,
     DataBlock,
+    Base64Source,
     HintBlock,
 )
 from ..tool import ToolChoice
@@ -240,22 +243,45 @@ class ChatModelBase:
         )
 
         async def _stream() -> AsyncGenerator[ChatResponse, None]:
-            """The wrapper around model calling."""
-            # For backward compatibility
+            """The wrapper around model calling.
+
+            Uses fragment lists for O(n) accumulation instead of
+            repeated string concatenation which is O(n^2) for large
+            payloads (e.g. tool call arguments with 100k+ chars).
+            """
             yield_acc_res = True
+
+            # Fragment-based accumulators: block_id -> fragments
+            # str fragments for text/thinking/tool_call
+            _str_frags: dict[str, list[str]] = defaultdict(list)
+            # byte fragments for audio DataBlock
+            _byte_frags: dict[str, list[bytes]] = defaultdict(list)
+            # Insertion order of block IDs
+            _block_order: list[str] = []
+            # Block metadata: type, name, extras, source info
+            _block_meta: dict[str, dict] = {}
+
             try:
                 async for chunk in res:
                     if not chunk.is_last:
-                        acc_res.append_chat_response(chunk)
+                        # Collect fragments — O(1) per delta
+                        self._collect_chunk_fragments(
+                            chunk,
+                            _block_order,
+                            _block_meta,
+                            _str_frags,
+                            _byte_frags,
+                        )
+
                         acc_res.id = chunk.id
-                        # Empty-content deltas are "carrier" chunks used
-                        # by subclasses to propagate usage / id metadata
-                        # (e.g. OpenAI-compatible APIs emit a trailing
-                        # usage-only chunk with no choices). We absorb
-                        # their metadata into ``acc_res`` above but do
-                        # not surface them to the consumer, which keeps
-                        # the visible stream free of spurious empty
-                        # deltas.
+                        if chunk.usage:
+                            acc_res.usage = chunk.usage
+                        # Empty-content deltas are "carrier" chunks
+                        # used by subclasses to propagate usage / id
+                        # metadata (e.g. OpenAI-compatible APIs emit a
+                        # trailing usage-only chunk with no choices).
+                        # We absorb their metadata above but do not
+                        # surface them to the consumer.
                         if not chunk.content:
                             continue
                     else:
@@ -266,9 +292,219 @@ class ChatModelBase:
                 yield_acc_res = True
 
             if yield_acc_res:
+                # Build acc_res from fragments — single O(n) join
+                self._build_acc_response(
+                    acc_res,
+                    _block_order,
+                    _block_meta,
+                    _str_frags,
+                    _byte_frags,
+                )
                 yield acc_res
 
         return _stream()
+
+    @staticmethod
+    def _collect_chunk_fragments(
+        chunk: ChatResponse,
+        block_order: list[str],
+        block_meta: dict[str, dict],
+        str_frags: dict[str, list[str]],
+        byte_frags: dict[str, list[bytes]],
+    ) -> None:
+        """Collect all block deltas from a chunk into fragment storage.
+
+        Dispatches each content block to the appropriate fragment
+        accumulator based on block type. This is the shared logic
+        used by both ``_stream()`` and
+        ``_call_api_with_structured_output()``.
+
+        Args:
+            chunk (`ChatResponse`):
+                The streaming delta chunk to collect from.
+            block_order (`list[str]`):
+                Mutable ordered list of unique block IDs,
+                preserving first-seen insertion order.
+            block_meta (`dict[str, dict]`):
+                Mutable metadata dict per block. Keys include
+                ``type``, and optionally ``name``, ``extra``,
+                ``media_type``, ``source``.
+            str_frags (`dict[str, list[str]]`):
+                Mutable mapping of block_id to string fragment
+                lists (text, thinking, tool_call input).
+            byte_frags (`dict[str, list[bytes]]`):
+                Mutable mapping of block_id to byte fragment
+                lists (audio DataBlock).
+        """
+        for block in chunk.content:
+            bid = block.id
+            if bid not in block_meta:
+                block_order.append(bid)
+                block_meta[bid] = {"type": block.type}
+
+            meta = block_meta[bid]
+
+            if isinstance(block, TextBlock):
+                str_frags[bid].append(block.text)
+
+            elif isinstance(block, ThinkingBlock):
+                str_frags[bid].append(block.thinking)
+                for k, v in (block.model_extra or {}).items():
+                    if v is not None:
+                        meta.setdefault("extra", {})[k] = v
+
+            elif isinstance(block, ToolCallBlock):
+                if "name" not in meta:
+                    meta["name"] = block.name
+                str_frags[bid].append(block.input)
+                for k, v in (block.model_extra or {}).items():
+                    if v is not None:
+                        meta.setdefault("extra", {})[k] = v
+
+            elif isinstance(block, DataBlock):
+                ChatModelBase._collect_data_fragment(
+                    block,
+                    bid,
+                    meta,
+                    byte_frags,
+                )
+
+    @staticmethod
+    def _collect_data_fragment(
+        block: DataBlock,
+        bid: str,
+        meta: dict,
+        byte_frags: dict[str, list[bytes]],
+    ) -> None:
+        """Collect a DataBlock delta into fragment storage.
+
+        For audio media: decodes base64 chunks and appends raw
+        bytes to avoid repeated decode-concat-encode per delta.
+        For non-audio: stores the latest source (last wins).
+
+        Args:
+            block (`DataBlock`):
+                The incoming DataBlock delta to collect.
+            bid (`str`):
+                The block ID used as key in fragment storage.
+            meta (`dict`):
+                Mutable metadata dict for this block. Updated
+                in-place with ``name``, ``media_type``, and/or
+                ``source`` as appropriate.
+            byte_frags (`dict[str, list[bytes]]`):
+                Mutable mapping of block_id to accumulated raw
+                byte fragments (used for audio streams).
+        """
+        # Always preserve name if provided
+        if block.name is not None:
+            meta["name"] = block.name
+
+        if not isinstance(block.source, Base64Source):
+            meta["source"] = block.source
+            return
+
+        media_type = block.source.media_type
+        if "media_type" not in meta:
+            meta["media_type"] = media_type
+
+        if media_type.startswith("audio/"):
+            if block.source.data:
+                byte_frags[bid].append(
+                    base64.b64decode(block.source.data),
+                )
+        else:
+            # Non-streamable: latest data wins
+            meta["source"] = block.source
+
+    @staticmethod
+    def _build_acc_response(
+        acc_res: ChatResponse,
+        block_order: list[str],
+        block_meta: dict[str, dict],
+        str_frags: dict[str, list[str]],
+        byte_frags: dict[str, list[bytes]],
+    ) -> None:
+        """Build acc_res content from collected fragments.
+
+        Performs a single O(n) join for each block instead of
+        O(n^2) repeated string concatenation.
+
+        Args:
+            acc_res (`ChatResponse`):
+                The target response object whose ``content``
+                list will be populated in-place.
+            block_order (`list[str]`):
+                Ordered list of block IDs preserving insertion
+                order from the stream.
+            block_meta (`dict[str, dict]`):
+                Metadata for each block keyed by block ID.
+                Expected keys: ``type``, and optionally
+                ``name``, ``extra``, ``media_type``, ``source``.
+            str_frags (`dict[str, list[str]]`):
+                String fragments for text/thinking/tool_call
+                blocks, keyed by block ID.
+            byte_frags (`dict[str, list[bytes]]`):
+                Raw byte fragments for audio DataBlocks, keyed
+                by block ID.
+        """
+        for bid in block_order:
+            meta = block_meta[bid]
+            btype = meta["type"]
+
+            if btype == "text":
+                acc_res.content.append(
+                    TextBlock(
+                        id=bid,
+                        text="".join(str_frags.get(bid, [])),
+                    ),
+                )
+            elif btype == "thinking":
+                blk = ThinkingBlock(
+                    id=bid,
+                    thinking="".join(str_frags.get(bid, [])),
+                )
+                for k, v in meta.get("extra", {}).items():
+                    setattr(blk, k, v)
+                acc_res.content.append(blk)
+
+            elif btype == "tool_call":
+                blk = ToolCallBlock(
+                    id=bid,
+                    name=meta.get("name", ""),
+                    input="".join(str_frags.get(bid, [])),
+                )
+                for k, v in meta.get("extra", {}).items():
+                    setattr(blk, k, v)
+                acc_res.content.append(blk)
+
+            elif btype == "data":
+                if bid in byte_frags:
+                    # Audio: join raw bytes, encode once
+                    joined = b"".join(byte_frags[bid])
+                    acc_res.content.append(
+                        DataBlock(
+                            id=bid,
+                            source=Base64Source(
+                                data=base64.b64encode(
+                                    joined,
+                                ).decode("ascii"),
+                                media_type=meta.get(
+                                    "media_type",
+                                    "",
+                                ),
+                            ),
+                            name=meta.get("name"),
+                        ),
+                    )
+                elif "source" in meta:
+                    # Non-audio or URL source: use stored
+                    acc_res.content.append(
+                        DataBlock(
+                            id=bid,
+                            source=meta["source"],
+                            name=meta.get("name"),
+                        ),
+                    )
 
     @abstractmethod
     async def _call_api(
@@ -599,13 +835,34 @@ class ChatModelBase:
                 is_last=True,
                 finished_reason=FinishedReason.COMPLETED,
             )
+            _str_frags: dict[str, list[str]] = defaultdict(list)
+            _byte_frags: dict[str, list[bytes]] = defaultdict(list)
+            _block_order: list[str] = []
+            _block_meta: dict[str, dict] = {}
+
             async for chunk in res:
                 if chunk.is_last:
                     completed_response = chunk
                     break
-                acc_res.append_chat_response(chunk)
+                self._collect_chunk_fragments(
+                    chunk,
+                    _block_order,
+                    _block_meta,
+                    _str_frags,
+                    _byte_frags,
+                )
                 acc_res.id = chunk.id
+                if chunk.usage:
+                    acc_res.usage = chunk.usage
+
             if completed_response is None:
+                self._build_acc_response(
+                    acc_res,
+                    _block_order,
+                    _block_meta,
+                    _str_frags,
+                    _byte_frags,
+                )
                 completed_response = acc_res
         else:
             completed_response = res

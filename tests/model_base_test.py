@@ -465,5 +465,284 @@ class ChatModelBaseCallTest(IsolatedAsyncioTestCase):
             ],
         )
 
+    # ------------------------------------------------------------------
+    # 7) stream with large tool call arguments — O(n) accumulation
+    # ------------------------------------------------------------------
+    async def test_stream_large_tool_call_linear_accumulation(
+        self,
+    ) -> None:
+        """A large tool call argument (simulating write_file with many
+        fragments) must be accumulated in O(n) time. We verify the
+        final accumulated content is correct with 10000 fragments."""
+        num_chunks = 10000
+        fragment = "x" * 100  # 100 chars per chunk
+
+        deltas = [
+            ChatResponse(
+                content=[
+                    ToolCallBlock(
+                        id="tool-big",
+                        name="write_file",
+                        input=fragment,
+                    ),
+                ],
+                is_last=False,
+                id=f"chunk-{i}",
+            )
+            for i in range(num_chunks)
+        ]
+        self.model.set_responses([deltas])
+
+        gen = await self.model(messages=self.messages)
+        last_chunk = None
+        async for chunk in gen:
+            last_chunk = chunk
+
+        self.assertDictEqual(
+            _dump(last_chunk),
+            _expected(
+                content=[
+                    {
+                        "type": "tool_call",
+                        "id": "tool-big",
+                        "name": "write_file",
+                        "input": fragment * num_chunks,
+                        "state": "pending",
+                        "suggested_rules": [],
+                    },
+                ],
+                is_last=True,
+                finished_reason=FinishedReason.COMPLETED,
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # 8) stream with is_last=True — no acc_res needed
+    # ------------------------------------------------------------------
+    async def test_stream_with_final_chunk_no_acc_res(self) -> None:
+        """When the model stream produces a final chunk with
+        is_last=True, acc_res should NOT be yielded (the model
+        provides the complete response itself)."""
+        deltas = [
+            ChatResponse(
+                content=[TextBlock(text="hello", id="t1")],
+                is_last=False,
+                id="chunk-1",
+            ),
+            ChatResponse(
+                content=[TextBlock(text=" world", id="t1")],
+                is_last=False,
+                id="chunk-2",
+            ),
+            # Model provides its own final complete response
+            ChatResponse(
+                content=[TextBlock(text="hello world", id="t1")],
+                is_last=True,
+                id="chunk-final",
+            ),
+        ]
+        self.model.set_responses([deltas])
+
+        gen = await self.model(messages=self.messages)
+        collected = [_dump(c) async for c in gen]
+
+        # Only 3 chunks: 2 deltas + 1 model-provided final
+        # (NOT 4 — no acc_res appended)
+        self.assertListEqual(
+            collected,
+            [
+                _expected(
+                    content=[
+                        {"type": "text", "text": "hello", "id": "t1"},
+                    ],
+                    is_last=False,
+                ),
+                _expected(
+                    content=[
+                        {
+                            "type": "text",
+                            "text": " world",
+                            "id": "t1",
+                        },
+                    ],
+                    is_last=False,
+                ),
+                _expected(
+                    content=[
+                        {
+                            "type": "text",
+                            "text": "hello world",
+                            "id": "t1",
+                        },
+                    ],
+                    is_last=True,
+                ),
+            ],
+        )
+
+    # ------------------------------------------------------------------
+    # 9) stream mixed block types — normal completion (happy path)
+    # ------------------------------------------------------------------
+    async def test_stream_mixed_blocks_normal_completion(self) -> None:
+        """Mixed block types (thinking + text + tool_call) in a
+        normal stream completion (no CancelledError). The final
+        accumulated response must contain all blocks in order with
+        correctly joined fragments."""
+        deltas = [
+            # thinking part 1
+            ChatResponse(
+                content=[
+                    ThinkingBlock(thinking="step 1: ", id="think-1"),
+                ],
+                is_last=False,
+                id="chunk-1",
+            ),
+            # thinking part 2
+            ChatResponse(
+                content=[
+                    ThinkingBlock(thinking="analyze", id="think-1"),
+                ],
+                is_last=False,
+                id="chunk-2",
+            ),
+            # text part 1
+            ChatResponse(
+                content=[TextBlock(text="I will ", id="text-1")],
+                is_last=False,
+                id="chunk-3",
+            ),
+            # text part 2
+            ChatResponse(
+                content=[TextBlock(text="help you", id="text-1")],
+                is_last=False,
+                id="chunk-4",
+            ),
+            # tool_call part 1
+            ChatResponse(
+                content=[
+                    ToolCallBlock(
+                        id="tool-1",
+                        name="search",
+                        input='{"query":',
+                    ),
+                ],
+                is_last=False,
+                id="chunk-5",
+            ),
+            # tool_call part 2
+            ChatResponse(
+                content=[
+                    ToolCallBlock(
+                        id="tool-1",
+                        name="search",
+                        input='"hello"}',
+                    ),
+                ],
+                is_last=False,
+                id="chunk-6",
+            ),
+        ]
+        self.model.set_responses([deltas])
+
+        gen = await self.model(messages=self.messages)
+        collected = [_dump(c) async for c in gen]
+
+        self.assertListEqual(
+            collected,
+            [
+                _expected(
+                    content=[
+                        {
+                            "type": "thinking",
+                            "thinking": "step 1: ",
+                            "id": "think-1",
+                        },
+                    ],
+                    is_last=False,
+                ),
+                _expected(
+                    content=[
+                        {
+                            "type": "thinking",
+                            "thinking": "analyze",
+                            "id": "think-1",
+                        },
+                    ],
+                    is_last=False,
+                ),
+                _expected(
+                    content=[
+                        {
+                            "type": "text",
+                            "text": "I will ",
+                            "id": "text-1",
+                        },
+                    ],
+                    is_last=False,
+                ),
+                _expected(
+                    content=[
+                        {
+                            "type": "text",
+                            "text": "help you",
+                            "id": "text-1",
+                        },
+                    ],
+                    is_last=False,
+                ),
+                _expected(
+                    content=[
+                        {
+                            "type": "tool_call",
+                            "id": "tool-1",
+                            "name": "search",
+                            "input": '{"query":',
+                            "state": "pending",
+                            "suggested_rules": [],
+                        },
+                    ],
+                    is_last=False,
+                ),
+                _expected(
+                    content=[
+                        {
+                            "type": "tool_call",
+                            "id": "tool-1",
+                            "name": "search",
+                            "input": '"hello"}',
+                            "state": "pending",
+                            "suggested_rules": [],
+                        },
+                    ],
+                    is_last=False,
+                ),
+                # accumulated final — all blocks merged
+                _expected(
+                    content=[
+                        {
+                            "type": "thinking",
+                            "thinking": "step 1: analyze",
+                            "id": "think-1",
+                        },
+                        {
+                            "type": "text",
+                            "text": "I will help you",
+                            "id": "text-1",
+                        },
+                        {
+                            "type": "tool_call",
+                            "id": "tool-1",
+                            "name": "search",
+                            "input": '{"query":"hello"}',
+                            "state": "pending",
+                            "suggested_rules": [],
+                        },
+                    ],
+                    is_last=True,
+                    finished_reason=FinishedReason.COMPLETED,
+                ),
+            ],
+        )
+
     async def asyncTearDown(self) -> None:
         """The async teardown method."""
