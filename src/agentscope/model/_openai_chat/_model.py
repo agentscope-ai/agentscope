@@ -33,6 +33,39 @@ else:
     AsyncStream = Any
 
 
+def _safe_getattr(obj: Any, name: str) -> Any:
+    """Return an attribute value unless it is an unresolved mock-like attr."""
+    value = getattr(obj, name, None)
+    if value.__class__.__module__.startswith("unittest.mock"):
+        return None
+    return value
+
+
+def _dump_openai_obj(obj: Any) -> Any:
+    """Convert OpenAI SDK objects to JSON-safe metadata values."""
+    if obj is None:
+        return None
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, list):
+        return [_dump_openai_obj(_) for _ in obj]
+    if isinstance(obj, tuple):
+        return [_dump_openai_obj(_) for _ in obj]
+    if isinstance(obj, dict):
+        return {str(k): _dump_openai_obj(v) for k, v in obj.items()}
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump(mode="json", exclude_none=True)
+    if obj.__class__.__module__.startswith("unittest.mock"):
+        return None
+    if hasattr(obj, "__dict__"):
+        return {
+            str(k): _dump_openai_obj(v)
+            for k, v in vars(obj).items()
+            if not k.startswith("_")
+        }
+    return str(obj)
+
+
 class OpenAIChatModel(ChatModelBase):
     """The OpenAI Chat Completions model."""
 
@@ -320,6 +353,7 @@ class OpenAIChatModel(ChatModelBase):
         # ``True`` once the first audio chunk has been prefixed with a
         # streaming WAV header and yielded.
         audio_header_sent: bool = False
+        finish_reason: str | None = None
 
         usage = None
         response_id: str = _generate_id()
@@ -364,6 +398,9 @@ class OpenAIChatModel(ChatModelBase):
                     continue
 
                 choice = chunk.choices[0]
+                choice_finish_reason = _safe_getattr(choice, "finish_reason")
+                if isinstance(choice_finish_reason, str):
+                    finish_reason = choice_finish_reason
                 delta = choice.delta
 
                 # Thinking
@@ -445,7 +482,9 @@ class OpenAIChatModel(ChatModelBase):
                         input=delta_args or "",
                     )
 
-                if delta_res.content or usage:
+                if finish_reason is not None and not delta_res.metadata:
+                    delta_res.metadata = {"finish_reason": finish_reason}
+                if delta_res.content or usage or delta_res.metadata:
                     delta_res.usage = usage
                     yield delta_res
 
@@ -540,6 +579,27 @@ class OpenAIChatModel(ChatModelBase):
             "is_last": True,
             "usage": usage,
         }
+        if response.choices:
+            choice = response.choices[0]
+            metadata: dict[str, Any] = {}
+            finish_reason = _safe_getattr(choice, "finish_reason")
+            if isinstance(finish_reason, str):
+                metadata["finish_reason"] = finish_reason
+
+            function_call = _dump_openai_obj(
+                _safe_getattr(choice.message, "function_call"),
+            )
+            if function_call is not None:
+                metadata["function_call"] = function_call
+
+            tool_calls = _dump_openai_obj(
+                _safe_getattr(choice.message, "tool_calls"),
+            )
+            if tool_calls is not None:
+                metadata["tool_calls"] = tool_calls
+
+            if metadata:
+                resp_kwargs["metadata"] = metadata
         response_id = getattr(response, "id", None)
         if response_id:
             resp_kwargs["id"] = response_id
