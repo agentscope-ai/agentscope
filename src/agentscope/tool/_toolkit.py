@@ -517,8 +517,15 @@ class Toolkit:
 
             # MCP tools
             for client in group.mcps:
-                tools = await client.list_tools()
-                cache_tools.extend(tools)
+                try:
+                    tools = await client.list_tools()
+                    cache_tools.extend(tools)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to list tools from MCP '%s': %s, skipping.",
+                        client.name,
+                        e,
+                    )
 
             # Append cached tools into the available tools and solve the name
             # conflict
