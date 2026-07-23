@@ -243,9 +243,11 @@ class BubblewrapBackend(BackendBase):
         """Read a sandbox file as raw bytes.
 
         Files under ``/workspace`` and ``/tmp`` are read by a command running
-        inside Bubblewrap.  The resolved target must remain under one of the
-        writable mounts, so a symlink cannot redirect the file API to a
-        read-only system mount or another mounted device.
+        inside Bubblewrap. The in-sandbox check resolves the target and
+        rejects anything outside the writable mounts, which stops a symlink
+        from redirecting reads to a read-only system mount or another device.
+        This is a best-effort check inside the sandbox, not a guard against a
+        target swapped between the resolve and the read.
         """
         sandbox_path = self._sandbox_path_for(path)
         result = await self.exec_shell(
@@ -366,6 +368,10 @@ class BubblewrapBackend(BackendBase):
         """Build the ``bwrap`` argv for one sandboxed process."""
         self._validate_mount_sources()
 
+        # ``--bind``/``--ro-bind``/``--tmpfs`` all create their destination
+        # mount points (including parents), so an explicit ``--dir`` before a
+        # same-path mount is redundant. ``--dir /var`` is kept because the
+        # tmpfs below only covers ``/var/tmp``.
         args = [
             "bwrap",
             "--die-with-parent",
@@ -375,18 +381,12 @@ class BubblewrapBackend(BackendBase):
             "/proc",
             "--dev",
             "/dev",
-            "--dir",
-            SANDBOX_WORKDIR,
             "--bind",
             self._host_workdir,
             SANDBOX_WORKDIR,
-            "--dir",
-            SANDBOX_TMPDIR,
             "--bind",
             self._host_tmpdir,
             SANDBOX_TMPDIR,
-            "--dir",
-            "/run",
             "--tmpfs",
             "/run",
             "--dir",
@@ -397,8 +397,6 @@ class BubblewrapBackend(BackendBase):
         if self._host_cache_dir is not None:
             args.extend(
                 [
-                    "--dir",
-                    SANDBOX_CACHE_DIR,
                     "--bind",
                     self._host_cache_dir,
                     SANDBOX_CACHE_DIR,

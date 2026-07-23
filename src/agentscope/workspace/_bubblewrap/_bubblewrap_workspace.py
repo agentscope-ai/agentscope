@@ -51,6 +51,17 @@ Layout:
 class BubblewrapWorkspace(SandboxedWorkspaceBase):
     """Workspace backed by Linux Bubblewrap.
 
+    .. warning::
+        This is **not** a network sandbox. The current TCP MCP gateway
+        requires ``share_net=True`` so gateway requests from later ``bwrap``
+        executions can reach the long-lived gateway process over host
+        loopback. Sandboxed code therefore shares the host network namespace
+        and can reach any service the host can — other loopback services,
+        internal endpoints, and cloud metadata (e.g. ``169.254.169.254``).
+        The gateway bearer token only guards the gateway itself, not the rest
+        of the host network. Bubblewrap still isolates other namespaces and
+        the mounted filesystem; only the network namespace is shared.
+
     ``host_workdir`` is mounted read-write at ``/workspace``. When it is
     omitted, an ephemeral temp directory is created and removed on close.
     Bootstrap caches are stored outside ``host_workdir`` by default, and the
@@ -58,12 +69,6 @@ class BubblewrapWorkspace(SandboxedWorkspaceBase):
     explicit ``host_cache_dir`` must not overlap ``host_workdir`` or the
     backend's temporary directory; sharing one cache between mutually trusted
     workspaces is an opt-in tradeoff.
-
-    Security note: the current TCP MCP gateway requires ``share_net=True`` so
-    gateway requests from later ``bwrap`` executions can reach the long-lived
-    gateway process over host loopback. This means sandboxed code shares the
-    host network namespace; Bubblewrap still isolates other namespaces and the
-    mounted filesystem, but this is not full network isolation.
     """
 
     _gateway_home = GATEWAY_HOME
