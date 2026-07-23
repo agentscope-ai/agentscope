@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The agent state class."""
+
 from typing import Any, Type
 
 from pydantic import BaseModel, Field, field_serializer, model_validator
@@ -43,46 +44,74 @@ class ToolContext(BaseModel):
     """The names of the activated tool groups, each group contains a set of
     tools."""
 
-    async def get_cache(self, file_path: str) -> ReadCacheEntry | None:
+    async def get_cache(
+        self,
+        file_path: str,
+        mtime: float | None = None,
+    ) -> ReadCacheEntry | None:
         """Get cached file content if still valid.
 
         Args:
-            file_path: The absolute path of the file.
+            file_path (`str`):
+                The absolute path of the file.
+            mtime (`float | None`, optional):
+                The file's modification time according to the same
+                filesystem the Read/Edit tool used (e.g. a workspace
+                backend's ``stat_mtime``). When provided, it is trusted
+                over the host filesystem so caches for files that only
+                exist inside a sandbox stay valid. When ``None``, the
+                host filesystem mtime is read as a fallback. A ``None``
+                value (backend could not stat the file) skips the
+                staleness check and the cached entry is returned as-is.
 
         Returns:
-            The cached entry if valid, otherwise None.
+            `ReadCacheEntry | None`:
+                The cached entry if valid, otherwise None.
         """
 
         # Find the cache entry
         for entry in self.read_file_cache:
             if entry.file_path == file_path:
-                # Check if cache is still valid
-                try:
-                    updated_at = await aiofiles.os.path.getmtime(file_path)
-                    if updated_at == entry.updated_at:
-                        return entry
-                    else:
-                        # Cache is outdated, remove it
-                        self.read_file_cache.remove(entry)
-                        return None
-                except Exception:
-                    # File might not exist anymore
-                    self.read_file_cache.remove(entry)
-                    return None
+                # A None mtime means the backend could not stat the file;
+                # keep the cached entry without a staleness check so that
+                # Read followed by Edit still works for such paths.
+                if mtime is None:
+                    return entry
+                if mtime == entry.updated_at:
+                    return entry
+                # Cache is outdated, remove it
+                self.read_file_cache.remove(entry)
+                return None
         return None
 
-    async def cache_file(self, file_path: str, lines: list[str]) -> None:
+    async def cache_file(
+        self,
+        file_path: str,
+        lines: list[str],
+        mtime: float | None = None,
+    ) -> None:
         """Cache file content with LRU eviction.
 
         Args:
-            file_path: The absolute path of the file.
-            lines: The lines of the file content.
+            file_path (`str`):
+                The absolute path of the file.
+            lines (`list[str]`):
+                The lines of the file content.
+            mtime (`float | None`, optional):
+                The file's modification time from the same filesystem
+                the Read/Edit tool used (e.g. a workspace backend's
+                ``stat_mtime``). When ``None``, the host filesystem mtime
+                is read as a fallback; if that also fails caching is
+                skipped. Passing the backend mtime is what allows files
+                that live only inside a sandbox (e.g. ``DockerWorkspace``)
+                to be cached at all.
         """
-        try:
-            updated_at = await aiofiles.os.path.getmtime(file_path)
-        except Exception:
-            # Cannot get mtime, skip caching
-            return
+        if mtime is None:
+            try:
+                mtime = await aiofiles.os.path.getmtime(file_path)
+            except Exception:
+                # Cannot get mtime, skip caching
+                return
 
         # Calculate size in KB
         new_entry_bytes = (
@@ -113,7 +142,7 @@ class ToolContext(BaseModel):
         self.read_file_cache.append(
             ReadCacheEntry(
                 lines=lines,
-                updated_at=updated_at,
+                updated_at=mtime,
                 bytes=new_entry_bytes,
                 file_path=file_path,
             ),
