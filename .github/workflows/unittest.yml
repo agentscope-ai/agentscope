@@ -26,64 +26,7 @@ jobs:
       env:
         GRPC_VERBOSITY: ERROR
       run: |
-        coverage run -m pytest tests -v --ignore=tests/backend_applecontainer_test.py --ignore=tests/workspace_applecontainer_test.py
+        coverage run -m pytest tests -v
     - name: Generate coverage report
       run: |
         coverage report -m
-
-  # ── Apple Container live tests ───────────────────────────────────
-  #
-  # Runs on a bare-metal / self-hosted Apple Silicon runner where the
-  # ``container`` CLI is pre-installed and ``container system start``
-  # is running.  The job FAILS (not skips) when the CLI or service is
-  # missing — the check happens before pytest so we never silently
-  # pass.
-  #
-  # To switch to a self-hosted runner, change ``runs-on`` to your
-  # runner labels, e.g.:
-  #     runs-on: [self-hosted, apple-silicon, macOS]
-  #
-  # The APPLE_CONTAINER_LIVE=1 env var gates the heavy integration
-  # tests that pull an image, bootstrap the gateway venv, install
-  # system packages, register a real MCP echo server, and call it
-  # through the gateway.
-  apple-container-live:
-    if: false == contains(github.event.pull_request.title, 'WIP')
-    runs-on: macos-26
-    env:
-      APPLE_CONTAINER_LIVE: 1
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Verify Apple Container is available
-        run: |
-          if ! command -v container &> /dev/null; then
-            echo "::error::Apple Container CLI ('container') not found."
-            echo "Install it from https://developer.apple.com/container/"
-            echo "and ensure 'container system start' is running."
-            exit 1
-          fi
-          container system version --format json || {
-            echo "::error::container system service is not running."
-            echo "Run 'container system start' first."
-            exit 1
-          }
-          echo "Apple Container CLI OK"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install Dev Dependencies
-        run: |
-          uv pip install -q -e ".[dev]"
-          uv pip install coverage pytest
-
-      - name: Run Apple Container live tests
-        run: |
-          coverage run -m pytest tests/backend_applecontainer_test.py tests/workspace_applecontainer_test.py -v
-
-      - name: Generate coverage report
-        run: |
-          coverage report -m

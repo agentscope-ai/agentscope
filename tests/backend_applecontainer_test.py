@@ -20,14 +20,28 @@ from agentscope.workspace import AppleContainerBackend
 _CONTAINER_CLI = shutil.which("container")
 _RUN_REASON = "container CLI not found — install Apple Container first"
 
+#: Patch target for the CLI spawn inside the backend module.
+_EXEC_PATCH = (
+    "agentscope.workspace._applecontainer._applecontainer_backend."
+    "asyncio.create_subprocess_exec"
+)
 
-class TestAppleContainerBackendCommandConstruction(unittest.TestCase):
-    """Unit tests for CLI argv construction — no container needed.
 
-    These tests verify the exact command vectors that
-    :class:`AppleContainerBackend` produces for various inputs,
-    ensuring the ``--`` separator is NOT included (Apple Container
-    treats ``--`` as the target executable).
+def _ok_proc() -> AsyncMock:
+    """A mock process that exits 0 with empty stdout/stderr."""
+    proc = AsyncMock()
+    proc.returncode = 0
+    proc.communicate.return_value = (b"", b"")
+    return proc
+
+
+class TestAppleContainerBackendCommandConstruction(IsolatedAsyncioTestCase):
+    """CLI argv construction tests — no container needed.
+
+    Each test patches ``create_subprocess_exec``, drives the backend,
+    and asserts on the *actual* argv the backend passes, verifying the
+    ``--`` separator is never present (Apple Container treats ``--`` as
+    the target executable).
     """
 
     WORKDIR = "/workspace"
@@ -39,72 +53,66 @@ class TestAppleContainerBackendCommandConstruction(unittest.TestCase):
             workdir=self.WORKDIR,
         )
 
-    @staticmethod
-    def _extract_cli_cmd(mock_exec):
-        """Extract the CLI argv from a mocked ``create_subprocess_exec``."""
-        call_args = mock_exec.call_args
-        # create_subprocess_exec(*args, ...)
-        return list(call_args[0]) if call_args else []
+    @patch(_EXEC_PATCH)
+    async def test_simple_command_argv(self, mock_exec: AsyncMock) -> None:
+        """A plain command yields the exec prefix and no ``--``."""
+        mock_exec.return_value = _ok_proc()
+        await self.backend.exec_shell(["echo", "hello"])
+        argv = list(mock_exec.call_args.args)
+        self.assertEqual(
+            argv,
+            [
+                "container",
+                "exec",
+                "--workdir",
+                self.WORKDIR,
+                self.CONTAINER_ID,
+                "echo",
+                "hello",
+            ],
+        )
+        self.assertNotIn("--", argv)
 
-    def test_simple_command_argv(self) -> None:
-        """A plain command has no ``--`` separator."""
-        expected_prefix = [
+    @patch(_EXEC_PATCH)
+    async def test_custom_cwd_in_argv(self, mock_exec: AsyncMock) -> None:
+        """Custom ``cwd`` is passed via ``--workdir``, no ``--``."""
+        mock_exec.return_value = _ok_proc()
+        await self.backend.exec_shell(["pwd"], cwd="/custom/dir")
+        argv = list(mock_exec.call_args.args)
+        self.assertEqual(argv[3], "/custom/dir")
+        self.assertEqual(argv[-1], "pwd")
+        self.assertNotIn("--", argv)
+
+    @patch(_EXEC_PATCH)
+    async def test_shell_command_wrapping(
+        self,
+        mock_exec: AsyncMock,
+    ) -> None:
+        """Shell features wrapped in ``sh -c`` are appended verbatim."""
+        mock_exec.return_value = _ok_proc()
+        await self.backend.exec_shell(
+            ["sh", "-c", "echo hello && echo world"],
+        )
+        argv = list(mock_exec.call_args.args)
+        self.assertEqual(argv[-3:], ["sh", "-c", "echo hello && echo world"])
+        self.assertNotIn("--", argv)
+
+    @patch(_EXEC_PATCH)
+    async def test_multi_arg_command(self, mock_exec: AsyncMock) -> None:
+        """Commands with multiple args are appended in order."""
+        mock_exec.return_value = _ok_proc()
+        cmd = ["find", "/", "-name", "*.py", "-type", "f"]
+        await self.backend.exec_shell(cmd)
+        argv = list(mock_exec.call_args.args)
+        prefix = [
             "container",
             "exec",
             "--workdir",
             self.WORKDIR,
             self.CONTAINER_ID,
         ]
-        expected_cmd = ["echo", "hello"]
-        # Build what the backend would use.
-        cli = expected_prefix + expected_cmd
-        self.assertEqual(cli[0], "container")
-        self.assertEqual(cli[1], "exec")
-        self.assertNotIn("--", cli)
-        self.assertEqual(cli[-2:], ["echo", "hello"])
-
-    def test_custom_cwd_in_argv(self) -> None:
-        """Custom ``cwd`` is passed via ``--workdir``."""
-        expected_prefix = [
-            "container",
-            "exec",
-            "--workdir",
-            "/custom/dir",
-            self.CONTAINER_ID,
-        ]
-        expected_cmd = ["pwd"]
-        cli = expected_prefix + expected_cmd
-        self.assertEqual(cli[3], "/custom/dir")
-        self.assertNotIn("--", cli)
-
-    def test_shell_command_wrapping(self) -> None:
-        """Shell features are wrapped in ``sh -c``, no ``--``."""
-        expected_prefix = [
-            "container",
-            "exec",
-            "--workdir",
-            self.WORKDIR,
-            self.CONTAINER_ID,
-        ]
-        expected_cmd = ["sh", "-c", "echo hello && echo world"]
-        cli = expected_prefix + expected_cmd
-        self.assertNotIn("--", cli)
-        # Verify the sh -c command is last.
-        self.assertEqual(cli[-3:], ["sh", "-c", "echo hello && echo world"])
-
-    def test_multi_arg_command(self) -> None:
-        """Commands with multiple args are correctly appended."""
-        expected_prefix = [
-            "container",
-            "exec",
-            "--workdir",
-            self.WORKDIR,
-            self.CONTAINER_ID,
-        ]
-        expected_cmd = ["find", "/", "-name", "*.py", "-type", "f"]
-        cli = expected_prefix + expected_cmd
-        self.assertNotIn("--", cli)
-        self.assertEqual(len(cli), len(expected_prefix) + len(expected_cmd))
+        self.assertEqual(argv, prefix + cmd)
+        self.assertNotIn("--", argv)
 
 
 class TestAppleContainerBackendUnit(IsolatedAsyncioTestCase):
