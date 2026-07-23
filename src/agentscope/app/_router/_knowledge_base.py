@@ -501,7 +501,7 @@ async def upload_knowledge_document(
     return UploadKnowledgeDocumentResponse(
         document_id=record.id,
         filename=record.data.filename,
-        status=record.data.status,
+        status=record.status,
     )
 
 

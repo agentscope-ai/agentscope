@@ -371,6 +371,50 @@ class TestAnthropicFormatter(IsolatedAsyncioTestCase):
             res,
         )
 
+    async def test_chat_formatter_redacted_thinking_preserved(
+        self,
+    ) -> None:
+        """ThinkingBlock with redacted_thinking_data is formatted
+        as a redacted_thinking block."""
+        fmt = AnthropicChatFormatter()
+        msgs = [
+            AssistantMsg(
+                name="assistant",
+                content=[
+                    ThinkingBlock(
+                        thinking="visible",
+                        signature="sig_1",
+                    ),
+                    ThinkingBlock(
+                        thinking="",
+                        redacted_thinking_data="encrypted_abc",
+                    ),
+                    TextBlock(text="reply"),
+                ],
+            ),
+        ]
+        res = await fmt.format(msgs)
+        self.assertListEqual(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "thinking",
+                            "thinking": "visible",
+                            "signature": "sig_1",
+                        },
+                        {
+                            "type": "redacted_thinking",
+                            "data": "encrypted_abc",
+                        },
+                        {"type": "text", "text": "reply"},
+                    ],
+                },
+            ],
+            res,
+        )
+
     async def test_chat_formatter_thinking_without_signature_dropped(
         self,
     ) -> None:

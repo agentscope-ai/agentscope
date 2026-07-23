@@ -1,4 +1,3 @@
-
 [project]
 name = "agentscope"
 dynamic = ["version"]
@@ -27,7 +26,7 @@ dependencies = [
     "filetype",
     "json5",
     "json_repair",
-    "mcp",
+    "mcp<2.0.0",
     "httpx",
     "numpy",
     "openai",
@@ -44,17 +43,19 @@ dependencies = [
     "tree_sitter",
     "tree_sitter_bash",
     "jsonschema",
+    # The IANA timezone database, which is absent on Windows and slim images
+    "tzdata",
 ]
 
 [project.optional-dependencies]
 # ------------ Model APIs ------------
-gemini = ["google-genai"]
-ollama = ["ollama>=0.5.4"]
-xai = ["xai-sdk"]
+model-gemini = ["google-genai"]
+model-ollama = ["ollama>=0.5.4"]
+model-xai = ["xai-sdk"]
 models = [
-    "agentscope[ollama]",
-    "agentscope[gemini]",
-    "agentscope[xai]",
+    "agentscope[model-gemini]",
+    "agentscope[model-ollama]",
+    "agentscope[model-xai]",
 ]
 # ------------ Service ------------
 service = [
@@ -63,26 +64,47 @@ service = [
     "apscheduler",
     "ag-ui-protocol>=0.1.10",
 ]
-# ------------ Storage ------------
-storage = [
-    "redis",
+# ------------ Storage backends ------------
+storage-redis = ["redis"]
+# Async SQLAlchemy 2.0 + Alembic. The concrete driver
+# (aiosqlite / asyncpg / aiomysql / asyncmy) is left to the user
+# so the extra stays lightweight.
+storage-sql = [
+    "sqlalchemy[asyncio]>=2.0",
+    "alembic>=1.13",
 ]
-# ------------ Workspace -----------
-k8s = ["kubernetes-asyncio"]
+# S3-compatible blob store
+storage-s3 = ["aioboto3"]
+# ------------ Workspace (sandbox backends) ------------
+workspace-docker = ["aiodocker"]
+workspace-e2b = ["e2b"]
+workspace-daytona = ["daytona"]
+workspace-k8s = ["kubernetes-asyncio"]
+workspace-opensandbox = ["opensandbox"]
 workspace = [
-    "aiodocker",
-    "e2b",
-    "agentscope[k8s]",
-    "daytona",
-    "opensandbox",
+    "agentscope[workspace-docker]",
+    "agentscope[workspace-e2b]",
+    "agentscope[workspace-daytona]",
+    "agentscope[workspace-k8s]",
+    "agentscope[workspace-opensandbox]",
 ]
 # ------------ Tools ------------
+# Ships the ``rg`` binary for the builtin Grep tool on LocalWorkspace
+# (remote sandboxes install ripgrep inside the sandbox instead).
 tools = [
     "ripgrep",
 ]
+# ------------ Vector stores ------------
+vdb-qdrant = ["qdrant-client"]
+vdb-milvus = [
+    "pymilvus>=2.4.0",
+    "milvus-lite>=3.1.0",
+]
+vdb-mongodb = ["pymongo>=4.7"]
+vdb-elasticsearch = ["elasticsearch[async]>=8.12"]
 # ------------ RAG ------------
+# Document parsers; pick a vector store via the vdb-* extras.
 rag = [
-    "qdrant-client",
     "pypdf",
     "python-pptx",
     "python-docx",
@@ -90,20 +112,6 @@ rag = [
     "xlrd>=2.0",
     "pandas",
 ]
-milvuslite = [
-    "pymilvus[milvus-lite]>=2.4.0",
-    "milvus-lite>=3.0; sys_platform == 'win32'",
-]
-# ------------ MongoDB vector store ------------
-mongodb = [
-    "pymongo>=4.7",
-]
-
-# ------------ S3-compatible blob store ------------
-s3 = [
-    "aioboto3",
-]
-
 # ------------ Long-term memory ------------
 # Required by `agentscope.middleware._longterm_memory.Mem0Middleware`.
 # Pinned to mem0 v2.x because the middleware targets that
@@ -112,22 +120,43 @@ s3 = [
 # v3 phased pipeline in `_add_to_vector_store`. Running on mem0 1.x
 # wouldn't crash but the 2-tier add fallback degenerates into a
 # wasted LLM call.
-mem0 = ["mem0ai>=2.0.0"]
+memory-mem0 = ["mem0ai>=2.0.0"]
 # Required by `agentscope.middleware._longterm_memory.ReMeMiddleware`.
-reme = ["reme-ai>=0.4.0.6"]
+memory-reme = ["reme-ai>=0.4.0.6"]
+memory = [
+    "agentscope[memory-mem0]",
+    "agentscope[memory-reme]",
+]
+# ------------ Deprecated aliases ------------
+# Kept for backward compatibility; will be removed in a future
+# major release. Use the prefixed names instead.
+gemini = ["agentscope[model-gemini]"]
+ollama = ["agentscope[model-ollama]"]
+xai = ["agentscope[model-xai]"]
+storage = ["agentscope[storage-redis]"]
+sql = ["agentscope[storage-sql]"]
+s3 = ["agentscope[storage-s3]"]
+k8s = ["agentscope[workspace-k8s]"]
+milvuslite = ["agentscope[vdb-milvus]"]
+mongodb = ["agentscope[vdb-mongodb]"]
+elasticsearch = ["agentscope[vdb-elasticsearch]"]
+mem0 = ["agentscope[memory-mem0]"]
+reme = ["agentscope[memory-reme]"]
 # ------------ Full ------------
 full = [
     "agentscope[models]",
     "agentscope[service]",
-    "agentscope[storage]",
+    "agentscope[storage-redis]",
+    "agentscope[storage-sql]",
+    "agentscope[storage-s3]",
     "agentscope[workspace]",
     "agentscope[tools]",
     "agentscope[rag]",
-    "agentscope[milvuslite]",
-    "agentscope[mongodb]",
-    "agentscope[s3]",
-    "agentscope[mem0]",
-    "agentscope[reme]",
+    "agentscope[vdb-qdrant]",
+    "agentscope[vdb-milvus]",
+    "agentscope[vdb-mongodb]",
+    "agentscope[vdb-elasticsearch]",
+    "agentscope[memory]",
 ]
 
 # ------------ Development ------------
@@ -141,11 +170,11 @@ dev = [
     "myst_parser",
     "matplotlib",
     "fakeredis",
-    # S3-backend testing — moto[server] spins up an in-process S3, the
-    # store-under-test (`S3BlobStore`) uses aioboto3, and boto3 is the
-    # sync client the test fixtures use to seed/verify buckets.
+    # SQL backend tests — SQLite via aiosqlite so no server is needed.
+    "aiosqlite",
+    # S3-backend testing — moto[server] spins up an in-process S3
+    # (aioboto3 comes via full→storage-s3), boto3 seeds/verifies buckets.
     "moto[server,s3]",
-    "aioboto3",
     "boto3",
     # RAG parser tests — used to generate PDF fixtures in-memory
     "reportlab",
@@ -173,6 +202,17 @@ include-package-data = true
     "_cosyvoice_models/*.yaml",
 ]
 "agentscope.workspace._docker" = ["Dockerfile*.template"]
+# The Alembic scaffolding for the SQL storage backend lives in the
+# data-only ``_alembic/`` subtree (no ``__init__.py`` — Alembic loads
+# ``env.py`` / the version scripts by file path, not import). Ship them
+# explicitly so ``auto_migrate=True`` works from an installed wheel.
+"agentscope.app.storage._sql" = [
+    "_alembic/alembic.ini",
+    "_alembic/script.py.mako",
+    "_alembic/env.py",
+    "_alembic/versions/*.py",
+]
+
 [build-system]
 requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"

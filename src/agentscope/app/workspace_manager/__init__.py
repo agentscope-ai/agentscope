@@ -12,11 +12,13 @@ from ._opensandbox_workspace_manager import OpenSandboxWorkspaceManager
 from ._applecontainer_workspace_manager import (
     AppleContainerWorkspaceManager,
 )
+from ._bubblewrap_workspace_manager import BubblewrapWorkspaceManager
 
 __all__ = [
     "IsolationPolicy",
     "WorkspaceManagerBase",
     "LocalWorkspaceManager",
+    "BubblewrapWorkspaceManager",
     "DockerWorkspaceManager",
     "E2BWorkspaceManager",
     "DaytonaWorkspaceManager",

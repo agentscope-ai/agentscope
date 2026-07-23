@@ -2,10 +2,11 @@
 """Resource access service — cross-owner reads with viewer-relative views."""
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal, TypeVar, overload
 
 from fastapi import HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ..access import (
     ResourceAccessPolicyBase,
@@ -16,6 +17,7 @@ from ..access import (
 from ..storage import (
     AgentRecord,
     CredentialRecord,
+    EmbeddingModelConfig,
     KnowledgeBaseRecord,
     StorageBase,
 )
@@ -58,19 +60,66 @@ class CredentialView(CredentialRecord):
     )
 
 
-class KnowledgeBaseView(KnowledgeBaseRecord):
-    """Knowledge base record + viewer-relative ``editable``.
+class KnowledgeBaseView(BaseModel):
+    """Flat, viewer-facing projection of a knowledge base.
 
-    Subclasses :class:`KnowledgeBaseRecord` so the wire format is a
-    strict superset of the record (one extra top-level field), matching
-    :class:`AgentView` and :class:`CredentialView`.
+    Unlike :class:`AgentView` / :class:`CredentialView` — which subclass
+    their records and expose the nested ``data`` payload verbatim — the
+    knowledge base's public wire shape is intentionally **flat**: the
+    frontend and the documented API contract read ``name`` /
+    ``embedding_model_config`` at the top level. The storage-layer
+    nesting of those fields under :attr:`KnowledgeBaseRecord.data`
+    (introduced so the SQL backend can serialise a single JSON column)
+    must not leak into the HTTP response, so :meth:`_lift_data_payload`
+    lifts them back up. ``user_id`` and the opaque ``collection_name``
+    are dropped (pydantic ignores the surplus keys).
     """
 
+    id: str = Field(description="The knowledge base id.")
+    name: str = Field(description="Display name of the knowledge base.")
+    description: str = Field(
+        default="",
+        description="Free-form description of the knowledge base.",
+    )
+    embedding_model_config: EmbeddingModelConfig = Field(
+        description="Embedding model configuration pinned at creation.",
+    )
+    created_at: datetime = Field(description="Creation timestamp.")
+    updated_at: datetime = Field(description="Last-update timestamp.")
     editable: bool = Field(
         description=(
             "Whether the current viewer may modify this knowledge base."
         ),
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _lift_data_payload(cls, obj: Any) -> Any:
+        """Flatten a record's nested ``data`` payload to the top level.
+
+        Lets the view be built with
+        ``model_validate({**record.model_dump(), "editable": ...})``
+        exactly like the other views while still presenting a flat wire
+        shape. Explicit top-level keys win over payload keys; inputs
+        already flat pass through unchanged.
+
+        Args:
+            obj (`Any`):
+                The raw validator input. Only ``dict`` inputs carrying a
+                ``data`` sub-dict are rewritten; anything else is
+                returned verbatim.
+
+        Returns:
+            `Any`:
+                The input with ``data``'s fields lifted to the top
+                level.
+        """
+        if not isinstance(obj, dict) or not isinstance(obj.get("data"), dict):
+            return obj
+        merged = {k: v for k, v in obj.items() if k != "data"}
+        for key, value in obj["data"].items():
+            merged.setdefault(key, value)
+        return merged
 
 
 # ---------------------------------------------------------------------

@@ -38,7 +38,7 @@ and embedding model — so the only credential needed is a DashScope key.
 Starts each run from a clean workspace so the demo is reproducible.
 
 Requires:
-    pip install "agentscope[reme]"
+    pip install "agentscope[memory-reme]"
     export DASHSCOPE_API_KEY=sk-...
 """
 import asyncio

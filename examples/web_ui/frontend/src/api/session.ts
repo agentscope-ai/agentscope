@@ -13,6 +13,7 @@ import type {
 export interface MessagesResponse {
 	messages: Msg[];
 	is_running: boolean;
+	has_more: boolean;
 }
 
 export const sessionApi = {
@@ -41,11 +42,11 @@ export const sessionApi = {
 			agent_id: agentId,
 		}),
 
-	messages: (sessionId: string, agentId: string, offset = 0, limit = 50) =>
+	messages: (sessionId: string, agentId: string, params?: { before?: string; limit?: number }) =>
 		client.get<MessagesResponse>(`/sessions/${sessionId}/messages`, {
 			agent_id: agentId,
-			offset: String(offset),
-			limit: String(limit),
+			...(params?.before != null && { before: params.before }),
+			...(params?.limit != null && { limit: String(params.limit) }),
 		}),
 
 	/**

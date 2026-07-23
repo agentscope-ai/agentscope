@@ -39,7 +39,7 @@ class MongoDBStore(VectorStoreBase):
 
     .. note:: Requires ``pymongo`` with ``AsyncMongoClient`` support
         (``pymongo>=4.7``).  Install with
-        ``pip install agentscope[mongodb]``.
+        ``pip install agentscope[vdb-mongodb]``.
 
     .. note:: Fields used in :meth:`search` ``metadata_filter`` must be
         declared in ``filter_fields`` at construction time so they are

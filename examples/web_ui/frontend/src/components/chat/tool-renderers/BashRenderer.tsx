@@ -1,36 +1,13 @@
-import {
-	defaultGetDisplayName,
-	defaultRenderCallArgs,
-	defaultRenderGroup,
-	defaultRenderResult,
-} from './DefaultRenderer';
+import { getResultText, parseInput, toolLabelClass } from './_shared';
 import type { ToolRenderer } from './types';
 
-function parseInput(input: string): Record<string, unknown> {
-	try {
-		return JSON.parse(input);
-	} catch {
-		return {};
-	}
+function getCommand(input: string): string {
+	const { command } = parseInput(input) as { command?: string };
+	return command || input;
 }
 
 export const BashRenderer: ToolRenderer = {
 	getDisplayName: () => 'Bash',
-
-	renderCallArgs: (call) => {
-		const { command } = parseInput(call.input) as { command?: string };
-		return command || call.input;
-	},
-
-	renderResult: (call, result, t) => {
-		if (call.state === 'asking' || !result || result.state === 'running') {
-			return t('common.running');
-		}
-		if (result.state === 'interrupted') {
-			return t('common.interrupted');
-		}
-		return undefined;
-	},
 
 	renderConfirmBody: (call) => {
 		const { command, description } = parseInput(call.input) as {
@@ -45,14 +22,32 @@ export const BashRenderer: ToolRenderer = {
 		);
 	},
 
-	renderGroup: (calls, t) =>
-		defaultRenderGroup(calls, t, {
-			getDisplayName: (call) =>
-				BashRenderer.getDisplayName?.(call, t) ?? defaultGetDisplayName(call),
-			renderCallArgs: (call) =>
-				BashRenderer.renderCallArgs?.(call, t) ?? defaultRenderCallArgs(call),
-			renderResult: (call, result) =>
-				BashRenderer.renderResult?.(call, result, t) ??
-				defaultRenderResult(call, result, t),
-		}),
+	renderHeader: (pair) => (
+		<>
+			<span className={toolLabelClass}>Bash</span>
+			{/* The command is code, so it keeps a mono font rather than the shared
+			    argument style; it still brightens on hover like every other row. */}
+			<span className="font-mono min-w-0 truncate transition-colors group-hover:text-foreground">
+				{getCommand(pair.call.input)}
+			</span>
+		</>
+	),
+
+	renderBody: (pair) => {
+		if (!pair.result) return null;
+
+		const shellRes = getResultText(pair.result);
+		return (
+			<div className="flex flex-col border bg-background rounded-sm p-2 text-xs">
+				<div className="text-muted-foreground">Input</div>
+				<pre className="overflow-x-auto p-2 border rounded bg-secondary ">
+					{JSON.stringify(parseInput(pair.call.input), null, 2)}
+				</pre>
+				<div className="text-muted-foreground mt-2">Output</div>
+				<pre className="overflow-auto p-2 border rounded bg-secondary max-h-[200px]">
+					{shellRes}
+				</pre>
+			</div>
+		);
+	},
 };

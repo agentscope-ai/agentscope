@@ -18,6 +18,11 @@ jobs:
       uses: astral-sh/setup-uv@v5
       with:
         python-version: ${{ matrix.python-version }}
+    - name: Install Bubblewrap (Linux only)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y bubblewrap
     - name: Install Dev Dependencies
       run: |
         uv pip install -q -e .[dev]

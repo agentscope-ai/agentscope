@@ -513,25 +513,47 @@ async def update_session(
 async def list_messages(
     session_id: str,
     agent_id: str = Query(description="Agent the session belongs to."),
-    offset: int = Query(0, ge=0, description="Pagination offset."),
+    before: str
+    | None = Query(
+        None,
+        description=(
+            "A message ID used as the pagination cursor. Omit to get "
+            "the latest page. Provide a message ID from a previous "
+            "response to load older messages."
+        ),
+    ),
+    offset: int
+    | None = Query(
+        None,
+        deprecated=True,
+        description=(
+            "**Deprecated.** Use ``before`` for cursor-based pagination. "
+            "This parameter is always ignored."
+        ),
+    ),
     limit: int = Query(50, ge=1, le=200, description="Max messages."),
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     message_bus: MessageBus = Depends(get_message_bus),
 ) -> ListMessagesResponse:
-    """Return persisted messages for a session.
+    """Return persisted messages for a session with cursor-based
+    pagination.
 
     Args:
         session_id: The session to query.
         agent_id: Agent the session belongs to.
-        offset: Pagination offset.
+        before: A message ID used as the pagination cursor. Omit for
+            the latest page; provide a message ID from a previous
+            response to load older messages.
+        offset: **Deprecated.** Numeric offset, always ignored. Still
+            accepted for backward compatibility.
         limit: Maximum number of messages to return.
         user_id: Injected authenticated user ID.
         storage: Injected storage backend.
         message_bus: Injected message bus.
 
     Returns:
-        Messages and running status.
+        Messages, running status, and whether more pages exist.
     """
     existing = await storage.get_session(user_id, agent_id, session_id)
     if existing is None:
@@ -540,17 +562,24 @@ async def list_messages(
             detail=f"Session '{session_id}' not found.",
         )
 
-    messages = await storage.list_messages(
+    # Forward deprecated offset via kwargs so storage can warn.
+    extra: dict = {}
+    if offset is not None:
+        extra["offset"] = offset
+
+    messages, has_more = await storage.list_messages(
         user_id,
         session_id,
-        offset=offset,
         limit=limit,
+        before=before,
+        **extra,
     )
     return ListMessagesResponse(
         messages=messages,
         is_running=await message_bus.is_locked(
             MessageBusKeys.session_lock(session_id),
         ),
+        has_more=has_more,
     )
 
 
