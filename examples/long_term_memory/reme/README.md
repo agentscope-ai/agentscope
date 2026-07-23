@@ -27,7 +27,7 @@ see below.
 
 ```bash
 # reme-ai is an optional AgentScope dependency — pull it via the extra:
-pip install "agentscope[reme]"
+pip install "agentscope[memory-reme]"
 # (equivalent to `pip install agentscope reme-ai`)
 
 export DASHSCOPE_API_KEY=sk-...

@@ -1,5 +1,5 @@
-name: kimi-k2.5
-label: Kimi K2.5
+name: kimi-k3
+label: Kimi K3
 status: active
 
 input_types:
@@ -9,16 +9,21 @@ input_types:
   - image/png
   - image/gif
   - image/webp
+  - video/mp4
+  - video/mpeg
+  - video/quicktime
+  - video/avi
+  - video/webm
 
 output_types:
   - text/plain
   - application/x-thinking
 
-context_size: 262144
-output_size: 65536
+context_size: 1048576
+output_size: 1048576
 
 parameter_overrides:
   max_tokens:
-    maximum: 65536
-  reasoning_effort:
+    maximum: 1048576
+  thinking_enable:
     hidden: true

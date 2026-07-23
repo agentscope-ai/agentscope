@@ -7,22 +7,23 @@ import re
 
 from asyncio import Queue
 from copy import deepcopy
-from datetime import datetime, timezone, tzinfo
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from datetime import datetime
 from typing import (
     Any,
     AsyncGenerator,
     Sequence,
-    Literal,
     List,
     TYPE_CHECKING,
+    Type,
 )
 
 import jsonschema
+from pydantic import BaseModel
 
 from ._config import ContextConfig, ReActConfig, ModelConfig, InjectionConfig
 from ..state import AgentState
-from ._utils import _ToolCallBatch
+from ..state._state import ReplyContext
+from ._utils import _ToolCallBatch, Acting, Exit, Reasoning, _resolve_timezone
 from .._logging import logger
 from .._utils._common import (
     _generate_id,
@@ -97,27 +98,13 @@ from ..permission import (
     PermissionDecision,
     PermissionRule,
 )
+from ._structured_output_tool import _GenerateStructuredOutput
 from ..workspace import Offloader, WorkspaceBase
 
 if TYPE_CHECKING:
     from ..middleware import MiddlewareBase
 else:
     MiddlewareBase = Any
-
-
-def _resolve_timezone(name: str) -> tzinfo:
-    """Resolve the given timezone name, falling back to UTC when the name is
-    invalid or the timezone database is unavailable, e.g. on Windows or slim
-    images without the ``tzdata`` package."""
-    try:
-        return ZoneInfo(name)
-    except (ZoneInfoNotFoundError, ValueError):
-        logger.warning(
-            "Failed to resolve the timezone %s, fallback to UTC. Install the "
-            "'tzdata' package if the timezone database is missing.",
-            repr(name),
-        )
-        return timezone.utc
 
 
 class Agent:
@@ -265,7 +252,9 @@ class Agent:
         | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
-    ) -> AsyncGenerator[AgentEvent, None]:
+        structured_schema: Type[BaseModel] | None = None,
+        yield_final_msg: bool = False,
+    ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Reply to the given inputs and stream agent events.
 
         Args:
@@ -274,9 +263,16 @@ class Agent:
             optional):
                 The inputs that trigger this reply. See :meth:`reply` for
                 the full list of accepted variants.
+            structured_schema (`Type[BaseModel] | None`, optional):
+                The Pydantic model class that the reply's structured output
+                must conform to. See :meth:`reply` for details.
+            yield_final_msg (`bool`, defaults to `False`):
+                If yield the final reply message. When requiring structured
+                output, use this option to get the final message, and access
+                it via the `structured_output` attribute.
 
         Yields:
-            `AgentEvent`:
+            `AgentEvent | Msg`:
                 Streamed events produced during the reply.
 
         .. note:: If requiring outside interaction for multiple tool calls
@@ -284,9 +280,13 @@ class Agent:
             agent won't re-send the requiring events for the unconfirmed
             or unexecuted tool calls.
         """
-        async for chunk in self._reply(inputs=inputs):
-            if not isinstance(chunk, Msg):
-                yield chunk
+        async for chunk in self._reply(
+            inputs=inputs,
+            structured_schema=structured_schema,
+        ):
+            if isinstance(chunk, Msg) and not yield_final_msg:
+                continue
+            yield chunk
 
     async def reply(
         self,
@@ -296,6 +296,7 @@ class Agent:
         | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
+        structured_schema: Type[BaseModel] | None = None,
     ) -> Msg:
         """Reply to the given inputs, consuming all streamed events.
 
@@ -316,13 +317,20 @@ class Agent:
                   reasoning-acting loop,
                 - `None` if there is nothing new to feed in (e.g. just
                   continue from the current state).
+            structured_schema (`Type[BaseModel] | None`, optional):
+                The Pydantic model class that the reply's structured output
+                must conform to, with the validated result carried on the
+                final message's ``structured_output`` attribute as a dict.
 
         Returns:
             `Msg`:
                 A final reply message.
         """
         final_msg: Msg | None = None
-        async for evt_or_msg in self._reply(inputs=inputs):
+        async for evt_or_msg in self._reply(
+            inputs=inputs,
+            structured_schema=structured_schema,
+        ):
             if isinstance(evt_or_msg, Msg):
                 final_msg = evt_or_msg
         if final_msg is None:
@@ -701,10 +709,14 @@ class Agent:
         | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
+        structured_schema: Type[BaseModel] | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Reply entry point (maybe wrapped by middleware)."""
         if not self._reply_middlewares:
-            async for item in self._reply_impl(inputs=inputs):
+            async for item in self._reply_impl(
+                inputs=inputs,
+                structured_schema=structured_schema,
+            ):
                 yield item
         else:
 
@@ -716,13 +728,20 @@ class Agent:
                 | UserInterruptEvent
                 | ExternalExecutionResultEvent
                 | None = inputs,
+                structured_schema: Type[BaseModel] | None = structured_schema,
             ) -> AsyncGenerator[AgentEvent | Msg, None]:
                 if index >= len(self._reply_middlewares):
-                    async for item in self._reply_impl(inputs=inputs):
+                    async for item in self._reply_impl(
+                        inputs=inputs,
+                        structured_schema=structured_schema,
+                    ):
                         yield item
                 else:
                     mw = self._reply_middlewares[index]
-                    input_kwargs = {"inputs": inputs}
+                    input_kwargs = {
+                        "inputs": inputs,
+                        "structured_schema": structured_schema,
+                    }
 
                     async def next_handler(
                         **kwargs: Any,
@@ -813,6 +832,7 @@ class Agent:
         | UserInterruptEvent
         | ExternalExecutionResultEvent
         | None = None,
+        structured_schema: Type[BaseModel] | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Core reply logic."""
 
@@ -840,6 +860,13 @@ class Agent:
             else:
                 event = None
                 msgs = inputs
+
+            if event and structured_schema:
+                logger.warning(
+                    "The given structured_schema is ignored when "
+                    "resuming with a HITL event; the parked reply's "
+                    "schema is used instead.",
+                )
 
             # Parked-interrupt short-circuit: only signal an INTERRUPTED
             # end when there is actual HITL work to close; otherwise the
@@ -873,8 +900,12 @@ class Agent:
             else:
                 await self._handle_incoming_messages(msgs)
                 # Update the context with the incoming message and state
-                self.state.reply_id = _generate_id()
-                self.state.cur_iter = 0
+                self.state.reply_context = ReplyContext(
+                    reply_id=_generate_id(),
+                    cur_iter=0,
+                    structured_schema=structured_schema,
+                    structured_output=None,
+                )
 
                 yield ReplyStartEvent(
                     session_id=self.state.session_id,
@@ -882,159 +913,143 @@ class Agent:
                     name=self.name,
                 )
 
+            # Update the structured output tool for new requirements or
+            #  from the previous reply
+            await self.toolkit.remove_tool(_GenerateStructuredOutput.name)
+            if self.state.reply_context.structured_schema:
+                await self.toolkit.add_tool(
+                    _GenerateStructuredOutput(
+                        schema=self.state.reply_context.structured_schema,
+                    ),
+                )
+
             # =================================================================
             # Step 3: Enter the reasoning-acting loop until reaching max_iters
             #  or no more tool calls to execute
             # =================================================================
-            while self.state.cur_iter < self.react_config.max_iters:
+            final_msg: Msg | None = None
+            while True:
                 # =============================================================
-                # Step 3.1:
+                # Step 3.1: Decide the next action based on the current state
                 # =============================================================
-                action, data = self._check_next_action()
-                if action == "exit" and isinstance(data, Msg):
-                    yield data
-                    return
+                next_action = self._next_action(final_msg)
 
-                # =============================================================
-                # Step 3.2: Execute reasoning if no more tools to be executed
-                # =============================================================
-                if action == "reasoning":
-                    # Compressed the memory if needed before reasoning
-                    async for evt in (
-                        self._compress_context_with_status_events()
-                    ):
-                        yield evt
+                match next_action:
+                    case Exit(exit_msg=exit_msg, exit_events=exit_events):
+                        for exit_event in exit_events or []:
+                            yield exit_event
+                        if exit_msg:
+                            yield exit_msg
+                        return
 
-                    # Inject runtime state if needed before reasoning
-                    async for evt in self._inject_runtime_state():
-                        yield evt
+                    case Reasoning(hint=hint, tool_choice=tool_choice):
+                        final_msg = None
+                        if hint:
+                            self.state.append_context(self.name, [hint])
 
-                    # Perform reasoning
-                    interrupted = False
-                    async for evt in self._reasoning():
-                        # Exit the loop when no tool calls generated and the
-                        # reply message is generated
-                        if isinstance(evt, Msg):
+                        # Compressed the memory if needed before reasoning
+                        async for evt in (
+                            self._compress_context_with_status_events()
+                        ):
+                            yield evt
+
+                        # Inject runtime state if needed before reasoning
+                        async for evt in self._inject_runtime_state():
+                            yield evt
+
+                        # Perform reasoning
+                        interrupted = False
+                        async for evt in self._reasoning(
+                            tool_choice=tool_choice,
+                        ):
+                            if isinstance(evt, Msg):
+                                # Candidate final message; ``_next_action``
+                                # decides whether it ends the reply
+                                final_msg = evt
+                                continue
+
+                            if isinstance(evt, ModelCallEndEvent):
+                                interrupted = (
+                                    evt.finished_reason
+                                    == FinishedReason.INTERRUPTED
+                                )
+
+                            yield evt
+
+                        if interrupted:
                             end_event = ReplyEndEvent(
                                 session_id=self.state.session_id,
                                 reply_id=self.state.reply_id,
-                                finished_reason=ReplyFinishedReason.COMPLETED,
+                                finished_reason=(
+                                    ReplyFinishedReason.INTERRUPTED
+                                ),
                             )
-                            yield evt
                             return
 
-                        elif isinstance(evt, ModelCallEndEvent):
-                            interrupted = (
-                                evt.finished_reason
-                                == FinishedReason.INTERRUPTED
-                            )
+                    case Acting(tool_calls=tool_calls):
+                        for batch in await self._batch_tool_calls(tool_calls):
+                            if batch.type == "sequential":
+                                evt_generator = (
+                                    self._execute_sequential_tool_calls(
+                                        batch.tool_calls,
+                                    )
+                                )
 
-                        yield evt
+                            elif batch.type == "concurrent":
+                                evt_generator = (
+                                    self._execute_concurrent_tool_calls(
+                                        batch.tool_calls,
+                                    )
+                                )
 
-                    if interrupted:
-                        end_event = ReplyEndEvent(
-                            session_id=self.state.session_id,
-                            reply_id=self.state.reply_id,
-                            finished_reason=ReplyFinishedReason.INTERRUPTED,
-                        )
-                        return
+                            else:
+                                raise ValueError(
+                                    f"Invalid batch type: {batch.type}",
+                                )
 
-                # =============================================================
-                # Step 3.3: Getting batches of tool calls to be executed
-                #  - If not, finish loop by yielding RunFinishedEvent and exit
-                #  - Otherwise, execute by batch and continue the loop
-                # =============================================================
-                for batch in await self._batch_tool_calls():
-                    if batch.type == "sequential":
-                        evt_generator = self._execute_sequential_tool_calls(
-                            batch.tool_calls,
-                        )
+                            break_execution_for_hitl = False
+                            break_execution_for_interruption = False
+                            async for evt in evt_generator:
+                                yield evt
+                                if isinstance(
+                                    evt,
+                                    (
+                                        RequireUserConfirmEvent,
+                                        RequireExternalExecutionEvent,
+                                    ),
+                                ):
+                                    break_execution_for_hitl = True
 
-                    elif batch.type == "concurrent":
-                        evt_generator = self._execute_concurrent_tool_calls(
-                            batch.tool_calls,
-                        )
+                                elif (
+                                    isinstance(evt, ToolResultEndEvent)
+                                    and evt.state
+                                    == ToolResultState.INTERRUPTED
+                                ):
+                                    # Handle the interruption event
+                                    break_execution_for_interruption = True
 
-                    else:
-                        raise ValueError(
-                            f"Invalid batch type: {batch.type}",
-                        )
+                            if break_execution_for_interruption:
+                                end_event = ReplyEndEvent(
+                                    session_id=self.state.session_id,
+                                    reply_id=self.state.reply_id,
+                                    finished_reason=(
+                                        ReplyFinishedReason.INTERRUPTED
+                                    ),
+                                )
+                                return
 
-                    break_execution_for_hitl = False
-                    break_execution_for_interruption = False
-                    break_message = ""
-                    async for evt in evt_generator:
-                        yield evt
-                        if isinstance(
-                            evt,
-                            (
-                                RequireUserConfirmEvent,
-                                RequireExternalExecutionEvent,
-                            ),
-                        ):
-                            break_execution_for_hitl = True
-                            break_message = (
-                                "Waiting for tool calls to be confirmed or "
-                                "executed from outside ..."
-                            )
+                            if break_execution_for_hitl:
+                                break
 
-                        elif (
-                            isinstance(evt, ToolResultEndEvent)
-                            and evt.state == ToolResultState.INTERRUPTED
-                        ):
-                            # Handle the interruption event
-                            break_execution_for_interruption = True
-
-                    if break_execution_for_interruption:
-                        end_event = ReplyEndEvent(
-                            session_id=self.state.session_id,
-                            reply_id=self.state.reply_id,
-                            finished_reason=ReplyFinishedReason.INTERRUPTED,
-                        )
-                        return
-
-                    # If it requires outside interaction stop executing the
-                    # next batch and wait for outside trigger events
-                    if break_execution_for_hitl:
-                        yield AssistantMsg(
-                            id=self.state.reply_id,
-                            name=self.name,
-                            content=break_message,
-                        )
-                        return
+                        if break_execution_for_hitl:
+                            # Stop executing the next batches, and go back to
+                            # ``_next_action``, which parks the reply on the
+                            # awaiting tool calls. The unfinished round isn't
+                            # counted into ``cur_iter``
+                            continue
 
                 # Update iteration count after each round of reasoning-acting
                 self.state.cur_iter += 1
-
-            # =================================================================
-            # Step 4: Handling the max iteration executed
-            # =================================================================
-            yield ExceedMaxItersEvent(
-                reply_id=self.state.reply_id,
-                name=self.name,
-            )
-            logger.warning(
-                "Agent %s exceeds the max iteration numbers %d. "
-                "Stop the react loop.",
-                self.name,
-                self.react_config.max_iters,
-            )
-
-            # Mirror the normal-exit path so subscribers (e.g. SSE clients
-            # waiting on a terminal event) don't hang when the loop bails
-            # out on max_iters.
-            end_event = ReplyEndEvent(
-                session_id=self.state.session_id,
-                reply_id=self.state.reply_id,
-                finished_reason=ReplyFinishedReason.EXCEED_MAX_ITERS,
-            )
-
-            yield AssistantMsg(
-                id=self.state.reply_id,
-                name=self.name,
-                content="Executed maximum iterations of reasoning-acting loop "
-                "without finishing the task.",
-            )
 
         except asyncio.CancelledError:
             # Handle the CancelledError within the _reply_impl for the
@@ -1050,22 +1065,25 @@ class Agent:
 
         finally:
             if end_event is not None:
-                if (
+                interrupted_end = (
                     end_event.finished_reason
                     == ReplyFinishedReason.INTERRUPTED
-                ):
+                )
+                if interrupted_end:
                     # Handle the context when interruption
                     async for _ in self._close_unfinished_tool_calls():
                         yield _
 
-                    # A fallback msg object
+                yield end_event
+
+                if interrupted_end:
+                    # The fallback msg goes last: Msg terminates the stream
                     yield AssistantMsg(
                         id=self.state.reply_id,
                         name=self.name,
                         content=self.react_config.interruption_message,
+                        finished_reason=ReplyFinishedReason.INTERRUPTED,
                     )
-
-                yield end_event
 
     async def _inject_runtime_state(
         self,
@@ -1516,6 +1534,8 @@ class Agent:
                 # Text only response message
                 content=list(completed_response.content),
                 usage=final_usage,
+                # The INTERRUPTED case is excluded by the branch condition
+                finished_reason=ReplyFinishedReason.COMPLETED,
             )
 
     async def _check_incoming_event(
@@ -1542,25 +1562,17 @@ class Agent:
                 the reply id and iteration count should be updated for the new
                 reply.
         """
-        awaiting_confirmations = []
-        awaiting_external_executions = []
-
-        last_msg = self._get_last_msg()
-        if last_msg:
-            # The completed tool call ids
-            tool_result_ids = [
-                _.id for _ in last_msg.get_content_blocks("tool_result")
-            ]
-
-            for tool_call in last_msg.get_content_blocks("tool_call"):
-                if tool_call.state == ToolCallState.ASKING:
-                    awaiting_confirmations.append(tool_call.id)
-                elif (
-                    tool_call.state == ToolCallState.SUBMITTED
-                    and tool_call.id not in tool_result_ids
-                ):
-                    # submitted but no result yet, i.e. external execution
-                    awaiting_external_executions.append(tool_call.id)
+        awaiting_tool_calls = self.state.get_awaiting_tool_calls(self.name)
+        awaiting_confirmations = [
+            _.id
+            for _ in awaiting_tool_calls
+            if _.state == ToolCallState.ASKING
+        ]
+        awaiting_external_executions = [
+            _.id
+            for _ in awaiting_tool_calls
+            if _.state == ToolCallState.SUBMITTED
+        ]
 
         # No incoming event but needed
         if event is None and (
@@ -1739,13 +1751,14 @@ class Agent:
 
                 self.state.context.append(msg)
 
-    async def _batch_tool_calls(self) -> list[_ToolCallBatch]:
+    async def _batch_tool_calls(
+        self,
+        tool_calls: list[ToolCallBlock],
+    ) -> list[_ToolCallBatch]:
         """Batch the tool calls into a sequence of batches that should be
         executed **sequentially** or **concurrently** according to the tool
         properties `is_concurrency_safe` and `is_read_only`.
         """
-        # All tool calls that haven't the corresponding results in the context
-        tool_calls = self._get_executable_tool_calls()
 
         # Batch the tool calls according to whether they can be executed
         # concurrently or not
@@ -2971,36 +2984,15 @@ class Agent:
         if not persisted_blocks and msg_usage is None:
             return
 
-        if len(self.state.context) == 0:
-            self.state.context.append(
-                AssistantMsg(
-                    id=self.state.reply_id,
-                    name=self.name,
-                    content=persisted_blocks,
-                    usage=msg_usage,
-                ),
-            )
-        else:
-            last_msg = self.state.context[-1]
-            if last_msg.role == "assistant" and last_msg.name == self.name:
-                if isinstance(last_msg.content, str):
-                    last_msg.content = [TextBlock(text=last_msg.content)]
-                last_msg.content.extend(persisted_blocks)
-                if msg_usage is not None:
-                    if last_msg.usage is None:
-                        last_msg.usage = msg_usage
-                    else:
-                        last_msg.usage.input_tokens += msg_usage.input_tokens
-                        last_msg.usage.output_tokens += msg_usage.output_tokens
+        self.state.append_context(self.name, persisted_blocks)
+
+        tail = self.state.context[-1]
+        if msg_usage is not None:
+            if tail.usage is None:
+                tail.usage = msg_usage
             else:
-                self.state.context.append(
-                    AssistantMsg(
-                        id=self.state.reply_id,
-                        name=self.name,
-                        content=persisted_blocks,
-                        usage=msg_usage,
-                    ),
-                )
+                tail.usage.input_tokens += msg_usage.input_tokens
+                tail.usage.output_tokens += msg_usage.output_tokens
 
     def _get_last_msg(self) -> Msg | None:
         """Get the last message in the context that belongs to this agent."""
@@ -3011,134 +3003,202 @@ class Agent:
             return last_msg
         return None
 
-    def _check_next_action(
+    def _next_action(
         self,
-    ) -> (
-        tuple[Literal["exit"], Msg]
-        | tuple[Literal["reasoning"], None]
-        | tuple[Literal["acting"], None]
-    ):
-        """Check the next action for the agent
+        final_msg: Msg | None = None,
+    ) -> Reasoning | Acting | Exit:
+        """Decide the next action from the current state. Read-only: all
+        side effects are performed by the caller ``_reply_impl``."""
 
-        Awaiting tool calls:
-            The tool calls waiting for the outside events (confirmation or
-            external execution results, state = "asking" or "submitted")
-        Executable tool calls:
-            The tool calls allowed by the incoming confirmation events and
-            haven't been executed yet (state = "allowed")
+        # ===========================================================
+        # Step 1: Check executable and awaiting tool calls
+        # ===========================================================
+        awaiting_tool_calls = self.state.get_awaiting_tool_calls(self.name)
 
-        The next action:
-
-        |                          | Awaiting tool calls          | No awaiting tool call        |
-        | ------------------------ | ---------------------------- | ---------------------------- |
-        | Executable tool calls    | Acting executable tool calls | Acting executable tool calls |
-        | No executable tool calls | Exit the _reply              | Reasoning                    |
-
-        Returns:
-            `tuple[Literal["exit"], Msg]`:
-                If there is no executable tool call and there are awaiting tool
-                calls, which means the agent is waiting for the outside events
-                and should not do anything before that, the next action is to
-                exit the _reply and wait for the outside events.
-            `tuple[Literal["reasoning"], None]`:
-                If there is no executable tool call and no awaiting tool call,
-                which means the agent has nothing to do in this iteration and
-                can continue reasoning for the next step.
-            `tuple[Literal["acting"], None]`:
-                If there are executable tool calls, which means the agent can
-                act by executing the tool calls.
-        """  # noqa: E501
         last_msg = self._get_last_msg()
-        if last_msg is None:
-            return "reasoning", None
-
-        # In case wrong tool call state, first filter with the results
-        finished_ids = {
-            _.id for _ in last_msg.get_content_blocks("tool_result")
-        }
-        unfinished_tool_calls = [
-            _
-            for _ in last_msg.get_content_blocks("tool_call")
-            if _.id not in finished_ids
-        ]
-
-        # Find if there are executable or awaiting tool calls
-        awaiting_tool_calls: list[ToolCallBlock] = []
-        executable_tool_calls: list[ToolCallBlock] = []
-
-        confirming_names, asking_names = [], []
-        for _ in unfinished_tool_calls:
-            if _.state in [ToolCallState.PENDING, ToolCallState.ALLOWED]:
-                executable_tool_calls.append(_)
-
-            elif _.state == ToolCallState.ASKING:
-                asking_names.append(_.name)
-                awaiting_tool_calls.append(_)
-
-            elif _.state == ToolCallState.SUBMITTED:
-                confirming_names.append(_.name)
-                awaiting_tool_calls.append(_)
-
-        if executable_tool_calls:
-            return "acting", None
+        if last_msg is not None:
+            # In case wrong tool call state, first filter with the results
+            finished_ids = {
+                _.id for _ in last_msg.get_content_blocks("tool_result")
+            }
+            # With awaiting tool calls, PENDING ones are blocked (e.g.
+            # deduplicated in a batch) and wait; only ALLOWED ones execute
+            executable_tool_calls = [
+                _
+                for _ in last_msg.get_content_blocks("tool_call")
+                if _.id not in finished_ids
+                and (
+                    _.state == ToolCallState.ALLOWED
+                    or (
+                        _.state == ToolCallState.PENDING
+                        and not awaiting_tool_calls
+                    )
+                )
+            ]
+            if executable_tool_calls:
+                # Next execute the tool calls
+                return Acting(tool_calls=executable_tool_calls)
 
         if awaiting_tool_calls:
-            # Prepare the message
-            evt = ["I'm waiting for "]
-            if asking_names:
-                evt += [
-                    f"user confirmation for {len(asking_names)} tool calls",
-                ]
-
-            if confirming_names:
-                if evt:
-                    evt += [", and "]
-                evt += [
-                    f"external execution results for {len(confirming_names)} "
-                    f"tool calls",
-                ]
-
-            text = "".join(evt) + "."
-
-            return "exit", AssistantMsg(
-                name=self.name,
-                content=[TextBlock(text=text)],
+            # Next wait for the permission or external execution to finish
+            return Exit(
+                # The reply doesn't finish yet
+                exit_events=None,
+                exit_msg=AssistantMsg(
+                    id=self.state.reply_id,
+                    name=self.name,
+                    # both confirmation or external execution
+                    content="I'm waiting for your permission or the "
+                    "external execution to finish.",
+                ),
             )
 
-        return "reasoning", None
+        # ===========================================================
+        # Step 2: Check structured output if no blocked tool calls
+        # ===========================================================
 
-    def _get_executable_tool_calls(self) -> list[ToolCallBlock]:
-        """Get tool calls from the last message that to be executed, which
-        means we should reserve the tool calls that:
+        # Structured output requirement and satisfaction
+        required = self.state.reply_context.structured_schema is not None
+        satisfied = self.state.reply_context.structured_output is not None
 
-        1. doesn't have results yet, **and**
-        2. haven't been submitted for external execution (state != "submitted")
-        """
-        last_msg = self._get_last_msg()
-        if last_msg is None:
-            return []
+        if required and satisfied:
+            # Next return the structured output and finish the reply
+            return Exit(
+                exit_events=[
+                    ReplyEndEvent(
+                        session_id=self.state.session_id,
+                        reply_id=self.state.reply_id,
+                        finished_reason=ReplyFinishedReason.COMPLETED,
+                    ),
+                ],
+                exit_msg=AssistantMsg(
+                    id=self.state.reply_id,
+                    name=self.name,
+                    content="The required structured output is generated.",
+                    finished_reason=ReplyFinishedReason.COMPLETED,
+                    structured_output=deepcopy(
+                        self.state.reply_context.structured_output,
+                    ),
+                ),
+            )
 
-        # The tool results
-        result_ids = {_.id for _ in last_msg.get_content_blocks("tool_result")}
-        # The tool calls that doesn't have results yet
-        tool_calls_wo_results = [
-            _
-            for _ in last_msg.get_content_blocks("tool_call")
-            if _.id not in result_ids
-        ]
+        elif required and not satisfied:
+            # Maybe the model needs futher reasoning-acting to
+            # generate the structured output
+            tool_choice = None
+            suffix = (
+                "Call it when you are ready to generate the final "
+                "structured output."
+            )
 
-        # Filter the ones that are "submitted", which already report the
-        # external execution requirement
-        pending_tool_calls = [
-            _
-            for _ in tool_calls_wo_results
-            if _.state
-            in [
-                ToolCallState.PENDING,
-                ToolCallState.ALLOWED,
-            ]
-        ]
-        return pending_tool_calls
+            # Allow extra grace iterations for structured generation
+            if (
+                self.state.cur_iter
+                >= self.react_config.max_iters
+                + self.react_config.structured_output_grace_iters
+            ):
+                return Exit(
+                    exit_events=[
+                        ExceedMaxItersEvent(
+                            reply_id=self.state.reply_id,
+                            name=self.name,
+                        ),
+                        ReplyEndEvent(
+                            session_id=self.state.session_id,
+                            reply_id=self.state.reply_id,
+                            finished_reason=(
+                                ReplyFinishedReason.EXCEED_MAX_ITERS
+                            ),
+                        ),
+                    ],
+                    exit_msg=AssistantMsg(
+                        id=self.state.reply_id,
+                        name=self.name,
+                        content="The maximum reasoning-acting iterations "
+                        "are exceeded.",
+                        finished_reason=ReplyFinishedReason.EXCEED_MAX_ITERS,
+                    ),
+                )
+
+            if self.state.cur_iter >= self.react_config.max_iters:
+                # Must call the structured output tool and return the
+                # structured output
+                tool_choice = ToolChoice(
+                    mode=_GenerateStructuredOutput.name,
+                )
+                suffix = (
+                    "You have reached the maximum reasoning-acting "
+                    "iterations, so call this tool at once to generate "
+                    "the final structured output."
+                )
+
+            # Next continue reasoning with injected hint
+            return Reasoning(
+                hint=HintBlock(
+                    hint=[
+                        TextBlock(
+                            text=(
+                                "<system-reminder>You're required to "
+                                "generate structured output by calling the "
+                                f"'{_GenerateStructuredOutput.name}' tool. "
+                                f"{suffix}</system-reminder>"
+                            ),
+                        ),
+                    ],
+                    source='{"label": "System", "sublabel": '
+                    '"Structured Output Requirement"}',
+                ),
+                tool_choice=tool_choice,
+            )
+
+        # ===========================================================
+        # Step 3: Exit with the final message, or continue reasoning
+        # ===========================================================
+
+        # The last reasoning produced a text-only final message
+        if final_msg is not None:
+            return Exit(
+                exit_events=[
+                    ReplyEndEvent(
+                        session_id=self.state.session_id,
+                        reply_id=self.state.reply_id,
+                        finished_reason=ReplyFinishedReason.COMPLETED,
+                    ),
+                ],
+                exit_msg=final_msg,
+            )
+
+        if self.state.cur_iter >= self.react_config.max_iters:
+            logger.warning(
+                "Agent %s exceeds the max iteration numbers %d. "
+                "Stop the react loop.",
+                self.name,
+                self.react_config.max_iters,
+            )
+
+            return Exit(
+                exit_events=[
+                    ExceedMaxItersEvent(
+                        reply_id=self.state.reply_id,
+                        name=self.name,
+                    ),
+                    ReplyEndEvent(
+                        session_id=self.state.session_id,
+                        reply_id=self.state.reply_id,
+                        finished_reason=ReplyFinishedReason.EXCEED_MAX_ITERS,
+                    ),
+                ],
+                exit_msg=AssistantMsg(
+                    id=self.state.reply_id,
+                    name=self.name,
+                    content="The maximum reasoning-acting iterations are "
+                    "exceeded.",
+                    finished_reason=ReplyFinishedReason.EXCEED_MAX_ITERS,
+                ),
+            )
+
+        # By default, continue reasoning
+        return Reasoning()
 
     async def _convert_chat_response_to_event(
         self,

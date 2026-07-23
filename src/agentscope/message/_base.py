@@ -68,6 +68,10 @@ class Msg(BaseModel):
     """The message class in AgentScope, responsible for information storage
     and transmission among different agents."""
 
+    # =========================================================================
+    # The fields that will be fed into the context
+    # =========================================================================
+
     name: str
     """The name of the sender."""
     content: list[ContentBlock]
@@ -76,20 +80,38 @@ class Msg(BaseModel):
     """The role of the sender."""
     id: str = Field(default_factory=_generate_id)
     """The message identifier."""
+
+    # =========================================================================
+    # The fields that record the message metadata (creation time, current
+    #  usage and additional metadata).
+    # =========================================================================
+
     metadata: dict = Field(default_factory=dict)
     """The metadata of the message"""
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     """The creation time of the message"""
+    usage: Usage | None = Field(default=None)
+    """The token usage information of the message"""
+
+    # =========================================================================
+    # The fields used for workflow control, including the finished time,
+    #  reason, error message and structured output.
+    # =========================================================================
+
     finished_at: str | None = Field(default=None)
     """The finished time of the message"""
     finished_reason: ReplyFinishedReason | None = Field(default=None)
     """Terminal reason of this reply (error / interrupted /
     exceed_max_iters). ``None`` until a ``REPLY_END`` event is applied."""
+    structured_output: dict | None = Field(default=None)
+    """The structured output of the reply. Populated only when a structured
+    output is requested via ``reply(..., structured_schema=...)`` and
+    successfully generated; ``None`` otherwise, e.g. not requested, or the
+    reply ends (interrupted / error / exceed_max_iters) before the output
+    is generated."""
     error: ErrorInfo | None = Field(default=None)
     """Structured error info, populated only when
     ``finished_reason == ReplyFinishedReason.ERROR``."""
-    usage: Usage | None = Field(default=None)
-    """The token usage information of the message"""
 
     @model_validator(mode="after")
     def validate_role_content(self) -> Self:
@@ -493,6 +515,7 @@ def UserMsg(
     metadata: dict | None = None,
     created_at: str | None = None,
     finished_at: str | None = None,
+    finished_reason: ReplyFinishedReason | None = None,
     id: str | None = None,  # pylint: disable=redefined-builtin
 ) -> Msg:
     """Create a user message with role ``"user"``.
@@ -513,6 +536,9 @@ def UserMsg(
         finished_at (`str | None`, optional):
             ISO-format timestamp for when the message was finished. Defaults to
             the same value as ``created_at`` when not provided.
+        finished_reason (`ReplyFinishedReason | None`, optional):
+            The reason the message was finished. Defaults to ``None`` when not
+            provided.
         id (`str | None`, optional):
             A unique identifier for the message. A random UUID hex string is
             generated when not provided.
@@ -531,6 +557,7 @@ def UserMsg(
         metadata=metadata or {},
         created_at=created_at,
         finished_at=finished_at,
+        finished_reason=finished_reason,
         id=id or _generate_id(),
     )
 
@@ -541,6 +568,8 @@ def AssistantMsg(
     metadata: dict | None = None,
     created_at: str | None = None,
     finished_at: str | None = None,
+    finished_reason: ReplyFinishedReason | None = None,
+    structured_output: dict | None = None,
     id: str | None = None,  # pylint: disable=redefined-builtin
     usage: Usage | None = None,
 ) -> Msg:
@@ -562,6 +591,10 @@ def AssistantMsg(
         finished_at (`str | None`, optional):
             ISO-format timestamp for when the message was finished. Not set by
             default for assistant messages.
+        structured_output (`dict | None`, optional):
+            The structured output carried by the assistant message.
+        finished_reason (`ReplyFinishedReason | None`, optional):
+            The finished reason for the assistant message.
         id (`str | None`, optional):
             A unique identifier for the message. A random UUID hex string is
             generated when not provided.
@@ -579,6 +612,8 @@ def AssistantMsg(
         metadata=metadata or {},
         created_at=created_at or datetime.now().isoformat(),
         finished_at=finished_at,
+        finished_reason=finished_reason,
+        structured_output=structured_output,
         id=id or _generate_id(),
         usage=usage,
     )
@@ -590,6 +625,7 @@ def SystemMsg(
     metadata: dict | None = None,
     created_at: str | None = None,
     finished_at: str | None = None,
+    finished_reason: ReplyFinishedReason | None = None,
     id: str | None = None,  # pylint: disable=redefined-builtin
 ) -> Msg:
     """Create a system message with role ``"system"``.
@@ -610,6 +646,8 @@ def SystemMsg(
         finished_at (`str | None`, optional):
             ISO-format timestamp for when the message was finished. Defaults to
             the same value as ``created_at`` when not provided.
+        finished_reason (`ReplyFinishedReason | None`, optional):
+            The finished reason for the system message.
         id (`str | None`, optional):
             A unique identifier for the message. A random UUID hex string is
             generated when not provided.
@@ -628,5 +666,6 @@ def SystemMsg(
         metadata=metadata or {},
         created_at=created_at,
         finished_at=finished_at,
+        finished_reason=finished_reason,
         id=id or _generate_id(),
     )

@@ -186,6 +186,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             "created_at": AnyString(),
             "finished_at": None,
             "finished_reason": None,
+            "structured_output": None,
             "error": None,
             "metadata": {},
             "name": "Friday",
@@ -372,6 +373,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -446,6 +448,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -611,6 +614,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -734,6 +738,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -927,6 +932,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -1042,6 +1048,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -1229,6 +1236,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -1319,6 +1327,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {

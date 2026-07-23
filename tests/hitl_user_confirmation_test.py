@@ -279,6 +279,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             "created_at": AnyString(),
             "finished_at": None,
             "finished_reason": None,
+            "structured_output": None,
             "error": None,
             "metadata": {},
             "name": "Friday",
@@ -404,6 +405,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -485,6 +487,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -673,6 +676,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -814,6 +818,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -1039,6 +1044,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -1166,6 +1172,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -1502,6 +1509,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -1610,6 +1618,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                 "created_at": AnyString(),
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
                 "metadata": {},
                 "name": "user",

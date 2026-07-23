@@ -13,8 +13,10 @@ import frontmatter
 
 from ._utils import DEFAULT_WORKSPACE_INSTRUCTIONS
 from .._logging import logger
+from .._utils._common import _normalize_local_path
 from ..mcp import MCPClient
 from ..skill import Skill
+from ..tool import ToolBase
 from ..tool._builtin._backend import LocalBackend
 from ._base import WorkspaceBase
 
@@ -109,7 +111,9 @@ class LocalWorkspace(WorkspaceBase):
 
         # ── seed-only ───────────────────────────────────────────
         self.default_mcps: list[MCPClient] = list(default_mcps or [])
-        self.skill_paths: list[str] = list(skill_paths or [])
+        self.skill_paths: list[str] = [
+            _normalize_local_path(path) for path in skill_paths or []
+        ]
 
         # ── runtime state ───────────────────────────────────────
         self._backend = LocalBackend()
@@ -117,6 +121,29 @@ class LocalWorkspace(WorkspaceBase):
 
         self._skill_lock = asyncio.Lock()
         self._mcp_lock = asyncio.Lock()
+
+    async def list_tools(self) -> list[ToolBase]:
+        """Return builtin tools, using PowerShell as the shell on Windows."""
+        from ..tool import Bash, Edit, Glob, Grep, PowerShell, Read, Write
+
+        backend = self.get_backend()
+        glob_kwargs: dict = {"backend": backend}
+        if self._glob_helper_path is not None:
+            glob_kwargs["glob_helper_path"] = self._glob_helper_path
+
+        if os.name == "nt":
+            shell: ToolBase = PowerShell(cwd=self.workdir, backend=backend)
+        else:
+            shell = Bash(cwd=self.workdir, backend=backend)
+
+        return [
+            shell,
+            Edit(backend=backend),
+            Glob(**glob_kwargs),
+            Grep(backend=backend),
+            Read(backend=backend),
+            Write(backend=backend),
+        ]
 
     async def initialize(self) -> None:
         """Initialise the workspace.
@@ -700,6 +727,7 @@ class LocalWorkspace(WorkspaceBase):
             ValueError: If the skill at ``skill_path`` is invalid (missing or
                 malformed ``SKILL.md``).
         """
+        skill_path = _normalize_local_path(skill_path)
         skills_dir = os.path.join(self.workdir, "skills")
         async with self._skill_lock:
             os.makedirs(skills_dir, exist_ok=True)

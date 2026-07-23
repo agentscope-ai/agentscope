@@ -290,6 +290,18 @@ class ReActConfig(BaseModel):
     )
     """The maximum number of iterations for the reasoning-acting loop."""
 
+    structured_output_grace_iters: int = Field(
+        title="Grace Iters for Structured Output",
+        description=(
+            "The grace iterations for structured output when exceeding the "
+            "max iterations"
+        ),
+        default=5,
+        gt=0,
+    )
+    """The extra iterations allowed beyond ``max_iters`` to generate the
+    required structured output."""
+
     stop_on_reject: bool = Field(
         title="Rejection Handling",
         default=False,

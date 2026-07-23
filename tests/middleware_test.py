@@ -110,10 +110,12 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             "mw1_TEXT_BLOCK_END",
             "mw2_MODEL_CALL_END",
             "mw1_MODEL_CALL_END",
-            "mw2_msg",
-            "mw1_msg",
+            # The final Msg is the terminal item of the reply stream,
+            # emitted after REPLY_END
             "mw2_REPLY_END",
             "mw1_REPLY_END",
+            "mw2_msg",
+            "mw1_msg",
             "mw2_post",
             "mw1_post",
         ]
@@ -189,6 +191,10 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             "mw1_MODEL_CALL_END",
             "mw2_msg",
             "mw1_msg",
+            # The reasoning generator now completes naturally instead of
+            # being aborted by an early return, so the post hooks run
+            "mw2_post",
+            "mw1_post",
         ]
         self.assertListEqual(self.execution_log, expected)
 
@@ -495,6 +501,9 @@ class TestMiddleware(IsolatedAsyncioTestCase):
             "multi_system_prompt",
             "multi_model_call_pre",
             "multi_model_call_post",
+            # The reasoning generator now completes naturally instead of
+            # being aborted by an early return, so its post hook runs
+            "multi_reasoning_post",
             "multi_reply_post",
         ]
         self.assertListEqual(self.execution_log, expected)

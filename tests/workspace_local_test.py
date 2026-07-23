@@ -7,8 +7,10 @@ import base64
 import hashlib
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, patch
 from dataclasses import asdict
 from urllib.parse import urlparse
 from urllib.request import url2pathname
@@ -24,6 +26,7 @@ from agentscope.tool import (
     Glob,
     Grep,
     LocalBackend,
+    PowerShell,
     Read,
     Toolkit,
     ToolBase,
@@ -31,7 +34,7 @@ from agentscope.tool import (
     Write,
 )
 from agentscope.permission import PermissionDecision, PermissionBehavior
-from agentscope.workspace import LocalWorkspace
+from agentscope.workspace import LocalWorkspace, WorkspaceBase
 from agentscope.mcp import MCPClient, StdioMCPConfig
 from agentscope.message import (
     Msg,
@@ -95,13 +98,17 @@ class _LongResultTool(ToolBase):
 class TestLocalWorkspaceTools(IsolatedAsyncioTestCase):
     """Test cases for LocalWorkspace builtin tools."""
 
-    async def test_list_tools_builtin(self) -> None:
-        """Return all six builtin tools backed by LocalBackend."""
+    async def test_list_tools_builtin_posix_uses_bash(self) -> None:
+        """A POSIX local workspace returns Bash and filesystem tools."""
         with tempfile.TemporaryDirectory() as workdir:
             workspace = LocalWorkspace(workdir=workdir)
             await workspace.initialize()
             try:
-                tools = await workspace.list_tools()
+                with patch(
+                    "agentscope.workspace._local_workspace.os",
+                    SimpleNamespace(name="posix"),
+                ):
+                    tools = await workspace.list_tools()
             finally:
                 await workspace.close()
 
@@ -112,6 +119,51 @@ class TestLocalWorkspaceTools(IsolatedAsyncioTestCase):
         )
         for tool in tools:
             self.assertIsInstance(tool._backend, LocalBackend)
+
+    async def test_list_tools_builtin_windows_uses_powershell(self) -> None:
+        """A Windows local workspace returns PowerShell, not Bash."""
+        with tempfile.TemporaryDirectory() as workdir:
+            workspace = LocalWorkspace(workdir=workdir)
+            await workspace.initialize()
+            try:
+                with patch(
+                    "agentscope.workspace._local_workspace.os",
+                    SimpleNamespace(name="nt"),
+                ):
+                    tools = await workspace.list_tools()
+            finally:
+                await workspace.close()
+
+        self.assertEqual(len(tools), 6)
+        self.assertSetEqual(
+            {type(tool) for tool in tools},
+            {PowerShell, Edit, Glob, Grep, Read, Write},
+        )
+        for tool in tools:
+            self.assertIsInstance(tool._backend, LocalBackend)
+
+    async def test_windows_shell_switch_is_local_workspace_behavior(
+        self,
+    ) -> None:
+        """Build the tool list in LocalWorkspace without delegating up."""
+        workspace = LocalWorkspace(workdir="workspace")
+        backend = workspace.get_backend()
+
+        with (
+            patch.object(
+                WorkspaceBase,
+                "list_tools",
+                new=AsyncMock(side_effect=AssertionError("must not delegate")),
+            ),
+            patch(
+                "agentscope.workspace._local_workspace.os",
+                SimpleNamespace(name="nt"),
+            ),
+        ):
+            tools = await workspace.list_tools()
+
+        self.assertIsInstance(tools[0], PowerShell)
+        self.assertIs(tools[0]._backend, backend)
 
 
 class TestLocalWorkspaceOffload(IsolatedAsyncioTestCase):
@@ -599,6 +651,88 @@ description: {description}
             {"test_skill_1": "test_skill_1", "test_skill_2": "test_skill_2"},
         )
 
+    async def test_initialize_with_tilde_skill_path(self) -> None:
+        """Test that ``skill_paths`` expands user-home shorthand."""
+        with tempfile.TemporaryDirectory() as home_dir:
+            skill_dir = os.path.join(home_dir, "tilde_skill")
+            os.makedirs(skill_dir)
+            with open(
+                os.path.join(skill_dir, "SKILL.md"),
+                "w",
+                encoding="utf-8",
+            ) as f:
+                f.write(
+                    """---
+name: tilde_skill
+description: A skill under the user home directory
+---
+
+This skill is seeded through a tilde path.
+""",
+                )
+
+            env = {"HOME": home_dir, "USERPROFILE": home_dir}
+            drive, tail = os.path.splitdrive(home_dir)
+            if drive:
+                env["HOMEDRIVE"] = drive
+                env["HOMEPATH"] = tail
+
+            with patch.dict(os.environ, env, clear=False):
+                workspace = LocalWorkspace(
+                    workdir=self.temp_dir.name,
+                    skill_paths=[os.path.join("~", "tilde_skill")],
+                )
+                self.assertEqual(
+                    workspace.skill_paths,
+                    [os.path.abspath(skill_dir)],
+                )
+                await workspace.initialize()
+
+        skill_target = os.path.join(
+            self.temp_dir.name,
+            "skills",
+            "tilde_skill",
+        )
+        self.assertTrue(os.path.exists(os.path.join(skill_target, "SKILL.md")))
+
+    async def test_add_skill_with_tilde_path(self) -> None:
+        """Test that ``add_skill`` expands user-home shorthand."""
+        with tempfile.TemporaryDirectory() as home_dir:
+            skill_dir = os.path.join(home_dir, "tilde_skill")
+            os.makedirs(skill_dir)
+            with open(
+                os.path.join(skill_dir, "SKILL.md"),
+                "w",
+                encoding="utf-8",
+            ) as f:
+                f.write(
+                    """---
+name: tilde_skill
+description: A skill under the user home directory
+---
+
+This skill is added through a tilde path.
+""",
+                )
+
+            env = {"HOME": home_dir, "USERPROFILE": home_dir}
+            drive, tail = os.path.splitdrive(home_dir)
+            if drive:
+                env["HOMEDRIVE"] = drive
+                env["HOMEPATH"] = tail
+
+            workspace = LocalWorkspace(workdir=self.temp_dir.name)
+            await workspace.initialize()
+            with patch.dict(os.environ, env, clear=False):
+                await workspace.add_skill(os.path.join("~", "tilde_skill"))
+
+        skill_target = os.path.join(
+            self.temp_dir.name,
+            "skills",
+            "tilde_skill",
+        )
+        self.assertTrue(os.path.exists(os.path.join(skill_target, "SKILL.md")))
+
     async def test_initialize_skip_duplicate_skills(self) -> None:
         """Test that duplicate skills are not copied again.
 
@@ -981,6 +1115,7 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 "created_at": AnyString(),
                 "finished_at": None,
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
                 "usage": None,
             }
@@ -1126,8 +1261,10 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 '"id":"text_block_a"}'
                 '],"role":"user","id":"msg_a","metadata":{},'
                 '"created_at":"2026-01-01T00:00:00",'
+                '"usage":null,'
                 '"finished_at":"2026-01-01T00:00:00",'
-                '"finished_reason":null,"error":null,"usage":null}'
+                '"finished_reason":null,"structured_output":null,'
+                '"error":null}'
             )
             self.assertEqual(
                 content_after_first,
@@ -1170,8 +1307,10 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 + '"}'
                 '],"role":"assistant","id":"' + assistant_1.id + '",'
                 '"metadata":{},"created_at":"' + assistant_1.created_at + '",'
+                '"usage":null,'
                 '"finished_at":null,'
-                '"finished_reason":null,"error":null,"usage":null}'
+                '"finished_reason":null,"structured_output":null,'
+                '"error":null}'
             )
             expected_user_msg_b_json = (
                 '{"name":"user","content":['
@@ -1179,8 +1318,10 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 '"id":"text_block_b"}'
                 '],"role":"user","id":"msg_b","metadata":{},'
                 '"created_at":"2026-01-02T00:00:00",'
+                '"usage":null,'
                 '"finished_at":"2026-01-02T00:00:00",'
-                '"finished_reason":null,"error":null,"usage":null}'
+                '"finished_reason":null,"structured_output":null,'
+                '"error":null}'
             )
             self.assertEqual(
                 content_after_second,
@@ -1230,6 +1371,7 @@ class TestLocalWorkspaceWithAgent(IsolatedAsyncioTestCase):
                 "created_at": AnyString(),
                 "finished_at": None,
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
                 "usage": None,
             }
