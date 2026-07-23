@@ -7,6 +7,7 @@ is convenient for local development, tests, and small RAG workloads.
 """
 import asyncio
 import json
+import math
 import os
 import uuid
 from typing import TYPE_CHECKING, Any, Literal
@@ -275,6 +276,10 @@ class MilvusLiteStore(VectorStoreBase):
                 cosine / inner product metrics, or ascending distance
                 semantics for L2 as exposed by Milvus.
         """
+        output_fields = ["document_id", "chunk"]
+        if self._metric_type == "COSINE":
+            output_fields.append("vector")
+
         response = await asyncio.to_thread(
             self.get_client().search,
             collection_name=collection,
@@ -282,18 +287,23 @@ class MilvusLiteStore(VectorStoreBase):
             anns_field="vector",
             limit=top_k,
             filter=self._build_metadata_filter(metadata_filter),
-            output_fields=["document_id", "chunk"],
+            output_fields=output_fields,
             search_params={"metric_type": self._metric_type},
         )
 
         hits = response[0] if response else []
+        scores = self._extract_scores(
+            hits,
+            self._metric_type,
+            query_vector,
+        )
         return [
             VectorSearchResult(
-                score=self._extract_score(hit, self._metric_type),
+                score=score,
                 document_id=hit["entity"]["document_id"],
                 chunk=Chunk.model_validate(hit["entity"]["chunk"]),
             )
-            for hit in hits
+            for hit, score in zip(hits, scores, strict=True)
         ]
 
     # ------------------------------------------------------------------
@@ -423,9 +433,44 @@ class MilvusLiteStore(VectorStoreBase):
         )
 
     @staticmethod
+    def _extract_scores(
+        hits: list[dict[str, Any]],
+        metric_type: Literal["COSINE", "IP", "L2"],
+        query_vector: list[float],
+    ) -> list[float]:
+        """Normalize Milvus search scores.
+
+        Milvus Lite returns COSINE values as distance in some Python wheels
+        and as similarity in others. When possible, compute cosine similarity
+        from the stored vector to keep AgentScope scores stable.
+        """
+        if metric_type == "COSINE":
+            cosine_scores: list[float] = []
+            for hit in hits:
+                vector = hit.get("entity", {}).get("vector")
+                if vector is None:
+                    break
+                cosine_scores.append(
+                    MilvusLiteStore._cosine_similarity(
+                        query_vector,
+                        vector,
+                    ),
+                )
+            else:
+                return cosine_scores
+
+        scores = [MilvusLiteStore._extract_score(hit) for hit in hits]
+        if (
+            metric_type == "COSINE"
+            and len(scores) > 1
+            and scores[0] < scores[-1]
+        ):
+            return [1.0 - score for score in scores]
+        return scores
+
+    @staticmethod
     def _extract_score(
         hit: dict[str, Any],
-        metric_type: Literal["COSINE", "IP", "L2"],
     ) -> float:
         """Extract a score from Milvus search result shapes.
 
@@ -439,6 +484,28 @@ class MilvusLiteStore(VectorStoreBase):
         if "score" in hit:
             return float(hit["score"])
         return 0.0
+
+    @staticmethod
+    def _cosine_similarity(
+        query_vector: list[float],
+        stored_vector: list[float],
+    ) -> float:
+        """Calculate cosine similarity for two vectors."""
+        dot = sum(
+            float(query_value) * float(stored_value)
+            for query_value, stored_value in zip(
+                query_vector,
+                stored_vector,
+                strict=True,
+            )
+        )
+        query_norm = math.sqrt(sum(value * value for value in query_vector))
+        stored_norm = math.sqrt(
+            sum(float(value) * float(value) for value in stored_vector),
+        )
+        if query_norm == 0.0 or stored_norm == 0.0:
+            return 0.0
+        return dot / (query_norm * stored_norm)
 
     @staticmethod
     def _is_local_db_uri(uri: str) -> bool:

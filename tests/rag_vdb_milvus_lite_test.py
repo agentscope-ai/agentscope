@@ -173,6 +173,7 @@ class MilvusLiteStoreTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].document_id, "doc-1")
+        self.assertAlmostEqual(results[0].score, 1.0)
 
     async def test_delete_by_document_id(self) -> None:
         """delete removes all records of one document only."""
