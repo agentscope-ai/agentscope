@@ -168,6 +168,28 @@ class SandboxedWorkspaceBase(WorkspaceBase):
 
     # ── lifecycle template methods ────────────────────────────────
 
+    async def _mcp_config_is_empty(self) -> bool:
+        """Return True when no MCPs are configured (defaults or persisted).
+
+        Used to skip gateway bootstrap for workspaces that only need Bash /
+        file tools and Skills (#2113).
+        """
+        if self.default_mcps:
+            return False
+        backend = self.get_backend()
+        if not await backend.file_exists(self._mcp_file):
+            return True
+        try:
+            existing = await backend.read_file(self._mcp_file)
+            parsed = json.loads(existing.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError, OSError):
+            # Corrupted file will be reseeded by layout helper; treat as empty
+            # for the purpose of gateway skip until reseeding writes defaults.
+            return not self.default_mcps
+        if not isinstance(parsed, list):
+            return not self.default_mcps
+        return len(parsed) == 0
+
     async def initialize(self) -> None:
         """Provision the sandbox, restore MCPs, start the gateway.
 
@@ -191,8 +213,18 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         # Set up the workspace layout
         await self._ensure_workspace_layout()
 
-        # Set up the MCP gateway server
-        await self._setup_mcp_gateway()
+        # Skip MCP gateway bootstrap when no servers are configured — Bash /
+        # file tools and Skills do not need it (#2113).
+        if await self._mcp_config_is_empty():
+            logger.info(
+                "%s: no MCP configuration; skipping gateway bootstrap "
+                "(workspace_id=%r)",
+                type(self).__name__,
+                self.workspace_id,
+            )
+            self._mcps = []
+        else:
+            await self._setup_mcp_gateway()
 
         # Set up the skills if not exists
         await self._setup_skills()
@@ -274,6 +306,9 @@ class SandboxedWorkspaceBase(WorkspaceBase):
                 If the gateway is not attached or rejects the
                 registration.
         """
+        if self._gateway is None:
+            # Lazy start when the workspace was initialized without MCP (#2113).
+            await self._setup_mcp_gateway()
         if self._gateway is None:
             raise RuntimeError("Workspace has no MCP gateway attached.")
         async with self._mcp_lock:
