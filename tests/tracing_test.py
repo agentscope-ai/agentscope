@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """Unit tests for the tracing module using an in-memory OTel exporter."""
+import asyncio
 import json
-from typing import Any
+import logging
+from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from opentelemetry import trace as otel_trace
@@ -229,6 +231,81 @@ class TracingTest(IsolatedAsyncioTestCase):
             1,
             f"All spans must share exactly one conversation_id, "
             f"got: {conv_ids}",
+        )
+
+    async def test_span_detach_survives_cross_task_close(self) -> None:
+        """A span detached after a cross-task async-generator close must
+        not log ``"Failed to detach context"`` (regression test #2076).
+
+        ``on_reply`` / ``on_acting`` are async generators that keep an
+        OpenTelemetry span current across ``yield`` points. When the
+        generator is closed (``aclose``) from a different asyncio task,
+        the cleanup runs in the closing task's ``Context``, and a naive
+        ``context.detach`` raises ``ValueError`` which OpenTelemetry
+        logs at ERROR level. This test exercises the attach/detach
+        helpers with that exact pattern.
+        """
+        from agentscope.middleware._tracing._trace import (
+            _attach_span,
+            _detach_span,
+        )
+
+        tracer = otel_trace.get_tracer("test-cross-task-detach")
+        span = tracer.start_span("cross-task-probe")
+
+        detach_errors: list[logging.LogRecord] = []
+
+        class _Collector(logging.Handler):
+            """Collect ERROR records from the OTel context logger."""
+
+            def emit(self, record: logging.LogRecord) -> None:
+                detach_errors.append(record)
+
+        handler = _Collector()
+        handler.setLevel(logging.ERROR)
+        otel_context_logger = logging.getLogger("opentelemetry.context")
+        otel_context_logger.addHandler(handler)
+        try:
+
+            async def _traced_generator() -> AsyncGenerator[int, None]:
+                # Mirrors on_reply / on_acting: keep the span current
+                # across the yield, end it on clean shutdown, detach in
+                # ``finally``.
+                handle = _attach_span(span)
+                try:
+                    yield 1
+                except (GeneratorExit, asyncio.CancelledError):
+                    span.end()
+                    raise
+                finally:
+                    _detach_span(handle)
+
+            agen = _traced_generator()
+            # Drive the generator to its first yield so the span is
+            # attached and the generator is suspended inside the block.
+            first = await anext(agen)
+            self.assertEqual(first, 1)
+
+            # Close it from a DIFFERENT asyncio task (a fresh
+            # contextvars context) — this is what triggers the
+            # cross-context detach in the unfixed approach.
+            async def _close_from_other_task() -> None:
+                await agen.aclose()
+
+            await asyncio.create_task(_close_from_other_task())
+        finally:
+            otel_context_logger.removeHandler(handler)
+
+        # No ERROR record about a cross-context detach must be emitted.
+        self.assertEqual(
+            [r.getMessage() for r in detach_errors],
+            [],
+            "Cross-task stream close must not log a detach error",
+        )
+        # The span itself must still be ended and exported.
+        self.assertEqual(
+            [s.name for s in self.exporter.get_finished_spans()],
+            ["cross-task-probe"],
         )
 
     async def test_invoke_agent_span_has_response_attributes(self) -> None:

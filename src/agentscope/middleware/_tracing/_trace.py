@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """TracingMiddleware and supporting utilities for OpenTelemetry tracing."""
+import asyncio
+import contextvars
 import json
 from typing import (
     Any,
@@ -13,6 +15,7 @@ from typing import (
 
 import aioitertools
 
+from opentelemetry import context as otel_context
 from opentelemetry import trace as otel_trace
 from opentelemetry.trace import StatusCode
 
@@ -50,6 +53,15 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 
+# Probe ContextVar used to detect whether span cleanup is running in the
+# same ``contextvars`` Context that attached the span. See
+# :func:`_detach_span`.
+_probe_ctxvar = contextvars.ContextVar(
+    "_agentscope_tracing_ctx_probe",
+    default=False,
+)
+
+
 # ---------------------------------------------------------------------------
 # Utility helpers
 # ---------------------------------------------------------------------------
@@ -82,30 +94,81 @@ def _set_span_error_status(span: "Span", e: BaseException) -> None:
     span.end()
 
 
+def _attach_span(span: "Span") -> tuple[Any, Any]:
+    """Make ``span`` the current span and return a detach handle.
+
+    Unlike ``tracer.start_as_current_span`` (a context manager that
+    detaches on exit), the caller controls when to detach via
+    :func:`_detach_span`. This is required because the hooks are async
+    generators and the span must stay current across ``yield`` points so
+    that nested model/tool spans are parented correctly.
+
+    A probe ``ContextVar`` token is captured alongside the OpenTelemetry
+    token so that :func:`_detach_span` can detect whether cleanup is
+    running in the originating context.
+    """
+    probe_token = _probe_ctxvar.set(True)
+    otel_token = otel_context.attach(
+        otel_trace.set_span_in_context(
+            span,
+            otel_context.get_current(),
+        ),
+    )
+    return otel_token, probe_token
+
+
+def _detach_span(handle: tuple[Any, Any]) -> None:
+    """Detach a span handle, tolerating cross-task stream close.
+
+    ``context.detach`` resets a ``contextvars`` token. When an async
+    generator is closed (``aclose``) from a different asyncio task, the
+    generator's ``finally`` blocks run in the *closing* task's
+    ``Context``, so resetting the OpenTelemetry token (created in the
+    producer task's ``Context``) raises ``ValueError``, which
+    OpenTelemetry logs at ERROR level as ``"Failed to detach context"``.
+
+    The span was never attached in the closing task's ``Context``, so
+    there is genuinely nothing to detach there. A probe ``ContextVar``
+    detects this: resetting its token raises ``ValueError`` in the
+    foreign context (suppressed) and OpenTelemetry is only detached when
+    the probe reset succeeds — i.e. when we are back in the originating
+    context.
+    """
+    otel_token, probe_token = handle
+    try:
+        _probe_ctxvar.reset(probe_token)
+    except ValueError:
+        return
+    otel_context.detach(otel_token)
+
+
 async def _trace_async_generator_wrapper(
     res: AsyncGenerator[T, None],
     span: "Span",
 ) -> AsyncGenerator[T, None]:
     """Wrap an async generator so that response attributes are captured from
     the last yielded chunk before the span is closed."""
-    has_error = False
-
+    last_chunk = None
     try:
-        last_chunk = None
         async for chunk in aioitertools.iter(res):
             last_chunk = chunk
             yield chunk
 
+    except (GeneratorExit, asyncio.CancelledError):
+        # Clean stream shutdown (client disconnect, cancellation or
+        # cross-task ``aclose``). Capture what we have and end the span
+        # normally instead of recording it as an error.
+        span.set_attributes(_get_llm_response_attributes(last_chunk))
+        _set_span_success_status(span)
+        raise
+
     except BaseException as e:
-        has_error = True
         _set_span_error_status(span, e)
         raise
 
-    finally:
-        if not has_error:
-            response_attributes = _get_llm_response_attributes(last_chunk)
-            span.set_attributes(response_attributes)
-            _set_span_success_status(span)
+    response_attributes = _get_llm_response_attributes(last_chunk)
+    span.set_attributes(response_attributes)
+    _set_span_success_status(span)
 
 
 # ---------------------------------------------------------------------------
@@ -154,14 +217,15 @@ class TracingMiddleware(MiddlewareBase):
         )
         span_name = _get_agent_span_name(request_attributes)
 
-        with tracer.start_as_current_span(
+        span = tracer.start_span(
             name=span_name,
             attributes={
                 **request_attributes,
                 **common_attrs,
             },
-            end_on_exit=False,
-        ) as span:
+        )
+        span_handle = _attach_span(span)
+        try:
             # Synthetic execute_tool spans for externally executed tools
             event_arg = input_kwargs.get("inputs")
             if isinstance(event_arg, ExternalExecutionResultEvent):
@@ -210,6 +274,11 @@ class TracingMiddleware(MiddlewareBase):
                     if isinstance(item, Msg):
                         last_msg = item
                     yield item
+            except (GeneratorExit, asyncio.CancelledError):
+                # Clean stream shutdown (client disconnect, cancellation
+                # or cross-task ``aclose``). Not an error — end the span
+                # normally and propagate so the generator closes.
+                raise
             except BaseException as e:
                 has_error = True
                 error_exc = e
@@ -239,6 +308,8 @@ class TracingMiddleware(MiddlewareBase):
                             _get_agent_response_attributes(last_msg),
                         )
                     _set_span_success_status(span)
+        finally:
+            _detach_span(span_handle)
 
     # ------------------------------------------------------------------
     # on_model_call
@@ -321,20 +392,26 @@ class TracingMiddleware(MiddlewareBase):
         )
         span_name = _get_tool_span_name(request_attributes)
 
-        with tracer.start_as_current_span(
+        span = tracer.start_span(
             name=span_name,
             attributes={
                 **request_attributes,
                 **_get_common_attributes(agent.state.session_id),
             },
-            end_on_exit=False,
-        ) as span:
+        )
+        span_handle = _attach_span(span)
+        try:
             has_error = False
             last_item = None
             try:
                 async for item in next_handler(**input_kwargs):
                     last_item = item
                     yield item
+            except (GeneratorExit, asyncio.CancelledError):
+                # Clean stream shutdown (client disconnect, cancellation
+                # or cross-task ``aclose``). Not an error — end the span
+                # normally and propagate so the generator closes.
+                raise
             except BaseException as e:
                 has_error = True
                 _set_span_error_status(span, e)
@@ -346,3 +423,5 @@ class TracingMiddleware(MiddlewareBase):
                             _get_tool_response_attributes(last_item),
                         )
                     _set_span_success_status(span)
+        finally:
+            _detach_span(span_handle)
