@@ -145,16 +145,15 @@ class TestLocalWorkspaceTools(IsolatedAsyncioTestCase):
     async def test_windows_shell_switch_is_local_workspace_behavior(
         self,
     ) -> None:
-        """Replace the inherited Bash tool only in LocalWorkspace."""
+        """Build the tool list in LocalWorkspace without delegating up."""
         workspace = LocalWorkspace(workdir="workspace")
         backend = workspace.get_backend()
-        inherited_tools = [Bash(cwd="workspace", backend=backend)]
 
         with (
             patch.object(
                 WorkspaceBase,
                 "list_tools",
-                new=AsyncMock(return_value=inherited_tools),
+                new=AsyncMock(side_effect=AssertionError("must not delegate")),
             ),
             patch(
                 "agentscope.workspace._local_workspace.os",
@@ -163,7 +162,6 @@ class TestLocalWorkspaceTools(IsolatedAsyncioTestCase):
         ):
             tools = await workspace.list_tools()
 
-        self.assertIsNot(tools, inherited_tools)
         self.assertIsInstance(tools[0], PowerShell)
         self.assertIs(tools[0]._backend, backend)
 

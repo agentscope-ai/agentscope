@@ -120,16 +120,27 @@ class LocalWorkspace(WorkspaceBase):
         self._mcp_lock = asyncio.Lock()
 
     async def list_tools(self) -> list[ToolBase]:
-        """Return local tools with PowerShell selected on Windows."""
-        tools = list(await super().list_tools())
-        if os.name == "nt":
-            from ..tool import PowerShell
+        """Return builtin tools, using PowerShell as the shell on Windows."""
+        from ..tool import Bash, Edit, Glob, Grep, PowerShell, Read, Write
 
-            tools[0] = PowerShell(
-                cwd=self.workdir,
-                backend=self.get_backend(),
-            )
-        return tools
+        backend = self.get_backend()
+        glob_kwargs: dict = {"backend": backend}
+        if self._glob_helper_path is not None:
+            glob_kwargs["glob_helper_path"] = self._glob_helper_path
+
+        if os.name == "nt":
+            shell: ToolBase = PowerShell(cwd=self.workdir, backend=backend)
+        else:
+            shell = Bash(cwd=self.workdir, backend=backend)
+
+        return [
+            shell,
+            Edit(backend=backend),
+            Glob(**glob_kwargs),
+            Grep(backend=backend),
+            Read(backend=backend),
+            Write(backend=backend),
+        ]
 
     async def initialize(self) -> None:
         """Initialise the workspace.

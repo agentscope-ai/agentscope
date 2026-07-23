@@ -38,8 +38,9 @@ class PowerShellInterfaceTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             decision.behavior,
-            PermissionBehavior.PASSTHROUGH,
+            PermissionBehavior.ASK,
         )
+        self.assertFalse(decision.bypass_immune)
         self.assertEqual(
             await tool.generate_suggestions(
                 {"command": "Get-Location"},

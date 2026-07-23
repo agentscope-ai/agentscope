@@ -141,13 +141,15 @@ are easier for the user to review and authorize:
         tool_input: dict[str, Any],
         context: PermissionContext,
     ) -> PermissionDecision:
-        """Defer every command to the configured permission mode.
+        """Ask the user to confirm every PowerShell command.
 
         PowerShell-specific command validation is intentionally outside this
-        implementation. No command is automatically classified as safe.
+        implementation. Since no command is classified as safe, every
+        invocation prompts the user. This is a regular ASK that allow rules
+        and BYPASS mode may still override.
         """
         return PermissionDecision(
-            behavior=PermissionBehavior.PASSTHROUGH,
+            behavior=PermissionBehavior.ASK,
             message="Execute PowerShell command",
             decision_reason="PowerShell command validation is not enabled",
         )
