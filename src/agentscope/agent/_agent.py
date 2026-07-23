@@ -87,6 +87,7 @@ from ..message import (
 )
 from ..tool import (
     Toolkit,
+    ToolBase,
     ToolChunk,
     ToolChoice,
     ToolResponse,
@@ -140,8 +141,8 @@ class Agent:
             middlewares (`list[MiddlewareBase] | None`, optional):
                 Middlewares applied to the agent to modify its behavior
                 without altering its source code. Supported hook points
-                include: reply, reasoning, acting, model call, and system
-                prompt retrieval.
+                include: reply, reasoning, permission checking, acting, model
+                call, context compression, and system prompt retrieval.
             state (`AgentState | None`, optional):
                 The agent state. A new state will be created if not provided.
             offloader (`Offloader | None`, optional):
@@ -192,6 +193,9 @@ class Agent:
         ]
         self._reasoning_middlewares = [
             _ for _ in middlewares if _.is_implemented("on_reasoning")
+        ]
+        self._check_permission_middlewares = [
+            _ for _ in middlewares if _.is_implemented("on_check_permission")
         ]
         self._acting_middlewares = [
             _ for _ in middlewares if _.is_implemented("on_acting")
@@ -1916,6 +1920,85 @@ class Agent:
         async for evt in self._execute_tool_call(tool_call, kept_rules):
             await queue.put(evt)
 
+    async def _check_permission(
+        self,
+        tool_call: ToolCallBlock,
+        tool: ToolBase,
+        tool_input: dict[str, Any],
+    ) -> PermissionDecision:
+        """Run permission checking through the middleware onion.
+
+        The middleware chain receives copies of the tool call and tool input;
+        changes to these copies do not alter the eventual tool invocation. A
+        call already allowed by user confirmation still traverses the
+        middleware chain, but skips re-evaluation by the built-in engine.
+
+        Args:
+            tool_call (`ToolCallBlock`):
+                The validated tool call metadata.
+            tool (`ToolBase`):
+                The resolved tool instance.
+            tool_input (`dict[str, Any]`):
+                The parsed and schema-validated tool input.
+
+        Returns:
+            `PermissionDecision`:
+                The decision that the agent should consume.
+        """
+
+        async def check_permission_impl(
+            tool_call: ToolCallBlock,
+            tool: ToolBase,
+            tool_input: dict[str, Any],
+        ) -> PermissionDecision:
+            if tool_call.state == ToolCallState.ALLOWED:
+                return PermissionDecision(
+                    behavior=PermissionBehavior.ALLOW,
+                    message="Already allowed by user confirmation.",
+                )
+            return await self._engine.check_permission(tool, tool_input)
+
+        if not self._check_permission_middlewares:
+            return await check_permission_impl(tool_call, tool, tool_input)
+
+        async def execute_chain(
+            index: int = 0,
+            tool_call: ToolCallBlock = tool_call,
+            tool: ToolBase = tool,
+            tool_input: dict[str, Any] = tool_input,
+        ) -> PermissionDecision:
+            if index >= len(self._check_permission_middlewares):
+                return await check_permission_impl(
+                    tool_call,
+                    tool,
+                    tool_input,
+                )
+
+            middleware = self._check_permission_middlewares[index]
+            input_kwargs = {
+                "tool_call": tool_call,
+                "tool": tool,
+                "tool_input": tool_input,
+            }
+
+            async def next_handler(**kwargs: Any) -> PermissionDecision:
+                return await execute_chain(
+                    index + 1,
+                    **{**input_kwargs, **kwargs},
+                )
+
+            return await middleware.on_check_permission(
+                agent=self,
+                input_kwargs=input_kwargs,
+                next_handler=next_handler,
+            )
+
+        return await execute_chain(
+            tool_call=deepcopy(tool_call),
+            tool=tool,
+            tool_input=deepcopy(tool_input),
+        )
+
     async def _execute_tool_call(
         self,
         tool_call: ToolCallBlock,
@@ -2006,17 +2089,11 @@ class Agent:
         # ===================================================================
         # Step 2: Check permission by toolkit and permission engine
         # ===================================================================
-        if tool_call.state == ToolCallState.ALLOWED:
-            # Already allowed by user confirmation, skip permission checking
-            decision = PermissionDecision(
-                behavior=PermissionBehavior.ALLOW,
-                message="Already allowed by user confirmation.",
-            )
-        else:
-            decision = await self._engine.check_permission(
-                tool,
-                parsed_input,
-            )
+        decision = await self._check_permission(
+            tool_call,
+            tool,
+            parsed_input,
+        )
 
         # ===================================================================
         # Step 3: Handle the permission and execute the tool call if allowed
