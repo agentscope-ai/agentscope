@@ -50,7 +50,7 @@
 		"home": "返回首页"
 	},
 	"tool": {
-		"moreLines": "... 还有 {{count}} 行",
+		"callGeneric": "调用工具",
 		"read": {
 			"name": "读取",
 			"fileCount_one": "{{count}} 个文件",
@@ -62,18 +62,31 @@
 			"name": "Glob"
 		},
 		"taskCreate": {
-			"name": "TaskCreate",
-			"label": "创建",
-			"count_one": "{{count}} 个任务",
-			"count_other": "{{count}} 个任务"
+			"name": "TaskCreate"
 		},
 		"grep": {
 			"name": "Grep"
+		},
+		"summary": {
+			"separator": "，",
+			"bash_one": "执行 {{count}} 次脚本",
+			"bash_other": "执行 {{count}} 次脚本",
+			"read_one": "读取 {{count}} 个文件",
+			"read_other": "读取 {{count}} 个文件",
+			"edit_one": "编辑 {{count}} 个文件",
+			"edit_other": "编辑 {{count}} 个文件",
+			"search_one": "搜索 {{count}} 个模式",
+			"search_other": "搜索 {{count}} 个模式",
+			"todo_one": "更新 {{count}} 项待办",
+			"todo_other": "更新 {{count}} 项待办",
+			"mcp_one": "调用 {{count}} 次 MCP",
+			"mcp_other": "调用 {{count}} 次 MCP",
+			"fallback_one": "调用 {{count}} 次工具",
+			"fallback_other": "调用 {{count}} 次工具"
 		}
 	},
 	"textInput": {
 		"toComplete": "补全",
-		"newLine": "换行",
 		"attach": "添加附件",
 		"attachNotSupported": "当前模型不支持文件附件",
 		"send": "发送",
@@ -94,6 +107,17 @@
 			"tool_output": "工具输出",
 			"team_message": "团队消息",
 			"schedule": "定时任务"
+		},
+		"error": {
+			"title": "回复失败",
+			"authentication": "鉴权失败 —— 请检查模型的 API key 或凭证。",
+			"permission": "请求被拒绝 —— 当前凭证没有访问该模型或端点的权限。",
+			"rate_limit": "触发限流或额度用尽 —— 请稍后重试。",
+			"invalid_request": "发往模型的请求被判定为非法。",
+			"upstream": "上游模型服务返回了错误。",
+			"connection": "无法连接模型服务 —— 网络错误或超时。",
+			"internal": "发生了未预期的内部错误。",
+			"unknown": "回复因未知错误失败。"
 		}
 	},
 	"chat": {
@@ -104,8 +128,7 @@
 		"subagentConfirmTitle": "{{name}} 请求确认",
 		"newSession": "新会话",
 		"noSessions": "暂无会话",
-		"noMessages": "暂无消息",
-		"noMessagesDesc": "发送一条消息开始新的对话",
+		"greeting": "我们从哪儿开始？",
 		"agent": {
 			"selectPlaceholder": "选择 Agent",
 			"emptyTitle": "暂无 Agent",
@@ -129,28 +152,49 @@
 		"identity": {
 			"legend": "Agent 身份",
 			"description": "定义此 Agent 行为的名称和指令。",
-			"name": { "label": "名称", "placeholder": "我的 Agent" },
-			"system-prompt": { "label": "系统提示词" }
+			"name": {
+				"label": "名称",
+				"placeholder": "我的 Agent"
+			},
+			"system-prompt": {
+				"label": "系统提示词"
+			}
 		},
 		"context-config": {
 			"legend": "上下文配置",
 			"description": "控制上下文窗口的管理和压缩方式。",
-			"trigger-ratio": { "label": "触发比例" },
-			"reserve-ratio": { "label": "保留比例" },
-			"tool-result-limit": { "label": "工具结果限制" },
-			"compression-prompt": { "label": "压缩提示词" },
-			"summary-template": { "label": "摘要模板" }
+			"trigger-ratio": {
+				"label": "触发比例"
+			},
+			"reserve-ratio": {
+				"label": "保留比例"
+			},
+			"tool-result-limit": {
+				"label": "工具结果限制"
+			},
+			"compression-prompt": {
+				"label": "压缩提示词"
+			},
+			"summary-template": {
+				"label": "摘要模板"
+			}
 		},
 		"react-config": {
 			"legend": "ReAct 配置",
 			"description": "控制推理和行动循环的行为。",
-			"max-iters": { "label": "最大迭代次数" },
-			"stop-on-reject": { "label": "拒绝时停止" }
+			"max-iters": {
+				"label": "最大迭代次数"
+			},
+			"stop-on-reject": {
+				"label": "拒绝时停止"
+			}
 		},
 		"invite-config": {
 			"legend": "邀请配置",
 			"description": "控制此 Agent 是否可被其他 Agent 通过 AgentInvite 邀请。",
-			"invitable": { "label": "允许被邀请" },
+			"invitable": {
+				"label": "允许被邀请"
+			},
 			"invite-description": {
 				"label": "邀请说明",
 				"placeholder": "简要描述此 Agent 的专长；允许被邀请时必填。"

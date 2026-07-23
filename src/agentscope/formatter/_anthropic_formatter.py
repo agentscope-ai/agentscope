@@ -82,25 +82,44 @@ class _AnthropicFormatterBase(FormatterBase, ABC):
                         )
 
                 elif isinstance(block, ThinkingBlock):
-                    # Anthropic rejects thinking blocks without a valid
-                    # signature ("Invalid `signature` in `thinking` block").
-                    # ThinkingBlocks from other providers (OpenAI, DeepSeek,
-                    # ...) carry no signature, so drop them instead of
-                    # forwarding an empty one.
-                    signature = getattr(block, "signature", None)
-                    if signature:
+                    redacted_data = getattr(
+                        block,
+                        "redacted_thinking_data",
+                        None,
+                    )
+                    if redacted_data is not None:
                         content_blocks.append(
                             {
-                                "type": "thinking",
-                                "thinking": block.thinking,
-                                "signature": signature,
+                                "type": "redacted_thinking",
+                                "data": redacted_data,
                             },
                         )
                     else:
-                        logger.debug(
-                            "Dropping ThinkingBlock without signature; "
-                            "Anthropic requires a valid signature.",
+                        # Anthropic rejects thinking blocks without
+                        # a valid signature ("Invalid `signature`
+                        # in `thinking` block"). ThinkingBlocks from
+                        # other providers (OpenAI, DeepSeek, ...)
+                        # carry no signature, so drop them instead
+                        # of forwarding an empty one.
+                        signature = getattr(
+                            block,
+                            "signature",
+                            None,
                         )
+                        if signature:
+                            content_blocks.append(
+                                {
+                                    "type": "thinking",
+                                    "thinking": block.thinking,
+                                    "signature": signature,
+                                },
+                            )
+                        else:
+                            logger.debug(
+                                "Dropping ThinkingBlock without "
+                                "signature; Anthropic requires "
+                                "a valid signature.",
+                            )
 
                 elif isinstance(block, HintBlock):
                     if content_blocks:

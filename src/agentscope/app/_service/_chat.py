@@ -46,10 +46,13 @@ from ...agent import Agent, ModelConfig
 from ...event import (
     AgentEvent,
     ReplyStartEvent,
+    ReplyEndEvent,
+    ReplyFinishedReason,
     UserConfirmResultEvent,
     ExternalExecutionResultEvent,
     UserInterruptEvent,
 )
+from ._errors import _classify_error
 from ...message import AssistantMsg, Msg, ToolCallState
 from ...permission import AdditionalWorkingDirectory
 
@@ -558,17 +561,9 @@ class ChatService:
                             )
 
                     async for event in agent.reply_stream(inputs=input_msg):
-                        await publish_session_event(
-                            self._message_bus,
-                            session_id,
-                            event.model_dump(mode="json"),
-                        )
-                        await self._project_event(
-                            user_id,
-                            session_record,
-                            agent_record,
-                            event,
-                        )
+                        # Apply to reply_msg FIRST (sync — never
+                        # interrupted), so an interrupt in the awaits below
+                        # can't lose this event.
                         if isinstance(event, ReplyStartEvent):
                             reply_msg = AssistantMsg(
                                 id=event.reply_id,
@@ -577,6 +572,27 @@ class ChatService:
                             )
                         elif reply_msg is not None:
                             reply_msg.append_event(event)
+                        try:
+                            await publish_session_event(
+                                self._message_bus,
+                                session_id,
+                                event.model_dump(mode="json"),
+                            )
+                            await self._project_event(
+                                user_id,
+                                session_record,
+                                agent_record,
+                                event,
+                            )
+                        except asyncio.CancelledError:
+                            # Interrupt landed here, not at ``__anext__``.
+                            # Re-arm it so it's redelivered into the agent at
+                            # the next ``__anext__`` (which runs its
+                            # interruption cleanup) instead of abandoning the
+                            # generator and dropping that cleanup.
+                            current = asyncio.current_task()
+                            if current is not None:
+                                current.cancel()
 
                 else:
                     # Case B: continuation (UserConfirmResult
@@ -599,19 +615,55 @@ class ChatService:
                         reply_msg.append_event(input_msg)
 
                     async for event in agent.reply_stream(inputs=input_msg):
-                        await publish_session_event(
-                            self._message_bus,
-                            session_id,
-                            event.model_dump(mode="json"),
-                        )
-                        await self._project_event(
-                            user_id,
-                            session_record,
-                            agent_record,
-                            event,
-                        )
+                        # Apply to the persisted reply FIRST (synchronous),
+                        # then publish/project — see Case A above.
                         if reply_msg is not None:
                             reply_msg.append_event(event)
+                        try:
+                            await publish_session_event(
+                                self._message_bus,
+                                session_id,
+                                event.model_dump(mode="json"),
+                            )
+                            await self._project_event(
+                                user_id,
+                                session_record,
+                                agent_record,
+                                event,
+                            )
+                        except asyncio.CancelledError:
+                            # See Case A: redirect an interrupt landing here
+                            # back into the agent via the next ``__anext__``.
+                            current = asyncio.current_task()
+                            if current is not None:
+                                current.cancel()
+
+            except Exception as e:  # pylint: disable=broad-except
+                # The reply stream died before emitting its terminating
+                # ReplyEndEvent. Synthesize one so the reply is closed on
+                # both channels (publish → live SSE stops loading;
+                # append_event → persisted reply gets finished_at/reason/
+                # error for refresh), then re-raise for logging + the
+                # finally-persist. CancelledError is a BaseException, so
+                # interrupts are unaffected; reply_msg is None only when we
+                # failed before REPLY_START (nothing to close). The
+                # finished_reason guard skips the case where the agent
+                # already closed the reply and the failure is downstream
+                # (publish/projection) — don't overwrite a completed reply.
+                if reply_msg is not None and reply_msg.finished_reason is None:
+                    end_event = ReplyEndEvent(
+                        session_id=session_id,
+                        reply_id=reply_msg.id,
+                        finished_reason=ReplyFinishedReason.ERROR,
+                        error=_classify_error(e),
+                    )
+                    reply_msg.append_event(end_event)
+                    await publish_session_event(
+                        self._message_bus,
+                        session_id,
+                        end_event.model_dump(mode="json"),
+                    )
+                raise
 
             finally:
                 # All persistence in a single coroutine, shielded from

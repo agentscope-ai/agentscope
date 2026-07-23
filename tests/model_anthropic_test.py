@@ -195,6 +195,62 @@ class TestAnthropicNonStream(IsolatedAsyncioTestCase):
             ),
         )
 
+    @patch("anthropic.AsyncAnthropic")
+    async def test_redacted_thinking_response(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Non-stream redacted_thinking block is preserved."""
+        redacted = MagicMock()
+        redacted.type = "redacted_thinking"
+        redacted.data = "encrypted_data_abc"
+
+        thinking = MagicMock()
+        thinking.type = "thinking"
+        thinking.thinking = "visible thought"
+        thinking.signature = "sig_visible"
+
+        text = MagicMock()
+        text.type = "text"
+        text.text = "Answer"
+
+        resp = MagicMock()
+        resp.id = "msg-redacted"
+        resp.content = [thinking, redacted, text]
+        resp.usage = MagicMock()
+        resp.usage.input_tokens = 10
+        resp.usage.output_tokens = 5
+        resp.usage.cache_creation_input_tokens = 0
+        resp.usage.cache_read_input_tokens = 0
+
+        mock_create = AsyncMock(return_value=resp)
+        mock_client_cls.return_value.messages.create = mock_create
+
+        result = await self.model([])
+
+        self.assertEqual(
+            (result.is_last, result.content),
+            (
+                True,
+                [
+                    ThinkingBlock.model_construct(
+                        id=A,
+                        thinking="visible thought",
+                        signature="sig_visible",
+                    ),
+                    ThinkingBlock.model_construct(
+                        id=A,
+                        thinking="",
+                        redacted_thinking_data="encrypted_data_abc",
+                    ),
+                    TextBlock.model_construct(
+                        id=A,
+                        text="Answer",
+                    ),
+                ],
+            ),
+        )
+
 
 # ---------------------------------------------------------------------------
 # Streaming tests
@@ -231,8 +287,16 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
         msg_delta_usage = MagicMock()
         msg_delta_usage.output_tokens = 5
 
+        text_start = MagicMock()
+        text_start.type = "text"
+
         events = [
             _make_event("message_start", message=message),
+            _make_event(
+                "content_block_start",
+                index=0,
+                content_block=text_start,
+            ),
             _make_event("content_block_delta", index=0, delta=delta1),
             _make_event("content_block_delta", index=0, delta=delta2),
             _make_event(
@@ -286,10 +350,30 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
         text_delta.type = "text_delta"
         text_delta.text = "Result"
 
+        thinking_start = MagicMock()
+        thinking_start.type = "thinking"
+
+        text_start = MagicMock()
+        text_start.type = "text"
+
         events = [
             _make_event("message_start", message=message),
-            _make_event("content_block_delta", index=0, delta=thinking_delta),
+            _make_event(
+                "content_block_start",
+                index=0,
+                content_block=thinking_start,
+            ),
+            _make_event(
+                "content_block_delta",
+                index=0,
+                delta=thinking_delta,
+            ),
             _make_event("content_block_delta", index=0, delta=sig_delta),
+            _make_event(
+                "content_block_start",
+                index=1,
+                content_block=text_start,
+            ),
             _make_event("content_block_delta", index=1, delta=text_delta),
         ]
         mock_create = AsyncMock(
@@ -312,8 +396,6 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
                         ),
                     ],
                 ),
-                # ``signature_delta`` is emitted as its own delta chunk
-                # carrying the signature but no additional thinking text.
                 (
                     False,
                     [
@@ -334,6 +416,99 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
                             signature="sig_abc",
                         ),
                         TextBlock.model_construct(id=A, text="Result"),
+                    ],
+                ),
+            ],
+        )
+
+    @patch("anthropic.AsyncAnthropic")
+    async def test_stream_redacted_thinking(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Stream redacted_thinking block is emitted at
+        content_block_start."""
+        msg_usage = MagicMock()
+        msg_usage.input_tokens = 10
+        msg_usage.output_tokens = 0
+        msg_usage.cache_creation_input_tokens = 0
+        msg_usage.cache_read_input_tokens = 0
+
+        message = MagicMock()
+        message.id = "msg-r"
+        message.usage = msg_usage
+
+        redacted_block = MagicMock()
+        redacted_block.type = "redacted_thinking"
+        redacted_block.data = "encrypted_stream_data"
+
+        text_delta = MagicMock()
+        text_delta.type = "text_delta"
+        text_delta.text = "Result"
+
+        text_start = MagicMock()
+        text_start.type = "text"
+
+        events = [
+            _make_event("message_start", message=message),
+            _make_event(
+                "content_block_start",
+                index=0,
+                content_block=redacted_block,
+            ),
+            _make_event(
+                "content_block_start",
+                index=1,
+                content_block=text_start,
+            ),
+            _make_event(
+                "content_block_delta",
+                index=1,
+                delta=text_delta,
+            ),
+        ]
+        mock_create = AsyncMock(
+            return_value=_MockAsyncEventStream(events),
+        )
+        mock_client_cls.return_value.messages.create = mock_create
+
+        gen = await self.model([])
+        responses = [r async for r in gen]
+
+        self.assertListEqual(
+            [(r.is_last, r.content) for r in responses],
+            [
+                (
+                    False,
+                    [
+                        ThinkingBlock.model_construct(
+                            id=A,
+                            thinking="",
+                            redacted_thinking_data="encrypted_stream_data",
+                        ),
+                    ],
+                ),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            text="Result",
+                        ),
+                    ],
+                ),
+                (
+                    True,
+                    [
+                        ThinkingBlock.model_construct(
+                            id=A,
+                            thinking="",
+                            redacted_thinking_data="encrypted_stream_data",
+                        ),
+                        TextBlock.model_construct(
+                            id=A,
+                            text="Result",
+                        ),
                     ],
                 ),
             ],

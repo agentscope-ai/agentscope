@@ -22,7 +22,6 @@ from agentscope.permission import (
 from agentscope.tool import (
     Bash,
     Write,
-    Read,
     Edit,
     ToolBase,
 )
@@ -265,10 +264,15 @@ class PermissionEngineFileRuleTest(IsolatedAsyncioTestCase):
         self.engine = PermissionEngine(self.context)
 
     async def test_file_glob_pattern_matching(self) -> None:
-        """Test file path glob pattern matching."""
+        """Test file path glob pattern matching.
+
+        Uses ``Write`` (a mutating tool) rather than a read-only tool:
+        read-only invocations are auto-allowed before rule matching in
+        every mode, so they cannot exercise the allow-rule glob path.
+        """
         self.engine.add_rule(
             PermissionRule(
-                tool_name="Read",
+                tool_name="Write",
                 rule_content="*.py",
                 behavior=PermissionBehavior.ALLOW,
                 source="test",
@@ -277,14 +281,14 @@ class PermissionEngineFileRuleTest(IsolatedAsyncioTestCase):
 
         # Test matching file
         decision = await self.engine.check_permission(
-            Read(),
+            Write(),
             {"file_path": "test.py"},
         )
         self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
 
         # Test non-matching file
         decision = await self.engine.check_permission(
-            Read(),
+            Write(),
             {"file_path": "test.txt"},
         )
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
@@ -472,9 +476,14 @@ class PermissionEngineSuggestionTest(IsolatedAsyncioTestCase):
         self.assertIn("git commit:*", suggestion_contents)
 
     async def test_file_suggestions(self) -> None:
-        """Test suggestion generation for file operations."""
+        """Test suggestion generation for file operations.
+
+        Uses ``Write`` (a mutating tool): read-only tools are auto-allowed
+        and an ALLOW decision carries no suggestions, so a mutating tool is
+        needed to reach the ASK path that generates them.
+        """
         decision = await self.engine.check_permission(
-            Read(),
+            Write(),
             {"file_path": "/tmp/test.py"},
         )
 

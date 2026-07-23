@@ -36,6 +36,7 @@ from agentscope.app.rag.knowledge_base_manager._dimension_policy import (
 from agentscope.app.message_bus import RedisMessageBus
 from agentscope.app.storage import (
     EmbeddingModelConfig,
+    KnowledgeBaseData,
     KnowledgeBaseRecord,
     RedisStorage,
 )
@@ -208,14 +209,16 @@ class _FakeKbManager(KnowledgeBaseManagerBase):
     ) -> KnowledgeBaseRecord:
         record = KnowledgeBaseRecord(
             user_id=user_id,
-            name=name,
-            description=description,
-            embedding_model_config=embedding_model_config,
-            collection_name="",
+            data=KnowledgeBaseData(
+                name=name,
+                description=description,
+                embedding_model_config=embedding_model_config,
+                collection_name="",
+            ),
         )
-        record.collection_name = f"kb_{record.id}"
+        record.data.collection_name = f"kb_{record.id}"
         await self._vector_store.create_collection(
-            name=record.collection_name,
+            name=record.data.collection_name,
             dimensions=embedding_model_config.dimensions,
         )
         return await self._storage.upsert_knowledge_base(user_id, record)
@@ -231,7 +234,9 @@ class _FakeKbManager(KnowledgeBaseManagerBase):
         )
         if record is None:
             return False
-        await self._vector_store.delete_collection(record.collection_name)
+        await self._vector_store.delete_collection(
+            record.data.collection_name,
+        )
         return await self._storage.delete_knowledge_base(
             user_id,
             knowledge_base_id,
@@ -252,7 +257,7 @@ class _FakeKbManager(KnowledgeBaseManagerBase):
             )
         return _FakeKnowledge(
             vector_store=self._vector_store,
-            collection_name=record.collection_name,
+            collection_name=record.data.collection_name,
         )
 
 
@@ -335,19 +340,21 @@ class KnowledgeBaseUploadFlowTest(IsolatedAsyncioTestCase):
         # have to mock the manager's create flow over HTTP.
         kb_record = KnowledgeBaseRecord(
             user_id="user-1",
-            name="kb",
-            description="",
-            embedding_model_config=EmbeddingModelConfig(
-                type="openai_credential",
-                credential_id="cred-1",
-                model="text-embedding-3-small",
-                dimensions=1,
+            data=KnowledgeBaseData(
+                name="kb",
+                description="",
+                embedding_model_config=EmbeddingModelConfig(
+                    type="openai_credential",
+                    credential_id="cred-1",
+                    model="text-embedding-3-small",
+                    dimensions=1,
+                ),
+                collection_name="",
             ),
-            collection_name="",
         )
-        kb_record.collection_name = f"kb_{kb_record.id}"
+        kb_record.data.collection_name = f"kb_{kb_record.id}"
         await self._vector_store.create_collection(
-            kb_record.collection_name,
+            kb_record.data.collection_name,
             1,
         )
 

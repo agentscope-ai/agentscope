@@ -149,6 +149,17 @@ class WorkspaceBase:
     _skill_lock: asyncio.Lock
     """Guards mutation of the ``skills/`` directory."""
 
+    @property
+    def _glob_helper_path(self) -> str | None:
+        """Optional path (backend-side) to the ``Glob`` helper script.
+
+        ``None`` means the :class:`Glob` builtin tool falls back to its
+        default behaviour (suitable for :class:`LocalBackend`). Remote
+        backends override this with a sandbox-/container-side script path
+        so :class:`Glob` can run efficiently inside the workspace.
+        """
+        return None
+
     def __init__(
         self,
         *,

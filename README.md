@@ -62,7 +62,7 @@ AgentScope 2.0 is a production-ready, easy-to-use agent framework with essential
 - [**Event System** →](https://docs.agentscope.io/latest/en/building-blocks/message-and-event) A unified event bus to the frontend and human-in-the-loop support.
 - [**Permission System** →](https://docs.agentscope.io/latest/en/building-blocks/permission-system) Fine-grained, configurable control over tools and resources.
 - [**Multi-tenancy & Multi-session Service** →](https://docs.agentscope.io/latest/en/deploy/agent-service) Production-grade serving with isolation across tenants and sessions.
-- [**Workspace / Sandbox Support** →](https://docs.agentscope.io/latest/en/building-blocks/workspace) Run tools and code in isolated environments, with built-in backends for local, Docker, E2B, and OpenSandbox.
+- [**Workspace / Sandbox Support** →](https://docs.agentscope.io/latest/en/building-blocks/workspace) Run tools and code in isolated environments, with built-in backends for local, Docker, E2B, OpenSandbox, and Daytona.
 - [**Extensible Middleware System** →](https://docs.agentscope.io/latest/en/building-blocks/middleware) Composable hooks to customize and extend the agent's reasoning-acting loop.
 
 We design for increasingly agentic LLMs.
@@ -73,6 +73,7 @@ rather than constraining them with strict prompts and opinionated orchestrations
 
 ## News
 <!-- BEGIN NEWS -->
+- **[2026-07] `INTE`:** Daytona-based workspace/sandbox supported. [Docs](https://docs.agentscope.io/latest/en/building-blocks/workspace)
 - **[2026-07] `INTE`:** K8s, OpenSandbox-based workspace/sandbox supported. [Docs](https://docs.agentscope.io/latest/en/building-blocks/workspace)
 - **[2026-07] `INTE`:** ReMe long-term memory supported. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/long_term_memory/reme) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/long-term-memory)
 - **[2026-06] `FEAT`:** Agentic Memory supported. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/long_term_memory/agentic_memory) | [Docs](https://docs.agentscope.io/latest/en/building-blocks/long-term-memory)

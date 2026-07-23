@@ -379,7 +379,9 @@ class OpenAIResponseModel(ChatModelBase):
                     for s in getattr(item, "summary", [])
                     if getattr(s, "text", "")
                 )
-                if combined_summary:
+                # Keep even empty-summary reasoning items: the API requires
+                # reasoning_item_id to be echoed back in multi-turn history.
+                if combined_summary or reasoning_item_id:
                     content_blocks.append(
                         ThinkingBlock(
                             type="thinking",
