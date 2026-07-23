@@ -108,3 +108,149 @@ DANGEROUS_NODE_TYPES = {
 #
 # Note: simple_expansion ($VAR) is handled separately with allowlist
 # for known-safe environment variables ($HOME, $PWD, etc.)
+
+
+POWERSHELL_ALIASES: dict[str, str] = {
+    "ls": "Get-ChildItem",
+    "dir": "Get-ChildItem",
+    "gci": "Get-ChildItem",
+    "cat": "Get-Content",
+    "gc": "Get-Content",
+    "type": "Get-Content",
+    "sls": "Select-String",
+    "select": "Select-Object",
+    "where": "Where-Object",
+    "?": "Where-Object",
+    "sort": "Sort-Object",
+    "measure": "Measure-Object",
+    "echo": "Write-Output",
+    "write": "Write-Output",
+    "cd": "Set-Location",
+    "chdir": "Set-Location",
+    "sl": "Set-Location",
+    "pwd": "Get-Location",
+    "gl": "Get-Location",
+    "rm": "Remove-Item",
+    "del": "Remove-Item",
+    "ri": "Remove-Item",
+    "rmdir": "Remove-Item",
+    "rd": "Remove-Item",
+    "ni": "New-Item",
+    "mi": "Move-Item",
+    "move": "Move-Item",
+    "cpi": "Copy-Item",
+    "copy": "Copy-Item",
+    "cp": "Copy-Item",
+    "ii": "Invoke-Item",
+    "iex": "Invoke-Expression",
+    "irm": "Invoke-RestMethod",
+    "iwr": "Invoke-WebRequest",
+    "curl": "Invoke-WebRequest",
+    "wget": "Invoke-WebRequest",
+    "kill": "Stop-Process",
+    "spps": "Stop-Process",
+    "gps": "Get-Process",
+    "ps": "Get-Process",
+    "ft": "Format-Table",
+    "fl": "Format-List",
+    "foreach": "ForEach-Object",
+    "%": "ForEach-Object",
+}
+# Built-in PowerShell alias map (lowercase key → canonical cmdlet name).
+# Used for read-only classification, dangerous-command checks, and
+# case-insensitive permission rule matching.
+
+
+POWERSHELL_READ_ONLY_COMMANDS: set[str] = {
+    "Get-Location",
+    "Get-Date",
+    "Get-Host",
+    "Get-Help",
+    "Get-Member",
+    "Get-Unique",
+    "Get-Variable",
+    "Get-Alias",
+    "Get-Command",
+    "Get-Module",
+    "Get-Process",
+    "Get-Service",
+    "Get-ChildItem",
+    "Get-Content",
+    "Get-Item",
+    "Get-ItemProperty",
+    "Get-Acl",
+    "Get-FileHash",
+    "Test-Path",
+    "Resolve-Path",
+    "Select-Object",
+    "Select-String",
+    "Where-Object",
+    "Sort-Object",
+    "Measure-Object",
+    "Format-Table",
+    "Format-List",
+    "Format-Wide",
+    "Format-Custom",
+    "ConvertTo-Json",
+    "ConvertFrom-Json",
+    "ConvertTo-Csv",
+    "ConvertFrom-Csv",
+    "ConvertTo-Xml",
+    "ConvertFrom-StringData",
+    "Out-String",
+    "Out-Null",
+    "Write-Output",
+    "Write-Host",
+    "Write-Verbose",
+    "Write-Debug",
+    "Write-Information",
+}
+# Cmdlets treated as read-only for auto-ALLOW / EXPLORE mode.
+# Verb prefixes such as Get- / Select- / Format- / ConvertTo- /
+# ConvertFrom- are handled separately in the PowerShell parser.
+
+
+POWERSHELL_READ_ONLY_VERB_PREFIXES: tuple[str, ...] = (
+    "Get-",
+    "Select-",
+    "Format-",
+    "ConvertTo-",
+    "ConvertFrom-",
+)
+# Verb prefixes that are generally read-only when the cmdlet has no
+# script block, call operator, or redirection.
+
+
+POWERSHELL_DANGEROUS_COMMANDS: list[str] = [
+    "Clear-Content",
+    "Clear-Item",
+    "Format-Volume",
+    "Invoke-Expression",
+    "Start-Process",
+    "Add-Type",
+    "Set-ExecutionPolicy",
+    "Set-MpPreference",
+    "Stop-Computer",
+    "Restart-Computer",
+    "Register-ScheduledTask",
+]
+# Dangerous PowerShell cmdlets that always require a bypass-immune ASK.
+# Parameter-sensitive patterns (Remove-Item -Recurse/-Force,
+# Stop-Process -Force, HKLM registry writes, download-to-iex) are
+# handled in the parser.
+
+
+POWERSHELL_INJECTION_NODE_TYPES: set[str] = {
+    "sub_expression",
+    "if_statement",
+    "while_statement",
+    "for_statement",
+    "foreach_statement",
+    "switch_statement",
+    "function_definition",
+    "filter_definition",
+    "trap_statement",
+}
+# AST node types that prevent static analysis of PowerShell commands.
+# Detecting these forces a non-read-only classification and a
+# bypass-immune safety ASK.
