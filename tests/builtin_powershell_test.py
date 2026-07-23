@@ -13,10 +13,10 @@ from agentscope.tool import ExecResult, LocalBackend, PowerShell
 
 
 class PowerShellInterfaceTest(IsolatedAsyncioTestCase):
-    """Test the public PowerShell interface and conservative permissions."""
+    """Test the public PowerShell interface and permission hooks."""
 
-    async def test_public_interface_is_conservative(self) -> None:
-        """Expose the command schema without auto-allowing any command."""
+    async def test_public_interface_and_read_only_allow(self) -> None:
+        """Expose the command schema and auto-allow read-only cmdlets."""
         backend = LocalBackend()
         tool = PowerShell(cwd="workspace", backend=backend)
 
@@ -37,15 +37,133 @@ class PowerShellInterfaceTest(IsolatedAsyncioTestCase):
             PermissionContext(),
         )
         self.assertEqual(
-            decision.behavior,
-            PermissionBehavior.ASK,
+            {
+                "behavior": decision.behavior,
+                "bypass_immune": decision.bypass_immune,
+                "decision_reason": decision.decision_reason,
+            },
+            {
+                "behavior": PermissionBehavior.ALLOW,
+                "bypass_immune": False,
+                "decision_reason": "Read-only command is allowed",
+            },
         )
-        self.assertFalse(decision.bypass_immune)
+        self.assertTrue(
+            await tool.check_read_only({"command": "Get-ChildItem"}),
+        )
+        self.assertTrue(await tool.check_read_only({"command": "ls"}))
+        self.assertFalse(
+            await tool.check_read_only({"command": "Remove-Item ./x"}),
+        )
+
+        suggestions = await tool.generate_suggestions(
+            {"command": "Remove-Item ./tmp"},
+        )
         self.assertEqual(
-            await tool.generate_suggestions(
-                {"command": "Get-Location"},
+            [
+                {
+                    "tool_name": rule.tool_name,
+                    "rule_content": rule.rule_content,
+                    "behavior": rule.behavior,
+                    "source": rule.source,
+                }
+                for rule in suggestions
+            ],
+            [
+                {
+                    "tool_name": "PowerShell",
+                    "rule_content": "Remove-Item:*",
+                    "behavior": PermissionBehavior.ALLOW,
+                    "source": "suggested",
+                },
+            ],
+        )
+
+
+class PowerShellPermissionTest(IsolatedAsyncioTestCase):
+    """Test PowerShell permission tiers and rule matching."""
+
+    async def asyncSetUp(self) -> None:
+        """Create a PowerShell tool for permission tests."""
+        self.tool = PowerShell(backend=LocalBackend())
+
+    async def test_dangerous_commands_are_bypass_immune_ask(self) -> None:
+        """Dangerous patterns return bypass-immune ASK decisions."""
+        decision = await self.tool.check_permissions(
+            {"command": "Remove-Item -Recurse -Force ./tmp"},
+            PermissionContext(),
+        )
+        self.assertEqual(
+            {
+                "behavior": decision.behavior,
+                "bypass_immune": decision.bypass_immune,
+            },
+            {
+                "behavior": PermissionBehavior.ASK,
+                "bypass_immune": True,
+            },
+        )
+        self.assertIn("Remove-Item", decision.message)
+
+    async def test_injection_is_bypass_immune_ask(self) -> None:
+        """Injection risk returns a bypass-immune ASK."""
+        decision = await self.tool.check_permissions(
+            {"command": "iex '1'"},
+            PermissionContext(),
+        )
+        self.assertEqual(
+            {
+                "behavior": decision.behavior,
+                "bypass_immune": decision.bypass_immune,
+            },
+            {
+                "behavior": PermissionBehavior.ASK,
+                "bypass_immune": True,
+            },
+        )
+
+    async def test_mutating_non_dangerous_is_passthrough(self) -> None:
+        """Ordinary mutating commands fall through to the engine."""
+        decision = await self.tool.check_permissions(
+            {"command": "New-Item -ItemType File -Path a.txt"},
+            PermissionContext(),
+        )
+        self.assertEqual(
+            decision.behavior,
+            PermissionBehavior.PASSTHROUGH,
+        )
+
+    async def test_match_rule_wildcard_and_alias(self) -> None:
+        """Content rules match with wildcards, case, and aliases."""
+        self.assertTrue(
+            await self.tool.match_rule(
+                "Remove-Item*",
+                {"command": "Remove-Item ./tmp"},
             ),
-            [],
+        )
+        self.assertTrue(
+            await self.tool.match_rule(
+                "Get-ChildItem*",
+                {"command": "ls"},
+            ),
+        )
+        self.assertTrue(
+            await self.tool.match_rule(
+                "get-childitem:*",
+                {"command": "Get-ChildItem -Path ."},
+            ),
+        )
+        self.assertTrue(
+            await self.tool.match_rule(
+                None,
+                {"command": "anything"},
+            ),
+        )
+        self.assertFalse(
+            await self.tool.match_rule(
+                "Remove-Item*",
+                {"command": "Get-ChildItem"},
+            ),
         )
 
 

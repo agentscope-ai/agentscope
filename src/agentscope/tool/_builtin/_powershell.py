@@ -3,9 +3,11 @@
 
 import base64
 import os
+import re
 from typing import AsyncGenerator, Any, List
 
 from ._backend import BackendBase, LocalBackend, _normalize_newlines
+from ._powershell_parser import PowerShellCommandParser
 from .._base import ToolBase, ToolMiddlewareBase
 from .._response import ToolChunk
 from ...message import TextBlock, ToolResultState
@@ -113,6 +115,7 @@ are easier for the user to review and authorize:
         self._cwd = os.fspath(cwd) if cwd is not None else None
         self._backend = backend or LocalBackend()
         self._executable: str | None = None
+        self._powershell_parser = PowerShellCommandParser()
 
     async def _resolve_executable(self) -> str:
         """Prefer PowerShell 6+ and cache the first available executable."""
@@ -136,34 +139,220 @@ are easier for the user to review and authorize:
                 self._executable = "powershell.exe"
         return self._executable
 
+    async def check_read_only(
+        self,
+        tool_input: dict[str, Any],
+    ) -> bool:
+        """Decide whether this PowerShell invocation is read-only.
+
+        Inspects the command and returns ``True`` for known-safe read-only
+        cmdlets (e.g. ``Get-ChildItem``, ``Test-Path``, ``ls``). The static
+        :attr:`is_read_only` class attribute remains ``False`` because
+        PowerShell can execute arbitrary commands; this method overrides
+        that with a per-invocation answer.
+        """
+        command = tool_input.get("command", "")
+        if not command:
+            return self.is_read_only
+        # Dynamic / unanalyzable structure cannot be proven read-only —
+        # e.g. ``Get-ChildItem $(Remove-Item -Recurse C:\\)``.
+        if self._powershell_parser.check_injection_risk(command):
+            return False
+        return self._powershell_parser.is_read_only_command(command)
+
     async def check_permissions(
         self,
         tool_input: dict[str, Any],
         context: PermissionContext,
     ) -> PermissionDecision:
-        """Ask the user to confirm every PowerShell command.
+        """Check permissions for PowerShell command execution.
 
-        PowerShell-specific command validation is intentionally outside this
-        implementation. Since no command is classified as safe, every
-        invocation prompts the user. This is a regular ASK that allow rules
-        and BYPASS mode may still override.
+        Implements Bash-style tiered checks:
+
+        0. Injection risk (bypass-immune safety ASK)
+        1. Read-only command auto-ALLOW
+        2. Dangerous command patterns (bypass-immune safety ASK)
+        3. PASSTHROUGH for the permission engine
+
+        Args:
+            tool_input (`dict[str, Any]`):
+                Tool input containing a ``command`` key.
+            context (`PermissionContext`):
+                Permission context with mode and rules.
+
+        Returns:
+            `PermissionDecision`:
+                ALLOW, ASK (possibly bypass-immune), or PASSTHROUGH.
         """
-        return PermissionDecision(
-            behavior=PermissionBehavior.ASK,
-            message="Execute PowerShell command",
-            decision_reason="PowerShell command validation is not enabled",
+        command = tool_input.get("command", "")
+        if not command:
+            return PermissionDecision(
+                behavior=PermissionBehavior.PASSTHROUGH,
+                message="Empty command",
+            )
+
+        injection_reason = self._powershell_parser.check_injection_risk(
+            command,
         )
+        if injection_reason:
+            return PermissionDecision(
+                behavior=PermissionBehavior.ASK,
+                message=f"Permission required: {injection_reason}",
+                decision_reason=(
+                    "Safety check: command contains dynamic expansion "
+                    "that cannot be statically analyzed"
+                ),
+                bypass_immune=True,
+            )
+
+        if self._powershell_parser.is_read_only_command(command):
+            return PermissionDecision(
+                behavior=PermissionBehavior.ALLOW,
+                message="Permission granted for read-only command",
+                decision_reason="Read-only command is allowed",
+            )
+
+        dangerous_pattern = self._powershell_parser.check_dangerous_command(
+            command,
+        )
+        if dangerous_pattern:
+            return PermissionDecision(
+                behavior=PermissionBehavior.ASK,
+                message=(
+                    "Permission required: Command contains dangerous "
+                    f"pattern: {dangerous_pattern}"
+                ),
+                decision_reason=(
+                    "Safety check: dangerous command pattern detected"
+                ),
+                bypass_immune=True,
+            )
+
+        return PermissionDecision(
+            behavior=PermissionBehavior.PASSTHROUGH,
+            message="PowerShell permission check passed",
+        )
+
+    async def match_rule(
+        self,
+        rule_content: str | None,
+        tool_input: dict[str, Any],
+    ) -> bool:
+        r"""Match PowerShell commands with Bash-compatible wildcards.
+
+        Pattern grammar matches Bash, with PowerShell-specific extras:
+
+        - Case-insensitive matching
+        - Alias normalization (``ls`` matches ``Get-ChildItem*``)
+        - ``:*`` prefix patterns, ``*`` wildcards, and substring match
+        - ``None`` rule content matches all invocations
+
+        Args:
+            rule_content (`str | None`):
+                Command pattern to match, or ``None`` for tool-name rules.
+            tool_input (`dict[str, Any]`):
+                Must contain a ``command`` key.
+
+        Returns:
+            `bool`:
+                ``True`` when the pattern matches the command.
+        """
+        if rule_content is None:
+            return True
+
+        command = tool_input.get("command", "")
+        command = self._powershell_parser.normalize_command_for_match(command)
+        pattern_source = self._powershell_parser.normalize_command_for_match(
+            rule_content,
+        )
+        command_cf = command.casefold()
+        rule_cf = pattern_source.casefold()
+
+        if rule_cf.endswith(":*"):
+            prefix = rule_cf[:-2].strip()
+            return command_cf.startswith(prefix + " ") or command_cf == prefix
+
+        def has_wildcards(pattern: str) -> bool:
+            """Check if pattern contains unescaped * wildcards."""
+            i = 0
+            while i < len(pattern):
+                if pattern[i] == "\\":
+                    i += 2
+                elif pattern[i] == "*":
+                    return True
+                else:
+                    i += 1
+            return False
+
+        if not has_wildcards(rule_cf):
+            pattern = rule_cf
+            pattern = pattern.replace("\\\\", "\x00BACKSLASH\x00")
+            pattern = pattern.replace("\\*", "*")
+            pattern = pattern.replace("\x00BACKSLASH\x00", "\\")
+            return pattern in command_cf
+
+        escaped_star = "\x00ESCAPED_STAR\x00"
+        escaped_backslash = "\x00ESCAPED_BACKSLASH\x00"
+
+        pattern = rule_cf
+        pattern = pattern.replace("\\\\", escaped_backslash)
+        pattern = pattern.replace("\\*", escaped_star)
+
+        special_chars = r".^$+?{}[]|()"
+        for char in special_chars:
+            pattern = pattern.replace(char, "\\" + char)
+
+        pattern = pattern.replace("*", ".*")
+        pattern = pattern.replace(escaped_star, r"\*")
+        pattern = pattern.replace(escaped_backslash, r"\\")
+
+        if pattern.endswith(".*"):
+            base_pattern = pattern[:-2].rstrip()
+            if re.fullmatch(base_pattern, command_cf):
+                return True
+
+        try:
+            return bool(re.fullmatch(pattern, command_cf))
+        except re.error:
+            return rule_cf.replace("*", "") in command_cf
 
     async def generate_suggestions(
         self,
         tool_input: dict[str, Any],
     ) -> List[PermissionRule]:
-        """Return no automatic allow-rule suggestions.
+        """Generate cmdlet prefix allow-rule suggestions.
 
-        A broad rule would weaken the conservative permission boundary before
-        PowerShell-specific command validation is available.
+        Produces rules such as ``Remove-Item:*`` from the command's
+        alias-normalized cmdlet names.
+
+        Args:
+            tool_input (`dict[str, Any]`):
+                Tool input containing a ``command`` key.
+
+        Returns:
+            `List[PermissionRule]`:
+                Suggested allow rules for the current command.
         """
-        return []
+        command = tool_input.get("command", "")
+        if not command:
+            return []
+
+        prefixes = self._powershell_parser.extract_command_prefixes(
+            command,
+            max_prefixes=5,
+        )
+        if not prefixes:
+            return []
+
+        return [
+            PermissionRule(
+                tool_name="PowerShell",
+                rule_content=f"{prefix}:*",
+                behavior=PermissionBehavior.ALLOW,
+                source="suggested",
+            )
+            for prefix in prefixes
+        ]
 
     async def call(  # type: ignore[override] # pylint: disable=unused-argument
         self,
