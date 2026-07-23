@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
 """Unified MCP client implementation for AgentScope."""
+import ipaddress
 import re
+import socket
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager
 from typing import Any, TYPE_CHECKING
+from urllib.parse import urlparse
 
 import httpx
 import mcp.types
@@ -19,6 +22,196 @@ if TYPE_CHECKING:
 else:
     MCPTool = Any
     ToolBase = Any
+
+
+# Security: Default allowlist for STDIO commands.
+# Only these commands are permitted to be spawned as MCP server processes.
+# Users can extend this via the ``allowed_commands`` parameter on MCPClient.
+_DEFAULT_ALLOWED_STDIO_COMMANDS = frozenset({
+    "npx",
+    "node",
+    "python",
+    "python3",
+    "uvx",
+    "uv",
+    "pipx",
+    "mcp-server-filesystem",
+    "mcp-server-fetch",
+    "mcp-server-git",
+    "mcp-server-sqlite",
+    "mcp-server-time",
+    "mcp-server-web-search",
+})
+
+# Security: Shell metacharacters that must never appear in a command string
+_SHELL_META_CHARS = frozenset(";|&$`(){}[]<>!\\\"'\n\r")
+
+# Security: Environment variable prefixes that are considered sensitive
+# and should not be passed to MCP server subprocesses.
+_SENSITIVE_ENV_PREFIXES = (
+    "AWS_",
+    "GITHUB_",
+    "OPENAI_",
+    "ANTHROPIC_",
+    "AZURE_",
+    "GOOGLE_",
+    "GCP_",
+    "DATABASE_",
+    "DB_",
+    "MYSQL_",
+    "POSTGRES_",
+    "REDIS_",
+    "MONGO_",
+    "SECRET_",
+    "PRIVATE_",
+    "TOKEN_",
+    "API_KEY",
+    "API_SECRET",
+)
+
+# Security: Cloud metadata endpoints that must be blocked.
+_CLOUD_METADATA_HOSTS = frozenset({
+    "169.254.169.254",       # AWS / GCP / Azure / Oracle metadata
+    "fd00:ec2::254",         # AWS IPv6 metadata
+    "metadata.google.internal",
+    "metadata.goog",
+})
+
+# Security: Maximum size for base64-encoded media content from MCP servers
+# to prevent memory exhaustion attacks (10 MB).
+_MAX_BASE64_CONTENT_SIZE = 10 * 1024 * 1024
+
+# Security: Maximum length for text content from MCP servers.
+_MAX_TEXT_CONTENT_LENGTH = 1_000_000  # ~1M characters
+
+
+def _validate_url_security_url(url: str) -> str:
+    """Validate a URL against SSRF attacks.
+
+    Checks that the URL does not target private IP ranges, loopback
+    addresses, link-local addresses, or cloud metadata endpoints.
+
+    Args:
+        url: The URL to validate.
+
+    Returns:
+        The validated URL.
+
+    Raises:
+        ValueError: If the URL targets a disallowed network resource.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception as e:
+        raise ValueError(f"Invalid URL '{url}': {e}") from e
+
+    # Only allow http and https schemes
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(
+            f"URL scheme '{parsed.scheme}' is not allowed. "
+            "Only 'http' and 'https' are permitted.",
+        )
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError(f"URL '{url}' does not contain a valid hostname.")
+
+    # Block cloud metadata endpoints by hostname
+    if hostname.lower() in _CLOUD_METADATA_HOSTS:
+        raise ValueError(
+            f"URL '{url}' targets a cloud metadata endpoint, which is "
+            "blocked for security reasons.",
+        )
+
+    # Resolve hostname to IP and check for private/reserved ranges
+    try:
+        addr_infos = socket.getaddrinfo(hostname, None)
+    except socket.gaierror:
+        # If DNS resolution fails, allow the URL — the connection
+        # attempt itself will fail with a clear error.
+        return url
+
+    for family, _, _, _, sockaddr in addr_infos:
+        ip_str = sockaddr[0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            continue
+
+        # Block private, loopback, link-local, and reserved addresses
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+            raise ValueError(
+                f"URL '{url}' resolves to {ip}, which is in a private or "
+                "reserved IP range. This is blocked for SSRF protection.",
+            )
+
+    return url
+
+
+def _validate_stdio_command(command: str) -> None:
+    """Validate a STDIO command for security.
+
+    Checks that the command does not contain shell metacharacters
+    that could enable command injection.
+
+    Args:
+        command: The command string to validate.
+
+    Raises:
+        ValueError: If the command contains disallowed characters.
+    """
+    # Check for shell metacharacters
+    for char in command:
+        if char in _SHELL_META_CHARS:
+            raise ValueError(
+                f"STDIO command '{command}' contains disallowed "
+                f"character '{char}'. Shell metacharacters are not "
+                "permitted for security reasons.",
+            )
+
+
+def _is_command_allowed(command: str) -> bool:
+    """Check if a command is in the default allowlist.
+
+    Args:
+        command: The command to check.
+
+    Returns:
+        True if the command is allowed, False otherwise.
+    """
+    # Extract the base command name (handle paths like /usr/bin/python)
+    base_command = command.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    return base_command in _DEFAULT_ALLOWED_STDIO_COMMANDS
+
+
+def _filter_sensitive_env_vars(
+    env: dict[str, str] | None,
+) -> dict[str, str] | None:
+    """Filter out sensitive environment variables.
+
+    Removes environment variables whose names match known sensitive
+    prefixes to prevent credential leakage to MCP server subprocesses.
+
+    Args:
+        env: The environment variable dictionary, or None.
+
+    Returns:
+        The filtered dictionary, or None if input was None.
+    """
+    if env is None:
+        return None
+
+    filtered = {}
+    for key, value in env.items():
+        if any(key.upper().startswith(prefix) for prefix in _SENSITIVE_ENV_PREFIXES):
+            logger.warning(
+                "Sensitive environment variable '%s' was filtered out "
+                "to prevent credential leakage to MCP subprocess.",
+                key,
+            )
+            continue
+        filtered[key] = value
+    return filtered
 
 
 class MCPClient(BaseModel):
@@ -98,6 +291,10 @@ class MCPClient(BaseModel):
     execution_timeout: float | None = None
     """The execution timeout in seconds for calling the tools from this MCP."""
 
+    allowed_commands: list[str] | None = None
+    """Additional allowed STDIO commands beyond the default allowlist.
+    If None, only the default allowlist is used."""
+
     # Private attributes
     _client: Any = PrivateAttr(default=None)
     _session: ClientSession | None = PrivateAttr(default=None)
@@ -113,6 +310,18 @@ class MCPClient(BaseModel):
             True if connected, False otherwise.
         """
         return self._is_connected
+
+    def _get_effective_allowed_commands(self) -> frozenset:
+        """Get the effective set of allowed STDIO commands.
+
+        Returns:
+            The combined set of default and user-specified allowed commands.
+        """
+        if self.allowed_commands:
+            return _DEFAULT_ALLOWED_STDIO_COMMANDS | frozenset(
+                self.allowed_commands,
+            )
+        return _DEFAULT_ALLOWED_STDIO_COMMANDS
 
     def model_post_init(self, __context: Any) -> None:
         """Validate configuration and initialize client."""
@@ -160,6 +369,16 @@ class MCPClient(BaseModel):
                     f"should not overlap, but got {intersection}.",
                 )
 
+        # Validate allowed_commands if provided
+        if self.allowed_commands is not None:
+            if not isinstance(self.allowed_commands, list) or any(
+                not isinstance(_, str) for _ in self.allowed_commands
+            ):
+                raise ValueError(
+                    "allowed_commands should be a list of strings, "
+                    f"but got {self.allowed_commands}.",
+                )
+
         # Initialize the underlying client
         self._initialize_client()
 
@@ -172,14 +391,38 @@ class MCPClient(BaseModel):
         :meth:`connect` (or per-call inside :meth:`_get_client_gen` for
         stateless mode), since each ``streamable_http_client`` /
         ``sse_client`` is a one-shot context manager.
+
+        Security: The command is validated against an allowlist and checked
+        for shell metacharacters. Sensitive environment variables are
+        filtered out to prevent credential leakage.
         """
         if self.mcp_config.type == "stdio_mcp":
             config = self.mcp_config
+
+            # Security: Validate command does not contain shell metacharacters
+            _validate_stdio_command(config.command)
+
+            # Security: Validate command is in the allowlist
+            allowed = self._get_effective_allowed_commands()
+            base_command = (
+                config.command.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+            )
+            if base_command not in allowed:
+                raise ValueError(
+                    f"STDIO command '{config.command}' is not in the "
+                    f"allowed commands list. Allowed commands: "
+                    f"{sorted(allowed)}. To allow this command, pass it "
+                    f"via the 'allowed_commands' parameter on MCPClient.",
+                )
+
+            # Security: Filter sensitive environment variables
+            filtered_env = _filter_sensitive_env_vars(config.env)
+
             self._client = stdio_client(
                 StdioServerParameters(
                     command=config.command,
                     args=config.args or [],
-                    env=config.env,
+                    env=filtered_env,
                     cwd=str(config.cwd) if config.cwd else None,
                     encoding="utf-8",
                     encoding_error_handler=config.encoding_error_handler,
@@ -189,8 +432,15 @@ class MCPClient(BaseModel):
     def _create_http_client(
         self,
     ) -> _AsyncGeneratorContextManager[Any]:
-        """Create an HTTP MCP client (SSE or streamable HTTP)."""
+        """Create an HTTP MCP client (SSE or streamable HTTP).
+
+        Security: The URL is validated against SSRF attacks before
+        establishing the connection.
+        """
         config = self.mcp_config
+
+        # Security: Validate URL against SSRF attacks
+        _validate_url_security_url(config.url)
 
         # Determine transport from URL
         if config.url.endswith("/sse") or config.url.endswith("/messages/"):
