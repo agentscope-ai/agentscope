@@ -13,6 +13,7 @@ import frontmatter
 
 from ._utils import DEFAULT_WORKSPACE_INSTRUCTIONS
 from .._logging import logger
+from .._utils._common import _normalize_local_path
 from ..mcp import MCPClient
 from ..skill import Skill
 from ..tool import ToolBase
@@ -110,7 +111,9 @@ class LocalWorkspace(WorkspaceBase):
 
         # ── seed-only ───────────────────────────────────────────
         self.default_mcps: list[MCPClient] = list(default_mcps or [])
-        self.skill_paths: list[str] = list(skill_paths or [])
+        self.skill_paths: list[str] = [
+            _normalize_local_path(path) for path in skill_paths or []
+        ]
 
         # ── runtime state ───────────────────────────────────────
         self._backend = LocalBackend()
@@ -724,6 +727,7 @@ class LocalWorkspace(WorkspaceBase):
             ValueError: If the skill at ``skill_path`` is invalid (missing or
                 malformed ``SKILL.md``).
         """
+        skill_path = _normalize_local_path(skill_path)
         skills_dir = os.path.join(self.workdir, "skills")
         async with self._skill_lock:
             os.makedirs(skills_dir, exist_ok=True)

@@ -61,7 +61,7 @@ from typing import Self
 from pydantic import AnyUrl
 
 from .._logging import logger
-from .._utils._common import _generate_id
+from .._utils._common import _generate_id, _normalize_local_path
 from ..mcp import MCPClient
 from ..message import (
     Base64Source,
@@ -191,7 +191,9 @@ class WorkspaceBase:
         self._backend = None
 
         self.default_mcps = list(default_mcps or [])
-        self.skill_paths = list(skill_paths or [])
+        self.skill_paths = [
+            _normalize_local_path(path) for path in skill_paths or []
+        ]
 
         self._mcps = []
         self._mcp_lock = asyncio.Lock()
