@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Literal
 from ..._logging import logger
 from ...mcp import MCPClient
 from .._sandboxed_base import SandboxedWorkspaceBase
-from .._utils import _GATEWAY_BASE_REQUIREMENTS
+from .._utils import _GATEWAY_BASE_REQUIREMENTS, DEFAULT_WORKSPACE_INSTRUCTIONS
 from ._constants import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_IMAGE,
@@ -31,21 +31,6 @@ if TYPE_CHECKING:
         NetworkPolicy,
         SandboxInfo,
     )
-
-
-_DEFAULT_INSTRUCTIONS = """<workspace>
-You have an OpenSandbox-based workspace. All tool calls execute **inside
-the sandbox** at ``{workdir}``.
-
-Layout:
-
-```
-{workdir}
-├── data/        # offloaded multimodal files
-├── skills/      # reusable skills
-└── sessions/    # session context and tool results
-```
-</workspace>"""
 
 
 class OpenSandboxWorkspace(SandboxedWorkspaceBase):
@@ -78,7 +63,7 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         entrypoint: list[str] | None = None,
         network_policy: NetworkPolicy | None = None,
         extra_pip: list[str] | None = None,
-        instructions: str = _DEFAULT_INSTRUCTIONS,
+        instructions: str = DEFAULT_WORKSPACE_INSTRUCTIONS,
         default_mcps: list[MCPClient] | None = None,
         skill_paths: list[str] | None = None,
     ) -> None:
@@ -121,8 +106,9 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
             extra_pip (`list[str] | None`, optional):
                 Extra Python packages installed into the gateway venv
                 during bootstrap.
-            instructions (`str`, defaults to `_DEFAULT_INSTRUCTIONS`):
-                System-prompt fragment template (supports ``{workdir}``).
+            instructions (`str`, defaults to `DEFAULT_WORKSPACE_INSTRUCTIONS`):
+                Instructions that will be injected into the system prompt,
+                which should receive placeholders "{workdir}".
             default_mcps (`list[MCPClient] | None`, optional):
                 MCPs registered on first init when no persisted
                 ``.mcp`` exists.
@@ -207,7 +193,10 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         the sandbox-side path (``/workspace``). The agent always sees
         sandbox-internal paths.
         """
-        return self.instructions.format(workdir=SANDBOX_WORKDIR)
+        return self.instructions.format(
+            backend="OpenSandbox",
+            workdir=self.workdir,
+        )
 
     def _connection_config(self) -> ConnectionConfig:
         """Build OpenSandbox connection config on demand."""
@@ -226,14 +215,14 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
 
     async def _find_existing_sandbox(self) -> SandboxInfo | None:
         """Return the most recent sandbox matching this workspace id."""
-        from opensandbox.models.sandboxes import SandboxFilter
+        from opensandbox.models.sandboxes import SandboxFilter, SandboxState
         from opensandbox import SandboxManager
 
         manager = await SandboxManager.create(
             connection_config=self._connection_config(),
         )
         sandbox_filter = SandboxFilter(
-            states=["RUNNING", "PAUSED"],
+            states=[SandboxState.RUNNING, SandboxState.PAUSED],
             metadata={METADATA_WORKSPACE_ID_KEY: self.workspace_id},
         )
         try:
@@ -382,19 +371,19 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         pip_args = " ".join(shlex.quote(p) for p in pip_pkgs)
 
         return [
-            # 1. System packages used by bootstrap and builtin tools. The
-            # default image runs as root, so no sudo is needed. ``procps``
-            # backs gateway-process cleanup; ``ripgrep`` backs the Grep tool.
+            # System packages used by bootstrap and builtin tools. The
+            # default image runs as root, so no sudo is needed. ``ripgrep``
+            # backs the Grep tool.
             "apt-get update -qq "
             "&& apt-get install -y --no-install-recommends curl "
-            "ca-certificates procps ripgrep "
+            "ca-certificates ripgrep "
             "&& rm -rf /var/lib/apt/lists/*",
-            # 2. Astral uv → /usr/local/bin (on PATH). INSTALLER_NO_MODIFY_PATH
+            # Astral uv → /usr/local/bin (on PATH). INSTALLER_NO_MODIFY_PATH
             # suppresses shell rc edits.
             "curl -LsSf https://astral.sh/uv/install.sh "
             "| env UV_INSTALL_DIR=/usr/local/bin "
             "INSTALLER_NO_MODIFY_PATH=1 sh",
-            # 3. Gateway venv + base requirements + agentscope from PyPI.
+            # Gateway venv + base requirements + agentscope from PyPI.
             # ``uv venv`` creates the gateway home as a parent dir.
             f"uv venv {self._gateway_venv}",
             f"uv pip install --python {self._gateway_python} {pip_args}",

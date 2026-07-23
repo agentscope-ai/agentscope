@@ -64,4 +64,3 @@ WORKDIR /workspace
 # Container has nothing to run by itself — K8s Pod spec will override CMD
 # with the sleep loop from ``_build_pod_spec``.
 CMD ["sleep", "infinity"]
-

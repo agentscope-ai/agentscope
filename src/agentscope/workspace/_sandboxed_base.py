@@ -61,6 +61,12 @@ class SandboxedWorkspaceBase(WorkspaceBase):
     _gateway: GatewayClient | None
     """Workspace-side gateway facade. ``None`` before init / after close."""
 
+    is_alive: bool
+    """Inherited lifecycle flag, repeated for file-scoped type checks."""
+
+    _mcps: list[MCPClient]
+    """Inherited MCP handle list, repeated for file-scoped type checks."""
+
     _bootstrap_cmd_timeout: float = 1800.0
     """Per-command timeout applied to every :meth:`_setup_mcp_gateway`
     bootstrap step. Subclasses lower this for lighter base images
@@ -409,11 +415,19 @@ class SandboxedWorkspaceBase(WorkspaceBase):
                 _read_gateway_script_bytes(),
             )
 
-        # Launch. ``pkill`` clears any gateway left running by a
-        # previous resume so the new one can bind the port cleanly.
-        # The gateway reads ``.mcp`` directly — no separate config file.
+        # Clear any gateway left running by a previous resume so the
+        # new one can bind the port cleanly. Keep this in a separate
+        # shell command from launch: some providers expose the full
+        # launch shell command line to ``pkill -f``, which would also
+        # contain the gateway script path and terminate the launch
+        # before ``nohup`` starts.
+        await backend.exec_shell(
+            ["sh", "-c", "pkill -f '[_]mcp_gateway_app.py' || true"],
+        )
+
+        # Launch. The gateway reads ``.mcp`` directly — no separate
+        # config file.
         launch_cmd = (
-            "pkill -f _mcp_gateway_app.py || true; "
             f"nohup {shlex.quote(self._gateway_python)} -u "
             f"{shlex.quote(self._gateway_script)} "
             f"--config {shlex.quote(self._mcp_file)} "

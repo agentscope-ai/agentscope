@@ -12,7 +12,7 @@ base class, not here.
 
 #: Default OpenSandbox image. The slim Python image is small but still
 #: has enough package-manager support for installing curl, certificates,
-#: ripgrep, and procps during bootstrap.
+#: and ripgrep during bootstrap.
 DEFAULT_IMAGE = "python:3.11-slim"
 
 #: Default keep-alive timeout in seconds for newly-created sandboxes.

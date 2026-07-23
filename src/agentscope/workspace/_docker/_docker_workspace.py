@@ -23,6 +23,7 @@ import sys
 import tarfile
 from typing import Any
 
+from .._utils import DEFAULT_WORKSPACE_INSTRUCTIONS
 from ..._logging import logger
 from ...mcp import MCPClient
 from .._sandboxed_base import SandboxedWorkspaceBase
@@ -34,20 +35,6 @@ from ._make_dockerfile import (
     GATEWAY_HOME,
     prepare_build_context,
 )
-
-_DEFAULT_INSTRUCTIONS = """<workspace>
-You have a Docker-based workspace. All tool calls execute **inside the
-container** at ``{workdir}``.
-
-Layout:
-
-```
-{workdir}
-├── data/        # offloaded multimodal files
-├── skills/      # reusable skills
-└── sessions/    # session context and tool results
-```
-</workspace>"""
 
 
 # ── the workspace ──────────────────────────────────────────────────
@@ -72,7 +59,7 @@ class DockerWorkspace(SandboxedWorkspaceBase):
         extra_pip: list[str] | None = None,
         gateway_port: int = DEFAULT_GATEWAY_PORT,
         env: dict[str, str] | None = None,
-        instructions: str = _DEFAULT_INSTRUCTIONS,
+        instructions: str = DEFAULT_WORKSPACE_INSTRUCTIONS,
         default_mcps: list[MCPClient] | None = None,
         skill_paths: list[str] | None = None,
         **kwargs: Any,
@@ -102,7 +89,7 @@ class DockerWorkspace(SandboxedWorkspaceBase):
                 (no host port mapping).
             env (`dict[str, str] | None`, optional):
                 Environment variables to set inside the container.
-            instructions (`str`, defaults to `_DEFAULT_INSTRUCTIONS`):
+            instructions (`str`, defaults to `DEFAULT_WORKSPACE_INSTRUCTIONS`):
                 System-prompt fragment template; supports ``{workdir}``.
             default_mcps (`list[MCPClient] | None`, optional):
                 MCPs registered on first init when no persisted
@@ -133,7 +120,10 @@ class DockerWorkspace(SandboxedWorkspaceBase):
         self.extra_pip: list[str] = list(extra_pip or [])
         self.gateway_port = gateway_port
         self.env: dict[str, str] = dict(env or {})
-        self.instructions = instructions
+        self.instructions = instructions.format(
+            backend="Docker-based",
+            workdir=self.workdir,
+        )
 
         # ── runtime state (Docker-only) ─────────────────────────
         self._client: Any = None  # aiodocker.Docker
@@ -205,7 +195,7 @@ class DockerWorkspace(SandboxedWorkspaceBase):
     async def get_instructions(self) -> str:
         """Return the system-prompt fragment, formatted with the
         container-side ``{workdir}``."""
-        return self.instructions.format(workdir=CONTAINER_WORKDIR)
+        return self.instructions
 
     # ── internals: image build ──────────────────────────────────
 

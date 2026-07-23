@@ -7,6 +7,7 @@ import fakeredis.aioredis
 
 from agentscope.app.storage import (
     EmbeddingModelConfig,
+    KnowledgeBaseData,
     KnowledgeBaseRecord,
     RedisStorage,
 )
@@ -25,15 +26,17 @@ def make_record(user_id: str, name: str = "kb") -> KnowledgeBaseRecord:
     """Build a KnowledgeBaseRecord with a default embedding config."""
     return KnowledgeBaseRecord(
         user_id=user_id,
-        name=name,
-        description="desc",
-        embedding_model_config=EmbeddingModelConfig(
-            type="openai_credential",
-            credential_id="cred-1",
-            model="text-embedding-3-small",
-            dimensions=1536,
+        data=KnowledgeBaseData(
+            name=name,
+            description="desc",
+            embedding_model_config=EmbeddingModelConfig(
+                type="openai_credential",
+                credential_id="cred-1",
+                model="text-embedding-3-small",
+                dimensions=1536,
+            ),
+            collection_name="kb_abc",
         ),
-        collection_name="kb_abc",
     )
 
 
@@ -55,7 +58,7 @@ class KnowledgeBaseStorageTest(IsolatedAsyncioTestCase):
         # get returns the persisted record for the right owner
         fetched = await storage.get_knowledge_base("user-1", stored_a.id)
         self.assertEqual(fetched.id, stored_a.id)
-        self.assertEqual(fetched.name, "first")
+        self.assertEqual(fetched.data.name, "first")
 
         # cross-user lookups return None
         self.assertIsNone(
@@ -102,9 +105,9 @@ class KnowledgeBaseStorageTest(IsolatedAsyncioTestCase):
         rec = make_record("user-1")
         first = await storage.upsert_knowledge_base("user-1", rec)
 
-        rec.name = "renamed"
+        rec.data.name = "renamed"
         second = await storage.upsert_knowledge_base("user-1", rec)
 
         self.assertEqual(second.id, first.id)
         self.assertEqual(second.created_at, first.created_at)
-        self.assertEqual(second.name, "renamed")
+        self.assertEqual(second.data.name, "renamed")

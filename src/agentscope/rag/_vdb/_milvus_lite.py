@@ -427,12 +427,15 @@ class MilvusLiteStore(VectorStoreBase):
         hit: dict[str, Any],
         metric_type: Literal["COSINE", "IP", "L2"],
     ) -> float:
-        """Extract a score from Milvus search result shapes."""
+        """Extract a score from Milvus search result shapes.
+
+        Since milvus-lite >= 3.1.0 the ``distance`` field for COSINE
+        already carries the cosine similarity (1.0 for identical
+        vectors), so no conversion is needed.
+        """
+        # pylint: disable=unused-argument
         if "distance" in hit:
-            distance = float(hit["distance"])
-            if metric_type == "COSINE":
-                return 1.0 - distance
-            return distance
+            return float(hit["distance"])
         if "score" in hit:
             return float(hit["score"])
         return 0.0

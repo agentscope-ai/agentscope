@@ -1,4 +1,3 @@
-
 [project]
 name = "agentscope"
 dynamic = ["version"]
@@ -27,7 +26,7 @@ dependencies = [
     "filetype",
     "json5",
     "json_repair",
-    "mcp",
+    "mcp<2.0.0",
     "httpx",
     "numpy",
     "openai",
@@ -44,6 +43,8 @@ dependencies = [
     "tree_sitter",
     "tree_sitter_bash",
     "jsonschema",
+    # The IANA timezone database, which is absent on Windows and slim images
+    "tzdata",
 ]
 
 [project.optional-dependencies]
@@ -67,12 +68,21 @@ service = [
 storage = [
     "redis",
 ]
+# ------------ SQL storage ------------
+# Async SQLAlchemy 2.0 + Alembic. The concrete driver
+# (aiosqlite / asyncpg / aiomysql / asyncmy) is left to the user
+# so the extra stays lightweight.
+sql = [
+    "sqlalchemy[asyncio]>=2.0",
+    "alembic>=1.13",
+]
 # ------------ Workspace -----------
 k8s = ["kubernetes-asyncio"]
 workspace = [
     "aiodocker",
     "e2b",
     "agentscope[k8s]",
+    "daytona",
     "opensandbox",
 ]
 # ------------ Tools ------------
@@ -90,12 +100,16 @@ rag = [
     "pandas",
 ]
 milvuslite = [
-    "pymilvus[milvus-lite]>=2.4.0",
-    "milvus-lite>=3.0; sys_platform == 'win32'",
+    "pymilvus>=2.4.0",
+    "milvus-lite>=3.1.0",
 ]
 # ------------ MongoDB vector store ------------
 mongodb = [
     "pymongo>=4.7",
+]
+# ------------ Elasticsearch vector store ------------
+elasticsearch = [
+    "elasticsearch[async]>=8.12",
 ]
 
 # ------------ S3-compatible blob store ------------
@@ -119,11 +133,13 @@ full = [
     "agentscope[models]",
     "agentscope[service]",
     "agentscope[storage]",
+    "agentscope[sql]",
     "agentscope[workspace]",
     "agentscope[tools]",
     "agentscope[rag]",
     "agentscope[milvuslite]",
     "agentscope[mongodb]",
+    "agentscope[elasticsearch]",
     "agentscope[s3]",
     "agentscope[mem0]",
     "agentscope[reme]",
@@ -140,6 +156,8 @@ dev = [
     "myst_parser",
     "matplotlib",
     "fakeredis",
+    # SQL backend tests — SQLite via aiosqlite so no server is needed.
+    "aiosqlite",
     # S3-backend testing — moto[server] spins up an in-process S3, the
     # store-under-test (`S3BlobStore`) uses aioboto3, and boto3 is the
     # sync client the test fixtures use to seed/verify buckets.
@@ -172,6 +190,17 @@ include-package-data = true
     "_cosyvoice_models/*.yaml",
 ]
 "agentscope.workspace._docker" = ["Dockerfile*.template"]
+# The Alembic scaffolding for the SQL storage backend lives in the
+# data-only ``_alembic/`` subtree (no ``__init__.py`` — Alembic loads
+# ``env.py`` / the version scripts by file path, not import). Ship them
+# explicitly so ``auto_migrate=True`` works from an installed wheel.
+"agentscope.app.storage._sql" = [
+    "_alembic/alembic.ini",
+    "_alembic/script.py.mako",
+    "_alembic/env.py",
+    "_alembic/versions/*.py",
+]
+
 [build-system]
 requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"

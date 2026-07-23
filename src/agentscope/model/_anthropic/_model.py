@@ -246,10 +246,29 @@ class AnthropicChatModel(ChatModelBase):
                 ):
                     thinking_block = ThinkingBlock(
                         thinking=content_block.thinking,
-                        signature=getattr(content_block, "signature", "")
+                        signature=getattr(
+                            content_block,
+                            "signature",
+                            "",
+                        )
                         or "",
                     )
                     content_blocks.append(thinking_block)
+
+                elif (
+                    hasattr(content_block, "type")
+                    and content_block.type == "redacted_thinking"
+                ):
+                    content_blocks.append(
+                        ThinkingBlock(
+                            thinking="",
+                            redacted_thinking_data=getattr(
+                                content_block,
+                                "data",
+                                "",
+                            ),
+                        ),
+                    )
 
                 elif (
                     hasattr(content_block, "type")
@@ -375,6 +394,17 @@ class AnthropicChatModel(ChatModelBase):
                         block_id=tool_block.id,
                         name=tool_block.name,
                         input="",
+                    )
+
+                elif event.content_block.type == "redacted_thinking":
+                    delta_res.append_thinking(
+                        "",
+                        block_id=_generate_id(),
+                        redacted_thinking_data=getattr(
+                            event.content_block,
+                            "data",
+                            "",
+                        ),
                     )
 
             elif event.type == "content_block_delta":

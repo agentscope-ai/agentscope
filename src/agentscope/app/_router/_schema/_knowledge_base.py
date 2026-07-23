@@ -118,7 +118,7 @@ class KnowledgeDocumentView(BaseModel):
             filename=record.data.filename,
             size=record.data.size,
             content_type=record.data.content_type,
-            status=record.data.status,
+            status=record.status,
             error=record.data.error,
             chunk_count=record.data.chunk_count,
             created_at=record.created_at,

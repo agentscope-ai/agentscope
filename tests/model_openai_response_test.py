@@ -44,13 +44,22 @@ def _mock_completion(
     """Build a mock non-streaming Responses API response."""
     output = []
 
-    if reasoning_summary:
+    if reasoning_summary is not None:
         reasoning_item = MagicMock()
         reasoning_item.type = "reasoning"
         reasoning_item.id = reasoning_id
-        summary_mock = MagicMock()
-        summary_mock.text = reasoning_summary
-        reasoning_item.summary = [summary_mock]
+        summary_texts = (
+            reasoning_summary
+            if isinstance(reasoning_summary, list)
+            else [reasoning_summary]
+            if reasoning_summary is not None
+            else []
+        )
+        reasoning_item.summary = []
+        for summary_text in summary_texts:
+            summary_mock = MagicMock()
+            summary_mock.text = summary_text
+            reasoning_item.summary.append(summary_mock)
         output.append(reasoning_item)
 
     if text:
@@ -207,6 +216,38 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
             ),
         )
 
+    @patch("openai.AsyncClient")
+    async def test_empty_reasoning_summary_response(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Non-stream empty reasoning summary still preserves its item id."""
+        mock_create = AsyncMock(
+            return_value=_mock_completion(
+                reasoning_summary=[],
+                text="Answer",
+                reasoning_id="rs_empty",
+            ),
+        )
+        mock_client_cls.return_value.responses.create = mock_create
+
+        result = await self.model([])
+
+        self.assertEqual(
+            (result.is_last, result.content),
+            (
+                True,
+                [
+                    ThinkingBlock.model_construct(
+                        id=A,
+                        thinking="",
+                        reasoning_item_id="rs_empty",
+                    ),
+                    TextBlock.model_construct(id=A, text="Answer"),
+                ],
+            ),
+        )
+
 
 class TestOpenAIResponseModelParameters(unittest.TestCase):
     """Tests for OpenAIResponseModel.Parameters."""
@@ -357,6 +398,71 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
                             reasoning_item_id="rs_123",
                         ),
                         TextBlock.model_construct(id=A, text="Answer"),
+                    ],
+                ),
+            ],
+        )
+
+    @patch("openai.AsyncClient")
+    async def test_stream_empty_reasoning_summary_keeps_reasoning_item_id(
+        self,
+        mock_client_cls: MagicMock,
+    ) -> None:
+        """Stream empty reasoning summary still preserves its item id."""
+        reasoning_item = MagicMock()
+        reasoning_item.type = "reasoning"
+        reasoning_item.id = "rs_empty"
+
+        msg_item = MagicMock()
+        msg_item.type = "message"
+
+        completed_resp = MagicMock()
+        completed_resp.id = "resp-empty"
+        completed_resp.output = [reasoning_item, msg_item]
+        completed_resp.usage = MagicMock()
+        completed_resp.usage.input_tokens = 10
+        completed_resp.usage.output_tokens = 5
+        completed_resp.usage.input_tokens_details = None
+
+        events = [
+            _make_event(
+                "response.output_text.delta",
+                delta="Answer",
+                response=MagicMock(id="resp-empty"),
+            ),
+            _make_event("response.completed", response=completed_resp),
+        ]
+        mock_create = AsyncMock(
+            return_value=_MockAsyncEventStream(events),
+        )
+        mock_client_cls.return_value.responses.create = mock_create
+
+        gen = await self.model([])
+        responses = [r async for r in gen]
+
+        self.assertListEqual(
+            [(r.is_last, r.content) for r in responses],
+            [
+                (False, [TextBlock.model_construct(id=A, text="Answer")]),
+                (
+                    False,
+                    [
+                        ThinkingBlock.model_construct(
+                            id=A,
+                            thinking="",
+                            reasoning_item_id="rs_empty",
+                        ),
+                    ],
+                ),
+                (
+                    True,
+                    [
+                        TextBlock.model_construct(id=A, text="Answer"),
+                        ThinkingBlock.model_construct(
+                            id=A,
+                            thinking="",
+                            reasoning_item_id="rs_empty",
+                        ),
                     ],
                 ),
             ],

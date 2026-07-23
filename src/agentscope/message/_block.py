@@ -22,9 +22,17 @@ class TextBlock(BaseModel):
 class ThinkingBlock(BaseModel):
     """The thinking block.
 
-    Allows extra provider-specific fields (e.g. Anthropic's ``signature``)
-    via ``extra="allow"`` so that model implementations can pass
-    arbitrary metadata without subclassing.
+    Allows extra provider-specific fields (e.g. Anthropic's ``signature``,
+    ``redacted_thinking_data``) via ``extra="allow"`` so that model
+    implementations can pass arbitrary metadata without subclassing.
+
+    .. note::
+        Anthropic's ``redacted_thinking`` blocks are also stored as
+        ``ThinkingBlock`` instances with ``thinking=""`` and the
+        encrypted payload in the ``redacted_thinking_data`` extra
+        field. Callers filtering by ``type=="thinking"`` (e.g.
+        ``get_content_blocks``) will receive both visible and
+        redacted blocks.
     """
 
     model_config = ConfigDict(extra="allow")
