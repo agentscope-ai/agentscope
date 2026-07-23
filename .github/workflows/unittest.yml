@@ -8,12 +8,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-15]
+        os: [ubuntu-latest, windows-latest, macos-26]
         python-version: ['3.11']
     env:
       OS: ${{ matrix.os }}
     steps:
-    - uses: actions/checkout@master
+    - uses: actions/checkout@v4
     - name: Install uv
       uses: astral-sh/setup-uv@v5
       with:
@@ -31,7 +31,7 @@ jobs:
       env:
         GRPC_VERBOSITY: ERROR
       run: |
-        coverage run -m pytest tests
+        coverage run -m pytest tests -v
     - name: Generate coverage report
       run: |
         coverage report -m
