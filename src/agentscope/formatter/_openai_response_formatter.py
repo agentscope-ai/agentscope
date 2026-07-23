@@ -49,6 +49,11 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
           audio input yet; use Chat Completions API instead). See
           https://developers.openai.com/api/docs/guides/audio
 
+        For image blocks, ``DataBlock`` extra fields are merged into the
+        ``input_image`` item itself (for example ``detail``), because the
+        Responses API uses a flat ``image_url`` string instead of the nested
+        Chat Completions ``image_url`` object.
+
         Args:
             block (`DataBlock`):
                 The DataBlock to format.
@@ -77,10 +82,14 @@ class _OpenAIResponseFormatterBase(_OpenAIFormatterBase, ABC):
             return None
 
         if base_result.get("type") == "image_url":
-            return {
+            result = {
                 "type": "input_image",
                 "image_url": base_result["image_url"]["url"],
             }
+            extra = block.model_extra or {}
+            if extra:
+                result.update(extra)
+            return result
 
         return base_result
 

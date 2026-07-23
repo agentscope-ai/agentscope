@@ -73,7 +73,16 @@ class URLSource(BaseModel):
 
 
 class DataBlock(BaseModel):
-    """The data block for binary content (images, audio, video, etc.)."""
+    """The data block for binary content (images, audio, video, etc.).
+
+    Allows extra provider-specific fields (e.g. OpenAI's ``detail``,
+    DashScope's ``fps``) via ``extra="allow"`` so users can attach media
+    processing parameters without subclassing. Formatters decide where these
+    extras belong in the target API payload because providers use different
+    nesting rules.
+    """
+
+    model_config = ConfigDict(extra="allow")
 
     type: Literal["data"] = "data"
     """The type of the data block, which is always 'data'."""
