@@ -7,6 +7,7 @@ from starlette.types import ASGIApp
 from ._base import ProtocolMiddlewareBase
 from ....event import (
     AgentEvent,
+    CustomEvent,
     DataBlockDeltaEvent,
     DataBlockEndEvent,
     DataBlockStartEvent,
@@ -249,6 +250,12 @@ class AGUIProtocolMiddleware(ProtocolMiddlewareBase):
             return AGUICustomEvent(
                 name="external_execution_result",
                 value=event.model_dump(exclude_none=True),
+            )
+
+        if isinstance(event, CustomEvent):
+            return AGUICustomEvent(
+                name=event.name,
+                value=event.value,
             )
 
         return AGUICustomEvent(

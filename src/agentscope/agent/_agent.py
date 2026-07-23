@@ -60,6 +60,7 @@ from ..event import (
     ReplyFinishedReason,
     UserInterruptEvent,
     HintBlockEvent,
+    CustomEvent,
 )
 from ..exception import AgentOrientedException
 from ..model import (
@@ -397,10 +398,76 @@ class Agent:
 
             await execute_chain()
 
+    async def _compress_context_with_status_events(
+        self,
+    ) -> AsyncGenerator[CustomEvent, None]:
+        """Compress context and report lifecycle events when it actually runs.
+
+        The threshold check runs in the current reply task to preserve the
+        existing scheduling semantics. Without compression middleware, its
+        prepared model input and token estimate are reused by the core
+        implementation so token counting still happens exactly once.
+
+        Yields:
+            `CustomEvent`:
+                Context-compression lifecycle events with ``started``,
+                ``completed``, or ``failed`` status.
+        """
+        cfg = self.context_config
+        prepared_input = await self._prepare_model_input()
+        estimated_tokens = await self.model.count_tokens(**prepared_input)
+        compression_needed = (
+            estimated_tokens >= cfg.trigger_ratio * self.model.context_size
+        )
+
+        # Preserve custom compression middleware behavior even when the
+        # default configuration does not currently require compression.
+        if not compression_needed:
+            if self._compress_context_middlewares:
+                await self.compress_context()
+            return
+
+        event_value = {
+            "reply_id": self.state.reply_id,
+            "status": "started",
+        }
+        yield CustomEvent(
+            name="context_compression",
+            value=event_value,
+        )
+
+        try:
+            if self._compress_context_middlewares:
+                await self.compress_context()
+            else:
+                await self._compress_context_impl(
+                    _prepared_input=prepared_input,
+                    _estimated_tokens=estimated_tokens,
+                )
+        except Exception:
+            yield CustomEvent(
+                name="context_compression",
+                value={
+                    **event_value,
+                    "status": "failed",
+                },
+            )
+            raise
+
+        yield CustomEvent(
+            name="context_compression",
+            value={
+                **event_value,
+                "status": "completed",
+            },
+        )
+
     async def _compress_context_impl(
         self,
         context_config: ContextConfig | None = None,
         instructions: HintBlock | None = None,
+        _prepared_input: dict[str, Any] | None = None,
+        _estimated_tokens: int | None = None,
     ) -> None:
         """Compress the agent's context if the token count exceeds the
         threshold.
@@ -413,12 +480,21 @@ class Agent:
             instructions (`HintBlock | None`, optional):
                 Optional hints or instructions injected into the compression
                 context to guide the summarization behavior.
+            _prepared_input (`dict[str, Any] | None`, optional):
+                Precomputed model input from the reply-stream threshold check.
+            _estimated_tokens (`int | None`, optional):
+                Precomputed token count for ``_prepared_input``.
         """
         cfg: ContextConfig = context_config or self.context_config
 
         # Count the current tokens
-        kwargs = await self._prepare_model_input()
-        estimated_tokens = await self.model.count_tokens(**kwargs)
+        if _prepared_input is None:
+            kwargs = await self._prepare_model_input()
+        else:
+            kwargs = _prepared_input
+        estimated_tokens = _estimated_tokens
+        if estimated_tokens is None:
+            estimated_tokens = await self.model.count_tokens(**kwargs)
 
         # Skip if no compression is needed
         threshold = cfg.trigger_ratio * self.model.context_size
@@ -872,7 +948,10 @@ class Agent:
                             self.state.append_context(self.name, [hint])
 
                         # Compressed the memory if needed before reasoning
-                        await self.compress_context()
+                        async for evt in (
+                            self._compress_context_with_status_events()
+                        ):
+                            yield evt
 
                         # Inject runtime state if needed before reasoning
                         async for evt in self._inject_runtime_state():
