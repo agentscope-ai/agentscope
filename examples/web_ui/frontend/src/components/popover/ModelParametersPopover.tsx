@@ -23,7 +23,9 @@ import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useAvailableTTSModels } from '@/hooks/useAvailableTTSModels';
+import { useVoiceProfiles } from '@/hooks/useVoiceProfiles';
 import { useTranslation } from '@/i18n/useI18n';
+import { isModelForEngine } from '@/utils/tts';
 
 interface ParameterProperty {
 	type?: string;
@@ -234,6 +236,7 @@ export function ModelParametersPopover({
 	const { t } = useTranslation();
 	const { groups } = useAvailableModels();
 	const { groups: ttsGroups } = useAvailableTTSModels();
+	const { profiles: voiceProfiles } = useVoiceProfiles();
 
 	const schema = modelCard?.parameter_schema as ParameterSchema | undefined;
 	const properties = schema?.properties ?? {};
@@ -416,7 +419,178 @@ export function ModelParametersPopover({
 						<span className="truncate">{t('model-parameters.ttsLabel')}</span>
 					</DropdownMenuSubTrigger>
 					<DropdownMenuSubContent className="max-h-96 overflow-y-auto">
-						{Object.keys(ttsGroups).length === 0 ? (
+						{/* Voice Profiles section */}
+						{voiceProfiles.length > 0 && (
+							<>
+								<DropdownMenuLabel>
+									{t('model-parameters.voiceProfiles')}
+								</DropdownMenuLabel>
+								{voiceProfiles.map((vp) => {
+									const isProfileActive =
+										selectedTTSModel != null &&
+										(selectedTTSModel.parameters as Record<string, unknown>)
+											?._voice_profile_id === vp.id;
+									return (
+										<DropdownMenuCheckboxItem
+											key={vp.id}
+											checked={isProfileActive}
+											onSelect={(e) => e.preventDefault()}
+											onCheckedChange={(checked) => {
+												if (!checked) return;
+												const engine = vp.data.engine;
+												const profileModel = vp.data.model;
+												const profileCredId = vp.data.credential_id;
+
+												let matchedType: string | undefined;
+												let matchedCredentialId: string | undefined;
+												let matchedModelName: string | undefined;
+												let matchedSchema: ParameterSchema | undefined;
+
+												if (engine) {
+													for (const [type, items] of Object.entries(
+														ttsGroups,
+													)) {
+														for (const {
+															credential,
+															models,
+														} of items) {
+															// Prefer the profile's credential_id
+															if (
+																profileCredId &&
+																credential.id !== profileCredId
+															) {
+																continue;
+															}
+															const model = profileModel
+																? models.find(
+																		(m) =>
+																			m.name === profileModel,
+																	)
+																: models.find((m) =>
+																		isModelForEngine(
+																			m.name,
+																			engine,
+																		),
+																	);
+															if (model) {
+																matchedType = type;
+																matchedCredentialId = credential.id;
+																matchedModelName = model.name;
+																matchedSchema =
+																	model.parameter_schema as
+																		| ParameterSchema
+																		| undefined;
+																break;
+															}
+														}
+														if (matchedModelName) break;
+													}
+												}
+
+												if (!matchedType && selectedTTSModel) {
+													matchedType = selectedTTSModel.type;
+													matchedCredentialId =
+														selectedTTSModel.credential_id;
+													matchedModelName = selectedTTSModel.model;
+													const selItems = ttsGroups[matchedType];
+													if (selItems) {
+														for (const {
+															credential,
+															models,
+														} of selItems) {
+															if (
+																credential.id !==
+																matchedCredentialId
+															)
+																continue;
+															const m = models.find(
+																(mod) =>
+																	mod.name === matchedModelName,
+															);
+															if (m) {
+																matchedSchema =
+																	m.parameter_schema as
+																		| ParameterSchema
+																		| undefined;
+																break;
+															}
+														}
+													}
+												}
+
+												if (!matchedType) {
+													const firstGroup = Object.entries(ttsGroups)[0];
+													if (firstGroup) {
+														const [ft, fi] = firstGroup;
+														const item = fi[0];
+														if (item && item.models[0]) {
+															matchedType = ft;
+															matchedCredentialId =
+																item.credential.id;
+															matchedModelName = item.models[0].name;
+															matchedSchema = item.models[0]
+																.parameter_schema as
+																| ParameterSchema
+																| undefined;
+														}
+													}
+												}
+
+												if (
+													!matchedType ||
+													!matchedCredentialId ||
+													!matchedModelName
+												) {
+													return;
+												}
+
+												const params: Record<string, unknown> = {};
+												if (matchedSchema?.properties) {
+													for (const [k, p] of Object.entries(
+														matchedSchema.properties,
+													)) {
+														if (p.default !== undefined) {
+															params[k] = p.default;
+														}
+													}
+												}
+												if (vp.data.voice) {
+													params.voice = vp.data.voice;
+												}
+												params._voice_profile_id = vp.id;
+
+												// Use profile model directly if available
+												let finalModel = matchedModelName;
+												if (profileModel) {
+													finalModel = profileModel;
+												}
+
+												onTTSChange({
+													type: matchedType,
+													credential_id: matchedCredentialId,
+													model: finalModel,
+													parameters: params,
+												});
+											}}
+										>
+											<span className="truncate">{vp.data.name}</span>
+											{vp.data.engine && (
+												<Badge
+													variant="secondary"
+													className="ml-1.5 text-[10px] px-1 py-0"
+												>
+													{vp.data.engine}
+												</Badge>
+											)}
+										</DropdownMenuCheckboxItem>
+									);
+								})}
+								<DropdownMenuSeparator />
+							</>
+						)}
+
+						{/* Manual engine selection */}
+						{Object.keys(ttsGroups).length === 0 && voiceProfiles.length === 0 ? (
 							<div className="px-2 py-3 text-center text-sm text-muted-foreground">
 								<p>{t('model-parameters.ttsEmpty')}</p>
 							</div>
@@ -428,175 +602,212 @@ export function ModelParametersPopover({
 										{type.replace(/_credential$/, '')}
 									</DropdownMenuLabel>
 									{items.flatMap(({ credential, models }) =>
-										models.map((m) => {
-											const isSelected =
-												selectedTTSModel?.credential_id === credential.id &&
-												selectedTTSModel?.model === m.name;
-											return (
-												<DropdownMenuCheckboxItem
-													key={`${credential.id}-${m.name}`}
-													checked={isSelected}
-													onSelect={(e) => e.preventDefault()}
-													onCheckedChange={(checked) => {
-														if (!checked) return;
-														const schema = m.parameter_schema as
-															| ParameterSchema
-															| undefined;
-														const defaults: Record<string, unknown> =
-															{};
-														if (schema?.properties) {
-															for (const [k, p] of Object.entries(
-																schema.properties,
-															)) {
-																if (p.default !== undefined) {
-																	defaults[k] = p.default;
+										models
+											.filter((m) => {
+												// Hide models with no preset voices
+												const ps = m.parameter_schema as
+													| ParameterSchema
+													| undefined;
+												const voiceProp = ps?.properties?.voice;
+												if (!voiceProp) return true;
+												const { enumValues } = resolveType(voiceProp);
+												return enumValues !== null && enumValues.length > 0;
+											})
+											.map((m) => {
+												const hasActiveProfile =
+													selectedTTSModel != null &&
+													(
+														selectedTTSModel.parameters as Record<
+															string,
+															unknown
+														>
+													)?._voice_profile_id != null;
+												const isSelected =
+													!hasActiveProfile &&
+													selectedTTSModel?.credential_id ===
+														credential.id &&
+													selectedTTSModel?.model === m.name;
+												return (
+													<DropdownMenuCheckboxItem
+														key={`${credential.id}-${m.name}`}
+														checked={isSelected}
+														onSelect={(e) => e.preventDefault()}
+														onCheckedChange={(checked) => {
+															if (!checked) return;
+															const schema = m.parameter_schema as
+																| ParameterSchema
+																| undefined;
+															const defaults: Record<
+																string,
+																unknown
+															> = {};
+															if (schema?.properties) {
+																for (const [k, p] of Object.entries(
+																	schema.properties,
+																)) {
+																	if (p.default !== undefined) {
+																		defaults[k] = p.default;
+																	}
 																}
 															}
-														}
-														onTTSChange({
-															type,
-															credential_id: credential.id,
-															model: m.name,
-															parameters: defaults,
-														});
-													}}
-												>
-													{m.label}
-													{m.realtime && (
-														<Badge
-															variant="outline"
-															className="ml-1.5 text-[10px] px-1 py-0"
-														>
-															Realtime
-														</Badge>
-													)}
-												</DropdownMenuCheckboxItem>
-											);
-										}),
+															onTTSChange({
+																type,
+																credential_id: credential.id,
+																model: m.name,
+																parameters: defaults,
+															});
+														}}
+													>
+														{m.label}
+														{m.realtime && (
+															<Badge
+																variant="outline"
+																className="ml-1.5 text-[10px] px-1 py-0"
+															>
+																Realtime
+															</Badge>
+														)}
+													</DropdownMenuCheckboxItem>
+												);
+											}),
 									)}
 								</div>
 							))
 						)}
 
 						{/* TTS parameters sub-panel (hover to expand right) */}
-						{selectedTTSModel && (
-							<>
-								<DropdownMenuSeparator />
-								<DropdownMenuSub>
-									<DropdownMenuSubTrigger>
-										{t('model-parameters.ttsParameters')}
-									</DropdownMenuSubTrigger>
-									<DropdownMenuSubContent className="w-72 max-h-96 overflow-y-auto p-3">
-										<div className="mb-3">
-											<p className="text-sm font-medium">
-												{t('model-parameters.title')}
-											</p>
-											<p className="text-muted-foreground text-xs">
-												{t('model-parameters.ttsParametersDescription')}
-											</p>
-										</div>
-										{(() => {
-											if (!selectedTTSModel) return null;
-											const selType = selectedTTSModel.type;
-											const selItems = ttsGroups[selType];
-											if (!selItems) return null;
-											let selModel: TTSModelCard | undefined;
-											for (const { credential, models } of selItems) {
-												if (
-													credential.id !== selectedTTSModel.credential_id
-												)
-													continue;
-												selModel = models.find(
-													(m) => m.name === selectedTTSModel.model,
-												);
-												if (selModel) break;
-											}
-											if (!selModel) return null;
-											const mSchema = selModel.parameter_schema as
-												| ParameterSchema
-												| undefined;
-											const mProps = mSchema?.properties ?? {};
-											const mRequired = mSchema?.required ?? [];
-											const mEntries = Object.entries(mProps);
-											if (mEntries.length === 0) {
+						{selectedTTSModel &&
+							!(selectedTTSModel.parameters as Record<string, unknown>)
+								?._voice_profile_id && (
+								<>
+									<DropdownMenuSeparator />
+									<DropdownMenuSub>
+										<DropdownMenuSubTrigger>
+											{t('model-parameters.ttsParameters')}
+										</DropdownMenuSubTrigger>
+										<DropdownMenuSubContent className="w-72 max-h-96 overflow-y-auto p-3">
+											<div className="mb-3">
+												<p className="text-sm font-medium">
+													{t('model-parameters.title')}
+												</p>
+												<p className="text-muted-foreground text-xs">
+													{t('model-parameters.ttsParametersDescription')}
+												</p>
+											</div>
+											{(() => {
+												if (!selectedTTSModel) return null;
+												const selType = selectedTTSModel.type;
+												const selItems = ttsGroups[selType];
+												if (!selItems) return null;
+												let selModel: TTSModelCard | undefined;
+												for (const { credential, models } of selItems) {
+													if (
+														credential.id !==
+														selectedTTSModel.credential_id
+													)
+														continue;
+													selModel = models.find(
+														(m) => m.name === selectedTTSModel.model,
+													);
+													if (selModel) break;
+												}
+												if (!selModel) return null;
+												const mSchema = selModel.parameter_schema as
+													| ParameterSchema
+													| undefined;
+												const mProps = mSchema?.properties ?? {};
+												const mRequired = mSchema?.required ?? [];
+												const mEntries = Object.entries(mProps);
+												if (mEntries.length === 0) {
+													return (
+														<p className="text-muted-foreground text-xs">
+															{t('model-parameters.empty')}
+														</p>
+													);
+												}
+												const curParams = selectedTTSModel.parameters ?? {};
+
 												return (
-													<p className="text-muted-foreground text-xs">
-														{t('model-parameters.empty')}
-													</p>
-												);
-											}
-											const curParams = selectedTTSModel.parameters ?? {};
+													<div
+														className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-3"
+														onPointerDown={(e) => e.stopPropagation()}
+														onKeyDown={(e) => e.stopPropagation()}
+													>
+														{mEntries.map(([key, prop]) => {
+															const {
+																type: effectiveType,
+																enumValues,
+															} = resolveType(prop);
+															const label = prop.title ?? key;
+															const isReq = mRequired.includes(key);
+															const fieldProps: FieldProps = {
+																id: `tts-${selModel!.name}-${key}`,
+																label,
+																required: isReq,
+																prop,
+																value: curParams[key],
+																onChange: (v) => {
+																	const next = {
+																		...curParams,
+																		[key]: v,
+																	};
+																	if (
+																		v === '' ||
+																		v === undefined
+																	) {
+																		delete next[key];
+																	}
+																	onTTSChange({
+																		...selectedTTSModel,
+																		parameters: next,
+																	});
+																},
+															};
 
-											return (
-												<div
-													className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-3"
-													onPointerDown={(e) => e.stopPropagation()}
-													onKeyDown={(e) => e.stopPropagation()}
-												>
-													{mEntries.map(([key, prop]) => {
-														const { type: effectiveType, enumValues } =
-															resolveType(prop);
-														const label = prop.title ?? key;
-														const isReq = mRequired.includes(key);
-														const fieldProps: FieldProps = {
-															id: `tts-${selModel!.name}-${key}`,
-															label,
-															required: isReq,
-															prop,
-															value: curParams[key],
-															onChange: (v) => {
-																const next = {
-																	...curParams,
-																	[key]: v,
-																};
-																if (v === '' || v === undefined) {
-																	delete next[key];
-																}
-																onTTSChange({
-																	...selectedTTSModel,
-																	parameters: next,
-																});
-															},
-														};
+															let field: React.ReactNode;
+															if (effectiveType === 'boolean') {
+																field = (
+																	<BooleanField {...fieldProps} />
+																);
+															} else if (enumValues) {
+																field = (
+																	<EnumField {...fieldProps} />
+																);
+															} else if (
+																effectiveType === 'number' ||
+																effectiveType === 'integer'
+															) {
+																field = (
+																	<NumberField {...fieldProps} />
+																);
+															} else {
+																field = (
+																	<StringField {...fieldProps} />
+																);
+															}
 
-														let field: React.ReactNode;
-														if (effectiveType === 'boolean') {
-															field = (
-																<BooleanField {...fieldProps} />
+															return (
+																<Tooltip key={key}>
+																	<TooltipTrigger asChild>
+																		<div className="col-span-2 grid grid-cols-subgrid items-center">
+																			{field}
+																		</div>
+																	</TooltipTrigger>
+																	{prop.description && (
+																		<TooltipContent side="left">
+																			{prop.description}
+																		</TooltipContent>
+																	)}
+																</Tooltip>
 															);
-														} else if (enumValues) {
-															field = <EnumField {...fieldProps} />;
-														} else if (
-															effectiveType === 'number' ||
-															effectiveType === 'integer'
-														) {
-															field = <NumberField {...fieldProps} />;
-														} else {
-															field = <StringField {...fieldProps} />;
-														}
-
-														return (
-															<Tooltip key={key}>
-																<TooltipTrigger asChild>
-																	<div className="col-span-2 grid grid-cols-subgrid items-center">
-																		{field}
-																	</div>
-																</TooltipTrigger>
-																{prop.description && (
-																	<TooltipContent side="left">
-																		{prop.description}
-																	</TooltipContent>
-																)}
-															</Tooltip>
-														);
-													})}
-												</div>
-											);
-										})()}
-									</DropdownMenuSubContent>
-								</DropdownMenuSub>
-							</>
-						)}
+														})}
+													</div>
+												);
+											})()}
+										</DropdownMenuSubContent>
+									</DropdownMenuSub>
+								</>
+							)}
 
 						<DropdownMenuSeparator />
 						<DropdownMenuCheckboxItem

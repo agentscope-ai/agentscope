@@ -20,6 +20,7 @@ from ._model import (
     SessionConfig,
     SessionSource,
     TeamRecord,
+    VoiceProfileRecord,
 )
 from ._utils import _dump_with_secrets
 from ...credential import CredentialBase
@@ -104,6 +105,11 @@ class RedisStorage(StorageBase):
             "agentscope:user:{user_id}"
             ":knowledge_base:{knowledge_base_id}:documents"
         )
+
+        voice_profile: str = (
+            "agentscope:user:{user_id}" ":voice_profile:{profile_id}"
+        )
+        voice_profile_index: str = "agentscope:user:{user_id}:voice_profiles"
         # Global index of every document key as ``user_id:kb_id:doc_id``;
         # used by the lease sweeper, never by per-user listing.
         knowledge_document_global_index: str = "agentscope:knowledge_documents"
@@ -1847,3 +1853,98 @@ class RedisStorage(StorageBase):
             if record.created_at < threshold:
                 records.append(record)
         return records
+
+    # ------------------------------------------------------------------
+    # Voice profile persistence
+    # ------------------------------------------------------------------
+
+    async def upsert_voice_profile(
+        self,
+        user_id: str,
+        record: VoiceProfileRecord,
+    ) -> str:
+        """Create or update a voice profile record.
+
+        Args:
+            user_id (`str`): The owner user id.
+            record (`VoiceProfileRecord`): The voice profile record.
+
+        Returns:
+            `str`: The id of the stored voice profile.
+        """
+        record.user_id = user_id
+        key = self._key(
+            self.key_config.voice_profile,
+            user_id=user_id,
+            profile_id=record.id,
+        )
+        index_key = self._key(
+            self.key_config.voice_profile_index,
+            user_id=user_id,
+        )
+        await self._client.set(
+            key,
+            record.model_dump_json(),
+        )
+        await self._client.sadd(index_key, record.id)
+        return record.id
+
+    async def get_voice_profile(
+        self,
+        user_id: str,
+        profile_id: str,
+    ) -> VoiceProfileRecord | None:
+        """Fetch a single voice profile record by id."""
+        key = self._key(
+            self.key_config.voice_profile,
+            user_id=user_id,
+            profile_id=profile_id,
+        )
+        raw = await self._client.get(key)
+        if raw:
+            return VoiceProfileRecord.model_validate_json(raw)
+        return None
+
+    async def list_voice_profiles(
+        self,
+        user_id: str,
+    ) -> list[VoiceProfileRecord]:
+        """List all voice profiles for a given user."""
+        index_key = self._key(
+            self.key_config.voice_profile_index,
+            user_id=user_id,
+        )
+        ids = await self._client.smembers(index_key)
+        records: list[VoiceProfileRecord] = []
+        for profile_id in ids:
+            raw = await self._client.get(
+                self._key(
+                    self.key_config.voice_profile,
+                    user_id=user_id,
+                    profile_id=profile_id,
+                ),
+            )
+            if raw:
+                records.append(
+                    VoiceProfileRecord.model_validate_json(raw),
+                )
+        return records
+
+    async def delete_voice_profile(
+        self,
+        user_id: str,
+        profile_id: str,
+    ) -> bool:
+        """Delete a voice profile record."""
+        key = self._key(
+            self.key_config.voice_profile,
+            user_id=user_id,
+            profile_id=profile_id,
+        )
+        index_key = self._key(
+            self.key_config.voice_profile_index,
+            user_id=user_id,
+        )
+        deleted = await self._client.delete(key)
+        await self._client.srem(index_key, profile_id)
+        return deleted > 0

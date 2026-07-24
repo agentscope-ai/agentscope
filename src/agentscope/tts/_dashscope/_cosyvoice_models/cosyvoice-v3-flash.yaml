@@ -1,6 +1,7 @@
 name: cosyvoice-v3-flash
 label: CosyVoice-v3-Flash
 status: active
+voice_cloning: true
 
 input_types:
   - text/plain

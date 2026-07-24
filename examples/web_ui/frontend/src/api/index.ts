@@ -7,3 +7,12 @@ export { workspaceApi } from './workspace';
 export { scheduleApi } from './schedule';
 export { modelApi, ttsModelApi } from './model';
 export { knowledgeBaseApi } from './knowledgeBase';
+export { voiceProfileApi } from './voiceProfile';
+export type {
+	VoiceProfileData,
+	VoiceProfileRecord,
+	ListVoiceProfilesResponse,
+	CreateVoiceProfileResponse,
+	EngineInfo,
+} from './voiceProfile';
+export type { TTSModelCard } from './types';

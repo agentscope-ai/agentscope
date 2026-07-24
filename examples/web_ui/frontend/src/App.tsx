@@ -14,6 +14,7 @@ import { CredentialPage } from '@/pages/credential';
 import { KnowledgePage } from '@/pages/knowledge';
 import { SchedulePage } from '@/pages/schedule';
 import { SetupPage } from '@/pages/setup';
+import { VoiceProfilePage } from '@/pages/voice-profile';
 
 function SetupPageRoute() {
 	const navigate = useNavigate();
@@ -48,6 +49,7 @@ const router = createBrowserRouter([
 					{ path: '/credential', element: <CredentialPage /> },
 					{ path: '/knowledge', element: <KnowledgePage /> },
 					{ path: '/knowledge/:kbId', element: <KnowledgePage /> },
+					{ path: '/voice-profile', element: <VoiceProfilePage /> },
 				],
 			},
 		],

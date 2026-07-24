@@ -28,6 +28,8 @@ from ._model import (
     UserRecord,
     TeamMember,
     InviteConfig,
+    VoiceProfileData,
+    VoiceProfileRecord,
 )
 
 if TYPE_CHECKING:
@@ -85,4 +87,6 @@ __all__ = [
     "ScheduleData",
     "ScheduleRecord",
     "ScheduleSource",
+    "VoiceProfileData",
+    "VoiceProfileRecord",
 ]

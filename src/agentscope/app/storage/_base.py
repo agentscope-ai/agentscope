@@ -17,6 +17,7 @@ from ._model import (
     SessionConfig,
     SessionSource,
     TeamRecord,
+    VoiceProfileRecord,
 )
 from ...credential import CredentialBase
 from ...message import Msg
@@ -927,4 +928,81 @@ class StorageBase(ABC):
         Returns:
             `list[KnowledgeDocumentRecord]`:
                 Orphan ``pending`` documents to redispatch.
+        """
+
+    # ------------------------------------------------------------------
+    # Voice profile persistence
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    async def upsert_voice_profile(
+        self,
+        user_id: str,
+        record: VoiceProfileRecord,
+    ) -> str:
+        """Create or update a voice profile record.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            record (`VoiceProfileRecord`):
+                The voice profile record to persist.
+
+        Returns:
+            `str`:
+                The id of the stored voice profile.
+        """
+
+    @abstractmethod
+    async def get_voice_profile(
+        self,
+        user_id: str,
+        profile_id: str,
+    ) -> VoiceProfileRecord | None:
+        """Fetch a single voice profile record by id.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            profile_id (`str`):
+                The voice profile id.
+
+        Returns:
+            `VoiceProfileRecord | None`:
+                The record, or ``None`` if not found.
+        """
+
+    @abstractmethod
+    async def list_voice_profiles(
+        self,
+        user_id: str,
+    ) -> list[VoiceProfileRecord]:
+        """List all voice profiles for a given user.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+
+        Returns:
+            `list[VoiceProfileRecord]`:
+                All voice profile records for the user.
+        """
+
+    @abstractmethod
+    async def delete_voice_profile(
+        self,
+        user_id: str,
+        profile_id: str,
+    ) -> bool:
+        """Delete a voice profile record.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            profile_id (`str`):
+                The voice profile id.
+
+        Returns:
+            `bool`:
+                ``True`` if deleted, ``False`` if not found.
         """

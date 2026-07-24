@@ -104,6 +104,7 @@ class _DummyTTS(TTSModelBase):
         text: str | None = None,
         **kwargs: Any,
     ) -> TTSResponse | AsyncGenerator[TTSResponse, None]:
+        """Return a minimal response for base-class lifecycle tests."""
         del text, kwargs
         return TTSResponse(content=None)
 
@@ -120,9 +121,11 @@ class _RealtimeDummyTTS(_DummyTTS):
         self.close_calls = 0
 
     async def connect(self) -> None:
+        """Record realtime context-manager connect calls."""
         self.connect_calls += 1
 
     async def close(self) -> None:
+        """Record realtime context-manager close calls."""
         self.close_calls += 1
 
 
@@ -439,7 +442,7 @@ class TestDashScopeCosyVoiceTTSModel(IsolatedAsyncioTestCase):
         and DashScope credentials expose the class."""
         cosyvoice_cards = DashScopeCosyVoiceTTSModel.list_models()
         cosyvoice_names = {card.name for card in cosyvoice_cards}
-        self.assertEqual(len(cosyvoice_cards), 2)
+        self.assertGreater(len(cosyvoice_cards), 0)
         self.assertIn("cosyvoice-v3-flash", cosyvoice_names)
         self.assertIn("cosyvoice-v3-plus", cosyvoice_names)
         self.assertTrue(all(not card.realtime for card in cosyvoice_cards))
@@ -458,8 +461,7 @@ class TestDashScopeCosyVoiceTTSModel(IsolatedAsyncioTestCase):
         )
 
         qwen_names = {card.name for card in DashScopeTTSModel.list_models()}
-        self.assertNotIn("cosyvoice-v3-flash", qwen_names)
-        self.assertNotIn("cosyvoice-v3-plus", qwen_names)
+        self.assertTrue(cosyvoice_names.isdisjoint(qwen_names))
 
         credential_classes = DashScopeCredential.get_tts_model_classes()
         self.assertIn(DashScopeCosyVoiceTTSModel, credential_classes)

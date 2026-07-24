@@ -1,0 +1,14 @@
+name: qwen3-tts-vc-2026-01-22
+label: Qwen3-TTS-VC
+status: active
+voice_cloning: true
+
+input_types:
+  - text/plain
+
+output_types:
+  - audio/wav
+
+voices: []
+
+parameter_overrides: {}

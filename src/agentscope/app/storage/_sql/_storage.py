@@ -31,6 +31,7 @@ from .._model import (
     SessionConfig,
     SessionSource,
     TeamRecord,
+    VoiceProfileRecord,
 )
 from .._utils import _dump_with_secrets
 from ._mappers import _from_record, _to_record
@@ -44,6 +45,7 @@ from ._tables import (
     ScheduleRow,
     SessionRow,
     TeamRow,
+    VoiceProfileRow,
 )
 from ....credential import CredentialBase
 from ....message import Msg
@@ -1649,3 +1651,89 @@ class AsyncSQLAlchemyStorage(StorageBase):
                 .all()
             )
         return [_to_record(r, KnowledgeDocumentRecord) for r in rows]
+
+    # ---- Voice Profile ----
+
+    async def upsert_voice_profile(
+        self,
+        user_id: str,
+        record: VoiceProfileRecord,
+    ) -> str:
+        """Create or update a voice profile record.
+
+        On update (the id already exists in the database), only
+        the owner may overwrite. If the existing row belongs to a
+        different user, a PermissionError is raised.
+        """
+        record.user_id = user_id
+
+        if record.id:
+            from sqlalchemy import select
+
+            async with self._session() as sess:
+                existing = (
+                    await sess.execute(
+                        select(VoiceProfileRow).where(
+                            VoiceProfileRow.id == record.id,
+                        ),
+                    )
+                ).scalar_one_or_none()
+
+            if existing is not None and existing.user_id != user_id:
+                raise PermissionError(
+                    "Cannot overwrite another user's voice profile.",
+                )
+
+        await self._write_row(VoiceProfileRow, record)
+        return record.id
+
+    async def get_voice_profile(
+        self,
+        user_id: str,
+        profile_id: str,
+    ) -> VoiceProfileRecord | None:
+        """Fetch one voice profile; owner-scoped."""
+        async with self._session() as sess:
+            row = await sess.get(VoiceProfileRow, profile_id)
+        if row is None or row.user_id != user_id:
+            return None
+        return _to_record(row, VoiceProfileRecord)
+
+    async def list_voice_profiles(
+        self,
+        user_id: str,
+    ) -> list[VoiceProfileRecord]:
+        """Return all voice profiles for *user_id*."""
+        from sqlalchemy import select
+
+        async with self._session() as sess:
+            rows = (
+                (
+                    await sess.execute(
+                        select(VoiceProfileRow).where(
+                            VoiceProfileRow.user_id == user_id,
+                        ),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [_to_record(r, VoiceProfileRecord) for r in rows]
+
+    async def delete_voice_profile(
+        self,
+        user_id: str,
+        profile_id: str,
+    ) -> bool:
+        """Delete a voice profile; owner-scoped."""
+        from sqlalchemy import delete
+
+        async with self._session() as sess:
+            result = await sess.execute(
+                delete(VoiceProfileRow).where(
+                    VoiceProfileRow.id == profile_id,
+                    VoiceProfileRow.user_id == user_id,
+                ),
+            )
+            await sess.commit()
+        return result.rowcount > 0

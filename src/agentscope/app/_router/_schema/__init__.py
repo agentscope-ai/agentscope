@@ -55,6 +55,19 @@ from ._session import (
     TeamDetailResponse,
     TeamMemberView,
 )
+from ._voice_profile import (
+    AvailableEnginesResponse,
+    CloneVoiceRequest,
+    CloneVoiceResponse,
+    CreateVoiceProfileRequest,
+    CreateVoiceProfileResponse,
+    CredentialRef,
+    EngineInfo,
+    ListVoiceProfilesResponse,
+    OpenAIConsentRequest,
+    OpenAIConsentResponse,
+    UpdateVoiceProfileRequest,
+)
 
 __all__ = [
     # Agent
@@ -113,4 +126,16 @@ __all__ = [
     "SessionView",
     "TeamDetailResponse",
     "TeamMemberView",
+    # Voice Profile
+    "AvailableEnginesResponse",
+    "CloneVoiceRequest",
+    "CloneVoiceResponse",
+    "CreateVoiceProfileRequest",
+    "CreateVoiceProfileResponse",
+    "CredentialRef",
+    "EngineInfo",
+    "ListVoiceProfilesResponse",
+    "OpenAIConsentRequest",
+    "OpenAIConsentResponse",
+    "UpdateVoiceProfileRequest",
 ]
