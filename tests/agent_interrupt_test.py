@@ -20,6 +20,7 @@ from utils import AnyString, MockModel
 from agentscope.agent import Agent, InjectionConfig
 from agentscope.event import (
     ReplyEndEvent,
+    ToolResultStartEvent,
     UserInterruptEvent,
 )
 from agentscope.message import (
@@ -742,7 +743,7 @@ class AgentInterruptEventTest(IsolatedAsyncioTestCase):
         agent: Agent,
         model: MockModel,
         pending_tool_calls: list[ToolCallBlock],
-    ) -> None:
+    ) -> list[Any]:
         """Drive one reply that yields the given tool calls so the reply
         parks in either ASKING or SUBMITTED state."""
         model.set_responses(
@@ -758,10 +759,12 @@ class AgentInterruptEventTest(IsolatedAsyncioTestCase):
                 ],
             ],
         )
-        async for _ in agent.reply_stream(
+        events = []
+        async for event in agent.reply_stream(
             UserMsg(name="user", content="Hi"),
         ):
-            pass
+            events.append(event)
+        return events
 
     async def test_interrupt_event_on_idle_agent_is_noop(self) -> None:
         """No parked HITL → ``UserInterruptEvent`` yields nothing and
@@ -839,7 +842,7 @@ class AgentInterruptEventTest(IsolatedAsyncioTestCase):
         """Parked in SUBMITTED: ``UserInterruptEvent`` patches the same
         way (``str`` output)."""
         agent, model = self._make_agent([_ExternalConcurrentTool()])
-        await self._park_with(
+        parked_events = await self._park_with(
             agent,
             model,
             [
@@ -859,6 +862,13 @@ class AgentInterruptEventTest(IsolatedAsyncioTestCase):
         ):
             events.append(evt)
 
+        self.assertEqual(
+            sum(
+                isinstance(evt, ToolResultStartEvent)
+                for evt in [*parked_events, *events]
+            ),
+            1,
+        )
         _assert_interrupted_end(self, events, reply_id, session_id)
 
         context_dicts = [

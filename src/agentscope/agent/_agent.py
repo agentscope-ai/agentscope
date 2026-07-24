@@ -719,9 +719,12 @@ class Agent:
             call_block = last_msg.content[index]
             assert isinstance(call_block, ToolCallBlock)
 
-            # An ALLOWED call was already running, so its START was already
-            # emitted — skip it here (checked before flipping to FINISHED).
-            if call_block.state != ToolCallState.ALLOWED:
+            # ALLOWED calls are running and SUBMITTED external calls are
+            # awaiting their result; both already emitted START.
+            if call_block.state not in (
+                ToolCallState.ALLOWED,
+                ToolCallState.SUBMITTED,
+            ):
                 yield ToolResultStartEvent(
                     reply_id=self.state.reply_id,
                     tool_call_id=last_msg.content[index].id,
