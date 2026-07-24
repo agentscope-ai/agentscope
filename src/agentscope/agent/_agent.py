@@ -573,15 +573,33 @@ class Agent:
                     ):
                         break
 
-                res = await self.model.generate_structured_output(
-                    messages=messages,
-                    structured_model=cfg.summary_schema,
-                )
+                try:
+                    res = await self.model.generate_structured_output(
+                        messages=messages,
+                        structured_model=cfg.summary_schema,
+                    )
+                except Exception as inner_e:
+                    logger.debug(
+                        "[AGENT %s]: Retry structured output " + "failed: %s",
+                        self.name,
+                        inner_e,
+                    )
+                    res = None
 
             else:
-                raise e from None
+                res = None
 
-        if res.finished_reason == FinishedReason.INTERRUPTED:
+            if res is None:
+                logger.warning(
+                    "[AGENT %s]: Summary generation failed (%s)."
+                    " Falling back to context truncation.",
+                    self.name,
+                    e,
+                )
+
+        if res is not None and (
+            res.finished_reason == FinishedReason.INTERRUPTED
+        ):
             logger.warning(
                 "The context compression was interrupted and skipped. ",
             )
@@ -590,22 +608,47 @@ class Agent:
         # Update the summary
         async def _apply_change() -> None:
             """Apply the context change with interruption protection."""
-            new_summary = cfg.summary_template.format(**res.content)
-            if self.offloader:
-                path = await self.offloader.offload_context(
-                    self.state.session_id,
-                    msgs=msgs_to_compress,
+            if res is not None:
+                new_summary = cfg.summary_template.format(**res.content)
+                if self.offloader:
+                    path = await self.offloader.offload_context(
+                        self.state.session_id,
+                        msgs=msgs_to_compress,
+                    )
+                    new_summary += (
+                        f"\n<system-reminder>The compressed context"
+                        f" is offloaded to '{path}', you can refer"
+                        f" to it when needed.</system-reminder>"
+                    )
+            else:
+                # Fallback: truncation without summary
+                raw_summary = self.state.summary
+                existing = raw_summary if isinstance(raw_summary, str) else ""
+                _TRUNC_TAG = "<system-truncation-note>"
+                _TRUNC_END = "</system-truncation-note>"
+                tag_pos = existing.find(_TRUNC_TAG)
+                if tag_pos >= 0:
+                    existing = existing[:tag_pos].rstrip()
+
+                truncation_msg = (
+                    f"{len(msgs_to_compress)} earlier message(s)"
+                    f" were truncated because summary"
+                    f" generation failed. Continue with the"
+                    f" remaining context."
                 )
-                new_summary += (
-                    f"\n<system-reminder>The compressed context is offloaded "
-                    f"to '{path}', you can refer to it when needed."
-                    f"</system-reminder>"
+                if self.offloader:
+                    path = await self.offloader.offload_context(
+                        self.state.session_id,
+                        msgs=msgs_to_compress,
+                    )
+                    truncation_msg += (
+                        f" The truncated context is offloaded to '{path}'."
+                    )
+                new_summary = (
+                    f"{existing}\n{_TRUNC_TAG}{truncation_msg}{_TRUNC_END}"
                 )
 
-            # Protected from interruption
             await self._clear_unreserved_read_cache(msgs_to_reserve)
-
-            # Update the context
             self.state.summary = new_summary
             self.state.context = msgs_to_reserve
 

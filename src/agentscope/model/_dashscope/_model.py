@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from ..._utils._audio import _build_streaming_wav_header
 from ..._utils._common import _generate_id
 from .._base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
-from .._model_response import ChatResponse, StructuredResponse
+from .._model_response import ChatResponse
 from .._model_usage import ChatUsage
 from ...credential import DashScopeCredential
 from ...formatter import FormatterBase, DashScopeChatFormatter
@@ -246,17 +246,21 @@ class DashScopeChatModel(ChatModelBase):
         if fmt_tool_choice is not None:
             request_kwargs["tool_choice"] = fmt_tool_choice
 
-        extra_body: dict[str, Any] = {}
-        if self.parameters.thinking_enable is not None:
-            extra_body["enable_thinking"] = self.parameters.thinking_enable
-        if self.parameters.thinking_budget is not None:
-            extra_body["thinking_budget"] = self.parameters.thinking_budget
-        if self.parameters.top_k is not None:
-            extra_body["top_k"] = self.parameters.top_k
+        request_kwargs.setdefault("extra_body", {})
+        eb = request_kwargs["extra_body"]
 
-        if extra_body:
-            request_kwargs.setdefault("extra_body", {})
-            request_kwargs["extra_body"].update(extra_body)
+        if self.parameters.thinking_enable is not None:
+            eb.setdefault(
+                "enable_thinking",
+                self.parameters.thinking_enable,
+            )
+        if self.parameters.thinking_budget is not None:
+            eb.setdefault(
+                "thinking_budget",
+                self.parameters.thinking_budget,
+            )
+        if self.parameters.top_k is not None:
+            eb.setdefault("top_k", self.parameters.top_k)
 
         if self.stream:
             request_kwargs["stream_options"] = {"include_usage": True}
@@ -531,51 +535,6 @@ class DashScopeChatModel(ChatModelBase):
 
         return fmt_tools, mode
 
-    async def _call_api_with_structured_output(
-        self,
-        model_name: str,
-        messages: list[Msg],
-        structured_model: Type[BaseModel] | dict,
-        tool_choice: ToolChoice | None = None,
-        **kwargs: Any,
-    ) -> StructuredResponse:
-        """DashScope-specific override for structured output.
-
-        DashScope rejects ``tool_choice="required"`` or an object-form
-        ``tool_choice`` when thinking mode is enabled. In that case we
-        default ``tool_choice`` to ``"auto"`` and rely on the base class's
-        injected system-reminder prompt to guide the model. When thinking
-        is disabled, this falls through to the base implementation.
-
-        See: https://help.aliyun.com/en/model-studio/qwen-function-calling
-
-        Args:
-            model_name (`str`):
-                The model name to use for this call.
-            messages (`list[Msg]`):
-                The context for the LLM to generate the structured output.
-            structured_model (`Type[BaseModel] | dict`):
-                A Pydantic model class or a JSON schema dict describing the
-                required output structure.
-            tool_choice (`ToolChoice | None`, defaults to `None`):
-                The tool_choice forwarded to ``_call_api``. When ``None``
-                and thinking mode is enabled, it is downgraded to
-                ``ToolChoice(mode="auto")``; otherwise the base default
-                (force the structured-output tool) is used.
-            **kwargs (`Any`):
-                Additional keyword arguments forwarded to ``_call_api``.
-
-        Returns:
-            `StructuredResponse`:
-                The structured response whose ``content`` is the validated
-                output dict matching ``structured_model``.
-        """
-        if tool_choice is None and self.parameters.thinking_enable:
-            tool_choice = ToolChoice(mode="auto")
-        return await super()._call_api_with_structured_output(
-            model_name=model_name,
-            messages=messages,
-            structured_model=structured_model,
-            tool_choice=tool_choice,
-            **kwargs,
-        )
+    def _get_disable_thinking_kwargs(self) -> dict:
+        """DashScope uses ``enable_thinking=False`` in extra_body."""
+        return {"extra_body": {"enable_thinking": False}}

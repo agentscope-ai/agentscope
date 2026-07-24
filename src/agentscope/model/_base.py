@@ -32,6 +32,22 @@ _TOOL_CHOICE_LITERAL_MODES = {"auto", "none", "required"}
 _MULTIMODAL_DATA_BLOCK_TOKEN_ESTIMATE = 2000
 
 
+def _shallow_merge_dicts(base: dict, override: dict) -> dict:
+    """Merge *override* into *base* with one-level dict recursion.
+
+    For keys whose values are dicts in both *base* and *override*,
+    the inner dicts are merged (override wins on conflicts).
+    All other keys are simply overwritten by *override*.
+    """
+    merged = {**base}
+    for k, v in override.items():
+        if k in merged and isinstance(merged[k], dict) and isinstance(v, dict):
+            merged[k] = {**merged[k], **v}
+        else:
+            merged[k] = v
+    return merged
+
+
 class ChatModelBase:
     """The base class for chat models."""
 
@@ -94,6 +110,7 @@ class ChatModelBase:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.context_size = context_size
+        self._structured_output_mode: int | None = None
 
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
@@ -105,6 +122,17 @@ class ChatModelBase:
         optional dependency.
         """
         return ()
+
+    def _get_disable_thinking_kwargs(self) -> dict:
+        """Return kwargs that disable thinking for this provider.
+
+        Subclasses whose API supports a thinking/reasoning toggle
+        should override this to return the appropriate kwargs dict
+        (e.g. ``{"extra_body": {"enable_thinking": False}}``).
+
+        Used by the structured-output fallback mechanism.
+        """
+        return {}
 
     @classmethod
     def list_models(
@@ -508,22 +536,17 @@ class ChatModelBase:
         tool_choice: ToolChoice | None = None,
         **kwargs: Any,
     ) -> StructuredResponse:
-        """This function constructs a 'generate_structured_output' tool to
-        help LLM generate structured output as a compromise for LLM APIs that
-        don't support structured output.
+        """Generate structured output with automatic fallback.
 
-        If your subclasses inherit from `ChatModelBase` and the underlying
-        API supports structured output, you can override this method to
-        provide a more accurate implementation.
+        Tries up to four strategies in order:
 
-        Note by default this method forces LLM to call the
-        'generate_structured_output' tool via tool_choice, and adds
-        instructions into the input messages. Subclasses whose underlying
-        API rejects forced tool_choice in certain modes (e.g. DashScope in
-        thinking mode) can pass ``tool_choice=ToolChoice(mode="auto")`` and
-        rely solely on the injected system-reminder prompt. LLM APIs that
-        don't support "required" tool choice may still fail (e.g. generate
-        text output and ignore the tool call, or fail in validation).
+        - **Mode A**: Keep current config + forced tool_choice
+        - **Mode B**: Disable thinking + forced tool_choice
+        - **Mode C**: Keep current config + auto tool_choice
+        - **Mode D**: Keep current config + no tool_choice
+
+        On first success the mode index is cached so subsequent
+        calls skip directly to the working strategy.
 
         Args:
             model_name (`str`):
@@ -539,15 +562,115 @@ class ChatModelBase:
             **kwargs (`Any`):
                 Additional keyword arguments forwarded to ``_call_api``.
         """
+        func_name = "generate_structured_output"
+        forced_tc = ToolChoice(mode=func_name)
+        auto_tc = ToolChoice(mode="auto")
 
+        # Build strategy list: (extra_kwargs, tool_choice | None)
+        disable_kwargs = self._get_disable_thinking_kwargs()
+        strategies: list[tuple[dict, ToolChoice | None]] = [
+            ({}, tool_choice or forced_tc),  # A: default + forced
+            (disable_kwargs, tool_choice or forced_tc),  # B: no-think + forced
+            ({}, auto_tc),  # C: default + auto
+            ({}, None),  # D: default + no tool_choice
+        ]
+        # If provider has no disable mechanism, skip B
+        if not disable_kwargs:
+            strategies = [
+                strategies[0],
+                strategies[2],
+                strategies[3],
+            ]
+
+        if self._structured_output_mode is not None:
+            idx = self._structured_output_mode
+            extra_kw, tc = strategies[idx]
+            merged = _shallow_merge_dicts(kwargs, extra_kw)
+            return await self._exec_structured_call(
+                model_name,
+                messages,
+                structured_model,
+                func_name,
+                tc,
+                **merged,
+            )
+
+        last_err: Exception | None = None
+        for idx, (extra_kw, tc) in enumerate(strategies):
+            merged = _shallow_merge_dicts(kwargs, extra_kw)
+            try:
+                result = await self._exec_structured_call(
+                    model_name,
+                    messages,
+                    structured_model,
+                    func_name,
+                    tc,
+                    **merged,
+                )
+                self._structured_output_mode = idx
+                if idx > 0:
+                    logger.info(
+                        (
+                            "Structured output for %s: "
+                            "using fallback mode %d."
+                        ),
+                        model_name,
+                        idx,
+                    )
+                return result
+            except Exception as e:
+                if isinstance(
+                    e,
+                    (asyncio.CancelledError, KeyboardInterrupt),
+                ):
+                    raise
+                last_err = e
+                logger.debug(
+                    "Structured output mode %d failed for %s: "
+                    "%s. Trying next.",
+                    idx,
+                    model_name,
+                    e,
+                )
+                continue
+
+        assert last_err is not None
+        raise last_err
+
+    async def _exec_structured_call(
+        self,
+        model_name: str,
+        messages: list[Msg],
+        structured_model: Type[BaseModel] | dict,
+        func_name: str,
+        tool_choice: ToolChoice | None,
+        **kwargs: Any,
+    ) -> StructuredResponse:
+        """Execute a single structured output API call.
+
+        Builds the tool schema, injects the instruction prompt,
+        calls the API, accumulates the stream if needed, and
+        validates the result.
+
+        Args:
+            model_name (`str`):
+                The model name.
+            messages (`list[Msg]`):
+                Input messages.
+            structured_model (`Type[BaseModel] | dict`):
+                The target structure.
+            func_name (`str`):
+                The tool function name.
+            tool_choice (`ToolChoice`):
+                The tool choice setting.
+            **kwargs (`Any`):
+                Extra kwargs for ``_call_api``.
+        """
         if isinstance(structured_model, dict):
             input_schema = structured_model
         else:
             input_schema = structured_model.model_json_schema()
 
-        func_name = "generate_structured_output"
-        if tool_choice is None:
-            tool_choice = ToolChoice(mode=func_name)
         instruction = (
             "<system-reminder>Now you **MUST** call the tool named "
             f"'{func_name}' to generate the structured output required "
