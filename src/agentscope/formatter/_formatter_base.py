@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """The formatter module."""
 import base64
+import hashlib
 import mimetypes
+import os
 import tempfile
 from abc import abstractmethod
 from fnmatch import fnmatch
@@ -141,21 +143,32 @@ class FormatterBase(BaseModel):
                     )
 
                 elif isinstance(block.source, Base64Source):
-                    # Have to save the base64 data locally
+                    # Have to save the base64 data locally. Derive the path
+                    # from the block's own stable id so re-formatting the
+                    # same (unchanged) block is a pure function of its input
+                    # instead of minting a new random path (and a new file)
+                    # on every call; hash the id rather than embedding it
+                    # directly so the path stays confined to the temp
+                    # directory regardless of what the id contains.
                     extension = mimetypes.guess_extension(
                         block.source.media_type,
                     )
-                    with tempfile.NamedTemporaryFile(
-                        suffix=extension,
-                        delete=False,
-                    ) as temp_file:
+                    digest = hashlib.sha256(
+                        block.id.encode("utf-8"),
+                    ).hexdigest()
+                    temp_path = os.path.join(
+                        tempfile.gettempdir(),
+                        f"agentscope_{digest}{extension or ''}",
+                    )
+                    if not os.path.exists(temp_path):
                         decoded_data = base64.b64decode(block.source.data)
-                        temp_file.write(decoded_data)
-                        textual_output.append(
-                            f"<system-reminder>A(n) {main_type} file is "
-                            f"returned and saved locally at: {temp_file.name}."
-                            f"</system-reminder>",
-                        )
+                        with open(temp_path, "wb") as temp_file:
+                            temp_file.write(decoded_data)
+                    textual_output.append(
+                        f"<system-reminder>A(n) {main_type} file is "
+                        f"returned and saved locally at: {temp_path}."
+                        f"</system-reminder>",
+                    )
 
         # Add system reminder tags if there is multimodal data to be promoted
         if multimodal_data:

@@ -3,6 +3,9 @@
 OpenAIMultiAgentFormatter, following the reference test style with exact
 ground-truth comparisons.
 """
+import base64
+import os
+import re
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
@@ -348,6 +351,39 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
             ],
             res,
         )
+
+    async def test_convert_tool_result_base64_unsupported_media_is_det(
+        self,
+    ) -> None:
+        """Formatting the same tool-result DataBlock with an unsupported
+        Base64Source media type twice must reuse the same on-disk path
+        instead of writing a new temp file with a new random path on
+        every call."""
+        fmt = OpenAIChatFormatter()
+        block = DataBlock(
+            source=Base64Source(
+                data=self.image_b64,
+                media_type="application/pdf",
+            ),
+        )
+
+        first_text, _ = fmt.convert_tool_result_to_string([block])
+        second_text, _ = fmt.convert_tool_result_to_string([block])
+
+        self.assertEqual(first_text, second_text)
+
+        match = re.search(
+            r"saved locally at: (.+)\.</system-reminder>",
+            first_text,
+        )
+        self.assertIsNotNone(match)
+        path = match.group(1)
+        self.assertTrue(os.path.exists(path))
+        with open(path, "rb") as saved_file:
+            self.assertEqual(
+                saved_file.read(),
+                base64.b64decode(self.image_b64),
+            )
 
     async def test_chat_formatter_thinking_dropped(self) -> None:
         """ThinkingBlock is silently dropped by OpenAI formatter."""
