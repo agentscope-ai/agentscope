@@ -431,6 +431,7 @@ async def update_session(
     user_id: str = Depends(get_current_user_id),
     storage: StorageBase = Depends(get_storage),
     access: ResourceAccessService = Depends(get_resource_access_service),
+    message_bus: MessageBus = Depends(get_message_bus),
 ) -> SessionRecord:
     """Update the model configuration of an existing session.
 
@@ -440,6 +441,7 @@ async def update_session(
         user_id (`str`): Injected authenticated user ID.
         storage (`StorageBase`): Injected storage backend.
         access (`ResourceAccessService`): Injected access service.
+        message_bus (`MessageBus`): Injected message bus.
 
     Returns:
         `SessionRecord`: The full session record after the update.
@@ -448,56 +450,70 @@ async def update_session(
         `HTTPException`: 404 if the session does not exist, or if the
             referenced credential / KB is not visible to the caller.
     """
-    existing = await storage.get_session(user_id, agent_id, session_id)
-    if existing is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Session '{session_id}' not found.",
+    async with message_bus.acquire_lock(
+        MessageBusKeys.session_update_lock(session_id),
+    ):
+        existing = await storage.get_session(user_id, agent_id, session_id)
+        if existing is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Session '{session_id}' not found.",
+            )
+
+        await _ensure_credential_exists(
+            access,
+            user_id,
+            body.chat_model_config,
+        )
+        await _ensure_credential_exists(
+            access,
+            user_id,
+            body.fallback_chat_model_config,
+        )
+        await _ensure_credential_exists(
+            access,
+            user_id,
+            body.tts_model_config,
+        )
+        await _ensure_knowledge_bases_exist(
+            access,
+            user_id,
+            body.knowledge_config,
         )
 
-    await _ensure_credential_exists(access, user_id, body.chat_model_config)
-    await _ensure_credential_exists(
-        access,
-        user_id,
-        body.fallback_chat_model_config,
-    )
-    await _ensure_credential_exists(access, user_id, body.tts_model_config)
-    await _ensure_knowledge_bases_exist(
-        access,
-        user_id,
-        body.knowledge_config,
-    )
+        updated_state = existing.state
+        if body.permission_mode is not None:
+            updated_ctx = existing.state.permission_context.model_copy(
+                update={"mode": body.permission_mode},
+            )
 
-    updated_state = existing.state
-    if body.permission_mode is not None:
-        updated_ctx = existing.state.permission_context.model_copy(
-            update={"mode": body.permission_mode},
+            updated_state = existing.state.model_copy(
+                update={
+                    "permission_context": updated_ctx,
+                },
+            )
+
+        # PATCH semantics: only fields explicitly present in the request body
+        # are applied. ``exclude_unset=True`` lets clients distinguish "leave
+        # unchanged" (omit) from "clear" (send ``null``) — required for
+        # clearing ``fallback_chat_model_config``.
+        config_updates = body.model_dump(
+            exclude_unset=True,
+            exclude={"permission_mode"},
         )
 
-        updated_state = existing.state.model_copy(
-            update={
-                "permission_context": updated_ctx,
-            },
+        return await storage.upsert_session(
+            user_id=user_id,
+            agent_id=agent_id,
+            config=SessionConfig.model_validate(
+                {
+                    **existing.config.model_dump(mode="json"),
+                    **config_updates,
+                },
+            ),
+            state=updated_state,
+            session_id=session_id,
         )
-
-    # PATCH semantics: only fields explicitly present in the request body are
-    # applied. ``exclude_unset=True`` lets clients distinguish "leave
-    # unchanged" (omit) from "clear" (send ``null``) — required for clearing
-    # ``fallback_chat_model_config``.
-    config_updates = body.model_dump(
-        exclude_unset=True,
-        exclude={"permission_mode"},
-    )
-
-    return await storage.upsert_session(
-        user_id=user_id,
-        agent_id=agent_id,
-        config=SessionConfig.model_validate(
-            {**existing.config.model_dump(mode="json"), **config_updates},
-        ),
-        state=updated_state,
-        session_id=session_id,
-    )
 
 
 # ----------------------------------------------------------------------

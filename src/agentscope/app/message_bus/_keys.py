@@ -134,6 +134,17 @@ class MessageBusKeys:
         return cls._SESSION_LOCK.format(sid=session_id)
 
     # ------------------------------------------------------------------
+    # Session update lock
+    # ------------------------------------------------------------------
+
+    _SESSION_UPDATE_LOCK = "agentscope:session:update-lock:{sid}"
+
+    @classmethod
+    def session_update_lock(cls, session_id: str) -> str:
+        """Per-session lock for atomic read-merge-write updates."""
+        return cls._SESSION_UPDATE_LOCK.format(sid=session_id)
+
+    # ------------------------------------------------------------------
     # Session inbox
     # ------------------------------------------------------------------
 
