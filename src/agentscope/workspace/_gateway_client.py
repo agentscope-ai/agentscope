@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import base64
 import json
+import secrets
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -366,6 +367,8 @@ class GatewayClient:
         inline_limit: int = BODY_INLINE_LIMIT,
         tmp_dir: str = SANDBOX_TMP_DIR,
         gateway_log_path: str | None = None,
+        auth_token: str | None = None,
+        instance_nonce: str | None = None,
     ) -> None:
         """Build a workspace-side gateway facade.
 
@@ -392,6 +395,13 @@ class GatewayClient:
                 a ``/health`` probe and — if the gateway is
                 unreachable — a tail of this log is emitted at
                 ``ERROR`` level to help diagnose crashes.
+            auth_token (`str | None`, defaults to `None`):
+                Optional bearer token forwarded to the gateway by the
+                in-sandbox shim.
+            instance_nonce (`str | None`, defaults to `None`):
+                Optional nonce expected from ``/health``. Used by shared
+                network backends to make sure the probed port belongs to the
+                gateway process that was just launched before sending auth.
         """
         self.backend = backend
         self.gateway_port = gateway_port
@@ -399,6 +409,8 @@ class GatewayClient:
         self.inline_limit = inline_limit
         self.tmp_dir = tmp_dir
         self.gateway_log_path = gateway_log_path
+        self.auth_token = auth_token
+        self.instance_nonce = instance_nonce
         # Health-probe timeout is kept short so the diagnostic path adds
         # little latency to the failing request. It only runs on the
         # error path, never on the hot path.
@@ -408,9 +420,13 @@ class GatewayClient:
         self._log_tail_bytes: int = 4000
 
     async def health(self) -> bool:
-        """Probe ``/health``. ``True`` iff the gateway answered 200;
+        """Probe ``/health``.
         any other outcome (shim transport failure, non-200) → ``False``.
-        Callers retry until this flips.
+        With no expected ``instance_nonce``, HTTP 200 means healthy. When a
+        nonce is configured, the response must be a JSON object containing the
+        matching ``instance_nonce``. Transport failures, non-200 responses,
+        malformed JSON, non-object JSON, and nonce mismatches return
+        ``False``.
 
         The ``/health`` path is treated specially by
         :meth:`exec_request` — it never triggers the failure
@@ -418,10 +434,30 @@ class GatewayClient:
         itself.
         """
         try:
-            status, _ = await self.exec_request("GET", "/health")
+            status, body = await self.exec_request(
+                "GET",
+                "/health",
+                include_auth=False,
+            )
         except Exception:
             return False
-        return status == 200
+        if status != 200:
+            return False
+        if self.instance_nonce is None:
+            return True
+        try:
+            payload = json.loads(body)
+        except (json.JSONDecodeError, UnicodeDecodeError, TypeError):
+            return False
+        if not isinstance(payload, dict):
+            return False
+        nonce = payload.get("instance_nonce")
+        return (
+            isinstance(nonce, str)
+            and nonce.isascii()
+            and self.instance_nonce.isascii()
+            and secrets.compare_digest(nonce, self.instance_nonce)
+        )
 
     async def list_mcps(self) -> list[GatewayMCPClient]:
         """Fetch every MCP the gateway is currently serving.
@@ -477,6 +513,7 @@ class GatewayClient:
         path: str,
         *,
         body: Any = None,
+        include_auth: bool = True,
     ) -> tuple[int, bytes]:
         """Relay one HTTP request through the sandbox.
 
@@ -503,6 +540,10 @@ class GatewayClient:
                 Path-only URL, e.g. ``/mcps/<name>/tools/<tool>``.
             body (`Any`, optional):
                 JSON-serializable request body; ``None`` for no body.
+            include_auth (`bool`, defaults to `True`):
+                Whether to send the configured bearer token to the shim.
+                Health probes set this to ``False`` so a port-race cannot
+                leak the token to a process that is not the gateway.
 
         Returns:
             `tuple[int, bytes]`:
@@ -535,6 +576,7 @@ class GatewayClient:
                         body_file,
                         str(self.inline_limit),
                         self.tmp_dir,
+                        (self.auth_token or "") if include_auth else "",
                     ],
                     timeout=self.timeout,
                 )

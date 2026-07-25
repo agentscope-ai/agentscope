@@ -57,6 +57,11 @@ def _generate_id() -> str:
     return _id_factory()
 
 
+def _normalize_local_path(path: str) -> str:
+    """Expand user-home shorthand and return an absolute local path."""
+    return os.path.abspath(os.path.expanduser(path))
+
+
 def _json_loads_with_repair(
     json_str: str,
     schema: dict | None = None,

@@ -25,9 +25,9 @@ To use a local persistent Milvus Lite vector store instead of the
 in-memory Qdrant store, install the optional extra:
 
 ```bash
-uv pip install "agentscope[milvuslite]"
+uv pip install "agentscope[vdb-milvus]"
 # Or from source (repo root)
-uv pip install -e ".[milvuslite]"
+uv pip install -e ".[vdb-milvus]"
 ```
 
 Then replace the vector store construction in `index_and_search.py`
@@ -47,9 +47,9 @@ store and wants to avoid maintaining a separate vector database — install
 the optional extra:
 
 ```bash
-uv pip install "agentscope[mongodb]"
+uv pip install "agentscope[vdb-mongodb]"
 # Or from source (repo root)
-uv pip install -e ".[mongodb]"
+uv pip install -e ".[vdb-mongodb]"
 ```
 
 **Prerequisites**
@@ -119,9 +119,9 @@ To use Elasticsearch as the vector backend, install the optional async
 client extra:
 
 ```bash
-uv pip install "agentscope[elasticsearch]"
+uv pip install "agentscope[vdb-elasticsearch]"
 # Or from source (repo root)
-uv pip install -e ".[elasticsearch]"
+uv pip install -e ".[vdb-elasticsearch]"
 ```
 
 **Prerequisites**
@@ -230,7 +230,7 @@ store = ElasticsearchStore(
 
 | | Qdrant (default) | Milvus Lite | MongoDB | Elasticsearch |
 | --- | --- | --- | --- | --- |
-| Install extra | `agentscope[rag]` | `agentscope[milvuslite]` | `agentscope[mongodb]` | `agentscope[elasticsearch]` |
+| Install extra | `agentscope[rag]` | `agentscope[vdb-milvus]` | `agentscope[vdb-mongodb]` | `agentscope[vdb-elasticsearch]` |
 | External service | No | No | Yes | Yes |
 | Persistence | No (`:memory:`) | Yes (local `.db`) | Yes (server) | Yes (server) |
 | Best for | Quick start / tests | Local dev with persistence | Teams already on MongoDB | Teams already on Elastic or needing distributed kNN search |
