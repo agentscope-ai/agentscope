@@ -99,11 +99,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 						<MessageScrollerViewport>
 							<MessageScrollerContent>
 								{msgs.map((message) => (
-									<MessageScrollerItem
-										key={message.id}
-										messageId={message.id}
-										// scrollAnchor={message.role === 'user'}
-									>
+									<MessageScrollerItem key={message.id} messageId={message.id}>
 										<ASMessageBubble
 											key={message.id}
 											message={message}

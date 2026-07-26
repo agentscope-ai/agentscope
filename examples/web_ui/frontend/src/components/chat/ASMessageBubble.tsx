@@ -4,6 +4,7 @@ import type {
 	DataBlock,
 	Msg,
 	TextBlock,
+	ThinkingBlock,
 	ToolCallBlock,
 	ToolResultBlock,
 } from '@agentscope-ai/agentscope/message';
@@ -428,9 +429,9 @@ export function ASMessageBubble({ message }: MessageBubbleProps) {
 				{blocks
 					.filter((block) => block.type !== 'data')
 					.map((block, index) => (
-						<Bubble variant={isUser ? 'muted' : 'ghost'}>
+						<Bubble key={index} variant={isUser ? 'muted' : 'ghost'}>
 							<BubbleContent>
-								<ASBlock block={block} key={index} />
+								<ASBlock block={block} />
 							</BubbleContent>
 						</Bubble>
 					))}
@@ -491,6 +492,59 @@ export function ASMessageBubble({ message }: MessageBubbleProps) {
 	);
 }
 
+/**
+ * A thinking block with a live-ticking "thinking for Xs" header. Kept as its
+ * own component so only thinking blocks pay for the per-second timer.
+ */
+function ThinkingBlockView({ block }: { block: ThinkingBlock }) {
+	const { t } = useTranslation();
+	const isRunning = !block.finished_at;
+
+	// Tick once per second while running so the elapsed time updates live.
+	const [now, setNow] = useState(() => Date.now());
+	useEffect(() => {
+		if (!isRunning) return;
+		const id = setInterval(() => setNow(Date.now()), 1000);
+		return () => clearInterval(id);
+	}, [isRunning]);
+
+	const startMs = new Date(block.created_at).getTime();
+	const endMs = isRunning ? now : new Date(block.finished_at!).getTime();
+	const elapsedSeconds = Math.max(0, (endMs - startMs) / 1000);
+	const elapsedText = formatTime(elapsedSeconds);
+	return (
+		<Collapsible>
+			<CollapsibleTrigger asChild>
+				<div
+					className={cn(
+						'group w-full flex items-center gap-2 text-left text-sm text-muted-foreground cursor-pointer',
+						isRunning && 'shimmer',
+					)}
+				>
+					<span>
+						{t(
+							elapsedText === '0s'
+								? 'messageBubble.thinking'
+								: 'messageBubble.thinkingFor',
+							{ duration: elapsedText },
+						)}
+					</span>
+					<ChevronRight className="hidden group-hover:flex group-data-[state=open]:flex size-3 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
+				</div>
+			</CollapsibleTrigger>
+			<CollapsibleContent asChild>
+				<Markdown
+					animated
+					isAnimating={isRunning}
+					className="text-muted-foreground bg-muted p-2 rounded text-sm"
+				>
+					{block.thinking}
+				</Markdown>
+			</CollapsibleContent>
+		</Collapsible>
+	);
+}
+
 interface ASBlockProps {
 	block: ExtendedContentBlock;
 }
@@ -498,19 +552,10 @@ interface ASBlockProps {
 export function ASBlock({ block, ...props }: ASBlockProps) {
 	const { t } = useTranslation();
 
-	// Compute time
-	const isRunning = !block.finished_at;
-	const [now, setNow] = useState(() => Date.now());
-	useEffect(() => {
-		if (isRunning) return;
-		const id = setInterval(() => setNow(Date.now()), 1000);
-		return () => clearInterval(id);
-	}, [isRunning]);
-
 	switch (block.type) {
 		case 'text':
 			return (
-				<Markdown animated isAnimating={true} {...props}>
+				<Markdown animated isAnimating={!block.finished_at} {...props}>
 					{block.text}
 				</Markdown>
 			);
@@ -573,43 +618,8 @@ export function ASBlock({ block, ...props }: ASBlockProps) {
 					);
 			}
 		}
-		case 'thinking': {
-			const startMs = new Date(block.created_at).getTime();
-			const endMs = isRunning ? now : new Date(block.finished_at!).getTime();
-			const elapsedSeconds = Math.max(0, (endMs - startMs) / 1000);
-			const elapsedText = formatTime(elapsedSeconds);
-			return (
-				<Collapsible>
-					<CollapsibleTrigger asChild>
-						<div
-							className={cn(
-								'group w-full flex items-center gap-2 text-left text-sm text-muted-foreground cursor-pointer',
-								block.finished_at ? '' : 'shimmer',
-							)}
-						>
-							<span>
-								{t(
-									elapsedText === '0s'
-										? 'messageBubble.thinking'
-										: 'messageBubble.thinkingFor',
-									{ duration: elapsedText },
-								)}
-							</span>
-							<ChevronRight className="hidden group-hover:flex group-data-[state=open]:flex size-3 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
-						</div>
-					</CollapsibleTrigger>
-					<CollapsibleContent asChild>
-						<Markdown
-							animated
-							isAnimating={isRunning}
-							className="text-muted-foreground bg-muted p-2 rounded text-sm"
-						>
-							{block.thinking}
-						</Markdown>
-					</CollapsibleContent>
-				</Collapsible>
-			);
-		}
+		case 'thinking':
+			return <ThinkingBlockView block={block} />;
 		case 'hint': {
 			// Parse source: try JSON, fall back to plain string, default to t('common.message').
 			let hintLabel: string;
@@ -648,7 +658,7 @@ export function ASBlock({ block, ...props }: ASBlockProps) {
 						<div
 							className={cn(
 								'group w-full flex gap-2 items-center text-sm text-muted-foreground cursor-pointer hover:text-primary',
-								isRunning && 'shimmer',
+								!block.finished_at && 'shimmer',
 							)}
 						>
 							<span>{hintLabel + (hintSublabel ? ` - ${hintSublabel}` : '')}</span>
