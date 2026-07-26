@@ -131,7 +131,10 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             (result.is_last, result.content),
-            (True, [TextBlock.model_construct(id=A, text="Hello!")]),
+            (
+                True,
+                [TextBlock.model_construct(id=A, created_at=A, text="Hello!")],
+            ),
         )
 
     @patch("google.genai.Client")
@@ -160,8 +163,9 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
             (
                 True,
                 [
-                    ToolCallBlock(
+                    ToolCallBlock.model_construct(
                         id="call-1",
+                        created_at=A,
                         name="get_weather",
                         input=json.dumps(
                             {"city": "Tokyo"},
@@ -200,6 +204,7 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
                 [
                     ToolCallBlock.model_construct(
                         id=A,
+                        created_at=A,
                         name="get_weather",
                         input=json.dumps(
                             {"city": "Tokyo"},
@@ -235,9 +240,14 @@ class TestGeminiNonStream(IsolatedAsyncioTestCase):
                 [
                     ThinkingBlock.model_construct(
                         id=A,
+                        created_at=A,
                         thinking="Let me think...",
                     ),
-                    TextBlock.model_construct(id=A, text="Answer"),
+                    TextBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        text="Answer",
+                    ),
                 ],
             ),
         )
@@ -271,9 +281,36 @@ class TestGeminiStream(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [(r.is_last, r.content) for r in responses],
             [
-                (False, [TextBlock.model_construct(id=A, text="Hello")]),
-                (False, [TextBlock.model_construct(id=A, text=" world")]),
-                (True, [TextBlock.model_construct(id=A, text="Hello world")]),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Hello",
+                        ),
+                    ],
+                ),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text=" world",
+                        ),
+                    ],
+                ),
+                (
+                    True,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Hello world",
+                        ),
+                    ],
+                ),
             ],
         )
 
@@ -299,14 +336,37 @@ class TestGeminiStream(IsolatedAsyncioTestCase):
             [
                 (
                     False,
-                    [ThinkingBlock.model_construct(id=A, thinking="Think")],
+                    [
+                        ThinkingBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            thinking="Think",
+                        ),
+                    ],
                 ),
-                (False, [TextBlock.model_construct(id=A, text="Answer")]),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Answer",
+                        ),
+                    ],
+                ),
                 (
                     True,
                     [
-                        ThinkingBlock.model_construct(id=A, thinking="Think"),
-                        TextBlock.model_construct(id=A, text="Answer"),
+                        ThinkingBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            thinking="Think",
+                        ),
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Answer",
+                        ),
                     ],
                 ),
             ],
@@ -338,8 +398,9 @@ class TestGeminiStream(IsolatedAsyncioTestCase):
         gen = await self.model([])
         responses = [r async for r in gen]
 
-        tool_block = ToolCallBlock(
+        tool_block = ToolCallBlock.model_construct(
             id="call-1",
+            created_at=A,
             name="search",
             input=json.dumps({"q": "test"}, ensure_ascii=False),
         )

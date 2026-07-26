@@ -207,6 +207,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hello, world!",
                     },
@@ -226,6 +228,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hello, world!",
                     },
@@ -261,6 +265,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "a",
                         "text": "123",
                     },
@@ -279,6 +285,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "b",
                         "text": "456",
                     },
@@ -297,6 +305,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "b",
                         "text": "789",
                     },
@@ -315,6 +325,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "data",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "1",
                         "name": None,
                         "source": {
@@ -338,6 +350,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "data",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "2",
                         "name": None,
                         "source": {
@@ -361,6 +375,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "data",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "1",
                         "name": None,
                         "source": {
@@ -389,12 +405,16 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "a",
                         # All consecutive TextBlocks merged
                         "text": "123456789",
                     },
                     {
                         "type": "data",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "1",
                         "name": None,
                         "source": {
@@ -405,6 +425,8 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "data",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": "2",
                         "name": None,
                         "source": {
@@ -536,6 +558,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Result: 8",
                     },
@@ -555,6 +579,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Result: 8",
                     },
@@ -602,6 +628,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "The weather in Chengdu is sunny.",
                     },
@@ -620,6 +648,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "The weather in Chengdu is sunny.",
                     },
@@ -755,6 +785,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                     "content": [
                         {
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "id": AnyString(),
                             "text": str(i),
                         },
@@ -774,6 +806,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "123",  # All consecutive TextBlocks merged
                     },
@@ -905,6 +939,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Product: 10.0",
                     },
@@ -924,6 +960,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Product: 10.0",
                     },
@@ -1009,6 +1047,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                     "content": [
                         {
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "id": AnyString(),
                             "text": f"Number: {num}",
                         },
@@ -1028,6 +1068,8 @@ class RegisterFunctionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         # All consecutive TextBlocks merged
                         "text": "Number: 5Number: 6Number: 7",
@@ -1240,6 +1282,8 @@ class ToolGroupTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": """The currently activated tool group(s): group_2.
 <tool-instructions>
@@ -1274,6 +1318,8 @@ The tool instructions are a collection of suggestions, rules and notifications a
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": """The currently activated tool group(s): group_1, group_2.
 <tool-instructions>
@@ -1308,6 +1354,8 @@ The tool instructions are a collection of suggestions, rules and notifications a
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "All tool groups are currently deactivated.",
                     },

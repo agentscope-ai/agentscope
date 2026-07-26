@@ -125,7 +125,10 @@ class TestAnthropicNonStream(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             (result.is_last, result.content),
-            (True, [TextBlock.model_construct(id=A, text="Hello!")]),
+            (
+                True,
+                [TextBlock.model_construct(id=A, created_at=A, text="Hello!")],
+            ),
         )
         self.assertEqual(result.id, "msg-1")
 
@@ -155,7 +158,8 @@ class TestAnthropicNonStream(IsolatedAsyncioTestCase):
             (
                 True,
                 [
-                    ToolCallBlock(
+                    ToolCallBlock.model_construct(
+                        created_at=A,
                         id="toolu_1",
                         name="get_weather",
                         input=json.dumps({"city": "Beijing"}),
@@ -187,10 +191,15 @@ class TestAnthropicNonStream(IsolatedAsyncioTestCase):
                 [
                     ThinkingBlock.model_construct(
                         id=A,
+                        created_at=A,
                         thinking="Deep thought...",
                         signature="sig123",
                     ),
-                    TextBlock.model_construct(id=A, text="Answer"),
+                    TextBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        text="Answer",
+                    ),
                 ],
             ),
         )
@@ -235,16 +244,19 @@ class TestAnthropicNonStream(IsolatedAsyncioTestCase):
                 [
                     ThinkingBlock.model_construct(
                         id=A,
+                        created_at=A,
                         thinking="visible thought",
                         signature="sig_visible",
                     ),
                     ThinkingBlock.model_construct(
                         id=A,
+                        created_at=A,
                         thinking="",
                         redacted_thinking_data="encrypted_data_abc",
                     ),
                     TextBlock.model_construct(
                         id=A,
+                        created_at=A,
                         text="Answer",
                     ),
                 ],
@@ -315,9 +327,36 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [(r.is_last, r.content) for r in responses],
             [
-                (False, [TextBlock.model_construct(id=A, text="Hello")]),
-                (False, [TextBlock.model_construct(id=A, text=" world")]),
-                (True, [TextBlock.model_construct(id=A, text="Hello world")]),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Hello",
+                        ),
+                    ],
+                ),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text=" world",
+                        ),
+                    ],
+                ),
+                (
+                    True,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Hello world",
+                        ),
+                    ],
+                ),
             ],
         )
         self.assertEqual(responses[-1].id, "msg-1")
@@ -392,6 +431,7 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
                     [
                         ThinkingBlock.model_construct(
                             id=A,
+                            created_at=A,
                             thinking="Let me think",
                         ),
                     ],
@@ -401,21 +441,36 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
                     [
                         ThinkingBlock.model_construct(
                             id=A,
+                            created_at=A,
                             thinking="",
                             signature="sig_abc",
                         ),
                     ],
                 ),
-                (False, [TextBlock.model_construct(id=A, text="Result")]),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Result",
+                        ),
+                    ],
+                ),
                 (
                     True,
                     [
                         ThinkingBlock.model_construct(
                             id=A,
+                            created_at=A,
                             thinking="Let me think",
                             signature="sig_abc",
                         ),
-                        TextBlock.model_construct(id=A, text="Result"),
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Result",
+                        ),
                     ],
                 ),
             ],
@@ -483,6 +538,7 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
                     [
                         ThinkingBlock.model_construct(
                             id=A,
+                            created_at=A,
                             thinking="",
                             redacted_thinking_data="encrypted_stream_data",
                         ),
@@ -493,6 +549,7 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
                     [
                         TextBlock.model_construct(
                             id=A,
+                            created_at=A,
                             text="Result",
                         ),
                     ],
@@ -502,11 +559,13 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
                     [
                         ThinkingBlock.model_construct(
                             id=A,
+                            created_at=A,
                             thinking="",
                             redacted_thinking_data="encrypted_stream_data",
                         ),
                         TextBlock.model_construct(
                             id=A,
+                            created_at=A,
                             text="Result",
                         ),
                     ],
@@ -571,7 +630,8 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
                 (
                     False,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
+                            created_at=A,
                             id="toolu_1",
                             name="get_weather",
                             input="",
@@ -581,7 +641,8 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
                 (
                     False,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
+                            created_at=A,
                             id="toolu_1",
                             name="get_weather",
                             input='{"city":',
@@ -591,7 +652,8 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
                 (
                     False,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
+                            created_at=A,
                             id="toolu_1",
                             name="get_weather",
                             input='"BJ"}',
@@ -601,7 +663,8 @@ class TestAnthropicStream(IsolatedAsyncioTestCase):
                 (
                     True,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
+                            created_at=A,
                             id="toolu_1",
                             name="get_weather",
                             input='{"city":"BJ"}',

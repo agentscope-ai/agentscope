@@ -103,6 +103,8 @@ class AgentInjectionTest(IsolatedAsyncioTestCase):
         """Build the expected persisted ``HintBlock`` dump."""
         return {
             "type": "hint",
+            "created_at": AnyString(),
+            "finished_at": AnyString(),
             "hint": hint,
             "id": AnyString(),
             "source": INJECTION_SOURCE,

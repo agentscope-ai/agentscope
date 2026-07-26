@@ -180,7 +180,10 @@ class TestDashScopeNonStream(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             (result.is_last, result.content),
-            (True, [TextBlock.model_construct(id=A, text="Hello!")]),
+            (
+                True,
+                [TextBlock.model_construct(id=A, created_at=A, text="Hello!")],
+            ),
         )
         self.assertEqual(result.id, "req-1")
 
@@ -210,7 +213,8 @@ class TestDashScopeNonStream(IsolatedAsyncioTestCase):
             (
                 True,
                 [
-                    ToolCallBlock(
+                    ToolCallBlock.model_construct(
+                        created_at=A,
                         id="call-1",
                         name="get_weather",
                         input='{"city":"Hangzhou"}',
@@ -242,9 +246,10 @@ class TestDashScopeNonStream(IsolatedAsyncioTestCase):
                 [
                     ThinkingBlock.model_construct(
                         id=A,
+                        created_at=A,
                         thinking="Reasoning step...",
                     ),
-                    TextBlock.model_construct(id=A, text="42"),
+                    TextBlock.model_construct(id=A, created_at=A, text="42"),
                 ],
             ),
         )
@@ -281,9 +286,36 @@ class TestDashScopeStream(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [(r.is_last, r.content) for r in responses],
             [
-                (False, [TextBlock.model_construct(id=A, text="Hello")]),
-                (False, [TextBlock.model_construct(id=A, text=" world")]),
-                (True, [TextBlock.model_construct(id=A, text="Hello world")]),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Hello",
+                        ),
+                    ],
+                ),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text=" world",
+                        ),
+                    ],
+                ),
+                (
+                    True,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Hello world",
+                        ),
+                    ],
+                ),
             ],
         )
 
@@ -313,18 +345,47 @@ class TestDashScopeStream(IsolatedAsyncioTestCase):
             [
                 (
                     False,
-                    [ThinkingBlock.model_construct(id=A, thinking="Think")],
+                    [
+                        ThinkingBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            thinking="Think",
+                        ),
+                    ],
                 ),
-                (False, [ThinkingBlock.model_construct(id=A, thinking="ing")]),
-                (False, [TextBlock.model_construct(id=A, text="Answer")]),
+                (
+                    False,
+                    [
+                        ThinkingBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            thinking="ing",
+                        ),
+                    ],
+                ),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Answer",
+                        ),
+                    ],
+                ),
                 (
                     True,
                     [
                         ThinkingBlock.model_construct(
                             id=A,
+                            created_at=A,
                             thinking="Thinking",
                         ),
-                        TextBlock.model_construct(id=A, text="Answer"),
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Answer",
+                        ),
                     ],
                 ),
             ],
@@ -364,7 +425,8 @@ class TestDashScopeStream(IsolatedAsyncioTestCase):
                 (
                     False,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
+                            created_at=A,
                             id="call-1",
                             name="search",
                             input='{"q":',
@@ -374,7 +436,8 @@ class TestDashScopeStream(IsolatedAsyncioTestCase):
                 (
                     False,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
+                            created_at=A,
                             id="call-1",
                             name="search",
                             input='"hello"}',
@@ -384,7 +447,8 @@ class TestDashScopeStream(IsolatedAsyncioTestCase):
                 (
                     True,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
+                            created_at=A,
                             id="call-1",
                             name="search",
                             input='{"q":"hello"}',
@@ -413,8 +477,14 @@ class TestDashScopeStream(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [(r.is_last, r.content) for r in responses],
             [
-                (False, [TextBlock.model_construct(id=A, text="X")]),
-                (True, [TextBlock.model_construct(id=A, text="X")]),
+                (
+                    False,
+                    [TextBlock.model_construct(id=A, created_at=A, text="X")],
+                ),
+                (
+                    True,
+                    [TextBlock.model_construct(id=A, created_at=A, text="X")],
+                ),
             ],
         )
         self.assertEqual(responses[-1].usage.input_tokens, 50)

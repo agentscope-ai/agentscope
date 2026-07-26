@@ -169,7 +169,16 @@ class TestDeepSeekNonStream(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             (result.is_last, result.content),
-            (True, [TextBlock.model_construct(id=A, text="Hello world!")]),
+            (
+                True,
+                [
+                    TextBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        text="Hello world!",
+                    ),
+                ],
+            ),
         )
         self.assertEqual(result.id, "deepseek-1")
 
@@ -204,12 +213,14 @@ class TestDeepSeekNonStream(IsolatedAsyncioTestCase):
             (
                 True,
                 [
-                    ToolCallBlock(
+                    ToolCallBlock.model_construct(
+                        created_at=A,
                         id="call-1",
                         name="get_weather",
                         input='{"city":"Beijing"}',
                     ),
-                    ToolCallBlock(
+                    ToolCallBlock.model_construct(
+                        created_at=A,
                         id="call-2",
                         name="get_time",
                         input='{"tz":"UTC"}',
@@ -241,9 +252,14 @@ class TestDeepSeekNonStream(IsolatedAsyncioTestCase):
                 [
                     ThinkingBlock.model_construct(
                         id=A,
+                        created_at=A,
                         thinking="Let me think step by step...",
                     ),
-                    TextBlock.model_construct(id=A, text="The answer is 42."),
+                    TextBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        text="The answer is 42.",
+                    ),
                 ],
             ),
         )
@@ -285,10 +301,40 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [(r.is_last, r.content) for r in responses],
             [
-                (False, [TextBlock.model_construct(id=A, text="Hello")]),
-                (False, [TextBlock.model_construct(id=A, text=" world")]),
-                (False, [TextBlock.model_construct(id=A, text="!")]),
-                (True, [TextBlock.model_construct(id=A, text="Hello world!")]),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Hello",
+                        ),
+                    ],
+                ),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text=" world",
+                        ),
+                    ],
+                ),
+                (
+                    False,
+                    [TextBlock.model_construct(id=A, created_at=A, text="!")],
+                ),
+                (
+                    True,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Hello world!",
+                        ),
+                    ],
+                ),
             ],
         )
         self.assertEqual(responses[-1].id, "deepseek-1")
@@ -320,22 +366,57 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
             [
                 (
                     False,
-                    [ThinkingBlock.model_construct(id=A, thinking="Think")],
+                    [
+                        ThinkingBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            thinking="Think",
+                        ),
+                    ],
                 ),
                 (
                     False,
-                    [ThinkingBlock.model_construct(id=A, thinking="ing...")],
+                    [
+                        ThinkingBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            thinking="ing...",
+                        ),
+                    ],
                 ),
-                (False, [TextBlock.model_construct(id=A, text="Answer")]),
-                (False, [TextBlock.model_construct(id=A, text=" here.")]),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Answer",
+                        ),
+                    ],
+                ),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text=" here.",
+                        ),
+                    ],
+                ),
                 (
                     True,
                     [
                         ThinkingBlock.model_construct(
                             id=A,
+                            created_at=A,
                             thinking="Thinking...",
                         ),
-                        TextBlock.model_construct(id=A, text="Answer here."),
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Answer here.",
+                        ),
                     ],
                 ),
             ],
@@ -377,7 +458,8 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
                 (
                     False,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
+                            created_at=A,
                             id="call-1",
                             name="get_weather",
                             input='{"ci',
@@ -387,7 +469,8 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
                 (
                     False,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
+                            created_at=A,
                             id="call-1",
                             name="get_weather",
                             input='ty":"BJ"}',
@@ -397,7 +480,8 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
                 (
                     True,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
+                            created_at=A,
                             id="call-1",
                             name="get_weather",
                             input='{"city":"BJ"}',
@@ -446,18 +530,26 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
                     [
                         ThinkingBlock.model_construct(
                             id=A,
+                            created_at=A,
                             thinking="Let me check",
                         ),
                     ],
                 ),
                 (
                     False,
-                    [TextBlock.model_construct(id=A, text="I'll look it up.")],
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="I'll look it up.",
+                        ),
+                    ],
                 ),
                 (
                     False,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
+                            created_at=A,
                             id="call-1",
                             name="search",
                             input='{"q":"weather"}',
@@ -469,13 +561,16 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
                     [
                         ThinkingBlock.model_construct(
                             id=A,
+                            created_at=A,
                             thinking="Let me check",
                         ),
                         TextBlock.model_construct(
                             id=A,
+                            created_at=A,
                             text="I'll look it up.",
                         ),
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
+                            created_at=A,
                             id="call-1",
                             name="search",
                             input='{"q":"weather"}',
@@ -511,8 +606,14 @@ class TestDeepSeekStream(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [(r.is_last, r.content) for r in responses],
             [
-                (False, [TextBlock.model_construct(id=A, text="Hi")]),
-                (True, [TextBlock.model_construct(id=A, text="Hi")]),
+                (
+                    False,
+                    [TextBlock.model_construct(id=A, created_at=A, text="Hi")],
+                ),
+                (
+                    True,
+                    [TextBlock.model_construct(id=A, created_at=A, text="Hi")],
+                ),
             ],
         )
         self.assertEqual(responses[-1].usage.input_tokens, 100)

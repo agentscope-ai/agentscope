@@ -131,7 +131,10 @@ class TestOllamaNonStream(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             (result.is_last, result.content),
-            (True, [TextBlock.model_construct(id=A, text="Hello!")]),
+            (
+                True,
+                [TextBlock.model_construct(id=A, created_at=A, text="Hello!")],
+            ),
         )
 
     @patch("ollama.AsyncClient")
@@ -155,8 +158,9 @@ class TestOllamaNonStream(IsolatedAsyncioTestCase):
             (
                 True,
                 [
-                    ToolCallBlock(
+                    ToolCallBlock.model_construct(
                         id="0_get_weather",
+                        created_at=A,
                         name="get_weather",
                         input=json.dumps({"city": "SH"}),
                     ),
@@ -187,9 +191,14 @@ class TestOllamaNonStream(IsolatedAsyncioTestCase):
                 [
                     ThinkingBlock.model_construct(
                         id=A,
+                        created_at=A,
                         thinking="Let me think...",
                     ),
-                    TextBlock.model_construct(id=A, text="Answer"),
+                    TextBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        text="Answer",
+                    ),
                 ],
             ),
         )
@@ -223,9 +232,30 @@ class TestOllamaStream(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [(r.is_last, r.content) for r in responses],
             [
-                (False, [TextBlock.model_construct(id=A, text="Hi")]),
-                (False, [TextBlock.model_construct(id=A, text=" there")]),
-                (True, [TextBlock.model_construct(id=A, text="Hi there")]),
+                (
+                    False,
+                    [TextBlock.model_construct(id=A, created_at=A, text="Hi")],
+                ),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text=" there",
+                        ),
+                    ],
+                ),
+                (
+                    True,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Hi there",
+                        ),
+                    ],
+                ),
             ],
         )
 
@@ -255,19 +285,34 @@ class TestOllamaStream(IsolatedAsyncioTestCase):
                     [
                         ThinkingBlock.model_construct(
                             id=A,
+                            created_at=A,
                             thinking="Think step",
                         ),
                     ],
                 ),
-                (False, [TextBlock.model_construct(id=A, text="Result")]),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Result",
+                        ),
+                    ],
+                ),
                 (
                     True,
                     [
                         ThinkingBlock.model_construct(
                             id=A,
+                            created_at=A,
                             thinking="Think step",
                         ),
-                        TextBlock.model_construct(id=A, text="Result"),
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Result",
+                        ),
                     ],
                 ),
             ],
@@ -294,8 +339,9 @@ class TestOllamaStream(IsolatedAsyncioTestCase):
         gen = await self.model([])
         responses = [r async for r in gen]
 
-        tool_block = ToolCallBlock(
+        tool_block = ToolCallBlock.model_construct(
             id="0_search",
+            created_at=A,
             name="search",
             input=json.dumps({"q": "hello"}),
         )
