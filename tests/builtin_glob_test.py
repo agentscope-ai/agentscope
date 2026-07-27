@@ -121,6 +121,8 @@ class GlobToolTest(IsolatedAsyncioTestCase):
                             "test3.py",
                         ),
                         "id": AnyString(),
+                        "created_at": AnyString(),
+                        "finished_at": None,
                     },
                 ],
                 "state": "running",

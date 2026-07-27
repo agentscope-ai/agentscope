@@ -4,8 +4,9 @@
 Runs inside the workspace environment as a standalone script. Reads
 ``--config`` — a JSON list of ``MCPClient.model_dump()`` dicts (same
 format as the workspace's ``.mcp`` file) — instantiates one client per
-entry, and exposes per-server HTTP endpoints. No auth: the gateway is
-only reachable via ``backend.exec_shell`` from inside the sandbox.
+entry, and exposes per-server HTTP endpoints. Authentication is optional.
+Sandboxes sharing a host network namespace can enable a bearer token to
+prevent cross-workspace gateway access.
 
 Endpoints::
 
@@ -24,6 +25,7 @@ gateway does not need).
 import argparse
 import asyncio
 import json
+import secrets
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
@@ -51,12 +53,38 @@ async def _build_client(spec: dict[str, Any]) -> MCPClient:
     return client
 
 
-def _build_app(state: _State) -> FastAPI:
+def _build_app(
+    state: _State,
+    auth_token: str | None = None,
+    instance_nonce: str | None = None,
+) -> FastAPI:
     """Build the FastAPI app with all routes wired against ``state``."""
     app = FastAPI(title="agentscope-workspace-mcp-gateway")
 
-    @app.get("/health")
-    async def _health() -> PlainTextResponse:
+    if auth_token:
+
+        @app.middleware("http")
+        async def _auth_middleware(request: Request, call_next: Any) -> Any:
+            if request.url.path == "/health":
+                return await call_next(request)
+            header = request.headers.get("authorization", "")
+            expected = f"Bearer {auth_token}"
+            valid = (
+                header.isascii()
+                and expected.isascii()
+                and secrets.compare_digest(header, expected)
+            )
+            if not valid:
+                return PlainTextResponse(
+                    "invalid gateway token",
+                    status_code=401,
+                )
+            return await call_next(request)
+
+    @app.get("/health", response_model=None)
+    async def _health() -> Any:
+        if instance_nonce is not None:
+            return {"status": "ok", "instance_nonce": instance_nonce}
         return PlainTextResponse("ok")
 
     @app.get("/mcps")
@@ -139,7 +167,12 @@ async def _connect_initial(
         print(f"[gateway] connected {client.name!r}", flush=True)
 
 
-async def _run(config_path: str, port: int) -> None:
+async def _run(
+    config_path: str,
+    port: int,
+    auth_token: str | None = None,
+    instance_nonce: str | None = None,
+) -> None:
     """Read config, connect upstreams, start uvicorn, clean up on exit."""
     with open(config_path, encoding="utf-8") as f:
         servers = json.load(f)
@@ -152,7 +185,11 @@ async def _run(config_path: str, port: int) -> None:
     state = _State()
     await _connect_initial(state, servers)
 
-    app = _build_app(state)
+    app = _build_app(
+        state,
+        auth_token=auth_token,
+        instance_nonce=instance_nonce,
+    )
     print(
         f"[gateway] serving {len(state.clients)} MCPs on :{port}",
         flush=True,
@@ -182,8 +219,17 @@ def main() -> None:
     )
     parser.add_argument("--config", required=True)
     parser.add_argument("--port", type=int, default=5600)
+    parser.add_argument("--auth-token")
+    parser.add_argument("--instance-nonce")
     args = parser.parse_args()
-    asyncio.run(_run(args.config, args.port))
+    asyncio.run(
+        _run(
+            args.config,
+            args.port,
+            auth_token=args.auth_token,
+            instance_nonce=args.instance_nonce,
+        ),
+    )
 
 
 if __name__ == "__main__":

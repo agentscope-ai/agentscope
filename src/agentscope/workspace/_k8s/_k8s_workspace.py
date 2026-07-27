@@ -33,7 +33,7 @@ from typing import Any
 from ..._logging import logger
 from ...mcp import MCPClient
 from .._sandboxed_base import SandboxedWorkspaceBase
-from .._utils import _GATEWAY_BASE_REQUIREMENTS
+from .._utils import _GATEWAY_BASE_REQUIREMENTS, DEFAULT_WORKSPACE_INSTRUCTIONS
 from ._k8s_backend import K8sBackend
 from ._constants import (
     DEFAULT_GATEWAY_PORT,
@@ -43,20 +43,6 @@ from ._constants import (
     SYSTEM_DEPS,
     _k8s_safe_name,
 )
-
-_DEFAULT_INSTRUCTIONS = """<workspace>
-You have a Kubernetes-based workspace. All tool calls execute **inside
-the Pod** at ``{workdir}``.
-
-Layout:
-
-```
-{workdir}
-├── data/        # offloaded multimodal files
-├── skills/      # reusable skills
-└── sessions/    # session context and tool results
-```
-</workspace>"""
 
 
 # ── the workspace ──────────────────────────────────────────────────
@@ -95,7 +81,7 @@ class K8sWorkspace(SandboxedWorkspaceBase):
         delete_pvc_on_close: bool = False,
         # ── Environment ──
         env: dict[str, str] | None = None,
-        instructions: str = _DEFAULT_INSTRUCTIONS,
+        instructions: str = DEFAULT_WORKSPACE_INSTRUCTIONS,
         # ── Seed ──
         default_mcps: list[MCPClient] | None = None,
         skill_paths: list[str] | None = None,
@@ -169,7 +155,10 @@ class K8sWorkspace(SandboxedWorkspaceBase):
         self._storage_size = storage_size
         self._delete_pvc_on_close = delete_pvc_on_close
         self.env: dict[str, str] = dict(env or {})
-        self.instructions = instructions
+        self.instructions = instructions.format(
+            backend="Kubernetes-based",
+            workdir=self.workdir,
+        )
 
         # ── runtime state (K8s-only) ────────────────────────────
         self._api_client: Any = None
@@ -248,7 +237,7 @@ class K8sWorkspace(SandboxedWorkspaceBase):
 
     async def get_instructions(self) -> str:
         """Return the system-prompt fragment for this workspace."""
-        return self.instructions.format(workdir=POD_WORKDIR)
+        return self.instructions
 
     # ── internals: K8s resource management ─────────────────────
 

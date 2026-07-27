@@ -191,6 +191,14 @@ easier to review tool calls and give permission.
         command = tool_input.get("command", "")
         if not command:
             return self.is_read_only
+        # A command with dynamic / unanalyzable structure (command
+        # substitution, control flow, ...) cannot be *proven* read-only —
+        # e.g. ``ls $(rm -rf /)`` looks read-only but embeds a mutation.
+        # Report it as non-read-only so the engine's read-only fast path
+        # does not short-circuit it; ``check_permissions`` then surfaces the
+        # bypass-immune injection safety ASK.
+        if self._bash_parser.check_injection_risk(command):
+            return False
         return self._bash_parser.is_read_only_command(command)
 
     async def check_permissions(
@@ -324,13 +332,17 @@ easier to review tool calls and give permission.
                 bypass_immune=True,
             )
 
-        # 6. ACCEPT_EDITS auto-allow for filesystem commands whose targets
-        # all live inside a working directory. Mirrors Write/Edit's strict
+        # 6. Auto-allow filesystem commands whose targets all live inside a
+        # working directory. Applies to ACCEPT_EDITS (interactive) and
+        # DONT_ASK (its unattended counterpart). Mirrors Write/Edit's strict
         # working-directory check — we never auto-allow a bash command that
         # would touch a path outside the configured working set (e.g.
         # ``cp /etc/hosts /tmp/x`` must not pass even though ``cp`` is in
         # the auto-allow list).
-        if context.mode == PermissionMode.ACCEPT_EDITS:
+        if context.mode in (
+            PermissionMode.ACCEPT_EDITS,
+            PermissionMode.DONT_ASK,
+        ):
             filesystem_commands = {
                 "mkdir",
                 "touch",
@@ -366,13 +378,12 @@ easier to review tool calls and give permission.
                     return PermissionDecision(
                         behavior=PermissionBehavior.ALLOW,
                         message=f"Permission granted for '{base_command}' "
-                        f"command (accept edits mode - filesystem command, "
-                        f"all targets in working directory)",
+                        f"command (filesystem command, all targets in "
+                        f"working directory)",
                         decision_reason=(
                             f"Filesystem command '{base_command}' is "
-                            f"auto-allowed in accept edits mode because "
-                            f"all target paths are within a working "
-                            f"directory"
+                            f"auto-allowed because all target paths are "
+                            f"within a working directory"
                         ),
                     )
 

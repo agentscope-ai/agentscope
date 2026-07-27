@@ -1,11 +1,25 @@
-import type { ContentBlock, Msg, ToolCallBlock } from '@agentscope-ai/agentscope/message';
-import React from 'react';
-import { useRef, useEffect } from 'react';
+import {
+	type ContentBlock,
+	getContentBlocks,
+	type Msg,
+	type ToolCallBlock,
+} from '@agentscope-ai/agentscope/message';
+import React, { useMemo } from 'react';
 
-import { EmptyMessage } from './Empty';
-import { MessageBubble } from '@/components/chat/MessageBubble';
+import { ASMessageBubble } from '@/components/chat/ASMessageBubble.tsx';
+import { ConfirmCard } from '@/components/chat/ConfirmCard.tsx';
+import { FlipCard } from '@/components/chat/FlipCard.tsx';
 import { TextInput } from '@/components/chat/TextInput.tsx';
+import {
+	MessageScroller,
+	MessageScrollerButton,
+	MessageScrollerContent,
+	MessageScrollerItem,
+	MessageScrollerProvider,
+	MessageScrollerViewport,
+} from '@/components/ui/message-scroller.tsx';
 import type { ReplyPhase } from '@/hooks/useMessages';
+import { useTranslation } from '@/i18n/useI18n';
 import { cn } from '@/lib/utils';
 
 interface ChatContentProps {
@@ -55,78 +69,83 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	allowedInputTypes,
 	fileProcessor,
 }) => {
-	const scrollAreaRef = useRef<HTMLDivElement>(null);
-	const prevMsgCountRef = useRef<number>(0);
-	const wasNearBottomRef = useRef<boolean>(true);
+	const { t } = useTranslation();
+	const isEmpty = msgs.length === 0;
 
-	// Auto-scroll to bottom only if user is already near the bottom
-	useEffect(() => {
-		const currentCount = msgs.length;
-		const prevCount = prevMsgCountRef.current;
+	const toConfirmedToolCalls = useMemo(() => {
+		if (msgs.length === 0) return [];
 
-		const isActive = phase !== 'idle';
-		const isInitialLoad = prevCount === 0 && currentCount > 0;
-		const hasRelevantUpdate =
-			(currentCount > prevCount && prevCount > 0) || (isActive && prevCount > 0);
-		const shouldScroll = isInitialLoad || (hasRelevantUpdate && wasNearBottomRef.current);
+		const lastMsg = msgs[msgs.length - 1];
+		return getContentBlocks(lastMsg, 'tool_call')
+			.filter((tc) => tc.state === 'asking')
+			.map((tc) => ({ replyId: lastMsg.id, toolCall: tc }));
+	}, [msgs]);
 
-		if (shouldScroll && scrollAreaRef.current) {
-			const { scrollHeight } = scrollAreaRef.current;
-
-			scrollAreaRef.current.scrollTo({
-				top: scrollHeight,
-				behavior: 'smooth',
-			});
-		}
-
-		prevMsgCountRef.current = currentCount;
-	}, [msgs, phase]);
-
-	// Track if user is near bottom whenever they scroll
-	useEffect(() => {
-		const scrollArea = scrollAreaRef.current;
-		if (!scrollArea) return;
-
-		const handleScroll = () => {
-			const { scrollTop, scrollHeight, clientHeight } = scrollArea;
-			wasNearBottomRef.current = scrollTop + clientHeight >= scrollHeight - 50;
-		};
-
-		scrollArea.addEventListener('scroll', handleScroll);
-		return () => scrollArea.removeEventListener('scroll', handleScroll);
-	}, []);
-
+	// On an empty session the prompt and the input centre together, so every box
+	// down to the message list shrinks to its content instead of filling.
 	return (
-		<div className={cn('flex flex-col h-full w-full items-center p-2 gap-4', className)}>
-			<div
-				ref={scrollAreaRef}
-				className="flex-1 w-full max-w-full overflow-auto no-scrollbar overflow-x-hidden"
-			>
-				<div className="flex flex-col gap-4 size-full max-w-full">
-					{msgs.length > 0 ? (
-						msgs.map((message) => (
-							<MessageBubble
-								key={message.id}
-								message={message}
-								onUserConfirm={onUserConfirm}
-							/>
-						))
+		<div
+			className={cn(
+				'flex flex-col h-full w-full items-center gap-4',
+				isEmpty && 'justify-center',
+				className,
+			)}
+		>
+			{isEmpty ? (
+				<p className="text-center text-lg mb-2">{t('chat.greeting')}</p>
+			) : (
+				<MessageScrollerProvider autoScroll={true} defaultScrollPosition={'end'}>
+					<MessageScroller>
+						<MessageScrollerViewport>
+							<MessageScrollerContent>
+								{msgs.map((message) => (
+									<MessageScrollerItem key={message.id} messageId={message.id}>
+										<ASMessageBubble
+											key={message.id}
+											message={message}
+											onUserConfirm={onUserConfirm}
+										/>
+									</MessageScrollerItem>
+								))}
+							</MessageScrollerContent>
+						</MessageScrollerViewport>
+						<MessageScrollerButton className="rounded-full" />
+					</MessageScroller>
+				</MessageScrollerProvider>
+			)}
+
+			<div className="relative min-w-full max-w-full w-full">
+				<FlipCard
+					visible={toConfirmedToolCalls.length > 0 || footerSlot !== null}
+					className="absolute bottom-full left-0 right-0 mb-2 z-50"
+				>
+					{toConfirmedToolCalls.length > 0 ? (
+						<ConfirmCard
+							toolCall={toConfirmedToolCalls[0].toolCall}
+							onUserConfirm={async (confirm, rules) => {
+								onUserConfirm(
+									toConfirmedToolCalls[0].toolCall,
+									confirm,
+									toConfirmedToolCalls[0].replyId,
+									rules,
+								);
+							}}
+						/>
 					) : (
-						<EmptyMessage />
+						footerSlot
 					)}
-				</div>
+				</FlipCard>
+				<TextInput
+					className="min-w-full max-w-full w-full"
+					onSend={onSend}
+					disabled={disabled}
+					autoComplete={autoComplete}
+					allowedInputTypes={allowedInputTypes}
+					fileProcessor={fileProcessor}
+					phase={phase}
+					onInterrupt={onInterrupt}
+				/>{' '}
 			</div>
-			{footerSlot ? <div className="w-full max-w-full shrink-0">{footerSlot}</div> : null}
-			<TextInput
-				className="min-w-full max-w-full w-full"
-				onSend={onSend}
-				disabled={disabled}
-				autoComplete={autoComplete}
-				allowedInputTypes={allowedInputTypes}
-				fileProcessor={fileProcessor}
-				phase={phase}
-				onInterrupt={onInterrupt}
-			/>
 		</div>
 	);
 };

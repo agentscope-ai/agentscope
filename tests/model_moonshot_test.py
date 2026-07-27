@@ -163,7 +163,10 @@ class TestMoonshotNonStream(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             (result.is_last, result.content),
-            (True, [TextBlock.model_construct(id=A, text="Hello!")]),
+            (
+                True,
+                [TextBlock.model_construct(id=A, created_at=A, text="Hello!")],
+            ),
         )
         self.assertEqual(result.id, "kimi-1")
 
@@ -191,8 +194,9 @@ class TestMoonshotNonStream(IsolatedAsyncioTestCase):
             (
                 True,
                 [
-                    ToolCallBlock(
+                    ToolCallBlock.model_construct(
                         id="call-1",
+                        created_at=A,
                         name="get_weather",
                         input='{"city":"Shanghai"}',
                     ),
@@ -221,9 +225,10 @@ class TestMoonshotNonStream(IsolatedAsyncioTestCase):
                 [
                     ThinkingBlock.model_construct(
                         id=A,
+                        created_at=A,
                         thinking="Step by step...",
                     ),
-                    TextBlock.model_construct(id=A, text="42"),
+                    TextBlock.model_construct(id=A, created_at=A, text="42"),
                 ],
             ),
         )
@@ -277,9 +282,30 @@ class TestMoonshotStream(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [(r.is_last, r.content) for r in responses],
             [
-                (False, [TextBlock.model_construct(id=A, text="Hi")]),
-                (False, [TextBlock.model_construct(id=A, text=" there")]),
-                (True, [TextBlock.model_construct(id=A, text="Hi there")]),
+                (
+                    False,
+                    [TextBlock.model_construct(id=A, created_at=A, text="Hi")],
+                ),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text=" there",
+                        ),
+                    ],
+                ),
+                (
+                    True,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Hi there",
+                        ),
+                    ],
+                ),
             ],
         )
 
@@ -307,21 +333,47 @@ class TestMoonshotStream(IsolatedAsyncioTestCase):
             [
                 (
                     False,
-                    [ThinkingBlock.model_construct(id=A, thinking="Let me")],
+                    [
+                        ThinkingBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            thinking="Let me",
+                        ),
+                    ],
                 ),
                 (
                     False,
-                    [ThinkingBlock.model_construct(id=A, thinking=" think")],
+                    [
+                        ThinkingBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            thinking=" think",
+                        ),
+                    ],
                 ),
-                (False, [TextBlock.model_construct(id=A, text="Result")]),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Result",
+                        ),
+                    ],
+                ),
                 (
                     True,
                     [
                         ThinkingBlock.model_construct(
                             id=A,
+                            created_at=A,
                             thinking="Let me think",
                         ),
-                        TextBlock.model_construct(id=A, text="Result"),
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Result",
+                        ),
                     ],
                 ),
             ],
@@ -359,8 +411,9 @@ class TestMoonshotStream(IsolatedAsyncioTestCase):
                 (
                     False,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
                             id="call-1",
+                            created_at=A,
                             name="search",
                             input='{"q":',
                         ),
@@ -369,8 +422,9 @@ class TestMoonshotStream(IsolatedAsyncioTestCase):
                 (
                     False,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
                             id="call-1",
+                            created_at=A,
                             name="search",
                             input='"test"}',
                         ),
@@ -379,8 +433,9 @@ class TestMoonshotStream(IsolatedAsyncioTestCase):
                 (
                     True,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
                             id="call-1",
+                            created_at=A,
                             name="search",
                             input='{"q":"test"}',
                         ),

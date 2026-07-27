@@ -5,7 +5,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString, MockModel
 
-from agentscope.agent import Agent
+from agentscope.agent import Agent, ContextConfig, InjectionConfig
 from agentscope.model import ChatResponse
 from agentscope.tool import (
     ToolBase,
@@ -17,7 +17,13 @@ from agentscope.permission import (
     PermissionBehavior,
     PermissionContext,
 )
-from agentscope.message import TextBlock, ToolCallBlock, UserMsg
+from agentscope.message import (
+    TextBlock,
+    ThinkingBlock,
+    ToolCallBlock,
+    UserMsg,
+)
+from agentscope.types import ReplyFinishedReason
 
 
 class MockSequentialTool(ToolBase):
@@ -105,6 +111,9 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             system_prompt="You are a helpful assistant.",
             model=self.model,
             toolkit=Toolkit(),
+            # The runtime state injection is covered by agent_injection_test,
+            # turn it off here to keep the event assertions focused.
+            injection_config=InjectionConfig(inject_runtime_state=False),
         )
 
     def _get_event_base(self, reply_id: str) -> dict:
@@ -122,6 +131,9 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             "id": AnyString(),
             "created_at": AnyString(),
             "finished_at": None,
+            "finished_reason": None,
+            "structured_output": None,
+            "error": None,
             "metadata": {},
             "name": "Friday",
             "role": "assistant",
@@ -146,10 +158,12 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         self.assertIsNot(agent_1.model_config, agent_2.model_config)
         self.assertIsNot(agent_1.context_config, agent_2.context_config)
         self.assertIsNot(agent_1.react_config, agent_2.react_config)
+        self.assertIsNot(agent_1.injection_config, agent_2.injection_config)
 
         agent_1.model_config.max_retries = 3
         agent_1.context_config.tool_result_limit = 123
         agent_1.react_config.max_iters = 2
+        agent_1.injection_config.timezone = "Asia/Shanghai"
 
         self.assertNotEqual(
             agent_1.model_config.max_retries,
@@ -163,6 +177,33 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             agent_1.react_config.max_iters,
             agent_2.react_config.max_iters,
         )
+        self.assertNotEqual(
+            agent_1.injection_config.timezone,
+            agent_2.injection_config.timezone,
+        )
+
+    async def test_inconsistent_ratios_are_rejected(self) -> None:
+        """The ratios across the context and injection configs must leave room
+        ahead of the compression threshold."""
+        with self.assertRaises(ValueError):
+            Agent(
+                name="agent",
+                system_prompt="You are an agent.",
+                model=MockModel(),
+                context_config=ContextConfig(
+                    trigger_ratio=0.5,
+                    reserve_ratio=0.6,
+                ),
+            )
+
+        with self.assertRaises(ValueError):
+            Agent(
+                name="agent",
+                system_prompt="You are an agent.",
+                model=MockModel(),
+                context_config=ContextConfig(trigger_ratio=0.5),
+                injection_config=InjectionConfig(context_buffer_ratio=0.5),
+            )
 
     async def test_streaming_reasoning(self) -> None:
         """Test the streaming model inference without tool calls generated,
@@ -244,6 +285,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             },
             {
                 "type": "REPLY_END",
+                "error": None,
                 "session_id": session_id,
                 "finished_reason": "completed",
             },
@@ -265,17 +307,24 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hi",
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
             },
             {
                 **msg_base,
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hello world!",
                     },
@@ -296,12 +345,17 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hello world!",
                     },
                 ],
                 "created_at": AnyString(),
                 "finished_at": None,
+                "finished_reason": ReplyFinishedReason.COMPLETED,
+                "structured_output": None,
+                "error": None,
                 "id": AnyString(),
                 "metadata": {},
                 "usage": None,
@@ -317,12 +371,17 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hi",
                     },
                 ],
                 "metadata": {},
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
             },
             {
                 **msg_base,
@@ -331,6 +390,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hello world!",
                     },
@@ -344,12 +405,17 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hi again",
                     },
                 ],
                 "metadata": {},
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
             },
             {
                 **msg_base,
@@ -358,6 +424,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hello world!",
                     },
@@ -428,6 +496,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             },
             {
                 "type": "REPLY_END",
+                "error": None,
                 "session_id": session_id,
                 "finished_reason": "completed",
             },
@@ -449,18 +518,25 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hi",
                     },
                 ],
                 "metadata": {},
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
             },
             {
                 **msg_base,
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hello world!",
                     },
@@ -491,12 +567,17 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hello world!",
                     },
                 ],
                 "created_at": AnyString(),
                 "finished_at": None,
+                "finished_reason": ReplyFinishedReason.COMPLETED,
+                "structured_output": None,
+                "error": None,
                 "id": AnyString(),
                 "metadata": {},
                 "usage": None,
@@ -512,12 +593,17 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hi",
                     },
                 ],
                 "metadata": {},
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
             },
             {
                 **msg_base,
@@ -526,6 +612,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hello world!",
                     },
@@ -539,12 +627,17 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hi again",
                     },
                 ],
                 "metadata": {},
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
             },
             {
                 **msg_base,
@@ -553,6 +646,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hello world!",
                     },
@@ -562,6 +657,94 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         ]
         context_dicts = [msg.model_dump() for msg in self.agent.state.context]
         self.assertListEqual(context_dicts, expected_context_after_reply)
+
+    async def test_thinking_only_response_continues_reasoning(self) -> None:
+        """A thinking-only response should not end with an empty reply."""
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[ThinkingBlock(thinking="Working on it")],
+                    is_last=True,
+                ),
+                ChatResponse(
+                    content=[TextBlock(text="Final answer")],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        msg = await self.agent.reply(UserMsg(name="user", content="Think"))
+
+        # The thinking-only turn must trigger a second reasoning round
+        self.assertEqual(self.model.cnt, 2)
+
+        # The final reply message only carries the visible text answer
+        self.assertDictEqual(
+            msg.model_dump(),
+            {
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": None,
+                "finished_reason": ReplyFinishedReason.COMPLETED,
+                "structured_output": None,
+                "error": None,
+                "metadata": {},
+                "name": "Friday",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Final answer",
+                    },
+                ],
+                "usage": None,
+            },
+        )
+
+        # The context keeps the thinking block and the final answer in a
+        # single assistant message following the user turn
+        msg_base = self._get_msg_base()
+        expected_context = [
+            {
+                **msg_base,
+                "name": "user",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Think",
+                    },
+                ],
+                "finished_at": AnyString(),
+            },
+            {
+                **msg_base,
+                "content": [
+                    {
+                        "type": "thinking",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "thinking": "Working on it",
+                    },
+                    {
+                        "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
+                        "id": AnyString(),
+                        "text": "Final answer",
+                    },
+                ],
+            },
+        ]
+        context_dicts = [msg.model_dump() for msg in self.agent.state.context]
+        self.assertListEqual(context_dicts, expected_context)
 
     async def test_streaming_sequential_tool_calls(self) -> None:
         """Test the streaming model inference with tool calls generated.
@@ -744,6 +927,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             },
             {
                 "type": "REPLY_END",
+                "error": None,
                 "session_id": session_id,
                 "finished_reason": "completed",
             },
@@ -764,21 +948,30 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Test",
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
             },
             {
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "I'll call the tool",
                     },
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": tool_call_id_1,
                         "name": "mock_sequential_tool",
                         "input": '{"input": "test1"}',
@@ -787,6 +980,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": tool_call_id_2,
                         "name": "mock_sequential_tool",
                         "input": '{"input": "test2"}',
@@ -795,10 +990,14 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "output": [
                             {
                                 "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
                                 "id": AnyString(),
                                 "text": "Sequential result: test1",
                             },
@@ -809,10 +1008,14 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "output": [
                             {
                                 "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
                                 "id": AnyString(),
                                 "text": "Sequential result: test2",
                             },
@@ -823,6 +1026,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "ended",
                     },
@@ -975,6 +1180,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             },
             {
                 "type": "REPLY_END",
+                "error": None,
                 "session_id": session_id,
                 "finished_reason": "completed",
             },
@@ -1016,16 +1222,23 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Test",
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
             },
             {
                 "content": [
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": tool_call_id_1,
                         "name": "mock_concurrent_tool",
                         "input": '{"input": "test1"}',
@@ -1034,6 +1247,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": tool_call_id_2,
                         "name": "mock_concurrent_tool",
                         "input": '{"input": "test2"}',
@@ -1042,10 +1257,14 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "output": [
                             {
                                 "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
                                 "id": AnyString(),
                                 "text": "Concurrent result: test1",
                             },
@@ -1056,10 +1275,14 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "output": [
                             {
                                 "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
                                 "id": AnyString(),
                                 "text": "Concurrent result: test2",
                             },
@@ -1070,6 +1293,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "All done",
                     },
@@ -1248,6 +1473,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             },
             {
                 "type": "REPLY_END",
+                "error": None,
                 "session_id": session_id,
                 "finished_reason": "completed",
             },
@@ -1301,16 +1527,23 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Test",
                     },
                 ],
                 "finished_at": AnyString(),
+                "finished_reason": None,
+                "structured_output": None,
+                "error": None,
             },
             {
                 "content": [
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": tool_call_id_1,
                         "name": "mock_sequential_tool",
                         "input": '{"input": "seq1"}',
@@ -1319,6 +1552,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": tool_call_id_2,
                         "name": "mock_concurrent_tool",
                         "input": '{"input": "conc1"}',
@@ -1327,6 +1562,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": tool_call_id_3,
                         "name": "mock_concurrent_tool",
                         "input": '{"input": "conc2"}',
@@ -1335,12 +1572,16 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "name": "mock_sequential_tool",
                         "state": "success",
                         "output": [
                             {
                                 "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
                                 "id": AnyString(),
                                 "text": "Sequential result: seq1",
                             },
@@ -1349,12 +1590,16 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "name": "mock_concurrent_tool",
                         "state": "success",
                         "output": [
                             {
                                 "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
                                 "id": AnyString(),
                                 "text": "Concurrent result: conc1",
                             },
@@ -1363,12 +1608,16 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "name": "mock_concurrent_tool",
                         "state": "success",
                         "output": [
                             {
                                 "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
                                 "id": AnyString(),
                                 "text": "Concurrent result: conc2",
                             },
@@ -1377,6 +1626,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "All done",
                     },

@@ -32,7 +32,7 @@ class MilvusLiteStore(VectorStoreBase):
     field used for flat equality filtering.
 
     .. note:: Install optional dependencies with
-        ``pip install agentscope[milvuslite]``.
+        ``pip install agentscope[vdb-milvus]``.
 
     .. code-block:: python
 

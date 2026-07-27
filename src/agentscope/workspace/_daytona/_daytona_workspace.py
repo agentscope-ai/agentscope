@@ -50,7 +50,7 @@ from typing import Any
 from ..._logging import logger
 from ...mcp import MCPClient
 from .._sandboxed_base import SandboxedWorkspaceBase
-from .._utils import _GATEWAY_BASE_REQUIREMENTS
+from .._utils import _GATEWAY_BASE_REQUIREMENTS, DEFAULT_WORKSPACE_INSTRUCTIONS
 from ._constants import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_TIMEOUT,
@@ -58,24 +58,6 @@ from ._constants import (
     METADATA_WORKSPACE_ID_KEY,
 )
 from ._daytona_backend import DaytonaBackend
-
-_DEFAULT_INSTRUCTIONS = """<workspace>
-You have a Daytona-based sandbox workspace. All tool calls execute
-inside the sandbox at ``{workdir}``.
-
-Layout:
-
-```
-{workdir}
-├── data/        # offloaded multimodal files
-├── skills/      # reusable skills
-└── sessions/    # session context and tool results
-```
-
-Use the MCP-provided tools to interact with the sandbox filesystem
-and processes.
-</workspace>"""
-
 
 # ── the workspace ──────────────────────────────────────────────────
 
@@ -106,7 +88,7 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
         env: dict[str, str] | None = None,
         sandbox_metadata: dict[str, str] | None = None,
         extra_pip: list[str] | None = None,
-        instructions: str = _DEFAULT_INSTRUCTIONS,
+        instructions: str = DEFAULT_WORKSPACE_INSTRUCTIONS,
         default_mcps: list[MCPClient] | None = None,
         skill_paths: list[str] | None = None,
         os_user: str | None = None,
@@ -143,7 +125,7 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
             extra_pip (`list[str] | None`, optional):
                 Extra Python packages installed into the gateway venv
                 during bootstrap.
-            instructions (`str`, defaults to `_DEFAULT_INSTRUCTIONS`):
+            instructions (`str`, defaults to `DEFAULT_WORKSPACE_INSTRUCTIONS`):
                 System-prompt fragment template (supports ``{workdir}``).
             default_mcps (`list[MCPClient] | None`, optional):
                 MCPs registered on first init when no persisted
@@ -238,8 +220,10 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
         SDK-reported sandbox workdir. Before initialization, a readable
         placeholder is used because Daytona paths are not known yet.
         """
-        workdir = self.workdir or "<sandbox workdir>"
-        return self.instructions.format(workdir=workdir)
+        return self.instructions.format(
+            backend="Daytona-based",
+            workdir=self.workdir or "<unknown>",
+        )
 
     # ── internals: Daytona client / sandbox attach / create ─────
 

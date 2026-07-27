@@ -44,6 +44,7 @@ SANDBOX_TMP_DIR = "/tmp"
 #     argv[3] = body_file or ""   (path readable on the sandbox)
 #     argv[4] = inline_limit      (bytes; int as str)
 #     argv[5] = tmp_dir           (where to spill oversized responses)
+#     argv[6] = auth_token or ""  (optional bearer token)
 SHIM_SCRIPT = r"""
 import sys, json, base64, uuid, os
 import urllib.request, urllib.error
@@ -53,6 +54,7 @@ url = sys.argv[2]
 body_file = sys.argv[3]
 inline_limit = int(sys.argv[4])
 tmp_dir = sys.argv[5]
+auth_token = sys.argv[6] if len(sys.argv) > 6 else ""
 
 body = None
 if body_file:
@@ -62,6 +64,8 @@ if body_file:
 req = urllib.request.Request(url, data=body, method=method)
 if body is not None:
     req.add_header("Content-Type", "application/json")
+if auth_token:
+    req.add_header("Authorization", "Bearer " + auth_token)
 
 try:
     with urllib.request.urlopen(req) as resp:

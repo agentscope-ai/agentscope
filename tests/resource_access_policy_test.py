@@ -15,7 +15,14 @@ from agentscope.app.access import (
     ResourceRef,
 )
 from agentscope.app._service import ResourceAccessService
-from agentscope.app.storage import AgentData, AgentRecord, CredentialRecord
+from agentscope.app.storage import (
+    AgentData,
+    AgentRecord,
+    CredentialRecord,
+    EmbeddingModelConfig,
+    KnowledgeBaseData,
+    KnowledgeBaseRecord,
+)
 from agentscope.app.storage import StorageBase
 from agentscope.agent import ContextConfig, ReActConfig
 
@@ -112,6 +119,13 @@ class _FakeStorage:
                 data=_make_agent_data("Own team"),
             ),
         }
+        self.knowledge_bases: dict[tuple[str, str], KnowledgeBaseRecord] = {
+            ("viewer", "kb-1"): KnowledgeBaseRecord(
+                id="kb-1",
+                user_id="viewer",
+                data=_make_kb_data("My KB"),
+            ),
+        }
 
     async def list_credentials(
         self,
@@ -148,6 +162,25 @@ class _FakeStorage:
         """Get an agent."""
         return self.agents.get((user_id, agent_id))
 
+    async def list_knowledge_bases(
+        self,
+        user_id: str,
+    ) -> list[KnowledgeBaseRecord]:
+        """List knowledge bases owned by ``user_id``."""
+        return [
+            record
+            for (owner_id, _), record in self.knowledge_bases.items()
+            if owner_id == user_id
+        ]
+
+    async def get_knowledge_base(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+    ) -> KnowledgeBaseRecord | None:
+        """Get a knowledge base."""
+        return self.knowledge_bases.get((user_id, knowledge_base_id))
+
 
 def _make_agent_data(name: str) -> AgentData:
     """Create valid agent data for tests."""
@@ -156,6 +189,21 @@ def _make_agent_data(name: str) -> AgentData:
         system_prompt="You are a helpful assistant.",
         context_config=ContextConfig(),
         react_config=ReActConfig(),
+    )
+
+
+def _make_kb_data(name: str) -> KnowledgeBaseData:
+    """Create valid knowledge base data for tests."""
+    return KnowledgeBaseData(
+        name=name,
+        description="A test knowledge base.",
+        embedding_model_config=EmbeddingModelConfig(
+            type="openai_credential",
+            credential_id="credential-1",
+            model="text-embedding-3-small",
+            dimensions=1536,
+        ),
+        collection_name="kb_deadbeef",
     )
 
 
@@ -339,6 +387,67 @@ class ResourceAccessServiceTest(IsolatedAsyncioTestCase):
                     "updated_at": AnyValue(),
                     "data": AnyValue(),
                     "editable": False,
+                },
+            ],
+        )
+
+    async def test_get_knowledge_base_view_is_flat(self) -> None:
+        """KB views must lift ``data.*`` to the top level for the wire.
+
+        The frontend reads ``kb.name`` and
+        ``kb.embedding_model_config.model`` flat; a regression that let
+        the storage-layer ``data`` nesting leak onto the wire broke the
+        sidebar name and crashed the panel. Lock the flat shape in.
+        """
+        view = await self.service.get_resource(
+            "viewer",
+            ResourceKind.KNOWLEDGE_BASE,
+            "kb-1",
+        )
+
+        self.assertEqual(
+            view.model_dump(),
+            {
+                "id": "kb-1",
+                "name": "My KB",
+                "description": "A test knowledge base.",
+                "embedding_model_config": {
+                    "type": "openai_credential",
+                    "credential_id": "credential-1",
+                    "model": "text-embedding-3-small",
+                    "dimensions": 1536,
+                    "parameters": {},
+                },
+                "created_at": AnyValue(),
+                "updated_at": AnyValue(),
+                "editable": True,
+            },
+        )
+
+    async def test_list_knowledge_bases_view_is_flat(self) -> None:
+        """Listed KB views must be flat too — same wire contract."""
+        views = await self.service.list_resource(
+            "viewer",
+            ResourceKind.KNOWLEDGE_BASE,
+        )
+
+        self.assertEqual(
+            [v.model_dump() for v in views],
+            [
+                {
+                    "id": "kb-1",
+                    "name": "My KB",
+                    "description": "A test knowledge base.",
+                    "embedding_model_config": {
+                        "type": "openai_credential",
+                        "credential_id": "credential-1",
+                        "model": "text-embedding-3-small",
+                        "dimensions": 1536,
+                        "parameters": {},
+                    },
+                    "created_at": AnyValue(),
+                    "updated_at": AnyValue(),
+                    "editable": True,
                 },
             ],
         )

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Literal
 from ..._logging import logger
 from ...mcp import MCPClient
 from .._sandboxed_base import SandboxedWorkspaceBase
-from .._utils import _GATEWAY_BASE_REQUIREMENTS
+from .._utils import _GATEWAY_BASE_REQUIREMENTS, DEFAULT_WORKSPACE_INSTRUCTIONS
 from ._constants import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_IMAGE,
@@ -31,21 +31,6 @@ if TYPE_CHECKING:
         NetworkPolicy,
         SandboxInfo,
     )
-
-
-_DEFAULT_INSTRUCTIONS = """<workspace>
-You have an OpenSandbox-based workspace. All tool calls execute **inside
-the sandbox** at ``{workdir}``.
-
-Layout:
-
-```
-{workdir}
-├── data/        # offloaded multimodal files
-├── skills/      # reusable skills
-└── sessions/    # session context and tool results
-```
-</workspace>"""
 
 
 class OpenSandboxWorkspace(SandboxedWorkspaceBase):
@@ -78,7 +63,7 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         entrypoint: list[str] | None = None,
         network_policy: NetworkPolicy | None = None,
         extra_pip: list[str] | None = None,
-        instructions: str = _DEFAULT_INSTRUCTIONS,
+        instructions: str = DEFAULT_WORKSPACE_INSTRUCTIONS,
         default_mcps: list[MCPClient] | None = None,
         skill_paths: list[str] | None = None,
     ) -> None:
@@ -121,8 +106,9 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
             extra_pip (`list[str] | None`, optional):
                 Extra Python packages installed into the gateway venv
                 during bootstrap.
-            instructions (`str`, defaults to `_DEFAULT_INSTRUCTIONS`):
-                System-prompt fragment template (supports ``{workdir}``).
+            instructions (`str`, defaults to `DEFAULT_WORKSPACE_INSTRUCTIONS`):
+                Instructions that will be injected into the system prompt,
+                which should receive placeholders "{workdir}".
             default_mcps (`list[MCPClient] | None`, optional):
                 MCPs registered on first init when no persisted
                 ``.mcp`` exists.
@@ -207,7 +193,10 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         the sandbox-side path (``/workspace``). The agent always sees
         sandbox-internal paths.
         """
-        return self.instructions.format(workdir=SANDBOX_WORKDIR)
+        return self.instructions.format(
+            backend="OpenSandbox",
+            workdir=self.workdir,
+        )
 
     def _connection_config(self) -> ConnectionConfig:
         """Build OpenSandbox connection config on demand."""

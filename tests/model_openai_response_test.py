@@ -145,7 +145,10 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             (result.is_last, result.content),
-            (True, [TextBlock.model_construct(id=A, text="Hello!")]),
+            (
+                True,
+                [TextBlock.model_construct(id=A, created_at=A, text="Hello!")],
+            ),
         )
         self.assertEqual(result.id, "resp-openai-1")
 
@@ -174,8 +177,9 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
             (
                 True,
                 [
-                    ToolCallBlock(
+                    ToolCallBlock.model_construct(
                         id="call-1",
+                        created_at=A,
                         name="get_weather",
                         input='{"city":"BJ"}',
                     ),
@@ -205,10 +209,15 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
                 [
                     ThinkingBlock.model_construct(
                         id=A,
+                        created_at=A,
                         thinking="Thinking step...",
                         reasoning_item_id="rs_abc999",
                     ),
-                    TextBlock.model_construct(id=A, text="Answer"),
+                    TextBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        text="Answer",
+                    ),
                 ],
             ),
         )
@@ -235,10 +244,15 @@ class TestOpenAIResponseNonStream(IsolatedAsyncioTestCase):
                 [
                     ThinkingBlock.model_construct(
                         id=A,
+                        created_at=A,
                         thinking="",
                         reasoning_item_id="rs_empty",
                     ),
-                    TextBlock.model_construct(id=A, text="Answer"),
+                    TextBlock.model_construct(
+                        id=A,
+                        created_at=A,
+                        text="Answer",
+                    ),
                 ],
             ),
         )
@@ -318,9 +332,36 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [(r.is_last, r.content) for r in responses],
             [
-                (False, [TextBlock.model_construct(id=A, text="Hello")]),
-                (False, [TextBlock.model_construct(id=A, text=" world")]),
-                (True, [TextBlock.model_construct(id=A, text="Hello world")]),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Hello",
+                        ),
+                    ],
+                ),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text=" world",
+                        ),
+                    ],
+                ),
+                (
+                    True,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Hello world",
+                        ),
+                    ],
+                ),
             ],
         )
 
@@ -366,9 +407,24 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
             [
                 (
                     False,
-                    [ThinkingBlock.model_construct(id=A, thinking="Thinking")],
+                    [
+                        ThinkingBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            thinking="Thinking",
+                        ),
+                    ],
                 ),
-                (False, [TextBlock.model_construct(id=A, text="Answer")]),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Answer",
+                        ),
+                    ],
+                ),
                 # ``reasoning_item_id`` is only known at
                 # ``response.completed``; it is emitted as a dedicated
                 # carrier delta chunk (empty thinking text) that the base
@@ -378,6 +434,7 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
                     [
                         ThinkingBlock.model_construct(
                             id=A,
+                            created_at=A,
                             thinking="",
                             reasoning_item_id="rs_123",
                         ),
@@ -388,10 +445,15 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
                     [
                         ThinkingBlock.model_construct(
                             id=A,
+                            created_at=A,
                             thinking="Thinking",
                             reasoning_item_id="rs_123",
                         ),
-                        TextBlock.model_construct(id=A, text="Answer"),
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Answer",
+                        ),
                     ],
                 ),
             ],
@@ -435,12 +497,22 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [(r.is_last, r.content) for r in responses],
             [
-                (False, [TextBlock.model_construct(id=A, text="Answer")]),
+                (
+                    False,
+                    [
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Answer",
+                        ),
+                    ],
+                ),
                 (
                     False,
                     [
                         ThinkingBlock.model_construct(
                             id=A,
+                            created_at=A,
                             thinking="",
                             reasoning_item_id="rs_empty",
                         ),
@@ -449,9 +521,14 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
                 (
                     True,
                     [
-                        TextBlock.model_construct(id=A, text="Answer"),
+                        TextBlock.model_construct(
+                            id=A,
+                            created_at=A,
+                            text="Answer",
+                        ),
                         ThinkingBlock.model_construct(
                             id=A,
+                            created_at=A,
                             thinking="",
                             reasoning_item_id="rs_empty",
                         ),
@@ -510,8 +587,9 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
                 (
                     False,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
                             id="call-1",
+                            created_at=A,
                             name="search",
                             input='{"q":',
                         ),
@@ -520,8 +598,9 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
                 (
                     False,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
                             id="call-1",
+                            created_at=A,
                             name="search",
                             input='"test"}',
                         ),
@@ -530,8 +609,9 @@ class TestOpenAIResponseStream(IsolatedAsyncioTestCase):
                 (
                     True,
                     [
-                        ToolCallBlock(
+                        ToolCallBlock.model_construct(
                             id="call-1",
+                            created_at=A,
                             name="search",
                             input='{"q":"test"}',
                         ),

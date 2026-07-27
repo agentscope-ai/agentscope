@@ -37,6 +37,7 @@
 		"switchToEn": "Switch to English",
 		"success": "Success",
 		"team": "Team",
+		"uploading": "Uploading",
 		"leader": "Leader",
 		"worker": "Worker",
 		"time": "Time",
@@ -87,7 +88,6 @@
 	},
 	"textInput": {
 		"toComplete": "to complete",
-		"newLine": "new line",
 		"attach": "Attach file",
 		"attachNotSupported": "This model does not support file attachments",
 		"send": "Send",
@@ -100,14 +100,28 @@
 	},
 	"messageBubble": {
 		"thinking": "Thinking",
+		"thinkingFor": "Thinking for {{duration}}",
 		"audioGenerating": "Generating audio…",
 		"playAudio": "Play audio",
 		"pauseAudio": "Pause audio",
 		"running": "Running...",
 		"hintSource": {
 			"tool_output": "Tool Output",
-			"team_message": "Team Message",
-			"schedule": "Schedule"
+			"team": "Team",
+			"team_message": "Team",
+			"schedule": "Schedule",
+			"system": "System"
+		},
+		"error": {
+			"title": "Reply failed",
+			"authentication": "Authentication failed — check the model's API key or credential.",
+			"permission": "Request not allowed — the credential lacks permission for this model or endpoint.",
+			"rate_limit": "Rate limit or quota exceeded — please try again later.",
+			"invalid_request": "The request to the model was rejected as invalid.",
+			"upstream": "The upstream model service returned an error.",
+			"connection": "Could not reach the model service — network error or timeout.",
+			"internal": "An unexpected internal error occurred.",
+			"unknown": "The reply failed with an unknown error."
 		}
 	},
 	"chat": {
@@ -118,8 +132,7 @@
 		"subagentConfirmTitle": "{{name}} requests confirmation",
 		"newSession": "New Session",
 		"noSessions": "No sessions yet",
-		"noMessages": "No Messages Yet",
-		"noMessagesDesc": "Start your conversation by sending a message",
+		"greeting": "Where should we start?",
 		"agent": {
 			"selectPlaceholder": "Select an agent",
 			"emptyTitle": "No agents",

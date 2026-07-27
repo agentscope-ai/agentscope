@@ -44,7 +44,7 @@ from typing import Any
 from ..._logging import logger
 from ...mcp import MCPClient
 from .._sandboxed_base import SandboxedWorkspaceBase
-from .._utils import _GATEWAY_BASE_REQUIREMENTS
+from .._utils import _GATEWAY_BASE_REQUIREMENTS, DEFAULT_WORKSPACE_INSTRUCTIONS
 from ._constants import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_TEMPLATE,
@@ -54,20 +54,6 @@ from ._constants import (
     SANDBOX_WORKDIR,
 )
 from ._e2b_backend import E2BBackend
-
-_DEFAULT_INSTRUCTIONS = """<workspace>
-You have an E2B-based cloud workspace. All tool calls execute **inside
-the sandbox** at ``{workdir}``.
-
-Layout:
-
-```
-{workdir}
-├── data/        # offloaded multimodal files
-├── skills/      # reusable skills
-└── sessions/    # session context and tool results
-```
-</workspace>"""
 
 
 # ── the workspace ──────────────────────────────────────────────────
@@ -98,7 +84,7 @@ class E2BWorkspace(SandboxedWorkspaceBase):
         env: dict[str, str] | None = None,
         sandbox_metadata: dict[str, str] | None = None,
         extra_pip: list[str] | None = None,
-        instructions: str = _DEFAULT_INSTRUCTIONS,
+        instructions: str = DEFAULT_WORKSPACE_INSTRUCTIONS,
         default_mcps: list[MCPClient] | None = None,
         skill_paths: list[str] | None = None,
     ) -> None:
@@ -128,7 +114,7 @@ class E2BWorkspace(SandboxedWorkspaceBase):
             extra_pip (`list[str] | None`, optional):
                 Extra Python packages installed into the gateway venv
                 during bootstrap.
-            instructions (`str`, defaults to `_DEFAULT_INSTRUCTIONS`):
+            instructions (`str`, defaults to `DEFAULT_WORKSPACE_INSTRUCTIONS`):
                 System-prompt fragment template (supports ``{workdir}``).
             default_mcps (`list[MCPClient] | None`, optional):
                 MCPs registered on first init when no persisted
@@ -152,7 +138,10 @@ class E2BWorkspace(SandboxedWorkspaceBase):
         self.env: dict[str, str] = dict(env or {})
         self.sandbox_metadata: dict[str, str] = dict(sandbox_metadata or {})
         self.extra_pip: list[str] = list(extra_pip or [])
-        self.instructions = instructions
+        self.instructions = instructions.format(
+            backend="E2B-based",
+            workdir=self.workdir,
+        )
 
         # ── runtime state (E2B-only) ────────────────────────────
         self._sandbox: Any = None  # e2b.AsyncSandbox
