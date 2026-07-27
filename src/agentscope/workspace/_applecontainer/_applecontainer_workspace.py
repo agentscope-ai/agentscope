@@ -243,16 +243,23 @@ class AppleContainerWorkspace(SandboxedWorkspaceBase):
             RuntimeError: If the CLI is not installed or the system
                 service is not running.
         """
-        process = await asyncio.create_subprocess_exec(
-            "container",
-            "system",
-            "version",
-            "--format",
-            "json",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await process.communicate()
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "container",
+                "system",
+                "version",
+                "--format",
+                "json",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await process.communicate()
+        except FileNotFoundError as e:
+            # The ``container`` binary itself is missing.
+            raise RuntimeError(
+                "Apple Container CLI is not installed. Install it "
+                "first: https://github.com/apple/container",
+            ) from e
         if process.returncode != 0:
             raise RuntimeError(
                 "Apple Container CLI is not available. "
@@ -398,7 +405,11 @@ class AppleContainerWorkspace(SandboxedWorkspaceBase):
             try:
                 info = json.loads(stdout.decode())
             except (json.JSONDecodeError, UnicodeDecodeError):
-                info = {}
+                info = None
+            # ``container inspect`` may return a bare object or a
+            # single-element array (Docker-compatible shape).
+            if isinstance(info, list):
+                info = info[0] if info else None
             if isinstance(info, dict) and info.get(
                 "status",
                 "",

@@ -13,6 +13,7 @@ import shutil
 import sys
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, patch
 
 from agentscope.mcp import MCPClient, StdioMCPConfig
 from agentscope.workspace import AppleContainerBackend, AppleContainerWorkspace
@@ -133,6 +134,94 @@ class TestImageRefNormalization(unittest.TestCase):
             ),
             "alpine@sha256:abc123...",
         )
+
+
+#: Patch target for the CLI spawn inside the workspace module.
+_WS_EXEC_PATCH = (
+    "agentscope.workspace._applecontainer._applecontainer_workspace."
+    "asyncio.create_subprocess_exec"
+)
+
+
+def _ws_proc(
+    returncode: int = 0,
+    stdout: bytes = b"",
+    stderr: bytes = b"",
+) -> AsyncMock:
+    """An awaited-process mock with the given return code and output."""
+    proc = AsyncMock()
+    proc.returncode = returncode
+    proc.communicate.return_value = (stdout, stderr)
+    return proc
+
+
+class TestAppleContainerWorkspaceInternals(IsolatedAsyncioTestCase):
+    """Mocked tests for CLI check and reattach parsing — no container."""
+
+    @patch(_WS_EXEC_PATCH, new_callable=AsyncMock)
+    async def test_check_cli_missing_binary_raises_runtimeerror(
+        self,
+        mock_exec: AsyncMock,
+    ) -> None:
+        """A missing ``container`` binary surfaces as ``RuntimeError``."""
+        mock_exec.side_effect = FileNotFoundError("no container binary")
+        ws = AppleContainerWorkspace()
+        with self.assertRaises(RuntimeError) as ctx:
+            await ws._check_cli()
+        self.assertIn("not installed", str(ctx.exception))
+
+    @patch(_WS_EXEC_PATCH, new_callable=AsyncMock)
+    async def test_check_cli_service_down_raises_runtimeerror(
+        self,
+        mock_exec: AsyncMock,
+    ) -> None:
+        """A non-zero exit surfaces the ``container system start`` hint."""
+        mock_exec.return_value = _ws_proc(1, b"", b"service down")
+        ws = AppleContainerWorkspace()
+        with self.assertRaises(RuntimeError) as ctx:
+            await ws._check_cli()
+        self.assertIn("container system start", str(ctx.exception))
+
+    @patch(_WS_EXEC_PATCH, new_callable=AsyncMock)
+    async def test_reattach_array_running_skips_start(
+        self,
+        mock_exec: AsyncMock,
+    ) -> None:
+        """Array-shaped ``inspect`` reporting running skips ``start``."""
+        calls: list = []
+
+        def _fake(*args, **_kwargs):
+            calls.append(args)
+            if args[1] == "inspect":
+                return _ws_proc(0, b'[{"status": "running"}]')
+            return _ws_proc(0)
+
+        mock_exec.side_effect = _fake
+        ws = AppleContainerWorkspace()
+        await ws._start_container_if_stopped()
+        spawned = [a[1] for a in calls]
+        self.assertIn("inspect", spawned)
+        self.assertNotIn("start", spawned)
+
+    @patch(_WS_EXEC_PATCH, new_callable=AsyncMock)
+    async def test_reattach_array_stopped_triggers_start(
+        self,
+        mock_exec: AsyncMock,
+    ) -> None:
+        """Array-shaped ``inspect`` reporting stopped triggers ``start``."""
+        calls: list = []
+
+        def _fake(*args, **_kwargs):
+            calls.append(args)
+            if args[1] == "inspect":
+                return _ws_proc(0, b'[{"status": "stopped"}]')
+            return _ws_proc(0)
+
+        mock_exec.side_effect = _fake
+        ws = AppleContainerWorkspace()
+        await ws._start_container_if_stopped()
+        spawned = [a[1] for a in calls]
+        self.assertIn("start", spawned)
 
 
 @unittest.skipUnless(_CONTAINER_CLI, _RUN_REASON)

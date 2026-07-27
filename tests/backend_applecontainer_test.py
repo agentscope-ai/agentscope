@@ -13,6 +13,7 @@ import sys
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
 from agentscope.tool import ExecResult
 from agentscope.workspace import AppleContainerBackend
@@ -281,6 +282,8 @@ class TestAppleContainerBackend(IsolatedAsyncioTestCase):
     """Test cases against a real Apple Container."""
 
     WORKDIR = "/workspace"
+    #: Unique per run so a leaked container never collides on re-run.
+    container_name = f"as_test_backend_{uuid4().hex[:8]}"
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -298,7 +301,7 @@ class TestAppleContainerBackend(IsolatedAsyncioTestCase):
 
     @classmethod
     async def _setup_container(cls) -> None:
-        """Create a container for testing."""
+        """Create a container for testing and its ``/workspace`` root."""
         import asyncio
 
         proc = await asyncio.create_subprocess_exec(
@@ -306,42 +309,53 @@ class TestAppleContainerBackend(IsolatedAsyncioTestCase):
             "run",
             "-d",
             "--name",
-            "as_test_backend",
+            cls.container_name,
             "python:3.11-slim",
             "sleep",
             "infinity",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await proc.communicate()
+        _stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
             raise RuntimeError(
                 f"Failed to create test container: "
                 f"{stderr.decode(errors='replace')}",
             )
-        cls.container_id = stdout.decode().strip() or "as_test_backend"
+        # The bare image has no ``/workspace``; create it so exec calls
+        # using ``--workdir /workspace`` resolve to an existing dir.
+        mkdir = await asyncio.create_subprocess_exec(
+            "container",
+            "exec",
+            cls.container_name,
+            "mkdir",
+            "-p",
+            cls.WORKDIR,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await mkdir.communicate()
 
     @classmethod
     async def _teardown_container(cls) -> None:
-        """Remove the test container."""
+        """Stop and remove the test container, awaiting completion."""
         import asyncio
 
-        await asyncio.create_subprocess_exec(
-            "container",
-            "stop",
-            "as_test_backend",
-        )
-        await asyncio.create_subprocess_exec(
-            "container",
-            "rm",
-            "-f",
-            "as_test_backend",
-        )
+        for args in (
+            ("container", "stop", cls.container_name),
+            ("container", "rm", "-f", cls.container_name),
+        ):
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await proc.communicate()
 
     def setUp(self) -> None:
         """Create a backend instance for each test."""
         self.backend = AppleContainerBackend(
-            container_id="as_test_backend",
+            container_id=self.container_name,
             workdir=self.WORKDIR,
         )
 
