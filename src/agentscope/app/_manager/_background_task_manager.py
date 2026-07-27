@@ -293,6 +293,7 @@ class BackgroundTaskManager:
                 "agent_id": agent_id,
                 "started_at": time.time(),
             },
+            ensure_ascii=False,
         )
         await self._message_bus.registry_set(
             MessageBusKeys.bg_tasks(session_id),

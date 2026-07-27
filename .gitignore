@@ -16,6 +16,11 @@ eggs/
 .eggs/
 lib/
 lib64/
+# JS/Node frontend uses lib/ as a source directory (shadcn convention).
+# Re-include it so newly added files under examples/web_ui/frontend/src/lib/
+# aren't silently swallowed by the Python-oriented lib/ rule above.
+!examples/web_ui/frontend/src/lib/
+!examples/web_ui/frontend/src/lib/**
 parts/
 sdist/
 var/

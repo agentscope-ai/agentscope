@@ -13,6 +13,7 @@ from ._schedule import (
 )
 from ._agent import (
     AgentSchemaResponse,
+    AgentSchemaV2Response,
     ListAgentsResponse,
     CreateAgentRequest,
     CreateAgentResponse,
@@ -25,12 +26,31 @@ from ._credential import (
     ListCredentialsResponse,
     ListCredentialSchemasResponse,
 )
+from ._knowledge_base import (
+    CreateKnowledgeBaseRequest,
+    CreateKnowledgeBaseResponse,
+    KbEmbeddingProvider,
+    KbMiddlewareParametersSchemaResponse,
+    KnowledgeDocumentView,
+    ListKbEmbeddingModelsResponse,
+    ListKnowledgeBasesResponse,
+    ListKnowledgeDocumentsResponse,
+    ListKnowledgeDocumentStatusResponse,
+    ListSupportedContentTypesResponse,
+    SearchKnowledgeBaseRequest,
+    SearchKnowledgeBaseResponse,
+    UpdateKnowledgeBaseRequest,
+    UploadKnowledgeDocumentResponse,
+)
 from ._session import (
     CreateSessionRequest,
     CreateSessionResponse,
+    InterruptSessionResponse,
     UpdateSessionRequest,
     ListSessionsResponse,
     ListMessagesResponse,
+    SessionStatus,
+    SessionStatusResponse,
     SessionView,
     TeamDetailResponse,
     TeamMemberView,
@@ -39,6 +59,7 @@ from ._session import (
 __all__ = [
     # Agent
     "AgentSchemaResponse",
+    "AgentSchemaV2Response",
     "ListAgentsResponse",
     "CreateAgentRequest",
     "CreateAgentResponse",
@@ -53,6 +74,21 @@ __all__ = [
     "UpdateCredentialRequest",
     "ListCredentialsResponse",
     "ListCredentialSchemasResponse",
+    # Knowledge base
+    "CreateKnowledgeBaseRequest",
+    "CreateKnowledgeBaseResponse",
+    "KbEmbeddingProvider",
+    "KbMiddlewareParametersSchemaResponse",
+    "KnowledgeDocumentView",
+    "ListKbEmbeddingModelsResponse",
+    "ListKnowledgeBasesResponse",
+    "ListKnowledgeDocumentsResponse",
+    "ListKnowledgeDocumentStatusResponse",
+    "ListSupportedContentTypesResponse",
+    "SearchKnowledgeBaseRequest",
+    "SearchKnowledgeBaseResponse",
+    "UpdateKnowledgeBaseRequest",
+    "UploadKnowledgeDocumentResponse",
     # Model
     "ListModelsRequest",
     "ListModelsResponse",
@@ -68,9 +104,12 @@ __all__ = [
     # Session
     "CreateSessionRequest",
     "CreateSessionResponse",
+    "InterruptSessionResponse",
     "UpdateSessionRequest",
     "ListSessionsResponse",
     "ListMessagesResponse",
+    "SessionStatus",
+    "SessionStatusResponse",
     "SessionView",
     "TeamDetailResponse",
     "TeamMemberView",

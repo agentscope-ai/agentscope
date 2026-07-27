@@ -55,29 +55,15 @@ class GeminiListModelsTest(IsolatedAsyncioTestCase):
                 "status": "active",
                 "input_types": ["text/plain"],
                 "output_types": ["application/x-embedding"],
+                "dimensions": 3072,
+                "supported_dimensions": [3072, 1536, 768, 512, 256, 128],
                 "context_size": 2048,
                 "parameter_schema": {
                     "type": "object",
-                    "properties": {
-                        "dimensions": {
-                            "default": 3072,
-                            "description": (
-                                "The output embedding vector dimensions."
-                            ),
-                            "enum": [3072, 1536, 768, 512, 256, 128],
-                            "exclusiveMinimum": 0,
-                            "title": "Dimensions",
-                            "type": "integer",
-                        },
-                    },
+                    "properties": {},
                     "required": [],
                 },
-                "parameter_overrides": {
-                    "dimensions": {
-                        "default": 3072,
-                        "enum": [3072, 1536, 768, 512, 256, 128],
-                    },
-                },
+                "parameter_overrides": {},
             },
         )
 
@@ -88,10 +74,7 @@ class GeminiListModelsTest(IsolatedAsyncioTestCase):
         self.assertIn("image/png", card.input_types)
         self.assertIn("application/pdf", card.input_types)
         self.assertEqual(card.context_size, 8192)
-        self.assertEqual(
-            card.parameter_schema["properties"]["dimensions"]["enum"],
-            [3072, 1536, 768],
-        )
+        self.assertEqual(card.supported_dimensions, [3072, 1536, 768])
 
 
 class GeminiTextCallTest(IsolatedAsyncioTestCase):

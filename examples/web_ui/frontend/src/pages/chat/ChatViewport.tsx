@@ -1,19 +1,21 @@
 import type { PermissionContext } from '@agentscope-ai/agentscope/permission';
 import type { TaskContext } from '@agentscope-ai/agentscope/state';
-import { BookText, ChevronDown, ListTodo, PanelRight, ShieldCheck } from 'lucide-react';
+import { BookText, ChevronDown, Database, ListTodo, PanelRight, ShieldCheck } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import type { ChatModelConfig, TTSModelConfig } from '@/api';
+import type { ChatModelConfig, SessionKnowledgeConfig, TTSModelConfig } from '@/api';
 import { sessionApi } from '@/api';
 import MCPSvg from '@/assets/images/mcp.svg?react';
 import { ChatContent } from '@/components/chat/ChatContent.tsx';
 import { SubagentHitlCard } from '@/components/chat/SubagentHitlCard';
 import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDialog';
+import { KnowledgeBasePanel } from '@/components/panel/KnowledgeBasePanel';
 import { McpPanel } from '@/components/panel/McpPanel';
 import { PanelDock, type PanelDescriptor, type PanelKey } from '@/components/panel/PanelDock.tsx';
 import { PermissionPanel } from '@/components/panel/PermissionPanel';
 import { SkillPanel } from '@/components/panel/SkillPanel';
 import { TaskPanel } from '@/components/panel/TaskPanel';
+import { KnowledgeBaseParametersPopover } from '@/components/popover/KnowledgeBaseParametersPopover';
 import { ModelParametersPopover } from '@/components/popover/ModelParametersPopover';
 import { LlmSelect } from '@/components/select/LlmSelect';
 import { PermissionModeSelect } from '@/components/select/PermissionModeSelect.tsx';
@@ -32,6 +34,8 @@ import {
 } from '@/components/ui/resizable.tsx';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
+import { useKnowledgeBaseMiddlewareSchema } from '@/hooks/useKnowledgeBaseMiddlewareSchema';
+import { useKnowledgeBases } from '@/hooks/useKnowledgeBases';
 import { useMessages } from '@/hooks/useMessages';
 import { useSessions } from '@/hooks/useSessions';
 import { useWorkspace } from '@/hooks/useWorkspace.ts';
@@ -132,6 +136,8 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		null,
 	);
 	const [selectedTTSModel, setSelectedTTSModel] = useState<TTSModelConfig | null>(null);
+	const [selectedKnowledgeConfig, setSelectedKnowledgeConfig] =
+		useState<SessionKnowledgeConfig | null>(null);
 	const [selectedPermissionMode, setSelectedPermissionMode] = useState<string>('default');
 	const [credentialOpen, setCredentialOpen] = useState(false);
 	const [credentialRefetchTrigger, setCredentialRefetchTrigger] = useState(0);
@@ -150,14 +156,11 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		}
 	}, []);
 
-	const { msgs, streaming, send, onUserConfirm, onSubagentConfirm, subagentHitl } = useMessages(
-		agentId,
-		sessionId,
-		{
+	const { msgs, phase, send, onUserConfirm, onSubagentConfirm, subagentHitl, interrupt } =
+		useMessages(agentId, sessionId, {
 			onTeamUpdated: handleTeamUpdated,
 			onStateUpdated: handleStateUpdated,
-		},
-	);
+		});
 	const {
 		mcps,
 		loading: mcpsLoading,
@@ -168,6 +171,8 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		addSkill,
 		removeSkill,
 	} = useWorkspace(agentId, sessionId);
+	const { knowledgeBases, loading: knowledgeBasesLoading } = useKnowledgeBases();
+	const { schema: kbMiddlewareSchema } = useKnowledgeBaseMiddlewareSchema();
 
 	// Toggle a panel open/closed from the top-bar buttons.
 	const togglePanel = useCallback((key: PanelKey) => {
@@ -186,6 +191,28 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	const isPanelOpen = useCallback(
 		(key: PanelKey) => panelLayout.some((column) => column.includes(key)),
 		[panelLayout],
+	);
+
+	/**
+	 * Persist a knowledge-base attachment change. `null` detaches every
+	 * knowledge base from this session, removing the `RAGMiddleware`.
+	 *
+	 * Declared above `panels` (rather than alongside the other model
+	 * handlers below) because `panels` is built inside `useMemo` and
+	 * references this handler eagerly — a later `const` would still be
+	 * in the temporal dead zone when the memo factory runs on first
+	 * render.
+	 *
+	 * @param config - New attachment, or `null` to detach all.
+	 */
+	const handleKnowledgeConfigChange = useCallback(
+		async (config: SessionKnowledgeConfig | null) => {
+			if (!sessionId || !agentId) return;
+			setSelectedKnowledgeConfig(config);
+			await sessionApi.update(sessionId, agentId, { knowledge_config: config });
+			await refetchSessions();
+		},
+		[sessionId, agentId, refetchSessions],
 	);
 
 	// Build the panel descriptors with live data. Rebuilt on every
@@ -236,6 +263,36 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 				icon: <ShieldCheck className="size-4" />,
 				content: <PermissionPanel permissionContext={permissionContext} />,
 			},
+			knowledge: {
+				title: (
+					<span className="flex items-center gap-x-2">
+						{t('panel.knowledge.title')}
+						{selectedKnowledgeConfig?.knowledge_base_ids.length ? (
+							<Badge variant="outline">
+								{selectedKnowledgeConfig.knowledge_base_ids.length}
+							</Badge>
+						) : null}
+					</span>
+				),
+				icon: <Database className="size-4" />,
+				actions: (
+					<KnowledgeBaseParametersPopover
+						value={selectedKnowledgeConfig}
+						schema={kbMiddlewareSchema}
+						onChange={handleKnowledgeConfigChange}
+						disabled={!sessionId}
+					/>
+				),
+				content: (
+					<KnowledgeBasePanel
+						knowledgeBases={knowledgeBases}
+						loading={knowledgeBasesLoading}
+						value={selectedKnowledgeConfig}
+						onChange={handleKnowledgeConfigChange}
+						disabled={!sessionId}
+					/>
+				),
+			},
 		}),
 		[
 			t,
@@ -249,6 +306,12 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 			addSkill,
 			removeSkill,
 			permissionContext,
+			knowledgeBases,
+			knowledgeBasesLoading,
+			selectedKnowledgeConfig,
+			kbMiddlewareSchema,
+			handleKnowledgeConfigChange,
+			sessionId,
 		],
 	);
 
@@ -277,6 +340,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		setSelectedModel(null);
 		setSelectedFallbackModel(null);
 		setSelectedTTSModel(null);
+		setSelectedKnowledgeConfig(null);
 	}, [sessionId]);
 
 	const selectedModelCard = useMemo(() => {
@@ -381,6 +445,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 
 		setSelectedFallbackModel(view.session.config.fallback_chat_model_config ?? null);
 		setSelectedTTSModel(view.session.config.tts_model_config ?? null);
+		setSelectedKnowledgeConfig(view.session.config.knowledge_config ?? null);
 	}, [view, groups, sessionId, agentId]);
 
 	// Sync selectedPermissionMode when the session changes. Same
@@ -534,6 +599,14 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 												<ShieldCheck />
 												{t('panel.permission.title')}
 											</DropdownMenuCheckboxItem>
+											<DropdownMenuCheckboxItem
+												checked={isPanelOpen('knowledge')}
+												onCheckedChange={() => togglePanel('knowledge')}
+												onSelect={(e) => e.preventDefault()}
+											>
+												<Database />
+												{t('panel.knowledge.title')}
+											</DropdownMenuCheckboxItem>
 										</DropdownMenuContent>
 									</DropdownMenu>
 								</div>
@@ -542,28 +615,25 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 								<ChatContent
 									className={'max-w-[var(--chat-content-w)] w-full'}
 									msgs={msgs}
-									sending={streaming}
+									phase={phase}
 									disabled={selectedModel === null}
 									onSend={send}
 									onUserConfirm={onUserConfirm}
+									onInterrupt={interrupt}
 									footerSlot={
 										subagentHitl.length > 0 ? (
-											<div className="space-y-2 pb-2">
-												{subagentHitl.map((entry) => (
-													<SubagentHitlCard
-														key={`${entry.worker_session_id}:${entry.reply_id}`}
-														entry={entry}
-														onConfirm={(toolCall, confirm, rules) =>
-															onSubagentConfirm(
-																entry,
-																toolCall,
-																confirm,
-																rules,
-															)
-														}
-													/>
-												))}
-											</div>
+											<SubagentHitlCard
+												key={`${subagentHitl[0].worker_session_id}:${subagentHitl[0].reply_id}`}
+												entry={subagentHitl[0]}
+												onConfirm={(toolCall, confirm, rules) =>
+													onSubagentConfirm(
+														subagentHitl[0],
+														toolCall,
+														confirm,
+														rules,
+													)
+												}
+											/>
 										) : null
 									}
 									allowedInputTypes={(
@@ -589,6 +659,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 														file.type || 'application/octet-stream',
 												},
 												name: file.name,
+												created_at: new Date().toISOString(),
 											};
 										}
 										if (file.type === 'text/plain') {
@@ -597,6 +668,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 												id: crypto.randomUUID(),
 												type: 'text' as const,
 												text: `[File: ${file.name}]\n${text}`,
+												created_at: new Date().toISOString(),
 											};
 										}
 										const buffer = await file.arrayBuffer();
@@ -615,6 +687,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 												data: base64,
 											},
 											name: file.name,
+											created_at: new Date().toISOString(),
 										};
 									}}
 								/>

@@ -16,7 +16,5 @@ output_types:
 
 context_size: 8192
 
-parameter_overrides:
-  dimensions:
-    default: 3072
-    enum: [3072, 1536, 768]
+dimensions: 3072
+supported_dimensions: [3072, 1536, 768]

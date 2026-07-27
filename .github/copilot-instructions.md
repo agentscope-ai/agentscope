@@ -8,7 +8,7 @@ You should conduct a strict code review. Each requirement is labeled with priori
 ## 1. Code Quality
 
 ### [MUST] Lazy Loading
-- Third-party library dependencies should be imported at the point of use, avoid centralized imports at file top
+- **Third-party library** dependencies should be imported at the point of use, avoid centralized imports at file top
   - The `Third-party library` refers to libraries not included in the `dependencies` variable in `pyproject.toml`.
 - For base class imports, use factory pattern:
 ```python
@@ -38,6 +38,7 @@ After understanding the code intent, check if it can be optimized:
 - New features must include unit tests
 - New dependencies need to be added to the corresponding section in `pyproject.toml`
 - Dependencies for non-core scenarios should not be added to the minimal dependency list
+- Test assertions MUST compare the entire data structure rather than asserting individual fields, so reviewers can quickly understand the test intent. For random or non-deterministic fields, use `AnyString` and `AnyValue` from `tests/utils.py` for matching
 
 ## 4. Code Standards
 

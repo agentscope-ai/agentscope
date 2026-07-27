@@ -17,6 +17,7 @@ import { AgentDialog } from '@/components/dialog/AgentDialog';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog';
 import { EditAgentDialog } from '@/components/dialog/EditAgentDialog';
 import { RenameSessionDialog } from '@/components/dialog/RenameSessionDialog';
+import { AgentSelect } from '@/components/select/AgentSelect';
 import { TeamSidebar } from '@/components/team/TeamSidebar';
 import { ChatTourController } from '@/components/tour/ChatTourController';
 import { Button } from '@/components/ui/button';
@@ -34,13 +35,6 @@ import {
 	EmptyContent,
 	EmptyMedia,
 } from '@/components/ui/empty';
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from '@/components/ui/select';
 import {
 	Sidebar,
 	SidebarContent,
@@ -215,38 +209,20 @@ const ChatPageInner = () => {
 							{localStorage.getItem('server_url')}
 						</span>
 						<div className="flex flex-row gap-x-2 items-center">
-							<Select
-								value={urlAgentId ?? ''}
-								onValueChange={(id) => navigate(`/chat/${id}`)}
-							>
-								<SelectTrigger className="w-full" size="sm">
-									<SelectValue placeholder={t('chat.agent.selectPlaceholder')} />
-								</SelectTrigger>
-								<SelectContent position="popper">
-									{agents.length === 0 ? (
-										<Empty className="border-none py-4">
-											<EmptyHeader>
-												<EmptyTitle>
-													{t('chat.agent.emptyTitle')}
-												</EmptyTitle>
-												<EmptyDescription>
-													{t('chat.agent.emptyDescription')}
-												</EmptyDescription>
-											</EmptyHeader>
-										</Empty>
-									) : (
-										agents.map((agent) => (
-											<SelectItem key={agent.id} value={agent.id}>
-												{agent.data.name}
-											</SelectItem>
-										))
-									)}
-								</SelectContent>
-							</Select>
+							<AgentSelect
+								agents={agents}
+								value={urlAgentId ?? null}
+								onChange={(id) => navigate(`/chat/${id}`)}
+							/>
 							<Button
 								size="icon"
 								variant="ghost"
-								disabled={!urlAgentId}
+								disabled={!urlAgentId || !selectedAgent?.editable}
+								tooltip={
+									selectedAgent && !selectedAgent.editable
+										? t('common.readOnlyTooltip')
+										: undefined
+								}
 								onClick={() => setEditOpen(true)}
 							>
 								<Settings2 />
@@ -254,7 +230,12 @@ const ChatPageInner = () => {
 							<Button
 								size="icon"
 								variant="ghost"
-								disabled={!urlAgentId}
+								disabled={!urlAgentId || !selectedAgent?.editable}
+								tooltip={
+									selectedAgent && !selectedAgent.editable
+										? t('common.readOnlyTooltip')
+										: undefined
+								}
 								onClick={() => setDeleteOpen(true)}
 							>
 								<Trash2 className="text-destructive" />

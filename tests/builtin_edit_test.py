@@ -121,7 +121,7 @@ class EditToolTest(IsolatedAsyncioTestCase):
         """Test match_rule with glob patterns."""
         # Test exact match
         self.assertTrue(
-            self.edit_tool.match_rule(
+            await self.edit_tool.match_rule(
                 "test.py",
                 {"file_path": "test.py"},
             ),
@@ -129,7 +129,7 @@ class EditToolTest(IsolatedAsyncioTestCase):
 
         # Test wildcard pattern
         self.assertTrue(
-            self.edit_tool.match_rule(
+            await self.edit_tool.match_rule(
                 "*.py",
                 {"file_path": "test.py"},
             ),
@@ -137,7 +137,7 @@ class EditToolTest(IsolatedAsyncioTestCase):
 
         # Test directory pattern
         self.assertTrue(
-            self.edit_tool.match_rule(
+            await self.edit_tool.match_rule(
                 "/tmp/**",
                 {"file_path": "/tmp/test.py"},
             ),
@@ -145,7 +145,7 @@ class EditToolTest(IsolatedAsyncioTestCase):
 
         # Test non-matching pattern
         self.assertFalse(
-            self.edit_tool.match_rule(
+            await self.edit_tool.match_rule(
                 "*.txt",
                 {"file_path": "test.py"},
             ),
@@ -153,7 +153,7 @@ class EditToolTest(IsolatedAsyncioTestCase):
 
         # Test empty file_path
         self.assertFalse(
-            self.edit_tool.match_rule(
+            await self.edit_tool.match_rule(
                 "*.py",
                 {"file_path": ""},
             ),
@@ -163,7 +163,7 @@ class EditToolTest(IsolatedAsyncioTestCase):
         """Test generate_suggestions for file operations."""
 
         # Test suggestion for file in subdirectory
-        suggestions = self.edit_tool.generate_suggestions(
+        suggestions = await self.edit_tool.generate_suggestions(
             {"file_path": "/tmp/project/src/main.py"},
         )
 
@@ -176,7 +176,7 @@ class EditToolTest(IsolatedAsyncioTestCase):
         self.assertIn("/tmp/project/src/**", suggestion_contents)
 
         # Test suggestion for file in root
-        suggestions = self.edit_tool.generate_suggestions(
+        suggestions = await self.edit_tool.generate_suggestions(
             {"file_path": "/test.py"},
         )
         self.assertGreater(len(suggestions), 0)

@@ -1,7 +1,6 @@
 name: cosyvoice-v3-flash
 label: CosyVoice-v3-Flash
 status: active
-realtime: true
 
 input_types:
   - text/plain
@@ -15,11 +14,10 @@ voices:
   - longanhuan
   - longhuhu_v3
   - longyingmu_v3
-  - longxiaochun
-  - longxiaoxia
-  - longlaotie
-  - longshuo
-  - longjing
-  - longshu
+  - longxiaochun_v3
+  - longxiaoxia_v3
+  - longlaotie_v3
+  - longshuo_v3
+  - longshu_v3
 
 parameter_overrides: {}

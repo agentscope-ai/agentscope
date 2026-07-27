@@ -159,6 +159,8 @@ class TestSchedulerFireDelivery(_SchedulerFireTestBase):
             {
                 "type": "hint",
                 "id": AnyString(),
+                "created_at": AnyString(),
+                "finished_at": AnyString(),
                 "hint": AnyString(),
                 "source": json.dumps(
                     {"label": "schedule", "sublabel": record.data.name},
