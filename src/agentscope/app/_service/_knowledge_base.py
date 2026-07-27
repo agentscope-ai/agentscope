@@ -22,6 +22,7 @@ from typing import IO, TYPE_CHECKING
 
 from fastapi import HTTPException, status
 
+from ..access import ResourceKind
 from ..rag.knowledge_base_manager import (
     DimensionPolicyError,
     KnowledgeBaseNotFoundError,
@@ -32,6 +33,7 @@ from ..storage import (
 )
 from ..._logging import logger
 from .._bus_ops import enqueue_index_task
+from ._access import ResourceAccessService
 
 if TYPE_CHECKING:
     from ..rag.blob_store import BlobStoreBase
@@ -62,6 +64,7 @@ class KnowledgeBaseService:
         knowledge_base_manager: "KnowledgeBaseManagerBase",
         blob_store: "BlobStoreBase",
         message_bus: "MessageBus",
+        resource_access_service: "ResourceAccessService",
     ) -> None:
         """Initialize the service.
 
@@ -82,11 +85,17 @@ class KnowledgeBaseService:
                 :func:`~agentscope.app._bus_ops.enqueue_index_task`;
                 a co-located or out-of-process
                 :class:`IndexTaskConsumer` drains and processes them.
+            resource_access_service (`ResourceAccessService`):
+                Cross-owner access resolver. Every KB lookup (read
+                *and* mutation) goes through it so shared knowledge
+                bases work end-to-end: readers see documents +
+                search hits, editors can also upload / delete.
         """
         self._storage = storage
         self._manager = knowledge_base_manager
         self._blob_store = blob_store
         self._bus = message_bus
+        self._access = resource_access_service
 
     # ------------------------------------------------------------------
     # Knowledge base CRUD
@@ -161,8 +170,9 @@ class KnowledgeBaseService:
         Only ``name`` and ``description`` are mutable.  The embedding
         model configuration is pinned at creation time.
         """
+        owner_id = await self._require_edit(user_id, knowledge_base_id)
         record = await self._manager.update_knowledge_base(
-            user_id=user_id,
+            user_id=owner_id,
             knowledge_base_id=knowledge_base_id,
             name=name,
             description=description,
@@ -186,15 +196,16 @@ class KnowledgeBaseService:
         best-effort here so disk space is reclaimed even though the
         manager + storage cascade would otherwise orphan them.
         """
+        owner_id = await self._require_edit(user_id, knowledge_base_id)
         documents = await self._storage.list_knowledge_documents(
-            user_id,
+            owner_id,
             knowledge_base_id,
         )
         for document in documents:
             await self._delete_blob_quietly(document.data.blob_uri)
 
         deleted = await self._manager.delete_knowledge_base(
-            user_id,
+            owner_id,
             knowledge_base_id,
         )
         if not deleted:
@@ -252,8 +263,9 @@ class KnowledgeBaseService:
                 ``404`` if the knowledge base does not exist.
         """
         # Authorise before touching the blob store: raising after a
-        # write would leave the blob orphaned.
-        await self._authorise_kb(user_id, knowledge_base_id)
+        # write would leave the blob orphaned. Uploading a document is
+        # a mutation, so require edit permission.
+        owner_id = await self._require_edit(user_id, knowledge_base_id)
 
         document_id = uuid.uuid4().hex
         blob_uri = await self._blob_store.write_stream(
@@ -263,7 +275,7 @@ class KnowledgeBaseService:
 
         record = KnowledgeDocumentRecord(
             id=document_id,
-            user_id=user_id,
+            user_id=owner_id,
             knowledge_base_id=knowledge_base_id,
             data=KnowledgeDocumentData(
                 filename=filename,
@@ -274,7 +286,7 @@ class KnowledgeBaseService:
         )
         try:
             stored = await self._storage.upsert_knowledge_document(
-                user_id,
+                owner_id,
                 record,
             )
         except Exception:
@@ -285,7 +297,7 @@ class KnowledgeBaseService:
 
         await enqueue_index_task(
             self._bus,
-            user_id=user_id,
+            user_id=owner_id,
             knowledge_base_id=knowledge_base_id,
             document_id=document_id,
         )
@@ -305,7 +317,8 @@ class KnowledgeBaseService:
 
         Args:
             user_id (`str`):
-                The owner user id.
+                The viewer user id — can be the owner or a viewer
+                granted access through the resource access policy.
             knowledge_base_id (`str`):
                 The target knowledge base id.
 
@@ -316,11 +329,15 @@ class KnowledgeBaseService:
 
         Raises:
             `HTTPException`:
-                ``404`` if the knowledge base does not exist.
+                ``404`` if the knowledge base is not visible to the
+                caller.
         """
-        await self._authorise_kb(user_id, knowledge_base_id)
-        return await self._storage.list_knowledge_documents(
+        record = await self._access.resolve_knowledge_base(
             user_id,
+            knowledge_base_id,
+        )
+        return await self._storage.list_knowledge_documents(
+            record.user_id,
             knowledge_base_id,
         )
 
@@ -341,7 +358,7 @@ class KnowledgeBaseService:
 
         Args:
             user_id (`str`):
-                The owner user id.
+                The viewer user id.
             knowledge_base_id (`str`):
                 The target knowledge base id.
             document_ids (`list[str]`):
@@ -353,18 +370,22 @@ class KnowledgeBaseService:
 
         Raises:
             `HTTPException`:
-                ``404`` if the knowledge base does not exist.
+                ``404`` if the knowledge base is not visible to the
+                caller.
         """
-        await self._authorise_kb(user_id, knowledge_base_id)
+        record = await self._access.resolve_knowledge_base(
+            user_id,
+            knowledge_base_id,
+        )
         records: list[KnowledgeDocumentRecord] = []
         for document_id in document_ids:
-            record = await self._storage.get_knowledge_document(
-                user_id,
+            record_doc = await self._storage.get_knowledge_document(
+                record.user_id,
                 knowledge_base_id,
                 document_id,
             )
-            if record is not None:
-                records.append(record)
+            if record_doc is not None:
+                records.append(record_doc)
         return records
 
     async def delete_document(
@@ -391,7 +412,7 @@ class KnowledgeBaseService:
 
         Args:
             user_id (`str`):
-                The owner user id.
+                The viewer user id — owner or shared editor.
             knowledge_base_id (`str`):
                 The target knowledge base id.
             document_id (`str`):
@@ -399,23 +420,24 @@ class KnowledgeBaseService:
 
         Raises:
             `HTTPException`:
-                ``404`` if the knowledge base does not exist.
+                ``404`` if the knowledge base is not visible to the
+                caller; ``403`` if visible but not editable.
         """
+        owner_id = await self._require_edit(user_id, knowledge_base_id)
         record = await self._storage.get_knowledge_document(
-            user_id,
+            owner_id,
             knowledge_base_id,
             document_id,
         )
         if record is None:
-            # 404 if the KB does not exist, otherwise treat the
-            # missing document as already-deleted (idempotent).
-            await self._authorise_kb(user_id, knowledge_base_id)
+            # Idempotent: KB exists (edit check succeeded) but the
+            # document is already gone.
             return
 
         knowledge = await self._resolve_knowledge(user_id, knowledge_base_id)
         await knowledge.delete_document(document_id)
         await self._storage.delete_knowledge_document(
-            user_id,
+            owner_id,
             knowledge_base_id,
             document_id,
         )
@@ -436,7 +458,7 @@ class KnowledgeBaseService:
 
         Args:
             user_id (`str`):
-                The owner user id.
+                The viewer user id — owner or shared reader.
             knowledge_base_id (`str`):
                 The knowledge base to search.
             query (`str`):
@@ -450,7 +472,8 @@ class KnowledgeBaseService:
 
         Raises:
             `HTTPException`:
-                ``404`` if the knowledge base does not exist.
+                ``404`` if the knowledge base is not visible to the
+                caller.
         """
         knowledge = await self._resolve_knowledge(user_id, knowledge_base_id)
         return await knowledge.search(queries=[query], top_k=top_k)
@@ -459,38 +482,45 @@ class KnowledgeBaseService:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _authorise_kb(
+    async def _require_edit(
         self,
         user_id: str,
         knowledge_base_id: str,
-    ) -> "KnowledgeBaseRecord":
-        """Look the KB record up so we can 404 cleanly.
+    ) -> str:
+        """Ensure the caller can mutate this KB; return the *owner* id.
 
-        The check is intentionally separate from :meth:`_resolve_knowledge`
-        because document-level endpoints (list / delete) need to refuse
-        unknown KBs without paying the embedding-model construction cost
-        that :meth:`_resolve_knowledge` triggers.
+        Every KB mutation writes back through the owner's storage key,
+        so a shared editor's request must be resolved to the owner id
+        before touching storage. Raises ``404`` when the KB is not
+        visible to ``user_id`` and ``403`` when it is visible but only
+        readable.
         """
-        record = await self._storage.get_knowledge_base(
+        owner_id, _ = await self._access.resolve_for_edit(
             user_id,
+            ResourceKind.KNOWLEDGE_BASE,
             knowledge_base_id,
         )
-        if record is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Knowledge base {knowledge_base_id!r} not found.",
-            )
-        return record
+        return owner_id
 
     async def _resolve_knowledge(
         self,
         user_id: str,
         knowledge_base_id: str,
     ) -> "object":
-        """Resolve a :class:`KnowledgeBase` and translate not-found to 404."""
+        """Resolve a :class:`KnowledgeBase` for a viewer.
+
+        Rewrites ``user_id`` to the owning user id when the caller is a
+        shared reader/editor, so the manager reads the correct
+        collection metadata from storage. ``KnowledgeBaseNotFoundError``
+        is translated to ``404``.
+        """
+        record = await self._access.resolve_knowledge_base(
+            user_id,
+            knowledge_base_id,
+        )
         try:
             return await self._manager.get_knowledge(
-                user_id,
+                record.user_id,
                 knowledge_base_id,
             )
         except KnowledgeBaseNotFoundError as exc:

@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { getDisplayName, renderConfirmBody } from './tool-renderers';
 import { Button } from '@/components/ui/button';
 import { Kbd } from '@/components/ui/kbd';
+import { Spinner } from '@/components/ui/spinner.tsx';
 import { useTranslation } from '@/i18n/useI18n';
 import { cn } from '@/lib/utils';
 
@@ -15,7 +16,7 @@ export function ConfirmCard({
 	onUserConfirm,
 }: {
 	toolCall: ToolCallBlock;
-	onUserConfirm: (confirm: boolean, rules?: ToolCallBlock['suggested_rules']) => void;
+	onUserConfirm: (confirm: boolean, rules?: ToolCallBlock['suggested_rules']) => Promise<void>;
 }) {
 	const { t } = useTranslation();
 	const hasSuggestedRules = !!toolCall.suggested_rules?.length;
@@ -23,9 +24,18 @@ export function ConfirmCard({
 		? ['yes', 'yes_with_rule', 'no']
 		: ['yes', 'no'];
 	const [selected, setSelected] = useState<SelectOption>('yes');
+	const [hasConfirmed, sethasConfirmed] = useState<boolean>(false);
+
+	const handleConfirm = async (confirm: boolean, rules?: ToolCallBlock['suggested_rules']) => {
+		if (hasConfirmed) return;
+		sethasConfirmed(true);
+		onUserConfirm(confirm, rules).catch(() => {
+			sethasConfirmed(false);
+		});
+	};
 
 	useEffect(() => {
-		const handleKeyDown = (e: KeyboardEvent) => {
+		const handleKeyDown = async (e: KeyboardEvent) => {
 			const currentIndex = options.indexOf(selected);
 			switch (e.key) {
 				case 'ArrowUp':
@@ -39,9 +49,9 @@ export function ConfirmCard({
 				case 'Enter':
 					e.preventDefault();
 					if (selected === 'yes_with_rule') {
-						onUserConfirm(true, [toolCall.suggested_rules![0]]);
+						await handleConfirm(true, [toolCall.suggested_rules![0]]);
 					} else {
-						onUserConfirm(selected === 'yes');
+						await handleConfirm(selected === 'yes');
 					}
 					break;
 			}
@@ -52,10 +62,10 @@ export function ConfirmCard({
 	}, [onUserConfirm, selected, options]);
 
 	return (
-		<div className="ring ring-border rounded-xl w-full p-4 space-y-4 text-sm overflow-hidden">
-			<div className="flex flex-col gap-y-2">
+		<div className="bg-muted ring ring-border rounded-[28px] w-full px-6 py-5 space-y-4 text-sm overflow-hidden">
+			<div className="flex flex-col gap-y-2 max-w-full">
 				<strong className="text-secondary-foreground">{getDisplayName(toolCall, t)}</strong>
-				<div className="px-4 py-2 bg-white rounded-sm">
+				<div className="px-4 py-2 bg-white rounded-sm max-w-full">
 					{renderConfirmBody(toolCall, t)}
 				</div>
 			</div>
@@ -71,15 +81,22 @@ export function ConfirmCard({
 					size="sm"
 					variant="ghost"
 					onMouseEnter={() => setSelected('yes')}
-					onClick={(e) => {
+					onClick={async (e) => {
 						e.stopPropagation();
 						e.preventDefault();
-						onUserConfirm(true);
+						await handleConfirm(true);
 					}}
+					disabled={hasConfirmed}
 				>
-					<ChevronRight
-						className={cn('size-4', selected === 'yes' ? 'visible' : 'invisible')}
-					/>
+					{hasConfirmed ? (
+						<Spinner
+							className={cn('size-4', selected === 'yes' ? 'visible' : 'invisible')}
+						/>
+					) : (
+						<ChevronRight
+							className={cn('size-4', selected === 'yes' ? 'visible' : 'invisible')}
+						/>
+					)}
 					1. {t('common.yes')}
 					<div className={cn(selected === 'yes' ? 'text-muted-foreground' : 'invisible')}>
 						(<Kbd>Enter</Kbd> {t('confirmCard.toConfirm')})
@@ -94,30 +111,43 @@ export function ConfirmCard({
 						size="sm"
 						variant="ghost"
 						onMouseEnter={() => setSelected('yes_with_rule')}
-						onClick={(e) => {
+						onClick={async (e) => {
 							e.stopPropagation();
 							e.preventDefault();
-							onUserConfirm(true, [toolCall.suggested_rules![0]]);
+							await handleConfirm(true, [toolCall.suggested_rules![0]]);
 						}}
+						disabled={hasConfirmed}
 					>
 						<span className="flex items-start gap-1 w-full break-words whitespace-normal min-w-0">
-							<ChevronRight
-								className={cn(
-									'size-4 shrink-0 mt-0.5',
-									selected === 'yes_with_rule' ? 'visible' : 'invisible',
-								)}
-							/>
-							<span className="break-words min-w-0">
+							{hasConfirmed ? (
+								<Spinner
+									className={cn(
+										'size-4 shrink-0 mt-0.5',
+										selected === 'yes_with_rule' ? 'visible' : 'invisible',
+									)}
+								/>
+							) : (
+								<ChevronRight
+									className={cn(
+										'size-4 shrink-0 mt-0.5',
+										selected === 'yes_with_rule' ? 'visible' : 'invisible',
+									)}
+								/>
+							)}
+							<span className="break-all min-w-0">
 								2.{' '}
 								{t('confirmCard.yesWithRule', {
 									toolName: toolCall.suggested_rules![0].tool_name,
 									ruleContent: toolCall.suggested_rules![0].rule_content,
 								})}
-								{selected === 'yes_with_rule' && (
-									<span className="text-muted-foreground ml-1 whitespace-nowrap">
-										(<Kbd>Enter</Kbd> {t('confirmCard.toConfirm')})
-									</span>
-								)}
+								<span
+									className={cn(
+										'text-muted-foreground ml-1 whitespace-nowrap',
+										selected === 'yes_with_rule' ? 'visible' : 'invisible',
+									)}
+								>
+									(<Kbd>Enter</Kbd> {t('confirmCard.toConfirm')})
+								</span>
 							</span>
 						</span>
 					</Button>
@@ -130,15 +160,22 @@ export function ConfirmCard({
 					size="sm"
 					variant="ghost"
 					onMouseEnter={() => setSelected('no')}
-					onClick={(e) => {
+					onClick={async (e) => {
 						e.stopPropagation();
 						e.preventDefault();
-						onUserConfirm(false);
+						await handleConfirm(false);
 					}}
+					disabled={hasConfirmed}
 				>
-					<ChevronRight
-						className={cn('size-4', selected === 'no' ? 'visible' : 'invisible')}
-					/>
+					{hasConfirmed ? (
+						<Spinner
+							className={cn('size-4', selected === 'no' ? 'visible' : 'invisible')}
+						/>
+					) : (
+						<ChevronRight
+							className={cn('size-4', selected === 'no' ? 'visible' : 'invisible')}
+						/>
+					)}
 					{hasSuggestedRules ? '3' : '2'}. {t('common.no')}
 					<div className={cn(selected === 'no' ? 'text-muted-foreground' : 'invisible')}>
 						(<Kbd>Enter</Kbd> {t('confirmCard.toConfirm')})

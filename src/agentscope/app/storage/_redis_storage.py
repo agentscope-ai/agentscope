@@ -2,6 +2,7 @@
 # pylint: disable=too-many-public-methods
 """The Redis storage implementation."""
 
+import warnings
 from datetime import datetime, timedelta
 from typing import Any, TYPE_CHECKING, Self
 
@@ -492,14 +493,17 @@ class RedisStorage(StorageBase):
            a team — the team).
         2. **Schedules** — every schedule whose ``data.agent_id`` matches
            is deleted via :meth:`delete_schedule`.
-        3. **Team back-references (defensive)** — if the agent is a team
-           worker (``source='team'``) but the caller chose to delete it
-           directly instead of going through :meth:`delete_team`, scan
-           the user's teams and remove the agent id from every
-           :attr:`TeamData.member_ids` list it appears in. The normal
-           path (``delete_team`` iterates ``member_ids`` and calls
-           ``delete_agent`` for each) does not need this scan, but it
-           keeps the team record consistent if a caller bypasses it.
+        3. **Team back-references (defensive)** — if the caller chose to
+           delete the agent directly instead of going through
+           :meth:`delete_team`, scan the user's teams and remove the
+           agent id from both the legacy :attr:`TeamData.member_ids`
+           list *and* the current :attr:`TeamData.members` list. The
+           normal path (``delete_team`` iterates members and calls
+           ``delete_agent`` / ``delete_session`` for each) does not
+           need this scan, but it keeps team records consistent if a
+           caller bypasses it. Applies to invited members too — a stale
+           entry pointing at a removed agent would otherwise poison
+           ``TeamSay`` routing.
         4. **Agent record + index** — finally delete the agent key and
            remove from the per-user agent index.
 
@@ -525,16 +529,26 @@ class RedisStorage(StorageBase):
             if schedule.agent_id == agent_id:
                 await self.delete_schedule(user_id, schedule.id)
 
-        # Defensive: scrub agent_id from any team's member_ids list.
-        # The common path (delete_team -> delete_agent) is unaffected
-        # because the team is being torn down anyway and removed from
-        # the index in step 4 of delete_team.
+        # Defensive: scrub agent_id from any team's member roster.
+        # Covers both the legacy ``member_ids`` field and the current
+        # ``members`` list (which additionally holds invited entries).
+        # The common path (delete_team -> delete_agent / delete_session)
+        # is unaffected because the team is being torn down anyway.
         teams = await self.list_teams(user_id)
         for team in teams:
+            dirty = False
             if agent_id in team.data.member_ids:
                 team.data.member_ids = [
                     mid for mid in team.data.member_ids if mid != agent_id
                 ]
+                dirty = True
+            filtered_members = [
+                m for m in team.data.members if m.agent_id != agent_id
+            ]
+            if len(filtered_members) != len(team.data.members):
+                team.data.members = filtered_members
+                dirty = True
+            if dirty:
                 await self.upsert_team(user_id, team)
 
         key = self._key(
@@ -975,17 +989,95 @@ class RedisStorage(StorageBase):
                     return msg
         return None
 
+    async def _find_message_index(
+        self,
+        key: str,
+        message_id: str,
+        chunk_size: int = 100,
+    ) -> int | None:
+        """Return the index of a message in the Redis list, or ``None``.
+
+        Scans backwards from the tail (most recent) in chunks, since
+        ``before`` cursors are typically near the end.
+
+        Args:
+            key (`str`): The Redis list key.
+            message_id (`str`): The message ID to locate.
+            chunk_size (`int`, optional): Number of entries fetched per
+                round trip. Defaults to 100.
+
+        Returns:
+            `int | None`: Zero-based index, or ``None`` if not found.
+        """
+        end = await self._client.llen(key) - 1
+        while end >= 0:
+            start = max(end - chunk_size + 1, 0)
+            raw_list = await self._client.lrange(key, start, end)
+            for offset, raw in enumerate(reversed(raw_list)):
+                if Msg.model_validate_json(raw).id == message_id:
+                    return end - offset
+            end = start - 1
+        return None
+
     async def list_messages(
         self,
         user_id: str,
         session_id: str,
-        offset: int = 0,
         limit: int = 50,
-    ) -> list[Msg]:
-        """Return messages for a session with pagination."""
+        before: str | None = None,
+        **kwargs: Any,
+    ) -> tuple[list[Msg], bool]:
+        """Return the most recent messages with cursor-based pagination.
+
+        Messages are returned in chronological order.
+
+        Args:
+            user_id (`str`): The owner user id.
+            session_id (`str`): The session id.
+            limit (`int`, optional): Maximum number of messages to
+                return. Defaults to 50.
+            before (`str | None`, optional): A message ID used as the
+                cursor. When provided, returns messages created before
+                this message. Omit to get the latest page.
+            **kwargs: Reserved for backward compatibility. Passing
+                ``offset`` will emit a ``DeprecationWarning`` and be
+                ignored.
+
+        Returns:
+            `tuple[list[Msg], bool]`: A tuple of (messages in
+            chronological order, has_more). ``has_more`` is ``True``
+            when older messages exist before the returned page.
+        """
+        if "offset" in kwargs:
+            warnings.warn(
+                "The 'offset' parameter is deprecated and will be "
+                "removed in a future version. Use 'before' for "
+                "cursor-based pagination instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         key = self._message_key(user_id, session_id)
-        raw_list = await self._client.lrange(key, offset, offset + limit - 1)
-        return [Msg.model_validate_json(raw) for raw in raw_list]
+        total = await self._client.llen(key)
+
+        if total == 0:
+            return [], False
+
+        if before is None:
+            end = total - 1
+        else:
+            idx = await self._find_message_index(key, before)
+            if idx is None:
+                return [], False
+            end = idx - 1
+
+        start = max(end - limit + 1, 0)
+        if end < 0:
+            return [], False
+
+        raw_list = await self._client.lrange(key, start, end)
+        has_more = start > 0
+        return [Msg.model_validate_json(raw) for raw in raw_list], has_more
 
     # ------------------------------------------------------------------
     # Team persistence
@@ -1122,14 +1214,26 @@ class RedisStorage(StorageBase):
         await self._set_with_ttl(key, record.model_dump_json())
 
     async def delete_team(self, user_id: str, team_id: str) -> bool:
-        """Delete a team record and cascade-delete all of its workers.
+        """Delete a team record and cascade-clean its members by role.
 
         Cascade order (mirrors what SQL's ``ON DELETE CASCADE`` would do
-        for the same set of foreign keys):
+        for the same set of foreign keys, but role-aware to honour the
+        ``AgentInvite`` semantics — see :class:`TeamMember`):
 
-        1. For each ``member_id`` in :attr:`TeamData.member_ids`, call
-           :meth:`delete_agent`. Each call cascades the worker's single
-           session via the existing agent-cascade logic.
+        1. Materialise the member roster via
+           :func:`ensure_team_members` (which migrates legacy
+           ``member_ids``-only records on first read). For each entry:
+
+           - ``role == "created"`` — the member was spawned by
+             ``AgentCreate`` and lives only for this team. Delete it in
+             full via :meth:`delete_agent`, which cascades that
+             worker's session.
+           - ``role == "invited"`` — the member is a pre-existing
+             user-owned agent that was borrowed via ``AgentInvite``.
+             Only remove the team-scoped session via
+             :meth:`delete_session`; the underlying
+             :class:`AgentRecord` and its other sessions must survive.
+
         2. Clear ``team_id`` on the leader session (referenced by
            :attr:`TeamRecord.session_id`) — semantically equivalent to
            ``ON DELETE SET NULL`` for that direction of the relationship.
@@ -1153,6 +1257,11 @@ class RedisStorage(StorageBase):
                 ``False`` if no record was found at the
                 ``(user_id, team_id)`` key.
         """
+        # Local import to avoid a top-level cycle between _utils (which
+        # imports TeamMember from _model) and _base (which imports the
+        # abstract StorageBase from this module hierarchy).
+        from ._utils import _ensure_team_members
+
         team = await self.get_team(user_id, team_id)
         if team is None:
             # Make sure the index is also clean if the record vanished
@@ -1161,9 +1270,17 @@ class RedisStorage(StorageBase):
             await self._client.srem(index_key, team_id)
             return False
 
-        # Cascade: delete each worker agent (which cascades its session)
-        for member_id in team.data.member_ids:
-            await self.delete_agent(user_id, member_id)
+        # Role-aware member cleanup — see docstring above.
+        members = await _ensure_team_members(self, user_id, team)
+        for member in members:
+            if member.role == "created":
+                await self.delete_agent(member.owner_id, member.agent_id)
+            else:  # invited
+                await self.delete_session(
+                    member.owner_id,
+                    member.agent_id,
+                    member.session_id,
+                )
 
         # Clear team_id on the leader session (idempotent)
         await self.set_session_team_id(user_id, team.session_id, None)
@@ -1517,7 +1634,7 @@ class RedisStorage(StorageBase):
         if not raw:
             return
         record = KnowledgeDocumentRecord.model_validate_json(raw)
-        record.data.status = status
+        record.status = status
         if error is not None:
             record.data.error = error
         if chunk_count is not None:
@@ -1561,7 +1678,7 @@ class RedisStorage(StorageBase):
                         return False
                     record = KnowledgeDocumentRecord.model_validate_json(raw)
                     holder = record.processing_node
-                    deadline = record.data.lease_expires_at
+                    deadline = record.lease_expires_at
                     if (
                         holder is not None
                         and deadline is not None
@@ -1570,7 +1687,7 @@ class RedisStorage(StorageBase):
                         await pipe.unwatch()
                         return False
                     record.processing_node = processing_node
-                    record.data.lease_expires_at = new_deadline
+                    record.lease_expires_at = new_deadline
                     record.updated_at = now
                     pipe.multi()
                     pipe.set(key, record.model_dump_json())
@@ -1614,7 +1731,7 @@ class RedisStorage(StorageBase):
                     if record.processing_node != processing_node:
                         await pipe.unwatch()
                         return False
-                    record.data.lease_expires_at = new_deadline
+                    record.lease_expires_at = new_deadline
                     record.updated_at = now
                     pipe.multi()
                     pipe.set(key, record.model_dump_json())
@@ -1652,7 +1769,7 @@ class RedisStorage(StorageBase):
                         await pipe.unwatch()
                         return
                     record.processing_node = None
-                    record.data.lease_expires_at = None
+                    record.lease_expires_at = None
                     record.updated_at = datetime.now()
                     pipe.multi()
                     pipe.set(key, record.model_dump_json())
@@ -1694,13 +1811,13 @@ class RedisStorage(StorageBase):
             if not raw:
                 continue
             record = KnowledgeDocumentRecord.model_validate_json(raw)
-            if record.data.status in terminal:
+            if record.status in terminal:
                 continue
             if record.processing_node is None:
                 continue
             if (
-                record.data.lease_expires_at is not None
-                and record.data.lease_expires_at < now
+                record.lease_expires_at is not None
+                and record.lease_expires_at < now
             ):
                 records.append(record)
         return records
@@ -1725,7 +1842,7 @@ class RedisStorage(StorageBase):
             if not raw:
                 continue
             record = KnowledgeDocumentRecord.model_validate_json(raw)
-            if record.data.status != "pending":
+            if record.status != "pending":
                 continue
             if record.created_at < threshold:
                 records.append(record)

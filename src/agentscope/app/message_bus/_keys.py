@@ -167,6 +167,7 @@ class MessageBusKeys:
 
     _SESSION_CANCEL = "agentscope:session:cancel"
     _TASK_CANCEL = "agentscope:task:cancel"
+    _SESSION_INTERRUPT = "agentscope:session:interrupt"
 
     @classmethod
     def session_cancel_channel(cls) -> str:
@@ -177,6 +178,17 @@ class MessageBusKeys:
     def task_cancel_channel(cls) -> str:
         """Single-task cancel broadcast channel."""
         return cls._TASK_CANCEL
+
+    @classmethod
+    def session_interrupt_channel(cls) -> str:
+        """Global session-interrupt broadcast channel.
+
+        Used by the interrupt API endpoint to request graceful
+        interruption of a running agent.  Separate from
+        ``session_cancel_channel`` (which is used for hard-cancel on
+        session deletion).
+        """
+        return cls._SESSION_INTERRUPT
 
     # ------------------------------------------------------------------
     # Background task registry

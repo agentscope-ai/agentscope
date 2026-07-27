@@ -18,6 +18,7 @@ from ._service import (
     IndexTaskConsumer,
     IndexWorker,
     KnowledgeBaseService,
+    ResourceAccessService,
     SessionService,
 )
 
@@ -46,6 +47,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     knowledge_base_manager = app.state.knowledge_base_manager
     blob_store = app.state.blob_store
     enable_index_worker = app.state.enable_index_worker
+    resource_access_policy = app.state.resource_access_policy
 
     async with AsyncExitStack() as stack:
         await stack.enter_async_context(storage)
@@ -81,12 +83,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         app.state.scheduler_manager = scheduler
 
+        # Resource access service — combines owner-scoped storage reads
+        # with the injected policy so both routers and runtime services
+        # go through a single choke point when resolving credentials /
+        # agents / knowledge bases.
+        resource_access_service = ResourceAccessService(
+            storage=storage,
+            policy=resource_access_policy,
+        )
+        app.state.resource_access_service = resource_access_service
+
         chat_service = ChatService(
             storage=storage,
             workspace_manager=workspace_manager,
             scheduler_manager=scheduler,
             background_task_manager=bg_manager,
             message_bus=message_bus,
+            resource_access_service=resource_access_service,
             knowledge_base_manager=knowledge_base_manager,
             extra_agent_middlewares=app.state.extra_agent_middlewares,
             extra_agent_tools=app.state.extra_agent_tools,
@@ -154,6 +167,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 knowledge_base_manager=knowledge_base_manager,
                 blob_store=blob_store,
                 message_bus=message_bus,
+                resource_access_service=resource_access_service,
             )
 
         app.state.knowledge_base_service = knowledge_base_service

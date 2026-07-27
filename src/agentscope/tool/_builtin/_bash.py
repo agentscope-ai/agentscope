@@ -191,6 +191,14 @@ easier to review tool calls and give permission.
         command = tool_input.get("command", "")
         if not command:
             return self.is_read_only
+        # A command with dynamic / unanalyzable structure (command
+        # substitution, control flow, ...) cannot be *proven* read-only —
+        # e.g. ``ls $(rm -rf /)`` looks read-only but embeds a mutation.
+        # Report it as non-read-only so the engine's read-only fast path
+        # does not short-circuit it; ``check_permissions`` then surfaces the
+        # bypass-immune injection safety ASK.
+        if self._bash_parser.check_injection_risk(command):
+            return False
         return self._bash_parser.is_read_only_command(command)
 
     async def check_permissions(
@@ -311,7 +319,7 @@ easier to review tool calls and give permission.
         # Checked separately from step 4 because these paths are not in the
         # dangerous_files/directories lists — they are system-level paths
         # that should never be removed regardless of user configuration.
-        removal_path = self._check_dangerous_removal_path(command)
+        removal_path = await self._check_dangerous_removal_path(command)
         if removal_path:
             return PermissionDecision(
                 behavior=PermissionBehavior.ASK,
@@ -324,13 +332,17 @@ easier to review tool calls and give permission.
                 bypass_immune=True,
             )
 
-        # 6. ACCEPT_EDITS auto-allow for filesystem commands whose targets
-        # all live inside a working directory. Mirrors Write/Edit's strict
+        # 6. Auto-allow filesystem commands whose targets all live inside a
+        # working directory. Applies to ACCEPT_EDITS (interactive) and
+        # DONT_ASK (its unattended counterpart). Mirrors Write/Edit's strict
         # working-directory check — we never auto-allow a bash command that
         # would touch a path outside the configured working set (e.g.
         # ``cp /etc/hosts /tmp/x`` must not pass even though ``cp`` is in
         # the auto-allow list).
-        if context.mode == PermissionMode.ACCEPT_EDITS:
+        if context.mode in (
+            PermissionMode.ACCEPT_EDITS,
+            PermissionMode.DONT_ASK,
+        ):
             filesystem_commands = {
                 "mkdir",
                 "touch",
@@ -366,13 +378,12 @@ easier to review tool calls and give permission.
                     return PermissionDecision(
                         behavior=PermissionBehavior.ALLOW,
                         message=f"Permission granted for '{base_command}' "
-                        f"command (accept edits mode - filesystem command, "
-                        f"all targets in working directory)",
+                        f"command (filesystem command, all targets in "
+                        f"working directory)",
                         decision_reason=(
                             f"Filesystem command '{base_command}' is "
-                            f"auto-allowed in accept edits mode because "
-                            f"all target paths are within a working "
-                            f"directory"
+                            f"auto-allowed because all target paths are "
+                            f"within a working directory"
                         ),
                     )
 
@@ -382,7 +393,7 @@ easier to review tool calls and give permission.
             message=f"Execute bash command: {command}",
         )
 
-    def match_rule(
+    async def match_rule(
         self,
         rule_content: str | None,
         tool_input: dict[str, Any],
@@ -479,7 +490,7 @@ easier to review tool calls and give permission.
             # Invalid regex, fall back to substring matching
             return rule_content.replace("*", "") in command
 
-    def generate_suggestions(
+    async def generate_suggestions(
         self,
         tool_input: dict[str, Any],
     ) -> List["PermissionRule"]:
@@ -554,8 +565,8 @@ easier to review tool calls and give permission.
 
         return dangerous_paths
 
-    def _check_dangerous_removal_path(self, command: str) -> str | None:
-        """Check if an rm/rmdir command targets a critical system path.
+    async def _check_dangerous_removal_path(self, command: str) -> str | None:
+        """Check if a rm/rmdir command targets a critical system path.
 
         Detects commands like `rm -rf /`, `rm -rf /usr`, `rmdir ~` that
         would destroy critical system directories. Unlike _is_dangerous_path
@@ -609,15 +620,19 @@ easier to review tool calls and give permission.
                     i += 1
                     continue
                 path = tok.strip("'\"")
-                if self._is_dangerous_removal_path(path):
+                if await self._is_dangerous_removal_path(path):
                     return path
                 i += 1
 
         return None
 
-    def _is_dangerous_removal_path(self, path: str) -> bool:
+    async def _is_dangerous_removal_path(self, path: str) -> bool:
         """Check if a path is a critical system directory that must not be
         removed.
+
+        All path resolution is performed via the backend so that the
+        check operates on the **backend environment's** ``$HOME`` /
+        ``cwd`` / path semantics, not the host process's.
 
         Args:
             path (`str`):
@@ -635,24 +650,30 @@ easier to review tool calls and give permission.
         if path.endswith("/*") or path.endswith("\\*"):
             return True
 
-        # Expand tilde and resolve to absolute path
-        expanded = os.path.expanduser(path)
-        # Don't resolve symlinks — /tmp is a symlink on macOS but is
-        # still a root-child and should be flagged
-        abs_path = os.path.normpath(os.path.abspath(expanded))
+        # Expand tilde and resolve to an absolute path inside the
+        # backend environment.  Don't resolve symlinks — ``/tmp`` is a
+        # symlink on macOS but is still a root-child and should be
+        # flagged.
+        expanded = await self._backend.expanduser(path)
+        backend_cwd = await self._backend.getcwd()
+        abs_path = self._backend.abspath(expanded, cwd=backend_cwd)
 
         # Home directory
-        home = os.path.expanduser("~")
+        home = await self._backend.expanduser("~")
         if abs_path == home:
             return True
 
-        # Root itself
-        if abs_path == "/":
+        # Root itself: ``dirname(root) == root`` on both POSIX
+        # (``"/"``) and Windows (``"C:\\"``), so this check is
+        # path-flavor agnostic.
+        parent = self._backend.dirname(abs_path)
+        if abs_path == parent:
             return True
 
-        # Direct children of root: /usr, /etc, /tmp, /var, /bin, etc.
-        parent = os.path.dirname(abs_path)
-        if parent == "/":
+        # Direct children of root (e.g. ``/usr``, ``/etc``, ``/tmp``):
+        # the *parent* of these is the root, where
+        # ``dirname(parent) == parent``.
+        if self._backend.dirname(parent) == parent:
             return True
 
         return False

@@ -13,6 +13,7 @@ from ._schedule import (
 )
 from ._agent import (
     AgentSchemaResponse,
+    AgentSchemaV2Response,
     ListAgentsResponse,
     CreateAgentRequest,
     CreateAgentResponse,
@@ -30,7 +31,6 @@ from ._knowledge_base import (
     CreateKnowledgeBaseResponse,
     KbEmbeddingProvider,
     KbMiddlewareParametersSchemaResponse,
-    KnowledgeBaseView,
     KnowledgeDocumentView,
     ListKbEmbeddingModelsResponse,
     ListKnowledgeBasesResponse,
@@ -45,9 +45,12 @@ from ._knowledge_base import (
 from ._session import (
     CreateSessionRequest,
     CreateSessionResponse,
+    InterruptSessionResponse,
     UpdateSessionRequest,
     ListSessionsResponse,
     ListMessagesResponse,
+    SessionStatus,
+    SessionStatusResponse,
     SessionView,
     TeamDetailResponse,
     TeamMemberView,
@@ -56,6 +59,7 @@ from ._session import (
 __all__ = [
     # Agent
     "AgentSchemaResponse",
+    "AgentSchemaV2Response",
     "ListAgentsResponse",
     "CreateAgentRequest",
     "CreateAgentResponse",
@@ -75,7 +79,6 @@ __all__ = [
     "CreateKnowledgeBaseResponse",
     "KbEmbeddingProvider",
     "KbMiddlewareParametersSchemaResponse",
-    "KnowledgeBaseView",
     "KnowledgeDocumentView",
     "ListKbEmbeddingModelsResponse",
     "ListKnowledgeBasesResponse",
@@ -101,9 +104,12 @@ __all__ = [
     # Session
     "CreateSessionRequest",
     "CreateSessionResponse",
+    "InterruptSessionResponse",
     "UpdateSessionRequest",
     "ListSessionsResponse",
     "ListMessagesResponse",
+    "SessionStatus",
+    "SessionStatusResponse",
     "SessionView",
     "TeamDetailResponse",
     "TeamMemberView",

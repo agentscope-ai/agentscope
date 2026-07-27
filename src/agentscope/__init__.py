@@ -6,7 +6,7 @@ from ._logging import (
     logger,
     setup_logger,
 )
-from ._utils._common import set_id_factory
+from ._utils._common import set_id_factory, set_timestamp_factory
 from ._version import __version__
 
 # Raise each warning only once
@@ -17,5 +17,6 @@ __all__ = [
     "logger",
     "setup_logger",
     "set_id_factory",
+    "set_timestamp_factory",
     "__version__",
 ]

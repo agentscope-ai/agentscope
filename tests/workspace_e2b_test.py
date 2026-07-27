@@ -26,7 +26,7 @@ class TestE2BWorkspaceLifecycle(IsolatedAsyncioTestCase):
     """Test cases for E2BWorkspace lifecycle and MCP integration.
 
     Each test creates a real E2B cloud sandbox and tears it down
-    (``pause``) afterwards.  The suite is skipped entirely when
+    (``pause``) afterward.  The suite is skipped entirely when
     ``E2B_API_KEY`` is absent so that CI runs without E2B credentials
     are unaffected.
     """

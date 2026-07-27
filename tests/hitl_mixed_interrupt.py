@@ -12,7 +12,6 @@ from agentscope.tool import (
     ToolBase,
     Toolkit,
     ToolChunk,
-    RegisteredTool,
 )
 from agentscope.permission import (
     PermissionDecision,
@@ -354,10 +353,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         """Test one tool call that needs confirmation and external
         execution."""
         mixed_tool = MockMixedSequentialTool()
-        self.agent.toolkit.tools[mixed_tool.name] = RegisteredTool(
-            tool=mixed_tool,
-            group="basic",
-        )
+        self.agent.toolkit = Toolkit(tools=[mixed_tool])
 
         self._set_model_tool_call_responses(
             [
@@ -558,10 +554,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         """Test sequential tool calls that need confirmation and external
         execution."""
         mixed_tool = MockMixedSequentialTool()
-        self.agent.toolkit.tools[mixed_tool.name] = RegisteredTool(
-            tool=mixed_tool,
-            group="basic",
-        )
+        self.agent.toolkit = Toolkit(tools=[mixed_tool])
 
         self._set_model_tool_call_responses(
             [
@@ -917,10 +910,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         """Test concurrent tool calls that need confirmation and external
         execution."""
         mixed_tool = MockMixedConcurrentTool()
-        self.agent.toolkit.tools[mixed_tool.name] = RegisteredTool(
-            tool=mixed_tool,
-            group="basic",
-        )
+        self.agent.toolkit = Toolkit(tools=[mixed_tool])
 
         self._set_model_tool_call_responses(
             [

@@ -33,6 +33,11 @@ export interface ReActConfig {
 	stop_on_reject?: boolean;
 }
 
+export interface InviteConfig {
+	invitable?: boolean;
+	invite_description?: string | null;
+}
+
 // ─── Agent ────────────────────────────────────────────────────────────────────
 
 export interface AgentData {
@@ -41,11 +46,17 @@ export interface AgentData {
 	system_prompt: string;
 	context_config: ContextConfig;
 	react_config: ReActConfig;
+	invite_config: InviteConfig;
 }
 
-export interface AgentRecord extends RecordBase {
+export interface AgentView extends RecordBase {
 	user_id: string;
 	data: AgentData;
+	/**
+	 * Whether the current viewer may PATCH/DELETE this agent. `false`
+	 * for agents shared to the viewer with read-only permission.
+	 */
+	editable: boolean;
 }
 
 export interface CreateAgentRequest {
@@ -53,6 +64,7 @@ export interface CreateAgentRequest {
 	system_prompt?: string;
 	context_config?: ContextConfig;
 	react_config?: ReActConfig;
+	invite_config?: InviteConfig;
 }
 
 export interface CreateAgentResponse {
@@ -64,22 +76,37 @@ export interface UpdateAgentRequest {
 	system_prompt?: string;
 	context_config?: ContextConfig;
 	react_config?: ReActConfig;
+	invite_config?: InviteConfig;
 }
 
 export interface AgentListResponse {
-	agents: AgentRecord[];
+	agents: AgentView[];
 	total: number;
 }
 
 /**
- * JSON Schema fragments returned by `GET /agent/schema`. Each fragment is a
- * self-contained JSON Schema object (no `$ref`s across fragments) covering
- * one section of the agent create / edit form.
+ * @deprecated Superseded by {@link AgentSchemaV2Response}. Kept only for
+ * legacy consumers still calling `GET /agent/schema`. The new form flow
+ * uses `GET /agent/schema/v2`, which returns the full `AgentData` JSON
+ * Schema in a single `schema` field.
  */
 export interface AgentSchemaResponse {
 	identity: JSONSchema;
 	context_config: JSONSchema;
 	react_config: JSONSchema;
+}
+
+/**
+ * Response of `GET /agent/schema/v2`. `schema` is the full `AgentData`
+ * JSON Schema (with `$ref`s inlined, `id` filtered out, and
+ * `context_config.summary_schema` filtered out). The frontend derives
+ * its section grouping directly from `schema.properties`:
+ *   - top-level scalar/textarea/boolean properties → "identity" section
+ *   - top-level `object`-typed properties (currently `context_config`,
+ *     `react_config`, and `invite_config`) → one section each
+ */
+export interface AgentSchemaV2Response {
+	schema: JSONSchema;
 }
 
 // ─── Session ──────────────────────────────────────────────────────────────────
@@ -130,6 +157,10 @@ export interface CreateSessionRequest {
 }
 
 export interface CreateSessionResponse {
+	session_id: string;
+}
+
+export interface InterruptSessionResponse {
 	session_id: string;
 }
 
@@ -194,11 +225,11 @@ export interface TeamRecord extends RecordBase {
 
 /**
  * One member entry inside `TeamDetailResponse.members`. Pairs the
- * worker's `AgentRecord` with its single `session_id` so the UI can
+ * worker's `AgentView` with its single `session_id` so the UI can
  * navigate straight to the worker's chat.
  */
 export interface TeamMemberInfo {
-	agent: AgentRecord;
+	agent: AgentView;
 	/** `null` if the agent is in an inconsistent state (no session). */
 	session_id: string | null;
 }
@@ -206,12 +237,12 @@ export interface TeamMemberInfo {
 /**
  * Resolved team detail returned inline inside `SessionView.team`.
  *
- * The leader's `AgentRecord` is looked up from the team's
+ * The leader's `AgentView` is looked up from the team's
  * `session_id` → `session.agent_id` chain on the server side.
  */
 export interface TeamDetailResponse {
 	team: TeamRecord;
-	leader_agent: AgentRecord | null;
+	leader_agent: AgentView | null;
 	members: TeamMemberInfo[];
 }
 
@@ -278,9 +309,19 @@ export interface CredentialSchemasResponse {
 	schemas: CredentialSchema[];
 }
 
-export interface CredentialRecord extends RecordBase {
+export interface CredentialView extends RecordBase {
 	user_id: string;
+	/**
+	 * Credential payload. When the current viewer is not the owner
+	 * (shared credential), only `type` and `name` are populated —
+	 * secret fields are stripped server-side.
+	 */
 	data: Record<string, unknown>;
+	/**
+	 * Whether the current viewer may PATCH/DELETE this credential.
+	 * `false` for credentials shared with read-only permission.
+	 */
+	editable: boolean;
 }
 
 export interface CreateCredentialRequest {
@@ -296,7 +337,7 @@ export interface UpdateCredentialRequest {
 }
 
 export interface CredentialListResponse {
-	credentials: CredentialRecord[];
+	credentials: CredentialView[];
 	total: number;
 }
 
@@ -491,10 +532,7 @@ export interface EmbeddingModelCard {
 
 /**
  * Knowledge base view as exposed by the API. Mirrors
- * :class:`agentscope.app._router._schema.KnowledgeBaseView`.
- *
- * Internal `user_id` / `collection_name` are stripped — the front-end
- * has no business introspecting either.
+ * :class:`agentscope.app._service.KnowledgeBaseView`.
  */
 export interface KnowledgeBaseView {
 	id: string;
@@ -503,6 +541,12 @@ export interface KnowledgeBaseView {
 	embedding_model_config: EmbeddingModelConfig;
 	created_at: string;
 	updated_at: string;
+	/**
+	 * Whether the current viewer may modify this knowledge base (edit
+	 * metadata, add/delete documents). `false` for knowledge bases
+	 * shared with read-only permission.
+	 */
+	editable: boolean;
 }
 
 export interface ListKnowledgeBasesResponse {
@@ -627,7 +671,7 @@ export interface DimensionPolicy {
 
 /** One credential and the embedding models it can serve, post-policy. */
 export interface KbEmbeddingProvider {
-	credential: CredentialRecord;
+	credential: CredentialView;
 	models: EmbeddingModelCard[];
 }
 

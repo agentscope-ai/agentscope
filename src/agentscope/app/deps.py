@@ -8,7 +8,12 @@ from ._manager import (
     ChatRunRegistry,
     SchedulerManager,
 )
-from ._service import ChatService, KnowledgeBaseService, SessionService
+from ._service import (
+    ChatService,
+    KnowledgeBaseService,
+    ResourceAccessService,
+    SessionService,
+)
 from ._types import AgentMiddlewareFactory, AgentToolFactory
 from .message_bus import MessageBus
 from .rag.blob_store import BlobStoreBase
@@ -76,6 +81,23 @@ async def get_chat_service(request: Request) -> ChatService:
         `ChatService`: The chat service instance stored in ``app.state``.
     """
     return request.app.state.chat_service
+
+
+async def get_resource_access_service(
+    request: Request,
+) -> ResourceAccessService:
+    """Return the application-wide resource access service.
+
+    Args:
+        request (`Request`): The incoming FastAPI request.
+
+    Returns:
+        `ResourceAccessService`:
+            The access service stored in ``app.state`` — the single
+            entry point routers should use to resolve
+            credential / agent / knowledge base records.
+    """
+    return request.app.state.resource_access_service
 
 
 async def get_session_service(request: Request) -> SessionService:

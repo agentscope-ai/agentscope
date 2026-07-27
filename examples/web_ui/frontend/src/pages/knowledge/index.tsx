@@ -10,6 +10,7 @@ import { DeleteDialog } from '@/components/dialog/DeleteDialog.tsx';
 import { EditKnowledgeBaseDialog } from '@/components/dialog/EditKnowledgeBaseDialog.tsx';
 import { KnowledgeSearchDrawer } from '@/components/drawer/KnowledgeSearchDrawer.tsx';
 import { KnowledgeDocumentsPanel } from '@/components/knowledge/KnowledgeDocumentsPanel.tsx';
+import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import {
 	DropdownMenu,
@@ -68,7 +69,14 @@ function DetailPanel({ knowledgeBase, onTest }: DetailPanelProps) {
 			{/* Header */}
 			<div className="flex items-start justify-between gap-x-4">
 				<div className="flex flex-col gap-y-1 min-w-0">
-					<h2 className="text-lg font-semibold truncate">{knowledgeBase.name}</h2>
+					<div className="flex items-center gap-x-2">
+						<h2 className="text-lg font-semibold truncate">{knowledgeBase.name}</h2>
+						{!knowledgeBase.editable && (
+							<Badge variant="secondary" title={t('common.readOnlyTooltip')}>
+								{t('common.readOnly')}
+							</Badge>
+						)}
+					</div>
 					{knowledgeBase.description ? (
 						<p className="text-sm text-muted-foreground">{knowledgeBase.description}</p>
 					) : null}
@@ -178,32 +186,47 @@ export const KnowledgePage = () => {
 													}}
 												>
 													<span className="truncate">{kb.name}</span>
-												</SidebarMenuButton>
-												<SidebarMenuAction showOnHover>
-													<DropdownMenu>
-														<DropdownMenuTrigger asChild>
-															<Ellipsis />
-														</DropdownMenuTrigger>
-														<DropdownMenuContent
-															side="right"
-															align="start"
+													{!kb.editable && (
+														<Badge
+															variant="secondary"
+															className="text-[10px] px-1 py-0"
+															title={t('common.readOnlyTooltip')}
 														>
-															<DropdownMenuItem
-																onClick={() => setEditTarget(kb)}
+															{t('common.readOnly')}
+														</Badge>
+													)}
+												</SidebarMenuButton>
+												{kb.editable && (
+													<SidebarMenuAction showOnHover>
+														<DropdownMenu>
+															<DropdownMenuTrigger asChild>
+																<Ellipsis />
+															</DropdownMenuTrigger>
+															<DropdownMenuContent
+																side="right"
+																align="start"
 															>
-																<Pencil />
-																{t('common.edit')}
-															</DropdownMenuItem>
-															<DropdownMenuItem
-																variant="destructive"
-																onClick={() => setDeleteTarget(kb)}
-															>
-																<Trash2 />
-																{t('common.delete')}
-															</DropdownMenuItem>
-														</DropdownMenuContent>
-													</DropdownMenu>
-												</SidebarMenuAction>
+																<DropdownMenuItem
+																	onClick={() =>
+																		setEditTarget(kb)
+																	}
+																>
+																	<Pencil />
+																	{t('common.edit')}
+																</DropdownMenuItem>
+																<DropdownMenuItem
+																	variant="destructive"
+																	onClick={() =>
+																		setDeleteTarget(kb)
+																	}
+																>
+																	<Trash2 />
+																	{t('common.delete')}
+																</DropdownMenuItem>
+															</DropdownMenuContent>
+														</DropdownMenu>
+													</SidebarMenuAction>
+												)}
 											</SidebarMenuItem>
 										);
 									})}

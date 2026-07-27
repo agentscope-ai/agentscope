@@ -7,19 +7,22 @@ from ..tool import ToolBase
 if TYPE_CHECKING:
     from ..agent import Agent
     from ..model import ChatResponse
+    from ..permission import PermissionDecision
 
 
 class MiddlewareBase:  # pylint: disable=unused-argument
     """Base class for all middleware implementations.
 
-    Middleware provides interception mechanisms at 5 key execution points
+    Middleware provides interception mechanisms at 7 key execution points
     in the Agent lifecycle:
 
     **Onion Pattern Hooks** (with before/after logic):
     - `on_reply`: Intercepts the entire reply process
     - `on_reasoning`: Intercepts the reasoning/model call phase
+    - `on_check_permission`: Intercepts permission checking for a tool call
     - `on_acting`: Intercepts individual tool call execution
     - `on_model_call`: Intercepts the raw model API call
+    - `on_compress_context`: Intercepts context compression
 
     **Transformer Pattern Hook** (sequential pipeline):
     - `on_system_prompt`: Transforms the system prompt string
@@ -156,6 +159,49 @@ class MiddlewareBase:  # pylint: disable=unused-argument
             f"{type(self).__name__} does not implement on_acting",
         )
         yield  # pylint: disable=unreachable
+
+    async def on_check_permission(
+        self,
+        agent: "Agent",
+        input_kwargs: dict,
+        next_handler: Callable[..., Awaitable["PermissionDecision"]],
+    ) -> "PermissionDecision":
+        """Hook for intercepting permission checking for one tool call.
+
+        This hook runs after the tool has been resolved and its input has been
+        parsed and validated, but before the resulting decision is consumed by
+        the agent.
+
+        Middleware can delegate with ``next_handler(**input_kwargs)``, replace
+        the returned decision, or return a decision without delegating. The
+        chain receives copies of ``tool_call`` and ``tool_input``; changes to
+        these copies do not alter the eventual tool invocation.
+
+        .. note::
+            Returning without calling ``next_handler`` bypasses the built-in
+            permission resolution for that call.
+
+        Args:
+            agent (`Agent`):
+                The Agent instance performing the permission check.
+            input_kwargs (`dict`):
+                Dictionary containing:
+
+                - ``tool_call`` (``ToolCallBlock``): validated call metadata
+                  used to correlate the permission decision.
+                - ``tool`` (``ToolBase``): the resolved tool instance.
+                - ``tool_input`` (``dict``): the parsed and validated input.
+            next_handler (`Callable[..., Awaitable[PermissionDecision]]`):
+                Callable that executes the next middleware or the built-in
+                permission resolution.
+
+        Returns:
+            `PermissionDecision`:
+                The decision the agent should consume.
+        """
+        raise RuntimeError(
+            f"{type(self).__name__} does not implement on_check_permission",
+        )
 
     async def on_model_call(
         self,
