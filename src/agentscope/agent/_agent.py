@@ -1614,20 +1614,16 @@ class Agent:
                 The decision that the agent should consume.
         """
 
-        async def check_permission_impl(
-            tool_call: ToolCallBlock,
-            tool: ToolBase,
-            tool_input: dict[str, Any],
-        ) -> PermissionDecision:
-            if tool_call.state == ToolCallState.ALLOWED:
-                return PermissionDecision(
-                    behavior=PermissionBehavior.ALLOW,
-                    message="Already allowed by user confirmation.",
-                )
-            return await self._engine.check_permission(tool, tool_input)
-
         if not self._check_permission_middlewares:
-            return await check_permission_impl(tool_call, tool, tool_input)
+            return await self._check_permission_impl(
+                tool_call,
+                tool,
+                tool_input,
+            )
+
+        # Copy so middleware cannot mutate what the agent consumes later.
+        tool_call = deepcopy(tool_call)
+        tool_input = deepcopy(tool_input)
 
         async def execute_chain(
             index: int = 0,
@@ -1635,14 +1631,15 @@ class Agent:
             tool: ToolBase = tool,
             tool_input: dict[str, Any] = tool_input,
         ) -> PermissionDecision:
+            """Execute the check_permission middleware chain."""
             if index >= len(self._check_permission_middlewares):
-                return await check_permission_impl(
+                return await self._check_permission_impl(
                     tool_call,
                     tool,
                     tool_input,
                 )
 
-            middleware = self._check_permission_middlewares[index]
+            mw = self._check_permission_middlewares[index]
             input_kwargs = {
                 "tool_call": tool_call,
                 "tool": tool,
@@ -1655,17 +1652,32 @@ class Agent:
                     **{**input_kwargs, **kwargs},
                 )
 
-            return await middleware.on_check_permission(
+            return await mw.on_check_permission(
                 agent=self,
                 input_kwargs=input_kwargs,
                 next_handler=next_handler,
             )
 
-        return await execute_chain(
-            tool_call=deepcopy(tool_call),
-            tool=tool,
-            tool_input=deepcopy(tool_input),
-        )
+        return await execute_chain()
+
+    async def _check_permission_impl(
+        self,
+        tool_call: ToolCallBlock,
+        tool: ToolBase,
+        tool_input: dict[str, Any],
+    ) -> PermissionDecision:
+        """Core permission resolution, wrapped by ``on_check_permission``.
+
+        A call already allowed by user confirmation short-circuits to ALLOW;
+        otherwise the built-in engine evaluates the tool and its input. See
+        :meth:`_check_permission` for the argument and return semantics.
+        """
+        if tool_call.state == ToolCallState.ALLOWED:
+            return PermissionDecision(
+                behavior=PermissionBehavior.ALLOW,
+                message="Already allowed by user confirmation.",
+            )
+        return await self._engine.check_permission(tool, tool_input)
 
     async def _execute_tool_call(
         self,
