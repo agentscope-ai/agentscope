@@ -4,6 +4,7 @@ from typing import Type, TYPE_CHECKING, Any
 
 from ._lifespan import lifespan
 from .access import DenyAllResourceAccessPolicy, ResourceAccessPolicyBase
+from .hub import MCPHubBase, SkillHubBase
 from .rag.blob_store import BlobStoreBase, LocalBlobStore
 from .rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from .workspace_manager import WorkspaceManagerBase
@@ -49,6 +50,8 @@ def create_app(
     knowledge_chunker: ChunkerBase | None = None,
     blob_store: BlobStoreBase | None = None,
     enable_index_worker: bool = True,
+    mcp_hubs: list[MCPHubBase] | None = None,
+    skill_hubs: list[SkillHubBase] | None = None,
     *,
     extra_credentials: list[Type[CredentialBase]] | None = None,
     extra_middlewares: list[FastAPIMiddleware] | None = None,
@@ -143,6 +146,10 @@ def create_app(
             process is expected to consume tasks from the message
             bus.  No effect when ``knowledge_base_manager`` is
             ``None``.
+        mcp_hubs (`list[MCPHubBase] | None`, optional):
+            The MCP hubs that provide MCPs.
+        skill_hubs (`list[SkillHubBase] | None`, optional):
+            The SkillHubs that provide skills.
         extra_credentials (`list[Type[CredentialBase]] | None`, optional):
             Additional :class:`~agentscope.credential.CredentialBase`
             subclasses to register before the app starts.  Equivalent to
