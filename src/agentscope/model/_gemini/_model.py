@@ -252,8 +252,6 @@ class GeminiChatModel(ChatModelBase):
                 generator of ``ChatResponse`` objects when streaming is
                 enabled.
         """
-        client = self.client
-
         formatted_messages = await self.formatter.format(messages)
 
         config: dict[str, Any] = {**config_kwargs}
@@ -295,7 +293,7 @@ class GeminiChatModel(ChatModelBase):
         start_datetime = datetime.now()
 
         if self.stream:
-            response = await client.aio.models.generate_content_stream(
+            response = await self.client.aio.models.generate_content_stream(
                 **kwargs,
             )
             return self._parse_stream_response(
@@ -303,7 +301,7 @@ class GeminiChatModel(ChatModelBase):
                 response,
             )
 
-        response = await client.aio.models.generate_content(**kwargs)
+        response = await self.client.aio.models.generate_content(**kwargs)
         return self._parse_completion_response(start_datetime, response)
 
     async def _parse_stream_response(

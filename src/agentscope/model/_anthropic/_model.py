@@ -158,8 +158,6 @@ class AnthropicChatModel(ChatModelBase):
                 enabled.
         """
 
-        client = self.client
-
         # Anthropic requires max_tokens; fall back to a safe default when
         # the user hasn't configured one explicitly.
         max_tokens = self.parameters.max_tokens or 8192
@@ -201,7 +199,7 @@ class AnthropicChatModel(ChatModelBase):
 
         start_datetime = datetime.now()
 
-        response = await client.messages.create(**kwargs)
+        response = await self.client.messages.create(**kwargs)
 
         if self.stream:
             return self._parse_anthropic_stream_completion_response(

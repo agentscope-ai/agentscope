@@ -180,8 +180,6 @@ class OpenAIResponseModel(ChatModelBase):
                 generator of ``ChatResponse`` objects when streaming is
                 enabled.
         """
-        client = self.client
-
         formatted_messages = await self.formatter.format(messages)
 
         api_kwargs: dict[str, Any] = {
@@ -224,7 +222,7 @@ class OpenAIResponseModel(ChatModelBase):
             api_kwargs["tool_choice"] = fmt_tool_choice
 
         start_datetime = datetime.now()
-        response = await client.responses.create(**api_kwargs)
+        response = await self.client.responses.create(**api_kwargs)
 
         if self.stream:
             return self._parse_stream_response(start_datetime, response)

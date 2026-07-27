@@ -116,10 +116,8 @@ class OllamaEmbeddingModel(EmbeddingModelBase[str | TextBlock]):
                     source="cache",
                 )
 
-        client = self.client
-
         start_time = datetime.now()
-        response = await client.embed(**api_kwargs)
+        response = await self.client.embed(**api_kwargs)
         time = (datetime.now() - start_time).total_seconds()
 
         if self.embedding_cache:

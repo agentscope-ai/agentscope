@@ -163,8 +163,6 @@ class MoonshotChatModel(ChatModelBase):
                 generator of ``ChatResponse`` objects when streaming is
                 enabled.
         """
-        client = self.client
-
         formatted_messages = await self.formatter.format(messages)
 
         kwargs: dict[str, Any] = {
@@ -203,7 +201,7 @@ class MoonshotChatModel(ChatModelBase):
             kwargs["stream_options"] = {"include_usage": True}
 
         start_datetime = datetime.now()
-        response = await client.chat.completions.create(**kwargs)
+        response = await self.client.chat.completions.create(**kwargs)
 
         if self.stream:
             return self._parse_stream_response(start_datetime, response)

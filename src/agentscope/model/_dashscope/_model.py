@@ -205,8 +205,6 @@ class DashScopeChatModel(ChatModelBase):
                 The keyword arguments for DashScope chat completions API,
                 e.g. ``temperature``, ``max_tokens``, ``top_p``, etc.
         """
-        client = self.client
-
         formatted_messages = await self.formatter.format(messages)
 
         request_kwargs: dict[str, Any] = {
@@ -262,7 +260,7 @@ class DashScopeChatModel(ChatModelBase):
             request_kwargs["stream_options"] = {"include_usage": True}
 
         start_datetime = datetime.now()
-        response = await client.chat.completions.create(**request_kwargs)
+        response = await self.client.chat.completions.create(**request_kwargs)
 
         if self.stream:
             return self._parse_stream_response(start_datetime, response)

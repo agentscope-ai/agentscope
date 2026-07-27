@@ -150,8 +150,6 @@ class OpenAITTSModel(TTSModelBase):
         if not text:
             return TTSResponse(content=None)
 
-        client = self.client
-
         media_type = _MEDIA_TYPES.get(
             self.parameters.response_format,
             _MEDIA_TYPES[_DEFAULT_RESPONSE_FORMAT],
@@ -168,9 +166,13 @@ class OpenAITTSModel(TTSModelBase):
             request_kwargs["instructions"] = self.parameters.instructions
 
         if self.stream:
-            return self._stream(client, media_type, **request_kwargs)
+            return self._stream(self.client, media_type, **request_kwargs)
 
-        return await self._aggregate(client, media_type, **request_kwargs)
+        return await self._aggregate(
+            self.client,
+            media_type,
+            **request_kwargs,
+        )
 
     @staticmethod
     async def _aggregate(

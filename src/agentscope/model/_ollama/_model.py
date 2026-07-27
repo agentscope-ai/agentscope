@@ -157,8 +157,6 @@ class OllamaChatModel(ChatModelBase):
                 generator of ``ChatResponse`` objects when streaming is
                 enabled.
         """
-        client = self.client
-
         formatted_messages = await self.formatter.format(messages)
 
         kwargs: dict[str, Any] = {
@@ -185,7 +183,7 @@ class OllamaChatModel(ChatModelBase):
             kwargs["tools"] = fmt_tools
 
         start_datetime = datetime.now()
-        response = await client.chat(**kwargs)
+        response = await self.client.chat(**kwargs)
 
         if self.stream:
             return self._parse_stream_response(start_datetime, response)
