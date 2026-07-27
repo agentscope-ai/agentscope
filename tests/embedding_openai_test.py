@@ -268,8 +268,8 @@ class OpenAIEmbeddingServiceTest(IsolatedAsyncioTestCase):
     ) -> None:
         """Stored parameters should flow into ``OpenAIEmbeddingModel``."""
         mock_client_cls.return_value = MagicMock()
-        storage = MagicMock()
-        storage.get_credential = AsyncMock(
+        access = MagicMock()
+        access.resolve_credential = AsyncMock(
             return_value=CredentialRecord(
                 id="cred-1",
                 user_id="user-1",
@@ -288,7 +288,7 @@ class OpenAIEmbeddingServiceTest(IsolatedAsyncioTestCase):
                 dimensions=1024,
                 parameters={"pass_dimensions": False},
             ),
-            storage=storage,
+            access=access,
         )
 
         self.assertIsInstance(model, OpenAIEmbeddingModel)
