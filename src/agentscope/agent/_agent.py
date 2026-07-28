@@ -393,9 +393,11 @@ class Agent:
 
             await execute_chain()
 
-    @staticmethod
-    def _prepare_messages_for_compression(messages: list[Msg]) -> list[Msg]:
-        """Return copies of messages without binary attachment payloads."""
+    def _prepare_messages_for_compression(
+        self,
+        messages: list[Msg],
+    ) -> list[Msg]:
+        """Return message copies compatible with the compression model."""
 
         def _replace_data_blocks(
             blocks: list[TextBlock | DataBlock],
@@ -403,6 +405,7 @@ class Agent:
             return [
                 TextBlock(text=_COMPRESSION_DATA_PLACEHOLDER)
                 if isinstance(block, DataBlock)
+                and not self.model.accepts_data_block(block)
                 else block
                 for block in blocks
             ]
@@ -413,7 +416,10 @@ class Agent:
                 continue
 
             for index, block in enumerate(msg.content):
-                if isinstance(block, DataBlock):
+                if isinstance(
+                    block,
+                    DataBlock,
+                ) and not self.model.accepts_data_block(block):
                     msg.content[index] = TextBlock(
                         text=_COMPRESSION_DATA_PLACEHOLDER,
                     )

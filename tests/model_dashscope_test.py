@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from utils import AnyString
 
 from agentscope.message import (
+    Base64Source,
     TextBlock,
     ToolCallBlock,
     ThinkingBlock,
@@ -45,6 +46,39 @@ def _make_model(stream: bool = False) -> Any:
             thinking_budget=100,
         ),
     )
+
+
+class TestDashScopeModelCardCapabilities(unittest.TestCase):
+    """Tests for per-model media capability lookup."""
+
+    def test_models_in_same_api_family_have_distinct_capabilities(
+        self,
+    ) -> None:
+        """Capability lookup uses the concrete model, not its formatter."""
+        credential = DashScopeCredential(api_key="test")
+        image = DataBlock(
+            source=Base64Source(
+                data="image",
+                media_type="image/png",
+            ),
+        )
+
+        vision_model = DashScopeChatModel(
+            credential=credential,
+            model="qwen3.7-plus",
+        )
+        text_model = DashScopeChatModel(
+            credential=credential,
+            model="qwen3.7-max",
+        )
+        unknown_model = DashScopeChatModel(
+            credential=credential,
+            model="qwen3.7-plus-2099-01-01",
+        )
+
+        self.assertTrue(vision_model.accepts_data_block(image))
+        self.assertFalse(text_model.accepts_data_block(image))
+        self.assertTrue(unknown_model.accepts_data_block(image))
 
 
 def _mock_completion(
