@@ -11,7 +11,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import MockModel, AnyString
 
-from agentscope.model import StructuredResponse
+from agentscope.model import ModelCard, StructuredResponse
 from agentscope.agent import Agent, ContextConfig
 from agentscope.state import AgentState
 from agentscope.message import (
@@ -25,8 +25,6 @@ from agentscope.message import (
     DataBlock,
     Base64Source,
     Msg,
-    DataBlock,
-    Base64Source,
     URLSource,
 )
 from agentscope.tool import Toolkit
@@ -217,6 +215,45 @@ def _make_failing_compression_agent(
         toolkit=Toolkit(),
     )
     return agent, model
+
+
+def _model_card(name: str, input_types: list[str]) -> ModelCard:
+    """Build a minimal model card for compression tests."""
+    return ModelCard(
+        name=name,
+        label=name,
+        status="active",
+        input_types=input_types,
+        output_types=["text/plain"],
+        context_size=1000,
+        output_size=100,
+        parameter_schema={},
+        parameters_overrides={},
+    )
+
+
+class TextOnlyRecordingStructuredMockModel(RecordingStructuredMockModel):
+    """A recording model with a known text-only model card."""
+
+    @classmethod
+    def list_models(
+        cls,
+        custom_yaml_dir: str | None = None,
+    ) -> list[ModelCard]:
+        """Return the test model card."""
+        return [_model_card("text-only", ["text/plain"])]
+
+
+class VisionRecordingStructuredMockModel(RecordingStructuredMockModel):
+    """A recording model with image input support."""
+
+    @classmethod
+    def list_models(
+        cls,
+        custom_yaml_dir: str | None = None,
+    ) -> list[ModelCard]:
+        """Return the test model card."""
+        return [_model_card("vision", ["text/plain", "image/*"])]
 
 
 def _has_instruction_hint(
@@ -1458,7 +1495,10 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
 
     async def test_context_compression_replaces_data_blocks(self) -> None:
         """Compression omits binary data without mutating source messages."""
-        model = RecordingStructuredMockModel(context_size=100)
+        model = TextOnlyRecordingStructuredMockModel(
+            model="text-only",
+            context_size=30,
+        )
         source_message = AssistantMsg(
             name="Friday",
             content=[
@@ -1591,6 +1631,115 @@ class ContextCompressionTest(IsolatedAsyncioTestCase):
             source_hint.hint[1],
             DataBlock,
         )
+
+    async def test_compression_keeps_supported_data_blocks(self) -> None:
+        """Compression keeps media accepted by the configured model."""
+        model = VisionRecordingStructuredMockModel(model="vision")
+        source_message = UserMsg(
+            name="user",
+            content=[
+                DataBlock(
+                    source=Base64Source(
+                        data="image",
+                        media_type="image/png",
+                    ),
+                ),
+                DataBlock(
+                    source=Base64Source(
+                        data="document",
+                        media_type="application/pdf",
+                    ),
+                ),
+            ],
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="Summarize the conversation.",
+            model=model,
+            context_config=ContextConfig(reserve_ratio=0.001),
+            state=AgentState(
+                session_id="123",
+                context=[source_message],
+            ),
+            toolkit=Toolkit(),
+        )
+        model.set_structured_response(
+            StructuredResponse(
+                content={
+                    "task_overview": "1",
+                    "current_state": "2",
+                    "important_discoveries": "3",
+                    "next_steps": "4",
+                    "context_to_preserve": "5",
+                },
+            ),
+        )
+
+        await agent.compress_context()
+
+        compressed_message = next(
+            msg
+            for msg in model.recorded_structured_messages[0]
+            if msg.id == source_message.id
+        )
+        self.assertIsInstance(compressed_message.content[0], DataBlock)
+        self.assertIsInstance(compressed_message.content[1], TextBlock)
+        self.assertEqual(
+            compressed_message.content[1].text,
+            "[Non-text attachment omitted during context compression]",
+        )
+        self.assertTrue(
+            all(
+                isinstance(block, DataBlock)
+                for block in source_message.content
+            ),
+        )
+
+    async def test_compression_keeps_data_for_unknown_model(self) -> None:
+        """Compression conservatively keeps media without a model card."""
+        model = RecordingStructuredMockModel(model="custom-model")
+        source_message = UserMsg(
+            name="user",
+            content=[
+                DataBlock(
+                    source=Base64Source(
+                        data="image",
+                        media_type="image/png",
+                    ),
+                ),
+            ],
+        )
+        agent = Agent(
+            name="Friday",
+            system_prompt="Summarize the conversation.",
+            model=model,
+            context_config=ContextConfig(),
+            state=AgentState(
+                session_id="123",
+                context=[source_message],
+            ),
+            toolkit=Toolkit(),
+        )
+        model.set_structured_response(
+            StructuredResponse(
+                content={
+                    "task_overview": "1",
+                    "current_state": "2",
+                    "important_discoveries": "3",
+                    "next_steps": "4",
+                    "context_to_preserve": "5",
+                },
+            ),
+        )
+
+        await agent.compress_context()
+
+        compressed_message = next(
+            msg
+            for msg in model.recorded_structured_messages[0]
+            if msg.id == source_message.id
+        )
+        self.assertIsInstance(compressed_message.content[0], DataBlock)
 
     async def test_context_compression_overflow_retry_keeps_instructions(
         self,
