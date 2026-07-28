@@ -109,8 +109,8 @@ class FormatterBase(BaseModel):
                 ):
                     # If supported, promote the block
 
-                    # Create a deterministic identifier based on the source data
-                    # so that identical blocks produce the same identifier
+                    # Create a deterministic identifier based on the source
+                    # data so that identical blocks produce the same identifier
                     source_data = (
                         block.source.data
                         if isinstance(block.source, Base64Source)
