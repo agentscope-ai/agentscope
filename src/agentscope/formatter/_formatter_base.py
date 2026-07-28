@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """The formatter module."""
 import base64
+import hashlib
 import mimetypes
 import tempfile
 from abc import abstractmethod
 from fnmatch import fnmatch
 from typing import Any, List, AsyncGenerator
 
-import shortuuid
 from pydantic import BaseModel, Field
 
 from ..message import (
@@ -109,9 +109,16 @@ class FormatterBase(BaseModel):
                 ):
                     # If supported, promote the block
 
-                    # Create an identifier for such multimodal data for
-                    # accurate reference (in terms of order, position, etc.)
-                    identifier = shortuuid.uuid()
+                    # Create a deterministic identifier based on the source data
+                    # so that identical blocks produce the same identifier
+                    source_data = (
+                        block.source.data
+                        if isinstance(block.source, Base64Source)
+                        else str(block.source.url)
+                    )
+                    identifier = hashlib.md5(
+                        source_data.encode(),
+                    ).hexdigest()[:12]
 
                     textual_output.append(
                         f"<system-reminder>A(n) {main_type} file is returned "
