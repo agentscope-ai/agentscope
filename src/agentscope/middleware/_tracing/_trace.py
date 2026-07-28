@@ -154,91 +154,91 @@ class TracingMiddleware(MiddlewareBase):
         )
         span_name = _get_agent_span_name(request_attributes)
 
-        with tracer.start_as_current_span(
+        span = tracer.start_span(
             name=span_name,
             attributes={
                 **request_attributes,
                 **common_attrs,
             },
-            end_on_exit=False,
-        ) as span:
-            # Synthetic execute_tool spans for externally executed tools
-            event_arg = input_kwargs.get("inputs")
-            if isinstance(event_arg, ExternalExecutionResultEvent):
-                for result in event_arg.execution_results:
-                    tool_attrs: dict[str, Any] = {
-                        SpanAttributes.GEN_AI_OPERATION_NAME: (
-                            OperationNameValues.EXECUTE_TOOL
-                        ),
-                        SpanAttributes.GEN_AI_TOOL_CALL_ID: result.id,
-                        SpanAttributes.GEN_AI_TOOL_NAME: result.name,
-                        SpanAttributes.AGENTSCOPE_IS_EXTERNAL_EXECUTION: (
-                            True
-                        ),
-                        **common_attrs,
-                    }
-                    if result.output is not None:
-                        tool_attrs[
-                            SpanAttributes.GEN_AI_TOOL_CALL_RESULT
-                        ] = _serialize_to_str(result.output)
-                    with tracer.start_as_current_span(
-                        name=(
-                            f"{OperationNameValues.EXECUTE_TOOL}"
-                            f" {result.name}"
-                        ),
-                        attributes=tool_attrs,
-                    ):
-                        pass
+        )
 
-            has_error = False
-            error_exc: BaseException | None = None
-            last_msg: Msg | None = None
-            hitl_pending: list[str] = []
-            external_pending: list[str] = []
-            observed_reply_id: str | None = None
+        # Synthetic execute_tool spans for externally executed tools
+        event_arg = input_kwargs.get("inputs")
+        if isinstance(event_arg, ExternalExecutionResultEvent):
+            for result in event_arg.execution_results:
+                tool_attrs: dict[str, Any] = {
+                    SpanAttributes.GEN_AI_OPERATION_NAME: (
+                        OperationNameValues.EXECUTE_TOOL
+                    ),
+                    SpanAttributes.GEN_AI_TOOL_CALL_ID: result.id,
+                    SpanAttributes.GEN_AI_TOOL_NAME: result.name,
+                    SpanAttributes.AGENTSCOPE_IS_EXTERNAL_EXECUTION: (
+                        True
+                    ),
+                    **common_attrs,
+                }
+                if result.output is not None:
+                    tool_attrs[
+                        SpanAttributes.GEN_AI_TOOL_CALL_RESULT
+                    ] = _serialize_to_str(result.output)
+                with tracer.start_as_current_span(
+                    name=(
+                        f"{OperationNameValues.EXECUTE_TOOL}"
+                        f" {result.name}"
+                    ),
+                    attributes=tool_attrs,
+                ):
+                    pass
 
-            try:
-                async for item in next_handler(**input_kwargs):
-                    if isinstance(item, ReplyStartEvent):
-                        observed_reply_id = item.reply_id
-                    elif isinstance(item, RequireUserConfirmEvent):
-                        hitl_pending.extend(t.name for t in item.tool_calls)
-                    elif isinstance(item, RequireExternalExecutionEvent):
-                        external_pending.extend(
-                            t.name for t in item.tool_calls
-                        )
-                    if isinstance(item, Msg):
-                        last_msg = item
-                    yield item
-            except BaseException as e:
-                has_error = True
-                error_exc = e
-                raise
-            finally:
-                reply_id = observed_reply_id or agent.state.reply_id
-                if reply_id:
-                    span.set_attribute(
-                        SpanAttributes.AGENTSCOPE_REPLY_ID,
-                        reply_id,
+        has_error = False
+        error_exc: BaseException | None = None
+        last_msg: Msg | None = None
+        hitl_pending: list[str] = []
+        external_pending: list[str] = []
+        observed_reply_id: str | None = None
+
+        try:
+            async for item in next_handler(**input_kwargs):
+                if isinstance(item, ReplyStartEvent):
+                    observed_reply_id = item.reply_id
+                elif isinstance(item, RequireUserConfirmEvent):
+                    hitl_pending.extend(t.name for t in item.tool_calls)
+                elif isinstance(item, RequireExternalExecutionEvent):
+                    external_pending.extend(
+                        t.name for t in item.tool_calls
                     )
-                if hitl_pending:
-                    span.set_attribute(
-                        SpanAttributes.AGENTSCOPE_HITL_PENDING_TOOLS,
-                        json.dumps(hitl_pending, ensure_ascii=False),
+                if isinstance(item, Msg):
+                    last_msg = item
+                yield item
+        except BaseException as e:
+            has_error = True
+            error_exc = e
+            raise
+        finally:
+            reply_id = observed_reply_id or agent.state.reply_id
+            if reply_id:
+                span.set_attribute(
+                    SpanAttributes.AGENTSCOPE_REPLY_ID,
+                    reply_id,
+                )
+            if hitl_pending:
+                span.set_attribute(
+                    SpanAttributes.AGENTSCOPE_HITL_PENDING_TOOLS,
+                    json.dumps(hitl_pending, ensure_ascii=False),
+                )
+            if external_pending:
+                span.set_attribute(
+                    SpanAttributes.AGENTSCOPE_EXTERNAL_EXECUTION_PENDING_TOOLS,  # noqa
+                    json.dumps(external_pending, ensure_ascii=False),
+                )
+            if has_error and error_exc is not None:
+                _set_span_error_status(span, error_exc)
+            else:
+                if last_msg is not None:
+                    span.set_attributes(
+                        _get_agent_response_attributes(last_msg),
                     )
-                if external_pending:
-                    span.set_attribute(
-                        SpanAttributes.AGENTSCOPE_EXTERNAL_EXECUTION_PENDING_TOOLS,  # noqa
-                        json.dumps(external_pending, ensure_ascii=False),
-                    )
-                if has_error and error_exc is not None:
-                    _set_span_error_status(span, error_exc)
-                else:
-                    if last_msg is not None:
-                        span.set_attributes(
-                            _get_agent_response_attributes(last_msg),
-                        )
-                    _set_span_success_status(span)
+                _set_span_success_status(span)
 
     # ------------------------------------------------------------------
     # on_model_call
@@ -271,27 +271,26 @@ class TracingMiddleware(MiddlewareBase):
         )
         span_name = _get_llm_span_name(request_attributes)
 
-        with tracer.start_as_current_span(
+        span = tracer.start_span(
             name=span_name,
             attributes={
                 **request_attributes,
                 **_get_common_attributes(agent.state.session_id),
             },
-            end_on_exit=False,
-        ) as span:
-            try:
-                result = await next_handler(**input_kwargs)
+        )
+        try:
+            result = await next_handler(**input_kwargs)
 
-                if isinstance(result, AsyncGenerator):
-                    return _trace_async_generator_wrapper(result, span)
+            if isinstance(result, AsyncGenerator):
+                return _trace_async_generator_wrapper(result, span)
 
-                span.set_attributes(_get_llm_response_attributes(result))
-                _set_span_success_status(span)
-                return result
+            span.set_attributes(_get_llm_response_attributes(result))
+            _set_span_success_status(span)
+            return result
 
-            except BaseException as e:
-                _set_span_error_status(span, e)
-                raise
+        except BaseException as e:
+            _set_span_error_status(span, e)
+            raise
 
     # ------------------------------------------------------------------
     # on_acting
@@ -321,28 +320,27 @@ class TracingMiddleware(MiddlewareBase):
         )
         span_name = _get_tool_span_name(request_attributes)
 
-        with tracer.start_as_current_span(
+        span = tracer.start_span(
             name=span_name,
             attributes={
                 **request_attributes,
                 **_get_common_attributes(agent.state.session_id),
             },
-            end_on_exit=False,
-        ) as span:
-            has_error = False
-            last_item = None
-            try:
-                async for item in next_handler(**input_kwargs):
-                    last_item = item
-                    yield item
-            except BaseException as e:
-                has_error = True
-                _set_span_error_status(span, e)
-                raise
-            finally:
-                if not has_error:
-                    if last_item is not None:
-                        span.set_attributes(
-                            _get_tool_response_attributes(last_item),
-                        )
-                    _set_span_success_status(span)
+        )
+        has_error = False
+        last_item = None
+        try:
+            async for item in next_handler(**input_kwargs):
+                last_item = item
+                yield item
+        except BaseException as e:
+            has_error = True
+            _set_span_error_status(span, e)
+            raise
+        finally:
+            if not has_error:
+                if last_item is not None:
+                    span.set_attributes(
+                        _get_tool_response_attributes(last_item),
+                    )
+                _set_span_success_status(span)
