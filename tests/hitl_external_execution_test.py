@@ -186,6 +186,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             "created_at": AnyString(),
             "finished_at": None,
             "finished_reason": None,
+            "structured_output": None,
             "error": None,
             "metadata": {},
             "name": "Friday",
@@ -257,6 +258,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 "tool_calls": [
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": id,
                         "name": name,
                         "input": tool_input,
@@ -366,18 +369,23 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": self.user_input_text,
                     },
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
                 "content": [
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": self.tool_call_id_1,
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_1,
@@ -440,18 +448,23 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": self.user_input_text,
                     },
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
                 "content": [
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": self.tool_call_id_1,
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_1,
@@ -460,11 +473,15 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "name": self.sequential_tool_name,
                         "output": [
                             {
                                 "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
                                 "id": AnyString(),
                                 "text": self.sequential_result_1,
                             },
@@ -474,6 +491,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": self.final_response_text,
                     },
@@ -605,18 +624,23 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": self.user_input_text,
                     },
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
                 "content": [
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": self.tool_call_id_1,
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_1,
@@ -625,6 +649,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": self.tool_call_id_2,
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_2,
@@ -728,18 +754,23 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": self.user_input_text,
                     },
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
                 "content": [
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": self.tool_call_id_1,
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_1,
@@ -748,6 +779,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": self.tool_call_id_2,
                         "name": self.sequential_tool_name,
                         "input": self.tool_input_2,
@@ -756,11 +789,15 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "name": self.sequential_tool_name,
                         "output": [
                             {
                                 "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
                                 "id": AnyString(),
                                 "text": self.sequential_result_1,
                             },
@@ -770,11 +807,15 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "name": self.sequential_tool_name,
                         "output": [
                             {
                                 "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
                                 "id": AnyString(),
                                 "text": self.sequential_result_2,
                             },
@@ -784,6 +825,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": self.final_response_text,
                     },
@@ -921,18 +964,23 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": self.user_input_text,
                     },
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
                 "content": [
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": self.tool_call_id_1,
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_1,
@@ -941,6 +989,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": self.tool_call_id_2,
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_2,
@@ -1036,18 +1086,23 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": self.user_input_text,
                     },
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
                 "content": [
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": self.tool_call_id_1,
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_1,
@@ -1056,6 +1111,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": self.tool_call_id_2,
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_2,
@@ -1064,11 +1121,15 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "name": self.concurrent_tool_name,
                         "output": [
                             {
                                 "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
                                 "id": AnyString(),
                                 "text": self.concurrent_result_1,
                             },
@@ -1078,11 +1139,15 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "name": self.concurrent_tool_name,
                         "output": [
                             {
                                 "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
                                 "id": AnyString(),
                                 "text": self.concurrent_result_2,
                             },
@@ -1092,6 +1157,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": self.final_response_text,
                     },
@@ -1223,18 +1290,23 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": self.user_input_text,
                     },
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
                 "content": [
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": self.tool_call_id_1,
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_1,
@@ -1243,6 +1315,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": self.tool_call_id_2,
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_2,
@@ -1313,18 +1387,23 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": self.user_input_text,
                     },
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
                 "content": [
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": self.tool_call_id_1,
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_1,
@@ -1333,6 +1412,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": self.tool_call_id_2,
                         "name": self.concurrent_tool_name,
                         "input": self.tool_input_2,
@@ -1341,11 +1422,15 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "name": self.concurrent_tool_name,
                         "output": [
                             {
                                 "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
                                 "id": AnyString(),
                                 "text": self.concurrent_result_1,
                             },
@@ -1355,11 +1440,15 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "name": self.concurrent_tool_name,
                         "output": [
                             {
                                 "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
                                 "id": AnyString(),
                                 "text": self.concurrent_result_2,
                             },
@@ -1369,6 +1458,8 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": self.final_response_text,
                     },

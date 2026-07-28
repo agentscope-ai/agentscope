@@ -1,5 +1,6 @@
 import type { ContentBlock, TextBlock } from '@agentscope-ai/agentscope/message';
-import { Paperclip, Send, Loader2, Square, X, type LucideIcon } from 'lucide-react';
+import { Paperclip, Send, Loader2, Square, type LucideIcon, XIcon, FileText } from 'lucide-react';
+import mime from 'mime';
 import React, {
 	useState,
 	useRef,
@@ -12,6 +13,16 @@ import React, {
 
 import { Button } from '../ui/button';
 import { Kbd } from '../ui/kbd';
+import {
+	Attachment,
+	AttachmentAction,
+	AttachmentActions,
+	AttachmentContent,
+	AttachmentDescription,
+	AttachmentGroup,
+	AttachmentMedia,
+	AttachmentTitle,
+} from '@/components/ui/attachment.tsx';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { ReplyPhase } from '@/hooks/useMessages';
 import { useTranslation } from '@/i18n/useI18n.ts';
@@ -196,6 +207,8 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 					id: crypto.randomUUID(),
 					type: 'text',
 					text: value.trim(),
+					created_at: new Date().toISOString(),
+					finished_at: new Date().toISOString(),
 				};
 				blocks.push(textBlock);
 			}
@@ -290,35 +303,64 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 		};
 
 		return (
-			<div className={cn('flex flex-col gap-1', className)}>
+			<div className={cn('flex flex-col', className)}>
 				<div
 					id="tour-chat-input"
-					className="flex w-full flex-col gap-2 rounded-[28px] border bg-background px-2"
+					className="flex w-full flex-col rounded-[28px] border bg-background px-2"
 					data-tour="chat-input"
 				>
-					{/* File list */}
 					{files.length > 0 && (
-						<div className="flex flex-wrap gap-2">
-							{files.map((file, index) => (
-								<div
-									key={index}
-									className="flex items-center gap-1 rounded bg-muted px-2 py-1 text-sm"
-								>
-									{file.status === 'processing' && (
-										<Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />
-									)}
-									<span className="max-w-[200px] truncate">{file.name}</span>
-									<button
-										onClick={() =>
-											setFiles(files.filter((_, i) => i !== index))
-										}
-										className="text-muted-foreground hover:text-foreground"
-									>
-										<X className="h-3 w-3" />
-									</button>
-								</div>
-							))}
-						</div>
+						<AttachmentGroup className={'w-full max-w-full px-1 mt-1'}>
+							{files.map((file, index) => {
+								const isImage =
+									file.block &&
+									file.block.type === 'data' &&
+									file.block.source.media_type.startsWith('image/');
+								let data: undefined | string;
+								if (file.block && file.block.type === 'data') {
+									const block = file.block;
+									data =
+										block.source.type === 'url'
+											? block.source.url
+											: `data:${block.source.media_type};base64,${block.source.data}`;
+								}
+
+								return (
+									<Attachment>
+										<AttachmentMedia variant={isImage ? 'image' : 'icon'}>
+											{file.status === 'processing' ? (
+												<Loader2 className="size-3 shrink-0 animate-spin" />
+											) : isImage ? (
+												<img src={data} alt={file.name} />
+											) : (
+												<FileText className="size-3" />
+											)}
+										</AttachmentMedia>
+										<AttachmentContent>
+											<AttachmentTitle>{file.name}</AttachmentTitle>
+											<AttachmentDescription>
+												{file.status === 'processing'
+													? t('common.uploading')
+													: (
+															mime.getExtension(
+																mime.getType(file.name) || 'bin',
+															) || 'bin'
+														).toUpperCase()}
+											</AttachmentDescription>
+										</AttachmentContent>
+										<AttachmentActions>
+											<AttachmentAction
+												onClick={() =>
+													setFiles(files.filter((_, i) => i !== index))
+												}
+											>
+												<XIcon />
+											</AttachmentAction>
+										</AttachmentActions>
+									</Attachment>
+								);
+							})}
+						</AttachmentGroup>
 					)}
 
 					{/* ``items-end`` in both layouts: the buttons are then already at the

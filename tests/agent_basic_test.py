@@ -25,6 +25,7 @@ from agentscope.message import (
     ToolCallBlock,
     UserMsg,
 )
+from agentscope.types import ReplyFinishedReason
 
 
 class MockSequentialTool(ToolBase):
@@ -133,6 +134,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             "created_at": AnyString(),
             "finished_at": None,
             "finished_reason": None,
+            "structured_output": None,
             "error": None,
             "metadata": {},
             "name": "Friday",
@@ -330,12 +332,15 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hi",
                     },
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -343,6 +348,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hello world!",
                     },
@@ -363,13 +370,16 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hello world!",
                     },
                 ],
                 "created_at": AnyString(),
                 "finished_at": None,
-                "finished_reason": None,
+                "finished_reason": ReplyFinishedReason.COMPLETED,
+                "structured_output": None,
                 "error": None,
                 "id": AnyString(),
                 "metadata": {},
@@ -386,6 +396,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hi",
                     },
@@ -393,6 +405,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -402,6 +415,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hello world!",
                     },
@@ -415,6 +430,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hi again",
                     },
@@ -422,6 +439,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -431,6 +449,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hello world!",
                     },
@@ -523,6 +543,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hi",
                     },
@@ -530,6 +552,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -537,6 +560,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hello world!",
                     },
@@ -567,13 +592,16 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hello world!",
                     },
                 ],
                 "created_at": AnyString(),
                 "finished_at": None,
-                "finished_reason": None,
+                "finished_reason": ReplyFinishedReason.COMPLETED,
+                "structured_output": None,
                 "error": None,
                 "id": AnyString(),
                 "metadata": {},
@@ -590,6 +618,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hi",
                     },
@@ -597,6 +627,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -606,6 +637,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hello world!",
                     },
@@ -619,6 +652,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hi again",
                     },
@@ -626,6 +661,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "metadata": {},
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
@@ -635,6 +671,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Hello world!",
                     },
@@ -672,7 +710,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "id": AnyString(),
                 "created_at": AnyString(),
                 "finished_at": None,
-                "finished_reason": None,
+                "finished_reason": ReplyFinishedReason.COMPLETED,
+                "structured_output": None,
                 "error": None,
                 "metadata": {},
                 "name": "Friday",
@@ -680,6 +719,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Final answer",
                     },
@@ -699,6 +740,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Think",
                     },
@@ -710,11 +753,15 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "thinking",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "thinking": "Working on it",
                     },
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Final answer",
                     },
@@ -926,23 +973,30 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Test",
                     },
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "I'll call the tool",
                     },
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": tool_call_id_1,
                         "name": "mock_sequential_tool",
                         "input": '{"input": "test1"}',
@@ -951,6 +1005,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": tool_call_id_2,
                         "name": "mock_sequential_tool",
                         "input": '{"input": "test2"}',
@@ -959,10 +1015,14 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "output": [
                             {
                                 "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
                                 "id": AnyString(),
                                 "text": "Sequential result: test1",
                             },
@@ -973,10 +1033,14 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "output": [
                             {
                                 "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
                                 "id": AnyString(),
                                 "text": "Sequential result: test2",
                             },
@@ -987,6 +1051,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "ended",
                     },
@@ -1181,18 +1247,23 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Test",
                     },
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
                 "content": [
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": tool_call_id_1,
                         "name": "mock_concurrent_tool",
                         "input": '{"input": "test1"}',
@@ -1201,6 +1272,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": tool_call_id_2,
                         "name": "mock_concurrent_tool",
                         "input": '{"input": "test2"}',
@@ -1209,10 +1282,14 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "output": [
                             {
                                 "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
                                 "id": AnyString(),
                                 "text": "Concurrent result: test1",
                             },
@@ -1223,10 +1300,14 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "output": [
                             {
                                 "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
                                 "id": AnyString(),
                                 "text": "Concurrent result: test2",
                             },
@@ -1237,6 +1318,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "All done",
                     },
@@ -1469,18 +1552,23 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "Test",
                     },
                 ],
                 "finished_at": AnyString(),
                 "finished_reason": None,
+                "structured_output": None,
                 "error": None,
             },
             {
                 "content": [
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": tool_call_id_1,
                         "name": "mock_sequential_tool",
                         "input": '{"input": "seq1"}',
@@ -1489,6 +1577,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": tool_call_id_2,
                         "name": "mock_concurrent_tool",
                         "input": '{"input": "conc1"}',
@@ -1497,6 +1587,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_call",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": tool_call_id_3,
                         "name": "mock_concurrent_tool",
                         "input": '{"input": "conc2"}',
@@ -1505,12 +1597,16 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "name": "mock_sequential_tool",
                         "state": "success",
                         "output": [
                             {
                                 "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
                                 "id": AnyString(),
                                 "text": "Sequential result: seq1",
                             },
@@ -1519,12 +1615,16 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "name": "mock_concurrent_tool",
                         "state": "success",
                         "output": [
                             {
                                 "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
                                 "id": AnyString(),
                                 "text": "Concurrent result: conc1",
                             },
@@ -1533,12 +1633,16 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "tool_result",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "name": "mock_concurrent_tool",
                         "state": "success",
                         "output": [
                             {
                                 "type": "text",
+                                "created_at": AnyString(),
+                                "finished_at": None,
                                 "id": AnyString(),
                                 "text": "Concurrent result: conc2",
                             },
@@ -1547,6 +1651,8 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                     },
                     {
                         "type": "text",
+                        "created_at": AnyString(),
+                        "finished_at": None,
                         "id": AnyString(),
                         "text": "All done",
                     },

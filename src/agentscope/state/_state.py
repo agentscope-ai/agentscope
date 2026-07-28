@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """The agent state class."""
-from typing import Any
+from typing import Any, Type
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer, model_validator
 
 import aiofiles.os
 
@@ -146,6 +146,33 @@ class TaskContext(BaseModel):
     """The task context."""
 
 
+class ReplyContext(BaseModel):
+    """The context of the current agent reply."""
+
+    reply_id: str = Field(default_factory=_generate_id)
+    """The id of the current reply, which is also used as the id of the
+    final message of the reply."""
+
+    cur_iter: int = 0
+    """The current iteration of the agent's reasoning-acting loop in this
+    reply."""
+
+    structured_schema: Type[BaseModel] | dict | None = None
+    """The reply's structured output requirement, a pydantic model class in
+    process and serialized as its JSON schema dict."""
+
+    @field_serializer("structured_schema")
+    def _serialize_structured_schema(
+        self,
+        value: Type[BaseModel] | dict | None,
+    ) -> dict | None:
+        """Serialize a schema class into its JSON schema dict."""
+        return value.model_json_schema() if isinstance(value, type) else value
+
+    structured_output: dict | None = None
+    """The structured output generated within this reply."""
+
+
 class AgentState(BaseModel):
     """The agent state that should be saved and loaded from storage."""
 
@@ -156,13 +183,57 @@ class AgentState(BaseModel):
     summary: str | list[TextBlock | DataBlock] = ""
     """The compressed summary of the context, which will be prepended to the
     context when fed into the LLM."""
+
     context: list[Msg] = Field(default_factory=list)
     """The uncompressed conversation context, which will be fed into the LLM"""
-    reply_id: str = Field(default_factory=_generate_id)
-    """The id of the current reply, which is also used as the id of the
-    final message of the reply."""
-    cur_iter: int = 0
-    """The current iteration of the agent's reasoning-acting loop."""
+
+    # =================================================================
+    # For backword compatibility
+    # =================================================================
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_reply_fields(cls, data: Any) -> Any:
+        """Migrate the top-level ``reply_id``/``cur_iter`` fields (the
+        pre-``reply_context`` storage format) into ``reply_context``, so
+        that the states saved by previous versions load correctly."""
+        if isinstance(data, dict) and (
+            "reply_id" in data or "cur_iter" in data
+        ):
+            data = dict(data)
+            reply_context = dict(data.get("reply_context") or {})
+            for key in ("reply_id", "cur_iter"):
+                if key in data and key not in reply_context:
+                    reply_context[key] = data.pop(key)
+            data["reply_context"] = reply_context
+        return data
+
+    @property
+    def reply_id(self) -> str:
+        """The reply id of the current reply."""
+        return self.reply_context.reply_id
+
+    @reply_id.setter
+    def reply_id(self, value: str) -> None:
+        """Set the reply id of the current reply."""
+        self.reply_context.reply_id = value
+
+    @property
+    def cur_iter(self) -> int:
+        """The current iteration of the agent's reasoning-acting loop in
+        this reply."""
+        return self.reply_context.cur_iter
+
+    @cur_iter.setter
+    def cur_iter(self, value: int) -> None:
+        """Set the current iteration of the agent's reasoning-acting loop in
+        this reply."""
+        self.reply_context.cur_iter = value
+
+    # =================================================================
+    # The reply context
+    # =================================================================
+    reply_context: ReplyContext = Field(default_factory=ReplyContext)
+    """The reply related context."""
 
     # =================================================================
     # The permission context
@@ -236,16 +307,33 @@ class AgentState(BaseModel):
             `bool`:
                 ``True`` when at least one such tool call is pending.
         """
+        return bool(self.get_awaiting_tool_calls(name))
+
+    def get_awaiting_tool_calls(self, name: str) -> list[ToolCallBlock]:
+        """Get the tail assistant message's tool calls still awaiting an
+        outside response — an ``ASKING`` user confirmation or a
+        ``SUBMITTED`` external execution with no matching tool result yet.
+
+        Args:
+            name (`str`):
+                Only messages authored by this agent name are inspected;
+                observed messages from other agents are ignored.
+
+        Returns:
+            `list[ToolCallBlock]`:
+                The awaiting tool call blocks, empty if none.
+        """
         if not self.context:
-            return False
+            return []
         last_msg = self.context[-1]
         if last_msg.role != "assistant" or last_msg.name != name:
-            return False
+            return []
         result_ids = {b.id for b in last_msg.get_content_blocks("tool_result")}
-        return any(
-            tc.state == ToolCallState.ASKING
+        return [
+            tc
+            for tc in last_msg.get_content_blocks("tool_call")
+            if tc.state == ToolCallState.ASKING
             or (
                 tc.state == ToolCallState.SUBMITTED and tc.id not in result_ids
             )
-            for tc in last_msg.get_content_blocks("tool_call")
-        )
+        ]

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The TeamSay tool — sends a message to one or all team members."""
+import json
 from typing import Any
 
 from pydantic import Field
@@ -317,7 +318,10 @@ class TeamSay(_TeamToolBase):
                     f"{content}\n"
                     f"</team-message>"
                 ),
-                source=sender_name,
+                source=json.dumps(
+                    {"label": "team", "sublabel": sender_name},
+                    ensure_ascii=False,
+                ),
             )
             payload = hint.model_dump(mode="json")
 

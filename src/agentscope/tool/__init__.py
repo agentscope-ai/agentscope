@@ -9,6 +9,7 @@ from ._adapters import MCPTool, FunctionTool
 from ._builtin import (
     ResetTools,
     Bash,
+    PowerShell,
     Edit,
     Glob,
     Grep,
@@ -46,6 +47,7 @@ __all__ = [
     "ExecResult",
     "ResetTools",
     "Bash",
+    "PowerShell",
     "Edit",
     "Glob",
     "Grep",

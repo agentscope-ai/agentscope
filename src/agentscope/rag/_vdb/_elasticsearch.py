@@ -27,7 +27,7 @@ class ElasticsearchStore(VectorStoreBase):
     dynamic mappings.
 
     .. note:: Requires the official async Elasticsearch client. Install it
-        with ``pip install agentscope[elasticsearch]``.
+        with ``pip install agentscope[vdb-elasticsearch]``.
     """
 
     def __init__(
