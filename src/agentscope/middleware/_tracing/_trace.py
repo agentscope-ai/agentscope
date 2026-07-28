@@ -172,20 +172,15 @@ class TracingMiddleware(MiddlewareBase):
                     ),
                     SpanAttributes.GEN_AI_TOOL_CALL_ID: result.id,
                     SpanAttributes.GEN_AI_TOOL_NAME: result.name,
-                    SpanAttributes.AGENTSCOPE_IS_EXTERNAL_EXECUTION: (
-                        True
-                    ),
+                    SpanAttributes.AGENTSCOPE_IS_EXTERNAL_EXECUTION: (True),
                     **common_attrs,
                 }
                 if result.output is not None:
-                    tool_attrs[
-                        SpanAttributes.GEN_AI_TOOL_CALL_RESULT
-                    ] = _serialize_to_str(result.output)
+                    tool_attrs[SpanAttributes.GEN_AI_TOOL_CALL_RESULT] = (
+                        _serialize_to_str(result.output)
+                    )
                 with tracer.start_as_current_span(
-                    name=(
-                        f"{OperationNameValues.EXECUTE_TOOL}"
-                        f" {result.name}"
-                    ),
+                    name=(f"{OperationNameValues.EXECUTE_TOOL}" f" {result.name}"),
                     attributes=tool_attrs,
                 ):
                     pass
@@ -204,9 +199,7 @@ class TracingMiddleware(MiddlewareBase):
                 elif isinstance(item, RequireUserConfirmEvent):
                     hitl_pending.extend(t.name for t in item.tool_calls)
                 elif isinstance(item, RequireExternalExecutionEvent):
-                    external_pending.extend(
-                        t.name for t in item.tool_calls
-                    )
+                    external_pending.extend(t.name for t in item.tool_calls)
                 if isinstance(item, Msg):
                     last_msg = item
                 yield item
