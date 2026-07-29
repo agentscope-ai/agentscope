@@ -88,7 +88,10 @@ class StateChangeMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
         )
 
     async def _publish_state(
-        self, agent: Any, tasks_changed: bool, perm_changed: bool
+        self,
+        agent: Any,
+        tasks_changed: bool,
+        perm_changed: bool,
     ) -> None:
         """Push a ``state_updated`` event with only the changed fields.
 
