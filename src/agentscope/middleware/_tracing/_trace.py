@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """TracingMiddleware and supporting utilities for OpenTelemetry tracing."""
+
 import json
 from typing import (
     Any,
@@ -180,7 +181,9 @@ class TracingMiddleware(MiddlewareBase):
                         _serialize_to_str(result.output)
                     )
                 with tracer.start_as_current_span(
-                    name=(f"{OperationNameValues.EXECUTE_TOOL}" f" {result.name}"),
+                    name=(
+                        f"{OperationNameValues.EXECUTE_TOOL}" f" {result.name}"
+                    ),
                     attributes=tool_attrs,
                 ):
                     pass
