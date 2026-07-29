@@ -107,10 +107,10 @@ class StateChangeMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 mode="json",
             )
         if perm_changed:
-            value["permission_context"] = (
-                agent.state.permission_context.model_dump(
-                    mode="json",
-                )
+            value[
+                "permission_context"
+            ] = agent.state.permission_context.model_dump(
+                mode="json",
             )
         if not value:
             return
