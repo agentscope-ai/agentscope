@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 """The formatter module."""
+
 import base64
-import hashlib
 import mimetypes
 import tempfile
 from abc import abstractmethod
 from fnmatch import fnmatch
 from typing import Any, List, AsyncGenerator
 
+import shortuuid
 from pydantic import BaseModel, Field
 
 from ..message import (
@@ -116,9 +117,9 @@ class FormatterBase(BaseModel):
                         if isinstance(block.source, Base64Source)
                         else str(block.source.url)
                     )
-                    identifier = hashlib.md5(
-                        source_data.encode(),
-                    ).hexdigest()[:12]
+                    identifier = shortuuid.uuid(
+                        name=source_data,
+                    )  # noqa: FBT003
 
                     textual_output.append(
                         f"<system-reminder>A(n) {main_type} file is returned "
