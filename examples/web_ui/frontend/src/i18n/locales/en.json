@@ -92,7 +92,8 @@
 		"attachNotSupported": "This model does not support file attachments",
 		"send": "Send",
 		"stop": "Stop generating",
-		"stopping": "Stopping ..."
+		"stopping": "Stopping ...",
+		"newLineHint": "Shift + Enter for new line"
 	},
 	"confirmCard": {
 		"toConfirm": "to confirm",

@@ -91,8 +91,8 @@ const COLLAPSED_HEIGHT_PX = 52;
  * height would leave dead space under the caret instead of centring the line.
  */
 const TEXTAREA_PADDING_Y_PX = (COLLAPSED_HEIGHT_PX - LINE_HEIGHT_PX) / 2;
-/** Growth stops after six lines of text; the textarea scrolls beyond that. */
-const MAX_HEIGHT_PX = LINE_HEIGHT_PX * 6 + TEXTAREA_PADDING_Y_PX * 2;
+/** Growth stops after 12 lines of text; the textarea scrolls beyond that. */
+const MAX_HEIGHT_PX = LINE_HEIGHT_PX * 12 + TEXTAREA_PADDING_Y_PX * 2;
 /** Horizontal padding of the textarea, mirrored by the overlay and the ghost. */
 const TEXTAREA_PADDING_X_PX = 12;
 
@@ -506,6 +506,12 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 						</div>
 					</div>
 				</div>
+				<p className="mt-1 px-4 text-xs text-muted-foreground/70 flex items-center gap-1">
+					<Kbd>Shift</Kbd>
+					<span>+</span>
+					<Kbd>Enter</Kbd>
+					<span>— {t('textInput.newLineHint')}</span>
+				</p>
 			</div>
 		);
 	},
