@@ -25,6 +25,7 @@ event chain, because ``on_acting`` yields ``ToolChunk | ToolResponse``
 — not ``AgentEvent``. The SSE ``/stream`` endpoint picks them up from
 the bus like any other session event.
 """
+
 import hashlib
 from typing import Any, AsyncGenerator, Callable
 
@@ -106,8 +107,10 @@ class StateChangeMiddleware(MiddlewareBase):  # pylint: disable=abstract-method
                 mode="json",
             )
         if perm_changed:
-            value["permission_context"] = agent.state.permission_context.model_dump(
-                mode="json",
+            value["permission_context"] = (
+                agent.state.permission_context.model_dump(
+                    mode="json",
+                )
             )
         if not value:
             return
