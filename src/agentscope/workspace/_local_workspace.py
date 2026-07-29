@@ -686,8 +686,18 @@ class LocalWorkspace(WorkspaceBase):
         Args:
             mcp_client (`MCPClient`):
                 The MCP client to add.
+
+        Raises:
+            ValueError:
+                If an MCP with the same name already exists. Names are
+                unique because they compose the model-facing tool name
+                ``mcp__{name}__{tool}``.
         """
         async with self._mcp_lock:
+            if any(m.name == mcp_client.name for m in self._mcps):
+                raise ValueError(
+                    f"MCP {mcp_client.name!r} already exists in workspace.",
+                )
             if mcp_client.is_stateful and not mcp_client.is_connected:
                 await mcp_client.connect()
             self._mcps.append(mcp_client)

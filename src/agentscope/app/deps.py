@@ -15,11 +15,13 @@ from ._service import (
     SessionService,
 )
 from ._types import AgentMiddlewareFactory, AgentToolFactory
+from .hub import MCPHubBase, SkillHubBase
 from .message_bus import MessageBus
 from .rag.blob_store import BlobStoreBase
 from .rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from .storage import StorageBase
 from ..rag import ParserBase
+from ..workspace import WorkspaceBase
 
 
 async def get_current_user_id(
@@ -313,3 +315,76 @@ async def get_knowledge_parsers(
             ),
         )
     return parsers
+
+
+async def get_mcp_hubs(request: Request) -> dict[str, MCPHubBase]:
+    """Return the registered MCP hubs, keyed by hub id.
+
+    Args:
+        request (`Request`):
+            The incoming FastAPI request.
+
+    Returns:
+        `dict[str, MCPHubBase]`:
+            The hubs stored in ``app.state.mcp_hubs``, empty when none
+            were passed to ``create_app``.
+    """
+    return getattr(request.app.state, "mcp_hubs", {})
+
+
+async def get_skill_hubs(request: Request) -> dict[str, SkillHubBase]:
+    """Return the registered skill hubs, keyed by hub id.
+
+    Args:
+        request (`Request`):
+            The incoming FastAPI request.
+
+    Returns:
+        `dict[str, SkillHubBase]`:
+            The hubs stored in ``app.state.skill_hubs``, empty when none
+            were passed to ``create_app``.
+    """
+    return getattr(request.app.state, "skill_hubs", {})
+
+
+async def resolve_workspace(
+    user_id: str,
+    agent_id: str,
+    session_id: str,
+    storage: StorageBase,
+    workspace_manager: WorkspaceManagerBase,
+) -> WorkspaceBase:
+    """Return the workspace backing the given session.
+
+    Args:
+        user_id (`str`):
+            The authenticated user ID.
+        agent_id (`str`):
+            The agent owning the session.
+        session_id (`str`):
+            The session whose workspace is wanted.
+        storage (`StorageBase`):
+            The storage used to look the session record up.
+        workspace_manager (`WorkspaceManagerBase`):
+            The manager that opens or reattaches the workspace.
+
+    Returns:
+        `WorkspaceBase`:
+            The session's workspace.
+
+    Raises:
+        `HTTPException`:
+            ``404`` when the session does not exist.
+    """
+    session_record = await storage.get_session(user_id, agent_id, session_id)
+    if session_record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session {session_id!r} not found.",
+        )
+    return await workspace_manager.get_workspace(
+        user_id,
+        agent_id,
+        session_id,
+        session_record.config.workspace_id,
+    )

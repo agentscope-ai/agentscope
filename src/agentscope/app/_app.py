@@ -4,7 +4,7 @@ from typing import Type, TYPE_CHECKING, Any
 
 from ._lifespan import lifespan
 from .access import DenyAllResourceAccessPolicy, ResourceAccessPolicyBase
-from .hub import MCPHubBase, SkillHubBase
+from .hub import HubBase, MCPHubBase, SkillHubBase
 from .rag.blob_store import BlobStoreBase, LocalBlobStore
 from .rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from .workspace_manager import WorkspaceManagerBase
@@ -12,6 +12,7 @@ from ._router import (
     agent_router,
     chat_router,
     credential_router,
+    hub_router,
     knowledge_base_router,
     model_router,
     tts_model_router,
@@ -39,6 +40,35 @@ if TYPE_CHECKING:
 else:
     FastAPI = Any
     FastAPIMiddleware = Any
+
+
+def _index_hubs(hubs: list | None, kind: str) -> dict:
+    """Key the hubs by id, rejecting duplicates.
+
+    Args:
+        hubs (`list | None`):
+            The hubs passed to :func:`create_app`.
+        kind (`str`):
+            The hub kind, used in the error message.
+
+    Returns:
+        `dict`:
+            The hubs keyed by :attr:`HubBase.hub_id`.
+
+    Raises:
+        `ValueError`:
+            When two hubs of the same kind share an id, which would make
+            them indistinguishable in the routes.
+    """
+    indexed: dict[str, HubBase] = {}
+    for hub in hubs or []:
+        if hub.hub_id in indexed:
+            raise ValueError(
+                f"Duplicate {kind} hub id {hub.hub_id!r}: hub ids must be "
+                f"unique so routes address exactly one hub.",
+            )
+        indexed[hub.hub_id] = hub
+    return indexed
 
 
 def create_app(
@@ -220,6 +250,8 @@ def create_app(
     app.state.resource_access_policy = (
         resource_access_policy or DenyAllResourceAccessPolicy()
     )
+    app.state.mcp_hubs = _index_hubs(mcp_hubs, "MCP")
+    app.state.skill_hubs = _index_hubs(skill_hubs, "skill")
 
     # Parser / chunker / blob-store defaults only make sense when the
     # KB feature is actually enabled.  When ``knowledge_base_manager`` is
@@ -265,6 +297,7 @@ def create_app(
         agent_router,
         chat_router,
         credential_router,
+        hub_router,
         knowledge_base_router,
         schedule_router,
         session_router,

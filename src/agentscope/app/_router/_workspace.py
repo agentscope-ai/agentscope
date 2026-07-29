@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
 """Workspace router — manage MCP clients and skills on a workspace."""
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, Field
 
 from ..deps import (
     get_current_user_id,
     get_storage,
     get_workspace_manager,
+    resolve_workspace,
 )
 from ..workspace_manager import WorkspaceManagerBase
 from ..storage import StorageBase
 from ...mcp import MCPClient
 from ...skill import Skill
-from ...workspace import WorkspaceBase
 
 workspace_router = APIRouter(prefix="/workspace", tags=["workspace"])
 
@@ -37,29 +37,6 @@ class MCPClientStatus(MCPClient):
     tools: list[ToolInfo] = Field(default_factory=list)
 
 
-async def _resolve_workspace(
-    user_id: str,
-    agent_id: str,
-    session_id: str,
-    storage: StorageBase,
-    workspace_manager: WorkspaceManagerBase,
-) -> WorkspaceBase:
-    """Resolve the workspace for the given session, raising 404 if not
-    found."""
-    session_record = await storage.get_session(user_id, agent_id, session_id)
-    if session_record is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Session {session_id!r} not found.",
-        )
-    return await workspace_manager.get_workspace(
-        user_id,
-        agent_id,
-        session_id,
-        session_record.config.workspace_id,
-    )
-
-
 # ---------------------------------------------------------------------------
 # MCP endpoints
 # ---------------------------------------------------------------------------
@@ -74,7 +51,7 @@ async def list_mcps(
     workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
 ) -> list[MCPClientStatus]:
     """Return all MCP clients with live tool list and health status."""
-    workspace = await _resolve_workspace(
+    workspace = await resolve_workspace(
         user_id,
         agent_id,
         session_id,
@@ -120,7 +97,7 @@ async def add_mcp(
     workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
 ) -> None:
     """Add an MCP client to the session's workspace."""
-    workspace = await _resolve_workspace(
+    workspace = await resolve_workspace(
         user_id,
         agent_id,
         session_id,
@@ -143,7 +120,7 @@ async def remove_mcp(
     workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
 ) -> None:
     """Remove an MCP client from the session's workspace by name."""
-    workspace = await _resolve_workspace(
+    workspace = await resolve_workspace(
         user_id,
         agent_id,
         session_id,
@@ -167,7 +144,7 @@ async def list_skills(
     workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
 ) -> list[Skill]:
     """Return all skills available in the session's workspace."""
-    workspace = await _resolve_workspace(
+    workspace = await resolve_workspace(
         user_id,
         agent_id,
         session_id,
@@ -187,7 +164,7 @@ async def add_skill(
     workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
 ) -> None:
     """Add a skill to the session's workspace from the given path."""
-    workspace = await _resolve_workspace(
+    workspace = await resolve_workspace(
         user_id,
         agent_id,
         session_id,
@@ -210,7 +187,7 @@ async def remove_skill(
     workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
 ) -> None:
     """Remove a skill from the session's workspace by name."""
-    workspace = await _resolve_workspace(
+    workspace = await resolve_workspace(
         user_id,
         agent_id,
         session_id,

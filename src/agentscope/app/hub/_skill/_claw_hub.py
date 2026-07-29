@@ -3,21 +3,24 @@
 
 A thin async client around the ClawHub HTTP API (``https://clawhub.ai``)
 that exposes the registry skills through the
-:class:`~agentscope.app._hub._skill._base.SkillHubBase` interface.
+:class:`~agentscope.app.hub._skill._base.SkillHubBase` interface.
 
 `ClawHub HTTP API <https://clawhub.ai/api/v1/openapi.json>`_
 
 .. note:: Only the public read endpoints are required. A Bearer token
     (``clh_...``) is optional and, when provided, raises the per-user
     rate limit.
+
+.. note:: Browsing and searching are different upstream endpoints:
+    ``GET /api/v1/skills`` is cursor-paginated but takes no query, while
+    ``GET /api/v1/search`` takes a query but returns a single page.
 """
 import asyncio
 import random
 from typing import TYPE_CHECKING, AsyncIterator
 
 from ._base import SkillHubBase
-from ....skill import Skill
-from ...._logging import logger
+from ._card import SkillCard, SkillHubPage
 
 if TYPE_CHECKING:
     import httpx
@@ -53,45 +56,50 @@ class ClawHubError(Exception):
 class ClawSkillHub(SkillHubBase):
     """A skill hub backed by the ClawHub registry.
 
-    Exposes two operations: :meth:`list_skills` to browse the registry
-    catalog and :meth:`download` to stream a skill archive.
-
     .. code-block:: python
 
-        hub = ClawHub(api_token="clh_xxx")
-        skills = await hub.list_skills(user_id="alice")
+        hub = ClawSkillHub(api_token="clh_xxx")
+        page = await hub.list_skills(user_id="alice", q="git")
         async for chunk in hub.download("gifgrep"):
             ...  # stream-write into a sandbox
     """
 
     def __init__(
         self,
+        hub_id: str = "clawhub",
+        display_name: str = "ClawHub",
+        description: str = "The ClawHub public skill registry.",
+        *,
         base_url: str = DEFAULT_BASE_URL,
         api_token: str | None = None,
-        limit: int = 100,
         timeout: float = 30.0,
         max_retries: int = 3,
     ) -> None:
         """Initialize the ClawHub skill provider.
 
         Args:
+            hub_id (`str`, defaults to `"clawhub"`):
+                The stable identifier addressing this hub in the API
+                routes.
+            display_name (`str`, defaults to `"ClawHub"`):
+                The user-facing hub name.
+            description (`str`, optional):
+                The user-facing hub description.
             base_url (`str`, defaults to `"https://clawhub.ai"`):
                 The base URL of the ClawHub registry.
             api_token (`str | None`, optional):
                 The ClawHub Bearer token (``clh_...``). When provided,
                 requests are authenticated and use the higher per-user
                 rate limit bucket.
-            limit (`int`, defaults to `100`):
-                The maximum number of skills to list (1-200).
             timeout (`float`, defaults to `30.0`):
                 The per-request timeout in seconds.
             max_retries (`int`, defaults to `3`):
                 The maximum number of retries when a request is rate
                 limited (HTTP ``429``).
         """
+        super().__init__(hub_id, display_name, description)
         self.base_url = base_url.rstrip("/")
         self.api_token = api_token
-        self.limit = limit
         self.timeout = timeout
         self.max_retries = max_retries
 
@@ -207,7 +215,7 @@ class ClawSkillHub(SkillHubBase):
 
     async def download(
         self,
-        slug: str,
+        card_id: str,
         version: str | None = None,
         tag: str | None = None,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
@@ -221,7 +229,7 @@ class ClawSkillHub(SkillHubBase):
         bytes are produced.
 
         Args:
-            slug (`str`):
+            card_id (`str`):
                 The canonical slug of the skill.
             version (`str | None`, optional):
                 A specific semver version to download. When omitted with
@@ -236,12 +244,14 @@ class ClawSkillHub(SkillHubBase):
                 The next chunk of the skill ZIP archive.
 
         Raises:
+            `KeyError`:
+                When the registry has no skill under ``card_id``.
             `ClawHubError`:
-                When the API returns a non-success status code.
+                When the API returns any other non-success status code.
         """
         import httpx
 
-        params: dict = {"slug": slug}
+        params: dict = {"slug": card_id}
         if version is not None:
             params["version"] = version
         if tag is not None:
@@ -270,6 +280,8 @@ class ClawSkillHub(SkillHubBase):
                         # Read the (plain-text) error body before the
                         # stream context closes.
                         body = await response.aread()
+                        if response.status_code == 404:
+                            raise KeyError(card_id)
                         raise ClawHubError(
                             response.status_code,
                             body.decode("utf-8", errors="replace"),
@@ -281,84 +293,156 @@ class ClawSkillHub(SkillHubBase):
 
         raise ClawHubError(429, "Rate limit exceeded after retries")
 
-    async def _load_skill(self, item: dict) -> Skill:
-        """Build a `Skill` from a catalog item and its ``SKILL.md``.
+    def _to_card(self, item: dict) -> SkillCard:
+        """Build a :class:`SkillCard` from one catalog or search record.
 
-        No local files are written: the markdown is fetched directly from
-        the registry file endpoint, and the archive bytes are left to the
-        caller (e.g. a sandbox) to stream via :meth:`download`.
+        No per-card request is made: everything comes from the record the
+        listing already returned, which is what keeps browsing at one
+        upstream call per page.
+
+        The slug is used as the card id — it is what every lookup and
+        download endpoint takes. The opaque ``id`` the search endpoint
+        also returns cannot be resolved back through the public API, so
+        it is deliberately ignored.
 
         Args:
             item (`dict`):
-                A skill record from ``GET /api/v1/skills``.
+                A record from ``GET /api/v1/skills`` (``items``) or
+                ``GET /api/v1/search`` (``results``).
 
         Returns:
-            `Skill`:
-                The parsed skill object.
+            `SkillCard`:
+                The card describing this skill.
         """
-        import frontmatter
+        # ``latestVersion`` is an object on the catalog endpoint and
+        # absent on the search endpoint, which carries ``version``.
+        latest = item.get("latestVersion")
+        if isinstance(latest, dict):
+            version = latest.get("version")
+        else:
+            version = latest or item.get("version")
 
-        slug = item["slug"]
-        response = await self._request(
-            "GET",
-            f"/api/v1/skills/{slug}/file",
-            {"path": "SKILL.md"},
+        updated_at = item.get("updatedAt")
+
+        return SkillCard(
+            hub_id=self.hub_id,
+            id=item["slug"],
+            name=item["slug"],
+            display_name=item.get("displayName"),
+            description=item.get("summary") or "",
+            # ``topics`` holds the categorical labels. Upstream ``tags``
+            # is a version-tag -> version map, not something to show.
+            tags=list(item.get("topics") or []),
+            version=version,
+            # ``updatedAt`` is reported in Unix milliseconds.
+            updated_at=float(updated_at) / 1000.0 if updated_at else None,
+            metadata={
+                key: item[key]
+                for key in ("stats", "downloads", "tags")
+                if item.get(key)
+            },
         )
-        parsed = await asyncio.to_thread(frontmatter.loads, response.text)
 
-        # ``updatedAt`` is reported in Unix milliseconds; convert to
-        # seconds to match the ``Skill.updated_at`` convention.
-        updated_at = float(item.get("updatedAt") or 0) / 1000.0
+    async def list_skills(
+        self,
+        user_id: str,
+        q: str | None = None,
+        cursor: str | None = None,
+        limit: int = 20,
+    ) -> SkillHubPage:
+        """Browse or search the ClawHub registry in one request.
 
-        return Skill(
-            name=slug,
-            description=item.get("summary")
-            or str(parsed.get("description", "")),
-            dir=slug,
-            markdown=parsed.content,
-            updated_at=updated_at,
-        )
-
-    async def list_skills(self, user_id: str) -> list[Skill]:
-        """Get the available skills from the ClawHub registry.
-
-        Browses the catalog via ``GET /api/v1/skills`` and loads each
-        skill's ``SKILL.md`` concurrently. Skills that fail to load are
-        skipped with a warning so a single failure does not break the
-        whole listing.
+        With ``q`` the search endpoint is used, which ranks by relevance
+        but returns a single page — ``next_cursor`` is then always
+        ``None``. Without ``q`` the cursor-paginated catalog is browsed.
 
         Args:
             user_id (`str`):
-                The user identifier to query the skill. Currently unused
-                by the public ClawHub catalog, kept for interface
+                The user identifier to query skill cards for. Unused by
+                the public ClawHub catalog, kept for interface
                 compatibility.
+            q (`str | None`, optional):
+                A keyword filtering the cards.
+            cursor (`str | None`, optional):
+                The opaque cursor from a previous page. Ignored when
+                ``q`` is given, since search is not paginated upstream.
+            limit (`int`, defaults to `20`):
+                The maximum number of cards per page (1-200).
 
         Returns:
-            `list[Skill]`:
-                The list of successfully loaded skills.
+            `SkillHubPage`:
+                The requested page of cards plus the next cursor.
+
+        Raises:
+            `ClawHubError`:
+                When the API returns a non-success status code.
         """
+        if q:
+            response = await self._request(
+                "GET",
+                "/api/v1/search",
+                {"q": q, "limit": limit},
+            )
+            records = response.json().get("results") or []
+            next_cursor = None
+        else:
+            params: dict = {"limit": limit}
+            if cursor is not None:
+                params["cursor"] = cursor
+            response = await self._request("GET", "/api/v1/skills", params)
+            payload = response.json()
+            records = payload.get("items") or []
+            next_cursor = payload.get("nextCursor")
 
-        response = await self._request(
-            "GET",
-            "/api/v1/skills",
-            {"limit": self.limit},
+        return SkillHubPage(
+            cards=[self._to_card(r) for r in records if r.get("slug")],
+            next_cursor=next_cursor,
         )
-        items = response.json().get("items", [])
 
-        results = await asyncio.gather(
-            *(self._load_skill(item) for item in items),
-            return_exceptions=True,
-        )
+    async def get_skill(self, user_id: str, card_id: str) -> SkillCard:
+        """Fetch one skill plus its ``SKILL.md`` body.
 
-        skills: list[Skill] = []
-        for item, result in zip(items, results):
-            if isinstance(result, Skill):
-                skills.append(result)
-            else:
-                logger.warning(
-                    "Failed to load ClawHub skill %s: %s",
-                    item.get("slug"),
-                    str(result),
-                )
+        Args:
+            user_id (`str`):
+                The user identifier to query the card for. Unused by the
+                public ClawHub catalog, kept for interface compatibility.
+            card_id (`str`):
+                The canonical slug of the skill.
 
-        return skills
+        Returns:
+            `SkillCard`:
+                The card with :attr:`SkillCard.markdown` populated.
+
+        Raises:
+            `KeyError`:
+                When the registry has no skill under ``card_id``.
+            `ClawHubError`:
+                When the API returns any other non-success status code.
+        """
+        import frontmatter
+
+        try:
+            detail, markdown = await asyncio.gather(
+                self._request("GET", f"/api/v1/skills/{card_id}"),
+                self._request(
+                    "GET",
+                    f"/api/v1/skills/{card_id}/file",
+                    {"path": "SKILL.md"},
+                ),
+            )
+        except ClawHubError as e:
+            if e.status_code == 404:
+                raise KeyError(card_id) from e
+            raise
+
+        payload = detail.json()
+        item = dict(payload.get("skill") or {})
+        item.setdefault("slug", card_id)
+        item["latestVersion"] = payload.get("latestVersion")
+
+        card = self._to_card(item)
+        parsed = await asyncio.to_thread(frontmatter.loads, markdown.text)
+        card.markdown = parsed.content
+        if not card.description:
+            card.description = str(parsed.get("description", ""))
+        return card
