@@ -402,7 +402,8 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 			return;
 		}
 		const tc = (view.session.state as Record<string, unknown>)?.tasks_context as
-			TaskContext | undefined;
+			| TaskContext
+			| undefined;
 		setTasksContext(tc ?? null);
 	}, [view]);
 
@@ -416,7 +417,8 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 			return;
 		}
 		const pc = (view.session.state as Record<string, unknown>)?.permission_context as
-			PermissionContext | undefined;
+			| PermissionContext
+			| undefined;
 		setPermissionContext(pc ?? null);
 	}, [view]);
 
