@@ -76,6 +76,21 @@ export type ReplyPhase = 'idle' | 'streaming' | 'interrupting';
 const INTERRUPT_TIMEOUT_MS = 10_000;
 
 /**
+ * Maximum silence window during an in-flight ``streaming`` reply. When the
+ * backend produces no ``AgentEvent`` for this many milliseconds while a reply
+ * is still open (unhandled LLM exception, crashed worker process, dropped
+ * network packet on the SSE connection), the frontend falls back to ``idle``
+ * and surfaces a descriptive error so the spinner / Stop button do not stick
+ * indefinitely (issue #2110).
+ *
+ * The value is intentionally generous at 45 s because long tool calls (e.g.
+ * web search, code sandbox, or a slow LLM ``n`` parameter run) are legitimately
+ * silent for 10 s – 30 s. Short values would false-positive stall-detect
+ * running requests.
+ */
+const STALL_TIMEOUT_MS = 45_000;
+
+/**
  * Manages messages for a single ``(agentId, sessionId)`` pair.
  *
  * Event delivery has two independent channels:
@@ -138,6 +153,10 @@ export function useMessages(
 	// Timer that reverts ``interrupting`` back to ``idle`` if the
 	// terminating REPLY_END never arrives (dropped SSE frame, etc.).
 	const interruptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// Timer that reverts ``streaming`` back to ``idle`` when the backend stops
+	// emitting AgentEvent for STALL_TIMEOUT_MS (crashed worker, LLM exception
+	// that escaped the event pipeline, silent TCP drop on the SSE socket).
+	const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	const clearInterruptTimer = useCallback(() => {
 		if (interruptTimerRef.current !== null) {
@@ -145,6 +164,29 @@ export function useMessages(
 			interruptTimerRef.current = null;
 		}
 	}, []);
+
+	const clearStallTimer = useCallback(() => {
+		if (stallTimerRef.current !== null) {
+			clearTimeout(stallTimerRef.current);
+			stallTimerRef.current = null;
+		}
+	}, []);
+
+	/** (Re)start the stall timer — only meaningful while streaming. */
+	const restartStallTimer = useCallback(() => {
+		clearStallTimer();
+		stallTimerRef.current = setTimeout(() => {
+			stallTimerRef.current = null;
+			setPhase((prev) => (prev === 'streaming' ? 'idle' : prev));
+			setError(
+				new Error(
+					`The backend stopped producing events for ${STALL_TIMEOUT_MS / 1000}s`
+						+ ' during this chat run (crashed worker or LLM exception).'
+						+ ' Please retry your message.',
+				),
+			);
+		}, STALL_TIMEOUT_MS);
+	}, [clearStallTimer]);
 
 	const audioManager = useAudioManager();
 
@@ -185,6 +227,7 @@ export function useMessages(
 					const v = custom.value as { worker_session_id: string; reply_id: string };
 					setSubagentHitl((prev) => prev.filter((x) => hitlKey(x) !== hitlKey(v)));
 				}
+				restartStallTimer();
 				return;
 			}
 			if (event.type === EventType.REPLY_START) {
@@ -195,15 +238,18 @@ export function useMessages(
 				currentReplyRef.current = msg;
 				clearInterruptTimer();
 				setPhase('streaming');
+				restartStallTimer();
 			} else if (event.type === EventType.REPLY_END) {
 				if (currentReplyRef.current) {
 					appendEvent(currentReplyRef.current, event);
 				}
 				clearInterruptTimer();
+				clearStallTimer();
 				setPhase('idle');
 				currentReplyRef.current = null;
 			} else if (currentReplyRef.current) {
 				appendEvent(currentReplyRef.current, event);
+				restartStallTimer();
 			}
 
 			// Route streaming audio DataBlocks to the audio manager. They still
@@ -231,7 +277,13 @@ export function useMessages(
 
 			scheduleUpdate();
 		},
-		[scheduleUpdate, audioManager, clearInterruptTimer],
+		[
+			scheduleUpdate,
+			audioManager,
+			clearInterruptTimer,
+			clearStallTimer,
+			restartStallTimer,
+		],
 	);
 
 	// ── Lifecycle: fetch history + open SSE stream ──────────────────
@@ -241,6 +293,7 @@ export function useMessages(
 		setMsgs([]);
 		setError(null);
 		clearInterruptTimer();
+		clearStallTimer();
 		setPhase('idle');
 		setSubagentHitl([]);
 		audioManager?.disposeAll();
@@ -268,6 +321,7 @@ export function useMessages(
 				const tail = messages[messages.length - 1];
 				if (is_running || hasPendingToolCall(tail)) {
 					setPhase('streaming');
+					restartStallTimer();
 					if (hasPendingToolCall(tail)) {
 						// Prime the ref so continuation events (which
 						// arrive without a fresh REPLY_START) apply to
@@ -295,6 +349,11 @@ export function useMessages(
 				}
 			} catch (e) {
 				if ((e as Error).name !== 'AbortError' && !cancelled) {
+					// The SSE stream disconnected unexpectedly — do not
+					// leave the UI stuck on streaming/spinner even if
+					// the backend never emitted a REPLY_END.
+					clearStallTimer();
+					setPhase((prev) => (prev === 'streaming' ? 'idle' : prev));
 					setError(e as Error);
 				}
 			}
@@ -305,8 +364,18 @@ export function useMessages(
 			controller.abort();
 			abortRef.current = null;
 			clearInterruptTimer();
+			clearStallTimer();
 		};
-	}, [agentId, sessionId, scheduleUpdate, processEvent, audioManager, clearInterruptTimer]);
+	}, [
+		agentId,
+		sessionId,
+		scheduleUpdate,
+		processEvent,
+		audioManager,
+		clearInterruptTimer,
+		clearStallTimer,
+		restartStallTimer,
+	]);
 
 	/**
 	 * Send a user message. Appends the message to the local list
@@ -410,6 +479,7 @@ export function useMessages(
 		// click) leave the phase alone.
 		setPhase((prev) => (prev === 'streaming' ? 'interrupting' : prev));
 		clearInterruptTimer();
+		clearStallTimer();
 		interruptTimerRef.current = setTimeout(() => {
 			interruptTimerRef.current = null;
 			setPhase((prev) => (prev === 'interrupting' ? 'idle' : prev));
@@ -421,7 +491,7 @@ export function useMessages(
 			setPhase((prev) => (prev === 'interrupting' ? 'idle' : prev));
 			setError(e as Error);
 		}
-	}, [agentId, sessionId, clearInterruptTimer]);
+	}, [agentId, sessionId, clearInterruptTimer, clearStallTimer]);
 
 	/**
 	 * Confirm or deny a tool call that a *team member* is awaiting,
