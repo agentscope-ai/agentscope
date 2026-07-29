@@ -16,6 +16,7 @@ from agentscope.message import (
     ToolCallBlock,
     DataBlock,
     Base64Source,
+    ToolResultState,
 )
 from agentscope.tool import (
     Toolkit,
@@ -482,6 +483,77 @@ class ToolkitTest(IsolatedAsyncioTestCase):
             base64.b64decode(merged.source.data),
             b"helloworld",
         )
+
+    async def test_append_chunk_preserves_error_over_interrupted(self) -> None:
+        """ERROR state must not be downgraded to INTERRUPTED by later chunk."""
+        response = ToolResponse()
+        response.append_chunk(
+            ToolChunk(
+                content=[TextBlock(text="failed")],
+                state=ToolResultState.ERROR,
+            ),
+        )
+        response.append_chunk(
+            ToolChunk(
+                content=[TextBlock(text="interrupted")],
+                state=ToolResultState.INTERRUPTED,
+            ),
+        )
+        self.assertEqual(response.state, ToolResultState.ERROR)
+
+    async def test_append_chunk_preserves_error_over_denied(self) -> None:
+        """ERROR state must not be downgraded to DENIED by later chunk."""
+        response = ToolResponse()
+        response.append_chunk(
+            ToolChunk(
+                content=[TextBlock(text="failed")],
+                state=ToolResultState.ERROR,
+            ),
+        )
+        response.append_chunk(
+            ToolChunk(
+                content=[TextBlock(text="denied")],
+                state=ToolResultState.DENIED,
+            ),
+        )
+        self.assertEqual(response.state, ToolResultState.ERROR)
+
+    async def test_append_chunk_preserves_denied_over_interrupted(
+        self,
+    ) -> None:
+        """DENIED must not be downgraded to INTERRUPTED by a later chunk."""
+        response = ToolResponse()
+        response.append_chunk(
+            ToolChunk(
+                content=[TextBlock(text="denied")],
+                state=ToolResultState.DENIED,
+            ),
+        )
+        response.append_chunk(
+            ToolChunk(
+                content=[TextBlock(text="interrupted")],
+                state=ToolResultState.INTERRUPTED,
+            ),
+        )
+        self.assertEqual(response.state, ToolResultState.DENIED)
+
+    async def test_append_chunk_upgrades_from_success_to_error(self) -> None:
+        """SUCCESS state should be correctly upgraded to ERROR."""
+        response = ToolResponse()
+        response.append_chunk(
+            ToolChunk(
+                content=[TextBlock(text="ok")],
+                state=ToolResultState.SUCCESS,
+            ),
+        )
+        self.assertEqual(response.state, ToolResultState.SUCCESS)
+        response.append_chunk(
+            ToolChunk(
+                content=[TextBlock(text="failed")],
+                state=ToolResultState.ERROR,
+            ),
+        )
+        self.assertEqual(response.state, ToolResultState.ERROR)
 
 
 class RegisterFunctionTest(IsolatedAsyncioTestCase):

@@ -10,6 +10,14 @@ from .._utils._common import _generate_id
 from ..message import DataBlock, TextBlock, Base64Source, ToolResultState
 
 
+_STATE_PRIORITY = {
+    ToolResultState.SUCCESS: 0,
+    ToolResultState.INTERRUPTED: 1,
+    ToolResultState.DENIED: 2,
+    ToolResultState.ERROR: 3,
+}
+
+
 def _merge_base64_chunks(existing: str, incoming: str) -> str:
     """Merge independently encoded base64 chunks without corrupting padding."""
     try:
@@ -133,12 +141,10 @@ class ToolResponse(BaseModel):
         # Update id, state and metadata
         # Only reserve the failure state and keep the previous state if not
         # worse.
-        if chunk.state == ToolResultState.ERROR:
-            self.state = ToolResultState.ERROR
-        elif chunk.state == "interrupted":
-            self.state = ToolResultState.INTERRUPTED
-        elif chunk.state == ToolResultState.DENIED:
-            self.state = ToolResultState.DENIED
+        new_priority = _STATE_PRIORITY.get(chunk.state, -1)
+        old_priority = _STATE_PRIORITY.get(self.state, -1)
+        if new_priority > old_priority:
+            self.state = chunk.state
 
         self.metadata.update(chunk.metadata)
 
