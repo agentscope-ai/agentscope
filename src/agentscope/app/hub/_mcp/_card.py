@@ -69,6 +69,66 @@ class MCPCard(BaseModel):
         description="The card version reported by the hub.",
     )
 
+    updated_at: float | None = Field(
+        default=None,
+        title="Updated At",
+        description="The last-updated timestamp (Unix epoch seconds).",
+    )
+
+    author: str | None = Field(
+        default=None,
+        title="Author",
+        description="Who published the MCP, when the hub says.",
+    )
+
+    icon_url: str | None = Field(
+        default=None,
+        title="Icon URL",
+        description=(
+            "An image representing the MCP. ``None`` when the hub offers "
+            "none — the UI is expected to fall back rather than show a "
+            "broken image."
+        ),
+    )
+
+    url: str | None = Field(
+        default=None,
+        title="URL",
+        description=(
+            "The MCP's page on the hub's website, for a 'view on the "
+            "hub' link. ``None`` when the hub has no web presence."
+        ),
+    )
+
+    readme: str | None = Field(
+        default=None,
+        title="Readme",
+        description=(
+            "The server's long-form documentation, shown in the detail "
+            "view where a skill shows its ``SKILL.md``. ``None`` when "
+            "the hub publishes none."
+        ),
+    )
+
+    installs: int | None = Field(
+        default=None,
+        title="Installs",
+        description=(
+            "How many times this MCP has been installed. ``None`` when "
+            "the hub does not count installs, which is not the same as "
+            "zero — render it only when set."
+        ),
+    )
+
+    downloads: int | None = Field(
+        default=None,
+        title="Downloads",
+        description=(
+            "How many times this MCP has been downloaded. ``None`` when "
+            "the hub does not count downloads."
+        ),
+    )
+
     is_stateful: bool = Field(
         default=True,
         title="Stateful",

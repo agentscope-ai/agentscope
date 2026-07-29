@@ -23,7 +23,7 @@ from ._base import ToolBase
 from ._response import ToolResponse, ToolChunk
 from ..skill import SkillLoaderBase, Skill
 from ._types import RegisteredTool
-from .._utils._common import _json_loads_with_repair
+from .._utils._common import _describe_exception, _json_loads_with_repair
 from ..exception import (
     DeveloperOrientedException,
     ToolNotFoundError,
@@ -517,8 +517,20 @@ class Toolkit:
 
             # MCP tools
             for client in group.mcps:
-                tools = await client.list_tools()
-                cache_tools.extend(tools)
+                try:
+                    cache_tools.extend(await client.list_tools())
+                except Exception as e:
+                    # One unreachable MCP must not take the reply down
+                    # with it: an expired token or a server that is
+                    # simply down would otherwise end the conversation
+                    # rather than just withdraw that server's tools.
+                    logger.warning(
+                        "Skipping MCP '%s' in group '%s': listing its "
+                        "tools failed with %s",
+                        client.name,
+                        group.name,
+                        _describe_exception(e),
+                    )
 
             # Append cached tools into the available tools and solve the name
             # conflict

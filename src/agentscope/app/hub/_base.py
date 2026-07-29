@@ -19,6 +19,7 @@ class HubBase:
         hub_id: str,
         display_name: str,
         description: str = "",
+        icon_url: str | None = None,
     ) -> None:
         """Initialize the hub identity.
 
@@ -31,6 +32,9 @@ class HubBase:
                 The user-facing hub name.
             description (`str`, defaults to `""`):
                 The user-facing hub description.
+            icon_url (`str | None`, optional):
+                An image identifying the hub in the picker. ``None``
+                leaves the UI to fall back rather than show a gap.
 
         Raises:
             `ValueError`:
@@ -44,3 +48,4 @@ class HubBase:
         self.hub_id = hub_id
         self.display_name = display_name
         self.description = description
+        self.icon_url = icon_url

@@ -56,7 +56,7 @@ import tarfile
 from abc import abstractmethod
 from copy import deepcopy
 from pathlib import Path
-from typing import Self
+from typing import AsyncIterator, Literal, Self
 
 from pydantic import AnyUrl
 
@@ -98,6 +98,48 @@ _EXTRACT_TAR_SHIM = (
     "    tf.close()\n"
     "os.unlink(src)\n"
 )
+
+#: Expands an archive inside the sandbox. Runs there rather than on the
+#: server so a traversing or bomb-sized archive detonates in the
+#: isolated environment. Argv: src, dst, format, max extracted bytes.
+_EXTRACT_ARCHIVE_SHIM = (
+    "import os, sys, tarfile, zipfile\n"
+    "src, dst, fmt, limit = sys.argv[1:5]\n"
+    "limit = int(limit)\n"
+    "os.makedirs(dst, exist_ok=True)\n"
+    "dst_real = os.path.realpath(dst)\n"
+    "def check(name):\n"
+    "    target = os.path.realpath(os.path.join(dst, name))\n"
+    "    if not (target == dst_real"
+    " or target.startswith(dst_real + os.sep)):\n"
+    "        raise Exception('unsafe archive member: ' + name)\n"
+    "if fmt == 'zip':\n"
+    "    ar = zipfile.ZipFile(src)\n"
+    "    members = ar.infolist()\n"
+    "    total = sum(m.file_size for m in members)\n"
+    "    names = [m.filename for m in members]\n"
+    "else:\n"
+    "    ar = tarfile.open(src)\n"
+    "    members = ar.getmembers()\n"
+    "    total = sum(m.size for m in members)\n"
+    "    names = [m.name for m in members]\n"
+    "    for m in members:\n"
+    "        if m.issym() or m.islnk():\n"
+    "            check(os.path.join(os.path.dirname(m.name), m.linkname))\n"
+    "try:\n"
+    "    if total > limit:\n"
+    "        raise Exception('archive expands to %d bytes, limit is %d'\n"
+    "                        % (total, limit))\n"
+    "    for name in names:\n"
+    "        check(name)\n"
+    "    ar.extractall(dst, members)\n"
+    "finally:\n"
+    "    ar.close()\n"
+    "os.unlink(src)\n"
+)
+
+#: Ceiling on what an archive may expand to inside the sandbox.
+DEFAULT_MAX_EXTRACTED_BYTES = 500 * 1024 * 1024
 
 
 class WorkspaceBase:
@@ -686,6 +728,148 @@ class WorkspaceBase:
                 )
 
             logger.info("Added skill %r at %s", dir_name, remote_dir)
+
+    async def add_skill_archive(
+        self,
+        stream: AsyncIterator[bytes],
+        fmt: Literal["zip", "tar", "tar.gz"],
+        dir_name: str,
+        max_extracted_bytes: int = DEFAULT_MAX_EXTRACTED_BYTES,
+    ) -> None:
+        """Install a skill from an archive stream into ``skills/``.
+
+        The archive is piped straight into the sandbox and expanded
+        there, so the server never holds it whole. Expansion lands in a
+        staging directory that is renamed into place only once it is
+        known to hold a ``SKILL.md`` — a failed install leaves nothing
+        behind.
+
+        Args:
+            stream (`AsyncIterator[bytes]`):
+                The archive bytes, in order.
+            fmt (`Literal["zip", "tar", "tar.gz"]`):
+                The archive format.
+            dir_name (`str`):
+                Directory name to install as. A numeric suffix is
+                appended when it is taken.
+            max_extracted_bytes (`int`):
+                Ceiling on the archive's expanded size.
+
+        Raises:
+            ValueError:
+                If ``dir_name`` is not a plain name, or the archive
+                holds no ``SKILL.md``.
+            RuntimeError:
+                If expanding the archive inside the sandbox fails.
+        """
+        if dir_name in (".", "..") or os.path.basename(dir_name) != dir_name:
+            raise ValueError(
+                f"Skill directory name {dir_name!r} must be a plain name "
+                f"without path separators.",
+            )
+
+        backend = self.get_backend()
+        suffix = "tar.gz" if fmt == "tar.gz" else fmt
+        archive_path = f"/tmp/skill-{_generate_id()}.{suffix}"
+
+        async with self._skill_lock:
+            await backend.exec_shell(["mkdir", "-p", self._skills_dir])
+            # Staged beside ``skills/`` rather than inside it: the same
+            # filesystem keeps the final rename atomic, while
+            # ``list_skills`` never sees a half-expanded archive.
+            staging = backend.join_path(
+                self.workdir,
+                f".skill-staging-{_generate_id()}",
+            )
+            await backend.write_stream(archive_path, stream)
+            try:
+                result = await backend.exec_shell(
+                    [
+                        "python3",
+                        "-c",
+                        _EXTRACT_ARCHIVE_SHIM,
+                        archive_path,
+                        staging,
+                        fmt,
+                        str(max_extracted_bytes),
+                    ],
+                )
+                if not result.ok():
+                    raise RuntimeError(
+                        f"Failed to expand skill archive: "
+                        f"{result.stderr.decode('utf-8', 'replace')}",
+                    )
+
+                root = await self._find_skill_root(staging)
+                installed = await self._free_skill_dir(dir_name)
+                move = await backend.exec_shell(
+                    [
+                        "mv",
+                        root,
+                        backend.join_path(self._skills_dir, installed),
+                    ],
+                )
+                if not move.ok():
+                    raise RuntimeError(
+                        f"Failed to install skill {installed!r}: "
+                        f"{move.stderr.decode('utf-8', 'replace')}",
+                    )
+            finally:
+                await backend.delete_path(staging)
+                await backend.delete_path(archive_path)
+
+        logger.info("Added skill %r to %s", installed, self._skills_dir)
+
+    async def _find_skill_root(self, staging: str) -> str:
+        """Return the directory under ``staging`` holding ``SKILL.md``.
+
+        Archives arrive flat or wrapped in a single top-level folder;
+        both are accepted.
+
+        Args:
+            staging (`str`):
+                The directory the archive was expanded into.
+
+        Returns:
+            `str`:
+                The path of the directory containing ``SKILL.md``.
+
+        Raises:
+            ValueError:
+                If no ``SKILL.md`` is found.
+        """
+        backend = self.get_backend()
+        if await backend.file_exists(backend.join_path(staging, "SKILL.md")):
+            return staging
+
+        for entry in await backend.list_dir(staging):
+            candidate = backend.join_path(staging, entry)
+            if await backend.file_exists(
+                backend.join_path(candidate, "SKILL.md"),
+            ):
+                return candidate
+
+        raise ValueError("The skill archive contains no SKILL.md")
+
+    async def _free_skill_dir(self, dir_name: str) -> str:
+        """Return ``dir_name``, suffixed until it is unused.
+
+        Args:
+            dir_name (`str`):
+                The preferred directory name.
+
+        Returns:
+            `str`:
+                A directory name not present in ``skills/``.
+        """
+        backend = self.get_backend()
+        candidate, counter = dir_name, 1
+        while await backend.file_exists(
+            backend.join_path(self._skills_dir, candidate),
+        ):
+            candidate = f"{dir_name}-{counter}"
+            counter += 1
+        return candidate
 
     async def remove_skill(self, name: str) -> None:
         """Remove a skill by its agent-facing ``name`` (front matter).

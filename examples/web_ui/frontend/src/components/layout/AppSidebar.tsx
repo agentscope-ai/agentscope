@@ -1,4 +1,5 @@
 import {
+	BookText,
 	BotMessageSquare,
 	Calendars,
 	Compass,
@@ -11,6 +12,7 @@ import { useOnborda } from 'onborda';
 import { useNavigate, useLocation } from 'react-router-dom';
 
 import AgentScope from '@/assets/images/agentscope.svg?react';
+import MCPSvg from '@/assets/images/mcp.svg?react';
 import { CHAT_TOUR_NAME } from '@/components/tour/chatTourSteps';
 import {
 	Sidebar,
@@ -96,6 +98,27 @@ export function AppSidebar() {
 									className="px-2"
 								>
 									<KeyRound />
+								</SidebarMenuButton>
+							</SidebarMenuItem>
+							<SidebarMenuItem>
+								<SidebarMenuButton
+									tooltip={{ children: t('common.mcp-hub'), hidden: false }}
+									// Stays lit while browsing a hub under /mcp/:hubId.
+									isActive={location.pathname.startsWith('/mcp')}
+									onClick={() => navigate('/mcp')}
+									className="px-2"
+								>
+									<MCPSvg />
+								</SidebarMenuButton>
+							</SidebarMenuItem>
+							<SidebarMenuItem>
+								<SidebarMenuButton
+									tooltip={{ children: t('common.skill-hub'), hidden: false }}
+									isActive={location.pathname.startsWith('/skill')}
+									onClick={() => navigate('/skill')}
+									className="px-2"
+								>
+									<BookText />
 								</SidebarMenuButton>
 							</SidebarMenuItem>
 							<SidebarMenuItem>

@@ -12,8 +12,9 @@ class SkillCard(BaseModel):
     a skill copies its files into the workspace, so no input form and no
     template substitution are involved.
 
-    :attr:`id` addresses the card on its hub and is what :attr:`ref`
-    embeds; :attr:`name` is the skill's own name.
+    :attr:`id` addresses the card on its hub — together with
+    :attr:`hub_id` it names the card globally; :attr:`name` is the
+    skill's own name.
     """
 
     hub_id: str = Field(
@@ -63,6 +64,50 @@ class SkillCard(BaseModel):
         default=None,
         title="Updated At",
         description="The last-updated timestamp (Unix epoch seconds).",
+    )
+
+    author: str | None = Field(
+        default=None,
+        title="Author",
+        description="Who published the skill, when the hub says.",
+    )
+
+    icon_url: str | None = Field(
+        default=None,
+        title="Icon URL",
+        description=(
+            "An image representing the skill, for the card and the "
+            "detail view. ``None`` when the hub offers none — the UI is "
+            "expected to fall back rather than show a broken image."
+        ),
+    )
+
+    installs: int | None = Field(
+        default=None,
+        title="Installs",
+        description=(
+            "How many times this skill has been installed. ``None`` when "
+            "the hub does not count installs, which is not the same as "
+            "zero — render it only when set."
+        ),
+    )
+
+    downloads: int | None = Field(
+        default=None,
+        title="Downloads",
+        description=(
+            "How many times this skill has been downloaded. ``None`` "
+            "when the hub does not count downloads."
+        ),
+    )
+
+    url: str | None = Field(
+        default=None,
+        title="URL",
+        description=(
+            "The skill's page on the hub's website, for a 'view on the "
+            "hub' link. ``None`` when the hub has no web presence."
+        ),
     )
 
     markdown: str | None = Field(

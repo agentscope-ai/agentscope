@@ -7,6 +7,7 @@ from fastapi.middleware import Middleware
 from fastapi.middleware.cors import CORSMiddleware
 
 from agentscope.app import create_app, SubAgentTemplate
+from agentscope.app.hub import ClawSkillHub, GitHubMCPHub
 from agentscope.app.message_bus import InMemoryMessageBus
 from agentscope.app.rag.knowledge_base_manager import CollectionPerKbManager
 from agentscope.app.storage import RedisStorage
@@ -14,6 +15,11 @@ from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.mcp import MCPClient, StdioMCPConfig, HttpMCPConfig
 from agentscope.permission import PermissionContext, PermissionMode
 from agentscope.rag import QdrantStore
+
+# A sibling module in this example, not an installed package — pylint
+# cannot tell and sorts it as third-party.
+# pylint: disable=wrong-import-order
+from hubs import StaticMCPHub
 
 default_mcps = [
     MCPClient(
@@ -72,6 +78,12 @@ app = create_app(
         storage=storage,
         vector_store=vector_store,
     ),
+    # Resource hubs the UI browses under /hub. Neither needs credentials
+    # of its own — an individual MCP card declares whatever key it wants
+    # from the user in its ``inputs_schema``. Passing a ClawHub token
+    # only raises the rate limit.
+    mcp_hubs=[StaticMCPHub(), GitHubMCPHub()],
+    skill_hubs=[ClawSkillHub(api_token=os.getenv("CLAWHUB_API_TOKEN"))],
     # Customize your own subagent templates
     custom_subagent_templates=[
         SubAgentTemplate(

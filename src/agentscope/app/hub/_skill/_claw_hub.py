@@ -17,9 +17,12 @@ that exposes the registry skills through the
 """
 import asyncio
 import random
+import re
+from datetime import datetime
+from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING, AsyncIterator
 
-from ._base import SkillHubBase
+from ._base import SkillArchive, SkillHubBase
 from ._card import SkillCard, SkillHubPage
 
 if TYPE_CHECKING:
@@ -30,6 +33,41 @@ DEFAULT_BASE_URL = "https://clawhub.ai"
 # The default streaming chunk size (64 KiB) used when downloading skill
 # archives, balancing memory usage and per-chunk overhead.
 DEFAULT_CHUNK_SIZE = 64 * 1024
+
+# ClawHub's bulk skill generator stamps versions as ``0.<date>.<time>``
+# rather than semver, e.g. ``0.20260729.110214``. Shown raw that is 17
+# characters of noise next to a skill name, so it is rendered as the
+# date it encodes.
+_TIMESTAMP_VERSION = re.compile(r"^0\.(\d{8})\.(\d{6})$")
+
+
+def _humanize_version(version: str | None) -> str | None:
+    """Render a timestamp-style version as its date.
+
+    Anything else — semver included — is returned untouched, so a hub
+    that versions its skills properly is never rewritten.
+
+    Args:
+        version (`str | None`):
+            The version as reported upstream.
+
+    Returns:
+        `str | None`:
+            ``YYYY-MM-DD`` for a timestamp version, else the input.
+    """
+    if version is None:
+        return None
+
+    match = _TIMESTAMP_VERSION.match(version)
+    if not match:
+        return version
+
+    try:
+        stamp = datetime.strptime(match.group(1), "%Y%m%d")
+    except ValueError:
+        # Eight digits that are not a real date — leave it alone.
+        return version
+    return stamp.strftime("%Y-%m-%d")
 
 
 class ClawHubError(Exception):
@@ -69,6 +107,7 @@ class ClawSkillHub(SkillHubBase):
         hub_id: str = "clawhub",
         display_name: str = "ClawHub",
         description: str = "The ClawHub public skill registry.",
+        icon_url: str | None = "https://openclaw.ai/favicon.svg",
         *,
         base_url: str = DEFAULT_BASE_URL,
         api_token: str | None = None,
@@ -85,6 +124,8 @@ class ClawSkillHub(SkillHubBase):
                 The user-facing hub name.
             description (`str`, optional):
                 The user-facing hub description.
+            icon_url (`str | None`, optional):
+                The hub's icon, defaulting to the ClawHub favicon.
             base_url (`str`, defaults to `"https://clawhub.ai"`):
                 The base URL of the ClawHub registry.
             api_token (`str | None`, optional):
@@ -97,7 +138,7 @@ class ClawSkillHub(SkillHubBase):
                 The maximum number of retries when a request is rate
                 limited (HTTP ``429``).
         """
-        super().__init__(hub_id, display_name, description)
+        super().__init__(hub_id, display_name, description, icon_url)
         self.base_url = base_url.rstrip("/")
         self.api_token = api_token
         self.timeout = timeout
@@ -215,20 +256,24 @@ class ClawSkillHub(SkillHubBase):
 
     async def download(
         self,
+        user_id: str,
         card_id: str,
         version: str | None = None,
         tag: str | None = None,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
-    ) -> AsyncIterator[bytes]:
-        """Stream a skill archive via ``GET /api/v1/download``.
+    ) -> SkillArchive:
+        """Open a skill archive via ``GET /api/v1/download``.
 
-        The archive is yielded chunk by chunk so callers never hold the
-        whole (potentially large) ZIP in memory and can stream-write it
-        into any sink, e.g. a sandbox filesystem. The body is consumed
-        lazily; rate-limit (``429``) responses are retried before any
-        bytes are produced.
+        The response headers are awaited here — so a missing skill or an
+        exhausted rate limit raises before the caller commits to an
+        install — while the body stays lazy, letting the archive be
+        piped into a sandbox without ever being held whole.
 
         Args:
+            user_id (`str`):
+                The user identifier the download is authorized against.
+                Unused by the public ClawHub catalog, kept for interface
+                compatibility.
             card_id (`str`):
                 The canonical slug of the skill.
             version (`str | None`, optional):
@@ -239,9 +284,9 @@ class ClawSkillHub(SkillHubBase):
             chunk_size (`int`, defaults to `65536`):
                 The number of bytes to yield per chunk.
 
-        Yields:
-            `bytes`:
-                The next chunk of the skill ZIP archive.
+        Returns:
+            `SkillArchive`:
+                The ZIP archive and its byte stream.
 
         Raises:
             `KeyError`:
@@ -258,40 +303,79 @@ class ClawSkillHub(SkillHubBase):
             params["tag"] = tag
 
         url = f"{self.base_url}/api/v1/download"
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        stack = AsyncExitStack()
+        try:
+            client = await stack.enter_async_context(
+                httpx.AsyncClient(timeout=self.timeout),
+            )
             for attempt in range(self.max_retries + 1):
-                async with client.stream(
-                    "GET",
-                    url,
-                    params=params,
-                    headers=self._headers(),
-                ) as response:
-                    if (
-                        response.status_code == 429
-                        and attempt < self.max_retries
-                    ):
-                        # Wait with jittered backoff before re-opening
-                        # the stream, as recommended by ClawHub.
-                        delay = self._retry_delay(response.headers)
-                        await asyncio.sleep(delay + random.uniform(0, 1))
-                        continue
+                # A nested stack so a retried attempt closes its own
+                # response without closing the client.
+                attempt_stack = await stack.enter_async_context(
+                    AsyncExitStack(),
+                )
+                response = await attempt_stack.enter_async_context(
+                    client.stream(
+                        "GET",
+                        url,
+                        params=params,
+                        headers=self._headers(),
+                    ),
+                )
+                if response.status_code == 429 and attempt < self.max_retries:
+                    # Wait with jittered backoff before re-opening the
+                    # stream, as recommended by ClawHub.
+                    delay = self._retry_delay(response.headers)
+                    await attempt_stack.aclose()
+                    await asyncio.sleep(delay + random.uniform(0, 1))
+                    continue
 
-                    if response.status_code >= 400:
-                        # Read the (plain-text) error body before the
-                        # stream context closes.
-                        body = await response.aread()
-                        if response.status_code == 404:
-                            raise KeyError(card_id)
-                        raise ClawHubError(
-                            response.status_code,
-                            body.decode("utf-8", errors="replace"),
-                        )
+                if response.status_code >= 400:
+                    # Read the (plain-text) error body before the stream
+                    # context closes.
+                    body = await response.aread()
+                    if response.status_code == 404:
+                        raise KeyError(card_id)
+                    raise ClawHubError(
+                        response.status_code,
+                        body.decode("utf-8", errors="replace"),
+                    )
 
-                    async for chunk in response.aiter_bytes(chunk_size):
-                        yield chunk
-                    return
+                return SkillArchive(
+                    "zip",
+                    self._drain(stack, response, chunk_size),
+                )
 
-        raise ClawHubError(429, "Rate limit exceeded after retries")
+            raise ClawHubError(429, "Rate limit exceeded after retries")
+        except BaseException:
+            await stack.aclose()
+            raise
+
+    @staticmethod
+    async def _drain(
+        stack: AsyncExitStack,
+        response: "httpx.Response",
+        chunk_size: int,
+    ) -> AsyncIterator[bytes]:
+        """Yield the response body, closing the connection after.
+
+        Args:
+            stack (`AsyncExitStack`):
+                Holds the open response and client, closed when done.
+            response (`httpx.Response`):
+                The open response whose body is drained.
+            chunk_size (`int`):
+                The number of bytes to yield per chunk.
+
+        Yields:
+            `bytes`:
+                The next chunk of the archive.
+        """
+        try:
+            async for chunk in response.aiter_bytes(chunk_size):
+                yield chunk
+        finally:
+            await stack.aclose()
 
     def _to_card(self, item: dict) -> SkillCard:
         """Build a :class:`SkillCard` from one catalog or search record.
@@ -324,6 +408,26 @@ class ClawSkillHub(SkillHubBase):
 
         updated_at = item.get("updatedAt")
 
+        stats = (
+            item.get("stats") if isinstance(item.get("stats"), dict) else {}
+        )
+
+        # The owner sits beside the skill on the detail endpoint and under
+        # ``native`` on search; the catalog endpoint omits it entirely, so
+        # most browse cards carry no author and no icon.
+        owner = item.get("owner") or (item.get("native") or {}).get("owner")
+        owner = owner if isinstance(owner, dict) else {}
+
+        # The search endpoint hands back an owner-scoped canonical path;
+        # the catalog endpoint has no link at all, so the slug route is
+        # built instead — it 307s to the same canonical page.
+        canonical = item.get("canonicalUrl")
+        url = (
+            f"{self.base_url}{canonical}"
+            if canonical
+            else f"{self.base_url}/skills/{item['slug']}"
+        )
+
         return SkillCard(
             hub_id=self.hub_id,
             id=item["slug"],
@@ -333,9 +437,15 @@ class ClawSkillHub(SkillHubBase):
             # ``topics`` holds the categorical labels. Upstream ``tags``
             # is a version-tag -> version map, not something to show.
             tags=list(item.get("topics") or []),
-            version=version,
+            version=_humanize_version(version),
             # ``updatedAt`` is reported in Unix milliseconds.
             updated_at=float(updated_at) / 1000.0 if updated_at else None,
+            author=owner.get("displayName") or owner.get("handle"),
+            icon_url=owner.get("image"),
+            installs=stats.get("installs"),
+            # Nested under ``stats`` on the catalog, top level on search.
+            downloads=stats.get("downloads", item.get("downloads")),
+            url=url,
             metadata={
                 key: item[key]
                 for key in ("stats", "downloads", "tags")
@@ -439,6 +549,9 @@ class ClawSkillHub(SkillHubBase):
         item = dict(payload.get("skill") or {})
         item.setdefault("slug", card_id)
         item["latestVersion"] = payload.get("latestVersion")
+        # The owner is a sibling of ``skill`` here, but ``_to_card`` reads
+        # it off the record, so fold it in.
+        item["owner"] = payload.get("owner")
 
         card = self._to_card(item)
         parsed = await asyncio.to_thread(frontmatter.loads, markdown.text)

@@ -51,19 +51,35 @@ _GENERIC_MESSAGE: dict[ErrorType, str] = {
         "Could not reach the model service — network error or timeout."
     ),
     ErrorType.INTERNAL: "An unexpected internal error occurred.",
+    ErrorType.SETUP: (
+        "The session could not be prepared — check the agent's model, "
+        "tools and knowledge bases."
+    ),
     ErrorType.UNKNOWN: "The reply failed with an unknown error.",
 }
 
 
 def _causes(e: BaseException) -> Iterator[BaseException]:
-    """Yield ``e`` then its ``__cause__`` / ``__context__`` chain, guarding
-    against cycles."""
+    """Yield ``e`` then everything it wraps, guarding against cycles.
+
+    Walks the ``__cause__`` / ``__context__`` chain and, for an
+    ``ExceptionGroup``, its members: async transports run inside task
+    groups, so a provider's 401 arrives as a leaf of a group whose own
+    message is ``"unhandled errors in a TaskGroup"``. Without descending
+    into it every such failure classifies as ``UNKNOWN``.
+    """
     seen: set[int] = set()
-    exc: BaseException | None = e
-    while exc is not None and id(exc) not in seen:
-        seen.add(id(exc))
-        yield exc
-        exc = exc.__cause__ or exc.__context__
+
+    def walk(exc: BaseException | None) -> Iterator[BaseException]:
+        while exc is not None and id(exc) not in seen:
+            seen.add(id(exc))
+            yield exc
+            if isinstance(exc, BaseExceptionGroup):
+                for sub in exc.exceptions:
+                    yield from walk(sub)
+            exc = exc.__cause__ or exc.__context__
+
+    yield from walk(e)
 
 
 def _extract_status(e: BaseException) -> int | None:
@@ -111,6 +127,31 @@ def _classify_type(e: Exception) -> ErrorType:
     if isinstance(e, DeveloperOrientedException):
         return ErrorType.INTERNAL
     return ErrorType.UNKNOWN
+
+
+def _classify_setup_error(e: Exception) -> ErrorInfo:
+    """Classify a failure that happened before the agent replied.
+
+    Same rules as :func:`_classify_error`, except that what it cannot
+    place falls to ``SETUP`` rather than ``UNKNOWN``: at this point the
+    one thing known for certain is that preparing the run failed, and
+    saying so beats saying nothing.
+
+    Args:
+        e (`Exception`):
+            The exception raised while setting the run up.
+
+    Returns:
+        `ErrorInfo`:
+            The structured, UI-facing error description.
+    """
+    info = _classify_error(e)
+    if info.type is ErrorType.UNKNOWN:
+        return ErrorInfo(
+            type=ErrorType.SETUP,
+            message=_GENERIC_MESSAGE[ErrorType.SETUP],
+        )
+    return info
 
 
 def _classify_error(e: Exception) -> ErrorInfo:

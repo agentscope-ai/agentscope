@@ -2,9 +2,11 @@
 """Hub router — browse resource hubs and install from them.
 
 The frontend flow is three levels deep: list the hubs, browse one hub's
-cards, then install a chosen card into the caller's session workspace.
-Cards are never merged across hubs, which keeps ranking a per-hub
-concern.
+cards, then install a chosen card into the caller's library. Cards are
+never merged across hubs, which keeps ranking a per-hub concern.
+
+Installing is user-level for both kinds — nothing here touches a
+workspace. See ``_mcp.py`` / ``_skill.py`` for the libraries it writes.
 """
 from typing import TypeVar
 
@@ -16,8 +18,6 @@ from ..deps import (
     get_mcp_hubs,
     get_skill_hubs,
     get_storage,
-    get_workspace_manager,
-    resolve_workspace,
 )
 from ..hub import (
     HubBase,
@@ -26,15 +26,13 @@ from ..hub import (
     MCPHubPage,
     MCPRenderError,
     SkillCard,
-    SkillFetchError,
     SkillHubBase,
     SkillHubPage,
-    fetch_skill_dir,
     render_mcp,
 )
-from ..storage import StorageBase
-from ..workspace_manager import WorkspaceManagerBase
-from ...workspace import WorkspaceBase
+from ..storage import MCPRecord, SkillRecord, StorageBase
+from ._mcp import MCPView
+from ._skill import SkillView
 
 hub_router = APIRouter(prefix="/hub", tags=["hub"])
 
@@ -47,6 +45,10 @@ class HubInfo(BaseModel):
     hub_id: str = Field(description="The id addressing this hub.")
     display_name: str = Field(description="The user-facing hub name.")
     description: str = Field(description="The user-facing description.")
+    icon_url: str | None = Field(
+        default=None,
+        description="An image identifying the hub, when it has one.",
+    )
 
 
 class InstallMCPRequest(BaseModel):
@@ -57,40 +59,13 @@ class InstallMCPRequest(BaseModel):
         description=(
             "The name to install under, defaulting to the card's name. "
             "Must match ``[a-zA-Z0-9_-]+``; use it to resolve a clash "
-            "with an MCP already in the workspace."
+            "with an MCP already in the library."
         ),
     )
     values: dict = Field(
         default_factory=dict,
         description=(
             "The answers to the card's ``inputs_schema``, e.g. API keys."
-        ),
-    )
-
-
-class InstallResponse(BaseModel):
-    """What was installed, and which card it came from.
-
-    The rendered config is deliberately not echoed back — it holds the
-    secrets the caller just submitted.
-    """
-
-    name: str = Field(
-        description=(
-            "The name the resource ended up under in the workspace. For "
-            "skills this is read back from the workspace rather than "
-            "requested, because backends derive it from ``SKILL.md``; it "
-            "falls back to the card id when ``already_present`` is set, "
-            "since no new skill appeared to read the name from."
-        ),
-    )
-    hub_id: str = Field(description="The hub the card came from.")
-    card_id: str = Field(description="The card's id on that hub.")
-    already_present: bool = Field(
-        default=False,
-        description=(
-            "Whether the workspace already held this resource, in which "
-            "case nothing was added."
         ),
     )
 
@@ -137,43 +112,10 @@ def _describe(hubs: dict) -> list[HubInfo]:
             hub_id=hub.hub_id,
             display_name=hub.display_name,
             description=hub.description,
+            icon_url=hub.icon_url,
         )
         for _, hub in sorted(hubs.items())
     ]
-
-
-async def _session_workspace(
-    user_id: str,
-    agent_id: str,
-    session_id: str,
-    storage: StorageBase,
-    workspace_manager: WorkspaceManagerBase,
-) -> WorkspaceBase:
-    """Resolve the workspace an install lands in.
-
-    Args:
-        user_id (`str`):
-            The authenticated user ID.
-        agent_id (`str`):
-            The agent owning the session.
-        session_id (`str`):
-            The session to install into.
-        storage (`StorageBase`):
-            The storage used to look the session record up.
-        workspace_manager (`WorkspaceManagerBase`):
-            The manager that opens or reattaches the workspace.
-
-    Returns:
-        `WorkspaceBase`:
-            The session's workspace.
-    """
-    return await resolve_workspace(
-        user_id,
-        agent_id,
-        session_id,
-        storage,
-        workspace_manager,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -232,17 +174,21 @@ async def install_mcp(
     card_id: str,
     body: InstallMCPRequest,
     *,
-    agent_id: str = Query(...),
-    session_id: str = Query(...),
     user_id: str = Depends(get_current_user_id),
     hubs: dict[str, MCPHubBase] = Depends(get_mcp_hubs),
     storage: StorageBase = Depends(get_storage),
-    workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
-) -> InstallResponse:
-    """Fill a card's template and add the result to the workspace.
+) -> MCPView:
+    """Fill a card's template and add the result to the user's library.
 
-    ``workspace.add_mcp`` connects the client, so a wrong API key fails
-    here rather than silently installing a broken MCP.
+    Installing is a user-level act with no workspace involved — putting
+    the MCP into a session's workspace is separate and explicit. The
+    record keeps ``(hub_id, card_id)`` so the library can later answer
+    "where did this come from" and "is there a newer version".
+
+    Note that the config is not connection-tested here, so a mistyped
+    API key surfaces on first use rather than now. Testing it would mean
+    connecting from the app process, and a stdio MCP would then spawn
+    its command here instead of in the workspace sandbox.
     """
     hub = _pick_hub(hubs, hub_id)
     try:
@@ -261,43 +207,34 @@ async def install_mcp(
             detail=str(e),
         ) from e
 
-    workspace = await _session_workspace(
-        user_id,
-        agent_id,
-        session_id,
-        storage,
-        workspace_manager,
+    record = MCPRecord(
+        user_id=user_id,
+        client=client,
+        values=body.values,
+        display_name=card.display_name,
+        description=card.description,
+        tags=card.tags,
+        author=card.author,
+        icon_url=card.icon_url,
+        url=card.url,
+        hub_id=card.hub_id,
+        card_id=card.id,
+        version=card.version,
     )
-
-    # Checked here rather than left to the backend: only the sandboxed
-    # workspaces reject duplicates, and a clash deserves a 409 anyway.
-    if any(m.name == client.name for m in await workspace.list_mcps()):
+    try:
+        await storage.upsert_mcp(user_id, record)
+    except ValueError as e:
+        # The name is unique per user, so a clash is the caller's to
+        # resolve by passing a different one.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                f"An MCP named {client.name!r} is already in this "
-                f"workspace. Pass a different 'name' to install anyway."
+                f"{e} Pass a different 'name' to install it alongside "
+                f"the existing one."
             ),
-        )
-
-    try:
-        await workspace.add_mcp(client)
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to connect MCP {client.name!r}: {e}",
         ) from e
 
-    # TODO: persist an installed-MCP record here so the card's origin
-    # survives. ``MCPClient`` carries no provenance, so once the client
-    # reaches the workspace, ``(hub_id, card_id)`` is only known to this
-    # response — the UI cannot answer "where did this come from" or
-    # "is there a newer version" for an already-installed MCP.
-    return InstallResponse(
-        name=client.name,
-        hub_id=card.hub_id,
-        card_id=card.id,
-    )
+    return MCPView.from_record(record)
 
 
 # ---------------------------------------------------------------------------
@@ -355,59 +292,51 @@ async def install_skill(
     hub_id: str,
     card_id: str,
     *,
-    version: str | None = Query(default=None),
-    agent_id: str = Query(...),
-    session_id: str = Query(...),
+    name: str | None = Query(default=None),
     user_id: str = Depends(get_current_user_id),
     hubs: dict[str, SkillHubBase] = Depends(get_skill_hubs),
     storage: StorageBase = Depends(get_storage),
-    workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
-) -> InstallResponse:
-    """Download a skill archive and unpack it into the workspace.
+) -> SkillView:
+    """Add a skill card to the user's library.
 
-    The installed name is not the caller's to choose: backends derive it
-    from the ``SKILL.md`` frontmatter and resolve clashes themselves, and
-    a content-identical skill is skipped outright. So the workspace is
-    read back afterwards and the response reports what actually landed.
+    Mirrors the MCP install: user-level, no workspace involved. The
+    archive is not downloaded here — only the card's metadata is
+    recorded, and the files are fetched when the skill is actually put
+    into a workspace. So a hub that has since dropped the card fails
+    then rather than now.
     """
     hub = _pick_hub(hubs, hub_id)
-    workspace = await _session_workspace(
-        user_id,
-        agent_id,
-        session_id,
-        storage,
-        workspace_manager,
-    )
-
-    before = {skill.name for skill in await workspace.list_skills()}
-
     try:
-        async with fetch_skill_dir(hub, card_id, version=version) as path:
-            await workspace.add_skill(path)
-    except SkillFetchError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        ) from e
+        card = await hub.get_skill(user_id, card_id)
     except KeyError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Hub {hub_id!r} has no skill {card_id!r}.",
         ) from e
+
+    record = SkillRecord(
+        user_id=user_id,
+        name=name or card.name,
+        display_name=card.display_name,
+        description=card.description,
+        tags=card.tags,
+        author=card.author,
+        icon_url=card.icon_url,
+        url=card.url,
+        markdown=card.markdown or "",
+        hub_id=card.hub_id,
+        card_id=card.id,
+        version=card.version,
+    )
+    try:
+        await storage.upsert_skill(user_id, record)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=str(e),
+            detail=(
+                f"{e} Pass a different 'name' to install it alongside "
+                f"the existing one."
+            ),
         ) from e
 
-    added = [
-        skill.name
-        for skill in await workspace.list_skills()
-        if skill.name not in before
-    ]
-    return InstallResponse(
-        name=added[0] if added else card_id,
-        hub_id=hub.hub_id,
-        card_id=card_id,
-        already_present=not added,
-    )
+    return SkillView.from_record(record)

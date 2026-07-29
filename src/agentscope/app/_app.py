@@ -14,10 +14,12 @@ from ._router import (
     credential_router,
     hub_router,
     knowledge_base_router,
+    mcp_router,
     model_router,
     tts_model_router,
     schedule_router,
     session_router,
+    skill_router,
     workspace_router,
 )
 from ._types import AgentMiddlewareFactory, AgentToolFactory, SubAgentTemplate
@@ -299,8 +301,10 @@ def create_app(
         credential_router,
         hub_router,
         knowledge_base_router,
+        mcp_router,
         schedule_router,
         session_router,
+        skill_router,
         workspace_router,
         model_router,
         tts_model_router,

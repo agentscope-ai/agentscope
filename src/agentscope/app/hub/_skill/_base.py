@@ -1,10 +1,26 @@
 # -*- coding: utf-8 -*-
 """The skill hub base class."""
 from abc import ABC, abstractmethod
-from typing import AsyncIterator
+from typing import AsyncIterator, Literal, NamedTuple
 
 from ._card import SkillCard, SkillHubPage
 from .._base import HubBase
+
+
+class SkillArchive(NamedTuple):
+    """A skill archive as the hub serves it.
+
+    The format travels with the bytes so a hub can forward its upstream
+    response untouched — repacking to a fixed format would force every
+    hub to buffer the whole archive.
+
+    Attributes:
+        format: The archive format, as the installer must unpack it.
+        stream: The archive bytes, in order.
+    """
+
+    format: Literal["zip", "tar", "tar.gz"]
+    stream: AsyncIterator[bytes]
 
 
 class SkillHubBase(HubBase, ABC):
@@ -76,26 +92,34 @@ class SkillHubBase(HubBase, ABC):
     @abstractmethod
     async def download(
         self,
+        user_id: str,
         card_id: str,
         version: str | None = None,
-    ) -> AsyncIterator[bytes]:
-        """Stream the skill archive as a ZIP.
+    ) -> SkillArchive:
+        """Open the skill archive for streaming.
+
+        Returns rather than yields so the format is known before the
+        first byte, and so the caller can pipe the stream onward
+        without ever holding the archive.
+
+        Takes ``user_id`` for the same reason the read methods do: a hub
+        that hides cards from a user must be able to refuse the download
+        too, otherwise guessing a card id bypasses the filter.
 
         Args:
+            user_id (`str`):
+                The user identifier the download is authorized against.
             card_id (`str`):
                 The :attr:`SkillCard.id` addressing the card on this hub.
             version (`str | None`, optional):
                 A specific version to download. When ``None`` the latest
                 version is used.
 
-        Yields:
-            `bytes`:
-                The next chunk of the skill ZIP archive.
+        Returns:
+            `SkillArchive`:
+                The archive format and its byte stream.
 
         Raises:
             `KeyError`:
                 When this hub has no card under ``card_id``.
         """
-        # Never reached — the yield is what makes this an async
-        # generator, so overrides type-check against the same signature.
-        yield b""

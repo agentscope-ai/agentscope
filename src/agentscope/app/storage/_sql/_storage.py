@@ -26,10 +26,12 @@ from .._model import (
     KnowledgeBaseRecord,
     KnowledgeDocumentRecord,
     KnowledgeDocumentStatus,
+    MCPRecord,
     ScheduleRecord,
     SessionRecord,
     SessionConfig,
     SessionSource,
+    SkillRecord,
     TeamRecord,
 )
 from .._utils import _dump_with_secrets
@@ -804,6 +806,86 @@ class AsyncSQLAlchemyStorage(StorageBase):
             )
             await sess.commit()
         return result.rowcount > 0
+
+    # ------------------------------------------------------------------
+    # Installed MCPs and skills
+    #
+    # Not implemented yet — the tables, their ``(user_id, name)`` unique
+    # constraints and the Alembic revision still have to be written. The
+    # methods are stubbed rather than omitted so that this backend stays
+    # instantiable; a deployment that touches the library on SQL gets a
+    # clear error instead of an abstract-class TypeError at startup.
+    # ------------------------------------------------------------------
+
+    _MCP_UNSUPPORTED = (
+        "Installed MCPs are not supported by the SQL storage backend yet. "
+        "Use RedisStorage, or wait for the SQL table to land."
+    )
+
+    _SKILL_UNSUPPORTED = (
+        "Installed skills are not supported by the SQL storage backend "
+        "yet. Use RedisStorage, or wait for the SQL table to land."
+    )
+
+    async def upsert_mcp(self, user_id: str, mcp_record: MCPRecord) -> str:
+        """Not implemented; see the section comment above."""
+        raise NotImplementedError(self._MCP_UNSUPPORTED)
+
+    async def list_mcps(self, user_id: str) -> list[MCPRecord]:
+        """Not implemented; see the section comment above."""
+        raise NotImplementedError(self._MCP_UNSUPPORTED)
+
+    async def get_mcp(self, user_id: str, mcp_id: str) -> MCPRecord | None:
+        """Not implemented; see the section comment above."""
+        raise NotImplementedError(self._MCP_UNSUPPORTED)
+
+    async def get_mcp_by_name(
+        self,
+        user_id: str,
+        name: str,
+    ) -> MCPRecord | None:
+        """Not implemented; see the section comment above."""
+        raise NotImplementedError(self._MCP_UNSUPPORTED)
+
+    async def delete_mcp(self, user_id: str, mcp_id: str) -> bool:
+        """Not implemented; see the section comment above."""
+        raise NotImplementedError(self._MCP_UNSUPPORTED)
+
+    async def upsert_skill(
+        self,
+        user_id: str,
+        skill_record: SkillRecord,
+    ) -> str:
+        """Not implemented; see the section comment above."""
+        raise NotImplementedError(self._SKILL_UNSUPPORTED)
+
+    async def list_installed_skills(self, user_id: str) -> list[SkillRecord]:
+        """Not implemented; see the section comment above."""
+        raise NotImplementedError(self._SKILL_UNSUPPORTED)
+
+    async def get_installed_skill(
+        self,
+        user_id: str,
+        skill_id: str,
+    ) -> SkillRecord | None:
+        """Not implemented; see the section comment above."""
+        raise NotImplementedError(self._SKILL_UNSUPPORTED)
+
+    async def get_installed_skill_by_name(
+        self,
+        user_id: str,
+        name: str,
+    ) -> SkillRecord | None:
+        """Not implemented; see the section comment above."""
+        raise NotImplementedError(self._SKILL_UNSUPPORTED)
+
+    async def delete_installed_skill(
+        self,
+        user_id: str,
+        skill_id: str,
+    ) -> bool:
+        """Not implemented; see the section comment above."""
+        raise NotImplementedError(self._SKILL_UNSUPPORTED)
 
     # ------------------------------------------------------------------
     # Agents

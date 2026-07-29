@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 
 import { workspaceApi } from '../api';
 import type { Skill } from '../api';
+import type { UploadOptions } from '../api/workspace';
 
 /**
  * Manages skills available in a session's workspace.
@@ -35,12 +36,28 @@ export function useSkills(agentId: string | null, sessionId: string | null) {
 		refetch();
 	}, [refetch]);
 
-	/** Adds a skill from the given path and refreshes the list. */
-	const add = useCallback(
-		async (skillPath: string) => {
+	/** Uploads a picked folder as a skill and refreshes the list. */
+	const upload = useCallback(
+		async (files: File[], options: UploadOptions = {}) => {
 			if (!agentId || !sessionId) throw new Error('No agent/session selected');
-			await workspaceApi.skill.add(agentId, sessionId, { skill_path: skillPath });
+			await workspaceApi.skill.upload(agentId, sessionId, files, options);
 			await refetch();
+		},
+		[agentId, sessionId, refetch],
+	);
+
+	/** Installs skills the user already has and refreshes the list. */
+	const addFromLibrary = useCallback(
+		async (skillIds: string[]) => {
+			if (!agentId || !sessionId) throw new Error('No agent/session selected');
+			const result = await workspaceApi.skill.addFromLibrary(agentId, sessionId, skillIds);
+			await refetch();
+			// Reported per skill, so a partial success is still a success
+			// for what landed; surface only what did not.
+			const failures = Object.entries(result.failed);
+			if (failures.length > 0) {
+				throw new Error(failures.map(([name, why]) => `${name}: ${why}`).join('\n'));
+			}
 		},
 		[agentId, sessionId, refetch],
 	);
@@ -55,5 +72,5 @@ export function useSkills(agentId: string | null, sessionId: string | null) {
 		[agentId, sessionId, refetch],
 	);
 
-	return { skills, loading, error, refetch, add, remove };
+	return { skills, loading, error, refetch, upload, addFromLibrary, remove };
 }

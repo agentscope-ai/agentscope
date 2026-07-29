@@ -78,11 +78,21 @@ export const formatDuration = (seconds: number): number => {
  * - Once the leading unit is hours, only whole hours are shown — minute and
  *   second precision is not useful at that scale and would only widen the
  *   badge when, e.g., a tool call sits awaiting user confirmation for hours.
+ * - The same reasoning extends past a day: only the leading whole unit is
+ *   shown, up to years. Months and years use average lengths, so they are
+ *   approximate by construction — fine for "updated 3mo ago", wrong for
+ *   anything that needs calendar accuracy.
  *
  * @param seconds - The duration in seconds to format
- * @returns Formatted string (e.g., "45s", "2min30s", "3h")
+ * @param options.leadingUnitOnly - Drop the trailing seconds from the
+ *   minutes case, so `49m33s` reads `49m`. Defaults to `false`, keeping the
+ *   two-segment form the elapsed-time badges rely on.
+ * @returns Formatted string (e.g., "45s", "2min30s", "3h", "5d", "2y")
  */
-export const formatTime = (seconds: number): string => {
+export const formatTime = (
+	seconds: number,
+	options: { leadingUnitOnly?: boolean } = {},
+): string => {
 	const total = Math.floor(seconds);
 	if (total < 60) {
 		return `${total}s`;
@@ -90,7 +100,21 @@ export const formatTime = (seconds: number): string => {
 	if (total < 3600) {
 		const minutes = Math.floor(total / 60);
 		const remaining = total % 60;
-		return remaining === 0 ? `${minutes}m` : `${minutes}m${remaining}s`;
+		if (options.leadingUnitOnly || remaining === 0) {
+			return `${minutes}m`;
+		}
+		return `${minutes}m${remaining}s`;
 	}
-	return `${Math.floor(total / 3600)}h`;
+	if (total < 86400) {
+		return `${Math.floor(total / 3600)}h`;
+	}
+	// 30.44 and 365.25 days — the average month and year, so a "1y" does
+	// not flip back to "12mo" for the leap-day stragglers.
+	if (total < 2629746) {
+		return `${Math.floor(total / 86400)}d`;
+	}
+	if (total < 31556952) {
+		return `${Math.floor(total / 2629746)}mo`;
+	}
+	return `${Math.floor(total / 31556952)}y`;
 };

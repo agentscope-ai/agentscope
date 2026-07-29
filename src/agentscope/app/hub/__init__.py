@@ -3,27 +3,35 @@
 """
 
 from ._base import HubBase
-from ._mcp import MCPHubBase, MCPCard, MCPHubPage, MCPRenderError, render_mcp
+from ._mcp import (
+    GitHubMCPError,
+    GitHubMCPHub,
+    MCPHubBase,
+    MCPCard,
+    MCPHubPage,
+    MCPRenderError,
+    render_mcp,
+)
 from ._skill import (
+    SkillArchive,
     SkillHubBase,
     SkillCard,
     SkillHubPage,
-    SkillFetchError,
-    fetch_skill_dir,
     ClawSkillHub,
 )
 
 __all__ = [
     "HubBase",
+    "GitHubMCPError",
+    "GitHubMCPHub",
     "MCPHubBase",
     "MCPCard",
     "MCPHubPage",
     "MCPRenderError",
     "render_mcp",
+    "SkillArchive",
     "SkillHubBase",
     "SkillCard",
     "SkillHubPage",
-    "SkillFetchError",
-    "fetch_skill_dir",
     "ClawSkillHub",
 ]
