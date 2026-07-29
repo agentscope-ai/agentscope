@@ -1121,6 +1121,7 @@ class _ToolCallRejectingMockModel(MockModel):
         :class:`MockModel`'s shortcut that returns a pre-set
         ``StructuredResponse`` without exercising the real logic."""
 
+        # pylint: disable-next=protected-access
         return await ChatModelBase._call_api_with_structured_output(
             self,
             *args,
