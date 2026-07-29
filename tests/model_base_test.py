@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 """Unit tests for :class:`agentscope.model.ChatModelBase.__call__` — the
 retry / accumulation / interrupt wrapper around ``_call_api``."""
+
 import asyncio
 import base64
 from unittest.async_case import IsolatedAsyncioTestCase
+
+from pydantic import BaseModel
 
 from utils import AnyString, MockModel
 
@@ -16,7 +19,13 @@ from agentscope.message import (
     URLSource,
     UserMsg,
 )
-from agentscope.model import ChatResponse, ChatUsage, FinishedReason
+from agentscope.model import (
+    ChatModelBase,
+    ChatResponse,
+    ChatUsage,
+    FinishedReason,
+)
+from agentscope.tool import ToolChoice
 
 
 def _dump(chat_response: ChatResponse) -> dict:
@@ -1068,3 +1077,248 @@ class ChatModelBaseCallTest(IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""
+
+
+class _SummaryModel(BaseModel):
+    """Pydantic structured model used by the structured-output tests."""
+
+    summary: str
+
+
+class _ToolCallRejectingMockModel(MockModel):
+    """A mock model that drives ``ChatModelBase._call_api`` via the
+    recording of :meth:`MockModel.set_responses`.
+
+    Unlike :class:`MockModel`, its subclass override of
+    ``_call_api_with_structured_output`` is intentionally removed, so
+    calls flow straight into :class:`ChatModelBase`'s implementation and
+    exercise the forced/auto tool_choice fallback plus JSON-in-TextBlock
+    extraction.
+    """
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """Disable the MockModel structured-output shortcut."""
+
+        super().__init__(*args, **kwargs)
+        self.used_tool_choices: list[ToolChoice] = []
+
+    async def _call_api(
+        self,
+        *args: object,
+        **kwargs: object,
+    ) -> object:
+        tool_choice = kwargs.get("tool_choice")
+        if isinstance(tool_choice, ToolChoice):
+            self.used_tool_choices.append(tool_choice)
+        return await MockModel._call_api(self, *args, **kwargs)
+
+    async def _call_api_with_structured_output(
+        self,
+        *args: object,
+        **kwargs: object,
+    ) -> object:
+        """Delegate straight to the base implementation, bypassing
+        :class:`MockModel`'s shortcut that returns a pre-set
+        ``StructuredResponse`` without exercising the real logic."""
+
+        return await ChatModelBase._call_api_with_structured_output(
+            self,
+            *args,
+            **kwargs,
+        )
+
+
+class ChatModelBaseStructuredOutputTest(IsolatedAsyncioTestCase):
+    """Tests for ``ChatModelBase._call_api_with_structured_output``.
+
+    Covers the three fallback paths introduced alongside issue #2137:
+
+    1. Forced tool_choice succeeds via a normal ``ToolCallBlock`` — the
+       base implementation should behave exactly as before.
+    2. Forced tool_choice fails because the provider rejects it
+       synchronously with a provider-level error — we must retry with
+       ``tool_choice=auto`` instead of raising.
+    3. Even under auto (or forced) tool_choice the provider emits a
+       plain ``TextBlock`` with valid JSON inside — we must extract and
+       validate that JSON instead of failing with "structured output
+       failed".
+    4. Streaming — when the provider produces a stream of
+       ``ToolCallBlock`` deltas the base implementation must accumulate
+       them into a single validated structured output.
+    """
+
+    async def asyncSetUp(self) -> None:
+        """The async setup method."""
+
+        self.model = _ToolCallRejectingMockModel(model="mock-model")
+        self.messages = [UserMsg(name="user", content="please compress.")]
+        self.model_name = "mock-model"
+
+    # ------------------------------------------------------------------
+    # 1) forced tool_choice ToolCallBlock — baseline behaviour
+    # ------------------------------------------------------------------
+    async def test_forced_tool_choice_extracts_tool_call_block(self) -> None:
+        """Forced tool_choice returns a ToolCallBlock; the structured
+        response must use its validated input dict."""
+
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="tc-1",
+                            name="generate_structured_output",
+                            input='{"summary":"short"}',
+                        ),
+                    ],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        result = await self.model.generate_structured_output(
+            messages=self.messages,
+            structured_model=_SummaryModel,
+        )
+
+        self.assertDictEqual(
+            result.content,
+            {"summary": "short"},
+        )
+        # Exactly one API call was made, and it used the forced
+        # tool_choice (name of the generated tool).
+        self.assertEqual(len(self.model.used_tool_choices), 1)
+        self.assertEqual(
+            self.model.used_tool_choices[0].mode,
+            "generate_structured_output",
+        )
+
+    # ------------------------------------------------------------------
+    # 2) forced tool_choice raises provider error → retry with auto
+    # ------------------------------------------------------------------
+    async def test_provider_error_forced_falls_back_to_auto(self) -> None:
+        """A non-retryable provider-level error on the forced attempt
+        should trigger a single retry with ``tool_choice=auto``. When
+        the retry succeeds, the structured output from the retry wins.
+        """
+
+        class _ProviderBadRequest(RuntimeError):
+            """Marker class – anything not in the retryable set retries
+            with tool_choice=auto."""
+
+        self.model.set_responses(
+            [
+                _ProviderBadRequest("tool_choice is not supported"),
+                ChatResponse(
+                    content=[
+                        ToolCallBlock(
+                            id="tc-2",
+                            name="generate_structured_output",
+                            input='{"summary":"via auto"}',
+                        ),
+                    ],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        result = await self.model.generate_structured_output(
+            messages=self.messages,
+            structured_model=_SummaryModel,
+        )
+
+        self.assertDictEqual(result.content, {"summary": "via auto"})
+        self.assertEqual(len(self.model.used_tool_choices), 2)
+        self.assertEqual(
+            self.model.used_tool_choices[0].mode,
+            "generate_structured_output",
+        )
+        self.assertEqual(self.model.used_tool_choices[1].mode, "auto")
+
+    # ------------------------------------------------------------------
+    # 3) auto tool_choice returns JSON inside a TextBlock — extraction
+    # ------------------------------------------------------------------
+    async def test_text_block_json_extraction_succeeds(self) -> None:
+        """Thinking-mode providers often respond with JSON directly
+        inside a TextBlock (no ToolCallBlock). The safety-net parser
+        should extract it and validate it against the schema."""
+
+        self.model.set_responses(
+            [
+                ChatResponse(
+                    content=[
+                        TextBlock(
+                            text=(
+                                "Here is my summary, wrapped as requested:\n"
+                                "```json\n"
+                                '{"summary": "hello from text block"}\n'
+                                "```\n"
+                            ),
+                        ),
+                    ],
+                    is_last=True,
+                ),
+            ],
+        )
+
+        result = await self.model.generate_structured_output(
+            messages=self.messages,
+            structured_model=_SummaryModel,
+            tool_choice=ToolChoice(mode="auto"),
+        )
+
+        self.assertDictEqual(
+            result.content,
+            {"summary": "hello from text block"},
+        )
+
+    # ------------------------------------------------------------------
+    # 4) stream of ToolCallBlock deltas accumulates correctly
+    # ------------------------------------------------------------------
+    async def test_streamed_tool_call_accumulates(self) -> None:
+        """When the provider streams the structured output in fragments
+        we must assemble them in the accumulator and validate the
+        concatenated JSON against the schema."""
+
+        stream_model = _ToolCallRejectingMockModel(
+            model="mock-model",
+            stream=True,
+        )
+        stream_model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id="tc-s",
+                                name="generate_structured_output",
+                                input='{"summary":"par',
+                            ),
+                        ],
+                        is_last=False,
+                        id="chunk-1",
+                    ),
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id="tc-s",
+                                name="generate_structured_output",
+                                input='tial stream"}',
+                            ),
+                        ],
+                        is_last=False,
+                        id="chunk-2",
+                    ),
+                ],
+            ],
+        )
+
+        result = await stream_model.generate_structured_output(
+            messages=self.messages,
+            structured_model=_SummaryModel,
+        )
+
+        self.assertDictEqual(
+            result.content,
+            {"summary": "partial stream"},
+        )

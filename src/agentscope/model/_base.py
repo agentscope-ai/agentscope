@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """The base class for the chat models."""
+
 import asyncio
 import inspect
 import json
+import warnings
 from abc import abstractmethod
 from copy import deepcopy
 from pathlib import Path
@@ -511,14 +513,17 @@ class ChatModelBase:
         API supports structured output, you can override this method to
         provide a more accurate implementation.
 
-        Note by default this method forces LLM to call the
-        'generate_structured_output' tool via tool_choice, and adds
-        instructions into the input messages. Subclasses whose underlying
-        API rejects forced tool_choice in certain modes (e.g. DashScope in
-        thinking mode) can pass ``tool_choice=ToolChoice(mode="auto")`` and
-        rely solely on the injected system-reminder prompt. LLM APIs that
-        don't support "required" tool choice may still fail (e.g. generate
-        text output and ignore the tool call, or fail in validation).
+        Note by default this method first tries forcing LLM to call the
+        'generate_structured_output' tool via ``tool_choice``, and adds
+        instructions into the input messages. When the provider is known
+        to reject forced ``tool_choice`` in certain modes (thinking,
+        reasoning etc.) subclasses are expected to override this method to
+        either pre-downgrade to ``ToolChoice(mode="auto")`` or translate
+        the specific API error. As a safety net we fall back to
+        ``tool_choice=auto`` on any non-retryable provider error that
+        mentions ``tool_choice``, because compression relies on structured
+        summary output and a missing structured reply kills the full
+        agent turn.
 
         Args:
             model_name (`str`):
@@ -541,8 +546,12 @@ class ChatModelBase:
             input_schema = structured_model.model_json_schema()
 
         func_name = "generate_structured_output"
-        if tool_choice is None:
-            tool_choice = ToolChoice(mode=func_name)
+        forced_tool_choice = (
+            tool_choice
+            if tool_choice is not None
+            else ToolChoice(mode=func_name)
+        )
+        auto_tool_choice = ToolChoice(mode="auto")
         instruction = (
             "<system-reminder>Now you **MUST** call the tool named "
             f"'{func_name}' to generate the structured output required "
@@ -561,34 +570,91 @@ class ChatModelBase:
                 UserMsg(name="user", content=[TextBlock(text=instruction)]),
             )
 
+        tool_schema = [
+            {
+                "type": "function",
+                "function": {
+                    "name": func_name,
+                    "description": "Call this function to generate "
+                    "structured output required by "
+                    "the user.",
+                    "parameters": input_schema,
+                },
+            },
+        ]
+
+        last_error: Exception | None = None
+        for attempt_tool_choice in (forced_tool_choice, auto_tool_choice):
+            try:
+                return await self._try_extract_structured_response(
+                    model_name=model_name,
+                    messages=copied_messages,
+                    tools=tool_schema,
+                    tool_choice=attempt_tool_choice,
+                    func_name=func_name,
+                    structured_model=structured_model,
+                    input_schema=input_schema,
+                    **kwargs,
+                )
+            except Exception as exc:  # noqa: BLE001 - provider surface
+                retryable = tuple(self._get_retryable_exceptions())
+                if isinstance(exc, retryable):
+                    # Retryable (network) errors still bubble up so the
+                    # outer generate_structured_output loop handles them
+                    raise
+                if (
+                    last_error is None
+                    and attempt_tool_choice is not auto_tool_choice
+                ):
+                    last_error = exc
+                    warnings.warn(
+                        "generate_structured_output: forced tool_choice "
+                        f"failed ({exc}); retrying with tool_choice=auto.",
+                        stacklevel=2,
+                    )
+                    continue
+                if (
+                    attempt_tool_choice is auto_tool_choice
+                    and last_error is not None
+                ):
+                    raise exc from last_error
+                raise exc
+
+        # Unreachable (loop has explicit return/raise paths) — satisfy
+        # type-checkers.
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError(
+            "Failed to generate structured output: no response after "
+            "forced + auto tool_choice attempts.",
+        )
+
+    async def _try_extract_structured_response(
+        self,
+        model_name: str,
+        messages: list[Msg],
+        tools: list[dict],
+        tool_choice: ToolChoice,
+        func_name: str,
+        structured_model: Type[BaseModel] | dict,
+        input_schema: dict,
+        **kwargs: Any,
+    ) -> StructuredResponse:
+        """Run one ``_call_api`` pass and extract/validate the structured
+        tool-call output. Shared between the forced and auto tool_choice
+        attempts in ``_call_api_with_structured_output``.
+        """
+
         res = await self._call_api(
             model_name=model_name,
-            messages=copied_messages,
-            tools=[
-                {
-                    "type": "function",
-                    "function": {
-                        "name": func_name,
-                        "description": "Call this function to generate "
-                        "structured output required by "
-                        "the user.",
-                        "parameters": input_schema,
-                    },
-                },
-            ],
+            messages=messages,
+            tools=tools,
             tool_choice=tool_choice,
             **kwargs,
         )
 
         completed_response: ChatResponse | None = None
         if self.stream:
-            # ``_call_api`` yields raw incremental chunks whose ``is_last``
-            # is always ``False``; subclasses rely on the ``__call__``
-            # wrapper to accumulate them and emit a final ``is_last=True``
-            # chunk. Since this method calls ``_call_api`` directly (to
-            # avoid duplicating the retry logic in ``__call__``), we must
-            # replicate that accumulation here, otherwise the stream may
-            # end without ever producing an ``is_last=True`` chunk.
             acc_res = _StreamAccumulator()
 
             async for chunk in res:
@@ -610,26 +676,37 @@ class ChatModelBase:
             )
 
         structured_output: dict[str, Any] | None = None
-        for _ in completed_response.content:
-            if isinstance(_, ToolCallBlock) and _.name == func_name:
+        fallback_text: str | None = None
+        for block in completed_response.content:
+            if isinstance(block, ToolCallBlock) and block.name == func_name:
                 structured_output = _json_loads_with_repair(
-                    _.input,
+                    block.input,
                     input_schema,
                 )
                 break
+            if isinstance(block, TextBlock) and fallback_text is None:
+                fallback_text = block.text
 
         if structured_output is None:
-            raise RuntimeError(
-                "Failed to generate structured output for model.",
+            # Last-ditch: providers without forced tool_choice may emit
+            # valid JSON inline inside a TextBlock (e.g. DeepSeek
+            # thinking-mode, or any auto-rolled schema). Try parsing that
+            # against the required schema before giving up.
+            parsed = self._parse_json_from_text(
+                fallback_text or "",
+                input_schema,
             )
+            if parsed is not None:
+                structured_output = parsed
+            else:
+                raise RuntimeError(
+                    "Failed to generate structured output for model.",
+                )
 
-        # Validate the output
         if isinstance(structured_model, dict):
             jsonschema.validate(structured_output, structured_model)
-
         elif issubclass(structured_model, BaseModel):
             structured_model.model_validate(structured_output)
-
         else:
             raise ValueError(
                 "The structured_model is expected to be a subclass of "
@@ -644,3 +721,67 @@ class ChatModelBase:
             usage=completed_response.usage,
             finished_reason=completed_response.finished_reason,
         )
+
+    @staticmethod
+    def _parse_json_from_text(
+        text: str,
+        input_schema: dict,
+    ) -> dict[str, Any] | None:
+        """Best-effort JSON extraction from free-form LLM text.
+
+        Used as a safety net when the provider refuses the forced
+        tool_choice (thinking models, non-standard tool_choice support,
+        etc.) and instead emits the structured payload inline inside a
+        text block. We first try to parse the whole text as JSON, then
+        search for the first ``{...}`` / ``[...]`` block whose shape
+        matches ``input_schema`` (object for default summary schema,
+        array otherwise).
+        """
+
+        stripped = text.strip()
+        if not stripped:
+            return None
+
+        target_type = (
+            dict
+            if not input_schema.get("type") or input_schema["type"] == "object"
+            else list
+        )
+
+        candidates: list[str] = []
+        try:
+            json.loads(stripped)
+            candidates.append(stripped)
+        except json.JSONDecodeError:
+            pass
+
+        # Prefer the largest balanced {...} / [...] pair we can find
+        for opener, closer in (("{", "}"), ("[", "]")):
+            depth = 0
+            start = -1
+            for idx, ch in enumerate(stripped):
+                if ch == opener:
+                    if depth == 0:
+                        start = idx
+                    depth += 1
+                elif ch == closer:
+                    if depth > 0:
+                        depth -= 1
+                        if depth == 0 and start != -1:
+                            candidates.append(
+                                stripped[start : idx + 1],  # noqa: E203
+                            )
+
+        for candidate in candidates:
+            try:
+                parsed = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(parsed, target_type):
+                continue
+            try:
+                jsonschema.validate(parsed, input_schema)
+            except jsonschema.ValidationError:
+                continue
+            return parsed  # type: ignore[return-value]
+        return None
