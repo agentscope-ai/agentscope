@@ -179,9 +179,9 @@ class TracingMiddleware(MiddlewareBase):
                         **common_attrs,
                     }
                     if result.output is not None:
-                        tool_attrs[SpanAttributes.GEN_AI_TOOL_CALL_RESULT] = (
-                            _serialize_to_str(result.output)
-                        )
+                        tool_attrs[
+                            SpanAttributes.GEN_AI_TOOL_CALL_RESULT
+                        ] = _serialize_to_str(result.output)
                     with tracer.start_as_current_span(
                         name=(
                             f"{OperationNameValues.EXECUTE_TOOL}"
