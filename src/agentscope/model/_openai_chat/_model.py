@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The OpenAI Chat Completions model implementation."""
+
 import warnings
 import base64
 from collections import OrderedDict
@@ -346,13 +347,15 @@ class OpenAIChatModel(ChatModelBase):
                         input_tokens=u.prompt_tokens,
                         output_tokens=u.completion_tokens,
                         time=(datetime.now() - start_datetime).total_seconds(),
-                        cache_input_tokens=getattr(
-                            details,
-                            "cached_tokens",
-                            0,
-                        )
-                        if details
-                        else 0,
+                        cache_input_tokens=(
+                            getattr(
+                                details,
+                                "cached_tokens",
+                                0,
+                            )
+                            if details
+                            else 0
+                        ),
                     )
 
                 if not chunk.choices:
@@ -524,13 +527,15 @@ class OpenAIChatModel(ChatModelBase):
                 input_tokens=u.prompt_tokens,
                 output_tokens=u.completion_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
-                cache_input_tokens=getattr(
-                    details,
-                    "cached_tokens",
-                    0,
-                )
-                if details
-                else 0,
+                cache_input_tokens=(
+                    getattr(
+                        details,
+                        "cached_tokens",
+                        0,
+                    )
+                    if details
+                    else 0
+                ),
             )
 
         resp_kwargs: dict[str, Any] = {
