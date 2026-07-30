@@ -180,9 +180,9 @@ export function useMessages(
 			setPhase((prev) => (prev === 'streaming' ? 'idle' : prev));
 			setError(
 				new Error(
-					`The backend stopped producing events for ${STALL_TIMEOUT_MS / 1000}s`
-						+ ' during this chat run (crashed worker or LLM exception).'
-						+ ' Please retry your message.',
+					`The backend stopped producing events for ${STALL_TIMEOUT_MS / 1000}s` +
+						' during this chat run (crashed worker or LLM exception).' +
+						' Please retry your message.',
 				),
 			);
 		}, STALL_TIMEOUT_MS);
@@ -277,13 +277,7 @@ export function useMessages(
 
 			scheduleUpdate();
 		},
-		[
-			scheduleUpdate,
-			audioManager,
-			clearInterruptTimer,
-			clearStallTimer,
-			restartStallTimer,
-		],
+		[scheduleUpdate, audioManager, clearInterruptTimer, clearStallTimer, restartStallTimer],
 	);
 
 	// ── Lifecycle: fetch history + open SSE stream ──────────────────
