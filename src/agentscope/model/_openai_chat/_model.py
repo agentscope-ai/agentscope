@@ -267,7 +267,7 @@ class OpenAIChatModel(ChatModelBase):
             kwargs["stream_options"] = {"include_usage": True}
 
         start_datetime = datetime.now()
-        response = await self.client.chat.completions.create(**kwargs)
+        response = await self._safe_chat_completions_create(kwargs)
 
         audio_cfg = kwargs.get("audio")
         audio_fmt = (
@@ -585,6 +585,69 @@ class OpenAIChatModel(ChatModelBase):
                 tool_choice=ToolChoice(mode="auto"),
                 **kwargs,
             )
+
+    async def _safe_chat_completions_create(
+        self,
+        kwargs: dict[str, Any],
+    ) -> Any:
+        """Call ``self.client.chat.completions.create`` with a tool_choice
+        fallback.
+
+        Some OpenAI-compatible providers (DeepSeek thinking-mode models,
+        reasoning variants of qwen-plus, certain Groq partitions, etc.)
+        reject the ``tool_choice`` parameter outright, even values such
+        as ``"auto"`` that would otherwise be a no-op.  When the
+        underlying call raises ``openai.BadRequestError`` and the error
+        message mentions ``tool_choice``, this helper drops
+        ``kwargs["tool_choice"]`` and retries once.
+
+        ``tool_choice`` is the only parameter this helper can suppress
+        on retry: a different ``BadRequestError`` is re-raised without
+        retrying so unrelated provider regressions continue to be
+        visible as soon as possible.
+
+        Args:
+            kwargs: Positional kwargs forwarded verbatim (after any
+                retry-time mutation) to
+                ``self.client.chat.completions.create``.
+
+        Returns:
+            The raw completion object (non-stream mode) or the async
+            stream object (stream mode) returned by the client.
+        """
+        import openai
+
+        first_error: Exception | None = None
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                return await self.client.chat.completions.create(**kwargs)
+            except openai.BadRequestError as exc:
+                if (
+                    "tool_choice" in str(exc)
+                    and "tool_choice" in kwargs
+                    and attempt < 2
+                ):
+                    first_error = exc
+                    fallback = {
+                        k: v for k, v in kwargs.items() if k != "tool_choice"
+                    }
+                    warnings.warn(
+                        "tool_choice parameter rejected by provider "
+                        f"({exc}); retrying without tool_choice "
+                        "(model still receives tool definitions, only "
+                        "the selection hint is dropped).",
+                        stacklevel=3,
+                    )
+                    kwargs = fallback
+                    continue
+                if first_error is not None:
+                    # Preserve the original traceback so operators can
+                    # still see exactly which argument the provider
+                    # rejected in the first place.
+                    raise first_error from exc
+                raise
 
     def _format_tools(
         self,

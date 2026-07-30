@@ -23,6 +23,7 @@ from agentscope.message import (
     ThinkingBlock,
     DataBlock,
     Base64Source,
+    UserMsg,
 )
 from agentscope.model import OpenAIChatModel
 from agentscope.credential import OpenAICredential
@@ -834,3 +835,181 @@ class TestOpenAIChatFormatTools(unittest.TestCase):
         fmt_tools, fmt_choice = self.model._format_tools(_FT_TOOLS, None)
         self.assertEqual(fmt_tools, _FT_TOOLS)
         self.assertIsNone(fmt_choice)
+
+
+def _bad_request_error(message: str) -> Exception:
+    """Build a minimal ``openai.BadRequestError``-compatible exception.
+
+    The real SDK error is a thin subclass of ``APIError`` with a body +
+    status code; for tests we only need ``str(exc)`` to contain the
+    provided ``message`` and for ``isinstance(exc, openai.BadRequestError)``
+    to be True, both of which this factory guarantees by importing
+    from an installed ``openai`` SDK (shipped as a core dependency).
+    """
+    from openai import BadRequestError  # type: ignore[import-not-found]
+
+    return BadRequestError(
+        message=message,
+        response=MagicMock(status_code=400),
+        body={"error": {"message": message}},
+    )
+
+
+class TestToolChoiceRejectionFallback(IsolatedAsyncioTestCase):
+    """Exercise ``_safe_chat_completions_create`` tool_choice retry loop."""
+
+    def setUp(self) -> None:
+        self.model = _make_model(stream=False)
+        self.mock_client = MagicMock()
+        self.model.client = self.mock_client
+
+    async def test_400_tool_choice_rejection_retries_without_param(
+        self,
+    ) -> None:
+        """On ``BadRequestError`` mentioning ``tool_choice`` the helper
+        drops the ``tool_choice`` kwarg and retries exactly once."""
+        calls = []
+        good_response = _mock_completion(text="ok")
+
+        async def create_side_effect(**kwargs: Any) -> Any:
+            calls.append(dict(kwargs))
+            if "tool_choice" in kwargs:
+                raise _bad_request_error(
+                    "deepseek-reasoner does not support this tool_choice",
+                )
+            return good_response
+
+        self.mock_client.chat.completions.create = AsyncMock(
+            side_effect=create_side_effect,
+        )
+
+        with self.assertWarns(UserWarning):
+            result = await self.model._safe_chat_completions_create(
+                {
+                    "model": "gpt-4o",
+                    "messages": [{"role": "user", "content": "Hi"}],
+                    "tools": _FT_TOOLS,
+                    "tool_choice": "required",
+                },
+            )
+
+        self.assertIs(result, good_response)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("tool_choice", calls[0])
+        self.assertNotIn("tool_choice", calls[1])
+        self.assertEqual(calls[1]["tools"], _FT_TOOLS)
+
+    async def test_unrelated_400_does_not_retry(self) -> None:
+        """A BadRequestError unrelated to tool_choice is re-raised."""
+        from openai import BadRequestError  # type: ignore[import-not-found]
+
+        async def _fail(**_kwargs: Any) -> Any:
+            raise _bad_request_error(
+                "invalid parameter: temperature must be <=2",
+            )
+
+        self.mock_client.chat.completions.create = AsyncMock(
+            side_effect=_fail,
+        )
+
+        with self.assertRaises(BadRequestError):
+            await self.model._safe_chat_completions_create(
+                {
+                    "model": "gpt-4o",
+                    "messages": [{"role": "user", "content": "Hi"}],
+                    "temperature": 3.5,
+                },
+            )
+
+        # Only one attempt – no retrying unrelated errors
+        self.assertEqual(
+            self.mock_client.chat.completions.create.await_count,
+            1,
+        )
+
+    async def test_second_attempt_failure_raises_first_error(self) -> None:
+        """If the second attempt also fails, re-raise the original
+        BadRequestError so operators see the provider message."""
+        from openai import BadRequestError  # type: ignore[import-not-found]
+
+        captured: list[Exception] = []
+
+        async def _fail_both(**_kwargs: Any) -> Any:
+            err = _bad_request_error(
+                "reasoning models do not accept tool_choice at all",
+            )
+            captured.append(err)
+            raise err
+
+        self.mock_client.chat.completions.create = AsyncMock(
+            side_effect=_fail_both,
+        )
+
+        with self.assertRaises(BadRequestError) as raised, self.assertWarns(
+            UserWarning,
+        ):
+            await self.model._safe_chat_completions_create(
+                {
+                    "model": "deepseek-v4-pro",
+                    "messages": [{"role": "user", "content": "Hi"}],
+                    "tool_choice": "required",
+                },
+            )
+
+        self.assertIs(raised.exception, captured[0])
+        # Exactly two attempts: first with tool_choice, second without
+        self.assertEqual(
+            self.mock_client.chat.completions.create.await_count,
+            2,
+        )
+
+    async def test_agent_invoke_path_observes_fallback(self) -> None:
+        """End-to-end: ``__call__()`` with ``tool_choice`` triggers the
+        fallback flow, drops the bad parameter, and returns a response
+        instead of raising."""
+        import warnings
+
+        calls = []
+
+        async def create_side_effect(**kwargs: Any) -> Any:
+            calls.append({k for k in kwargs if "tool" in k})
+            if "tool_choice" in kwargs:
+                raise _bad_request_error(
+                    "deepseek-reasoner does not support this tool_choice",
+                )
+            return _mock_completion(
+                tool_calls=[
+                    {
+                        "id": "call-x",
+                        "name": "get_weather",
+                        "arguments": '{"city":"Shanghai"}',
+                    },
+                ],
+            )
+
+        self.mock_client.chat.completions.create = AsyncMock(
+            side_effect=create_side_effect,
+        )
+
+        with warnings.catch_warnings(record=True) as captured_warnings:
+            warnings.simplefilter("always")
+            result = await self.model(
+                [UserMsg(name="user", content="Shanghai weather?")],
+                tools=_FT_TOOLS,
+                tool_choice=ToolChoice(mode="required"),
+            )
+
+        self.assertTrue(result.is_last)
+        blocks = [b for b in result.content if isinstance(b, ToolCallBlock)]
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0].name, "get_weather")
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("tool_choice", calls[0])
+        self.assertNotIn("tool_choice", calls[1])
+        self.assertTrue(
+            any(
+                "tool_choice parameter rejected" in str(w.message)
+                for w in captured_warnings
+            ),
+        )
