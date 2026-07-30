@@ -6,7 +6,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString, MockModel
 
-from agentscope.agent import Agent
+from agentscope.agent import Agent, InjectionConfig
 from agentscope.model import ChatResponse
 from agentscope.tool import (
     ToolBase,
@@ -17,12 +17,14 @@ from agentscope.permission import (
     PermissionDecision,
     PermissionBehavior,
     PermissionContext,
+    PermissionRule,
 )
 from agentscope.message import (
     TextBlock,
     ToolCallBlock,
     ToolResultBlock,
     UserMsg,
+    ToolCallState,
     ToolResultState,
 )
 from agentscope.event import (
@@ -55,6 +57,7 @@ class MockMixedSequentialTool(ToolBase):
         context: PermissionContext,
     ) -> PermissionDecision:
         """Check permissions for the tool usage."""
+        del tool_input, context
         return PermissionDecision(
             behavior=PermissionBehavior.ASK,
             decision_reason="Mock mixed tool requires user confirmation",
@@ -91,6 +94,7 @@ class MockMixedConcurrentTool(ToolBase):
         context: PermissionContext,
     ) -> PermissionDecision:
         """Check permissions for the tool usage."""
+        del tool_input, context
         return PermissionDecision(
             behavior=PermissionBehavior.ASK,
             decision_reason="Mock mixed tool requires user confirmation",
@@ -115,6 +119,9 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             system_prompt="You are a helpful assistant.",
             model=self.model,
             toolkit=Toolkit(),
+            # Runtime-state injection is covered by agent_injection_test.
+            # Keep these assertions focused on the HITL event flow.
+            injection_config=InjectionConfig(inject_runtime_state=False),
         )
         self.tool_call_id_1 = "tool_call_1"
         self.tool_call_id_2 = "tool_call_2"
@@ -150,6 +157,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
         ]
         self.final_mock_responses = [
@@ -170,6 +178,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         return {
             "id": AnyString(),
             "created_at": AnyString(),
+            "metadata": {},
             "reply_id": reply_id,
         }
 
@@ -178,9 +187,94 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         return {
             "id": AnyString(),
             "created_at": AnyString(),
+            "finished_at": None,
+            "finished_reason": None,
+            "structured_output": None,
+            "error": None,
             "metadata": {},
             "name": "Friday",
             "role": "assistant",
+            "usage": None,
+        }
+
+    @staticmethod
+    def _get_suggested_rules(name: str) -> list[dict]:
+        """Get the rule suggested for a tool confirmation."""
+        return [
+            {
+                "tool_name": name,
+                "rule_content": None,
+                "behavior": PermissionBehavior.ALLOW,
+                "source": "suggested",
+            },
+        ]
+
+    def _get_expected_user_message(self) -> dict:
+        """Get the expected user message."""
+        return {
+            "name": "user",
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "created_at": AnyString(),
+                    "finished_at": None,
+                    "id": AnyString(),
+                    "text": self.user_input_text,
+                },
+            ],
+            "finished_at": AnyString(),
+        }
+
+    def _get_expected_tool_call_block(
+        self,
+        id: str,
+        name: str,
+        tool_input: str,
+        state: ToolCallState,
+        *,
+        has_suggested_rule: bool = True,
+    ) -> dict:
+        """Get the expected serialized tool call block."""
+        return {
+            "type": "tool_call",
+            "created_at": AnyString(),
+            "finished_at": None,
+            "id": id,
+            "name": name,
+            "input": tool_input,
+            "state": state,
+            "suggested_rules": (
+                self._get_suggested_rules(name) if has_suggested_rule else []
+            ),
+        }
+
+    @staticmethod
+    def _get_expected_text_block(text: str) -> dict:
+        """Get the expected serialized text block."""
+        return {
+            "type": "text",
+            "created_at": AnyString(),
+            "finished_at": None,
+            "id": AnyString(),
+            "text": text,
+        }
+
+    def _get_expected_tool_result_block(
+        self,
+        name: str,
+        result: str,
+    ) -> dict:
+        """Get the expected serialized tool result block."""
+        return {
+            "type": "tool_result",
+            "created_at": AnyString(),
+            "finished_at": None,
+            "id": AnyString(),
+            "name": name,
+            "output": [self._get_expected_text_block(result)],
+            "state": "success",
+            "metadata": {},
         }
 
     def _get_tool_call_events(
@@ -239,13 +333,12 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             "type": "REQUIRE_USER_CONFIRM",
             "reply_id": reply_id,
             "tool_calls": [
-                {
-                    "type": "tool_call",
-                    "id": id,
-                    "name": name,
-                    "input": tool_input,
-                    "state": "asking",
-                },
+                self._get_expected_tool_call_block(
+                    id,
+                    name,
+                    tool_input,
+                    ToolCallState.ASKING,
+                ),
             ],
         }
 
@@ -255,6 +348,8 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         id: str,
         name: str,
         tool_input: str,
+        *,
+        has_suggested_rule: bool = True,
     ) -> list[dict]:
         """Helper method to get the expected external execution events."""
         return [
@@ -267,13 +362,13 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                 "type": "REQUIRE_EXTERNAL_EXECUTION",
                 "reply_id": reply_id,
                 "tool_calls": [
-                    {
-                        "type": "tool_call",
-                        "id": id,
-                        "name": name,
-                        "input": tool_input,
-                        "state": "submitted",
-                    },
+                    self._get_expected_tool_call_block(
+                        id,
+                        name,
+                        tool_input,
+                        ToolCallState.SUBMITTED,
+                        has_suggested_rule=has_suggested_rule,
+                    ),
                 ],
             },
         ]
@@ -307,11 +402,13 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         id: str,
         name: str,
         tool_input: str,
+        rules: list[PermissionRule] | None = None,
     ) -> ConfirmResult:
         """Build a confirmation result."""
         return ConfirmResult(
             confirmed=True,
             tool_call=self._get_tool_call_block(id, name, tool_input),
+            rules=rules,
         )
 
     def _build_tool_calls(
@@ -393,6 +490,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
             self._get_require_user_confirm_event(
                 reply_id,
@@ -407,20 +505,15 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         )
 
         expected_context = [
-            {
-                "name": "user",
-                "role": "user",
-                "content": self.user_input_text,
-            },
+            self._get_expected_user_message(),
             {
                 "content": [
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_1,
-                        "name": self.sequential_tool_name,
-                        "input": self.tool_input_1,
-                        "state": "asking",
-                    },
+                    self._get_expected_tool_call_block(
+                        self.tool_call_id_1,
+                        self.sequential_tool_name,
+                        self.tool_input_1,
+                        ToolCallState.ASKING,
+                    ),
                 ],
             },
         ]
@@ -455,20 +548,15 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         )
 
         expected_context = [
-            {
-                "name": "user",
-                "role": "user",
-                "content": self.user_input_text,
-            },
+            self._get_expected_user_message(),
             {
                 "content": [
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_1,
-                        "name": self.sequential_tool_name,
-                        "input": self.tool_input_1,
-                        "state": "submitted",
-                    },
+                    self._get_expected_tool_call_block(
+                        self.tool_call_id_1,
+                        self.sequential_tool_name,
+                        self.tool_input_1,
+                        ToolCallState.SUBMITTED,
+                    ),
                 ],
             },
         ]
@@ -499,7 +587,12 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                 self.sequential_result_1,
             ),
             *self.final_text_events,
-            {"type": "REPLY_END", "session_id": session_id},
+            {
+                "type": "REPLY_END",
+                "error": None,
+                "session_id": session_id,
+                "finished_reason": "completed",
+            },
         ]
         self.assertListEqual(
             events,
@@ -507,38 +600,20 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         )
 
         expected_context_final = [
-            {
-                "name": "user",
-                "role": "user",
-                "content": self.user_input_text,
-            },
+            self._get_expected_user_message(),
             {
                 "content": [
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_1,
-                        "name": self.sequential_tool_name,
-                        "input": self.tool_input_1,
-                        "state": "finished",
-                    },
-                    {
-                        "type": "tool_result",
-                        "id": AnyString(),
-                        "name": self.sequential_tool_name,
-                        "output": [
-                            {
-                                "type": "text",
-                                "id": AnyString(),
-                                "text": self.sequential_result_1,
-                            },
-                        ],
-                        "state": "success",
-                    },
-                    {
-                        "type": "text",
-                        "id": AnyString(),
-                        "text": self.final_response_text,
-                    },
+                    self._get_expected_tool_call_block(
+                        self.tool_call_id_1,
+                        self.sequential_tool_name,
+                        self.tool_input_1,
+                        ToolCallState.FINISHED,
+                    ),
+                    self._get_expected_tool_result_block(
+                        self.sequential_tool_name,
+                        self.sequential_result_1,
+                    ),
+                    self._get_expected_text_block(self.final_response_text),
                 ],
             },
         ]
@@ -608,6 +683,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
             self._get_require_user_confirm_event(
                 reply_id,
@@ -622,27 +698,22 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         )
 
         expected_context = [
-            {
-                "name": "user",
-                "role": "user",
-                "content": self.user_input_text,
-            },
+            self._get_expected_user_message(),
             {
                 "content": [
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_1,
-                        "name": self.sequential_tool_name,
-                        "input": self.tool_input_1,
-                        "state": "asking",
-                    },
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_2,
-                        "name": self.sequential_tool_name,
-                        "input": self.tool_input_2,
-                        "state": "pending",
-                    },
+                    self._get_expected_tool_call_block(
+                        self.tool_call_id_1,
+                        self.sequential_tool_name,
+                        self.tool_input_1,
+                        ToolCallState.ASKING,
+                    ),
+                    self._get_expected_tool_call_block(
+                        self.tool_call_id_2,
+                        self.sequential_tool_name,
+                        self.tool_input_2,
+                        ToolCallState.PENDING,
+                        has_suggested_rule=False,
+                    ),
                 ],
             },
         ]
@@ -677,27 +748,22 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         )
 
         expected_context = [
-            {
-                "name": "user",
-                "role": "user",
-                "content": self.user_input_text,
-            },
+            self._get_expected_user_message(),
             {
                 "content": [
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_1,
-                        "name": self.sequential_tool_name,
-                        "input": self.tool_input_1,
-                        "state": "submitted",
-                    },
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_2,
-                        "name": self.sequential_tool_name,
-                        "input": self.tool_input_2,
-                        "state": "pending",
-                    },
+                    self._get_expected_tool_call_block(
+                        self.tool_call_id_1,
+                        self.sequential_tool_name,
+                        self.tool_input_1,
+                        ToolCallState.SUBMITTED,
+                    ),
+                    self._get_expected_tool_call_block(
+                        self.tool_call_id_2,
+                        self.sequential_tool_name,
+                        self.tool_input_2,
+                        ToolCallState.PENDING,
+                        has_suggested_rule=False,
+                    ),
                 ],
             },
         ]
@@ -740,40 +806,25 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         )
 
         expected_context = [
-            {
-                "name": "user",
-                "role": "user",
-                "content": self.user_input_text,
-            },
+            self._get_expected_user_message(),
             {
                 "content": [
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_1,
-                        "name": self.sequential_tool_name,
-                        "input": self.tool_input_1,
-                        "state": "finished",
-                    },
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_2,
-                        "name": self.sequential_tool_name,
-                        "input": self.tool_input_2,
-                        "state": "asking",
-                    },
-                    {
-                        "type": "tool_result",
-                        "id": AnyString(),
-                        "name": self.sequential_tool_name,
-                        "output": [
-                            {
-                                "type": "text",
-                                "id": AnyString(),
-                                "text": self.sequential_result_1,
-                            },
-                        ],
-                        "state": "success",
-                    },
+                    self._get_expected_tool_call_block(
+                        self.tool_call_id_1,
+                        self.sequential_tool_name,
+                        self.tool_input_1,
+                        ToolCallState.FINISHED,
+                    ),
+                    self._get_expected_tool_call_block(
+                        self.tool_call_id_2,
+                        self.sequential_tool_name,
+                        self.tool_input_2,
+                        ToolCallState.ASKING,
+                    ),
+                    self._get_expected_tool_result_block(
+                        self.sequential_tool_name,
+                        self.sequential_result_1,
+                    ),
                 ],
             },
         ]
@@ -835,7 +886,12 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                 self.sequential_result_2,
             ),
             *self.final_text_events,
-            {"type": "REPLY_END", "session_id": session_id},
+            {
+                "type": "REPLY_END",
+                "error": None,
+                "session_id": session_id,
+                "finished_reason": "completed",
+            },
         ]
         self.assertListEqual(
             events,
@@ -843,58 +899,30 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         )
 
         expected_context_final = [
-            {
-                "name": "user",
-                "role": "user",
-                "content": self.user_input_text,
-            },
+            self._get_expected_user_message(),
             {
                 "content": [
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_1,
-                        "name": self.sequential_tool_name,
-                        "input": self.tool_input_1,
-                        "state": "finished",
-                    },
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_2,
-                        "name": self.sequential_tool_name,
-                        "input": self.tool_input_2,
-                        "state": "finished",
-                    },
-                    {
-                        "type": "tool_result",
-                        "id": AnyString(),
-                        "name": self.sequential_tool_name,
-                        "output": [
-                            {
-                                "type": "text",
-                                "id": AnyString(),
-                                "text": self.sequential_result_1,
-                            },
-                        ],
-                        "state": "success",
-                    },
-                    {
-                        "type": "tool_result",
-                        "id": AnyString(),
-                        "name": self.sequential_tool_name,
-                        "output": [
-                            {
-                                "type": "text",
-                                "id": AnyString(),
-                                "text": self.sequential_result_2,
-                            },
-                        ],
-                        "state": "success",
-                    },
-                    {
-                        "type": "text",
-                        "id": AnyString(),
-                        "text": self.final_response_text,
-                    },
+                    self._get_expected_tool_call_block(
+                        self.tool_call_id_1,
+                        self.sequential_tool_name,
+                        self.tool_input_1,
+                        ToolCallState.FINISHED,
+                    ),
+                    self._get_expected_tool_call_block(
+                        self.tool_call_id_2,
+                        self.sequential_tool_name,
+                        self.tool_input_2,
+                        ToolCallState.FINISHED,
+                    ),
+                    self._get_expected_tool_result_block(
+                        self.sequential_tool_name,
+                        self.sequential_result_1,
+                    ),
+                    self._get_expected_tool_result_block(
+                        self.sequential_tool_name,
+                        self.sequential_result_2,
+                    ),
+                    self._get_expected_text_block(self.final_response_text),
                 ],
             },
         ]
@@ -948,6 +976,8 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             self.tool_input_2,
         )
 
+        # Calls to the same tool share a suggested rule, so only the first
+        # call asks for confirmation while the second remains pending.
         expected_events = [
             {
                 "type": "REPLY_START",
@@ -964,18 +994,13 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                 "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "finished_reason": "completed",
             },
             self._get_require_user_confirm_event(
                 reply_id,
                 self.tool_call_id_1,
                 self.concurrent_tool_name,
                 self.tool_input_1,
-            ),
-            self._get_require_user_confirm_event(
-                reply_id,
-                self.tool_call_id_2,
-                self.concurrent_tool_name,
-                self.tool_input_2,
             ),
         ]
         self.assertListEqual(
@@ -984,27 +1009,22 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         )
 
         expected_context = [
-            {
-                "name": "user",
-                "role": "user",
-                "content": self.user_input_text,
-            },
+            self._get_expected_user_message(),
             {
                 "content": [
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_1,
-                        "name": self.concurrent_tool_name,
-                        "input": self.tool_input_1,
-                        "state": "asking",
-                    },
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_2,
-                        "name": self.concurrent_tool_name,
-                        "input": self.tool_input_2,
-                        "state": "asking",
-                    },
+                    self._get_expected_tool_call_block(
+                        self.tool_call_id_1,
+                        self.concurrent_tool_name,
+                        self.tool_input_1,
+                        ToolCallState.ASKING,
+                    ),
+                    self._get_expected_tool_call_block(
+                        self.tool_call_id_2,
+                        self.concurrent_tool_name,
+                        self.tool_input_2,
+                        ToolCallState.PENDING,
+                        has_suggested_rule=False,
+                    ),
                 ],
             },
         ]
@@ -1012,6 +1032,8 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         expected_context = [{**msg_base, **_} for _ in expected_context]
         self.assertListEqual(context_dicts, expected_context)
 
+        # Applying the first call's suggested rule also releases the pending
+        # second call for external execution.
         user_confirm_event = UserConfirmResultEvent(
             reply_id=reply_id,
             confirm_results=[
@@ -1019,11 +1041,14 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                     self.tool_call_id_1,
                     self.concurrent_tool_name,
                     self.tool_input_1,
-                ),
-                self._get_confirm_result(
-                    self.tool_call_id_2,
-                    self.concurrent_tool_name,
-                    self.tool_input_2,
+                    rules=[
+                        PermissionRule(
+                            tool_name=self.concurrent_tool_name,
+                            rule_content=None,
+                            behavior=PermissionBehavior.ALLOW,
+                            source="suggested",
+                        ),
+                    ],
                 ),
             ],
         )
@@ -1050,6 +1075,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                     self.tool_call_id_2,
                     self.concurrent_tool_name,
                     self.tool_input_2,
+                    has_suggested_rule=False,
                 )
             ],
         }
@@ -1068,27 +1094,22 @@ class AgentMixTest(IsolatedAsyncioTestCase):
             )
 
         expected_context = [
-            {
-                "name": "user",
-                "role": "user",
-                "content": self.user_input_text,
-            },
+            self._get_expected_user_message(),
             {
                 "content": [
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_1,
-                        "name": self.concurrent_tool_name,
-                        "input": self.tool_input_1,
-                        "state": "submitted",
-                    },
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_2,
-                        "name": self.concurrent_tool_name,
-                        "input": self.tool_input_2,
-                        "state": "submitted",
-                    },
+                    self._get_expected_tool_call_block(
+                        self.tool_call_id_1,
+                        self.concurrent_tool_name,
+                        self.tool_input_1,
+                        ToolCallState.SUBMITTED,
+                    ),
+                    self._get_expected_tool_call_block(
+                        self.tool_call_id_2,
+                        self.concurrent_tool_name,
+                        self.tool_input_2,
+                        ToolCallState.SUBMITTED,
+                        has_suggested_rule=False,
+                    ),
                 ],
             },
         ]
@@ -1128,7 +1149,12 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                 self.concurrent_result_2,
             ),
             *self.final_text_events,
-            {"type": "REPLY_END", "session_id": session_id},
+            {
+                "type": "REPLY_END",
+                "error": None,
+                "session_id": session_id,
+                "finished_reason": "completed",
+            },
         ]
         self.assertListEqual(
             events,
@@ -1136,58 +1162,31 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         )
 
         expected_context_final = [
-            {
-                "name": "user",
-                "role": "user",
-                "content": self.user_input_text,
-            },
+            self._get_expected_user_message(),
             {
                 "content": [
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_1,
-                        "name": self.concurrent_tool_name,
-                        "input": self.tool_input_1,
-                        "state": "finished",
-                    },
-                    {
-                        "type": "tool_call",
-                        "id": self.tool_call_id_2,
-                        "name": self.concurrent_tool_name,
-                        "input": self.tool_input_2,
-                        "state": "finished",
-                    },
-                    {
-                        "type": "tool_result",
-                        "id": AnyString(),
-                        "name": self.concurrent_tool_name,
-                        "output": [
-                            {
-                                "type": "text",
-                                "id": AnyString(),
-                                "text": self.concurrent_result_1,
-                            },
-                        ],
-                        "state": "success",
-                    },
-                    {
-                        "type": "tool_result",
-                        "id": AnyString(),
-                        "name": self.concurrent_tool_name,
-                        "output": [
-                            {
-                                "type": "text",
-                                "id": AnyString(),
-                                "text": self.concurrent_result_2,
-                            },
-                        ],
-                        "state": "success",
-                    },
-                    {
-                        "type": "text",
-                        "id": AnyString(),
-                        "text": self.final_response_text,
-                    },
+                    self._get_expected_tool_call_block(
+                        self.tool_call_id_1,
+                        self.concurrent_tool_name,
+                        self.tool_input_1,
+                        ToolCallState.FINISHED,
+                    ),
+                    self._get_expected_tool_call_block(
+                        self.tool_call_id_2,
+                        self.concurrent_tool_name,
+                        self.tool_input_2,
+                        ToolCallState.FINISHED,
+                        has_suggested_rule=False,
+                    ),
+                    self._get_expected_tool_result_block(
+                        self.concurrent_tool_name,
+                        self.concurrent_result_1,
+                    ),
+                    self._get_expected_tool_result_block(
+                        self.concurrent_tool_name,
+                        self.concurrent_result_2,
+                    ),
+                    self._get_expected_text_block(self.final_response_text),
                 ],
             },
         ]
