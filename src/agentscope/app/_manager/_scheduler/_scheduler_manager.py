@@ -39,6 +39,7 @@ class SchedulerManager:
         self,
         storage: StorageBase,
         message_bus: MessageBus,
+        enabled: bool = True,
     ) -> None:
         """Initialize the scheduler manager.
 
@@ -50,12 +51,17 @@ class SchedulerManager:
                 The application message bus. Each scheduled fire pushes
                 a :class:`HintBlock` to the target session's inbox and
                 enqueues a wakeup via this bus.
+            enabled (`bool`, defaults to ``True``):
+                Whether this process should start APScheduler and register
+                local jobs. Disable this for API-only workers in
+                multi-process deployments.
         """
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
         self._storage = storage
         self._message_bus = message_bus
         self._scheduler = AsyncIOScheduler()
+        self._enabled = enabled
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -72,6 +78,10 @@ class SchedulerManager:
         Returns:
             `Self`: This manager instance.
         """
+        if not self._enabled:
+            logger.info("SchedulerManager APScheduler disabled")
+            return self
+
         logger.info("SchedulerManager starting APScheduler")
         self._scheduler.start()
         logger.info("SchedulerManager APScheduler started")
@@ -84,6 +94,9 @@ class SchedulerManager:
 
     async def __aexit__(self, *exc: object) -> None:
         """Shut down the underlying APScheduler on context exit."""
+        if not self._enabled:
+            return
+
         logger.info("SchedulerManager shutting down APScheduler")
         self._scheduler.shutdown()
         logger.info("SchedulerManager APScheduler shut down")
@@ -289,6 +302,14 @@ class SchedulerManager:
             record.data.cron_expression,
             record.data.timezone,
         )
+        if not self._enabled:
+            logger.info(
+                "SchedulerManager disabled; schedule %s(%s) stored without "
+                "local APScheduler job",
+                record.id,
+                record.data.name,
+            )
+            return record.id
 
         # ``CronTrigger.from_crontab`` is a thin helper that only forwards
         # the 5 parsed fields and ``timezone`` — it has no parameter for
@@ -335,6 +356,13 @@ class SchedulerManager:
                 The APScheduler job ID to remove.
         """
         from apscheduler.jobstores.base import JobLookupError
+
+        if not self._enabled:
+            logger.info(
+                "SchedulerManager disabled; skipping local job removal %s",
+                job_id,
+            )
+            return
 
         logger.info("Removing schedule job %s", job_id)
         try:

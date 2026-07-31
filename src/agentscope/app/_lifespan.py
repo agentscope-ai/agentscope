@@ -48,6 +48,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     blob_store = app.state.blob_store
     enable_index_worker = app.state.enable_index_worker
     resource_access_policy = app.state.resource_access_policy
+    enable_scheduler = app.state.enable_scheduler
 
     async with AsyncExitStack() as stack:
         await stack.enter_async_context(storage)
@@ -79,6 +80,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             SchedulerManager(
                 storage=storage,
                 message_bus=message_bus,
+                enabled=enable_scheduler,
             ),
         )
         app.state.scheduler_manager = scheduler
