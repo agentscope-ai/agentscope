@@ -1,7 +1,13 @@
 import { ChevronDown, SlidersHorizontal } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 
-import type { ChatModelConfig, ModelCard, TTSModelCard, TTSModelConfig } from '@/api';
+import type {
+	ChatModelConfig,
+	ModelCard,
+	TTSModelCard,
+	TTSModelConfig,
+	VoiceProfileRecord,
+} from '@/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -23,7 +29,10 @@ import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useAvailableTTSModels } from '@/hooks/useAvailableTTSModels';
+import type { CredentialWithTTSModels } from '@/hooks/useAvailableTTSModels';
+import { useVoiceProfiles } from '@/hooks/useVoiceProfiles';
 import { useTranslation } from '@/i18n/useI18n';
+import { credentialTypeForEngine, isModelForEngine } from '@/utils/tts';
 
 interface ParameterProperty {
 	type?: string;
@@ -49,6 +58,40 @@ interface ParameterSchema {
 interface ResolvedType {
 	type: string;
 	enumValues: unknown[] | null;
+}
+
+interface ResolvedVoiceProfileBinding {
+	type: string;
+	credentialId: string;
+	modelName: string;
+	schema?: ParameterSchema;
+}
+
+/**
+ * Resolve only the exact credential/model binding stored by a voice profile.
+ * Returning a fallback here would create a config rejected by the backend's
+ * authorization binding checks.
+ */
+function resolveVoiceProfileBinding(
+	profile: VoiceProfileRecord,
+	ttsGroups: Record<string, CredentialWithTTSModels[]>,
+): ResolvedVoiceProfileBinding | null {
+	const { engine, credential_id: credentialId, model, voice } = profile.data;
+	if (!engine || !credentialId || !model || !voice) return null;
+
+	const type = credentialTypeForEngine(engine);
+	if (!type || !isModelForEngine(model, engine)) return null;
+
+	const credentialModels = ttsGroups[type]?.find((item) => item.credential.id === credentialId);
+	const modelCard = credentialModels?.models.find((item) => item.name === model);
+	if (!modelCard) return null;
+
+	return {
+		type,
+		credentialId,
+		modelName: model,
+		schema: modelCard.parameter_schema as ParameterSchema | undefined,
+	};
 }
 
 /** Resolve a property's effective scalar type and enum values, looking
@@ -234,6 +277,7 @@ export function ModelParametersPopover({
 	const { t } = useTranslation();
 	const { groups } = useAvailableModels();
 	const { groups: ttsGroups } = useAvailableTTSModels();
+	const { profiles: voiceProfiles } = useVoiceProfiles();
 
 	const schema = modelCard?.parameter_schema as ParameterSchema | undefined;
 	const properties = schema?.properties ?? {};
@@ -416,7 +460,83 @@ export function ModelParametersPopover({
 						<span className="truncate">{t('model-parameters.ttsLabel')}</span>
 					</DropdownMenuSubTrigger>
 					<DropdownMenuSubContent className="max-h-96 overflow-y-auto">
-						{Object.keys(ttsGroups).length === 0 ? (
+						{/* Voice Profiles section */}
+						{voiceProfiles.length > 0 && (
+							<>
+								<DropdownMenuLabel>
+									{t('model-parameters.voiceProfiles')}
+								</DropdownMenuLabel>
+								{voiceProfiles.map((vp) => {
+									const isProfileActive =
+										selectedTTSModel != null &&
+										selectedTTSModel.voice_profile_id === vp.id;
+									const binding = resolveVoiceProfileBinding(vp, ttsGroups);
+									const unavailable = binding === null;
+									const item = (
+										<DropdownMenuCheckboxItem
+											key={vp.id}
+											checked={isProfileActive}
+											disabled={unavailable}
+											onSelect={(e) => e.preventDefault()}
+											onCheckedChange={(checked) => {
+												if (!checked || !binding) return;
+
+												const params: Record<string, unknown> = {};
+												if (binding.schema?.properties) {
+													for (const [k, p] of Object.entries(
+														binding.schema.properties,
+													)) {
+														if (p.default !== undefined) {
+															params[k] = p.default;
+														}
+													}
+												}
+												if (vp.data.voice) {
+													params.voice = vp.data.voice;
+												}
+
+												onTTSChange({
+													type: binding.type,
+													credential_id: binding.credentialId,
+													model: binding.modelName,
+													voice_profile_id: vp.id,
+													parameters: params,
+												});
+											}}
+										>
+											<span className="truncate">{vp.data.name}</span>
+											{vp.data.engine && (
+												<Badge
+													variant="secondary"
+													className="ml-1.5 text-[10px] px-1 py-0"
+												>
+													{vp.data.engine}
+												</Badge>
+											)}
+										</DropdownMenuCheckboxItem>
+									);
+
+									if (!unavailable) {
+										return item;
+									}
+
+									return (
+										<Tooltip key={vp.id}>
+											<TooltipTrigger asChild>
+												<div className="cursor-not-allowed">{item}</div>
+											</TooltipTrigger>
+											<TooltipContent side="left">
+												{t('model-parameters.voiceProfileUnavailable')}
+											</TooltipContent>
+										</Tooltip>
+									);
+								})}
+								<DropdownMenuSeparator />
+							</>
+						)}
+
+						{/* Manual engine selection */}
+						{Object.keys(ttsGroups).length === 0 && voiceProfiles.length === 0 ? (
 							<div className="px-2 py-3 text-center text-sm text-muted-foreground">
 								<p>{t('model-parameters.ttsEmpty')}</p>
 							</div>
@@ -428,58 +548,76 @@ export function ModelParametersPopover({
 										{type.replace(/_credential$/, '')}
 									</DropdownMenuLabel>
 									{items.flatMap(({ credential, models }) =>
-										models.map((m) => {
-											const isSelected =
-												selectedTTSModel?.credential_id === credential.id &&
-												selectedTTSModel?.model === m.name;
-											return (
-												<DropdownMenuCheckboxItem
-													key={`${credential.id}-${m.name}`}
-													checked={isSelected}
-													onSelect={(e) => e.preventDefault()}
-													onCheckedChange={(checked) => {
-														if (!checked) return;
-														const schema = m.parameter_schema as
-															| ParameterSchema
-															| undefined;
-														const defaults: Record<string, unknown> =
-															{};
-														if (schema?.properties) {
-															for (const [k, p] of Object.entries(
-																schema.properties,
-															)) {
-																if (p.default !== undefined) {
-																	defaults[k] = p.default;
+										models
+											.filter((m) => {
+												// Hide models with no preset voices
+												const ps = m.parameter_schema as
+													| ParameterSchema
+													| undefined;
+												const voiceProp = ps?.properties?.voice;
+												if (!voiceProp) return true;
+												const { enumValues } = resolveType(voiceProp);
+												return enumValues !== null && enumValues.length > 0;
+											})
+											.map((m) => {
+												const hasActiveProfile =
+													selectedTTSModel != null &&
+													selectedTTSModel.voice_profile_id != null;
+												const isSelected =
+													!hasActiveProfile &&
+													selectedTTSModel?.credential_id ===
+														credential.id &&
+													selectedTTSModel?.model === m.name;
+												return (
+													<DropdownMenuCheckboxItem
+														key={`${credential.id}-${m.name}`}
+														checked={isSelected}
+														onSelect={(e) => e.preventDefault()}
+														onCheckedChange={(checked) => {
+															if (!checked) return;
+															const schema = m.parameter_schema as
+																| ParameterSchema
+																| undefined;
+															const defaults: Record<
+																string,
+																unknown
+															> = {};
+															if (schema?.properties) {
+																for (const [k, p] of Object.entries(
+																	schema.properties,
+																)) {
+																	if (p.default !== undefined) {
+																		defaults[k] = p.default;
+																	}
 																}
 															}
-														}
-														onTTSChange({
-															type,
-															credential_id: credential.id,
-															model: m.name,
-															parameters: defaults,
-														});
-													}}
-												>
-													{m.label}
-													{m.realtime && (
-														<Badge
-															variant="outline"
-															className="ml-1.5 text-[10px] px-1 py-0"
-														>
-															Realtime
-														</Badge>
-													)}
-												</DropdownMenuCheckboxItem>
-											);
-										}),
+															onTTSChange({
+																type,
+																credential_id: credential.id,
+																model: m.name,
+																parameters: defaults,
+															});
+														}}
+													>
+														{m.label}
+														{m.realtime && (
+															<Badge
+																variant="outline"
+																className="ml-1.5 text-[10px] px-1 py-0"
+															>
+																Realtime
+															</Badge>
+														)}
+													</DropdownMenuCheckboxItem>
+												);
+											}),
 									)}
 								</div>
 							))
 						)}
 
 						{/* TTS parameters sub-panel (hover to expand right) */}
-						{selectedTTSModel && (
+						{selectedTTSModel && !selectedTTSModel.voice_profile_id && (
 							<>
 								<DropdownMenuSeparator />
 								<DropdownMenuSub>

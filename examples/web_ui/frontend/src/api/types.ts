@@ -17,6 +17,7 @@ export interface TTSModelConfig {
 	type: string;
 	credential_id: string;
 	model: string;
+	voice_profile_id?: string | null;
 	parameters: Record<string, unknown>;
 }
 
@@ -726,6 +727,7 @@ export interface TTSModelCard {
 	input_types: string[];
 	output_types: string[];
 	realtime: boolean;
+	voice_cloning: boolean;
 	parameter_schema: Record<string, unknown>;
 	parameters_overrides: Record<string, Record<string, unknown>>;
 }

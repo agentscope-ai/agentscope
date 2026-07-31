@@ -38,6 +38,7 @@ from .._service import (
     SessionService,
     SessionProjection,
     SubagentHitlProjector,
+    validate_tts_model_config,
 )
 from ..storage import (
     ChatModelConfig,
@@ -301,7 +302,12 @@ async def create_session(
         user_id,
         body.fallback_chat_model_config,
     )
-    await _ensure_credential_exists(access, user_id, body.tts_model_config)
+    await validate_tts_model_config(
+        user_id,
+        body.tts_model_config,
+        access,
+        storage,
+    )
     await _ensure_knowledge_bases_exist(
         access,
         user_id,
@@ -461,7 +467,12 @@ async def update_session(
         user_id,
         body.fallback_chat_model_config,
     )
-    await _ensure_credential_exists(access, user_id, body.tts_model_config)
+    await validate_tts_model_config(
+        user_id,
+        body.tts_model_config,
+        access,
+        storage,
+    )
     await _ensure_knowledge_bases_exist(
         access,
         user_id,

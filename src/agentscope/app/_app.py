@@ -14,6 +14,7 @@ from ._router import (
     knowledge_base_router,
     model_router,
     tts_model_router,
+    voice_profile_router,
     schedule_router,
     session_router,
     workspace_router,
@@ -264,6 +265,7 @@ def create_app(
         workspace_router,
         model_router,
         tts_model_router,
+        voice_profile_router,
     ):
         app.include_router(router)
 

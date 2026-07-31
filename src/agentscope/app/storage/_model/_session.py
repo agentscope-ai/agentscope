@@ -2,8 +2,9 @@
 """The session data class for storage."""
 from datetime import datetime
 from enum import Enum
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ._base import _RecordBase
 from ....state import AgentState
@@ -44,8 +45,37 @@ class TTSModelConfig(BaseModel):
     model: str
     """The TTS model name."""
 
+    voice_profile_id: str | None = None
+    """The owner-scoped voice profile used for a custom voice.
+
+    Preset provider voices do not require a profile. Custom voices must carry
+    this field so the server can validate ownership and bind the voice to the
+    credential and model that created it.
+    """
+
     parameters: dict
     """TTS parameters (voice, language, etc.)."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_voice_profile_id(cls, value: Any) -> Any:
+        """Promote the former frontend-only parameter to a first-class
+        field."""
+        if not isinstance(value, dict) or value.get("voice_profile_id"):
+            return value
+        parameters = value.get("parameters")
+        if not isinstance(parameters, dict):
+            return value
+        legacy_profile_id = parameters.get("_voice_profile_id")
+        if not isinstance(legacy_profile_id, str) or not legacy_profile_id:
+            return value
+
+        migrated = dict(value)
+        migrated_parameters = dict(parameters)
+        migrated_parameters.pop("_voice_profile_id", None)
+        migrated["parameters"] = migrated_parameters
+        migrated["voice_profile_id"] = legacy_profile_id
+        return migrated
 
 
 class EmbeddingModelConfig(BaseModel):

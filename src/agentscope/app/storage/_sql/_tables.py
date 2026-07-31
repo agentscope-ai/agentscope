@@ -108,6 +108,20 @@ class CredentialRow(_JsonRecordMixin):
     _indexed_fields = ("user_id",)
 
 
+class VoiceProfileRow(_JsonRecordMixin):
+    """One row per :class:`~agentscope.app.storage.VoiceProfileRecord`."""
+
+    __tablename__ = "voice_profiles"
+
+    user_id: Mapped[str] = mapped_column(
+        String(_ID_LEN),
+        nullable=False,
+        index=True,
+    )
+
+    _indexed_fields = ("user_id",)
+
+
 class AgentRow(_JsonRecordMixin):
     """One row per :class:`~agentscope.app.storage.AgentRecord`."""
 

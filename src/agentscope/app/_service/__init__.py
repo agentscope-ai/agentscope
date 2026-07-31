@@ -13,7 +13,7 @@ from ._index_task_consumer import IndexTaskConsumer
 from ._index_worker import IndexWorker
 from ._knowledge_base import KnowledgeBaseService
 from ._model import get_model
-from ._tts_model import get_tts_model
+from ._tts_model import get_tts_model, validate_tts_model_config
 from ._session import SessionService, SessionStatus
 from ._session_projection import SessionProjection
 from ._projectors import SubagentHitlProjector
@@ -36,5 +36,6 @@ __all__ = [
     "get_embedding_model",
     "get_model",
     "get_tts_model",
+    "validate_tts_model_config",
     "get_toolkit",
 ]
