@@ -3,14 +3,12 @@
 """
 
 from ._base import HubBase
+from ._error import HubError
 from ._mcp import (
-    GitHubMCPError,
     GitHubMCPHub,
     MCPHubBase,
     MCPCard,
     MCPHubPage,
-    MCPRenderError,
-    render_mcp,
 )
 from ._skill import (
     SkillArchive,
@@ -22,13 +20,11 @@ from ._skill import (
 
 __all__ = [
     "HubBase",
-    "GitHubMCPError",
+    "HubError",
     "GitHubMCPHub",
     "MCPHubBase",
     "MCPCard",
     "MCPHubPage",
-    "MCPRenderError",
-    "render_mcp",
     "SkillArchive",
     "SkillHubBase",
     "SkillCard",

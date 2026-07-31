@@ -859,11 +859,11 @@ class AsyncSQLAlchemyStorage(StorageBase):
         """Not implemented; see the section comment above."""
         raise NotImplementedError(self._SKILL_UNSUPPORTED)
 
-    async def list_installed_skills(self, user_id: str) -> list[SkillRecord]:
+    async def list_skills(self, user_id: str) -> list[SkillRecord]:
         """Not implemented; see the section comment above."""
         raise NotImplementedError(self._SKILL_UNSUPPORTED)
 
-    async def get_installed_skill(
+    async def get_skill(
         self,
         user_id: str,
         skill_id: str,
@@ -871,7 +871,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
         """Not implemented; see the section comment above."""
         raise NotImplementedError(self._SKILL_UNSUPPORTED)
 
-    async def get_installed_skill_by_name(
+    async def get_skill_by_name(
         self,
         user_id: str,
         name: str,
@@ -879,7 +879,7 @@ class AsyncSQLAlchemyStorage(StorageBase):
         """Not implemented; see the section comment above."""
         raise NotImplementedError(self._SKILL_UNSUPPORTED)
 
-    async def delete_installed_skill(
+    async def delete_skill(
         self,
         user_id: str,
         skill_id: str,

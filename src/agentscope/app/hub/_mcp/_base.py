@@ -11,7 +11,7 @@ class MCPHubBase(HubBase, ABC):
 
     A hub exposes a browsable catalog of :class:`MCPCard` templates.
     Turning a card into a connectable ``MCPClient`` is the installer's
-    job, not the hub's — see :func:`agentscope.app.hub.render_mcp`.
+    job, not the hub's — see :func:`agentscope.app._service.render_mcp`.
     """
 
     @abstractmethod

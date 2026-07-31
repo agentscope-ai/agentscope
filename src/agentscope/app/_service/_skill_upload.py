@@ -27,7 +27,7 @@ _TAR_BLOCK = 512
 
 #: Serializes installs process-wide, so a burst of uploads cannot
 #: multiply into an unbounded number of open sandbox writes.
-install_slots = asyncio.Semaphore(MAX_CONCURRENT_INSTALLS)
+_install_slots = asyncio.Semaphore(MAX_CONCURRENT_INSTALLS)
 
 
 class SkillUploadError(ValueError):
@@ -52,7 +52,7 @@ class UploadManifest(BaseModel):
     entries: list[UploadEntry]
 
 
-def validate_manifest(manifest: UploadManifest) -> str:
+def _validate_manifest(manifest: UploadManifest) -> str:
     """Check a manifest and return the skill's root directory name.
 
     Args:
@@ -112,7 +112,7 @@ def validate_manifest(manifest: UploadManifest) -> str:
     return root
 
 
-async def tar_stream(
+async def _tar_stream(
     manifest: UploadManifest,
     files: list[UploadFile],
 ) -> AsyncIterator[bytes]:

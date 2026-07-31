@@ -226,7 +226,7 @@ class StorageBase(ABC):
         """
 
     @abstractmethod
-    async def list_installed_skills(self, user_id: str) -> list[SkillRecord]:
+    async def list_skills(self, user_id: str) -> list[SkillRecord]:
         """List every skill a user has installed, enabled or not.
 
         Named apart from the workspace's ``list_skills`` because these
@@ -242,7 +242,7 @@ class StorageBase(ABC):
         """
 
     @abstractmethod
-    async def get_installed_skill(
+    async def get_skill(
         self,
         user_id: str,
         skill_id: str,
@@ -261,7 +261,7 @@ class StorageBase(ABC):
         """
 
     @abstractmethod
-    async def get_installed_skill_by_name(
+    async def get_skill_by_name(
         self,
         user_id: str,
         name: str,
@@ -280,7 +280,7 @@ class StorageBase(ABC):
         """
 
     @abstractmethod
-    async def delete_installed_skill(
+    async def delete_skill(
         self,
         user_id: str,
         skill_id: str,

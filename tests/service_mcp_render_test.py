@@ -2,7 +2,8 @@
 """MCP card rendering test case."""
 from unittest import TestCase
 
-from agentscope.app.hub import MCPCard, MCPRenderError, render_mcp
+from agentscope.app._service import MCPRenderError, render_mcp
+from agentscope.app.hub import MCPCard
 
 API_KEY_SCHEMA = {
     "type": "object",

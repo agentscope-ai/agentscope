@@ -602,7 +602,7 @@ class RedisStorage(StorageBase):
 
         return skill_record.id
 
-    async def list_installed_skills(self, user_id: str) -> list[SkillRecord]:
+    async def list_skills(self, user_id: str) -> list[SkillRecord]:
         """Return every installed-skill record belonging to the user.
 
         Args:
@@ -626,7 +626,7 @@ class RedisStorage(StorageBase):
                 records.append(SkillRecord.model_validate_json(raw))
         return records
 
-    async def get_installed_skill(
+    async def get_skill(
         self,
         user_id: str,
         skill_id: str,
@@ -640,7 +640,7 @@ class RedisStorage(StorageBase):
         raw = await self._client.get(key)
         return SkillRecord.model_validate_json(raw) if raw else None
 
-    async def get_installed_skill_by_name(
+    async def get_skill_by_name(
         self,
         user_id: str,
         name: str,
@@ -652,9 +652,9 @@ class RedisStorage(StorageBase):
         )
         if not skill_id:
             return None
-        return await self.get_installed_skill(user_id, skill_id)
+        return await self.get_skill(user_id, skill_id)
 
-    async def delete_installed_skill(
+    async def delete_skill(
         self,
         user_id: str,
         skill_id: str,
@@ -668,7 +668,7 @@ class RedisStorage(StorageBase):
         Returns:
             `bool`: ``True`` if the record existed and was deleted.
         """
-        record = await self.get_installed_skill(user_id, skill_id)
+        record = await self.get_skill(user_id, skill_id)
 
         deleted = await self._client.delete(
             self._key(

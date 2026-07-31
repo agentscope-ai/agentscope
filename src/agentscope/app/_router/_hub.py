@@ -11,7 +11,6 @@ workspace. See ``_mcp.py`` / ``_skill.py`` for the libraries it writes.
 from typing import TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
 
 from ..deps import (
     get_current_user_id,
@@ -24,50 +23,17 @@ from ..hub import (
     MCPCard,
     MCPHubBase,
     MCPHubPage,
-    MCPRenderError,
     SkillCard,
     SkillHubBase,
     SkillHubPage,
-    render_mcp,
 )
+from .._service import MCPRenderError, render_mcp
 from ..storage import MCPRecord, SkillRecord, StorageBase
-from ._mcp import MCPView
-from ._skill import SkillView
+from ._schema import HubInfo, InstallMCPRequest, MCPView, SkillView
 
 hub_router = APIRouter(prefix="/hub", tags=["hub"])
 
 HubT = TypeVar("HubT", bound=HubBase)
-
-
-class HubInfo(BaseModel):
-    """One registered hub, as shown in the hub picker."""
-
-    hub_id: str = Field(description="The id addressing this hub.")
-    display_name: str = Field(description="The user-facing hub name.")
-    description: str = Field(description="The user-facing description.")
-    icon_url: str | None = Field(
-        default=None,
-        description="An image identifying the hub, when it has one.",
-    )
-
-
-class InstallMCPRequest(BaseModel):
-    """The body of an MCP install call."""
-
-    name: str | None = Field(
-        default=None,
-        description=(
-            "The name to install under, defaulting to the card's name. "
-            "Must match ``[a-zA-Z0-9_-]+``; use it to resolve a clash "
-            "with an MCP already in the library."
-        ),
-    )
-    values: dict = Field(
-        default_factory=dict,
-        description=(
-            "The answers to the card's ``inputs_schema``, e.g. API keys."
-        ),
-    )
 
 
 def _pick_hub(hubs: dict[str, HubT], hub_id: str) -> HubT:

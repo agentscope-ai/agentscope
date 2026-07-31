@@ -4,7 +4,7 @@ from typing import Type, TYPE_CHECKING, Any
 
 from ._lifespan import lifespan
 from .access import DenyAllResourceAccessPolicy, ResourceAccessPolicyBase
-from .hub import HubBase, MCPHubBase, SkillHubBase
+from .hub import HubBase, HubError, MCPHubBase, SkillHubBase
 from .rag.blob_store import BlobStoreBase, LocalBlobStore
 from .rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from .workspace_manager import WorkspaceManagerBase
@@ -233,7 +233,8 @@ def create_app(
     Returns:
         `FastAPI`: A fully configured application ready to serve requests.
     """
-    from fastapi import FastAPI
+    from fastapi import FastAPI, Request, status
+    from fastapi.responses import JSONResponse
 
     # Register any user-supplied credential types before the app starts
     for cls in extra_credentials or []:
@@ -310,6 +311,24 @@ def create_app(
         tts_model_router,
     ):
         app.include_router(router)
+
+    @app.exception_handler(HubError)
+    async def _on_hub_error(_: Request, exc: HubError) -> JSONResponse:
+        """Report an upstream registry failure as a gateway error.
+
+        A hub is a third party we proxy, so its 429 or 500 is not this
+        service's fault and must not read as one — a 500 here would send
+        the user hunting for a bug on our side.
+        """
+        status_code = (
+            status.HTTP_503_SERVICE_UNAVAILABLE
+            if exc.status_code == 429
+            else status.HTTP_502_BAD_GATEWAY
+        )
+        return JSONResponse(
+            status_code=status_code,
+            content={"detail": str(exc)},
+        )
 
     # Optional extra middlewares
     for middleware in extra_middlewares or []:

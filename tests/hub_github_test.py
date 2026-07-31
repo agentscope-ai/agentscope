@@ -2,7 +2,8 @@
 """GitHub MCP registry card-building test case, without any network."""
 from unittest import TestCase
 
-from agentscope.app.hub import GitHubMCPHub, render_mcp
+from agentscope.app._service import render_mcp
+from agentscope.app.hub import GitHubMCPHub
 
 
 class GitHubCardTest(TestCase):

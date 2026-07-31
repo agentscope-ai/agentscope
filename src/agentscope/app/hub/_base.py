@@ -1,17 +1,23 @@
 # -*- coding: utf-8 -*-
-"""The shared hub identity."""
+"""The shared hub identity and lifecycle."""
 import re
+from typing import Any, Self
 
 # A hub id is a path segment in the hub routes.
 HUB_ID_PATTERN = re.compile(r"[a-zA-Z0-9_-]+")
 
 
 class HubBase:
-    """The identity shared by every hub implementation.
+    """The identity and lifecycle shared by every hub implementation.
 
     A hub is addressed by :attr:`hub_id` in the HTTP routes, and a card
     is addressed globally by the ``(hub_id, card_id)`` pair, so the id
     must stay stable across restarts.
+
+    Hubs are entered once by the app lifespan and live as long as the
+    process, so an implementation talking to a registry over HTTP can
+    hold one client across requests instead of paying for a fresh
+    handshake on every page of a catalog.
     """
 
     def __init__(
@@ -49,3 +55,18 @@ class HubBase:
         self.display_name = display_name
         self.description = description
         self.icon_url = icon_url
+
+    async def __aenter__(self) -> Self:
+        """Enter the hub — open whatever it talks to the registry with.
+
+        The default is a no-op, so a hub with nothing to open needs no
+        boilerplate.
+
+        Returns:
+            `HubBase`:
+                ``self``.
+        """
+        return self
+
+    async def __aexit__(self, *exc: Any) -> None:
+        """Exit the hub — close what :meth:`__aenter__` opened."""

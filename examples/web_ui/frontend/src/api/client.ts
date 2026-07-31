@@ -48,7 +48,6 @@ async function extractErrorDetail(res: Response): Promise<string> {
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
 	const { method = 'GET', body, params, silent = false } = options;
-
 	const url = new URL(path, getBaseUrl());
 	if (params) {
 		Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));

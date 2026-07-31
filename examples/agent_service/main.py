@@ -16,11 +16,6 @@ from agentscope.mcp import MCPClient, StdioMCPConfig, HttpMCPConfig
 from agentscope.permission import PermissionContext, PermissionMode
 from agentscope.rag import QdrantStore
 
-# A sibling module in this example, not an installed package — pylint
-# cannot tell and sorts it as third-party.
-# pylint: disable=wrong-import-order
-from hubs import StaticMCPHub
-
 default_mcps = [
     MCPClient(
         name="browser-use",
@@ -82,7 +77,7 @@ app = create_app(
     # of its own — an individual MCP card declares whatever key it wants
     # from the user in its ``inputs_schema``. Passing a ClawHub token
     # only raises the rate limit.
-    mcp_hubs=[StaticMCPHub(), GitHubMCPHub()],
+    mcp_hubs=[GitHubMCPHub()],
     skill_hubs=[ClawSkillHub(api_token=os.getenv("CLAWHUB_API_TOKEN"))],
     # Customize your own subagent templates
     custom_subagent_templates=[

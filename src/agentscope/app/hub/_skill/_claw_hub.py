@@ -20,9 +20,10 @@ import random
 import re
 from datetime import datetime
 from contextlib import AsyncExitStack
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from ._base import SkillArchive, SkillHubBase
+from .._error import HubError
 from ._card import SkillCard, SkillHubPage
 
 if TYPE_CHECKING:
@@ -68,27 +69,6 @@ def _humanize_version(version: str | None) -> str | None:
         # Eight digits that are not a real date — leave it alone.
         return version
     return stamp.strftime("%Y-%m-%d")
-
-
-class ClawHubError(Exception):
-    """Raised when the ClawHub API returns a non-success response.
-
-    Public v1 error responses are plain text, so the response body is
-    surfaced verbatim as a human-readable message.
-    """
-
-    def __init__(self, status_code: int, message: str) -> None:
-        """Initialize the error.
-
-        Args:
-            status_code (`int`):
-                The HTTP status code returned by the ClawHub API.
-            message (`str`):
-                The plain-text error body returned by the ClawHub API.
-        """
-        self.status_code = status_code
-        self.message = message
-        super().__init__(f"ClawHub API error {status_code}: {message}")
 
 
 class ClawSkillHub(SkillHubBase):
@@ -143,6 +123,39 @@ class ClawSkillHub(SkillHubBase):
         self.api_token = api_token
         self.timeout = timeout
         self.max_retries = max_retries
+        self._client: "httpx.AsyncClient | None" = None
+
+    async def __aenter__(self) -> "ClawSkillHub":
+        """Open the HTTP client shared by every request.
+
+        Returns:
+            `ClawSkillHub`:
+                ``self``.
+        """
+        import httpx
+
+        self._client = httpx.AsyncClient(timeout=self.timeout)
+        return self
+
+    async def __aexit__(self, *exc: Any) -> None:
+        """Close the shared HTTP client."""
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
+    def _http(self) -> "httpx.AsyncClient":
+        """Return the shared client, opening one if the hub was never
+        entered — which is how a hub used outside the app behaves.
+
+        Returns:
+            `httpx.AsyncClient`:
+                The client to issue requests with.
+        """
+        import httpx
+
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=self.timeout)
+        return self._client
 
     def _headers(self) -> dict[str, str]:
         """Build the request headers, including auth when available.
@@ -225,34 +238,40 @@ class ClawSkillHub(SkillHubBase):
                 The successful HTTP response.
 
         Raises:
-            `ClawHubError`:
+            `HubError`:
                 When the API returns a non-success status code.
         """
-        import httpx
-
         url = f"{self.base_url}{path}"
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            for attempt in range(self.max_retries + 1):
-                response = await client.request(
-                    method,
-                    url,
-                    params=params,
-                    headers=self._headers(),
+        client = self._http()
+        for attempt in range(self.max_retries + 1):
+            response = await client.request(
+                method,
+                url,
+                params=params,
+                headers=self._headers(),
+            )
+
+            if response.status_code == 429 and attempt < self.max_retries:
+                # Wait with jittered backoff to avoid synchronized
+                # retries, as recommended by ClawHub.
+                delay = self._retry_delay(response.headers)
+                await asyncio.sleep(delay + random.uniform(0, 1))
+                continue
+
+            if response.status_code >= 400:
+                raise HubError(
+                    self.hub_id,
+                    response.status_code,
+                    response.text,
                 )
 
-                if response.status_code == 429 and attempt < self.max_retries:
-                    # Wait with jittered backoff to avoid synchronized
-                    # retries, as recommended by ClawHub.
-                    delay = self._retry_delay(response.headers)
-                    await asyncio.sleep(delay + random.uniform(0, 1))
-                    continue
+            return response
 
-                if response.status_code >= 400:
-                    raise ClawHubError(response.status_code, response.text)
-
-                return response
-
-        raise ClawHubError(429, "Rate limit exceeded after retries")
+        raise HubError(
+            self.hub_id,
+            429,
+            "Rate limit exceeded after retries",
+        )
 
     async def download(
         self,
@@ -291,11 +310,9 @@ class ClawSkillHub(SkillHubBase):
         Raises:
             `KeyError`:
                 When the registry has no skill under ``card_id``.
-            `ClawHubError`:
+            `HubError`:
                 When the API returns any other non-success status code.
         """
-        import httpx
-
         params: dict = {"slug": card_id}
         if version is not None:
             params["version"] = version
@@ -303,18 +320,13 @@ class ClawSkillHub(SkillHubBase):
             params["tag"] = tag
 
         url = f"{self.base_url}/api/v1/download"
+        client = self._http()
+        # Only the response is owned here — the client outlives every
+        # download, so closing it would break the next one.
         stack = AsyncExitStack()
         try:
-            client = await stack.enter_async_context(
-                httpx.AsyncClient(timeout=self.timeout),
-            )
             for attempt in range(self.max_retries + 1):
-                # A nested stack so a retried attempt closes its own
-                # response without closing the client.
-                attempt_stack = await stack.enter_async_context(
-                    AsyncExitStack(),
-                )
-                response = await attempt_stack.enter_async_context(
+                response = await stack.enter_async_context(
                     client.stream(
                         "GET",
                         url,
@@ -326,7 +338,8 @@ class ClawSkillHub(SkillHubBase):
                     # Wait with jittered backoff before re-opening the
                     # stream, as recommended by ClawHub.
                     delay = self._retry_delay(response.headers)
-                    await attempt_stack.aclose()
+                    await stack.aclose()
+                    stack = AsyncExitStack()
                     await asyncio.sleep(delay + random.uniform(0, 1))
                     continue
 
@@ -336,7 +349,8 @@ class ClawSkillHub(SkillHubBase):
                     body = await response.aread()
                     if response.status_code == 404:
                         raise KeyError(card_id)
-                    raise ClawHubError(
+                    raise HubError(
+                        self.hub_id,
                         response.status_code,
                         body.decode("utf-8", errors="replace"),
                     )
@@ -346,7 +360,11 @@ class ClawSkillHub(SkillHubBase):
                     self._drain(stack, response, chunk_size),
                 )
 
-            raise ClawHubError(429, "Rate limit exceeded after retries")
+            raise HubError(
+                self.hub_id,
+                429,
+                "Rate limit exceeded after retries",
+            )
         except BaseException:
             await stack.aclose()
             raise
@@ -357,11 +375,11 @@ class ClawSkillHub(SkillHubBase):
         response: "httpx.Response",
         chunk_size: int,
     ) -> AsyncIterator[bytes]:
-        """Yield the response body, closing the connection after.
+        """Yield the response body, closing the response after.
 
         Args:
             stack (`AsyncExitStack`):
-                Holds the open response and client, closed when done.
+                Holds the open response, closed when the body is done.
             response (`httpx.Response`):
                 The open response whose body is drained.
             chunk_size (`int`):
@@ -484,7 +502,7 @@ class ClawSkillHub(SkillHubBase):
                 The requested page of cards plus the next cursor.
 
         Raises:
-            `ClawHubError`:
+            `HubError`:
                 When the API returns a non-success status code.
         """
         if q:
@@ -526,7 +544,7 @@ class ClawSkillHub(SkillHubBase):
         Raises:
             `KeyError`:
                 When the registry has no skill under ``card_id``.
-            `ClawHubError`:
+            `HubError`:
                 When the API returns any other non-success status code.
         """
         import frontmatter
@@ -540,7 +558,7 @@ class ClawSkillHub(SkillHubBase):
                     {"path": "SKILL.md"},
                 ),
             )
-        except ClawHubError as e:
+        except HubError as e:
             if e.status_code == 404:
                 raise KeyError(card_id) from e
             raise

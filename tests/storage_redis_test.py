@@ -1386,7 +1386,7 @@ class TestSkill(IsolatedAsyncioTestCase):
         )
         skill_id = await self.storage.upsert_skill(self.user_id, record)
 
-        fetched = await self.storage.get_installed_skill(
+        fetched = await self.storage.get_skill(
             self.user_id,
             skill_id,
         )
@@ -1419,7 +1419,7 @@ class TestSkill(IsolatedAsyncioTestCase):
             make_skill_record("other-user"),
         )
         self.assertIsNotNone(
-            await self.storage.get_installed_skill("other-user", other),
+            await self.storage.get_skill("other-user", other),
         )
 
     async def test_update_in_place_keeps_name_claim(self) -> None:
@@ -1430,13 +1430,13 @@ class TestSkill(IsolatedAsyncioTestCase):
         record.enabled = False
         await self.storage.upsert_skill(self.user_id, record)
 
-        fetched = await self.storage.get_installed_skill(
+        fetched = await self.storage.get_skill(
             self.user_id,
             skill_id,
         )
         self.assertFalse(fetched.enabled)
         self.assertEqual(
-            len(await self.storage.list_installed_skills(self.user_id)),
+            len(await self.storage.list_skills(self.user_id)),
             1,
         )
 
@@ -1449,13 +1449,13 @@ class TestSkill(IsolatedAsyncioTestCase):
         await self.storage.upsert_skill(self.user_id, record)
 
         self.assertIsNone(
-            await self.storage.get_installed_skill_by_name(
+            await self.storage.get_skill_by_name(
                 self.user_id,
                 "gifgrep",
             ),
         )
         self.assertIsNotNone(
-            await self.storage.get_installed_skill_by_name(
+            await self.storage.get_skill_by_name(
                 self.user_id,
                 "gifgrep-2",
             ),
@@ -1465,7 +1465,7 @@ class TestSkill(IsolatedAsyncioTestCase):
             make_skill_record(self.user_id),
         )
         self.assertEqual(
-            len(await self.storage.list_installed_skills(self.user_id)),
+            len(await self.storage.list_skills(self.user_id)),
             2,
         )
 
@@ -1475,16 +1475,16 @@ class TestSkill(IsolatedAsyncioTestCase):
         skill_id = await self.storage.upsert_skill(self.user_id, record)
 
         self.assertTrue(
-            await self.storage.delete_installed_skill(self.user_id, skill_id),
+            await self.storage.delete_skill(self.user_id, skill_id),
         )
         self.assertIsNone(
-            await self.storage.get_installed_skill_by_name(
+            await self.storage.get_skill_by_name(
                 self.user_id,
                 "gifgrep",
             ),
         )
         self.assertEqual(
-            await self.storage.list_installed_skills(self.user_id),
+            await self.storage.list_skills(self.user_id),
             [],
         )
 
@@ -1496,7 +1496,7 @@ class TestSkill(IsolatedAsyncioTestCase):
     async def test_delete_missing_returns_false(self) -> None:
         """Deleting a missing record returns False without crashing."""
         self.assertFalse(
-            await self.storage.delete_installed_skill(
+            await self.storage.delete_skill(
                 self.user_id,
                 "no-such-id",
             ),
@@ -1515,6 +1515,6 @@ class TestSkill(IsolatedAsyncioTestCase):
 
         self.assertEqual(len(await self.storage.list_mcps(self.user_id)), 1)
         self.assertEqual(
-            len(await self.storage.list_installed_skills(self.user_id)),
+            len(await self.storage.list_skills(self.user_id)),
             1,
         )

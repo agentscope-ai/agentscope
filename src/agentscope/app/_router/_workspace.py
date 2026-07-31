@@ -10,94 +10,80 @@ from fastapi import (
     UploadFile,
     status,
 )
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import ValidationError
 
 from ..deps import (
     get_current_user_id,
     get_skill_hubs,
     get_storage,
     get_workspace_manager,
-    resolve_workspace,
 )
 from ..hub import SkillHubBase
 from .._service._skill_upload import (
     SkillUploadError,
     UploadManifest,
-    install_slots,
-    tar_stream,
-    validate_manifest,
+    _install_slots,
+    _tar_stream,
+    _validate_manifest,
 )
 from ..workspace_manager import WorkspaceManagerBase
 from ..storage import MCPRecord, StorageBase
 from ...mcp import MCPClient
 from ...skill import Skill
+from ...workspace import WorkspaceBase
+from ._schema import (
+    AddFromLibraryRequest,
+    AddFromLibraryResponse,
+    AddSkillRequest,
+    AddSkillsFromLibraryRequest,
+    MCPClientStatus,
+    ToolInfo,
+)
 from ..._utils._common import _describe_exception
 
 workspace_router = APIRouter(prefix="/workspace", tags=["workspace"])
 
 
-class AddSkillRequest(BaseModel):
-    """The request to add skill."""
+async def _resolve_workspace(
+    user_id: str,
+    agent_id: str,
+    session_id: str,
+    storage: StorageBase,
+    workspace_manager: WorkspaceManagerBase,
+) -> WorkspaceBase:
+    """Return the workspace backing the given session.
 
-    skill_path: str
+    Args:
+        user_id (`str`):
+            The authenticated user ID.
+        agent_id (`str`):
+            The agent owning the session.
+        session_id (`str`):
+            The session whose workspace is wanted.
+        storage (`StorageBase`):
+            The storage used to look the session record up.
+        workspace_manager (`WorkspaceManagerBase`):
+            The manager that opens or reattaches the workspace.
 
+    Returns:
+        `WorkspaceBase`:
+            The session's workspace.
 
-class AddFromLibraryRequest(BaseModel):
-    """The request to put library MCPs into a workspace."""
-
-    mcp_ids: list[str] = Field(
-        description="The installed-MCP record ids to add.",
-    )
-
-
-class AddSkillsFromLibraryRequest(BaseModel):
-    """The request to put library skills into a workspace."""
-
-    skill_ids: list[str] = Field(
-        description="The installed-skill record ids to add.",
-    )
-
-
-class AddFromLibraryResponse(BaseModel):
-    """What landed, and what did not.
-
-    Reported per item rather than as one status: installing is done one
-    at a time, so a bad API key on the third pick must not throw away
-    the two that worked.
+    Raises:
+        `HTTPException`:
+            ``404`` when the session does not exist.
     """
-
-    added: list[str] = Field(
-        default_factory=list,
-        description=(
-            "The names now in the workspace. Excludes ones already "
-            "present, which are skipped rather than re-added."
-        ),
-    )
-    failed: dict[str, str] = Field(
-        default_factory=dict,
-        description="Whatever could not be added, mapped to why.",
-    )
-
-
-class ToolInfo(BaseModel):
-    """The tool info."""
-
-    name: str
-    description: str | None = None
-
-
-class MCPClientStatus(MCPClient):
-    """MCPClient enriched with live tool list and health status."""
-
-    is_healthy: bool = False
-    tools: list[ToolInfo] = Field(default_factory=list)
-    error: str | None = Field(
-        default=None,
-        description=(
-            "Why listing this MCP's tools failed. A red dot alone leaves "
-            "the user with nothing to act on — a wrong API key, an "
-            "unreachable host and a missing command all look the same."
-        ),
+    session_record = await storage.get_session(user_id, agent_id, session_id)
+    if session_record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session {session_id!r} not found.",
+        )
+    return await workspace_manager.get_workspace(
+        user_id,
+        agent_id,
+        session_id,
+        session_record.config.workspace_id,
     )
 
 
@@ -115,7 +101,7 @@ async def list_mcps(
     workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
 ) -> list[MCPClientStatus]:
     """Return all MCP clients with live tool list and health status."""
-    workspace = await resolve_workspace(
+    workspace = await _resolve_workspace(
         user_id,
         agent_id,
         session_id,
@@ -169,7 +155,7 @@ async def add_mcp(
     that MCP is defined, and adding it to a second workspace must not
     silently redefine it.
     """
-    workspace = await resolve_workspace(
+    workspace = await _resolve_workspace(
         user_id,
         agent_id,
         session_id,
@@ -207,7 +193,7 @@ async def add_mcps_from_library(
     Adding is per-MCP: one that fails to connect does not cancel the
     rest, and the response says which ones landed.
     """
-    workspace = await resolve_workspace(
+    workspace = await _resolve_workspace(
         user_id,
         agent_id,
         session_id,
@@ -249,7 +235,7 @@ async def remove_mcp(
     workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
 ) -> None:
     """Remove an MCP client from the session's workspace by name."""
-    workspace = await resolve_workspace(
+    workspace = await _resolve_workspace(
         user_id,
         agent_id,
         session_id,
@@ -273,7 +259,7 @@ async def list_skills(
     workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
 ) -> list[Skill]:
     """Return all skills available in the session's workspace."""
-    workspace = await resolve_workspace(
+    workspace = await _resolve_workspace(
         user_id,
         agent_id,
         session_id,
@@ -303,7 +289,7 @@ async def add_skill(
     to send a folder, or ``POST /skill/from-library`` to install one
     the user already has.
     """
-    workspace = await resolve_workspace(
+    workspace = await _resolve_workspace(
         user_id,
         agent_id,
         session_id,
@@ -340,7 +326,7 @@ async def upload_skill(
     """
     try:
         parsed = UploadManifest.model_validate_json(manifest)
-        validate_manifest(parsed)
+        _validate_manifest(parsed)
     except (ValidationError, SkillUploadError) as e:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -354,19 +340,19 @@ async def upload_skill(
             f"{len(files)} were sent.",
         )
 
-    workspace = await resolve_workspace(
+    workspace = await _resolve_workspace(
         user_id,
         agent_id,
         session_id,
         storage,
         workspace_manager,
     )
-    async with install_slots:
+    async with _install_slots:
         try:
             # dir_name is unused: the tar members already carry the
             # picked folder as their first path segment.
             await workspace.add_skill_archive(
-                tar_stream(parsed, files),
+                _tar_stream(parsed, files),
                 "tar",
                 "skill",
             )
@@ -396,7 +382,7 @@ async def add_skills_from_library(
     workspace; the server holds no copy in between. Adding is
     per-skill, and the response says which ones landed.
     """
-    workspace = await resolve_workspace(
+    workspace = await _resolve_workspace(
         user_id,
         agent_id,
         session_id,
@@ -407,7 +393,7 @@ async def add_skills_from_library(
     added: list[str] = []
     failed: dict[str, str] = {}
     for skill_id in body.skill_ids:
-        record = await storage.get_installed_skill(user_id, skill_id)
+        record = await storage.get_skill(user_id, skill_id)
         if record is None:
             failed[skill_id] = "Not in your library."
             continue
@@ -418,7 +404,7 @@ async def add_skills_from_library(
             ] = f"Its hub {record.hub_id!r} is no longer registered."
             continue
         try:
-            async with install_slots:
+            async with _install_slots:
                 archive = await hub.download(
                     user_id,
                     record.card_id or record.name,
@@ -450,7 +436,7 @@ async def remove_skill(
     workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
 ) -> None:
     """Remove a skill from the session's workspace by name."""
-    workspace = await resolve_workspace(
+    workspace = await _resolve_workspace(
         user_id,
         agent_id,
         session_id,

@@ -5,8 +5,8 @@ from typing import Any
 
 import jsonschema
 
-from ._card import MCPCard
-from ....mcp import MCPClient
+from ..hub import MCPCard
+from ...mcp import MCPClient
 
 
 class MCPRenderError(ValueError):

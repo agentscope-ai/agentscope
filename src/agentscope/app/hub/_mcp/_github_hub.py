@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from ._base import MCPHubBase
 from ._card import MCPCard, MCPHubPage
+from .._error import HubError
 
 if TYPE_CHECKING:
     import httpx
@@ -41,44 +42,6 @@ _RUNTIMES: dict[str, list[str]] = {
 }
 
 
-class GitHubMCPError(Exception):
-    """Raised when the GitHub MCP registry returns a failure response."""
-
-    def __init__(self, status_code: int, message: str) -> None:
-        """Initialize the error.
-
-        Args:
-            status_code (`int`):
-                The HTTP status code returned by the registry.
-            message (`str`):
-                The response body, surfaced verbatim.
-        """
-        self.status_code = status_code
-        self.message = message
-        super().__init__(f"GitHub MCP registry error {status_code}: {message}")
-
-
-def _slug(name: str) -> str:
-    """Turn a registry name into a usable MCP client name.
-
-    ``MCPClient`` names reach the model as ``mcp__{name}__{tool}`` and so
-    must match ``[a-zA-Z0-9_-]+``, while registry names look like
-    ``microsoft/markitdown`` or ``io.github.upstash/context7``. The last
-    path segment is kept and anything else is replaced.
-
-    Args:
-        name (`str`):
-            The registry's server name.
-
-    Returns:
-        `str`:
-            A name the MCP client will accept.
-    """
-    tail = name.rsplit("/", 1)[-1]
-    cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "-", tail).strip("-")
-    return cleaned or "mcp"
-
-
 def _substitute(value: Any) -> Any:
     """Rewrite ``{VAR}`` placeholders to the ``${VAR}`` the renderer wants.
 
@@ -97,25 +60,6 @@ def _substitute(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: _substitute(item) for key, item in value.items()}
     return value
-
-
-def _parse_time(value: str | None) -> float | None:
-    """Parse a registry ISO-8601 timestamp into epoch seconds.
-
-    Args:
-        value (`str | None`):
-            The timestamp, e.g. ``"2026-01-21T09:35:10Z"``.
-
-    Returns:
-        `float | None`:
-            Epoch seconds, or ``None`` when absent or unparseable.
-    """
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        return None
 
 
 class GitHubMCPHub(MCPHubBase):
@@ -162,6 +106,25 @@ class GitHubMCPHub(MCPHubBase):
         self.base_url = base_url.rstrip("/")
         self.api_token = api_token
         self.timeout = timeout
+        self._client: "httpx.AsyncClient | None" = None
+
+    async def __aenter__(self) -> "GitHubMCPHub":
+        """Open the HTTP client shared by every request.
+
+        Returns:
+            `GitHubMCPHub`:
+                ``self``.
+        """
+        import httpx
+
+        self._client = httpx.AsyncClient(timeout=self.timeout)
+        return self
+
+    async def __aexit__(self, *exc: Any) -> None:
+        """Close the shared HTTP client."""
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
 
     async def _request(
         self,
@@ -181,7 +144,7 @@ class GitHubMCPHub(MCPHubBase):
                 The successful response.
 
         Raises:
-            `GitHubMCPError`:
+            `HubError`:
                 When the registry returns a non-success status code.
         """
         import httpx
@@ -190,14 +153,21 @@ class GitHubMCPHub(MCPHubBase):
         if self.api_token:
             headers["Authorization"] = f"Bearer {self.api_token}"
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.get(
-                f"{self.base_url}{path}",
-                params=params,
-                headers=headers,
-            )
+        # Opened lazily as well as on __aenter__, so a hub used outside
+        # the app still works.
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=self.timeout)
+        response = await self._client.get(
+            f"{self.base_url}{path}",
+            params=params,
+            headers=headers,
+        )
         if response.status_code >= 400:
-            raise GitHubMCPError(response.status_code, response.text)
+            raise HubError(
+                self.hub_id,
+                response.status_code,
+                response.text,
+            )
         return response
 
     @staticmethod
@@ -325,17 +295,32 @@ class GitHubMCPHub(MCPHubBase):
         owner = name.rsplit("/", 1)[0] if "/" in name else None
         repository = server.get("repository") or {}
 
+        # Client names reach the model as ``mcp__{name}__{tool}`` and so
+        # must match [a-zA-Z0-9_-]+, while registry names look like
+        # ``io.github.upstash/context7``. Keep the last segment.
+        slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", name.rsplit("/", 1)[-1])
+
+        updated_at = None
+        stamp = server.get("updated_at")
+        if stamp:
+            try:
+                updated_at = datetime.fromisoformat(
+                    stamp.replace("Z", "+00:00"),
+                ).timestamp()
+            except ValueError:
+                pass
+
         return MCPCard(
             hub_id=self.hub_id,
             id=server["id"],
-            name=_slug(name),
+            name=slug.strip("-") or "mcp",
             display_name=github.get("display_name") or name,
             description=server.get("description") or "",
             tags=[github["primary_language"]]
             if github.get("primary_language")
             else [],
             version=(server.get("version_detail") or {}).get("version"),
-            updated_at=_parse_time(server.get("updated_at")),
+            updated_at=updated_at,
             author=github.get("name_with_owner", "").rsplit("/", 1)[0]
             or owner,
             icon_url=github.get("preferred_image")
@@ -383,7 +368,7 @@ class GitHubMCPHub(MCPHubBase):
                 The cards of this page plus the next cursor.
 
         Raises:
-            `GitHubMCPError`:
+            `HubError`:
                 When the registry returns a non-success status code.
         """
         params: dict = {"limit": limit}
@@ -426,12 +411,12 @@ class GitHubMCPHub(MCPHubBase):
             `KeyError`:
                 When the registry has no such server, or describes no way
                 to reach it.
-            `GitHubMCPError`:
+            `HubError`:
                 When the registry returns any other failure.
         """
         try:
             response = await self._request(f"/v0/servers/{card_id}")
-        except GitHubMCPError as e:
+        except HubError as e:
             if e.status_code == 404:
                 raise KeyError(card_id) from e
             raise
