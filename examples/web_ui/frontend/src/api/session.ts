@@ -16,6 +16,28 @@ export interface MessagesResponse {
 	has_more: boolean;
 }
 
+/** The server emits heartbeats every 30s; allow two missed frames plus jitter. */
+const SSE_HEARTBEAT_TIMEOUT_MS = 90_000;
+
+async function readStreamChunk(
+	reader: ReadableStreamDefaultReader<Uint8Array>,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+	let timeout: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			reader.read(),
+			new Promise<never>((_, reject) => {
+				timeout = setTimeout(
+					() => reject(new Error('Session event stream heartbeat timed out.')),
+					SSE_HEARTBEAT_TIMEOUT_MS,
+				);
+			}),
+		]);
+	} finally {
+		if (timeout !== undefined) clearTimeout(timeout);
+	}
+}
+
 export const sessionApi = {
 	list: (agentId: string) => client.get<SessionListResponse>('/sessions/', { agent_id: agentId }),
 
@@ -55,7 +77,8 @@ export const sessionApi = {
 	 * Opens a long-lived ``GET /sessions/{sid}/stream`` connection and
 	 * yields each ``AgentEvent`` as it arrives. The connection stays
 	 * open until the caller aborts via the ``signal`` or closes the
-	 * generator.
+	 * generator. If no event or heartbeat bytes arrive for 90 seconds,
+	 * the generator throws so the UI can leave its streaming state.
 	 *
 	 * Uses fetch-based SSE (not native ``EventSource``) so the
 	 * ``X-User-ID`` custom header is sent.
@@ -74,6 +97,7 @@ export const sessionApi = {
 			method: 'GET',
 			params: { agent_id: agentId },
 			signal,
+			silent: true,
 		});
 
 		const reader = res.body!.getReader();
@@ -82,7 +106,7 @@ export const sessionApi = {
 
 		try {
 			while (true) {
-				const { done, value } = await reader.read();
+				const { done, value } = await readStreamChunk(reader);
 				if (done) break;
 
 				buffer += decoder.decode(value, { stream: true });
@@ -98,6 +122,9 @@ export const sessionApi = {
 					// (used for heartbeats).
 				}
 			}
+		} catch (error) {
+			await reader.cancel().catch(() => undefined);
+			throw error;
 		} finally {
 			reader.releaseLock();
 		}
