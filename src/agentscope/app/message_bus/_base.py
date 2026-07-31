@@ -167,6 +167,25 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
                 Queue identifier.
         """
 
+    @abstractmethod
+    async def queue_len(self, key: str) -> int:
+        """Return the number of entries currently in the drain queue.
+
+        The method is **non-destructive** — it does not consume or
+        remove any entries. Useful for pre-flight checks such as
+        "does this session have any inbox items to deliver before we
+        spin up an LLM call?"
+
+        Args:
+            key (`str`):
+                Queue identifier.
+
+        Returns:
+            `int`:
+                Number of entries currently stored in the queue.
+                Returns ``0`` for a missing key (never raises).
+        """
+
     # ------------------------------------------------------------------
     # Mode C — replay log (multi-consumer, externally bounded)
     # ------------------------------------------------------------------
@@ -634,6 +653,18 @@ class MessageBus(ABC):  # pylint: disable=too-many-public-methods
             self._INBOX_KEY.format(sid=session_id),
             max_count=max_count,
         )
+
+    async def inbox_len(self, session_id: str) -> int:
+        """Return the number of pending inbox messages for a session.
+
+        Non-destructive: equivalent to
+        ``await self.queue_len(MessageBusKeys.inbox(session_id))``.
+        Used by :class:`ChatService` to avoid spawning an LLM call on
+        a duplicate / already-processed wake-up where the inbox has
+        already been drained by a peer instance (multi-instance
+        at-least-once wake-up deliver semantics).
+        """
+        return await self.queue_len(self._INBOX_KEY.format(sid=session_id))
 
     # Wakeup ----------------------------------------------------------
 

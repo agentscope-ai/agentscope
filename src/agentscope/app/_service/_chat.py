@@ -220,8 +220,56 @@ class ChatService:
                 user_id,
                 session_id,
                 agent_id,
-                str(e),
+                e,
             )
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    async def _skip_duplicate_empty_wakeup(
+        self,
+        session_id: str,
+        input_msg: object,
+    ) -> bool:
+        """Guard against duplicate empty wake-ups in multi-instance deploys.
+
+        Multi-instance deployments deliver a single wake-up signal to
+        *every* listening instance.  The first instance to hold the
+        distributed session lock drains the shared inbox and runs the
+        agent; any later arrival finds the inbox already empty and,
+        without this guard, would still call the LLM (resulting in a
+        spurious "your message was empty" assistant reply and wasted
+        tokens).  See #1868 for the repro.
+
+        Must be called **inside** the distributed session lock so the
+        check serialises w.r.t. the winning instance's actual inbox
+        drain (which happens inside ``InboxMiddleware`` on the real
+        run).
+
+        Args:
+            session_id: Target session id (for the inbox key).
+            input_msg: The original ``input_msg`` passed to
+                :meth:`run`.  Guard is only relevant when this is
+                ``None`` (a pure wake-up, no user payload).
+
+        Returns:
+            ``True`` if the caller should return early without
+            invoking the agent.  ``False`` otherwise.
+        """
+        if input_msg is not None:
+            return False
+        inbox_size = await self._message_bus.inbox_len(session_id)
+        if inbox_size != 0:
+            return False
+        logger.info(
+            "Skipping empty wake-up for session %s: inbox is already "
+            "empty (drained by a peer instance or a previous run). "
+            "No assistant message appended for this wake-up; no LLM "
+            "tokens spent.",
+            session_id,
+        )
+        return True
 
     async def interrupt(
         self,
@@ -542,6 +590,23 @@ class ChatService:
             lock_key,
             ttl_secs=MessageBusKeys.SESSION_RUN_TTL_SECS,
         ):
+            # Step 7a — duplicate empty-wakeup guard (#1868).
+            #
+            # Multi-instance deploys deliver every wake-up to every
+            # listening instance; the first one to hold the lock drains
+            # the shared inbox and runs the agent.  Any subsequent
+            # (serialised) instance that finds the inbox already empty
+            # is a losing peer in that race: we return immediately so
+            # no "your message was empty" LLM reply gets appended.
+            # The check lives INSIDE the lock on purpose (serialises
+            # with the winning drain).  See _skip_duplicate_empty_wakeup
+            # for the full rationale.
+            if await self._skip_duplicate_empty_wakeup(
+                session_id,
+                input_msg,
+            ):
+                return
+
             reply_msg: Msg | None = None
             try:
                 if input_msg is None or isinstance(input_msg, (Msg, list)):

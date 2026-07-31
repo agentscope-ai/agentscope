@@ -181,6 +181,19 @@ class InMemoryMessageBus(MessageBus):
         """
         self._queues.pop(key, None)
 
+    async def queue_len(self, key: str) -> int:
+        """Return the number of entries currently stored in the queue.
+
+        Args:
+            key (`str`):
+                Queue identifier.
+
+        Returns:
+            `int`: length of the list (0 if the key does not exist yet
+            in the underlying defaultdict).
+        """
+        return len(self._queues.get(key) or [])
+
     # ------------------------------------------------------------------
     # Mode C — replay log
     # ------------------------------------------------------------------

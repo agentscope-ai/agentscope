@@ -276,6 +276,22 @@ class RedisMessageBus(MessageBus):
         """
         await self._client.delete(key)
 
+    async def queue_len(self, key: str) -> int:
+        """Return the number of entries currently stored in the queue.
+
+        Uses Redis ``XLEN key`` which is O(1) per call; returns ``0``
+        if the key does not exist (same as an empty stream).
+
+        Args:
+            key (`str`):
+                Stream key for the drain queue.
+
+        Returns:
+            `int`: number of entries in the stream, or ``0`` if the
+            key is missing / not a stream.
+        """
+        return int(await self._client.xlen(key))
+
     # ------------------------------------------------------------------
     # Mode C — replay log
     # ------------------------------------------------------------------

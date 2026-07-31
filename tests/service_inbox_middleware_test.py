@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=abstract-method,protected-access
+# pylint: disable=missing-function-docstring, unused-argument
 """Tests for :class:`InboxMiddleware`.
 
 Every cross-session message delivery in the framework (team messages
@@ -73,6 +74,9 @@ class _FakeBus(MessageBus):
 
     async def queue_delete(self, key: str) -> None:
         self._queues.pop(key, None)
+
+    async def queue_len(self, key: str) -> int:
+        return len(self._queues.get(key) or [])
 
     # Mode C — log (unused)
     async def log_append(
