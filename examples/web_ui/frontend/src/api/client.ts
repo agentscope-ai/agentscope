@@ -27,10 +27,17 @@ interface RequestOptions {
 	silent?: boolean;
 }
 
-function buildHeaders(hasBody: boolean): Record<string, string> {
+function buildHeaders(body: unknown): Record<string, string> {
 	const headers: Record<string, string> = { 'X-User-ID': getUserId() };
-	if (hasBody) headers['Content-Type'] = 'application/json';
+	if (body !== undefined && !(body instanceof FormData)) {
+		headers['Content-Type'] = 'application/json';
+	}
 	return headers;
+}
+
+function serializeBody(body: unknown): BodyInit | undefined {
+	if (body === undefined) return undefined;
+	return body instanceof FormData ? body : JSON.stringify(body);
 }
 
 /** Parse the response body and extract the `detail` field if the backend returned JSON. */
@@ -55,8 +62,8 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
 	const res = await fetch(url.toString(), {
 		method,
-		headers: buildHeaders(body !== undefined),
-		body: body ? JSON.stringify(body) : undefined,
+		headers: buildHeaders(body),
+		body: serializeBody(body),
 	});
 
 	if (!res.ok) {
@@ -82,8 +89,8 @@ async function streamRequest(
 
 	const res = await fetch(url.toString(), {
 		method,
-		headers: buildHeaders(body !== undefined),
-		body: body ? JSON.stringify(body) : undefined,
+		headers: buildHeaders(body),
+		body: serializeBody(body),
 		signal,
 	});
 

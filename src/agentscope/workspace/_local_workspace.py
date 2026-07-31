@@ -5,7 +5,6 @@ import asyncio
 import hashlib
 import json
 import os
-import re
 import shutil
 from typing import TypedDict
 
@@ -19,6 +18,11 @@ from ..skill import Skill
 from ..tool import ToolBase
 from ..tool._builtin._backend import LocalBackend
 from ._base import WorkspaceBase
+from ._skill import (
+    extract_skill_archive,
+    sanitize_skill_dir_name,
+    validate_skill_archive,
+)
 
 
 class _SkillEntry(TypedDict):
@@ -37,24 +41,6 @@ class _SkillsFile(TypedDict):
     """mtime of skills_dir at the time the index was last written."""
     skills: dict[str, _SkillEntry]
     """Mapping from directory name (relative to skills_dir) to skill entry."""
-
-
-def _sanitize_dir_name(name: str) -> str:
-    """Sanitize a skill name into a safe directory name.
-
-    Allowed characters: ASCII letters, digits, CJK unified ideographs,
-    hyphens, and underscores. Everything else is replaced with ``_``.
-
-    Args:
-        name (`str`):
-            The raw skill name from SKILL.md frontmatter.
-
-    Returns:
-        `str`:
-            A sanitized string safe to use as a directory name on Windows,
-            macOS, and Linux.
-    """
-    return re.sub(r"[^\w一-鿿-]", "_", name)
 
 
 class LocalWorkspace(WorkspaceBase):
@@ -231,7 +217,7 @@ class LocalWorkspace(WorkspaceBase):
                 counter += 1
 
             # Resolve directory name conflict
-            base_dir = _sanitize_dir_name(raw_name)
+            base_dir = sanitize_skill_dir_name(raw_name)
             dir_name = base_dir
             counter = 1
             while dir_name in existing_dir_names:
@@ -710,36 +696,71 @@ class LocalWorkspace(WorkspaceBase):
                     return
         logger.warning("MCP client %r not found in workspace", name)
 
-    async def add_skill(self, skill_path: str) -> None:
-        """Add a skill to the workspace by copying from the given path.
+    # pylint: disable=arguments-renamed, too-many-statements
+    async def add_skill(
+        self,
+        source: str | bytes | os.PathLike[str],
+    ) -> None:
+        """Add a skill from a local path or a validated tar archive.
 
         The skill directory must contain a valid ``SKILL.md`` file with
         ``name`` and ``description`` frontmatter fields.  Duplicate skills
-        (identified by the SHA-256 hash of ``SKILL.md``) are silently skipped.
-        Name and directory conflicts are resolved by appending a numeric
-        suffix.
+        (identified by the SHA-256 hash of ``SKILL.md``) are silently
+        skipped.  Name and directory conflicts are resolved by appending
+        a numeric suffix.
 
         Args:
-            skill_path (`str`):
-                Absolute or relative path to the skill directory to copy.
+            source: Either a filesystem path (``str`` or
+                ``os.PathLike[str]``) to a local skill directory — in
+                which case the directory is copied recursively — or a
+                ``bytes`` payload holding an uncompressed tar archive of
+                the skill files as uploaded from the browser.
 
         Raises:
-            ValueError: If the skill at ``skill_path`` is invalid (missing or
-                malformed ``SKILL.md``).
+            ValueError: If the source is invalid (missing or malformed
+                ``SKILL.md``, path pointing outside ``skills/``, or a
+                corrupt tar archive).
+            TypeError: If ``source`` is neither ``bytes`` nor a path.
         """
-        skill_path = _normalize_local_path(skill_path)
         skills_dir = os.path.join(self.workdir, "skills")
         async with self._skill_lock:
             os.makedirs(skills_dir, exist_ok=True)
 
-            result = await self._validate_and_hash_skill(skill_path)
-            if result is None:
-                raise ValueError(
-                    f"Invalid skill at {skill_path!r}: missing or malformed "
-                    "SKILL.md (requires 'name' and 'description' fields).",
-                )
+            if isinstance(source, (str, os.PathLike)):
+                # ----- path-based upload (mainline API) --------------------
+                skill_path = _normalize_local_path(os.fspath(source))
+                result = await self._validate_and_hash_skill(skill_path)
+                if result is None:
+                    raise ValueError(
+                        f"Invalid skill at {skill_path!r}: missing or "
+                        "malformed SKILL.md (requires 'name' and "
+                        "'description' fields).",
+                    )
+                _, raw_name, skill_hash = result
 
-            _, raw_name, skill_hash = result
+                def materialize(dest: str) -> None:
+                    if os.path.isdir(skill_path):
+                        shutil.copytree(skill_path, dest)
+                    else:
+                        raise ValueError(
+                            f"Skill path {skill_path!r} is not a directory.",
+                        )
+
+            elif isinstance(source, (bytes, bytearray, memoryview)):
+                # ----- byte-archive upload (browser upload API) -----------
+                archive_bytes = bytes(source)
+                metadata = validate_skill_archive(archive_bytes)
+                raw_name = metadata.name
+                skill_hash = metadata.content_hash
+
+                def materialize(dest: str) -> None:
+                    extract_skill_archive(archive_bytes, dest)
+
+            else:
+                raise TypeError(
+                    "add_skill() expects a str/os.PathLike directory path "
+                    f"or bytes tar archive, not {type(source).__name__}.",
+                )
 
             skills_file = await self._load_skills_file(skills_dir)
             existing: dict[str, _SkillEntry] = skills_file["skills"]
@@ -766,7 +787,7 @@ class LocalWorkspace(WorkspaceBase):
                 counter += 1
 
             # Resolve directory name conflict
-            base_dir = _sanitize_dir_name(raw_name)
+            base_dir = sanitize_skill_dir_name(raw_name)
             dir_name = base_dir
             counter = 1
             while dir_name in existing_dir_names:
@@ -779,21 +800,15 @@ class LocalWorkspace(WorkspaceBase):
                 os.path.realpath(skills_dir) + os.sep,
             ):
                 raise ValueError(
-                    f"Skill path {skill_path!r} resolves outside skills_dir.",
+                    f"Skill {raw_name!r} resolves outside skills_dir.",
                 )
 
-            await asyncio.to_thread(
-                shutil.copytree,
-                skill_path,
-                dest_path,
-                dirs_exist_ok=False,
-            )
+            await asyncio.to_thread(materialize, dest_path)
 
             logger.info(
-                "Copied skill '%s' (agent name: '%s') from %s to %s",
+                "Added skill '%s' (agent name: '%s') to %s",
                 raw_name,
                 agent_name,
-                skill_path,
                 dest_path,
             )
 

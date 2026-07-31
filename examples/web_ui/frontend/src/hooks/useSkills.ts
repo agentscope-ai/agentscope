@@ -35,11 +35,11 @@ export function useSkills(agentId: string | null, sessionId: string | null) {
 		refetch();
 	}, [refetch]);
 
-	/** Adds a skill from the given path and refreshes the list. */
+	/** Uploads a skill directory and refreshes the list. */
 	const add = useCallback(
-		async (skillPath: string) => {
+		async (files: File[]) => {
 			if (!agentId || !sessionId) throw new Error('No agent/session selected');
-			await workspaceApi.skill.add(agentId, sessionId, { skill_path: skillPath });
+			await workspaceApi.skill.add(agentId, sessionId, files);
 			await refetch();
 		},
 		[agentId, sessionId, refetch],
