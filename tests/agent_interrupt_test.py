@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=redefined-builtin
+# pylint: disable=missing-function-docstring, unused-argument
 """Tests for agent interruption:
 
 - :class:`AgentInterruptCancelTest`: ``task.cancel()`` lands during tool
@@ -20,6 +21,7 @@ from utils import AnyString, MockModel
 from agentscope.agent import Agent, InjectionConfig
 from agentscope.event import (
     ReplyEndEvent,
+    ToolResultStartEvent,
     UserInterruptEvent,
 )
 from agentscope.message import (
@@ -888,6 +890,18 @@ class AgentInterruptEventTest(IsolatedAsyncioTestCase):
             events.append(evt)
 
         _assert_interrupted_end(self, events, reply_id, session_id)
+
+        # Regression test for #2166: an external tool in SUBMITTED state
+        # had its START emitted at the ALLOWED transition already; the
+        # interruption cleanup must not emit a second START.
+        starts = [e for e in events if isinstance(e, ToolResultStartEvent)]
+        start_ids = [e.tool_call_id for e in starts]
+        self.assertEqual(
+            start_ids,
+            [],
+            f"Unexpected duplicate START events after interrupt "
+            f"cleanup of SUBMITTED tool: {start_ids!r}",
+        )
 
         context_dicts = [
             msg.model_dump(mode="json") for msg in agent.state.context
