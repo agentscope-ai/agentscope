@@ -31,12 +31,13 @@
 		"save": "保存",
 		"saving": "保存中…",
 		"schedule": "日程",
-		"selectAgent": "选择 Agent",
+		"selectAgent": "选择智能体",
 		"settings": "设置",
 		"switchToZh": "切换为中文",
 		"switchToEn": "Switch to English",
 		"success": "成功",
 		"team": "团队",
+		"uploading": "上传中",
 		"leader": "队长",
 		"worker": "成员",
 		"time": "时间",
@@ -99,14 +100,17 @@
 	},
 	"messageBubble": {
 		"thinking": "思考中",
+		"thinkingFor": "思考 {{duration}}",
 		"audioGenerating": "正在生成音频…",
 		"playAudio": "播放音频",
 		"pauseAudio": "暂停音频",
 		"running": "运行中...",
 		"hintSource": {
 			"tool_output": "工具输出",
+			"team": "团队",
 			"team_message": "团队消息",
-			"schedule": "定时任务"
+			"schedule": "定时任务",
+			"system": "系统消息"
 		},
 		"error": {
 			"title": "回复失败",

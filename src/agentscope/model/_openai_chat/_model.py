@@ -165,6 +165,15 @@ class OpenAIChatModel(ChatModelBase):
         self.client_kwargs = client_kwargs or {}
         self.extra_body = dict(extra_body) if extra_body is not None else None
 
+        import openai
+
+        self.client: openai.AsyncClient = openai.AsyncClient(
+            api_key=self.credential.api_key.get_secret_value(),
+            organization=self.credential.organization,
+            base_url=self.credential.base_url,
+            **self.client_kwargs,
+        )
+
     @classmethod
     def _get_retryable_exceptions(cls) -> tuple[Type[Exception], ...]:
         import openai
@@ -204,17 +213,6 @@ class OpenAIChatModel(ChatModelBase):
                 generator of ``ChatResponse`` objects when streaming is
                 enabled.
         """
-        import openai
-
-        client = openai.AsyncClient(
-            **{
-                "api_key": self.credential.api_key.get_secret_value(),
-                "organization": self.credential.organization,
-                "base_url": self.credential.base_url,
-                **self.client_kwargs,
-            },
-        )
-
         formatted_messages = await self.formatter.format(messages)
 
         kwargs: dict[str, Any] = {
@@ -269,7 +267,7 @@ class OpenAIChatModel(ChatModelBase):
             kwargs["stream_options"] = {"include_usage": True}
 
         start_datetime = datetime.now()
-        response = await client.chat.completions.create(**kwargs)
+        response = await self.client.chat.completions.create(**kwargs)
 
         audio_cfg = kwargs.get("audio")
         audio_fmt = (

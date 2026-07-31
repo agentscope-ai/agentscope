@@ -4,45 +4,50 @@ import type {
 	DataBlock,
 	Msg,
 	TextBlock,
+	ThinkingBlock,
 	ToolCallBlock,
 	ToolResultBlock,
 } from '@agentscope-ai/agentscope/message';
 import {
 	ArrowDown,
 	ArrowUp,
-	Bot,
-	CalendarClock,
 	CheckCircle,
 	ChevronRight,
 	CirclePlay,
-	Copy,
+	FileText,
+	FileVideo2,
 	Loader2,
-	MessageSquareQuote,
 	TriangleAlert,
-	Wrench,
 } from 'lucide-react';
+import * as mime from 'mime-types';
 import { useEffect, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 
-import { ConfirmCard } from './ConfirmCard';
-import { FileAttachment } from './FileAttachment';
 import { renderToolCall } from './tool-renderers';
 import { countDiffStats, DiffStats, getResultDiff } from './tool-renderers/_shared';
 import type { TFunction, ToolCallWithResult } from './tool-renderers/types';
+import { Markdown } from '@/components/markdown';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import {
+	Attachment,
+	AttachmentContent,
+	AttachmentDescription,
+	AttachmentGroup,
+	AttachmentMedia,
+	AttachmentTitle,
+} from '@/components/ui/attachment.tsx';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Bubble, BubbleContent } from '@/components/ui/bubble.tsx';
 import {
 	Collapsible,
 	CollapsibleContent,
 	CollapsibleTrigger,
 } from '@/components/ui/collapsible.tsx';
-import { Item, ItemContent } from '@/components/ui/item.tsx';
+import { Message, MessageFooter, MessageContent } from '@/components/ui/message';
 import { useAudioBlock, useReplayController } from '@/context/AudioContext';
 import { useTranslation } from '@/i18n/useI18n';
 import { cn } from '@/lib/utils';
 import { formatNumber, formatTime } from '@/utils/common';
+import 'streamdown/styles.css';
 
 /**
  * A run of *consecutive* tool calls (of any name) collapsed into a single
@@ -53,6 +58,8 @@ import { formatNumber, formatTime } from '@/utils/common';
 interface ToolCallGroupBlock {
 	type: 'tool_call_group';
 	calls: ToolCallWithResult[];
+	created_at?: string;
+	finished_at?: string;
 }
 
 type ExtendedContentBlock = ContentBlock | ToolCallGroupBlock;
@@ -120,6 +127,8 @@ function groupToolCalls(content: ContentBlock[]): ExtendedContentBlock[] {
 						name: block.name,
 						input: '',
 						state: 'finished' as const,
+						created_at: block.created_at,
+						finished_at: block.finished_at,
 					},
 					result: block,
 				},
@@ -281,27 +290,10 @@ function AudioInlineControl({ block }: { block: DataBlock }) {
 	);
 }
 
-type OnUserConfirm = (
-	toolCallBlock: ToolCallBlock,
-	confirm: boolean,
-	rules?: ToolCallBlock['suggested_rules'],
-) => void;
-
 const MCP_TOOL_PREFIX = 'mcp__';
 
 // Task-management tools are all surfaced under one "updated todos" summary.
 const TODO_TOOLS = new Set(['TaskGet', 'TaskUpdate', 'TaskList', 'TaskCreate']);
-
-function renderConfirmCard(askingCall: ToolCallBlock, onUserConfirm?: OnUserConfirm) {
-	return (
-		<ConfirmCard
-			toolCall={askingCall}
-			onUserConfirm={(confirm, rules) => {
-				if (onUserConfirm) onUserConfirm(askingCall, confirm, rules);
-			}}
-		/>
-	);
-}
 
 /**
  * Bucket a group's calls into per-category counts and total inserted/deleted
@@ -364,218 +356,6 @@ function summarizeToolGroup(calls: ToolCallWithResult[], t: TFunction) {
 	return { title, insertions, deletions };
 }
 
-/**
- * Render a single content block. A `tool_call_group` renders one summary fold
- * whose expanded body dispatches each call to `renderToolCall`. Truncation at
- * the first `asking` call (and the trailing ConfirmCard, kept outside the fold)
- * lives here so renderers only ever see a clean list of calls.
- */
-function renderBlock(
-	block: ExtendedContentBlock,
-	index: number,
-	t: TFunction,
-	onUserConfirm?: (
-		toolCallBlock: ToolCallBlock,
-		confirm: boolean,
-		rules?: ToolCallBlock['suggested_rules'],
-	) => void,
-) {
-	switch (block.type) {
-		case 'tool_call_group': {
-			const { title, insertions, deletions } = summarizeToolGroup(block.calls, t);
-			// Truncate at (and including) the first `asking` call — nothing runs
-			// after it. Its ConfirmCard renders OUTSIDE the Collapsible so
-			// collapsing never hides an action the user still needs to take.
-			const askIdx = block.calls.findIndex((c) => c.call.state === 'asking');
-			const visible = askIdx === -1 ? block.calls : block.calls.slice(0, askIdx + 1);
-			const askingCall = askIdx === -1 ? null : block.calls[askIdx].call;
-
-			const allFinished = block.calls.some((c) => !c.result || c.result.state === 'running');
-			return (
-				<div key={index} className="flex flex-col gap-y-4 text-muted-foreground">
-					<Collapsible defaultOpen={false}>
-						<CollapsibleTrigger asChild>
-							<Button
-								variant="ghost"
-								className="group flex w-full items-center justify-between gap-2 px-0 hover:bg-transparent data-[state=open]:bg-transparent active:!translate-y-0 cursor-pointer"
-							>
-								<span
-									className={cn(
-										'flex min-w-0 items-center gap-2',
-										allFinished && 'shimmer',
-									)}
-								>
-									<span className="truncate text-sm">{title}</span>
-									<ChevronRight className="size-3 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
-								</span>
-								{(insertions > 0 || deletions > 0) && (
-									<DiffStats insertions={insertions} deletions={deletions} />
-								)}
-							</Button>
-						</CollapsibleTrigger>
-						<CollapsibleContent className="flex flex-col gap-y-1 bg-muted p-2 rounded text-sm">
-							{visible.map((pair) => renderToolCall(pair, t))}
-						</CollapsibleContent>
-					</Collapsible>
-					{askingCall && renderConfirmCard(askingCall, onUserConfirm)}
-				</div>
-			);
-		}
-		case 'text':
-			return (
-				<div key={index} className="prose w-full min-w-full">
-					<ReactMarkdown
-						remarkPlugins={[remarkGfm]}
-						components={{
-							code: ({ className, children, ...props }) => {
-								const isInline = !String(className ?? '').startsWith('language-');
-								if (isInline) {
-									return (
-										<code className={`${className ?? ''} break-all`} {...props}>
-											{children}
-										</code>
-									);
-								}
-								return (
-									<div className="relative w-full">
-										<Button
-											size="icon-xs"
-											variant="ghost"
-											className="absolute top-0 right-0 z-10"
-											onClick={async (e) => {
-												e.preventDefault();
-												e.stopPropagation();
-												await navigator.clipboard.writeText(
-													String(children),
-												);
-											}}
-										>
-											<Copy />
-										</Button>
-										<div className="overflow-x-auto max-w-full w-full">
-											<code className={className} {...props}>
-												{children}
-											</code>
-										</div>
-									</div>
-								);
-							},
-						}}
-					>
-						{block.text}
-					</ReactMarkdown>
-				</div>
-			);
-
-		case 'thinking':
-			return (
-				<details key={index} className="text-muted-foreground">
-					<summary className="cursor-pointer select-none">
-						{t('messageBubble.thinking')}
-					</summary>
-					<p className="mt-1 whitespace-pre-wrap">{block.thinking}</p>
-				</details>
-			);
-
-		case 'data': {
-			const dataType = block.source.media_type.split('/')[0];
-			// Audio data blocks render in the footer (see AudioFooterControl),
-			// not inline alongside text.
-			if (dataType === 'audio') return null;
-			const data =
-				block.source.type === 'url'
-					? block.source.url
-					: `data:${block.source.media_type};base64,${block.source.data}`;
-			switch (dataType) {
-				case 'image':
-					return (
-						<img
-							key={index}
-							src={data}
-							alt={block.name || 'Uploaded image'}
-							className="max-h-80 max-w-full rounded-lg object-contain"
-						/>
-					);
-				case 'video':
-					return (
-						<video
-							key={index}
-							controls
-							src={data}
-							className="max-h-80 max-w-full rounded-lg"
-						/>
-					);
-				default:
-					return (
-						<FileAttachment
-							key={index}
-							name={block.name}
-							href={data}
-							mediaType={block.source.media_type}
-						/>
-					);
-			}
-		}
-
-		case 'hint': {
-			// Parse source: try JSON, fall back to plain string, default to t('common.message').
-			let hintLabel: string;
-			let hintSublabel: string | null = null;
-			let HintIcon = MessageSquareQuote;
-
-			if (block.source) {
-				try {
-					const parsed = JSON.parse(block.source) as {
-						label?: string;
-						sublabel?: string;
-					};
-					hintLabel = parsed.label
-						? t(`messageBubble.hintSource.${parsed.label}`)
-						: block.source;
-					hintSublabel = parsed.sublabel ?? null;
-					if (parsed.label === 'team_message') HintIcon = Bot;
-					else if (parsed.label === 'schedule') HintIcon = CalendarClock;
-					else if (parsed.label === 'tool_output') HintIcon = Wrench;
-				} catch {
-					hintLabel = block.source;
-				}
-			} else {
-				hintLabel = t('common.message');
-			}
-			const items: (TextBlock | DataBlock)[] =
-				typeof block.hint === 'string'
-					? [{ type: 'text', id: `${block.id}-text`, text: block.hint }]
-					: block.hint;
-			return (
-				<Item variant={'outline'} className="max-w-full">
-					<ItemContent className="max-w-full">
-						<Collapsible>
-							<CollapsibleTrigger asChild>
-								<Button className="group w-full max-w-full" variant="ghost">
-									<HintIcon className="size-3.5" />
-									<span className="tracking-tight">{hintLabel}</span>
-									{hintSublabel && (
-										<span className="text-muted-foreground font-normal truncate max-w-[200px]">
-											{hintSublabel}
-										</span>
-									)}
-									<ChevronRight className="ml-auto group-data-[state=open]:rotate-90" />
-								</Button>
-							</CollapsibleTrigger>
-							<CollapsibleContent className="p-2.5 pt-0 max-w-full overflow-hidden break-all text-muted-foreground">
-								{items.map((inner, i) => renderBlock(inner, i, t))}
-							</CollapsibleContent>
-						</Collapsible>
-					</ItemContent>
-				</Item>
-			);
-		}
-
-		default:
-			return null;
-	}
-}
-
 interface MessageBubbleProps {
 	message: Msg;
 	onUserConfirm: (
@@ -603,7 +383,7 @@ interface MessageBubbleProps {
  * When `content` is empty and the message is still running, the bubble
  * body is omitted entirely so only the bottom status row renders.
  */
-export function MessageBubble({ message, onUserConfirm }: MessageBubbleProps) {
+export function ASMessageBubble({ message }: MessageBubbleProps) {
 	const isUser = message.role === 'user';
 	const { t } = useTranslation();
 
@@ -620,17 +400,15 @@ export function MessageBubble({ message, onUserConfirm }: MessageBubbleProps) {
 		return () => clearInterval(id);
 	}, [isRunning]);
 
-	const blocks = groupToolCalls(message.content);
+	// Audio data blocks are rendered in the footer;
+	// For role="user" messages, the data blocks are rendered as attachments in the
+	// footer, while for role="assistant" messages, the data is rendered in its
+	// original position
 	const audioBlocks = message.content.filter(
 		(b): b is DataBlock => b.type === 'data' && b.source.media_type.split('/')[0] === 'audio',
 	);
-	// Audio data blocks are rendered in the footer, so they shouldn't keep an
-	// otherwise-empty body bubble alive.
-	const hasBodyContent = blocks.some(
-		(b) => !(b.type === 'data' && b.source.media_type.split('/')[0] === 'audio'),
-	);
-	const showBody = hasBodyContent;
-	const showFooter = !isUser;
+
+	const blocks = groupToolCalls(message.content);
 
 	// A fatal error terminated this reply. ``finished_reason`` / ``error`` are
 	// reply-level fields set by ``appendEvent`` on a ``REPLY_END`` with
@@ -646,76 +424,280 @@ export function MessageBubble({ message, onUserConfirm }: MessageBubbleProps) {
 	const elapsedText = formatTime(elapsedSeconds);
 
 	return (
-		<div
-			className={`flex flex-col w-full max-w-full ${isUser ? 'items-end' : 'items-start'} mb-4`}
-		>
-			{showBody && (
-				<div
-					className={`p-4 rounded-xl space-y-2 max-w-full ${
-						isUser ? 'w-fit bg-secondary' : 'w-full min-w-full'
-					}`}
-				>
-					{blocks.map((block, i) =>
-						renderBlock(
-							block,
-							i,
-							t,
-							(
-								toolCall: ToolCallBlock,
-								confirm: boolean,
-								rules?: ToolCallBlock['suggested_rules'],
-							) => {
-								onUserConfirm(toolCall, confirm, message.id, rules);
-								toolCall.state = confirm ? 'allowed' : 'finished';
-							},
-						),
-					)}
-				</div>
-			)}
-			{isError && (
-				<Alert
-					variant="destructive"
-					className="m-2 w-[calc(100%-1rem)] border-red-200 bg-red-50 text-destructive dark:border-red-900 dark:bg-red-950 dark:text-red-50"
-				>
-					<TriangleAlert />
-					<AlertTitle>{t('messageBubble.error.title')}</AlertTitle>
-					<AlertDescription>
-						{t(`messageBubble.error.${errorInfo?.type ?? 'unknown'}`, {
-							defaultValue: errorInfo?.message ?? t('messageBubble.error.unknown'),
-						})}
-					</AlertDescription>
-				</Alert>
-			)}
-			{showFooter && (
-				<div className="flex flex-row items-center text-muted-foreground gap-x-4 px-2 w-full">
-					<Badge
-						variant="secondary"
-						aria-label={isRunning ? t('messageBubble.running') : undefined}
+		<Message align={isUser ? 'end' : 'start'} data-role={message.role}>
+			<MessageContent>
+				{blocks
+					.filter((block) => block.type !== 'data')
+					.map((block, index) => (
+						<Bubble key={index} variant={isUser ? 'muted' : 'ghost'}>
+							<BubbleContent>
+								<ASBlock block={block} />
+							</BubbleContent>
+						</Bubble>
+					))}
+				{isError && (
+					<Alert
+						variant="destructive"
+						className="m-2 w-[calc(100%-1rem)] border-red-200 bg-red-50 text-destructive dark:border-red-900 dark:bg-red-950 dark:text-red-50"
 					>
-						{isRunning ? (
-							<Loader2 data-icon="inline-start" className="animate-spin" />
-						) : (
-							<CheckCircle data-icon="inline-start" />
-						)}
-						<span className="tabular-nums tracking-tighter">{elapsedText}</span>
-						{hasUsage && (
-							<>
-								<ArrowUp data-icon="inline-start" className="ml-1" />
-								<span className="tabular-nums">
-									{formatNumber(message.usage?.input_tokens ?? 0)}
-								</span>
-								<ArrowDown data-icon="inline-start" className="ml-1" />
-								<span className="tabular-nums">
-									{formatNumber(message.usage?.output_tokens ?? 0)}
-								</span>
-							</>
-						)}
-						{audioBlocks.map((block) => (
-							<AudioInlineControl key={block.id} block={block} />
+						<TriangleAlert />
+						<AlertTitle>{t('messageBubble.error.title')}</AlertTitle>
+						<AlertDescription>
+							{t(`messageBubble.error.${errorInfo?.type ?? 'unknown'}`, {
+								defaultValue:
+									errorInfo?.message ?? t('messageBubble.error.unknown'),
+							})}
+						</AlertDescription>
+					</Alert>
+				)}
+				<AttachmentGroup className="max-w-full">
+					{blocks
+						.filter((block) => block.type === 'data')
+						.map((block, index) => (
+							<ASBlock block={block} key={index} />
 						))}
-					</Badge>
-				</div>
-			)}
-		</div>
+				</AttachmentGroup>
+				{message.role !== 'user' && (
+					<MessageFooter>
+						<Badge
+							variant="secondary"
+							aria-label={isRunning ? t('messageBubble.running') : undefined}
+						>
+							{isRunning ? (
+								<Loader2 data-icon="inline-start" className="animate-spin" />
+							) : (
+								<CheckCircle data-icon="inline-start" />
+							)}
+							<span className="tabular-nums tracking-tighter">{elapsedText}</span>
+							{hasUsage && (
+								<>
+									<ArrowUp data-icon="inline-start" className="ml-1" />
+									<span className="tabular-nums">
+										{formatNumber(message.usage?.input_tokens ?? 0)}
+									</span>
+									<ArrowDown data-icon="inline-start" className="ml-1" />
+									<span className="tabular-nums">
+										{formatNumber(message.usage?.output_tokens ?? 0)}
+									</span>
+								</>
+							)}
+							{audioBlocks.map((block) => (
+								<AudioInlineControl key={block.id} block={block} />
+							))}
+						</Badge>
+					</MessageFooter>
+				)}
+			</MessageContent>
+		</Message>
 	);
+}
+
+/**
+ * A thinking block with a live-ticking "thinking for Xs" header. Kept as its
+ * own component so only thinking blocks pay for the per-second timer.
+ */
+function ThinkingBlockView({ block }: { block: ThinkingBlock }) {
+	const { t } = useTranslation();
+	const isRunning = !block.finished_at;
+
+	// Tick once per second while running so the elapsed time updates live.
+	const [now, setNow] = useState(() => Date.now());
+	useEffect(() => {
+		if (!isRunning) return;
+		const id = setInterval(() => setNow(Date.now()), 1000);
+		return () => clearInterval(id);
+	}, [isRunning]);
+
+	const startMs = new Date(block.created_at).getTime();
+	const endMs = isRunning ? now : new Date(block.finished_at!).getTime();
+	const elapsedSeconds = Math.max(0, (endMs - startMs) / 1000);
+	const elapsedText = formatTime(elapsedSeconds);
+	return (
+		<Collapsible>
+			<CollapsibleTrigger asChild>
+				<div
+					className={cn(
+						'group w-full flex items-center gap-2 text-left text-sm text-muted-foreground cursor-pointer',
+						isRunning && 'shimmer',
+					)}
+				>
+					<span>
+						{t(
+							elapsedText === '0s'
+								? 'messageBubble.thinking'
+								: 'messageBubble.thinkingFor',
+							{ duration: elapsedText },
+						)}
+					</span>
+					<ChevronRight className="hidden group-hover:flex group-data-[state=open]:flex size-3 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
+				</div>
+			</CollapsibleTrigger>
+			<CollapsibleContent asChild>
+				<Markdown
+					animated
+					isAnimating={isRunning}
+					className="text-muted-foreground bg-muted p-2 rounded text-sm"
+				>
+					{block.thinking}
+				</Markdown>
+			</CollapsibleContent>
+		</Collapsible>
+	);
+}
+
+interface ASBlockProps {
+	block: ExtendedContentBlock;
+}
+
+export function ASBlock({ block, ...props }: ASBlockProps) {
+	const { t } = useTranslation();
+
+	switch (block.type) {
+		case 'text':
+			return (
+				<Markdown animated isAnimating={!block.finished_at} {...props}>
+					{block.text}
+				</Markdown>
+			);
+		case 'data': {
+			const dataType = block.source.media_type.split('/')[0];
+			if (dataType === 'audio') return null;
+			const data =
+				block.source.type === 'url'
+					? block.source.url
+					: `data:${block.source.media_type};base64,${block.source.data}`;
+			switch (dataType) {
+				case 'image':
+					return (
+						<Attachment>
+							<AttachmentMedia variant={'image'}>
+								<img src={data} alt={block.name || 'Uploaded image'} />
+							</AttachmentMedia>
+							<AttachmentContent>
+								<AttachmentTitle>{block.name}</AttachmentTitle>
+								<AttachmentDescription>
+									{(
+										mime.extension(block.source.media_type) || 'bin'
+									).toUpperCase()}
+								</AttachmentDescription>
+							</AttachmentContent>
+						</Attachment>
+					);
+				case 'video':
+					return (
+						<Attachment>
+							<AttachmentMedia variant={'icon'}>
+								<FileVideo2 />
+							</AttachmentMedia>
+							<AttachmentContent>
+								<AttachmentTitle>{block.name}</AttachmentTitle>
+								<AttachmentDescription>
+									{(
+										mime.extension(block.source.media_type) || 'bin'
+									).toUpperCase()}
+								</AttachmentDescription>
+							</AttachmentContent>
+						</Attachment>
+					);
+				default:
+					// Unknown files
+					return (
+						<Attachment>
+							<AttachmentMedia variant={'icon'}>
+								<FileText />
+							</AttachmentMedia>
+							<AttachmentContent>
+								<AttachmentTitle>{block.name}</AttachmentTitle>
+								<AttachmentDescription>
+									{(
+										mime.extension(block.source.media_type) || 'bin'
+									).toUpperCase()}
+								</AttachmentDescription>
+							</AttachmentContent>
+						</Attachment>
+					);
+			}
+		}
+		case 'thinking':
+			return <ThinkingBlockView block={block} />;
+		case 'hint': {
+			// Parse source: try JSON, fall back to plain string, default to t('common.message').
+			let hintLabel: string;
+			let hintSublabel: string | null = null;
+
+			if (block.source) {
+				try {
+					const parsed = JSON.parse(block.source) as {
+						label?: string;
+						sublabel?: string;
+					};
+					hintLabel = parsed.label
+						? t(`messageBubble.hintSource.${parsed.label.toLowerCase()}`)
+						: block.source;
+					hintSublabel = parsed.sublabel ?? null;
+				} catch {
+					hintLabel = block.source;
+				}
+			} else {
+				hintLabel = t('common.message');
+			}
+			const items: (TextBlock | DataBlock)[] =
+				typeof block.hint === 'string'
+					? [
+							{
+								type: 'text',
+								id: `${block.id}-text`,
+								text: block.hint,
+								created_at: block.created_at,
+							},
+						]
+					: block.hint;
+			return (
+				<Collapsible>
+					<CollapsibleTrigger asChild>
+						<div
+							className={cn(
+								'group w-full flex gap-2 items-center text-sm text-muted-foreground cursor-pointer hover:text-primary',
+								!block.finished_at && 'shimmer',
+							)}
+						>
+							<span>{hintLabel + (hintSublabel ? ` - ${hintSublabel}` : '')}</span>
+							<ChevronRight className="size-3 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
+						</div>
+					</CollapsibleTrigger>
+					<CollapsibleContent className="bg-muted p-2 rounded text-sm">
+						{items.map((item, index) => (
+							<ASBlock block={item} key={index} />
+						))}
+					</CollapsibleContent>
+				</Collapsible>
+			);
+		}
+		case 'tool_call_group': {
+			const { title, insertions, deletions } = summarizeToolGroup(block.calls, t);
+			const allFinished = block.calls.some((c) => !c.result || c.result.state === 'running');
+			return (
+				<Collapsible defaultOpen={false}>
+					<CollapsibleTrigger asChild>
+						<div
+							className={cn(
+								'group w-full flex gap-2 items-center text-sm text-muted-foreground cursor-pointer hover:text-primary',
+								allFinished && 'shimmer',
+							)}
+						>
+							<span>{title}</span>
+							<ChevronRight className="size-3 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
+							<DiffStats insertions={insertions} deletions={deletions} />
+						</div>
+					</CollapsibleTrigger>
+					<CollapsibleContent className="flex flex-col w-full gap-y-1 bg-muted p-2 rounded text-sm text-muted-foreground">
+						{block.calls.map((pair) => renderToolCall(pair, t))}
+					</CollapsibleContent>
+				</Collapsible>
+			);
+		}
+
+		default:
+			return null;
+	}
 }

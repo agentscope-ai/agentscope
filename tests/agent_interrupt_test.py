@@ -174,7 +174,13 @@ def _user_msg_dict(content: str) -> dict[str, Any]:
         "name": "user",
         "role": "user",
         "content": [
-            {"type": "text", "id": AnyString(), "text": content},
+            {
+                "type": "text",
+                "id": AnyString(),
+                "text": content,
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ],
         "usage": None,
     }
@@ -188,6 +194,8 @@ def _tool_call_dict(
 ) -> dict[str, Any]:
     return {
         "type": "tool_call",
+        "created_at": AnyString(),
+        "finished_at": None,
         "id": tc_id,
         "name": name,
         "input": input,
@@ -215,12 +223,20 @@ def _interrupted_tool_result_dict(
     output: Any
     if output_is_blocks:
         output = [
-            {"type": "text", "id": AnyString(), "text": _INTERRUPT_MSG},
+            {
+                "type": "text",
+                "id": AnyString(),
+                "text": _INTERRUPT_MSG,
+                "created_at": AnyString(),
+                "finished_at": None,
+            },
         ]
     else:
         output = _INTERRUPT_MSG
     return {
         "type": "tool_result",
+        "created_at": AnyString(),
+        "finished_at": None,
         "id": tc_id,
         "name": name,
         "output": output,
@@ -342,6 +358,8 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
                     "content": [
                         {
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "id": AnyString(),
                             "text": "Calling.",
                         },
@@ -412,6 +430,8 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
                     "content": [
                         {
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "id": AnyString(),
                             "text": "Calling both.",
                         },
@@ -502,6 +522,8 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
                     "content": [
                         {
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "id": AnyString(),
                             "text": "Mixed batch.",
                         },
@@ -585,6 +607,8 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
                     "content": [
                         {
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "id": AnyString(),
                             "text": "Mixed batch.",
                         },
@@ -676,6 +700,8 @@ class AgentInterruptCancelTest(IsolatedAsyncioTestCase):
                     "content": [
                         {
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "id": AnyString(),
                             "text": "Mixed batch.",
                         },
@@ -816,6 +842,8 @@ class AgentInterruptEventTest(IsolatedAsyncioTestCase):
                     "content": [
                         {
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "id": AnyString(),
                             "text": "Need HITL.",
                         },
@@ -873,6 +901,8 @@ class AgentInterruptEventTest(IsolatedAsyncioTestCase):
                     "content": [
                         {
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "id": AnyString(),
                             "text": "Need HITL.",
                         },
@@ -938,6 +968,8 @@ class AgentInterruptEventTest(IsolatedAsyncioTestCase):
                     "content": [
                         {
                             "type": "text",
+                            "created_at": AnyString(),
+                            "finished_at": None,
                             "id": AnyString(),
                             "text": "Need HITL.",
                         },
