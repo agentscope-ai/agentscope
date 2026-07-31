@@ -16,6 +16,7 @@ The pre-baked image (see ``tests/docker/k8s_workspace_test.Dockerfile``)
 ships the gateway script at ``GATEWAY_HOME``, so ``initialize()`` skips
 bootstrap and each test finishes in ~15 s.
 """
+
 import os
 import shutil
 import sys
@@ -30,6 +31,7 @@ from agentscope.workspace._k8s._constants import (
     GATEWAY_HOME,
     POD_WORKDIR,
 )
+from agentscope.workspace._skill import build_skill_archive
 
 # ── cluster availability check ────────────────────────────────────
 
@@ -178,7 +180,7 @@ class TestK8sWorkspaceHappyPath(IsolatedAsyncioTestCase):
         )
         self.assertListEqual(await ws.list_skills(), [])
 
-        await ws.add_skill(skill_path)
+        await ws.add_skill(build_skill_archive(skill_path))
         skills = await ws.list_skills()
         self.assertEqual(len(skills), 1)
         self.assertEqual(
@@ -315,7 +317,7 @@ class TestK8sWorkspaceReset(IsolatedAsyncioTestCase):
             backend = ws.get_backend()
 
             # Seed state.
-            await ws.add_skill(skill_path)
+            await ws.add_skill(build_skill_archive(skill_path))
             await backend.write_file(
                 f"{POD_WORKDIR}/sessions/s1/context.jsonl",
                 b'{"msg": "hi"}\n',

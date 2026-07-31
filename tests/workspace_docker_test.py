@@ -55,6 +55,7 @@ from agentscope.permission import PermissionBehavior, PermissionDecision
 from agentscope.tool import ToolBase, ToolChunk
 from agentscope.workspace import DockerWorkspace
 from agentscope.workspace._docker._make_dockerfile import CONTAINER_WORKDIR
+from agentscope.workspace._skill import build_skill_archive
 
 CONTAINER_SKILLS_DIR = f"{CONTAINER_WORKDIR}/skills"
 CONTAINER_SESSIONS_DIR = f"{CONTAINER_WORKDIR}/sessions"
@@ -622,7 +623,7 @@ class TestDockerWorkspaceSkills(IsolatedAsyncioTestCase):
             "added_skill",
             "Added at runtime",
         )
-        await self.workspace.add_skill(new_skill)
+        await self.workspace.add_skill(build_skill_archive(new_skill))
 
         skills = await self.workspace.list_skills()
         self.assertEqual(len(skills), 1)
@@ -647,7 +648,7 @@ class TestDockerWorkspaceSkills(IsolatedAsyncioTestCase):
             f.write("def t():\n    pass\n")
 
         with self.assertRaises(ValueError):
-            await self.workspace.add_skill(invalid)
+            await self.workspace.add_skill(build_skill_archive(invalid))
 
 
 # ── lifecycle tests ───────────────────────────────────────────────
