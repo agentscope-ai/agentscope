@@ -28,6 +28,7 @@ Differences from the Docker manager:
 """
 
 import asyncio
+import re
 import time
 from typing import Any, Literal, Self
 
@@ -44,6 +45,45 @@ from ...workspace import OpenSandboxWorkspace
 from ._base import IsolationPolicy, WorkspaceManagerBase
 
 DEFAULT_SWEEP_INTERVAL = 300.0
+
+
+def _sanitize_metadata_value(value: str, max_length: int = 63) -> str:
+    """Sanitize metadata value to comply with OpenSandbox label requirements.
+    
+    OpenSandbox metadata values must:
+    - Be at most 63 characters
+    - Start and end with an alphanumeric character
+    - Contain only alphanumeric, '-', '_', or '.' characters
+    
+    Args:
+        value: The raw value to sanitize.
+        max_length: Maximum allowed length (default 63).
+    
+    Returns:
+        A sanitized value that complies with OpenSandbox requirements.
+    """
+    if not value:
+        return "unknown"
+    
+    # Replace invalid characters with '-'
+    sanitized = re.sub(r'[^a-zA-Z0-9._-]', '-', value)
+    
+    # Ensure starts with alphanumeric
+    while sanitized and not sanitized[0].isalnum():
+        sanitized = sanitized[1:]
+    
+    # Ensure ends with alphanumeric
+    while sanitized and not sanitized[-1].isalnum():
+        sanitized = sanitized[:-1]
+    
+    # Truncate to max length
+    if len(sanitized) > max_length:
+        sanitized = sanitized[:max_length]
+        # Ensure still ends with alphanumeric after truncation
+        while sanitized and not sanitized[-1].isalnum():
+            sanitized = sanitized[:-1]
+    
+    return sanitized or "unknown"
 
 
 class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
@@ -182,8 +222,8 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
             gateway_port=self._gateway_port,
             env=self._env,
             sandbox_metadata={
-                "agentscope.user.id": user_id,
-                "agentscope.agent.id": agent_id,
+                "agentscope.user.id": _sanitize_metadata_value(user_id),
+                "agentscope.agent.id": _sanitize_metadata_value(agent_id),
                 **self._sandbox_metadata,
             },
             resource=self._resource,
