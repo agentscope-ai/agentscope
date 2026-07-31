@@ -57,13 +57,12 @@ class AddSkillArchiveLocalTest(IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         """Open a workspace in a temporary directory."""
-        self.tmp = tempfile.TemporaryDirectory()
-        self.workspace = LocalWorkspace(workdir=self.tmp.name)
+        # enterContext is the unittest equivalent of "with", which
+        # pylint does not recognize.
+        # pylint: disable=consider-using-with
+        self.tmp = self.enterContext(tempfile.TemporaryDirectory())
+        self.workspace = LocalWorkspace(workdir=self.tmp)
         await self.workspace.initialize()
-
-    async def asyncTearDown(self) -> None:
-        """Drop the temporary directory."""
-        self.tmp.cleanup()
 
     async def test_install_zip_and_tar(self) -> None:
         """Both formats land, named from the front matter."""
@@ -104,7 +103,7 @@ class AddSkillArchiveLocalTest(IsolatedAsyncioTestCase):
                 "pack",
             )
         self.assertFalse(
-            os.path.exists(os.path.join(self.tmp.name, "..", "evil.txt")),
+            os.path.exists(os.path.join(self.tmp, "..", "evil.txt")),
         )
 
     async def test_archive_without_skill_md_is_refused(self) -> None:
@@ -124,7 +123,7 @@ class AddSkillArchiveLocalTest(IsolatedAsyncioTestCase):
             "pack",
         )
         self.assertEqual(
-            sorted(os.listdir(self.tmp.name)),
+            sorted(os.listdir(self.tmp)),
             [".mcp", "skills"],
         )
 
@@ -138,14 +137,13 @@ class AddSkillArchiveSandboxedTest(IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         """Open a workspace in a temporary directory."""
-        self.tmp = tempfile.TemporaryDirectory()
-        self.workspace = LocalWorkspace(workdir=self.tmp.name)
+        # enterContext is the unittest equivalent of "with", which
+        # pylint does not recognize.
+        # pylint: disable=consider-using-with
+        self.tmp = self.enterContext(tempfile.TemporaryDirectory())
+        self.workspace = LocalWorkspace(workdir=self.tmp)
         await self.workspace.initialize()
-        self.skills_dir = os.path.join(self.tmp.name, "skills")
-
-    async def asyncTearDown(self) -> None:
-        """Drop the temporary directory."""
-        self.tmp.cleanup()
+        self.skills_dir = os.path.join(self.tmp, "skills")
 
     async def test_directory_name_is_suffixed_when_taken(self) -> None:
         """A repeated name gets a numeric suffix rather than an error."""
@@ -265,8 +263,7 @@ class UploadManifestTest(IsolatedAsyncioTestCase):
         }
         manifest = self._manifest(files)
         chunks = [
-            chunk
-            async for chunk in tar_stream(manifest, self._uploads(files))
+            chunk async for chunk in tar_stream(manifest, self._uploads(files))
         ]
 
         archive = tarfile.open(fileobj=io.BytesIO(b"".join(chunks)))

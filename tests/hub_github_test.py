@@ -60,7 +60,8 @@ class GitHubCardTest(TestCase):
         self.assertEqual(headers["Authorization"], "Bearer ${TOKEN}")
         client = render_mcp(card, {"TOKEN": "sk"})
         self.assertEqual(
-            client.mcp_config.headers["Authorization"], "Bearer sk"
+            client.mcp_config.headers["Authorization"],
+            "Bearer sk",
         )
 
     def test_package_becomes_a_stdio_config(self) -> None:
