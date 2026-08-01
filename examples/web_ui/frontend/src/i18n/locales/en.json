@@ -19,8 +19,8 @@
 		"interrupted": "Interrupted",
 		"knowledge": "Knowledge Bases",
 		"loading": "Loading...",
-		"loadMore": "Load more",
 		"shownCount": "{{count}} shown",
+		"selectedCount": "{{selected}} of {{total}} selected",
 		"model": "Model",
 		"name": "Name",
 		"no": "No",
@@ -418,13 +418,9 @@
 		"dont_ask-tooltip": "Convert all ASK decisions to DENY; suitable for scheduled tasks or background execution when user is unavailable"
 	},
 	"dialog-mcp-create": {
-		"title": "Add MCP Servers",
-		"description": "Add new MCP server(s) by configuration.",
 		"configLabel": "MCP Configuration",
 		"keepAlive": "Keep Alive",
 		"keepAliveDesc": "Maintain state across interactions. Enable for browser-use or other long-running MCPs.",
-		"adding": "Adding…",
-		"added": "Added",
 		"parseError": "Invalid JSON configuration: {{message}}",
 		"missingMcpServers": "Configuration must contain a \"mcpServers\" object.",
 		"emptyMcpServers": "No MCP servers found in configuration."
@@ -433,12 +429,6 @@
 		"entity": "MCP server",
 		"skillEntity": "skill",
 		"skillDescription": "Are you sure you want to remove this skill from the workspace?"
-	},
-	"dialog-skill-add": {
-		"title": "Add skill",
-		"description": "Enter the path to a skill directory to add it to the workspace.",
-		"pathLabel": "Skill path",
-		"pathPlaceholder": "/path/to/skill"
 	},
 	"schedule": {
 		"calendar": "Calendar",
@@ -563,14 +553,12 @@
 			"add": "Add MCP",
 			"addDescription": "Reuse one you have already installed, or paste a configuration.",
 			"fromConfig": "From configuration",
-			"alreadyAdded": "Added",
 			"tools": "{{count}} tools",
 			"unhealthy": "This MCP could not be reached",
 			"healthy": "Connected",
 			"emptyTitle": "No MCP servers",
 			"emptyDescription": "Add an MCP server to equip the workspace with tools.",
 			"fromInstalled": "Installed MCPs",
-			"selectedCount": "{{selected}} of {{total}} selected",
 			"installedEmptyTitle": "Nothing installed yet",
 			"installedEmptyDescription": "Install one from the MCP Hub, or paste a configuration."
 		},

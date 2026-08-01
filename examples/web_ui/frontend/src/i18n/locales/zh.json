@@ -19,8 +19,8 @@
 		"interrupted": "已中断",
 		"knowledge": "知识库",
 		"loading": "加载中...",
-		"loadMore": "加载更多",
 		"shownCount": "已显示 {{count}} 个",
+		"selectedCount": "已选中 {{selected}} 个，共 {{total}} 个",
 		"model": "模型",
 		"name": "名称",
 		"no": "否",
@@ -418,13 +418,9 @@
 		"dont_ask-tooltip": "将所有 ASK 决策转为 DENY，适合定时任务或用户不在场时的后台执行"
 	},
 	"dialog-mcp-create": {
-		"title": "添加 MCP 服务器",
-		"description": "通过配置添加新的 MCP 服务器。",
 		"configLabel": "MCP 配置",
 		"keepAlive": "保持连接",
 		"keepAliveDesc": "在交互间保持状态。适用于浏览器操作或其他长时间运行的 MCP。",
-		"adding": "添加中…",
-		"added": "已添加",
 		"parseError": "JSON 配置无效：{{message}}",
 		"missingMcpServers": "配置中必须包含 \"mcpServers\" 对象。",
 		"emptyMcpServers": "配置中未找到 MCP 服务器。"
@@ -433,12 +429,6 @@
 		"entity": "MCP 服务器",
 		"skillEntity": "技能",
 		"skillDescription": "确定要将该技能从工作区中移除吗？"
-	},
-	"dialog-skill-add": {
-		"title": "添加技能",
-		"description": "输入技能目录的路径以添加到工作区。",
-		"pathLabel": "技能路径",
-		"pathPlaceholder": "/path/to/skill"
 	},
 	"schedule": {
 		"calendar": "日历",
@@ -563,14 +553,12 @@
 			"add": "添加 MCP",
 			"addDescription": "复用已安装的 MCP，或粘贴一份配置。",
 			"fromConfig": "从 configuration 导入",
-			"alreadyAdded": "已添加",
 			"tools": "{{count}} 个工具",
 			"unhealthy": "该 MCP 无法连接",
 			"healthy": "连接正常",
 			"emptyTitle": "暂无 MCP 服务器",
 			"emptyDescription": "添加 MCP 服务器为工作区配备工具。",
 			"fromInstalled": "导入已安装的 MCP",
-			"selectedCount": "已选中 {{selected}} 个，共 {{total}} 个",
 			"installedEmptyTitle": "还没有安装任何 MCP",
 			"installedEmptyDescription": "去 MCP 中心安装一个，或在这里粘贴配置。"
 		},

@@ -40,10 +40,10 @@ import {
 	SidebarMenuItem,
 } from '@/components/ui/sidebar.tsx';
 import { Spinner } from '@/components/ui/spinner.tsx';
-import { useInstalledSkills } from '@/hooks/useInstalledSkills.ts';
 import { useResourceDrawer } from '@/hooks/useResourceDrawer.ts';
 import { useSkillHubCards } from '@/hooks/useSkillHubCards.ts';
 import { useSkillHubs } from '@/hooks/useSkillHubs.ts';
+import { useSkills } from '@/hooks/useSkills.ts';
 import { useTranslation } from '@/i18n/useI18n';
 import { formatTime } from '@/utils/common';
 
@@ -459,7 +459,7 @@ export function SkillHubPage() {
 	const { hubs, loading: hubsLoading, error: hubsError, refetch } = useSkillHubs();
 	// Loaded page-wide, not per panel: the hub view needs it to mark cards
 	// as already installed, and the "mine" view to list them.
-	const { skills, loading: skillsLoading, refetch: refetchSkills, remove } = useInstalledSkills();
+	const { skills, loading: skillsLoading, refetch: refetchSkills, remove } = useSkills();
 	const installedNames = new Set(skills.map((skill) => skill.name));
 
 	return (

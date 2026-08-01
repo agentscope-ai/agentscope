@@ -34,7 +34,7 @@ import {
 import { Progress } from '@/components/ui/progress.tsx';
 import { Spinner } from '@/components/ui/spinner.tsx';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.tsx';
-import { useInstalledSkills } from '@/hooks/useInstalledSkills.ts';
+import { useSkills } from '@/hooks/useSkills.ts';
 import { useTranslation } from '@/i18n/useI18n';
 
 interface Props {
@@ -62,7 +62,7 @@ export function AddSkillDialog({ children, present, onUpload, onAddFromLibrary }
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const input = useRef<HTMLInputElement>(null);
-	const { skills, loading } = useInstalledSkills();
+	const { skills, loading } = useSkills();
 
 	const selectable = skills.filter((skill) => !present.has(skill.name));
 
@@ -296,7 +296,7 @@ export function AddSkillDialog({ children, present, onUpload, onAddFromLibrary }
 				<DialogFooter className="sm:justify-between">
 					<span className="self-center text-xs text-muted-foreground">
 						{tab === 'installed' && selectable.length > 0
-							? t('panel.mcp.selectedCount', {
+							? t('common.selectedCount', {
 									selected: picked.size,
 									total: selectable.length,
 								})

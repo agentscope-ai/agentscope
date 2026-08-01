@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """The installed-MCP record."""
-from pydantic import Field
+from pydantic import Field, computed_field
 
 from ._base import _RecordBase
 from ....mcp import MCPClient
@@ -25,6 +25,17 @@ class MCPRecord(_RecordBase):
     client: MCPClient
     """The connectable instance, ready to hand to ``workspace.add_mcp``.
     Its ``name`` is the user-unique handle the workspace joins on."""
+
+    # mypy cannot see through the decorator pair; the ignore is what
+    # pydantic's own docs prescribe for a computed property.
+    @computed_field  # type: ignore[misc]
+    @property
+    def name(self) -> str:
+        """``client.name`` lifted to the top level so storage backends can
+        index it. Computed rather than stored, so it cannot go stale when
+        the client is renamed, and records written before it existed need
+        no migration."""
+        return self.client.name
 
     display_name: str | None = Field(default=None)
     """The card's user-facing name, snapshotted at install time."""

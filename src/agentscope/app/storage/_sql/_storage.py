@@ -42,9 +42,11 @@ from ._tables import (
     CredentialRow,
     KnowledgeBaseRow,
     KnowledgeDocumentRow,
+    MCPRow,
     MessageRow,
     ScheduleRow,
     SessionRow,
+    SkillRow,
     TeamRow,
 )
 from ....credential import CredentialBase
@@ -810,82 +812,167 @@ class AsyncSQLAlchemyStorage(StorageBase):
     # ------------------------------------------------------------------
     # Installed MCPs and skills
     #
-    # Not implemented yet — the tables, their ``(user_id, name)`` unique
-    # constraints and the Alembic revision still have to be written. The
-    # methods are stubbed rather than omitted so that this backend stays
-    # instantiable; a deployment that touches the library on SQL gets a
-    # clear error instead of an abstract-class TypeError at startup.
+    # ``(user_id, name)`` is unique on both tables. The pre-write lookup
+    # below turns the common case into the same ``ValueError`` the Redis
+    # backend raises; the constraint is the backstop that closes the
+    # read-then-write window between concurrent writers.
     # ------------------------------------------------------------------
 
-    _MCP_UNSUPPORTED = (
-        "Installed MCPs are not supported by the SQL storage backend yet. "
-        "Use RedisStorage, or wait for the SQL table to land."
-    )
-
-    _SKILL_UNSUPPORTED = (
-        "Installed skills are not supported by the SQL storage backend "
-        "yet. Use RedisStorage, or wait for the SQL table to land."
-    )
-
     async def upsert_mcp(self, user_id: str, mcp_record: MCPRecord) -> str:
-        """Not implemented; see the section comment above."""
-        raise NotImplementedError(self._MCP_UNSUPPORTED)
+        """Create or update an installed-MCP record for *user_id*.
+
+        Same contract as :meth:`RedisStorage.upsert_mcp`.
+        """
+        holder = await self.get_mcp_by_name(user_id, mcp_record.name)
+        if holder is not None and holder.id != mcp_record.id:
+            raise ValueError(
+                f"An MCP named {mcp_record.name!r} already exists for "
+                f"this user.",
+            )
+        mcp_record.user_id = user_id
+        await self._write_row(MCPRow, mcp_record)
+        return mcp_record.id
 
     async def list_mcps(self, user_id: str) -> list[MCPRecord]:
-        """Not implemented; see the section comment above."""
-        raise NotImplementedError(self._MCP_UNSUPPORTED)
+        """Return every installed-MCP record for *user_id*."""
+        from sqlalchemy import select
+
+        async with self._session() as sess:
+            rows = (
+                (
+                    await sess.execute(
+                        select(MCPRow).where(MCPRow.user_id == user_id),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [_to_record(r, MCPRecord) for r in rows]
 
     async def get_mcp(self, user_id: str, mcp_id: str) -> MCPRecord | None:
-        """Not implemented; see the section comment above."""
-        raise NotImplementedError(self._MCP_UNSUPPORTED)
+        """Fetch one installed-MCP record by id; owner-scoped."""
+        async with self._session() as sess:
+            row = await sess.get(MCPRow, mcp_id)
+        if row is None or row.user_id != user_id:
+            return None
+        return _to_record(row, MCPRecord)
 
     async def get_mcp_by_name(
         self,
         user_id: str,
         name: str,
     ) -> MCPRecord | None:
-        """Not implemented; see the section comment above."""
-        raise NotImplementedError(self._MCP_UNSUPPORTED)
+        """Fetch one installed-MCP record by its user-unique name."""
+        from sqlalchemy import select
+
+        async with self._session() as sess:
+            row = (
+                await sess.execute(
+                    select(MCPRow).where(
+                        MCPRow.user_id == user_id,
+                        MCPRow.name == name,
+                    ),
+                )
+            ).scalar_one_or_none()
+        return None if row is None else _to_record(row, MCPRecord)
 
     async def delete_mcp(self, user_id: str, mcp_id: str) -> bool:
-        """Not implemented; see the section comment above."""
-        raise NotImplementedError(self._MCP_UNSUPPORTED)
+        """Delete an installed-MCP record; owner-scoped."""
+        from sqlalchemy import delete
+
+        async with self._session() as sess:
+            result = await sess.execute(
+                delete(MCPRow).where(
+                    MCPRow.id == mcp_id,
+                    MCPRow.user_id == user_id,
+                ),
+            )
+            await sess.commit()
+        return result.rowcount > 0
 
     async def upsert_skill(
         self,
         user_id: str,
         skill_record: SkillRecord,
     ) -> str:
-        """Not implemented; see the section comment above."""
-        raise NotImplementedError(self._SKILL_UNSUPPORTED)
+        """Create or update an installed-skill record for *user_id*.
+
+        Same contract as :meth:`RedisStorage.upsert_skill`.
+        """
+        holder = await self.get_skill_by_name(user_id, skill_record.name)
+        if holder is not None and holder.id != skill_record.id:
+            raise ValueError(
+                f"A skill named {skill_record.name!r} already exists for "
+                f"this user.",
+            )
+        skill_record.user_id = user_id
+        await self._write_row(SkillRow, skill_record)
+        return skill_record.id
 
     async def list_skills(self, user_id: str) -> list[SkillRecord]:
-        """Not implemented; see the section comment above."""
-        raise NotImplementedError(self._SKILL_UNSUPPORTED)
+        """Return every installed-skill record for *user_id*."""
+        from sqlalchemy import select
+
+        async with self._session() as sess:
+            rows = (
+                (
+                    await sess.execute(
+                        select(SkillRow).where(SkillRow.user_id == user_id),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [_to_record(r, SkillRecord) for r in rows]
 
     async def get_skill(
         self,
         user_id: str,
         skill_id: str,
     ) -> SkillRecord | None:
-        """Not implemented; see the section comment above."""
-        raise NotImplementedError(self._SKILL_UNSUPPORTED)
+        """Fetch one installed-skill record by id; owner-scoped."""
+        async with self._session() as sess:
+            row = await sess.get(SkillRow, skill_id)
+        if row is None or row.user_id != user_id:
+            return None
+        return _to_record(row, SkillRecord)
 
     async def get_skill_by_name(
         self,
         user_id: str,
         name: str,
     ) -> SkillRecord | None:
-        """Not implemented; see the section comment above."""
-        raise NotImplementedError(self._SKILL_UNSUPPORTED)
+        """Fetch one installed-skill record by its user-unique name."""
+        from sqlalchemy import select
+
+        async with self._session() as sess:
+            row = (
+                await sess.execute(
+                    select(SkillRow).where(
+                        SkillRow.user_id == user_id,
+                        SkillRow.name == name,
+                    ),
+                )
+            ).scalar_one_or_none()
+        return None if row is None else _to_record(row, SkillRecord)
 
     async def delete_skill(
         self,
         user_id: str,
         skill_id: str,
     ) -> bool:
-        """Not implemented; see the section comment above."""
-        raise NotImplementedError(self._SKILL_UNSUPPORTED)
+        """Delete an installed-skill record; owner-scoped."""
+        from sqlalchemy import delete
+
+        async with self._session() as sess:
+            result = await sess.execute(
+                delete(SkillRow).where(
+                    SkillRow.id == skill_id,
+                    SkillRow.user_id == user_id,
+                ),
+            )
+            await sess.commit()
+        return result.rowcount > 0
 
     # ------------------------------------------------------------------
     # Agents

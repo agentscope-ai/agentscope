@@ -17,7 +17,7 @@ import {
 	ItemMedia,
 	ItemTitle,
 } from '@/components/ui/item';
-import { useInstalledSkills } from '@/hooks/useInstalledSkills.ts';
+import { useSkills } from '@/hooks/useSkills.ts';
 import { useTranslation } from '@/i18n/useI18n.ts';
 
 interface SkillPanelProps {
@@ -75,7 +75,7 @@ export function SkillPanel({
 	const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 	// The workspace stores only the skill itself, so the icon and author
 	// are looked up in the library, matched on the shared name.
-	const { skills: library } = useInstalledSkills();
+	const { skills: library } = useSkills();
 	const byName = new Map(library.map((skill) => [skill.name, skill]));
 
 	const filtered = search

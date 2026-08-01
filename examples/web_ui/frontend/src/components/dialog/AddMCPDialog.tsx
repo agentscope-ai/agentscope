@@ -201,7 +201,7 @@ export function AddMCPDialog({ children, present, onAdd, onAddFromLibrary }: Pro
 				<DialogFooter className="sm:justify-between">
 					<span className="self-center text-xs text-muted-foreground">
 						{tab === 'installed' && selectable.length > 0
-							? t('panel.mcp.selectedCount', {
+							? t('common.selectedCount', {
 									selected: picked.size,
 									total: selectable.length,
 								})
