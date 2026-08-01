@@ -16,6 +16,7 @@ that exposes the registry skills through the
     ``GET /api/v1/search`` takes a query but returns a single page.
 """
 import asyncio
+import json
 import random
 import re
 from datetime import datetime
@@ -262,7 +263,7 @@ class ClawSkillHub(SkillHubBase):
                 raise HubError(
                     self.hub_id,
                     response.status_code,
-                    response.text,
+                    self._describe_error(response.status_code, response.text),
                 )
 
             return response
@@ -294,7 +295,8 @@ class ClawSkillHub(SkillHubBase):
                 Unused by the public ClawHub catalog, kept for interface
                 compatibility.
             card_id (`str`):
-                The canonical slug of the skill.
+                The :attr:`SkillCard.id`, either ``owner/slug`` or a
+                bare slug.
             version (`str | None`, optional):
                 A specific semver version to download. When omitted with
                 ``tag``, the latest version is used.
@@ -313,7 +315,8 @@ class ClawSkillHub(SkillHubBase):
             `HubError`:
                 When the API returns any other non-success status code.
         """
-        params: dict = {"slug": card_id}
+        slug, owner_params = self._split_card_id(card_id)
+        params: dict = {"slug": slug, **owner_params}
         if version is not None:
             params["version"] = version
         if tag is not None:
@@ -352,7 +355,10 @@ class ClawSkillHub(SkillHubBase):
                     raise HubError(
                         self.hub_id,
                         response.status_code,
-                        body.decode("utf-8", errors="replace"),
+                        self._describe_error(
+                            response.status_code,
+                            body.decode("utf-8", errors="replace"),
+                        ),
                     )
 
                 return SkillArchive(
@@ -395,6 +401,58 @@ class ClawSkillHub(SkillHubBase):
         finally:
             await stack.aclose()
 
+    @staticmethod
+    def _describe_error(status_code: int, body: str) -> str:
+        """Render an API error body as something a person can act on.
+
+        Only the ambiguous-slug 409 gets special treatment: it is the one
+        error whose body is structured, and the raw JSON is unreadable in
+        a toast. It reaches a user when a card came from the catalog
+        endpoint, which names no owner, and that slug turns out to be
+        shared.
+
+        Args:
+            status_code (`int`):
+                The HTTP status code the API answered with.
+            body (`str`):
+                The raw response body.
+
+        Returns:
+            `str`:
+                The message to carry on the :class:`HubError`.
+        """
+        if status_code != 409:
+            return body
+        try:
+            payload = json.loads(body)
+        except ValueError:
+            return body
+        if payload.get("code") != "AMBIGUOUS_SKILL_SLUG":
+            return body
+
+        refs = [m["ref"] for m in payload.get("matches", []) if m.get("ref")]
+        return (
+            f"Several publishers use the skill name "
+            f"{payload.get('slug', '')!r}: {', '.join(refs)}. Search for "
+            f"it by name and install the one you want from the results."
+        )
+
+    @staticmethod
+    def _split_card_id(card_id: str) -> tuple[str, dict]:
+        """Split a card id into its slug and the params that pin it down.
+
+        Args:
+            card_id (`str`):
+                Either ``owner/slug`` or a bare ``slug``.
+
+        Returns:
+            `tuple[str, dict]`:
+                The slug, and either ``{"ownerHandle": ...}`` or an empty
+                dict for a card whose listing named no owner.
+        """
+        handle, _, slug = card_id.rpartition("/")
+        return slug, {"ownerHandle": handle} if handle else {}
+
     def _to_card(self, item: dict) -> SkillCard:
         """Build a :class:`SkillCard` from one catalog or search record.
 
@@ -402,10 +460,13 @@ class ClawSkillHub(SkillHubBase):
         listing already returned, which is what keeps browsing at one
         upstream call per page.
 
-        The slug is used as the card id — it is what every lookup and
-        download endpoint takes. The opaque ``id`` the search endpoint
-        also returns cannot be resolved back through the public API, so
-        it is deliberately ignored.
+        The card id is ``owner/slug`` whenever the record names an owner,
+        because a slug alone is not unique: several publishers may use
+        one, and the lookup endpoints answer 409 rather than guess. The
+        catalog endpoint omits the owner, so those cards fall back to the
+        bare slug — see :meth:`_split_card_id`. The opaque ``id`` the
+        search endpoint also returns cannot be resolved back through the
+        public API, so it is deliberately ignored.
 
         Args:
             item (`dict`):
@@ -446,9 +507,15 @@ class ClawSkillHub(SkillHubBase):
             else f"{self.base_url}/skills/{item['slug']}"
         )
 
+        # ``ownerHandle`` sits at the top level on search and beside the
+        # owner object on the detail endpoint.
+        handle = item.get("ownerHandle") or owner.get("handle")
+
         return SkillCard(
             hub_id=self.hub_id,
-            id=item["slug"],
+            id=f"{handle}/{item['slug']}" if handle else item["slug"],
+            # The name stays the bare slug: it becomes a directory name
+            # in the workspace, so it cannot carry a separator.
             name=item["slug"],
             display_name=item.get("displayName"),
             description=item.get("summary") or "",
@@ -535,7 +602,8 @@ class ClawSkillHub(SkillHubBase):
                 The user identifier to query the card for. Unused by the
                 public ClawHub catalog, kept for interface compatibility.
             card_id (`str`):
-                The canonical slug of the skill.
+                The :attr:`SkillCard.id`, either ``owner/slug`` or a
+                bare slug.
 
         Returns:
             `SkillCard`:
@@ -549,13 +617,14 @@ class ClawSkillHub(SkillHubBase):
         """
         import frontmatter
 
+        slug, owner_params = self._split_card_id(card_id)
         try:
             detail, markdown = await asyncio.gather(
-                self._request("GET", f"/api/v1/skills/{card_id}"),
+                self._request("GET", f"/api/v1/skills/{slug}", owner_params),
                 self._request(
                     "GET",
-                    f"/api/v1/skills/{card_id}/file",
-                    {"path": "SKILL.md"},
+                    f"/api/v1/skills/{slug}/file",
+                    {"path": "SKILL.md", **owner_params},
                 ),
             )
         except HubError as e:
@@ -565,7 +634,7 @@ class ClawSkillHub(SkillHubBase):
 
         payload = detail.json()
         item = dict(payload.get("skill") or {})
-        item.setdefault("slug", card_id)
+        item.setdefault("slug", slug)
         item["latestVersion"] = payload.get("latestVersion")
         # The owner is a sibling of ``skill`` here, but ``_to_card`` reads
         # it off the record, so fold it in.

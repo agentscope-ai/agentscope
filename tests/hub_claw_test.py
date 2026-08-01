@@ -108,3 +108,63 @@ class ClawCardTest(TestCase):
         """Nested under ``stats`` on the catalog, top level on search."""
         self.assertEqual(self._card(stats={"downloads": 496}).downloads, 496)
         self.assertEqual(self._card(downloads=17058).downloads, 17058)
+
+    def test_card_id_is_owner_scoped_when_the_owner_is_known(self) -> None:
+        """A slug is not unique, so the owner pins the card down."""
+        self.assertEqual(self._card(ownerHandle="runware").id, "runware/demo")
+        self.assertEqual(
+            self._card(owner={"handle": "runware"}).id,
+            "runware/demo",
+        )
+
+    def test_card_id_falls_back_to_the_bare_slug(self) -> None:
+        """The catalog endpoint names no owner, so there is nothing to add."""
+        self.assertEqual(self._card().id, "demo")
+
+    def test_card_name_never_carries_the_owner(self) -> None:
+        """The name becomes a workspace directory, so it stays a slug."""
+        self.assertEqual(self._card(ownerHandle="runware").name, "demo")
+
+
+class ClawCardIdTest(TestCase):
+    """Splitting a card id back into the parameters ClawHub takes."""
+
+    def test_owner_scoped_id_splits(self) -> None:
+        """``owner/slug`` becomes a slug plus an ``ownerHandle`` param."""
+        # pylint: disable=protected-access
+        self.assertEqual(
+            ClawSkillHub._split_card_id("runware/music"),
+            ("music", {"ownerHandle": "runware"}),
+        )
+
+    def test_bare_slug_splits_to_no_params(self) -> None:
+        """A card from the catalog carries no owner to pass on."""
+        # pylint: disable=protected-access
+        self.assertEqual(
+            ClawSkillHub._split_card_id("gifgrep"),
+            ("gifgrep", {}),
+        )
+
+
+class ClawErrorTest(TestCase):
+    """Rendering upstream error bodies."""
+
+    _AMBIGUOUS = (
+        '{"code":"AMBIGUOUS_SKILL_SLUG","slug":"music","matches":'
+        '[{"ref":"@a/music"},{"ref":"@b/music"}]}'
+    )
+
+    def test_ambiguous_slug_names_the_candidates(self) -> None:
+        """The raw JSON is unreadable, so the refs are spelled out."""
+        # pylint: disable=protected-access
+        message = ClawSkillHub._describe_error(409, self._AMBIGUOUS)
+
+        self.assertIn("'music'", message)
+        self.assertIn("@a/music, @b/music", message)
+
+    def test_other_bodies_pass_through(self) -> None:
+        """Only the one structured error is rewritten."""
+        # pylint: disable=protected-access
+        self.assertEqual(ClawSkillHub._describe_error(500, "boom"), "boom")
+        self.assertEqual(ClawSkillHub._describe_error(409, "plain"), "plain")
+        self.assertEqual(ClawSkillHub._describe_error(409, "{}"), "{}")
