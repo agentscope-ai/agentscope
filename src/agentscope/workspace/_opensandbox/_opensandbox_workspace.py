@@ -151,6 +151,20 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         """OpenSandbox sandbox id, or ``None`` before initialize."""
         return self._sandbox.id if self._sandbox else None
 
+    @property
+    def _gateway_python(self) -> str:
+        """Sandbox-side path of the gateway python interpreter.
+        
+        When skip_system_bootstrap=True, use system python instead of venv.
+        """
+        if self.skip_system_bootstrap:
+            return "/usr/local/bin/python"
+        return self.get_backend().join_path(
+            self._gateway_venv,
+            "bin",
+            "python",
+        )
+
     async def _provision_backend(self) -> None:
         """Reattach or create the sandbox and bind the backend.
 
@@ -372,26 +386,20 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
             A list of shell command strings, to be executed in order. Each
             must exit 0; a non-zero exit aborts bootstrap.
         """
+        # If using a pre-built image with all dependencies already installed,
+        # skip all bootstrap commands. The gateway script will be uploaded
+        # directly by the base class.
+        if self.skip_system_bootstrap:
+            logger.info(
+                "OpenSandboxWorkspace: skip_system_bootstrap=True, "
+                "skipping all bootstrap commands (assuming pre-built image)"
+            )
+            return []
+
         pip_pkgs = list(_GATEWAY_BASE_REQUIREMENTS) + list(self.extra_pip)
         # Quote every requirement so entries with spaces or shell
         # metacharacters cannot break ``sh -c`` or inject inside the sandbox.
         pip_args = " ".join(shlex.quote(p) for p in pip_pkgs)
-
-        # If using a pre-built image with system deps already installed,
-        # skip the slow apt-get and uv installation steps.
-        if self.skip_system_bootstrap:
-            logger.info(
-                "OpenSandboxWorkspace: skip_system_bootstrap=True, "
-                "skipping apt-get and uv installation"
-            )
-            return [
-                # Gateway venv + base requirements + agentscope from PyPI.
-                # Assumes curl, ripgrep, and uv are already installed in the image.
-                f"uv venv {self._gateway_venv}",
-                f"uv pip install --python {self._gateway_python} {pip_args}",
-                f"uv pip install --python {self._gateway_python} "
-                f"--no-deps 'agentscope'",
-            ]
 
         return [
             # System packages used by bootstrap and builtin tools. The
