@@ -1251,7 +1251,7 @@ class TestDaytonaWorkspaceBuiltinToolsMock(IsolatedAsyncioTestCase):
 
 def _mcp_server_script() -> bytes:
     """Minimal FastMCP stdio server used by live reattach tests."""
-    return b"""from mcp.server import FastMCP
+    return b"""from mcp.server import MCPServer as FastMCP
 
 mcp = FastMCP("Persist")
 
