@@ -115,6 +115,7 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
         skill_paths: list[str] | None = None,
         ttl: float = 3600.0,
         sweep_interval: float = DEFAULT_SWEEP_INTERVAL,
+        skip_system_bootstrap: bool = False,
     ) -> None:
         """Initialize the OpenSandbox workspace manager.
 
@@ -190,6 +191,7 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
         self._skill_paths = list(skill_paths or [])
         self._ttl = ttl
         self._sweep_interval = sweep_interval
+        self._skip_system_bootstrap = skip_system_bootstrap
         super().__init__(isolation=isolation)
 
         # workspace_id -> (workspace, last_access_monotonic)
@@ -232,6 +234,7 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
             extra_pip=self._extra_pip,
             default_mcps=self._default_mcps,
             skill_paths=self._skill_paths,
+            skip_system_bootstrap=self._skip_system_bootstrap,
         )
         await ws.initialize()
         return ws
