@@ -1,9 +1,10 @@
-import { FolderUp, PlusCircle } from 'lucide-react';
+import { CircleAlert, FolderUp, PlusCircle } from 'lucide-react';
 import { useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
 import type { SkillView } from '@/api';
 import type { UploadOptions } from '@/api/workspace';
+import { Alert, AlertDescription } from '@/components/ui/alert.tsx';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Checkbox } from '@/components/ui/checkbox.tsx';
@@ -289,7 +290,14 @@ export function AddSkillDialog({ children, present, onUpload, onAddFromLibrary }
 				</Tabs>
 
 				{progress !== null && <Progress value={progress} />}
-				{error && <p className="text-sm text-destructive">{error}</p>}
+				{error && (
+					<Alert variant="destructive">
+						<CircleAlert />
+						{/* One line per skill that did not land, so the
+						    joined message has to keep its newlines. */}
+						<AlertDescription className="whitespace-pre-wrap">{error}</AlertDescription>
+					</Alert>
+				)}
 
 				{/* Outside the tabs on purpose: the footer is the dialog's,
 				    not either tab's, so its layout never shifts. */}

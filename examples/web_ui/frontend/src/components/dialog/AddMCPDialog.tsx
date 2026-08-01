@@ -1,9 +1,10 @@
-import { PlusCircle } from 'lucide-react';
+import { CircleAlert, PlusCircle } from 'lucide-react';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 
 import type { MCPClient, MCPView } from '@/api';
 import { MCPConfigForm } from '@/components/dialog/MCPConfigForm.tsx';
+import { Alert, AlertDescription } from '@/components/ui/alert.tsx';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Checkbox } from '@/components/ui/checkbox.tsx';
@@ -65,6 +66,7 @@ export function AddMCPDialog({ children, present, onAdd, onAddFromLibrary }: Pro
 	const [tab, setTab] = useState('installed');
 	const [picked, setPicked] = useState<Set<string>>(new Set());
 	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState<string | null>(null);
 	const { mcps, loading } = useMCPs();
 
 	const selectable = mcps.filter((mcp) => !present.has(mcp.name));
@@ -81,13 +83,17 @@ export function AddMCPDialog({ children, present, onAdd, onAddFromLibrary }: Pro
 	const close = () => {
 		setOpen(false);
 		setPicked(new Set());
+		setError(null);
 	};
 
 	const handleAddPicked = async () => {
 		setBusy(true);
+		setError(null);
 		try {
 			await onAddFromLibrary([...picked]);
 			close();
+		} catch (e) {
+			setError((e as Error).message);
 		} finally {
 			setBusy(false);
 		}
@@ -195,6 +201,15 @@ export function AddMCPDialog({ children, present, onAdd, onAddFromLibrary }: Pro
 						</TabsContent>
 					</div>
 				</Tabs>
+
+				{error && (
+					<Alert variant="destructive">
+						<CircleAlert />
+						{/* One line per MCP that did not land, so the
+						    joined message has to keep its newlines. */}
+						<AlertDescription className="whitespace-pre-wrap">{error}</AlertDescription>
+					</Alert>
+				)}
 
 				{/* Outside the tabs on purpose: the footer is the dialog's,
 				    not either tab's, so its layout never shifts. */}
