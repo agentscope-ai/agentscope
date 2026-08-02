@@ -914,6 +914,14 @@ class Agent:
                             )
                             return
 
+                        # A reasoning step that produces tool calls is counted
+                        # only after all of those calls finish. A plain final
+                        # response exits without consuming another iteration,
+                        # while intermediate responses (e.g. thinking-only or
+                        # text that does not satisfy a structured-output
+                        # requirement) consume one reasoning iteration.
+                        self._count_iteration_if_complete(final_msg)
+
                     case Acting(tool_calls=tool_calls):
                         for batch in await self._batch_tool_calls(tool_calls):
                             if batch.type == "sequential":
@@ -976,8 +984,12 @@ class Agent:
                             # counted into ``cur_iter``
                             continue
 
-                # Update iteration count after each round of reasoning-acting
-                self.state.cur_iter += 1
+                        # Existing awaiting calls may remain even when this
+                        # Acting pass emits no new HITL event (for example,
+                        # when only one of two ASKING calls was confirmed).
+                        # Count the round only after every tool call has a
+                        # matching result.
+                        self._count_iteration_if_complete()
 
         except asyncio.CancelledError:
             # Handle the CancelledError within the _reply_impl for the
@@ -3015,6 +3027,43 @@ class Agent:
         if last_msg.role == "assistant" and last_msg.name == self.name:
             return last_msg
         return None
+
+    def _has_unfinished_tool_calls(self) -> bool:
+        """Check for tool calls without results in the current reply."""
+        if len(self.state.context) == 0:
+            return False
+
+        last_msg = self.state.context[-1]
+        if not (
+            last_msg.role == "assistant"
+            and last_msg.name == self.name
+            and last_msg.id == self.state.reply_id
+        ):
+            return False
+
+        finished_ids = {
+            block.id for block in last_msg.get_content_blocks("tool_result")
+        }
+        return any(
+            block.id not in finished_ids
+            for block in last_msg.get_content_blocks("tool_call")
+        )
+
+    def _count_iteration_if_complete(
+        self,
+        final_msg: Msg | None = None,
+    ) -> None:
+        """Count a completed non-terminal reasoning-acting iteration."""
+        if self._has_unfinished_tool_calls():
+            return
+
+        if (
+            final_msg is not None
+            and self.state.reply_context.structured_schema is None
+        ):
+            return
+
+        self.state.cur_iter += 1
 
     def _next_action(
         self,
