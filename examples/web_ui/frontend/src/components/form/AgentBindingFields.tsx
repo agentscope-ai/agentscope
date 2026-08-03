@@ -1,11 +1,14 @@
-import { PlusCircle, Search, SearchX } from 'lucide-react';
+import { PlusCircle, Search, SearchX, Store } from 'lucide-react';
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import type { MCPView, SkillView } from '@/api';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar.tsx';
+import { Button } from '@/components/ui/button.tsx';
 import { Checkbox } from '@/components/ui/checkbox.tsx';
 import {
 	Empty,
+	EmptyContent,
 	EmptyDescription,
 	EmptyHeader,
 	EmptyMedia,
@@ -55,6 +58,7 @@ export function AgentBindingFields({ kind, values, onChange }: Props) {
 	const { mcps, loading: mcpsLoading } = useMCPs();
 	const { skills, loading: skillsLoading } = useSkills();
 
+	const navigate = useNavigate();
 	const [search, setSearch] = useState('');
 
 	const isMcp = kind === 'mcp_ids';
@@ -84,15 +88,17 @@ export function AgentBindingFields({ kind, values, onChange }: Props) {
 			<p className="text-muted-foreground text-sm">
 				{t(`agent-form.bindings.${i18n}.description`)}
 			</p>
+			{/* Leading icon, matching the hub pages these lists are picked
+			    from. */}
 			<InputGroup>
+				<InputGroupAddon align="inline-start">
+					<Search />
+				</InputGroupAddon>
 				<InputGroupInput
 					placeholder={t(`agent-form.bindings.${i18n}.searchPlaceholder`)}
 					value={search}
 					onChange={(e) => setSearch(e.target.value)}
 				/>
-				<InputGroupAddon align="inline-end">
-					<Search />
-				</InputGroupAddon>
 			</InputGroup>
 			{loading ? (
 				<div className="flex justify-center py-10">
@@ -115,6 +121,20 @@ export function AgentBindingFields({ kind, values, onChange }: Props) {
 								: t(`agent-form.bindings.${i18n}.empty`)}
 						</EmptyDescription>
 					</EmptyHeader>
+					{/* Only offered when the library is genuinely empty — a
+					    search that found nothing is no reason to leave. */}
+					{!needle && (
+						<EmptyContent>
+							<Button
+								variant="outline"
+								size="sm"
+								onClick={() => navigate(isMcp ? '/mcp' : '/skill')}
+							>
+								<Store />
+								{t(`agent-form.bindings.${i18n}.browseHub`)}
+							</Button>
+						</EmptyContent>
+					)}
 				</Empty>
 			) : (
 				<ItemGroup className="gap-1">

@@ -80,41 +80,63 @@ export const formatDuration = (seconds: number): number => {
  *   badge when, e.g., a tool call sits awaiting user confirmation for hours.
  * - The same reasoning extends past a day: only the leading whole unit is
  *   shown, up to years. Months and years use average lengths, so they are
- *   approximate by construction — fine for "updated 3mo ago", wrong for
+ *   approximate by construction — fine for "updated 3mon ago", wrong for
  *   anything that needs calendar accuracy.
  *
  * @param seconds - The duration in seconds to format
  * @param options.leadingUnitOnly - Drop the trailing seconds from the
  *   minutes case, so `49m33s` reads `49m`. Defaults to `false`, keeping the
  *   two-segment form the elapsed-time badges rely on.
- * @returns Formatted string (e.g., "45s", "2min30s", "3h", "5d", "2y")
+ * @param options.units - Suffix per unit. Defaults to the English compact
+ *   set; pass translated ones so the result is not an English tail glued
+ *   onto a localised sentence.
+ * @returns Formatted string (e.g., "45s", "2m30s", "3h", "5d", "2y")
  */
+export interface TimeUnits {
+	s: string;
+	m: string;
+	h: string;
+	d: string;
+	mon: string;
+	y: string;
+}
+
+const DEFAULT_TIME_UNITS: TimeUnits = {
+	s: 's',
+	m: 'm',
+	h: 'h',
+	d: 'd',
+	mon: 'mon',
+	y: 'y',
+};
+
 export const formatTime = (
 	seconds: number,
-	options: { leadingUnitOnly?: boolean } = {},
+	options: { leadingUnitOnly?: boolean; units?: TimeUnits } = {},
 ): string => {
+	const u = options.units ?? DEFAULT_TIME_UNITS;
 	const total = Math.floor(seconds);
 	if (total < 60) {
-		return `${total}s`;
+		return `${total}${u.s}`;
 	}
 	if (total < 3600) {
 		const minutes = Math.floor(total / 60);
 		const remaining = total % 60;
 		if (options.leadingUnitOnly || remaining === 0) {
-			return `${minutes}m`;
+			return `${minutes}${u.m}`;
 		}
-		return `${minutes}m${remaining}s`;
+		return `${minutes}${u.m}${remaining}${u.s}`;
 	}
 	if (total < 86400) {
-		return `${Math.floor(total / 3600)}h`;
+		return `${Math.floor(total / 3600)}${u.h}`;
 	}
 	// 30.44 and 365.25 days — the average month and year, so a "1y" does
 	// not flip back to "12mo" for the leap-day stragglers.
 	if (total < 2629746) {
-		return `${Math.floor(total / 86400)}d`;
+		return `${Math.floor(total / 86400)}${u.d}`;
 	}
 	if (total < 31556952) {
-		return `${Math.floor(total / 2629746)}mo`;
+		return `${Math.floor(total / 2629746)}${u.mon}`;
 	}
-	return `${Math.floor(total / 31556952)}y`;
+	return `${Math.floor(total / 31556952)}${u.y}`;
 };

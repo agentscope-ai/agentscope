@@ -50,7 +50,15 @@
 		"mine": "Mine",
 		"my-mcp": "Installed MCPs",
 		"skill-hub": "Skill Hub",
-		"my-skill": "Installed skills"
+		"my-skill": "Installed skills",
+		"timeUnits": {
+			"s": "s",
+			"m": "m",
+			"h": "h",
+			"d": "d",
+			"mon": "mon",
+			"y": "y"
+		}
 	},
 	"error": {
 		"description": "The page hit an unexpected error. You can retry or go back home.",
@@ -214,13 +222,15 @@
 		},
 		"bindings": {
 			"mcps": {
-				"description": "MCP servers the agent's workspace comes with.",
+				"browseHub": "Browse MCP hubs",
+				"description": "MCP servers the agent's workspace comes with, injected once when that workspace is created.",
 				"empty": "Install one from a hub first, then it can be picked here.",
 				"emptyTitle": "No MCP servers yet",
 				"searchPlaceholder": "Search MCP servers"
 			},
 			"skills": {
-				"description": "Skills the agent's workspace comes with.",
+				"browseHub": "Browse skill hubs",
+				"description": "Skills the agent's workspace comes with, injected once when that workspace is created.",
 				"empty": "Install one from a hub first, then it can be picked here.",
 				"emptyTitle": "No skills yet",
 				"searchPlaceholder": "Search skills"

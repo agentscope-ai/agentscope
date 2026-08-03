@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 
 import { hubApi } from '@/api';
 import type { HubInfo, MCPCard, MCPView } from '@/api';
+import { DeleteDialog } from '@/components/dialog/DeleteDialog.tsx';
 import { InstallMCPDialog } from '@/components/dialog/InstallMCPDialog.tsx';
 import { ResourceDetailDrawer } from '@/components/drawer/ResourceDetailDrawer.tsx';
 import { LoadMore } from '@/components/hub/LoadMore.tsx';
@@ -46,6 +47,7 @@ import { useMCPHubCards } from '@/hooks/useMCPHubCards.ts';
 import { useMCPHubs } from '@/hooks/useMCPHubs.ts';
 import { useMCPs } from '@/hooks/useMCPs.ts';
 import { useResourceDrawer } from '@/hooks/useResourceDrawer.ts';
+import { useTimeUnits } from '@/hooks/useTimeUnits.ts';
 import { useTranslation } from '@/i18n/useI18n';
 import { formatTime } from '@/utils/common';
 
@@ -87,6 +89,7 @@ interface CardItemProps {
 
 function CardItem({ card, installed, now, onInstall, onOpen }: CardItemProps) {
 	const { t } = useTranslation();
+	const units = useTimeUnits();
 
 	return (
 		<Item className="cursor-pointer hover:bg-accent/50" onClick={onOpen}>
@@ -136,6 +139,7 @@ function CardItem({ card, installed, now, onInstall, onOpen }: CardItemProps) {
 							: t('skill.updatedAgo', {
 									ago: formatTime(now - card.updated_at, {
 										leadingUnitOnly: true,
+										units,
 									}),
 								})
 						: null}
@@ -320,6 +324,7 @@ interface MinePanelProps {
 }
 
 function MinePanel({ mcps, loading, onEdit, onRemove }: MinePanelProps) {
+	const [deleteTarget, setDeleteTarget] = useState<MCPView | null>(null);
 	const { t } = useTranslation();
 	const [query, setQuery] = useState('');
 
@@ -448,7 +453,7 @@ function MinePanel({ mcps, loading, onEdit, onRemove }: MinePanelProps) {
 										size="icon-sm"
 										variant="ghost"
 										className="text-muted-foreground"
-										onClick={() => onRemove(mcp.id)}
+										onClick={() => setDeleteTarget(mcp)}
 										title={t('common.delete')}
 									>
 										<Trash2 />
@@ -459,6 +464,20 @@ function MinePanel({ mcps, loading, onEdit, onRemove }: MinePanelProps) {
 					))}
 				</ItemGroup>
 			)}
+			<DeleteDialog
+				open={deleteTarget !== null}
+				onOpenChange={(open) => {
+					if (!open) setDeleteTarget(null);
+				}}
+				title={t('common.deleteTitle', {
+					entity: t('dialog-mcp-delete.entity'),
+					name: deleteTarget?.display_name || deleteTarget?.name || '',
+				})}
+				description={t('common.deleteDescription')}
+				onConfirm={async () => {
+					if (deleteTarget) await onRemove(deleteTarget.id);
+				}}
+			/>
 		</ResourcePanel>
 	);
 }
