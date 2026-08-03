@@ -221,6 +221,7 @@
 			}
 		},
 		"bindings": {
+			"alreadySeeded": "This agent already has a workspace — changes apply to new ones only.",
 			"mcps": {
 				"browseHub": "Browse MCP hubs",
 				"description": "MCP servers the agent's workspace comes with, injected once when that workspace is created.",

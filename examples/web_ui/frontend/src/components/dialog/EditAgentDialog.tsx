@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/dialog';
 import { useAgents } from '@/hooks/useAgents';
 import { useAgentSchema } from '@/hooks/useAgentSchema';
+import { useSessions } from '@/hooks/useSessions';
 import { formatApiErrorForAlert } from '@/lib/api-error';
 
 interface Props {
@@ -36,6 +37,9 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 	const { update } = useAgents();
 	const { t } = useTranslation();
 	const { schema } = useAgentSchema();
+	// A session implies the workspace has booted, which is what
+	// freezes the seed list.
+	const { sessions } = useSessions(open ? agent.id : null);
 	const [submitting, setSubmitting] = useState(false);
 	const [values, setValues] = useState<AgentFormValues | null>(null);
 	const [bindings, setBindings] = useState<AgentBindings>({
@@ -127,6 +131,7 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 						onChange={handleChange}
 						bindings={bindings}
 						onBindingsChange={setBindings}
+						hasWorkspace={sessions.length > 0}
 					/>
 				) : (
 					<p className="text-muted-foreground text-sm">{t('common.loading')}</p>

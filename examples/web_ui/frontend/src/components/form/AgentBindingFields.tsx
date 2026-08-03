@@ -1,8 +1,9 @@
-import { PlusCircle, Search, SearchX, Store } from 'lucide-react';
+import { CircleAlert, PlusCircle, Search, SearchX, Store } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import type { MCPView, SkillView } from '@/api';
+import { Alert, AlertDescription } from '@/components/ui/alert.tsx';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Checkbox } from '@/components/ui/checkbox.tsx';
@@ -40,6 +41,12 @@ interface Props {
 	kind: AgentBindingKind;
 	values: AgentBindings;
 	onChange: (next: AgentBindings) => void;
+	/**
+	 * Whether this agent already has a workspace, in which case editing
+	 * the list changes nothing about it — seeding happens once, at
+	 * creation. Left `false` on the create form, where it cannot apply.
+	 */
+	hasWorkspace?: boolean;
 }
 
 /**
@@ -53,7 +60,7 @@ interface Props {
  * library, cheap, and prefetching the hidden tab means switching to it
  * does not flash a spinner.
  */
-export function AgentBindingFields({ kind, values, onChange }: Props) {
+export function AgentBindingFields({ kind, values, onChange, hasWorkspace = false }: Props) {
 	const { t } = useTranslation();
 	const { mcps, loading: mcpsLoading } = useMCPs();
 	const { skills, loading: skillsLoading } = useSkills();
@@ -88,6 +95,12 @@ export function AgentBindingFields({ kind, values, onChange }: Props) {
 			<p className="text-muted-foreground text-sm">
 				{t(`agent-form.bindings.${i18n}.description`)}
 			</p>
+			{hasWorkspace && (
+				<Alert>
+					<CircleAlert />
+					<AlertDescription>{t('agent-form.bindings.alreadySeeded')}</AlertDescription>
+				</Alert>
+			)}
 			{/* Leading icon, matching the hub pages these lists are picked
 			    from. */}
 			<InputGroup>

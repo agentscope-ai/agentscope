@@ -15,6 +15,8 @@ interface Props {
 	onChange: (section: AgentSection, key: string, value: SchemaFormValue) => void;
 	bindings: AgentBindings;
 	onBindingsChange: (next: AgentBindings) => void;
+	/** Passed through — see {@link AgentBindingFields}. */
+	hasWorkspace?: boolean;
 }
 
 /**
@@ -25,7 +27,14 @@ interface Props {
  * the two picker lists get their own tabs rather than being appended to
  * an even longer scroll.
  */
-export function AgentFormTabs({ schema, values, onChange, bindings, onBindingsChange }: Props) {
+export function AgentFormTabs({
+	schema,
+	values,
+	onChange,
+	bindings,
+	onBindingsChange,
+	hasWorkspace = false,
+}: Props) {
 	const { t } = useTranslation();
 
 	return (
@@ -58,6 +67,7 @@ export function AgentFormTabs({ schema, values, onChange, bindings, onBindingsCh
 						kind="mcp_ids"
 						values={bindings}
 						onChange={onBindingsChange}
+						hasWorkspace={hasWorkspace}
 					/>
 				</TabsContent>
 				<TabsContent value="skills">
@@ -65,6 +75,7 @@ export function AgentFormTabs({ schema, values, onChange, bindings, onBindingsCh
 						kind="skill_ids"
 						values={bindings}
 						onChange={onBindingsChange}
+						hasWorkspace={hasWorkspace}
 					/>
 				</TabsContent>
 			</div>

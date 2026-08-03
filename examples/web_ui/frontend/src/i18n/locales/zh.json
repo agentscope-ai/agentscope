@@ -221,6 +221,7 @@
 			}
 		},
 		"bindings": {
+			"alreadySeeded": "该智能体已有工作区，改动只对新工作区生效。",
 			"mcps": {
 				"browseHub": "去 MCP 中心看看",
 				"description": "智能体工作区自带的 MCP 服务，只在创建工作区时一次性注入。",
