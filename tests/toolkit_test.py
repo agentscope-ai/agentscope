@@ -10,6 +10,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString
 
+from agentscope.mcp import HttpMCPConfig, MCPClient
 from agentscope.state import AgentState
 from agentscope.message import (
     TextBlock,
@@ -1364,6 +1365,28 @@ The tool instructions are a collection of suggestions, rules and notifications a
                 "state": "success",
             },
         )
+
+    async def test_broken_mcp_is_skipped_not_fatal(self) -> None:
+        """One unreachable MCP must not take the whole reply down with
+        it: an expired token or a server that is simply down would
+        otherwise end the conversation instead of just withdrawing that
+        server's tools."""
+        toolkit = Toolkit(
+            mcps=[
+                MCPClient(
+                    name="broken",
+                    is_stateful=False,
+                    # Nothing listens on port 1; the connection is
+                    # refused rather than hanging.
+                    mcp_config=HttpMCPConfig(
+                        url="http://127.0.0.1:1/mcp",
+                        timeout=1.0,
+                    ),
+                ),
+            ],
+        )
+
+        self.assertEqual(await toolkit.get_tool_schemas(), [])
 
 
 class RemoveTitleFieldTest(TestCase):

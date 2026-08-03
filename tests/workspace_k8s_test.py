@@ -195,7 +195,10 @@ class TestK8sWorkspaceHappyPath(IsolatedAsyncioTestCase):
             is_stateful=True,
             mcp_config=StdioMCPConfig(
                 command="uvx",
-                args=["mcp-server-time"],
+                # Constrained because the client is pinned to mcp<2:
+                # unpinned, uvx now resolves an mcp 2.x server, whose
+                # handshake this client cannot complete.
+                args=["--with", "mcp<2.0.0", "mcp-server-time"],
             ),
         )
         self.assertListEqual(await ws.list_mcps(), [])

@@ -15,6 +15,7 @@ from ._service import (
     SessionService,
 )
 from ._types import AgentMiddlewareFactory, AgentToolFactory
+from .hub import MCPHubBase, SkillHubBase
 from .message_bus import MessageBus
 from .rag.blob_store import BlobStoreBase
 from .rag.knowledge_base_manager import KnowledgeBaseManagerBase
@@ -313,3 +314,33 @@ async def get_knowledge_parsers(
             ),
         )
     return parsers
+
+
+async def get_mcp_hubs(request: Request) -> dict[str, MCPHubBase]:
+    """Return the registered MCP hubs, keyed by hub id.
+
+    Args:
+        request (`Request`):
+            The incoming FastAPI request.
+
+    Returns:
+        `dict[str, MCPHubBase]`:
+            The hubs stored in ``app.state.mcp_hubs``, empty when none
+            were passed to ``create_app``.
+    """
+    return getattr(request.app.state, "mcp_hubs", {})
+
+
+async def get_skill_hubs(request: Request) -> dict[str, SkillHubBase]:
+    """Return the registered skill hubs, keyed by hub id.
+
+    Args:
+        request (`Request`):
+            The incoming FastAPI request.
+
+    Returns:
+        `dict[str, SkillHubBase]`:
+            The hubs stored in ``app.state.skill_hubs``, empty when none
+            were passed to ``create_app``.
+    """
+    return getattr(request.app.state, "skill_hubs", {})

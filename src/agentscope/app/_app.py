@@ -4,6 +4,7 @@ from typing import Type, TYPE_CHECKING, Any
 
 from ._lifespan import lifespan
 from .access import DenyAllResourceAccessPolicy, ResourceAccessPolicyBase
+from .hub import HubBase, HubError, MCPHubBase, SkillHubBase
 from .rag.blob_store import BlobStoreBase, LocalBlobStore
 from .rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from .workspace_manager import WorkspaceManagerBase
@@ -11,11 +12,14 @@ from ._router import (
     agent_router,
     chat_router,
     credential_router,
+    hub_router,
     knowledge_base_router,
+    mcp_router,
     model_router,
     tts_model_router,
     schedule_router,
     session_router,
+    skill_router,
     workspace_router,
 )
 from ._types import AgentMiddlewareFactory, AgentToolFactory, SubAgentTemplate
@@ -40,6 +44,35 @@ else:
     FastAPIMiddleware = Any
 
 
+def _index_hubs(hubs: list | None, kind: str) -> dict:
+    """Key the hubs by id, rejecting duplicates.
+
+    Args:
+        hubs (`list | None`):
+            The hubs passed to :func:`create_app`.
+        kind (`str`):
+            The hub kind, used in the error message.
+
+    Returns:
+        `dict`:
+            The hubs keyed by :attr:`HubBase.hub_id`.
+
+    Raises:
+        `ValueError`:
+            When two hubs of the same kind share an id, which would make
+            them indistinguishable in the routes.
+    """
+    indexed: dict[str, HubBase] = {}
+    for hub in hubs or []:
+        if hub.hub_id in indexed:
+            raise ValueError(
+                f"Duplicate {kind} hub id {hub.hub_id!r}: hub ids must be "
+                f"unique so routes address exactly one hub.",
+            )
+        indexed[hub.hub_id] = hub
+    return indexed
+
+
 def create_app(
     storage: StorageBase,
     message_bus: MessageBus,
@@ -49,6 +82,8 @@ def create_app(
     knowledge_chunker: ChunkerBase | None = None,
     blob_store: BlobStoreBase | None = None,
     enable_index_worker: bool = True,
+    mcp_hubs: list[MCPHubBase] | None = None,
+    skill_hubs: list[SkillHubBase] | None = None,
     *,
     extra_credentials: list[Type[CredentialBase]] | None = None,
     extra_middlewares: list[FastAPIMiddleware] | None = None,
@@ -143,6 +178,10 @@ def create_app(
             process is expected to consume tasks from the message
             bus.  No effect when ``knowledge_base_manager`` is
             ``None``.
+        mcp_hubs (`list[MCPHubBase] | None`, optional):
+            The MCP hubs that provide MCPs.
+        skill_hubs (`list[SkillHubBase] | None`, optional):
+            The SkillHubs that provide skills.
         extra_credentials (`list[Type[CredentialBase]] | None`, optional):
             Additional :class:`~agentscope.credential.CredentialBase`
             subclasses to register before the app starts.  Equivalent to
@@ -194,7 +233,8 @@ def create_app(
     Returns:
         `FastAPI`: A fully configured application ready to serve requests.
     """
-    from fastapi import FastAPI
+    from fastapi import FastAPI, Request, status
+    from fastapi.responses import JSONResponse
 
     # Register any user-supplied credential types before the app starts
     for cls in extra_credentials or []:
@@ -213,6 +253,8 @@ def create_app(
     app.state.resource_access_policy = (
         resource_access_policy or DenyAllResourceAccessPolicy()
     )
+    app.state.mcp_hubs = _index_hubs(mcp_hubs, "MCP")
+    app.state.skill_hubs = _index_hubs(skill_hubs, "skill")
 
     # Parser / chunker / blob-store defaults only make sense when the
     # KB feature is actually enabled.  When ``knowledge_base_manager`` is
@@ -258,14 +300,35 @@ def create_app(
         agent_router,
         chat_router,
         credential_router,
+        hub_router,
         knowledge_base_router,
+        mcp_router,
         schedule_router,
         session_router,
+        skill_router,
         workspace_router,
         model_router,
         tts_model_router,
     ):
         app.include_router(router)
+
+    @app.exception_handler(HubError)
+    async def _on_hub_error(_: Request, exc: HubError) -> JSONResponse:
+        """Report an upstream registry failure as a gateway error.
+
+        A hub is a third party we proxy, so its 429 or 500 is not this
+        service's fault and must not read as one — a 500 here would send
+        the user hunting for a bug on our side.
+        """
+        status_code = (
+            status.HTTP_503_SERVICE_UNAVAILABLE
+            if exc.status_code == 429
+            else status.HTTP_502_BAD_GATEWAY
+        )
+        return JSONResponse(
+            status_code=status_code,
+            content={"detail": str(exc)},
+        )
 
     # Optional extra middlewares
     for middleware in extra_middlewares or []:

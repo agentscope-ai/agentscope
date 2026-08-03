@@ -12,10 +12,12 @@ from ._model import (
     KnowledgeBaseRecord,
     KnowledgeDocumentRecord,
     KnowledgeDocumentStatus,
+    MCPRecord,
     ScheduleRecord,
     SessionRecord,
     SessionConfig,
     SessionSource,
+    SkillRecord,
     TeamRecord,
 )
 from ...credential import CredentialBase
@@ -103,6 +105,193 @@ class StorageBase(ABC):
                 The user id.
             credential_id (`str`):
                 The credential id.
+
+        Returns:
+            `bool`:
+                True if deleted, False if not found.
+        """
+
+    @abstractmethod
+    async def upsert_mcp(self, user_id: str, mcp_record: MCPRecord) -> str:
+        """Create or update an installed-MCP record.
+
+        The record's ``client.name`` is unique per user — the workspace
+        relation is derived by joining on it — so writing a name another
+        record already holds is an error rather than an overwrite.
+
+        Args:
+            user_id (`str`):
+                The user id.
+            mcp_record (`MCPRecord`):
+                The record to write. Its ``id`` decides create vs update.
+
+        Returns:
+            `str`:
+                The MCP record id.
+
+        Raises:
+            `ValueError`:
+                When another record of this user already uses the name.
+        """
+
+    @abstractmethod
+    async def list_mcps(self, user_id: str) -> list[MCPRecord]:
+        """List every MCP a user has installed, enabled or not.
+
+        Args:
+            user_id (`str`):
+                The user id.
+
+        Returns:
+            `list[MCPRecord]`:
+                All installed-MCP records for the user.
+        """
+
+    @abstractmethod
+    async def get_mcp(self, user_id: str, mcp_id: str) -> MCPRecord | None:
+        """Fetch a single installed-MCP record by id.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            mcp_id (`str`):
+                The record id.
+
+        Returns:
+            `MCPRecord | None`:
+                The record, or ``None`` if not found.
+        """
+
+    @abstractmethod
+    async def get_mcp_by_name(
+        self,
+        user_id: str,
+        name: str,
+    ) -> MCPRecord | None:
+        """Fetch an installed-MCP record by its MCP name.
+
+        This is the lookup the workspace relation is derived through —
+        a workspace holds names, not record ids.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            name (`str`):
+                The MCP name, i.e. ``record.client.name``.
+
+        Returns:
+            `MCPRecord | None`:
+                The record, or ``None`` if the user has no MCP so named.
+        """
+
+    @abstractmethod
+    async def delete_mcp(self, user_id: str, mcp_id: str) -> bool:
+        """Delete an installed-MCP record.
+
+        Args:
+            user_id (`str`):
+                The user id.
+            mcp_id (`str`):
+                The record id.
+
+        Returns:
+            `bool`:
+                True if deleted, False if not found.
+        """
+
+    @abstractmethod
+    async def upsert_skill(
+        self,
+        user_id: str,
+        skill_record: SkillRecord,
+    ) -> str:
+        """Create or update an installed-skill record.
+
+        The record's ``name`` is unique per user, for the same reason
+        MCP names are: a workspace refers to a skill by name.
+
+        Args:
+            user_id (`str`):
+                The user id.
+            skill_record (`SkillRecord`):
+                The record to write. Its ``id`` decides create vs update.
+
+        Returns:
+            `str`:
+                The skill record id.
+
+        Raises:
+            `ValueError`:
+                When another record of this user already uses the name.
+        """
+
+    @abstractmethod
+    async def list_skills(self, user_id: str) -> list[SkillRecord]:
+        """List every skill a user has installed, enabled or not.
+
+        Named apart from the workspace's ``list_skills`` because these
+        are library records, not skills present in any workspace.
+
+        Args:
+            user_id (`str`):
+                The user id.
+
+        Returns:
+            `list[SkillRecord]`:
+                All installed-skill records for the user.
+        """
+
+    @abstractmethod
+    async def get_skill(
+        self,
+        user_id: str,
+        skill_id: str,
+    ) -> SkillRecord | None:
+        """Fetch a single installed-skill record by id.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            skill_id (`str`):
+                The record id.
+
+        Returns:
+            `SkillRecord | None`:
+                The record, or ``None`` if not found.
+        """
+
+    @abstractmethod
+    async def get_skill_by_name(
+        self,
+        user_id: str,
+        name: str,
+    ) -> SkillRecord | None:
+        """Fetch an installed-skill record by its skill name.
+
+        Args:
+            user_id (`str`):
+                The owner user id.
+            name (`str`):
+                The skill name.
+
+        Returns:
+            `SkillRecord | None`:
+                The record, or ``None`` if the user has none so named.
+        """
+
+    @abstractmethod
+    async def delete_skill(
+        self,
+        user_id: str,
+        skill_id: str,
+    ) -> bool:
+        """Delete an installed-skill record.
+
+        Args:
+            user_id (`str`):
+                The user id.
+            skill_id (`str`):
+                The record id.
 
         Returns:
             `bool`:

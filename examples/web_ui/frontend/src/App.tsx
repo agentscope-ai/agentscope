@@ -3,6 +3,8 @@ import { useMemo, useState } from 'react';
 import { createBrowserRouter, Navigate, RouterProvider, useNavigate } from 'react-router-dom';
 import { Toaster } from 'sonner';
 
+import { MCPHubPage } from './pages/mcp';
+import { SkillHubPage } from './pages/skill';
 import { RouteError } from '@/components/error/RouteError';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { buildChatTour } from '@/components/tour/chatTourSteps';
@@ -46,6 +48,10 @@ const router = createBrowserRouter([
 					},
 					{ path: '/schedule', element: <SchedulePage /> },
 					{ path: '/credential', element: <CredentialPage /> },
+					{ path: '/mcp', element: <MCPHubPage /> },
+					{ path: '/mcp/:hubId', element: <MCPHubPage /> },
+					{ path: '/skill', element: <SkillHubPage /> },
+					{ path: '/skill/:hubId', element: <SkillHubPage /> },
 					{ path: '/knowledge', element: <KnowledgePage /> },
 					{ path: '/knowledge/:kbId', element: <KnowledgePage /> },
 				],

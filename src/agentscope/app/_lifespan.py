@@ -60,6 +60,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if blob_store is not None:
             await stack.enter_async_context(blob_store)
 
+        # Hubs live as long as the process so each can hold one client
+        # to its registry, instead of re-handshaking per catalog page.
+        for hub in (
+            *app.state.mcp_hubs.values(),
+            *app.state.skill_hubs.values(),
+        ):
+            await stack.enter_async_context(hub)
+
         bg_manager = await stack.enter_async_context(
             BackgroundTaskManager(message_bus=message_bus),
         )

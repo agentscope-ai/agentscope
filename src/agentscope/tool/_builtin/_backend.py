@@ -42,7 +42,7 @@ import shutil
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from types import ModuleType
-from typing import Any
+from typing import Any, AsyncIterator
 
 import aiofiles
 
@@ -307,6 +307,29 @@ class BackendBase(ABC):
             data (`bytes`):
                 The raw bytes to write.
         """
+
+    async def write_stream(
+        self,
+        path: str,
+        stream: AsyncIterator[bytes],
+    ) -> None:
+        """Write a byte stream to ``path``, creating parent directories.
+
+        The default buffers the whole stream and delegates to
+        :meth:`write_file`, so peak memory is the payload size; only
+        backends that override this (``LocalBackend``,
+        ``BubblewrapBackend``, ``K8sBackend``) are constant-memory.
+        Callers handling untrusted input must cap the payload
+        regardless.
+
+        Args:
+            path (`str`):
+                Destination path inside the backend's environment.
+            stream (`AsyncIterator[bytes]`):
+                The chunks to write, in order.
+        """
+        chunks = [chunk async for chunk in stream]
+        await self.write_file(path, b"".join(chunks))
 
     # ── derived filesystem ops (shell-based defaults) ──────────────
 
@@ -633,6 +656,26 @@ class LocalBackend(BackendBase):
             os.makedirs(parent, exist_ok=True)
         async with aiofiles.open(path, mode="wb") as f:
             await f.write(data)
+
+    async def write_stream(
+        self,
+        path: str,
+        stream: AsyncIterator[bytes],
+    ) -> None:
+        """Write a byte stream to a local file, chunk by chunk.
+
+        Args:
+            path (`str`):
+                Destination path on the local filesystem.
+            stream (`AsyncIterator[bytes]`):
+                The chunks to write, in order.
+        """
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        async with aiofiles.open(path, mode="wb") as f:
+            async for chunk in stream:
+                await f.write(chunk)
 
     async def getcwd(self) -> str:
         """Return the host process's current working directory.
