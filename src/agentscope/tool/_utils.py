@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The tool module utils."""
+
 import inspect
 import json
 import math
@@ -70,6 +71,7 @@ def _extract_func_description(docstring: str) -> str:
     return "\n".join(descriptions)
 
 
+# fmt: off
 def _extract_input_schema(
     tool_func: Callable,
     include_var_positional: bool = False,
@@ -151,6 +153,7 @@ def _extract_input_schema(
                     else param.default,
                 ),
             )
+# fmt: on
 
     base_model = create_model(
         "_StructuredOutputDynamicClass",
@@ -237,7 +240,10 @@ def _coerce_value(
         alternatives = prop_schema.get(comb_key)
         if isinstance(alternatives, list):
             return _coerce_composite(
-                value, alternatives, defs, param,
+                value,
+                alternatives,
+                defs,
+                param,
             )
 
     expected_type = prop_schema.get("type")
@@ -419,14 +425,13 @@ def _coerce_nested(
             The value with nested contents coerced.
     """
     # Coerce array items
-    if (
-        isinstance(value, list)
-        and isinstance(prop_schema.get("items"), dict)
-    ):
+    if isinstance(value, list) and isinstance(prop_schema.get("items"), dict):
         item_schema = prop_schema["items"]
         return [
             _coerce_value(
-                item, item_schema, defs,
+                item,
+                item_schema,
+                defs,
                 param=f"{param}[{i}]",
             )
             for i, item in enumerate(value)
@@ -447,7 +452,10 @@ def _coerce_nested(
             for key, val in result.items():
                 if key not in known:
                     result[key] = _coerce_value(
-                        val, addl, defs, param=f"{param}.{key}",
+                        val,
+                        addl,
+                        defs,
+                        param=f"{param}.{key}",
                     )
         return result
 
@@ -542,7 +550,8 @@ def _value_matches_type(value: Any, expected_type: str) -> bool:
         return isinstance(value, int) and not isinstance(value, bool)
     if expected_type == "number":
         return isinstance(value, (int, float)) and not isinstance(
-            value, bool,
+            value,
+            bool,
         )
     if expected_type == "boolean":
         return isinstance(value, bool)

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The toolkit class for tool calls in AgentScope."""
+
 import asyncio
 import inspect
 from collections import OrderedDict
@@ -39,7 +40,6 @@ from ..message import (
 from ._tool_group import ToolGroup
 from .._logging import logger
 from ..state import AgentState
-
 
 # pylint: disable=line-too-long
 DEFAULT_META_TOOL_RESPONSE_TEMPLATE = """{% if groups | length == 0 %}All tool groups are currently deactivated.{% else %}The currently activated tool group(s): {{ groups | map(attribute='name') | join(', ') }}.{% if groups | selectattr('instructions', 'ne', None) | list | length > 0 %}
@@ -89,8 +89,9 @@ class Toolkit:
     def __init__(
         self,
         tools: list[ToolBase] | None = None,
-        skills_or_loaders: Sequence[str | Skill | SkillLoaderBase]
-        | None = None,
+        skills_or_loaders: (
+            Sequence[str | Skill | SkillLoaderBase] | None
+        ) = None,
         mcps: list[MCPClient] | None = None,
         tool_groups: list[ToolGroup] | None = None,
         meta_tool_response_template: str = DEFAULT_META_TOOL_RESPONSE_TEMPLATE,

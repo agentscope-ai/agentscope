@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Regression tests for schema-driven ToolBase argument coercion."""
+
 import math
 import unittest
 from typing import Any, Optional
@@ -59,7 +60,11 @@ class ToolCoercionTest(unittest.TestCase):
                 )
 
         unchanged = (
-            "42.9", "not_a_number", "Infinity", "-Infinity", 42.9,
+            "42.9",
+            "not_a_number",
+            "Infinity",
+            "-Infinity",
+            42.9,
         )
         for value in unchanged:
             with self.subTest(value=value):
@@ -189,12 +194,14 @@ class ToolCoercionTest(unittest.TestCase):
             },
         )
         matched = _coerce_tool_args(
-            {"item": {"kind": "b", "y": "42"}}, schema,
+            {"item": {"kind": "b", "y": "42"}},
+            schema,
         )
         self.assertEqual(matched["item"], {"kind": "b", "y": 42})
         unknown = {"kind": "c", "x": "1", "extra": "2"}
         self.assertEqual(
-            _coerce_tool_args({"item": unknown}, schema)["item"], unknown,
+            _coerce_tool_args({"item": unknown}, schema)["item"],
+            unknown,
         )
 
     def test_dynamic_maps_and_passthrough_are_preserved(self) -> None:
@@ -239,7 +246,8 @@ class ToolCoercionTest(unittest.TestCase):
         self.assertEqual(_coerce_tool_args(once, schema), once)
         self.assertEqual(_coerce_tool_args({}, schema), {})
         self.assertEqual(
-            _coerce_tool_args({"x": "1"}, {"type": "object"}), {"x": "1"},
+            _coerce_tool_args({"x": "1"}, {"type": "object"}),
+            {"x": "1"},
         )
 
 
@@ -312,7 +320,9 @@ class ToolCoercionIntegrationTest(unittest.IsolatedAsyncioTestCase):
 
         toolkit = Toolkit(tools=[OverrideTool()])
         tool_call = ToolCallBlock(
-            id="call_1", name="override_tool", input='{"count": "42"}',
+            id="call_1",
+            name="override_tool",
+            input='{"count": "42"}',
         )
         state = AgentState(session_id="s1", agent_id="a1")
         async for _ in toolkit.call_tool(tool_call, state):

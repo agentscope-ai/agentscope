@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=unused-argument
 """The tool protocol in agentscope."""
+
 import inspect
 import os
 from abc import abstractmethod, ABC
