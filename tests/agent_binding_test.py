@@ -160,12 +160,14 @@ class AgentBindingTest(IsolatedAsyncioTestCase):
         self._client = self.enterContext(TestClient(app))
 
         self._mcp_id = self._client.post(
-            "/hub/mcp/fake/cards/echo/install",
+            "/hub/mcp/fake/install",
+            params={"card_id": "echo"},
             json={},
             headers=HEADERS,
         ).json()["id"]
         self._skill_id = self._client.post(
-            "/hub/skill/fakeskills/cards/gifgrep/install",
+            "/hub/skill/fakeskills/install",
+            params={"card_id": "gifgrep"},
             json={},
             headers=HEADERS,
         ).json()["id"]

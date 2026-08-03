@@ -112,11 +112,18 @@ async def list_mcp_cards(
     return await hub.list_mcps(user_id, q=q, cursor=cursor, limit=limit)
 
 
-@hub_router.get("/mcp/{hub_id}/cards/{card_id}")
+@hub_router.get("/mcp/{hub_id}/card")
 async def get_mcp_card(
     hub_id: str,
-    card_id: str,
     *,
+    card_id: str = Query(
+        description=(
+            "The card's id on this hub. A query parameter rather than "
+            "a path segment: card ids are opaque strings minted by the "
+            "hub, and one containing ``/`` cannot survive a path "
+            "parameter — the server decodes ``%2F`` before routing."
+        ),
+    ),
     user_id: str = Depends(get_current_user_id),
     hubs: dict[str, MCPHubBase] = Depends(get_mcp_hubs),
 ) -> MCPCard:
@@ -132,14 +139,21 @@ async def get_mcp_card(
 
 
 @hub_router.post(
-    "/mcp/{hub_id}/cards/{card_id}/install",
+    "/mcp/{hub_id}/install",
     status_code=status.HTTP_201_CREATED,
 )
 async def install_mcp(
     hub_id: str,
-    card_id: str,
     body: InstallMCPRequest,
     *,
+    card_id: str = Query(
+        description=(
+            "The card's id on this hub. A query parameter rather than "
+            "a path segment: card ids are opaque strings minted by the "
+            "hub, and one containing ``/`` cannot survive a path "
+            "parameter — the server decodes ``%2F`` before routing."
+        ),
+    ),
     user_id: str = Depends(get_current_user_id),
     hubs: dict[str, MCPHubBase] = Depends(get_mcp_hubs),
     storage: StorageBase = Depends(get_storage),
@@ -231,11 +245,18 @@ async def list_skill_cards(
     return await hub.list_skills(user_id, q=q, cursor=cursor, limit=limit)
 
 
-@hub_router.get("/skill/{hub_id}/cards/{card_id}")
+@hub_router.get("/skill/{hub_id}/card")
 async def get_skill_card(
     hub_id: str,
-    card_id: str,
     *,
+    card_id: str = Query(
+        description=(
+            "The card's id on this hub. A query parameter rather than "
+            "a path segment: card ids are opaque strings minted by the "
+            "hub, and one containing ``/`` cannot survive a path "
+            "parameter — the server decodes ``%2F`` before routing."
+        ),
+    ),
     user_id: str = Depends(get_current_user_id),
     hubs: dict[str, SkillHubBase] = Depends(get_skill_hubs),
 ) -> SkillCard:
@@ -251,13 +272,20 @@ async def get_skill_card(
 
 
 @hub_router.post(
-    "/skill/{hub_id}/cards/{card_id}/install",
+    "/skill/{hub_id}/install",
     status_code=status.HTTP_201_CREATED,
 )
 async def install_skill(
     hub_id: str,
-    card_id: str,
     *,
+    card_id: str = Query(
+        description=(
+            "The card's id on this hub. A query parameter rather than "
+            "a path segment: card ids are opaque strings minted by the "
+            "hub, and one containing ``/`` cannot survive a path "
+            "parameter — the server decodes ``%2F`` before routing."
+        ),
+    ),
     name: str | None = Query(default=None),
     user_id: str = Depends(get_current_user_id),
     hubs: dict[str, SkillHubBase] = Depends(get_skill_hubs),
