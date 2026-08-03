@@ -1,0 +1,83 @@
+services:
+  redis:
+    image: redis:7-bookworm
+    ports: ["6379:6379"]
+    volumes:
+      - redis-data:/data
+
+  agentscope-service:
+    # build:
+    #   context: ..
+    #   dockerfile: examples/agent_service/Dockerfile
+    image: agentscope-service:latest
+    ports: ["8000:8000"]
+    env_file: .env
+    environment:
+      - REDIS_HOST=redis
+    depends_on: [redis]
+    volumes:
+      # 挂载源码（可编辑模式）
+      - ../src:/app/src:ro
+      - ../examples/agent_service/main.py:/app/main.py:ro
+      - ../pyproject.toml:/app/pyproject.toml:ro
+      - ../README.md:/app/README.md:ro
+      # 工作区数据持久化
+      - workspace-data:/app/workspaces
+      # Docker Socket（支持 Docker 工作区沙箱）
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  webui-backend:
+    image: webui-backend:dev
+    # build:
+    #   context: ../examples/web_ui/backend
+    #   dockerfile: Dockerfile
+    #   # dev：容器内跑 nodemon 热更新开发服务器；prod：删除本行（默认构建到最后的 prod 阶段）
+    #   target: dev
+    # 仅容器网络内可访问，统一由 nginx 网关代理
+    expose: ["3000"]
+    environment:
+      - AGENTSCOPE_API_URL=http://agentscope-service:8000
+    depends_on: [agentscope-service]
+    volumes:
+      # 挂载源码
+      - ../examples/web_ui/backend/src:/app/src
+      - ../examples/web_ui/backend/package.json:/app/package.json
+      - ../examples/web_ui/backend/tsconfig.json:/app/tsconfig.json
+
+  webui-frontend:
+    image: webui-frontend:dev
+    # build:
+    #   context: ../examples/web_ui/frontend
+    #   dockerfile: Dockerfile
+    #   # dev：容器内跑 vite dev server（HMR）；prod：删除本行，并将 nginx 的
+    #   # FRONTEND_UPSTREAM 改为 webui-frontend:80
+    #   target: dev
+    #   args:
+    #     # 构建期注入 API 路径前缀（仅 prod 静态构建使用）
+    #     VITE_API_PREFIX: /api
+    # # 仅容器网络内可访问，统一由 nginx 网关代理
+    environment:
+      - VITE_API_BASE_URL=http://agentscope-service:8000
+    expose: ["5173"]
+    depends_on: [webui-backend]
+    volumes:
+      # 挂载源码实现改码即热更；匿名卷保留镜像内 node_modules 不被遮蔽
+      - ../examples/web_ui/frontend:/app
+      - /app/node_modules
+
+  # 反向代理网关：统一入口（http://localhost:80）
+  # /api/* → webui-backend:3000，其余 → 前端（dev:5173 / prod:80）
+  nginx:
+    image: nginx:alpine
+    ports: ["80:80"]
+    environment:
+      # envsubst 模板变量：dev 指向 vite dev server；prod 改为 webui-frontend:80
+      - FRONTEND_UPSTREAM=webui-frontend:5173
+    volumes:
+      # 以模板方式挂载，启动时经 envsubst 渲染为实际配置
+      - ./nginx/nginx.conf:/etc/nginx/templates/default.conf.template:ro
+    depends_on: [webui-frontend, webui-backend]
+
+volumes:
+  redis-data:
+  workspace-data:

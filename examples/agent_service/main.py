@@ -40,8 +40,8 @@ if os.getenv("AMAP_API_KEY"):
     )
 
 storage = RedisStorage(
-    host="localhost",
-    port=6379,
+    host=os.getenv("REDIS_HOST", "localhost"),
+    port=int(os.getenv("REDIS_PORT", "6379")),
 )
 
 vector_store = QdrantStore(location=":memory:")
