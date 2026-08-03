@@ -211,6 +211,25 @@
 				"label": "邀请说明",
 				"placeholder": "简要描述此 Agent 的专长；允许被邀请时必填。"
 			}
+		},
+		"bindings": {
+			"mcps": {
+				"description": "智能体工作区中自带的 MCP 服务。",
+				"empty": "先从中心安装一个，之后就能在这里选。",
+				"emptyTitle": "还没有 MCP 服务",
+				"searchPlaceholder": "搜索 MCP 服务"
+			},
+			"skills": {
+				"description": "智能体工作区中自带的技能。",
+				"empty": "先从中心安装一个，之后就能在这里选。",
+				"emptyTitle": "还没有技能",
+				"searchPlaceholder": "搜索技能"
+			}
+		},
+		"tabs": {
+			"general": "基本配置",
+			"mcps": "自带 MCP",
+			"skills": "自带技能"
 		}
 	},
 	"dialog-agent-edit": {
@@ -607,7 +626,10 @@
 			"emptyTitle": "无结果",
 			"emptyDescription": "没有匹配 “{{query}}” 的结果。"
 		},
-		"loading": "加载中…"
+		"loading": "加载中…",
+		"seedErrors": {
+			"title": "该智能体自带的部分工具没有装上"
+		}
 	},
 	"team-sidebar": {
 		"membersHeading": "成员",

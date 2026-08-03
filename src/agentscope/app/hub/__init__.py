@@ -11,6 +11,7 @@ from ._mcp import (
     MCPHubPage,
 )
 from ._skill import (
+    HubSkillSource,
     SkillArchive,
     SkillHubBase,
     SkillCard,
@@ -25,6 +26,7 @@ __all__ = [
     "MCPHubBase",
     "MCPCard",
     "MCPHubPage",
+    "HubSkillSource",
     "SkillArchive",
     "SkillHubBase",
     "SkillCard",

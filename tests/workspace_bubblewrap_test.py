@@ -1129,8 +1129,9 @@ class _FakeBubblewrapWorkspaceManager(BubblewrapWorkspaceManager):
         workspace_id: str,
         user_id: str,
         agent_id: str,
+        **seeds: Any,
     ) -> Any:
-        del user_id, agent_id
+        del user_id, agent_id, seeds
         return _FakeWorkspace(workspace_id)
 
 

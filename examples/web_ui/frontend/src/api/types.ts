@@ -47,6 +47,14 @@ export interface AgentData {
 	context_config: ContextConfig;
 	react_config: ReActConfig;
 	invite_config: InviteConfig;
+	/**
+	 * Library ids of the MCPs this agent comes with. Seeded into each of
+	 * its workspaces the first time that workspace boots, and never
+	 * again — editing the list only affects workspaces yet to exist.
+	 */
+	mcp_ids: string[];
+	/** Library ids of the skills it comes with. Same seeding. */
+	skill_ids: string[];
 }
 
 export interface AgentView extends RecordBase {
@@ -65,6 +73,8 @@ export interface CreateAgentRequest {
 	context_config?: ContextConfig;
 	react_config?: ReActConfig;
 	invite_config?: InviteConfig;
+	mcp_ids?: string[];
+	skill_ids?: string[];
 }
 
 export interface CreateAgentResponse {
@@ -77,6 +87,8 @@ export interface UpdateAgentRequest {
 	context_config?: ContextConfig;
 	react_config?: ReActConfig;
 	invite_config?: InviteConfig;
+	mcp_ids?: string[];
+	skill_ids?: string[];
 }
 
 export interface AgentListResponse {
@@ -405,6 +417,24 @@ export interface Skill {
 	dir: string;
 	markdown: string;
 	updated_at: number;
+}
+
+/**
+ * Names of the agent's own MCPs / skills that are not in the workspace,
+ * mapped to why. Populated when the workspace was first created: an MCP
+ * that would not connect, a skill whose hub is gone, a binding pointing
+ * at a deleted library record.
+ */
+export type SeedErrors = Record<string, string>;
+
+export interface ListWorkspaceMCPsResponse {
+	mcps: MCPClientStatus[];
+	seed_errors: SeedErrors;
+}
+
+export interface ListWorkspaceSkillsResponse {
+	skills: Skill[];
+	seed_errors: SeedErrors;
 }
 
 /**

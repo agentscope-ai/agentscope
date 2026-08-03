@@ -9,10 +9,11 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 
-import type { MCPClient, MCPClientStatus, MCPView } from '@/api';
+import type { MCPClient, MCPClientStatus, MCPView, SeedErrors as SeedErrorMap } from '@/api';
 import { AddMCPDialog } from '@/components/dialog/AddMCPDialog.tsx';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog.tsx';
 import { PanelEmpty } from '@/components/panel/PanelEmpty';
+import { SeedErrors } from '@/components/panel/SeedErrors';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert.tsx';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar.tsx';
 import { Button } from '@/components/ui/button';
@@ -37,6 +38,8 @@ import { useTranslation } from '@/i18n/useI18n.ts';
 interface McpPanelProps {
 	/** The MCP servers equipped in the workspace. */
 	mcps: MCPClientStatus[];
+	/** What the agent came with but could not be given. */
+	seedErrors?: SeedErrorMap;
 	/** Whether the MCP list is still loading. */
 	loading?: boolean;
 	/**
@@ -196,6 +199,7 @@ function McpRow({ mcp, installed, onDelete }: McpRowProps) {
  */
 export function McpPanel({
 	mcps,
+	seedErrors = {},
 	loading = false,
 	onAdd,
 	onAddFromLibrary,
@@ -217,6 +221,7 @@ export function McpPanel({
 	return (
 		<div className="flex flex-col flex-1 min-h-0 gap-y-2">
 			<span className="text-muted-foreground text-sm">{t('panel.mcp.description')}</span>
+			<SeedErrors errors={seedErrors} />
 			<InputGroup>
 				<InputGroupInput
 					placeholder={t('panel.mcp.searchPlaceholder')}

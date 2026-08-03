@@ -4,18 +4,19 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
 import shlex
-from typing import TYPE_CHECKING, Literal
+from datetime import timedelta
+from typing import Any, Literal, Sequence, TYPE_CHECKING
 
 from ..._logging import logger
 from ...mcp import MCPClient
+from ...skill import Skill, SkillLoaderBase, SkillSourceBase
 from .._sandboxed_base import SandboxedWorkspaceBase
 from .._utils import _GATEWAY_BASE_REQUIREMENTS, DEFAULT_WORKSPACE_INSTRUCTIONS
 from ._constants import (
+    BOOTSTRAP_COMMAND_TIMEOUT,
     DEFAULT_GATEWAY_PORT,
     DEFAULT_IMAGE,
-    BOOTSTRAP_COMMAND_TIMEOUT,
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_TIMEOUT,
     GATEWAY_HOME,
@@ -36,7 +37,7 @@ if TYPE_CHECKING:
 class OpenSandboxWorkspace(SandboxedWorkspaceBase):
     """Workspace backed by an OpenSandbox sandbox.
 
-    ``default_mcps`` and ``skill_paths`` are seed-time inputs and are
+    ``default_mcps`` and ``default_skills`` are seed-time inputs and are
     not retained as instance state past :meth:`initialize`.
     """
 
@@ -65,7 +66,11 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
         extra_pip: list[str] | None = None,
         instructions: str = DEFAULT_WORKSPACE_INSTRUCTIONS,
         default_mcps: list[MCPClient] | None = None,
-        skill_paths: list[str] | None = None,
+        default_skills: Sequence[
+            str | Skill | SkillLoaderBase | SkillSourceBase
+        ]
+        | None = None,
+        **kwargs: Any,
     ) -> None:
         """Construct an :class:`OpenSandboxWorkspace`.
 
@@ -112,13 +117,15 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
             default_mcps (`list[MCPClient] | None`, optional):
                 MCPs registered on first init when no persisted
                 ``.mcp`` exists.
-            skill_paths (`list[str] | None`, optional):
-                Local skill dirs seeded into ``skills/`` on first init.
+            default_skills (`Sequence[str | Skill | SkillLoaderBase | \
+SkillSourceBase] | None`, optional):
+                Skills seeded into ``skills/`` on first init.
         """
         super().__init__(
             workspace_id=workspace_id,
             default_mcps=default_mcps,
-            skill_paths=skill_paths,
+            default_skills=default_skills,
+            **kwargs,
         )
         self.workdir = SANDBOX_WORKDIR
         self.image = image
@@ -215,8 +222,8 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
 
     async def _find_existing_sandbox(self) -> SandboxInfo | None:
         """Return the most recent sandbox matching this workspace id."""
-        from opensandbox.models.sandboxes import SandboxFilter, SandboxState
         from opensandbox import SandboxManager
+        from opensandbox.models.sandboxes import SandboxFilter, SandboxState
 
         manager = await SandboxManager.create(
             connection_config=self._connection_config(),

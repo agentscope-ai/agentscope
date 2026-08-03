@@ -4,9 +4,11 @@
 import hashlib
 from abc import ABC, abstractmethod
 from enum import StrEnum
-from typing import Self
+from typing import Self, Sequence
 
 from ..._utils._common import _generate_id
+from ...mcp import MCPClient
+from ...skill import Skill, SkillLoaderBase, SkillSourceBase
 from ...workspace import WorkspaceBase
 
 
@@ -100,6 +102,9 @@ class WorkspaceManagerBase(ABC):
         agent_id: str,
         session_id: str,
         workspace_id: str | None = None,
+        seed_mcps: list[MCPClient] | None = None,
+        seed_skills: Sequence[str | Skill | SkillLoaderBase | SkillSourceBase]
+        | None = None,
     ) -> WorkspaceBase:
         """Return an initialized workspace.
 
@@ -114,6 +119,20 @@ class WorkspaceManagerBase(ABC):
                 Explicit workspace binding. ``None`` triggers
                 :meth:`assign_workspace_id` fallback — expected only
                 for callers without a persisted binding.
+            seed_mcps (`list[MCPClient] | None`, optional):
+                Caller-supplied MCPs to seed **this** workspace with,
+                appended to the manager's deployment-wide
+                ``default_mcps``. Used for whatever is specific to the
+                agent being opened.
+            seed_skills (`Sequence[str | Skill | SkillLoaderBase | \
+SkillSourceBase] | None`, optional):
+                The skill counterpart of ``seed_mcps``.
+
+        .. note::
+           Both seed arguments only matter when the workspace is
+           constructed. A cached one is returned as-is, and one whose
+           storage already carries a ``.mcp`` file ignores them — see
+           :meth:`WorkspaceBase.initialize`.
         """
 
     @abstractmethod

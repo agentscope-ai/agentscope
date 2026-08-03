@@ -32,6 +32,44 @@ agent_router = APIRouter(
 )
 
 
+async def _ensure_bindings_exist(
+    storage: StorageBase,
+    user_id: str,
+    mcp_ids: list[str] | None,
+    skill_ids: list[str] | None,
+) -> None:
+    """Reject bound ids that are not in the caller's own library.
+
+    Checked on write rather than on use: a typo would otherwise stay
+    invisible until some workspace boots without the tool.
+
+    Args:
+        storage (`StorageBase`): Injected storage backend.
+        user_id (`str`): The authenticated user ID.
+        mcp_ids (`list[str] | None`): Bound MCP ids, or ``None`` to skip.
+        skill_ids (`list[str] | None`): Bound skill ids, or ``None``.
+
+    Raises:
+        `HTTPException`: 404 naming the first id that does not exist.
+    """
+    for ids, owned, kind in (
+        (mcp_ids, storage.list_mcps, "MCP"),
+        (skill_ids, storage.list_skills, "skill"),
+    ):
+        if not ids:
+            continue
+        known = {record.id for record in await owned(user_id)}
+        missing = [i for i in ids if i not in known]
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    f"No installed {kind} with id {missing[0]!r} in your "
+                    f"library."
+                ),
+            )
+
+
 @agent_router.get(
     "/schema",
     response_model=AgentSchemaResponse,
@@ -195,6 +233,12 @@ async def create_agent(
             ``invite_description``). Symmetrical with
             :func:`update_agent`.
     """
+    await _ensure_bindings_exist(
+        storage,
+        user_id,
+        body.mcp_ids,
+        body.skill_ids,
+    )
     try:
         data = AgentData(
             name=body.name,
@@ -202,6 +246,8 @@ async def create_agent(
             context_config=body.context_config,
             react_config=body.react_config,
             invite_config=body.invite_config,
+            mcp_ids=body.mcp_ids,
+            skill_ids=body.skill_ids,
         )
     except ValidationError as exc:
         raise HTTPException(
@@ -248,6 +294,15 @@ async def update_agent(
         user_id,
         ResourceKind.AGENT,
         agent_id,
+    )
+
+    # Checked against the owner's library, not the editor's: that is
+    # the only one the seeding can read.
+    await _ensure_bindings_exist(
+        storage,
+        owner_id,
+        body.mcp_ids,
+        body.skill_ids,
     )
 
     updates = body.model_dump(exclude_none=True)

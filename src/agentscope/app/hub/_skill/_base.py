@@ -1,26 +1,14 @@
 # -*- coding: utf-8 -*-
 """The skill hub base class."""
 from abc import ABC, abstractmethod
-from typing import AsyncIterator, Literal, NamedTuple
 
 from ._card import SkillCard, SkillHubPage
 from .._base import HubBase
+from ....skill import SkillArchive
 
-
-class SkillArchive(NamedTuple):
-    """A skill archive as the hub serves it.
-
-    The format travels with the bytes so a hub can forward its upstream
-    response untouched — repacking to a fixed format would force every
-    hub to buffer the whole archive.
-
-    Attributes:
-        format: The archive format, as the installer must unpack it.
-        stream: The archive bytes, in order.
-    """
-
-    format: Literal["zip", "tar", "tar.gz"]
-    stream: AsyncIterator[bytes]
+# Re-exported: a hub serves the same thing a workspace seeds from, and
+# the workspace layer cannot import the app layer to reach it.
+__all__ = ["SkillArchive", "SkillHubBase"]
 
 
 class SkillHubBase(HubBase, ABC):

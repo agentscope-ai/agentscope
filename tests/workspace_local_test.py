@@ -685,7 +685,7 @@ This skill is seeded through a tilde path.
                     skill_paths=[os.path.join("~", "tilde_skill")],
                 )
                 self.assertEqual(
-                    workspace.skill_paths,
+                    [loader.directory for loader in workspace.default_skills],
                     [os.path.abspath(skill_dir)],
                 )
                 await workspace.initialize()

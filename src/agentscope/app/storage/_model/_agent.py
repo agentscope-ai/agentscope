@@ -108,6 +108,23 @@ class AgentData(BaseModel):
         title="Invite Config",
     )
 
+    mcp_ids: SkipJsonSchema[list[str]] = Field(default_factory=list)
+    """Ids of the user's installed MCPs this agent comes with.
+
+    Seeded into the agent's workspace the first time that workspace
+    boots, and never again — one the user later removes from the
+    workspace is not reinstated. Editing this list therefore only
+    affects workspaces that do not exist yet.
+
+    :class:`SkipJsonSchema` like :attr:`id`: the frontend renders the
+    create / edit form off ``AgentData``'s schema, and a bare list of
+    opaque ids has to be picked from the library rather than typed.
+    """
+
+    skill_ids: SkipJsonSchema[list[str]] = Field(default_factory=list)
+    """Ids of the user's installed skills this agent comes with. Same
+    seeding and form semantics as :attr:`mcp_ids`."""
+
 
 class AgentRecord(_RecordBase):
     """The agent ORM model."""

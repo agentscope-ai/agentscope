@@ -56,12 +56,16 @@ import tarfile
 from abc import abstractmethod
 from copy import deepcopy
 from pathlib import Path
-from typing import AsyncIterator, Literal, Self
+from typing import Any, AsyncIterator, Literal, Self, Sequence
 
 from pydantic import AnyUrl
 
 from .._logging import logger
-from .._utils._common import _generate_id, _normalize_local_path
+from .._utils._common import (
+    _describe_exception,
+    _generate_id,
+    _normalize_local_path,
+)
 from ..mcp import MCPClient
 from ..message import (
     Base64Source,
@@ -71,7 +75,12 @@ from ..message import (
     ToolResultBlock,
     URLSource,
 )
-from ..skill import Skill
+from ..skill import (
+    LocalSkillLoader,
+    Skill,
+    SkillLoaderBase,
+    SkillSourceBase,
+)
 from ..tool import BackendBase, ToolBase
 from ._utils import (
     DEFAULT_DATA_DIR,
@@ -173,8 +182,10 @@ class WorkspaceBase:
     """MCP clients to seed on first :meth:`initialize` when the
     persisted ``.mcp`` file is absent."""
 
-    skill_paths: list[str]
-    """Local skill directories to seed on first :meth:`initialize`."""
+    default_skills: list[Skill | SkillLoaderBase | SkillSourceBase]
+    """Skills to seed on first :meth:`initialize`, already normalised
+    from the ``str`` and deprecated ``skill_paths`` forms the
+    constructor accepts."""
 
     _mcps: list[MCPClient]
     """Currently registered MCP clients (in-memory authoritative copy).
@@ -207,7 +218,11 @@ class WorkspaceBase:
         *,
         workspace_id: str | None = None,
         default_mcps: list[MCPClient] | None = None,
-        skill_paths: list[str] | None = None,
+        default_skills: Sequence[
+            str | Skill | SkillLoaderBase | SkillSourceBase
+        ]
+        | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initialise the shared workspace state.
 
@@ -224,18 +239,67 @@ class WorkspaceBase:
             default_mcps (`list[MCPClient] | None`, optional):
                 MCP clients to register when the workspace boots
                 without a persisted ``.mcp`` file.
-            skill_paths (`list[str] | None`, optional):
-                Local skill directories to copy into ``skills/`` on
-                first start.
+            default_skills (`Sequence[str | Skill | SkillLoaderBase | \
+SkillSourceBase] | None`, optional):
+                Skills to install on first start. A ``str`` is a local
+                directory; a :class:`SkillSourceBase` is fetched instead
+                of copied, and is opened only if the seeding actually
+                happens.
+            **kwargs (`Any`):
+                Accepts the deprecated ``skill_paths``, folded into
+                ``default_skills``. Anything else is an error.
+
+        Raises:
+            `TypeError`:
+                On an unrecognised keyword argument, or a
+                ``default_skills`` entry that is none of the accepted
+                kinds.
         """
+        skill_paths = kwargs.pop("skill_paths", None)
+        if skill_paths is not None:
+            logger.warning(
+                "%s parameter 'skill_paths' is deprecated, pass local "
+                "skill directories in 'default_skills' instead.",
+                type(self).__name__,
+            )
+        if kwargs:
+            raise TypeError(
+                f"{type(self).__name__} got unexpected keyword "
+                f"argument(s): {', '.join(sorted(kwargs))}.",
+            )
+
         self.workspace_id = workspace_id or _generate_id()
         self.is_alive = False
         self._backend = None
 
         self.default_mcps = list(default_mcps or [])
-        self.skill_paths = [
-            _normalize_local_path(path) for path in skill_paths or []
-        ]
+
+        # ``str`` is normalised to a loader exactly as ``ToolGroup``
+        # does, so the two places that accept "a skill or something
+        # that yields one" stay the same shape.
+        self.default_skills: list[
+            Skill | SkillLoaderBase | SkillSourceBase
+        ] = []
+        for item in [*(skill_paths or []), *(default_skills or [])]:
+            if isinstance(item, str):
+                self.default_skills.append(
+                    LocalSkillLoader(directory=_normalize_local_path(item)),
+                )
+            elif isinstance(item, (Skill, SkillLoaderBase, SkillSourceBase)):
+                self.default_skills.append(item)
+            else:
+                raise TypeError(
+                    f"Invalid default skill: {item!r}. Must be a skill, "
+                    f"skill loader, skill source, or directory path.",
+                )
+
+        self.seed_errors: dict[str, str] = {}
+        """What could not be seeded on first start, mapped to why.
+
+        In memory only: it describes a one-off event, and re-deriving it
+        later from "bound but absent" would be wrong — by then the user
+        may simply have removed the skill on purpose.
+        """
 
         self._mcps = []
         self._mcp_lock = asyncio.Lock()
@@ -310,7 +374,7 @@ class WorkspaceBase:
         Closes and removes all registered MCPs, deletes all skills,
         and wipes per-session state (offloaded context / tool results
         and any data files). Constructor-time ``default_mcps`` and
-        ``skill_paths`` are **not** re-seeded — reset returns the
+        ``default_skills`` are **not** re-seeded — reset returns the
         workspace to an empty state, not its initial state.
 
         The default implementation is a no-op. Subclasses with user
@@ -900,33 +964,34 @@ class WorkspaceBase:
         await backend.delete_path(target_dir)
         logger.info("Removed skill %r at %s", name, target_dir)
 
-    async def _setup_skills(self) -> None:
-        """Copy :attr:`skill_paths` into ``${workdir}/skills`` once.
+    async def _seed_skills(self) -> None:
+        """Install :attr:`default_skills` into ``${workdir}/skills``.
 
-        Skips seeding when:
+        Called by :meth:`initialize` only on a workspace's first boot,
+        so a skill the user later deletes is not reinstated on the next
+        start. Dispatch is by how the skill has to travel, not by what
+        it is: one that already exists as a directory is copied, one
+        that has to be fetched is streamed into the sandbox and expanded
+        there.
 
-        - :attr:`skill_paths` is empty;
-        - the backend is not bound; or
-        - ``skills/`` already contains entries (assume the prior
-          run, or the user, is the source of truth).
-
-        Individual failures are logged and skipped — a single bad
-        skill cannot block startup.
+        Individual failures are recorded in :attr:`seed_errors` and
+        skipped — a single bad skill cannot block startup.
         """
-        if not self.skill_paths:
-            return
-        backend = self._backend
-        if backend is None:
-            return
-        entries = await backend.list_dir(self._skills_dir)
-        if entries:
-            return
-        for path in self.skill_paths:
+        for item in self.default_skills:
+            name = getattr(item, "name", None) or str(item)
             try:
-                await self.add_skill(path)
+                if isinstance(item, SkillSourceBase):
+                    archive = await item.open()
+                    await self.add_skill_archive(
+                        archive.stream,
+                        archive.format,
+                        item.name,
+                    )
+                elif isinstance(item, SkillLoaderBase):
+                    for skill in await item.list_skills():
+                        await self.add_skill(skill.dir)
+                else:
+                    await self.add_skill(item.dir)
             except Exception as e:
-                logger.warning(
-                    "Skip skill %r: %s",
-                    path,
-                    e,
-                )
+                self.seed_errors[name] = _describe_exception(e)
+                logger.warning("Skip skill %r: %s", name, e)

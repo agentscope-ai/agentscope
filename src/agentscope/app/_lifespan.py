@@ -108,6 +108,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             background_task_manager=bg_manager,
             message_bus=message_bus,
             resource_access_service=resource_access_service,
+            skill_hubs=app.state.skill_hubs,
             knowledge_base_manager=knowledge_base_manager,
             extra_agent_middlewares=app.state.extra_agent_middlewares,
             extra_agent_tools=app.state.extra_agent_tools,

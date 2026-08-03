@@ -7,22 +7,26 @@ import json
 import os
 import re
 import shutil
-from typing import AsyncIterator, Literal, TypedDict
+from typing import Any, AsyncIterator, Literal, Sequence, TypedDict
 
 import frontmatter
 
-from ._utils import DEFAULT_WORKSPACE_INSTRUCTIONS
 from .._logging import logger
-from .._utils._common import _generate_id, _normalize_local_path
+from .._utils._common import (
+    _describe_exception,
+    _generate_id,
+    _normalize_local_path,
+)
 from ..mcp import MCPClient
-from ..skill import Skill
+from ..skill import Skill, SkillLoaderBase, SkillSourceBase
 from ..tool import ToolBase
 from ..tool._builtin._backend import LocalBackend
 from ._base import (
-    DEFAULT_MAX_EXTRACTED_BYTES,
     _EXTRACT_ARCHIVE_SHIM,
+    DEFAULT_MAX_EXTRACTED_BYTES,
     WorkspaceBase,
 )
+from ._utils import DEFAULT_WORKSPACE_INSTRUCTIONS
 
 
 class _SkillEntry(TypedDict):
@@ -79,8 +83,12 @@ class LocalWorkspace(WorkspaceBase):
         workdir: str,
         workspace_id: str | None = None,
         default_mcps: list[MCPClient] | None = None,
-        skill_paths: list[str] | None = None,
+        default_skills: Sequence[
+            str | Skill | SkillLoaderBase | SkillSourceBase
+        ]
+        | None = None,
         instructions: str = DEFAULT_WORKSPACE_INSTRUCTIONS,
+        **kwargs: Any,
     ) -> None:
         """Construct a :class:`LocalWorkspace`.
 
@@ -95,16 +103,22 @@ class LocalWorkspace(WorkspaceBase):
                 MCP clients seeded into a brand-new workspace.
                 Ignored on subsequent restarts that already have a
                 persisted ``<workdir>/.mcp`` file.
-            skill_paths (`list[str] | None`, optional):
-                Local skill directories seeded into
-                ``<workdir>/skills`` on first :meth:`initialize`.
+            default_skills (`Sequence[str | Skill | SkillLoaderBase | \
+SkillSourceBase] | None`, optional):
+                Skills seeded into ``<workdir>/skills`` on first
+                :meth:`initialize`. Ignored on subsequent restarts.
             instructions (`str`, defaults to \
             `_DEFAULT_WORKSPACE_INSTRUCTIONS`):
                 System-prompt fragment template returned by
                 :meth:`get_instructions`. Supports the ``{workdir}``
                 placeholder.
         """
-        super().__init__(workspace_id=workspace_id)
+        super().__init__(
+            workspace_id=workspace_id,
+            default_mcps=default_mcps,
+            default_skills=default_skills,
+            **kwargs,
+        )
 
         # ── serializable config ─────────────────────────────────
         self.workdir = os.path.abspath(workdir)
@@ -112,12 +126,6 @@ class LocalWorkspace(WorkspaceBase):
             backend="local",
             workdir=self.workdir,
         )
-
-        # ── seed-only ───────────────────────────────────────────
-        self.default_mcps: list[MCPClient] = list(default_mcps or [])
-        self.skill_paths: list[str] = [
-            _normalize_local_path(path) for path in skill_paths or []
-        ]
 
         # ── runtime state ───────────────────────────────────────
         self._backend = LocalBackend()
@@ -154,7 +162,8 @@ class LocalWorkspace(WorkspaceBase):
 
         MCP state is restored from ``.mcp`` if it exists; otherwise
         ``default_mcps`` are used and persisted so the next start picks
-        them up from disk. ``skill_paths`` are seeded on first use.
+        them up from disk. ``default_skills`` are seeded alongside them,
+        under the same first-boot condition.
 
         Idempotent: a no-op when the workspace is already alive.
         """
@@ -163,9 +172,11 @@ class LocalWorkspace(WorkspaceBase):
 
         os.makedirs(self.workdir, exist_ok=True)
 
-        # Restore or seed MCPs
+        # Restore or seed MCPs. The absence of ``.mcp`` is what makes
+        # this the workspace's first boot, and it gates the skills too.
         mcp_file = os.path.join(self.workdir, ".mcp")
-        if await self._backend.file_exists(mcp_file):
+        first_boot = not await self._backend.file_exists(mcp_file)
+        if not first_boot:
             raw = await self._backend.read_file(mcp_file)
             raw_list = json.loads(raw.decode("utf-8"))
             for m in raw_list:
@@ -192,108 +203,23 @@ class LocalWorkspace(WorkspaceBase):
                         mcp.name,
                         e,
                     )
+                    if first_boot:
+                        # Dropped here, so it never reaches ``list_mcps``
+                        # and the caller would otherwise see a seeded MCP
+                        # simply missing, with no reason given.
+                        self.seed_errors[mcp.name] = _describe_exception(e)
                     failed.append(mcp)
         for mcp in failed:
             self._mcps.remove(mcp)
 
-        # Seed skills
-        skills_dir = os.path.join(self.workdir, "skills")
-        os.makedirs(skills_dir, exist_ok=True)
+        os.makedirs(os.path.join(self.workdir, "skills"), exist_ok=True)
 
-        skills_file = await self._load_skills_file(skills_dir)
-        existing: dict[str, _SkillEntry] = skills_file["skills"]
-
-        # Build fast-lookup sets from the current index
-        existing_hashes: set[str] = {e["hash"] for e in existing.values()}
-        existing_agent_names: set[str] = {
-            e["skill_name"] for e in existing.values()
-        }
-        existing_dir_names: set[str] = set(existing.keys())
-
-        updated = False
-        for skill_path in self.skill_paths:
-            result = await self._validate_and_hash_skill(skill_path)
-            if result is None:
-                continue
-
-            _, raw_name, skill_hash = result
-
-            # Skip if already present (by content hash)
-            if skill_hash in existing_hashes:
-                logger.info(
-                    "Skill '%s' (hash: %s...) already exists, skipping",
-                    raw_name,
-                    skill_hash[:8],
-                )
-                continue
-
-            # Resolve agent-facing name conflict
-            agent_name = raw_name
-            counter = 1
-            while agent_name in existing_agent_names:
-                agent_name = f"{raw_name} ({counter})"
-                counter += 1
-
-            # Resolve directory name conflict
-            base_dir = _sanitize_dir_name(raw_name)
-            dir_name = base_dir
-            counter = 1
-            while dir_name in existing_dir_names:
-                dir_name = f"{base_dir}_{counter}"
-                counter += 1
-
-            dest_path = os.path.join(skills_dir, dir_name)
-
-            # Defensive path-traversal check
-            if not os.path.realpath(dest_path).startswith(
-                os.path.realpath(skills_dir) + os.sep,
-            ):
-                logger.warning(
-                    "Skill '%s' resolves outside skills_dir, skipping",
-                    raw_name,
-                )
-                continue
-
-            try:
-                await asyncio.to_thread(
-                    shutil.copytree,
-                    skill_path,
-                    dest_path,
-                    dirs_exist_ok=False,
-                )
-            except Exception as e:
-                logger.warning(
-                    "Failed to copy skill '%s' from %s: %s",
-                    raw_name,
-                    skill_path,
-                    str(e),
-                )
-                continue
-
-            logger.info(
-                "Copied skill '%s' (agent name: '%s') from %s to %s",
-                raw_name,
-                agent_name,
-                skill_path,
-                dest_path,
-            )
-
-            entry: _SkillEntry = {"hash": skill_hash, "skill_name": agent_name}
-            existing[dir_name] = entry
-            existing_hashes.add(skill_hash)
-            existing_agent_names.add(agent_name)
-            existing_dir_names.add(dir_name)
-            updated = True
-
-        if updated:
-            skills_file["skills"] = existing
-            mtime = await self._backend.stat_mtime(skills_dir)
-            skills_file["skills_dir_mtime"] = (
-                mtime if mtime is not None else 0.0
-            )
-            await self._save_skills_file(skills_dir, skills_file)
-
+        # ``is_alive`` has to be set before seeding: ``add_skill`` and
+        # ``add_skill_archive`` operate on a live workspace.
         self.is_alive = True
+
+        if first_boot:
+            await self._seed_skills()
 
     async def get_instructions(self) -> str:
         """Get the workspace instructions."""

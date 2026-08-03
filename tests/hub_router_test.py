@@ -335,7 +335,7 @@ class HubRouterTest(IsolatedAsyncioTestCase):
             params=self._scope,
             headers=HEADERS,
         ).json()
-        self.assertEqual([m["name"] for m in listed], [])
+        self.assertEqual([m["name"] for m in listed["mcps"]], [])
 
     def test_install_never_echoes_the_rendered_config(self) -> None:
         """The response must not hand the submitted secret back."""
@@ -560,7 +560,7 @@ class HubRouterTest(IsolatedAsyncioTestCase):
             params=self._scope,
             headers=HEADERS,
         ).json()
-        self.assertEqual([m["name"] for m in listed], ["echo"])
+        self.assertEqual([m["name"] for m in listed["mcps"]], ["echo"])
 
     def test_add_from_library_skips_what_is_already_there(self) -> None:
         """Adding twice is a no-op, not a duplicate or an error."""
@@ -607,8 +607,8 @@ class HubRouterTest(IsolatedAsyncioTestCase):
             headers=HEADERS,
         ).json()
 
-        self.assertFalse(listed[0]["is_healthy"])
-        detail = listed[0]["error"]
+        self.assertFalse(listed["mcps"][0]["is_healthy"])
+        detail = listed["mcps"][0]["error"]
         self.assertTrue(detail)
         # The bare ExceptionGroup message says nothing useful; the leaf
         # cause is what has to come through.
@@ -655,7 +655,7 @@ class HubRouterTest(IsolatedAsyncioTestCase):
             params=self._scope,
             headers=HEADERS,
         ).json()
-        self.assertEqual([s["name"] for s in listed], [])
+        self.assertEqual([s["name"] for s in listed["skills"]], [])
 
     def test_install_skill_does_not_download(self) -> None:
         """The archive is fetched when the skill reaches a workspace,

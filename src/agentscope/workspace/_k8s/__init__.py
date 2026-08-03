@@ -6,7 +6,7 @@ can write ``from agentscope.workspace._k8s import K8sWorkspace``
 without having to poke at the underlying module layout.
 """
 
-from ._k8s_workspace import K8sWorkspace
 from ._k8s_backend import K8sBackend
+from ._k8s_workspace import K8sWorkspace
 
 __all__ = ["K8sWorkspace", "K8sBackend"]

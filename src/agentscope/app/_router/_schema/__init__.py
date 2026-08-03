@@ -10,6 +10,8 @@ from ._workspace import (
     AddFromLibraryResponse,
     AddSkillRequest,
     AddSkillsFromLibraryRequest,
+    ListWorkspaceMCPsResponse,
+    ListWorkspaceSkillsResponse,
     MCPClientStatus,
     ToolInfo,
 )
@@ -79,6 +81,8 @@ __all__ = [
     "AddFromLibraryResponse",
     "AddSkillRequest",
     "AddSkillsFromLibraryRequest",
+    "ListWorkspaceMCPsResponse",
+    "ListWorkspaceSkillsResponse",
     "MCPClientStatus",
     "ToolInfo",
     # Agent

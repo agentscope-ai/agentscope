@@ -28,18 +28,19 @@ constructor):
 import asyncio
 import os
 import time
-from typing import Self
+from typing import Self, Sequence
 
 from typing_extensions import deprecated
 
 from ..._logging import logger
 from ...mcp import MCPClient
+from ...skill import Skill, SkillLoaderBase, SkillSourceBase
 from ...workspace import DockerWorkspace
 from ...workspace._docker._make_dockerfile import (
     DEFAULT_BASE_IMAGE,
     DEFAULT_GATEWAY_PORT,
 )
-from ._base import WorkspaceManagerBase, IsolationPolicy
+from ._base import IsolationPolicy, WorkspaceManagerBase
 
 DEFAULT_SWEEP_INTERVAL = 300.0
 
@@ -68,6 +69,10 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         gateway_port: int = DEFAULT_GATEWAY_PORT,
         env: dict[str, str] | None = None,
         default_mcps: list[MCPClient] | None = None,
+        default_skills: Sequence[
+            str | Skill | SkillLoaderBase | SkillSourceBase
+        ]
+        | None = None,
         skill_paths: list[str] | None = None,
         ttl: float = 3600.0,
         sweep_interval: float = DEFAULT_SWEEP_INTERVAL,
@@ -105,8 +110,12 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
                 MCP clients seeded into brand-new workspaces. Ignored
                 on subsequent restarts of a workdir that already
                 persists ``.mcp``.
+            default_skills (`Sequence[str | Skill | SkillLoaderBase | \
+SkillSourceBase] | None`, optional):
+                Skills seeded into brand-new workspaces.
             skill_paths (`list[str] | None`, optional):
-                Skill directories seeded into brand-new workspaces.
+                **Deprecated.** Pass local directories in
+                ``default_skills`` instead.
             ttl (`float`, defaults to `3600.0`):
                 Seconds before an idle cached workspace is evicted
                 and its container torn down.
@@ -121,7 +130,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         self._gateway_port = gateway_port
         self._env = dict(env or {})
         self._default_mcps = list(default_mcps or [])
-        self._skill_paths = list(skill_paths or [])
+        self._default_skills = [*(skill_paths or []), *(default_skills or [])]
         super().__init__(isolation=isolation)
         self._ttl = ttl
         self._sweep_interval = sweep_interval
@@ -150,6 +159,9 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         workspace_id: str,
         user_id: str,
         agent_id: str,
+        seed_mcps: list[MCPClient] | None = None,
+        seed_skills: Sequence[str | Skill | SkillLoaderBase | SkillSourceBase]
+        | None = None,
     ) -> DockerWorkspace:
         """Create a :class:`DockerWorkspace` for ``(user_id, agent_id)``
         and run its full ``initialize``.
@@ -167,8 +179,8 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
             extra_pip=self._extra_pip,
             gateway_port=self._gateway_port,
             env=self._env,
-            default_mcps=self._default_mcps,
-            skill_paths=self._skill_paths,
+            default_mcps=[*self._default_mcps, *(seed_mcps or [])],
+            default_skills=[*self._default_skills, *(seed_skills or [])],
         )
         await ws.initialize()
         return ws
@@ -181,6 +193,9 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
         agent_id: str,
         session_id: str,
         workspace_id: str | None = None,
+        seed_mcps: list[MCPClient] | None = None,
+        seed_skills: Sequence[str | Skill | SkillLoaderBase | SkillSourceBase]
+        | None = None,
     ) -> DockerWorkspace:
         """Return an initialised workspace, building one on cache miss.
 
@@ -242,6 +257,8 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
                 workspace_id=workspace_id,
                 user_id=user_id,
                 agent_id=agent_id,
+                seed_mcps=seed_mcps,
+                seed_skills=seed_skills,
             )
             self._cache[workspace_id] = (ws, time.monotonic())
             return ws
@@ -289,7 +306,7 @@ class DockerWorkspaceManager(WorkspaceManagerBase):
             gateway_port=self._gateway_port,
             env=self._env,
             default_mcps=self._default_mcps,
-            skill_paths=self._skill_paths,
+            default_skills=self._default_skills,
         )
         await ws.initialize()
         async with self._lock:

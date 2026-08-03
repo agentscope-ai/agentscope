@@ -17,18 +17,19 @@ Differences from the E2B manager:
 
 import asyncio
 import time
-from typing import Any, Self
+from typing import Any, Self, Sequence
 
 from typing_extensions import deprecated
 
 from ..._logging import logger
 from ...mcp import MCPClient
+from ...skill import Skill, SkillLoaderBase, SkillSourceBase
 from ...workspace import K8sWorkspace
 from ...workspace._k8s._constants import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_IMAGE,
 )
-from ._base import WorkspaceManagerBase, IsolationPolicy
+from ._base import IsolationPolicy, WorkspaceManagerBase
 
 DEFAULT_SWEEP_INTERVAL = 300.0
 
@@ -59,6 +60,10 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
         storage_size: str = "1Gi",
         env: dict[str, str] | None = None,
         default_mcps: list[MCPClient] | None = None,
+        default_skills: Sequence[
+            str | Skill | SkillLoaderBase | SkillSourceBase
+        ]
+        | None = None,
         skill_paths: list[str] | None = None,
         ttl: float = 3600.0,
         sweep_interval: float = DEFAULT_SWEEP_INTERVAL,
@@ -101,8 +106,12 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
                 Environment variables for workspace containers.
             default_mcps (`list[MCPClient] | None`, optional):
                 MCPs seeded into new workspaces.
+            default_skills (`Sequence[str | Skill | SkillLoaderBase | \
+SkillSourceBase] | None`, optional):
+                Skills seeded into brand-new workspaces.
             skill_paths (`list[str] | None`, optional):
-                Skill directories seeded into new workspaces.
+                **Deprecated.** Pass local directories in
+                ``default_skills`` instead.
             ttl (`float`, defaults to `3600.0`):
                 Seconds before an idle workspace is evicted.
             sweep_interval (`float`, defaults to `300.0`):
@@ -126,7 +135,7 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
         self._storage_size = storage_size
         self._env = dict(env or {})
         self._default_mcps = list(default_mcps or [])
-        self._skill_paths = list(skill_paths or [])
+        self._default_skills = [*(skill_paths or []), *(default_skills or [])]
         self._ttl = ttl
         self._sweep_interval = sweep_interval
         self._delete_pvc_on_close = delete_pvc_on_close
@@ -143,6 +152,9 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
         self,
         *,
         workspace_id: str | None,
+        seed_mcps: list[MCPClient] | None = None,
+        seed_skills: Sequence[str | Skill | SkillLoaderBase | SkillSourceBase]
+        | None = None,
     ) -> K8sWorkspace:
         """Construct a :class:`K8sWorkspace` and run ``initialize``."""
         ws = K8sWorkspace(
@@ -162,8 +174,8 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
             storage_size=self._storage_size,
             delete_pvc_on_close=self._delete_pvc_on_close,
             env=self._env,
-            default_mcps=self._default_mcps,
-            skill_paths=self._skill_paths,
+            default_mcps=[*self._default_mcps, *(seed_mcps or [])],
+            default_skills=[*self._default_skills, *(seed_skills or [])],
         )
         await ws.initialize()
         return ws
@@ -176,6 +188,9 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
         agent_id: str,
         session_id: str,
         workspace_id: str | None = None,
+        seed_mcps: list[MCPClient] | None = None,
+        seed_skills: Sequence[str | Skill | SkillLoaderBase | SkillSourceBase]
+        | None = None,
     ) -> K8sWorkspace:
         """Return an initialised workspace, reattaching on cache miss.
 
@@ -220,6 +235,8 @@ class K8sWorkspaceManager(WorkspaceManagerBase):
 
             ws = await self._build_and_start(
                 workspace_id=workspace_id,
+                seed_mcps=seed_mcps,
+                seed_skills=seed_skills,
             )
             self._cache[workspace_id] = (ws, time.monotonic())
             return ws

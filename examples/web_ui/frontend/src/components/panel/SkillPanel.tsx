@@ -1,11 +1,12 @@
 import { FileX, PlusCircle, Search, SearchX, Trash } from 'lucide-react';
 import { useState } from 'react';
 
-import type { Skill } from '@/api';
+import type { Skill, SeedErrors as SeedErrorMap } from '@/api';
 import type { UploadOptions } from '@/api/workspace';
 import { AddSkillDialog } from '@/components/dialog/AddSkillDialog.tsx';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog.tsx';
 import { PanelEmpty } from '@/components/panel/PanelEmpty';
+import { SeedErrors } from '@/components/panel/SeedErrors';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar.tsx';
 import { Button } from '@/components/ui/button';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
@@ -23,6 +24,8 @@ import { useTranslation } from '@/i18n/useI18n.ts';
 interface SkillPanelProps {
 	/** The skills equipped in the workspace. */
 	skills: Skill[];
+	/** What the agent came with but could not be given. */
+	seedErrors?: SeedErrorMap;
 	/** Whether the skill list is still loading. */
 	loading?: boolean;
 	/**
@@ -64,6 +67,7 @@ interface SkillPanelProps {
  */
 export function SkillPanel({
 	skills,
+	seedErrors = {},
 	loading = false,
 	onUpload,
 	onAddFromLibrary,
@@ -85,6 +89,7 @@ export function SkillPanel({
 	return (
 		<div className="flex flex-col flex-1 min-h-0 gap-y-2">
 			<span className="text-muted-foreground text-sm">{t('panel.skill.description')}</span>
+			<SeedErrors errors={seedErrors} />
 			<InputGroup>
 				<InputGroupInput
 					placeholder={t('panel.skill.searchPlaceholder')}

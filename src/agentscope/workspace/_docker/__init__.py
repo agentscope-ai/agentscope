@@ -7,7 +7,7 @@ servers run *inside* the container behind a FastAPI gateway and are
 reached over HTTP — see :mod:`agentscope.workspace._gateway_client`.
 """
 
-from ._docker_workspace import DockerWorkspace
 from ._docker_backend import DockerBackend
+from ._docker_workspace import DockerWorkspace
 
 __all__ = ["DockerWorkspace", "DockerBackend"]

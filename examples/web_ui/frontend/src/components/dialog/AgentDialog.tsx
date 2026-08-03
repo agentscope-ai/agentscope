@@ -3,12 +3,13 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import type { ContextConfig, InviteConfig, ReActConfig } from '@/api';
+import type { AgentBindings } from '@/components/form/AgentBindingFields';
 import {
-	AgentFormFields,
 	defaultAgentFormValues,
 	type AgentFormValues,
 	type AgentSection,
 } from '@/components/form/AgentFormFields';
+import { AgentFormTabs } from '@/components/form/AgentFormTabs';
 import type { SchemaFormValue } from '@/components/form/SchemaForm';
 import { Alert, AlertDescription } from '@/components/ui/alert.tsx';
 import { Button } from '@/components/ui/button';
@@ -37,6 +38,10 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 	const [open, setOpen] = useState(false);
 	const [submitting, setSubmitting] = useState(false);
 	const [values, setValues] = useState<AgentFormValues | null>(null);
+	const [bindings, setBindings] = useState<AgentBindings>({
+		mcp_ids: [],
+		skill_ids: [],
+	});
 	const [errorMsg, setErrorMsg] = useState('');
 
 	useEffect(() => {
@@ -45,6 +50,7 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 		}
 		if (!open) {
 			setValues(null);
+			setBindings({ mcp_ids: [], skill_ids: [] });
 			setErrorMsg('');
 		}
 	}, [open, schema, values]);
@@ -70,6 +76,7 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 					context_config: values.context_config as unknown as ContextConfig,
 					react_config: values.react_config as unknown as ReActConfig,
 					invite_config: values.invite_config as unknown as InviteConfig,
+					...bindings,
 				},
 				{ silent: true },
 			);
@@ -92,20 +99,24 @@ export function AgentDialog({ onCreated, triggerId }: Props) {
 					<span>{t('dialog-agent-create.trigger')}</span>
 				</Button>
 			</DialogTrigger>
-			<DialogContent className="!w-[500px] !max-w-[500px]">
+			<DialogContent className="sm:max-w-2xl">
 				<DialogHeader>
 					<DialogTitle>{t('dialog-agent-create.title')}</DialogTitle>
 					<DialogDescription className="sr-only">
 						{t('dialog-agent-create.description')}
 					</DialogDescription>
 				</DialogHeader>
-				<div className="no-scrollbar -mx-4 max-h-[75vh] overflow-y-auto px-4">
-					{schema && values ? (
-						<AgentFormFields schema={schema} values={values} onChange={handleChange} />
-					) : (
-						<p className="text-muted-foreground text-sm">{t('common.loading')}</p>
-					)}
-				</div>
+				{schema && values ? (
+					<AgentFormTabs
+						schema={schema}
+						values={values}
+						onChange={handleChange}
+						bindings={bindings}
+						onBindingsChange={setBindings}
+					/>
+				) : (
+					<p className="text-muted-foreground text-sm">{t('common.loading')}</p>
+				)}
 				{errorMsg && (
 					<Alert variant="destructive">
 						<CircleAlert />
