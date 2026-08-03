@@ -180,6 +180,42 @@ class IndexWorkerLeaseTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(storage.released), 1)
 
+    async def test_external_cancellation_stops_child_tasks(self) -> None:
+        """Caller cancellation must tear down pipeline and heartbeat tasks."""
+        storage = _LeaseStorage()
+
+        worker = _SlowPipelineWorker(storage, pipeline_seconds=0.5)
+        task = asyncio.create_task(
+            worker.process("u", "kb", "doc-cancel"),
+        )
+        await asyncio.wait_for(worker.pipeline_started.wait(), timeout=1.0)
+
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=1.0)
+
+        renew_calls_after_cancel = storage.renew_calls
+        await asyncio.sleep(0.15)
+
+        self.assertTrue(
+            worker.pipeline_cancelled,
+            "Pipeline kept running after worker.process was cancelled.",
+        )
+        self.assertFalse(
+            worker.pipeline_completed,
+            "Pipeline completed after worker.process was cancelled.",
+        )
+        self.assertEqual(
+            storage.renew_calls,
+            renew_calls_after_cancel,
+            "Heartbeat kept renewing after worker.process was cancelled.",
+        )
+        self.assertEqual(
+            [u for u in storage.status_updates if u["status"] == "error"],
+            [],
+        )
+        self.assertEqual(len(storage.released), 1)
+
     async def test_not_acquired_short_circuits(self) -> None:
         """When the lease is already held by another worker, do nothing."""
         storage = _LeaseStorage()
