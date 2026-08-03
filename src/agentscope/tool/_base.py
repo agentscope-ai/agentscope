@@ -17,7 +17,7 @@ from ..permission import (
     PermissionBehavior,
 )
 from ._response import ToolChunk
-from ._utils import _remove_title_field
+from ._utils import _remove_title_field, _coerce_tool_args
 
 
 class ParamsBase(BaseModel):
@@ -197,6 +197,20 @@ class ToolBase(ABC):
                 f"{type(self).__name__} must be called with keyword arguments "
                 f"only, but got {len(args)} positional argument(s).",
             )
+
+        # Best-effort type coercion: LLMs often return arguments with
+        # incorrect types (e.g. str "42" instead of int 42).  Attempt to
+        # repair mismatches based on the tool's input_schema before the
+        # arguments reach the middleware chain or call().
+        #
+        # Note: _toolkit.py also applies _coerce_tool_args before
+        # invoking the tool (to cover subclasses that override __call__
+        # directly).  The function is idempotent — already-correct
+        # values pass through unchanged — so double application is
+        # harmless.
+        if kwargs and hasattr(self, "input_schema"):
+            kwargs = _coerce_tool_args(kwargs, self.input_schema)
+
         # ``getattr`` with a default so the no-middleware path keeps working
         # even if a subclass overrides ``__init__`` without calling
         # ``super().__init__()``.

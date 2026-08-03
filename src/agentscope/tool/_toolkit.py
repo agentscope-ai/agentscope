@@ -24,6 +24,7 @@ from ._response import ToolResponse, ToolChunk
 from ..skill import SkillLoaderBase, Skill
 from ._types import RegisteredTool
 from .._utils._common import _describe_exception, _json_loads_with_repair
+from ._utils import _coerce_tool_args
 from ..exception import (
     DeveloperOrientedException,
     ToolNotFoundError,
@@ -297,6 +298,13 @@ class Toolkit:
         try:
             # Prepare keyword arguments
             kwargs = _json_loads_with_repair(tool_call.input)
+
+            # Best-effort type coercion based on the tool's input_schema.
+            # Also covers subclasses that override __call__ directly,
+            # where the base class coercion in ToolBase.__call__ is
+            # bypassed.
+            if kwargs and hasattr(tool_func, "input_schema"):
+                kwargs = _coerce_tool_args(kwargs, tool_func.input_schema)
 
             # State injection
             if (
