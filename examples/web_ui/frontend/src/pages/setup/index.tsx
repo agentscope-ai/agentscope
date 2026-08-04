@@ -12,6 +12,7 @@ import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui
 import { Input } from '@/components/ui/input.tsx';
 import { useTranslation } from '@/i18n/useI18n.ts';
 import { cn } from '@/lib/utils.ts';
+import { normalizeServerUrl } from '@/utils/url.ts';
 
 interface Props {
 	onComplete: () => void;
@@ -25,7 +26,9 @@ export const SetupPage = ({ onComplete, className }: Props) => {
 
 	const handleSubmit = (e: React.FormEvent) => {
 		e.preventDefault();
-		localStorage.setItem('server_url', url);
+		const normalizedUrl = normalizeServerUrl(url);
+		setUrl(normalizedUrl);
+		localStorage.setItem('server_url', normalizedUrl);
 		localStorage.setItem('username', username);
 		onComplete();
 	};
@@ -47,7 +50,10 @@ export const SetupPage = ({ onComplete, className }: Props) => {
 									</FieldLabel>
 									<Input
 										id="server-url-input"
-										type="url"
+										type="text"
+										inputMode="url"
+										autoCapitalize="none"
+										autoCorrect="off"
 										placeholder={t('setup.serverUrlPlaceholder')}
 										value={url}
 										onChange={(e) => setUrl(e.target.value)}
