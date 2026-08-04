@@ -1,5 +1,5 @@
-import { Blocks, Check, Download, Pencil, Store, Trash2, TriangleAlert } from 'lucide-react';
-import { Fragment, useCallback, useEffect, useState } from 'react';
+import { Blocks, Check, Download, Pencil, Plug, Trash2, TriangleAlert } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
 import { hubApi } from '@/api';
@@ -27,7 +27,6 @@ import {
 	ItemDescription,
 	ItemGroup,
 	ItemMedia,
-	ItemSeparator,
 	ItemTitle,
 } from '@/components/ui/item.tsx';
 import {
@@ -47,7 +46,8 @@ import { useMCPHubs } from '@/hooks/useMCPHubs.ts';
 import { useMCPs } from '@/hooks/useMCPs.ts';
 import { useResourceDrawer } from '@/hooks/useResourceDrawer.ts';
 import { useTranslation } from '@/i18n/useI18n';
-import { formatTime } from '@/utils/common';
+import { cn } from '@/lib/utils';
+import { avatarTint, formatTime } from '@/utils/common';
 
 /**
  * The drawer body: the server's README where a skill shows its `SKILL.md`,
@@ -89,15 +89,24 @@ function CardItem({ card, installed, now, onInstall, onOpen }: CardItemProps) {
 	const { t } = useTranslation();
 
 	return (
-		<Item className="cursor-pointer hover:bg-accent/50" onClick={onOpen}>
-			<ItemMedia>
+		<Item
+			className={cn(
+				'cursor-pointer items-start rounded-none border-l-2 py-[13px] pr-[18px] pl-4 hover:bg-row-hover',
+				// The left rule is the "installed" marker. Only the icon
+				// dims with it — fading the whole row would drop the
+				// description to a 2.4:1 contrast ratio.
+				installed ? 'border-l-foreground' : 'border-l-transparent',
+			)}
+			onClick={onOpen}
+		>
+			<ItemMedia className={cn('translate-y-0', installed && 'opacity-55')}>
 				<Avatar className="rounded-md">
 					<AvatarImage
 						src={card.icon_url ?? undefined}
 						alt={card.display_name || card.name}
 						loading="lazy"
 					/>
-					<AvatarFallback className="rounded-md">
+					<AvatarFallback className="rounded-md" style={avatarTint(card.name)}>
 						{(card.display_name || card.name).slice(0, 1).toUpperCase()}
 					</AvatarFallback>
 				</Avatar>
@@ -112,24 +121,27 @@ function CardItem({ card, installed, now, onInstall, onOpen }: CardItemProps) {
 						<span className="text-xs text-muted-foreground">@{card.author}</span>
 					)}
 					{card.auth === 'inputs' && (
-						<Badge variant="outline" className="text-[10px] px-1 py-0">
+						// Sans, not mono: this one is a warning meant for a
+						// person, while the tags below are machine metadata.
+						<Badge className="rounded-full border-0 bg-amber-600/10 px-2 py-0.5 text-[10.5px] font-normal text-amber-700">
 							{t('mcp.needsConfig')}
 						</Badge>
 					)}
 					{card.tags.slice(0, 4).map((tag) => (
-						<span key={tag} className="text-xs text-muted-foreground/60">
-							#{tag}
-						</span>
+						<Badge
+							key={tag}
+							variant="secondary"
+							className="rounded-full bg-secondary px-1.75 py-0.5 font-mono text-[10px] font-normal text-text-tertiary"
+						>
+							{tag}
+						</Badge>
 					))}
 				</ItemTitle>
 				<ItemDescription className="line-clamp-1">{card.description}</ItemDescription>
 			</ItemContent>
 
-			<ItemActions className="flex-col items-end">
-				{/* Rendered even when empty: a missing timestamp would
-				    otherwise drop this row and slide the counter up, so
-				    rows would not line up with each other. */}
-				<span className="h-4 text-xs text-muted-foreground whitespace-nowrap">
+			<ItemActions className="items-center gap-3 self-center">
+				<span className="font-mono text-[10px] text-text-data whitespace-nowrap">
 					{card.updated_at
 						? now - card.updated_at < 3600
 							? t('skill.updatedRecently')
@@ -144,25 +156,31 @@ function CardItem({ card, installed, now, onInstall, onOpen }: CardItemProps) {
 					{/* Explicit null check: a hub reporting 0 installs is
 					    saying something, one that does not count them is not. */}
 					{card.installs != null && (
-						<span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+						<span className="inline-flex items-center gap-1 font-mono text-[10px] text-text-data">
 							<Download className="size-3" />
 							{card.installs.toLocaleString()}
 						</span>
 					)}
-					<Button
-						size="icon-sm"
-						variant="ghost"
-						disabled={installed}
-						// Installing straight from the row must not also
-						// open the drawer behind it.
-						onClick={(e) => {
-							e.stopPropagation();
-							onInstall();
-						}}
-						title={t(installed ? 'mcp.installed' : 'mcp.install')}
-					>
-						{installed ? <Check /> : <Download />}
-					</Button>
+					{installed ? (
+						// A state, not an action — a disabled button would
+						// still read as something you could have clicked.
+						<span className="flex h-7 items-center gap-x-[5px] rounded-full bg-surface-muted px-3 text-[11.5px] text-muted-foreground">
+							<Check className="size-3" />
+							{t('mcp.installed')}
+						</span>
+					) : (
+						<Button
+							className="h-7 rounded-full px-3.5 text-xs font-normal hover:opacity-86"
+							// Installing straight from the row must not also
+							// open the drawer behind it.
+							onClick={(e) => {
+								e.stopPropagation();
+								onInstall();
+							}}
+						>
+							{t('mcp.install')}
+						</Button>
+					)}
 				</div>
 			</ItemActions>
 		</Item>
@@ -204,7 +222,7 @@ function HubPanel({ hubId, hub, installedNames, onInstalled }: HubPanelProps) {
 						src={hub?.icon_url ?? undefined}
 						alt={hub?.display_name ?? hubId}
 					/>
-					<AvatarFallback className="rounded-md">
+					<AvatarFallback className="rounded-md" style={avatarTint(hubId)}>
 						{(hub?.display_name ?? hubId).slice(0, 1).toUpperCase()}
 					</AvatarFallback>
 				</Avatar>
@@ -247,19 +265,15 @@ function HubPanel({ hubId, hub, installedNames, onInstalled }: HubPanelProps) {
 					</Empty>
 				) : (
 					<ItemGroup className="gap-0">
-						{/* gap-0: the separators carry the spacing, so rows do
-						    not drift apart from the line between them. */}
-						{cards.map((card, index) => (
-							<Fragment key={`${card.hub_id}:${card.id}`}>
-								{index > 0 && <ItemSeparator />}
-								<CardItem
-									card={card}
-									installed={installedNames.has(card.name)}
-									now={now}
-									onInstall={() => setInstalling(card)}
-									onOpen={() => drawer.open(card)}
-								/>
-							</Fragment>
+						{cards.map((card) => (
+							<CardItem
+								key={`${card.hub_id}:${card.id}`}
+								card={card}
+								installed={installedNames.has(card.name)}
+								now={now}
+								onInstall={() => setInstalling(card)}
+								onOpen={() => drawer.open(card)}
+							/>
 						))}
 					</ItemGroup>
 				)}
@@ -338,7 +352,7 @@ function MinePanel({ mcps, loading, onEdit, onRemove }: MinePanelProps) {
 		<ResourcePanel
 			title={t('common.my-mcp')}
 			description={t('mcp.mineDescription')}
-			icon={<Store className="size-5 text-muted-foreground" />}
+			icon={<Plug className="size-5 text-muted-foreground" />}
 			search={
 				// Hidden while there is nothing to search through.
 				mcps.length > 0
@@ -358,7 +372,7 @@ function MinePanel({ mcps, loading, onEdit, onRemove }: MinePanelProps) {
 				<Empty className="border-none py-10">
 					<EmptyHeader>
 						<EmptyMedia variant="icon">
-							<Store />
+							<Plug />
 						</EmptyMedia>
 						<EmptyTitle>{t('mcp.mineEmptyTitle')}</EmptyTitle>
 						<EmptyDescription>{t('mcp.mineEmptyDescription')}</EmptyDescription>
@@ -376,86 +390,84 @@ function MinePanel({ mcps, loading, onEdit, onRemove }: MinePanelProps) {
 				</Empty>
 			) : (
 				<ItemGroup className="gap-0">
-					{shown.map((mcp, index) => (
-						<>
-							{index > 0 && <ItemSeparator />}
-							<Item key={mcp.id}>
-								<ItemMedia>
-									<Avatar className="rounded-md">
-										<AvatarImage
-											src={mcp.icon_url ?? undefined}
-											alt={mcp.display_name || mcp.name}
-											loading="lazy"
-										/>
-										<AvatarFallback className="rounded-md">
-											{(mcp.display_name || mcp.name)
-												.slice(0, 1)
-												.toUpperCase()}
-										</AvatarFallback>
-									</Avatar>
-								</ItemMedia>
+					{shown.map((mcp) => (
+						<Item key={mcp.id}>
+							<ItemMedia>
+								<Avatar className="rounded-md">
+									<AvatarImage
+										src={mcp.icon_url ?? undefined}
+										alt={mcp.display_name || mcp.name}
+										loading="lazy"
+									/>
+									<AvatarFallback
+										className="rounded-md"
+										style={avatarTint(mcp.name)}
+									>
+										{(mcp.display_name || mcp.name).slice(0, 1).toUpperCase()}
+									</AvatarFallback>
+								</Avatar>
+							</ItemMedia>
 
-								<ItemContent>
-									<ItemTitle>
-										<span className="font-medium">
-											{mcp.display_name || mcp.name}
-										</span>
-										{mcp.author && (
-											<span className="text-xs text-muted-foreground">
-												@{mcp.author}
-											</span>
-										)}
-										{mcp.is_stateful && (
-											<span
-												key={'state'}
-												className="text-xs text-muted-foreground/60"
-											>
-												#{t('mcp.stateful')}
-											</span>
-										)}
-										{mcp.tags.slice(0, 4).map((tag) => (
-											<span
-												key={tag}
-												className="text-xs text-muted-foreground/60"
-											>
-												#{tag}
-											</span>
-										))}
-									</ItemTitle>
-									<ItemDescription className="line-clamp-1">
-										{mcp.description}
-									</ItemDescription>
-								</ItemContent>
-
-								<ItemActions className="gap-1">
-									{mcp.version && (
-										<span className="text-xs text-muted-foreground whitespace-nowrap">
-											{mcp.version}
+							<ItemContent>
+								<ItemTitle>
+									<span className="font-medium">
+										{mcp.display_name || mcp.name}
+									</span>
+									{mcp.author && (
+										<span className="text-xs text-muted-foreground">
+											@{mcp.author}
 										</span>
 									)}
-									{mcp.hub_id && mcp.card_id && (
-										<Button
-											size="icon-sm"
-											variant="ghost"
-											className="text-muted-foreground"
-											onClick={() => onEdit(mcp)}
-											title={t('common.edit')}
+									{mcp.is_stateful && (
+										<span
+											key={'state'}
+											className="text-xs text-muted-foreground/60"
 										>
-											<Pencil />
-										</Button>
+											#{t('mcp.stateful')}
+										</span>
 									)}
+									{mcp.tags.slice(0, 4).map((tag) => (
+										<span
+											key={tag}
+											className="text-xs text-muted-foreground/60"
+										>
+											#{tag}
+										</span>
+									))}
+								</ItemTitle>
+								<ItemDescription className="line-clamp-1">
+									{mcp.description}
+								</ItemDescription>
+							</ItemContent>
+
+							<ItemActions className="gap-1">
+								{mcp.version && (
+									<span className="text-xs text-muted-foreground whitespace-nowrap">
+										{mcp.version}
+									</span>
+								)}
+								{mcp.hub_id && mcp.card_id && (
 									<Button
 										size="icon-sm"
 										variant="ghost"
 										className="text-muted-foreground"
-										onClick={() => onRemove(mcp.id)}
-										title={t('common.delete')}
+										onClick={() => onEdit(mcp)}
+										title={t('common.edit')}
 									>
-										<Trash2 />
+										<Pencil />
 									</Button>
-								</ItemActions>
-							</Item>
-						</>
+								)}
+								<Button
+									size="icon-sm"
+									variant="ghost"
+									className="text-muted-foreground"
+									onClick={() => onRemove(mcp.id)}
+									title={t('common.delete')}
+								>
+									<Trash2 />
+								</Button>
+							</ItemActions>
+						</Item>
 					))}
 				</ItemGroup>
 			)}
@@ -497,14 +509,16 @@ export function MCPHubPage() {
 	}, [editing]);
 
 	return (
-		<div className="flex size-full">
-			<Sidebar collapsible="none" className="border-r">
-				<SidebarHeader className="flex flex-col mt-5 gap-y-1">
-					<div className="text-lg font-semibold">{t('common.mcp-hub')}</div>
-					<div className="text-muted-foreground text-xs">{t('mcp.subtitle')}</div>
+		<div className="flex size-full p-2 gap-2">
+			<Sidebar collapsible="none" className="rounded-[22px]">
+				<SidebarHeader className="flex flex-col p-[20px_18px_14px] gap-y-1">
+					<div className="text-xl font-medium tracking-[-0.02em] text-foreground">
+						{t('common.mcp-hub')}
+					</div>
+					<div className="text-text-tertiary text-xs">{t('mcp.subtitle')}</div>
 				</SidebarHeader>
-				<SidebarContent className="my-5">
-					<SidebarGroup>
+				<SidebarContent>
+					<SidebarGroup className="mt-6 px-2 py-0">
 						<SidebarGroupLabel>{t('common.mine')}</SidebarGroupLabel>
 						<SidebarGroupContent>
 							<SidebarMenu>
@@ -513,16 +527,28 @@ export function MCPHubPage() {
 										isActive={!hubId}
 										onClick={() => navigate('/mcp')}
 									>
-										<Store />
-										<span className="truncate">{t('common.my-mcp')}</span>
+										<Plug />
+										<span className="min-w-0 flex-1 truncate">
+											{t('common.my-mcp')}
+										</span>
+										<span className="font-mono text-[10px] text-text-data">
+											{mcps.length}
+										</span>
 									</SidebarMenuButton>
 								</SidebarMenuItem>
 							</SidebarMenu>
 						</SidebarGroupContent>
 					</SidebarGroup>
 
-					<SidebarGroup>
-						<SidebarGroupLabel>{t('mcp.hubsLabel')}</SidebarGroupLabel>
+					<SidebarGroup className="mt-5 px-2 py-0">
+						<SidebarGroupLabel className="justify-between">
+							{t('mcp.hubsLabel')}
+							{hubs.length > 0 && (
+								<span className="text-[10px] text-text-data font-mono">
+									{hubs.length}
+								</span>
+							)}
+						</SidebarGroupLabel>
 						<SidebarGroupContent>
 							{hubsLoading ? (
 								<div className="flex justify-center py-4">
@@ -574,11 +600,16 @@ export function MCPHubPage() {
 														src={hub.icon_url ?? undefined}
 														alt={hub.display_name}
 													/>
-													<AvatarFallback className="rounded-sm text-[10px]">
+													<AvatarFallback
+														className="rounded-sm text-[10px]"
+														style={avatarTint(hub.hub_id)}
+													>
 														{hub.display_name.slice(0, 1).toUpperCase()}
 													</AvatarFallback>
 												</Avatar>
-												<span className="truncate">{hub.display_name}</span>
+												<span className="min-w-0 flex-1 truncate">
+													{hub.display_name}
+												</span>
 											</SidebarMenuButton>
 										</SidebarMenuItem>
 									))}
@@ -589,7 +620,7 @@ export function MCPHubPage() {
 				</SidebarContent>
 			</Sidebar>
 
-			<main className="flex-1 min-w-0 min-h-0 overflow-hidden">
+			<main className="flex-1 min-w-0 min-h-0 overflow-hidden rounded-[22px] bg-card shadow-panel">
 				{hubId ? (
 					// Remount on hub change so the panel's query box resets.
 					<HubPanel

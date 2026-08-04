@@ -126,7 +126,7 @@ function McpRow({ mcp, installed, onDelete }: McpRowProps) {
 				</Button>
 			</ItemActions>
 
-			<ItemFooter>
+			<ItemFooter className="min-w-0">
 				{mcp.is_healthy ? (
 					<Collapsible open={open} onOpenChange={setOpen} className="min-w-0 basis-full">
 						<CollapsibleTrigger asChild>

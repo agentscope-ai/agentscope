@@ -13,6 +13,10 @@ from ._workspace import (
     MCPClientStatus,
     ToolInfo,
 )
+from ._embedding_model import (
+    ListEmbeddingModelsResponse,
+    ListEmbeddingModelsRequest,
+)
 from ._model import ListModelsResponse, ListModelsRequest
 from ._tts_model import ListTTSModelsResponse, ListTTSModelsRequest
 from ._schedule import (
@@ -114,6 +118,8 @@ __all__ = [
     "UpdateKnowledgeBaseRequest",
     "UploadKnowledgeDocumentResponse",
     # Model
+    "ListEmbeddingModelsRequest",
+    "ListEmbeddingModelsResponse",
     "ListModelsRequest",
     "ListModelsResponse",
     # TTS Model

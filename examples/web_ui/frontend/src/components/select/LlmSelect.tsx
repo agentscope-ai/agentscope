@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useTranslation } from '@/i18n/useI18n.ts';
+import { cn } from '@/lib/utils';
 
 interface Props extends Omit<React.ComponentPropsWithoutRef<typeof Button>, 'onChange' | 'value'> {
 	value?: ChatModelConfig | null;
@@ -46,6 +47,7 @@ export function LlmSelect({
 	placeholder,
 	allowClear = false,
 	clearLabel,
+	className,
 	...props
 }: Props) {
 	const { groups, loading, refetch } = useAvailableModels();
@@ -72,17 +74,14 @@ export function LlmSelect({
 				<Button
 					variant="outline"
 					size="sm"
-					className="justify-between gap-1 text-muted-foreground hover:text-foreground font-mono"
+					className={cn('justify-between gap-1 font-normal', className)}
 					{...props}
 				>
 					<span className="truncate">{displayLabel}</span>
-					<ChevronDown className="size-3.5 opacity-50" />
+					<ChevronDown className="size-3.5 text-muted-foreground" />
 				</Button>
 			</DropdownMenuTrigger>
-			<DropdownMenuContent
-				align="start"
-				className="min-w-48 max-h-72 overflow-y-auto font-mono"
-			>
+			<DropdownMenuContent align="start" className="min-w-48 max-h-72 overflow-y-auto">
 				{!loading && !hasOptions ? (
 					<div className="px-2 py-3 text-center text-sm text-muted-foreground">
 						<p className="font-medium">{t('llm-select.empty.title')}</p>
@@ -109,7 +108,7 @@ export function LlmSelect({
 													)
 												}
 											>
-												{m.label}
+												{m.name}
 											</DropdownMenuItem>
 										))
 									: items.map(({ credential, models }) => {

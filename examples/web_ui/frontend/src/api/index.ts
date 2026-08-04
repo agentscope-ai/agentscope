@@ -8,5 +8,5 @@ export { hubApi } from './hub';
 export { mcpApi } from './mcp';
 export { skillApi } from './skill';
 export { scheduleApi } from './schedule';
-export { modelApi, ttsModelApi } from './model';
+export { embeddingModelApi, modelApi, ttsModelApi } from './model';
 export { knowledgeBaseApi } from './knowledgeBase';

@@ -74,11 +74,11 @@ export function AgentSelect({ agents, value, onChange, placeholder, className, .
 				<Button
 					variant="outline"
 					size="sm"
-					className={cn('flex-1 min-w-0 justify-between gap-1', className)}
+					className={cn('justify-between gap-1 font-normal', className)}
 					{...props}
 				>
 					<span className="truncate">{displayLabel}</span>
-					<ChevronDown className="size-3.5 opacity-50" />
+					<ChevronDown className="size-3.5 text-muted-foreground" />
 				</Button>
 			</DropdownMenuTrigger>
 			<DropdownMenuContent align="start" className="min-w-56 max-h-72 overflow-y-auto">

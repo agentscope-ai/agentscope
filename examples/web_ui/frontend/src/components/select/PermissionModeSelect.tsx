@@ -42,10 +42,7 @@ export function PermissionModeSelect({ className, value, disabled, onChange, ...
 				<Button
 					variant="outline"
 					size="sm"
-					className={cn(
-						'justify-between gap-1 font-mono text-muted-foreground',
-						className,
-					)}
+					className={cn('justify-between gap-1 font-normal', className)}
 					disabled={disabled}
 					tooltip={t('permission-mode.trigger-tooltip')}
 					{...props}
@@ -54,7 +51,7 @@ export function PermissionModeSelect({ className, value, disabled, onChange, ...
 						<UserRoundKey />
 						<span className="truncate">{displayLabel}</span>
 					</div>
-					<ChevronDown className="size-3.5 opacity-50" />
+					<ChevronDown className="size-3.5 text-muted-foreground" />
 				</Button>
 			</DropdownMenuTrigger>
 			<DropdownMenuContent align="start" className="min-w-48">

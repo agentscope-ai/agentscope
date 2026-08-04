@@ -738,6 +738,12 @@ export interface EmbeddingModelCard {
 	parameter_overrides: Record<string, Record<string, unknown>>;
 }
 
+/** Response of `GET /embedding-model/` — the provider's full catalogue. */
+export interface ListEmbeddingModelResponse {
+	models: EmbeddingModelCard[];
+	total: number;
+}
+
 // ─── Knowledge Base ───────────────────────────────────────────────────────────
 
 /**

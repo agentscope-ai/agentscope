@@ -33,14 +33,12 @@ import {
 	EmptyHeader,
 	EmptyTitle,
 	EmptyDescription,
-	EmptyContent,
 	EmptyMedia,
 } from '@/components/ui/empty';
 import {
 	Sidebar,
 	SidebarContent,
 	SidebarGroup,
-	SidebarGroupAction,
 	SidebarGroupContent,
 	SidebarGroupLabel,
 	SidebarMenu,
@@ -205,18 +203,18 @@ const ChatPageInner = () => {
 			 * (the drawer we want) — instead of the desktop `fixed left-0`
 			 * container, which would otherwise cover the app rail.
 			 */}
-			<Sidebar
-				collapsible={isMobile ? 'offcanvas' : 'none'}
-				className="rounded-[22px] shadow-panel"
-			>
+			<Sidebar collapsible={isMobile ? 'offcanvas' : 'none'} className="rounded-[22px]">
 				<SidebarContent className="my-2">
-					<SidebarGroup>
-						<SidebarGroupLabel>{t('common.agent').toUpperCase()}</SidebarGroupLabel>
-						<SidebarGroupAction>
+					<SidebarGroup className="px-2 py-0">
+						<SidebarGroupLabel className="justify-between">
+							{t('common.agent')}
 							<AgentDialog onCreated={refetchAgents}>
-								<Plus className="text-sidebar-foreground/70 !size-4" />
+								<Plus
+									id="tour-create-agent"
+									className="text-sidebar-foreground/70 size-4"
+								/>
 							</AgentDialog>
-						</SidebarGroupAction>
+						</SidebarGroupLabel>
 						<SidebarGroupContent className="flex items-center">
 							<AgentSelect
 								className="flex-1 min-w-0"
@@ -237,37 +235,37 @@ const ChatPageInner = () => {
 										<Ellipsis />
 									</Button>
 								</DropdownMenuTrigger>
-								<DropdownMenuContent>
+								{/* w-auto: the default pins the menu to the
+								    trigger's width, which is a 32px icon button. */}
+								<DropdownMenuContent className="w-auto">
 									<DropdownMenuItem onClick={() => setEditOpen(true)}>
 										<Settings2 />
-										Settings
+										{t('agent-menu.settings')}
 									</DropdownMenuItem>
 									<DropdownMenuItem
 										onClick={() => setDeleteOpen(true)}
 										variant="destructive"
 									>
 										<Trash2 />
-										Delete Agent
+										{t('agent-menu.delete')}
 									</DropdownMenuItem>
 								</DropdownMenuContent>
 							</DropdownMenu>
 						</SidebarGroupContent>
 					</SidebarGroup>
-					<SidebarGroup>
-						<SidebarGroupLabel>
-							{t('chat.session.label').toUpperCase()}
-						</SidebarGroupLabel>
-						<SidebarGroupAction asChild>
+					<SidebarGroup className="mt-5 px-2 py-0">
+						<SidebarGroupLabel className="justify-between">
+							{t('chat.session.label')}
 							<span className="text-[10px] text-text-data font-mono">
 								{sessions.length}
 							</span>
-						</SidebarGroupAction>
+						</SidebarGroupLabel>
 						<SidebarGroupContent>
 							<SidebarGroup>
 								<SidebarMenu className="mb-2">
-									<Button onClick={handleCreateSession}>
+									<Button id="tour-create-session" onClick={handleCreateSession}>
 										<Plus />
-										New session
+										{t('chat.newSession')}
 									</Button>
 								</SidebarMenu>
 							</SidebarGroup>
@@ -285,21 +283,13 @@ const ChatPageInner = () => {
 												: t('chat.session.emptyNoAgent')}
 										</EmptyDescription>
 									</EmptyHeader>
-									<EmptyContent>
-										<Button
-											variant="outline"
-											size="sm"
-											disabled={!urlAgentId}
-											onClick={handleCreateSession}
-										>
-											Create Session
-										</Button>
-									</EmptyContent>
 								</Empty>
 							) : (
 								<>
 									<SidebarGroup>
-										<SidebarGroupLabel>TODAY</SidebarGroupLabel>
+										<SidebarGroupLabel>
+											{t('chat.session.today')}
+										</SidebarGroupLabel>
 										<SidebarGroupContent>
 											<SidebarMenu>
 												{todaySessions.map((view) => {
@@ -351,6 +341,7 @@ const ChatPageInner = () => {
 																	</SidebarMenuAction>
 																</DropdownMenuTrigger>
 																<DropdownMenuContent
+																	className="w-auto"
 																	side="right"
 																	align="start"
 																>
@@ -385,7 +376,9 @@ const ChatPageInner = () => {
 										</SidebarGroupContent>
 									</SidebarGroup>
 									<SidebarGroup>
-										<SidebarGroupLabel>EARLIER</SidebarGroupLabel>
+										<SidebarGroupLabel>
+											{t('chat.session.earlier')}
+										</SidebarGroupLabel>
 										<SidebarGroupContent>
 											<SidebarMenu>
 												{earlierSessions.map((view) => {
@@ -431,6 +424,7 @@ const ChatPageInner = () => {
 																	</SidebarMenuAction>
 																</DropdownMenuTrigger>
 																<DropdownMenuContent
+																	className="w-auto"
 																	side="right"
 																	align="start"
 																>

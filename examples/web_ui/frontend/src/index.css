@@ -15,6 +15,10 @@ body,
 	width: 100%;
 }
 
+svg.lucide {
+	stroke-width: 1.7;
+}
+
 @custom-variant dark (&:is(.dark *));
 
 :root {
@@ -24,8 +28,8 @@ body,
 	--text: #6b6f76;
 	--text-h: #18191c;
 	--bg: #f4f5f6;
-	/* --border: oklch(0.922 0 0); */
-	--border: rgba(24, 25, 28, 0.06);
+	--border: oklch(0.922 0 0);
+	/* --border: rgba(24, 25, 28, 0.06); */
 	--code-bg: #f4f3ec;
 	/* --accent: oklch(0.97 0 0); */
 	--accent: rgba(24, 25, 28, 0.05);
@@ -48,10 +52,9 @@ body,
 		font-size: 16px;
 	}
 
-	/* --background: oklch(1 0 0); */
 	/* --foreground: oklch(0.145 0 0); */
 
-	--background: #f4f5f6;
+	--background: oklch(1 0 0);
 	--foreground: #18191c;
 
 	--card: oklch(1 0 0);
@@ -98,8 +101,8 @@ body,
 
 	--chart-5: oklch(0.269 0 0);
 
-	--radius: 0.625rem;
-	/* --radius: 1rem; */
+	/* --radius: 0.625rem; */
+	--radius: 1rem;
 
 	/* --sidebar: oklch(0.985 0 0); */
 	--sidebar: rgba(255, 255, 255, 0.62);
@@ -144,8 +147,15 @@ body,
 	--font-heading: var(--font-sans);
 	--font-sans: 'Geist Variable', sans-serif;
 	--font-mono: 'Geist Mono Variable', ui-monospace, monospace;
+	--color-canvas: var(--bg); /* → bg-canvas (app base; panels float on it) */
+	/* Menu-item inset, tied to the corner radius: a rounder item eats more
+	   horizontal room at the text's edge, so the padding has to grow with it. */
+	--spacing-menu-item: calc(var(--radius) * 0.625);
+	--color-text-secondary: #41454b; /* → text-text-secondary */
 	--color-text-tertiary: #a7abb2; /* → text-text-tertiary */
 	--color-text-data: #8e939a; /* → text-text-data */
+	--color-surface-muted: #f1f2f4; /* → bg-surface-muted (inline badges) */
+	--color-row-hover: rgba(24, 25, 28, 0.02); /* → hover:bg-row-hover */
 	--color-sidebar-ring: var(--sidebar-ring);
 	--color-sidebar-border: var(--sidebar-border);
 	--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -185,6 +195,7 @@ body,
 	--radius-3xl: calc(var(--radius) * 2.2);
 	--radius-4xl: calc(var(--radius) * 2.6);
 	--shadow-panel: 0 1px 2px rgba(24, 25, 28, 0.05), 0 18px 40px -30px rgba(24, 25, 28, 0.28);
+	--shadow-tab: 0 1px 2px rgba(24, 25, 28, 0.07); /* → shadow-tab (active tab) */
 }
 
 .dark {
@@ -226,7 +237,7 @@ body,
 		@apply border-border outline-ring/50;
 	}
 	body {
-		@apply bg-background text-foreground;
+		@apply bg-canvas text-foreground;
 	}
 	html {
 		@apply font-sans;

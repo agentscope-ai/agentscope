@@ -14,6 +14,7 @@ from ._router import (
     credential_router,
     hub_router,
     knowledge_base_router,
+    embedding_model_router,
     mcp_router,
     model_router,
     tts_model_router,
@@ -309,6 +310,7 @@ def create_app(
         workspace_router,
         model_router,
         tts_model_router,
+        embedding_model_router,
     ):
         app.include_router(router)
 

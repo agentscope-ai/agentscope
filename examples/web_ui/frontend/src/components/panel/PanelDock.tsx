@@ -98,7 +98,7 @@ interface PanelProps {
  */
 export const Panel = ({ title, icon, actions, onClose, children }: PanelProps) => {
 	return (
-		<div className="flex flex-1 flex-col border rounded-sm h-full py-1 min-h-0">
+		<div className="flex flex-1 flex-col h-full p-2 min-h-0">
 			<div className="flex items-center justify-between px-2">
 				<span className="flex items-center gap-x-1.5 text-sm">
 					{icon}
@@ -165,7 +165,7 @@ export const PanelDock = ({ layout, panels, onClosePanel }: PanelDockProps) => {
 										)}
 
 										<ResizablePanel
-											className="rounded-[22px] bg-white shadow-panel"
+											className="rounded-[22px] bg-card shadow-panel"
 											minSize={PANEL_MIN_HEIGHT}
 										>
 											<Panel

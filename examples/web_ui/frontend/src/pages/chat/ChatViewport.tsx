@@ -572,20 +572,19 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 			<main className="flex size-full">
 				<ResizablePanelGroup orientation="horizontal">
 					<ResizablePanel
-						className="flex flex-1  rounded-[22px] bg-white shadow-panel"
+						className="flex flex-1 rounded-[22px] bg-card shadow-panel"
 						minSize="24rem"
 					>
 						<div className="flex flex-col flex-1 min-h-0 min-w-0 overflow-x-hidden p-2">
 							<div className="flex flex-row gap-x-2 justify-between">
-								<div
-									id="tour-llm-select"
-									className="flex flex-row items-center gap-x-1"
-								>
+								<div className="flex flex-row items-center gap-x-1">
 									<SidebarTrigger className="md:hidden" />
 								</div>
-								<div id="tour-permission-mode" className="flex flex-row gap-x-1">
+								<div className="flex flex-row gap-x-1">
 									<LlmSelect
+										id="tour-llm-select"
 										variant="ghost"
+										className="font-mono text-muted-foreground hover:text-foreground"
 										value={selectedModel}
 										onChange={handleLlmChange}
 										onAddCredential={() => setCredentialOpen(true)}
@@ -601,7 +600,9 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 										onTTSChange={handleTTSChange}
 									/>
 									<PermissionModeSelect
+										id="tour-permission-mode"
 										variant={'ghost'}
+										className="font-mono text-muted-foreground hover:text-foreground"
 										value={selectedPermissionMode}
 										disabled={!sessionId}
 										onChange={handlePermissionModeChange}

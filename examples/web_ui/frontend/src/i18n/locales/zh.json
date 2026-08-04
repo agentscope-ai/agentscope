@@ -11,12 +11,10 @@
 		"credential": "凭证",
 		"date": "日期",
 		"delete": "删除",
-		"deleting": "删除中…",
 		"disabled": "已禁用",
 		"edit": "编辑",
 		"error": "出错了",
 		"information": "信息",
-		"interrupted": "已中断",
 		"knowledge": "知识库",
 		"loading": "加载中...",
 		"shownCount": "已显示 {{count}} 个",
@@ -37,11 +35,9 @@
 		"settings": "设置",
 		"switchToZh": "切换为中文",
 		"switchToEn": "Switch to English",
-		"success": "成功",
 		"team": "团队",
 		"uploading": "上传中",
 		"leader": "队长",
-		"worker": "成员",
 		"time": "时间",
 		"yes": "是",
 		"deleteTitle": "删除{{entity}} \"{{name}}\"？",
@@ -50,7 +46,11 @@
 		"mine": "我的",
 		"my-mcp": "已安装的 MCP",
 		"skill-hub": "技能中心",
-		"my-skill": "已安装的技能"
+		"my-skill": "已安装的技能",
+		"message": "消息",
+		"llm": "LLM",
+		"tts": "TTS",
+		"embedding": "向量"
 	},
 	"error": {
 		"description": "页面遇到意外错误。你可以重试或返回首页。",
@@ -134,12 +134,9 @@
 	},
 	"chat": {
 		"inputPlaceholder": "输入消息...",
-		"placeholder": "输入消息...",
-		"send": "发送",
 		"confirmToolCall": "允许此操作？",
 		"subagentConfirmTitle": "{{name}} 请求确认",
 		"newSession": "新会话",
-		"noSessions": "暂无会话",
 		"greeting": "我们从哪儿开始？",
 		"agent": {
 			"selectPlaceholder": "选择 Agent",
@@ -152,13 +149,14 @@
 			"label": "会话",
 			"emptyTitle": "暂无会话",
 			"emptyNoAgent": "请先选择一个 Agent。",
-			"emptyHasAgent": "创建会话开始对话。"
+			"emptyHasAgent": "创建会话开始对话。",
+			"today": "今天",
+			"earlier": "更早"
 		}
 	},
 	"dialog-agent-create": {
 		"title": "创建 Agent",
-		"description": "定义新 Agent 的身份与行为。",
-		"trigger": "创建 Agent"
+		"description": "定义新 Agent 的身份与行为。"
 	},
 	"agent-form": {
 		"identity": {
@@ -299,7 +297,6 @@
 	},
 	"credential": {
 		"noProviders": "暂无可用提供商",
-		"noConfigs": "暂无配置",
 		"selectHint": "未选择凭证",
 		"selectHintDescription": "从左侧选择一个凭证以查看详情。",
 		"availableModels": "可用模型",
@@ -310,17 +307,21 @@
 		"configured": "已配置",
 		"addProvider": "添加凭证",
 		"reasoning": "推理模型",
-		"maxContext": "最大上下文",
-		"maxOutput": "最大输出",
-		"inputTypes": "输入模态",
-		"outputTypes": "输出模态",
-		"availableTTSModels": "语音合成模型"
+		"realtime": "实时",
+		"table": {
+			"model": "模型",
+			"context": "上下文",
+			"maxOutput": "最大输出",
+			"accepts": "输入",
+			"outputs": "输出",
+			"legend": "上下文与最大输出均以 token 计。REASONING 表示模型支持深度思考。",
+			"dimensions": "维度"
+		}
 	},
 	"knowledge": {
 		"subtitle": "管理 Agent 使用的知识库",
 		"selectHint": "未选择知识库",
 		"selectHintDescription": "从左侧选择一个知识库以查看详情。",
-		"deleteEntity": "知识库",
 		"list": {
 			"label": "知识库",
 			"emptyTitle": "暂无知识库",
@@ -328,24 +329,16 @@
 			"createButton": "创建知识库"
 		},
 		"document": {
-			"label": "文档",
 			"emptyTitle": "暂无文档",
 			"emptyDescription": "上传文档以索引到该知识库中。",
 			"uploadButton": "上传文档",
 			"uploadButtonShort": "上传",
-			"countLabel": "文档（{{count}}）",
-			"size": "大小",
-			"chunks": "分块",
 			"chunkCount_one": "{{count}} 个分块",
 			"chunkCount_other": "{{count}} 个分块",
-			"uploadedAt": "{{when}} 上传",
-			"deleteEntity": "文档",
 			"deleteConfirmTitle": "删除文档",
 			"deleteConfirmDescription": "确认删除 \"{{name}}\"？该操作将一并移除文档及其全部已索引分块，且不可撤销。",
 			"deleteError": "删除文档失败。",
-			"dropHint": "拖拽文件到此处上传",
 			"dropHintIdle": "或拖拽文件到此处",
-			"invalidFile": "\"{{name}}\" 添加失败。",
 			"unsupportedExtension": "\"{{name}}\" 已跳过——不支持该文件类型。",
 			"status": {
 				"queued": "排队中",
@@ -360,11 +353,11 @@
 			},
 			"actions": {
 				"cancel": "取消",
-				"retry": "重试",
 				"dismiss": "关闭",
 				"remove": "删除",
 				"clearFinished": "清除已完成"
-			}
+			},
+			"title": "文档"
 		},
 		"test": {
 			"button": "测试",
@@ -382,12 +375,10 @@
 	},
 	"llm-select": {
 		"placeholder": "选择模型",
-		"fallbackPlaceholder": "兜底模型",
 		"loading": "加载中…",
 		"empty": {
 			"title": "暂无可用模型",
-			"description": "请先添加凭证。",
-			"addButton": "添加凭证"
+			"description": "请先添加凭证。"
 		},
 		"addCredential": "添加凭证",
 		"clear": "清除选择",
@@ -400,8 +391,7 @@
 			"title": "暂无可用的 Embedding 模型",
 			"description": "请先添加支持 Embedding 的凭证。"
 		},
-		"addCredential": "添加凭证",
-		"clear": "清除选择"
+		"addCredential": "添加凭证"
 	},
 	"dimension-select": {
 		"placeholder": "选择维度",
@@ -440,8 +430,7 @@
 			"title": "创建日程"
 		},
 		"deleteSchedule": {
-			"entity": "日程",
-			"successToast": "日程已删除。"
+			"entity": "日程"
 		},
 		"endAt": "结束日期",
 		"end_at": "结束时间",
@@ -457,8 +446,6 @@
 		"more": "更多",
 		"nextMonth": "下个月",
 		"nextYear": "下一年",
-		"noExecutions": "暂无执行记录",
-		"noExecutionsDescription": "该日程尚未执行过。",
 		"noSchedules": "暂无日程",
 		"noSchedulesDescription": "创建日程以自动化 Agent 任务。",
 		"pickDate": "选择日期",
@@ -472,7 +459,6 @@
 		"previousMonth": "上个月",
 		"previousYear": "上一年",
 		"saturday": "周六",
-		"startAt": "开始时间",
 		"sunday": "周日",
 		"thursday": "周四",
 		"today": "今天",
@@ -531,11 +517,6 @@
 		}
 	},
 	"task-panel": {
-		"heading": "任务",
-		"noTasks": "暂无任务。",
-		"pending": "待处理",
-		"inProgress": "进行中",
-		"completed": "已完成",
 		"blockedBy": "依赖"
 	},
 	"panel": {
@@ -547,7 +528,6 @@
 			"emptyDescription": "智能体规划的任务会显示在这里。"
 		},
 		"mcp": {
-			"title": "MCP",
 			"description": "工作区中配置的 MCP 服务器。",
 			"searchPlaceholder": "在工作区中搜索 MCP",
 			"add": "添加 MCP",
@@ -587,8 +567,7 @@
 			"emptyTitle": "暂无知识库",
 			"emptyDescription": "请先在「知识库」页面创建一个。",
 			"parametersTitle": "检索配置",
-			"parametersDescription": "知识库检索参数设置",
-			"selectedCount": "已挂载 {{count}} 个"
+			"parametersDescription": "知识库检索参数设置"
 		},
 		"permission": {
 			"title": "权限",
@@ -611,10 +590,7 @@
 	},
 	"team-sidebar": {
 		"membersHeading": "成员",
-		"noMembers": "还没有成员——让队长用 AgentCreate 添加一个。",
-		"running": "运行中",
-		"idle": "空闲",
-		"missingSession": "（无会话）"
+		"noMembers": "还没有成员——让队长用 AgentCreate 添加一个。"
 	},
 	"mcp": {
 		"subtitle": "浏览并安装 MCP 服务",
@@ -669,5 +645,9 @@
 		"loadFailedTitle": "无法连接服务",
 		"loadFailedDescription": "请检查服务地址，以及服务是否已启动。",
 		"retry": "重试"
+	},
+	"agent-menu": {
+		"settings": "设置",
+		"delete": "删除 Agent"
 	}
 }

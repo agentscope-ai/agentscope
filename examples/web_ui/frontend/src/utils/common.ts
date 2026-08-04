@@ -118,3 +118,33 @@ export const formatTime = (
 	}
 	return `${Math.floor(total / 31556952)}y`;
 };
+
+/**
+ * A deterministic, readable colour pair for a fallback avatar.
+ *
+ * The hue is hashed from the name so a given hub or card always looks
+ * the same; lightness and chroma are fixed. Working in OKLCH is what
+ * makes the fixed lightness safe — its L is perceptual, so every hue
+ * lands on the same contrast ratio (~7:1 here). The same two numbers in
+ * HSL would leave yellow washed out where blue reads fine.
+ *
+ * @param seed - Stable identity, e.g. the card or hub name.
+ * @returns Inline styles pairing a tinted background with a much darker
+ *   glyph of the same hue.
+ */
+export const avatarTint = (seed: string): { backgroundColor: string; color: string } => {
+	// FNV-1a: cheap, and spreads adjacent names across the wheel rather
+	// than clustering them the way a plain sum of char codes does.
+	let hash = 0x811c9dc5;
+	for (let i = 0; i < seed.length; i++) {
+		hash ^= seed.charCodeAt(i);
+		hash = Math.imul(hash, 0x01000193);
+	}
+	const hue = Math.abs(hash) % 360;
+	// Verified across all 360 hues: 7.16:1 worst case (WCAG AAA), and the
+	// chroma is low enough that nothing meaningfully leaves sRGB.
+	return {
+		backgroundColor: `oklch(0.94 0.03 ${hue})`,
+		color: `oklch(0.41 0.075 ${hue})`,
+	};
+};

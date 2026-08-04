@@ -6,7 +6,6 @@ import {
 	KeyRound,
 	Languages,
 	LibraryBig,
-	Settings,
 } from 'lucide-react';
 import { useOnborda } from 'onborda';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -72,7 +71,7 @@ export function AppSidebar() {
 										location.pathname.startsWith('/chat/')
 									}
 									onClick={() => navigate('/chat')}
-									className="px-2.5 md:px-2"
+									className="justify-center"
 								>
 									<BotMessageSquare />
 								</SidebarMenuButton>
@@ -82,7 +81,7 @@ export function AppSidebar() {
 									tooltip={{ children: t('common.schedule'), hidden: false }}
 									isActive={location.pathname === '/schedule'}
 									onClick={() => navigate('/schedule')}
-									className="px-2"
+									className="justify-center"
 								>
 									<Calendars />
 								</SidebarMenuButton>
@@ -98,7 +97,7 @@ export function AppSidebar() {
 									tooltip={{ children: t('common.credential'), hidden: false }}
 									isActive={location.pathname === '/credential'}
 									onClick={() => navigate('/credential')}
-									className="px-2"
+									className="justify-center"
 								>
 									<KeyRound />
 								</SidebarMenuButton>
@@ -109,7 +108,7 @@ export function AppSidebar() {
 									// Stays lit while browsing a hub under /mcp/:hubId.
 									isActive={location.pathname.startsWith('/mcp')}
 									onClick={() => navigate('/mcp')}
-									className="px-2"
+									className="justify-center"
 								>
 									<MCPSvg />
 								</SidebarMenuButton>
@@ -119,7 +118,7 @@ export function AppSidebar() {
 									tooltip={{ children: t('common.skill-hub'), hidden: false }}
 									isActive={location.pathname.startsWith('/skill')}
 									onClick={() => navigate('/skill')}
-									className="px-2"
+									className="justify-center"
 								>
 									<BookText />
 								</SidebarMenuButton>
@@ -129,7 +128,7 @@ export function AppSidebar() {
 									tooltip={{ children: t('common.knowledge'), hidden: false }}
 									isActive={location.pathname === '/knowledge'}
 									onClick={() => navigate('/knowledge')}
-									className="px-2"
+									className="justify-center"
 								>
 									<LibraryBig />
 								</SidebarMenuButton>
@@ -149,7 +148,7 @@ export function AppSidebar() {
 								hidden: false,
 							}}
 							onClick={handleToggleLanguage}
-							className="px-2"
+							className="justify-center"
 						>
 							<Languages />
 						</SidebarMenuButton>
@@ -158,7 +157,7 @@ export function AppSidebar() {
 						<SidebarMenuButton
 							tooltip={{ children: t('tour.trigger'), hidden: false }}
 							onClick={handleStartTour}
-							className="px-2"
+							className="justify-center"
 						>
 							<Compass />
 						</SidebarMenuButton>
@@ -168,9 +167,9 @@ export function AppSidebar() {
 							tooltip={{ children: t('common.settings'), hidden: false }}
 							isActive={location.pathname === '/setup'}
 							onClick={() => navigate('/setup')}
-							className="px-2"
+							className="justify-center"
 						>
-							<Settings />
+							<div className="">L</div>
 						</SidebarMenuButton>
 					</SidebarMenuItem>
 				</SidebarMenu>

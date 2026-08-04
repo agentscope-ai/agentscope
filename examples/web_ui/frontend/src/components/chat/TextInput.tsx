@@ -314,7 +314,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			<div className={cn('flex flex-col', className)}>
 				<div
 					id="tour-chat-input"
-					className="flex w-full flex-col rounded-[28px]  bg-background px-2"
+					className="flex w-full flex-col rounded-[28px] border bg-background px-2"
 					data-tour="chat-input"
 				>
 					{files.length > 0 && (
