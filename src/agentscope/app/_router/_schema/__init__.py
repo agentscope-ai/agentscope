@@ -10,7 +10,10 @@ from ._workspace import (
     AddFromLibraryResponse,
     AddSkillRequest,
     AddSkillsFromLibraryRequest,
+    AgentSkillsListResponse,
     MCPClientStatus,
+    SkillInfo,
+    SkillActionResponse,
     ToolInfo,
 )
 from ._model import ListModelsResponse, ListModelsRequest

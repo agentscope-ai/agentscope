@@ -68,3 +68,41 @@ class MCPClientStatus(MCPClient):
             "unreachable host and a missing command all look the same."
         ),
     )
+
+
+class SkillInfo(BaseModel):
+    """One skill listing served by the agent-skills endpoint."""
+
+    name: str = Field(description="The skill name (slug).")
+    category: str = Field(default="public", description="The skill category.")
+    description: str = Field(
+        default="",
+        description="The user-facing description of the skill.",
+    )
+    used: bool = Field(
+        default=False,
+        description="Whether the caller already installed this skill.",
+    )
+
+
+class AgentSkillsListResponse(BaseModel):
+    """Response body for ``GET /workspace/agents/{name}/skills``."""
+
+    skills: list[SkillInfo] = Field(
+        default_factory=list,
+        description="The skills on this page.",
+    )
+    total: int = Field(
+        default=0,
+        description="The number of skills returned.",
+    )
+
+
+class SkillActionResponse(BaseModel):
+    """Response body for the skill enable/download action."""
+
+    success: bool = Field(description="Whether the action succeeded.")
+    action: str = Field(description="The action performed, e.g. 'enabled'.")
+    skill_id: str = Field(
+        description="The skill identifier, 'category:name'.",
+    )
