@@ -18,7 +18,7 @@ import {
 import { useAvailableModels } from '@/hooks/useAvailableModels';
 import { useTranslation } from '@/i18n/useI18n.ts';
 
-interface Props {
+interface Props extends Omit<React.ComponentPropsWithoutRef<typeof Button>, 'onChange' | 'value'> {
 	value?: ChatModelConfig | null;
 	/**
 	 * Called when the user selects a model, or — when `allowClear` is true —
@@ -46,6 +46,7 @@ export function LlmSelect({
 	placeholder,
 	allowClear = false,
 	clearLabel,
+	...props
 }: Props) {
 	const { groups, loading, refetch } = useAvailableModels();
 	const { t } = useTranslation();
@@ -68,12 +69,20 @@ export function LlmSelect({
 	return (
 		<DropdownMenu>
 			<DropdownMenuTrigger asChild>
-				<Button variant="outline" size="sm" className="justify-between gap-1">
+				<Button
+					variant="outline"
+					size="sm"
+					className="justify-between gap-1 text-muted-foreground hover:text-foreground font-mono"
+					{...props}
+				>
 					<span className="truncate">{displayLabel}</span>
 					<ChevronDown className="size-3.5 opacity-50" />
 				</Button>
 			</DropdownMenuTrigger>
-			<DropdownMenuContent align="start" className="min-w-48 max-h-72 overflow-y-auto">
+			<DropdownMenuContent
+				align="start"
+				className="min-w-48 max-h-72 overflow-y-auto font-mono"
+			>
 				{!loading && !hasOptions ? (
 					<div className="px-2 py-3 text-center text-sm text-muted-foreground">
 						<p className="font-medium">{t('llm-select.empty.title')}</p>

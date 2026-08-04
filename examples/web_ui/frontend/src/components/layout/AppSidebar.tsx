@@ -10,7 +10,7 @@ import {
 import { useOnborda } from 'onborda';
 import { useNavigate, useLocation } from 'react-router-dom';
 
-import AgentScope from '@/assets/images/agentscope.svg?react';
+import AgentScope from '@/assets/images/agentscope_white.svg?react';
 import { CHAT_TOUR_NAME } from '@/components/tour/chatTourSteps';
 import {
 	Sidebar,
@@ -49,10 +49,13 @@ export function AppSidebar() {
 	};
 
 	return (
-		<Sidebar collapsible="none" className="w-[calc(var(--sidebar-width-icon)+1px)]! border-r">
+		<Sidebar
+			collapsible="none"
+			className="w-[calc(var(--sidebar-width-icon)+1px)]! bg-transparent"
+		>
 			<SidebarHeader>
-				<div className="flex items-center justify-center h-12 mt-2">
-					<AgentScope className="size-8 items-center justify-center rounded-lg" />
+				<div className="flex items-center justify-center size-8 mt-2 rounded-full bg-primary">
+					<AgentScope className="size-5 items-center justify-center rounded-lg" />
 				</div>
 			</SidebarHeader>
 			<SidebarContent>

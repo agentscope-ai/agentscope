@@ -458,7 +458,7 @@ export function ASMessageBubble({ message }: MessageBubbleProps) {
 						))}
 				</AttachmentGroup>
 				{message.role !== 'user' && (
-					<MessageFooter>
+					<MessageFooter className="font-mono">
 						<Badge
 							variant="secondary"
 							aria-label={isRunning ? t('messageBubble.running') : undefined}

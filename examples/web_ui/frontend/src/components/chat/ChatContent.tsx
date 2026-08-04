@@ -92,7 +92,9 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 			)}
 		>
 			{isEmpty ? (
-				<p className="text-center text-lg mb-2">{t('chat.greeting')}</p>
+				<span className="text-center text-4xl font-light tracking-[-0.035em] text-foreground mb-2">
+					{t('chat.greeting')}
+				</span>
 			) : (
 				<MessageScrollerProvider autoScroll={true} defaultScrollPosition={'end'}>
 					<MessageScroller>

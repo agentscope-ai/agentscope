@@ -525,7 +525,10 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		<>
 			<main className="flex size-full">
 				<ResizablePanelGroup orientation="horizontal">
-					<ResizablePanel className="flex flex-1" minSize="24rem">
+					<ResizablePanel
+						className="flex flex-1  rounded-[22px] bg-white shadow-panel"
+						minSize="24rem"
+					>
 						<div className="flex flex-col flex-1 min-h-0 min-w-0 overflow-x-hidden p-2">
 							<div className="flex flex-row gap-x-2 justify-between">
 								<div
@@ -533,7 +536,10 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 									className="flex flex-row items-center gap-x-1"
 								>
 									<SidebarTrigger className="md:hidden" />
+								</div>
+								<div id="tour-permission-mode" className="flex flex-row gap-x-1">
 									<LlmSelect
+										variant="ghost"
 										value={selectedModel}
 										onChange={handleLlmChange}
 										onAddCredential={() => setCredentialOpen(true)}
@@ -548,9 +554,8 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 										selectedTTSModel={selectedTTSModel}
 										onTTSChange={handleTTSChange}
 									/>
-								</div>
-								<div id="tour-permission-mode" className="flex flex-row gap-x-1">
 									<PermissionModeSelect
+										variant={'ghost'}
 										value={selectedPermissionMode}
 										disabled={!sessionId}
 										onChange={handlePermissionModeChange}
@@ -695,7 +700,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 						</div>
 					</ResizablePanel>
 					{panelLayout.length > 0 && (
-						<ResizableHandle withHandle className="bg-transparent" />
+						<ResizableHandle withHandle className="bg-transparent w-1.5" />
 					)}
 					<PanelDock layout={panelLayout} panels={panels} onClosePanel={closePanel} />
 				</ResizablePanelGroup>

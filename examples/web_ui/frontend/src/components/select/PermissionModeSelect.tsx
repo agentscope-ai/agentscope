@@ -22,14 +22,14 @@ const PERMISSION_MODES: { value: PermissionMode; label: string }[] = [
 	{ value: 'dont_ask', label: "Don't Ask" },
 ];
 
-interface Props {
+interface Props extends Omit<React.ComponentPropsWithoutRef<typeof Button>, 'onChange' | 'value'> {
 	className?: string;
 	value?: PermissionMode;
 	disabled?: boolean;
 	onChange?: (value: PermissionMode) => void;
 }
 
-export function PermissionModeSelect({ className, value, disabled, onChange }: Props) {
+export function PermissionModeSelect({ className, value, disabled, onChange, ...props }: Props) {
 	const { t } = useTranslation();
 
 	const displayLabel = value
@@ -42,9 +42,13 @@ export function PermissionModeSelect({ className, value, disabled, onChange }: P
 				<Button
 					variant="outline"
 					size="sm"
-					className={cn('justify-between gap-1', className)}
+					className={cn(
+						'justify-between gap-1 font-mono text-muted-foreground',
+						className,
+					)}
 					disabled={disabled}
 					tooltip={t('permission-mode.trigger-tooltip')}
+					{...props}
 				>
 					<div className="flex flex-row items-center gap-x-2">
 						<UserRoundKey />

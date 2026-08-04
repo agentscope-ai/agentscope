@@ -1,5 +1,13 @@
 import type { ContentBlock, TextBlock } from '@agentscope-ai/agentscope/message';
-import { Paperclip, Send, Loader2, Square, type LucideIcon, XIcon, FileText } from 'lucide-react';
+import {
+	Paperclip,
+	Loader2,
+	Square,
+	type LucideIcon,
+	XIcon,
+	FileText,
+	ArrowUp,
+} from 'lucide-react';
 import mime from 'mime';
 import React, {
 	useState,
@@ -252,7 +260,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 				};
 			}
 			return {
-				icon: Send,
+				icon: ArrowUp,
 				tooltip: t('textInput.send'),
 				disabled: disabled || !value.trim() || hasProcessing,
 				onClick: handleSend,
@@ -306,7 +314,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			<div className={cn('flex flex-col', className)}>
 				<div
 					id="tour-chat-input"
-					className="flex w-full flex-col rounded-[28px] border bg-background px-2"
+					className="flex w-full flex-col rounded-[28px]  bg-background px-2"
 					data-tour="chat-input"
 				>
 					{files.length > 0 && (
