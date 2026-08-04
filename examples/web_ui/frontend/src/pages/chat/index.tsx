@@ -306,8 +306,10 @@ const ChatPageInner = () => {
 													const session = view.session;
 													return (
 														<SidebarMenuItem key={session.id}>
+															{/* Wider right gutter than the stock
+															    pr-8: the badge holds a mono timestamp. */}
 															<SidebarMenuButton
-																className="text-muted-foreground hover:text-foreground"
+																className="text-muted-foreground hover:text-foreground group-has-data-[sidebar=menu-action]/menu-item:pr-16"
 																isActive={
 																	urlSessionId === session.id
 																}
@@ -330,7 +332,11 @@ const ChatPageInner = () => {
 																		session.id}
 																</span>
 															</SidebarMenuButton>
-															<SidebarMenuBadge className="group-hover/menu-item:hidden text-text-tertiary! font-mono">
+															{/* Badge and action are mutually exclusive.
+															    Keyboard focus reveals the action, plain
+															    focus-within does not — otherwise clicking
+															    the row would pin it open. */}
+															<SidebarMenuBadge className="max-md:hidden group-hover/menu-item:hidden group-has-focus-visible/menu-item:hidden group-has-data-[state=open]/menu-item:hidden text-text-tertiary! font-mono">
 																{format(
 																	new Date(
 																		view.session.created_at,
@@ -338,44 +344,40 @@ const ChatPageInner = () => {
 																	'HH:mm',
 																)}
 															</SidebarMenuBadge>
-															<SidebarMenuAction showOnHover>
-																<DropdownMenu>
-																	<DropdownMenuTrigger asChild>
+															<DropdownMenu>
+																<DropdownMenuTrigger asChild>
+																	<SidebarMenuAction className="md:opacity-0 group-hover/menu-item:opacity-100 group-has-focus-visible/menu-item:opacity-100 aria-expanded:opacity-100 peer-data-active/menu-button:text-sidebar-accent-foreground">
 																		<Ellipsis />
-																	</DropdownMenuTrigger>
-																	<DropdownMenuContent
-																		side="right"
-																		align="start"
+																	</SidebarMenuAction>
+																</DropdownMenuTrigger>
+																<DropdownMenuContent
+																	side="right"
+																	align="start"
+																>
+																	<DropdownMenuItem
+																		onClick={() => {
+																			setRenameSession(
+																				session,
+																			);
+																			setRenameOpen(true);
+																		}}
 																	>
-																		<DropdownMenuItem
-																			onClick={() => {
-																				setRenameSession(
-																					session,
-																				);
-																				setRenameOpen(true);
-																			}}
-																		>
-																			<Pencil />
-																			{t(
-																				'session-menu.rename',
-																			)}
-																		</DropdownMenuItem>
-																		<DropdownMenuItem
-																			variant="destructive"
-																			onClick={() =>
-																				requestDeleteSession(
-																					session,
-																				)
-																			}
-																		>
-																			<Trash2 />
-																			{t(
-																				'session-menu.delete',
-																			)}
-																		</DropdownMenuItem>
-																	</DropdownMenuContent>
-																</DropdownMenu>
-															</SidebarMenuAction>
+																		<Pencil />
+																		{t('session-menu.rename')}
+																	</DropdownMenuItem>
+																	<DropdownMenuItem
+																		variant="destructive"
+																		onClick={() =>
+																			requestDeleteSession(
+																				session,
+																			)
+																		}
+																	>
+																		<Trash2 />
+																		{t('session-menu.delete')}
+																	</DropdownMenuItem>
+																</DropdownMenuContent>
+															</DropdownMenu>
 														</SidebarMenuItem>
 													);
 												})}
@@ -391,6 +393,7 @@ const ChatPageInner = () => {
 													return (
 														<SidebarMenuItem key={session.id}>
 															<SidebarMenuButton
+																className="group-has-data-[sidebar=menu-action]/menu-item:pr-16"
 																isActive={
 																	urlSessionId === session.id
 																}
@@ -413,7 +416,7 @@ const ChatPageInner = () => {
 																		session.id}
 																</span>
 															</SidebarMenuButton>
-															<SidebarMenuBadge className="group-hover/menu-item:hidden text-text-tertiary! font-mono">
+															<SidebarMenuBadge className="max-md:hidden group-hover/menu-item:hidden group-has-focus-visible/menu-item:hidden group-has-data-[state=open]/menu-item:hidden text-text-tertiary! font-mono">
 																{format(
 																	new Date(
 																		view.session.created_at,
@@ -421,44 +424,40 @@ const ChatPageInner = () => {
 																	'MMM dd',
 																)}
 															</SidebarMenuBadge>
-															<SidebarMenuAction showOnHover>
-																<DropdownMenu>
-																	<DropdownMenuTrigger asChild>
+															<DropdownMenu>
+																<DropdownMenuTrigger asChild>
+																	<SidebarMenuAction className="md:opacity-0 group-hover/menu-item:opacity-100 group-has-focus-visible/menu-item:opacity-100 aria-expanded:opacity-100 peer-data-active/menu-button:text-sidebar-accent-foreground">
 																		<Ellipsis />
-																	</DropdownMenuTrigger>
-																	<DropdownMenuContent
-																		side="right"
-																		align="start"
+																	</SidebarMenuAction>
+																</DropdownMenuTrigger>
+																<DropdownMenuContent
+																	side="right"
+																	align="start"
+																>
+																	<DropdownMenuItem
+																		onClick={() => {
+																			setRenameSession(
+																				session,
+																			);
+																			setRenameOpen(true);
+																		}}
 																	>
-																		<DropdownMenuItem
-																			onClick={() => {
-																				setRenameSession(
-																					session,
-																				);
-																				setRenameOpen(true);
-																			}}
-																		>
-																			<Pencil />
-																			{t(
-																				'session-menu.rename',
-																			)}
-																		</DropdownMenuItem>
-																		<DropdownMenuItem
-																			variant="destructive"
-																			onClick={() =>
-																				requestDeleteSession(
-																					session,
-																				)
-																			}
-																		>
-																			<Trash2 />
-																			{t(
-																				'session-menu.delete',
-																			)}
-																		</DropdownMenuItem>
-																	</DropdownMenuContent>
-																</DropdownMenu>
-															</SidebarMenuAction>
+																		<Pencil />
+																		{t('session-menu.rename')}
+																	</DropdownMenuItem>
+																	<DropdownMenuItem
+																		variant="destructive"
+																		onClick={() =>
+																			requestDeleteSession(
+																				session,
+																			)
+																		}
+																	>
+																		<Trash2 />
+																		{t('session-menu.delete')}
+																	</DropdownMenuItem>
+																</DropdownMenuContent>
+															</DropdownMenu>
 														</SidebarMenuItem>
 													);
 												})}

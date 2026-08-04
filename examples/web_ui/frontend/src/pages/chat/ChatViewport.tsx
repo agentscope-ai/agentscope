@@ -65,6 +65,41 @@ interface ChatViewportProps {
 /** Maximum number of panels stacked in a single dock column. */
 const MAX_PANELS_PER_COLUMN = 2;
 
+/** localStorage key holding the dock layout across page navigations. */
+const PANEL_LAYOUT_KEY = 'chat_panel_layout';
+
+// Typed as a full Record so adding a PanelKey without listing it here
+// is a compile error rather than a silently unrestorable panel.
+const KNOWN_PANELS: Record<PanelKey, true> = {
+	plan: true,
+	mcp: true,
+	skill: true,
+	permission: true,
+	knowledge: true,
+};
+
+/**
+ * Restore the persisted dock layout, dropping anything that is no
+ * longer a known panel (keys get renamed/removed across releases).
+ *
+ * @returns The stored layout, or an empty one when absent or corrupt.
+ */
+function loadPanelLayout(): PanelKey[][] {
+	try {
+		const parsed: unknown = JSON.parse(localStorage.getItem(PANEL_LAYOUT_KEY) ?? '[]');
+		if (!Array.isArray(parsed)) return [];
+		return parsed
+			.map((column: unknown) =>
+				Array.isArray(column)
+					? column.filter((key): key is PanelKey => key in KNOWN_PANELS)
+					: [],
+			)
+			.filter((column) => column.length > 0);
+	} catch {
+		return [];
+	}
+}
+
 /**
  * Insert a panel into the dock layout. Scans columns left to right and
  * appends to the first one with spare room; if every column is full a
@@ -145,7 +180,12 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	const [permissionContext, setPermissionContext] = useState<PermissionContext | null>(null);
 	// Dock layout: columns laid out left→right, each holding up to 2
 	// panels stacked top→bottom. Open order determines placement.
-	const [panelLayout, setPanelLayout] = useState<PanelKey[][]>([]);
+	// Persisted so leaving and returning to /chat keeps the same panels.
+	const [panelLayout, setPanelLayout] = useState<PanelKey[][]>(loadPanelLayout);
+
+	useEffect(() => {
+		localStorage.setItem(PANEL_LAYOUT_KEY, JSON.stringify(panelLayout));
+	}, [panelLayout]);
 
 	const handleStateUpdated = useCallback((value: Record<string, unknown>) => {
 		if (value.tasks_context) {
