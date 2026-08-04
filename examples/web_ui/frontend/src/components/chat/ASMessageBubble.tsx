@@ -421,6 +421,8 @@ export function ASMessageBubble({ message }: MessageBubbleProps) {
 	const startMs = new Date(message.created_at).getTime();
 	const endMs = isRunning ? now : new Date(message.finished_at!).getTime();
 	const elapsedSeconds = Math.max(0, (endMs - startMs) / 1000);
+	// Left in the default English units: the badge stands alone with no
+	// surrounding sentence, so a bare "2m30s" reads fine in any locale.
 	const elapsedText = formatTime(elapsedSeconds);
 
 	return (
@@ -511,6 +513,8 @@ function ThinkingBlockView({ block }: { block: ThinkingBlock }) {
 	const startMs = new Date(block.created_at).getTime();
 	const endMs = isRunning ? now : new Date(block.finished_at!).getTime();
 	const elapsedSeconds = Math.max(0, (endMs - startMs) / 1000);
+	// Left in the default English units: the badge stands alone with no
+	// surrounding sentence, so a bare "2m30s" reads fine in any locale.
 	const elapsedText = formatTime(elapsedSeconds);
 	return (
 		<Collapsible>

@@ -45,10 +45,11 @@ from __future__ import annotations
 
 import posixpath
 import shlex
-from typing import Any
+from typing import Any, Sequence
 
 from ..._logging import logger
 from ...mcp import MCPClient
+from ...skill import Skill, SkillLoaderBase, SkillSourceBase
 from .._sandboxed_base import SandboxedWorkspaceBase
 from .._utils import _GATEWAY_BASE_REQUIREMENTS, DEFAULT_WORKSPACE_INSTRUCTIONS
 from ._constants import (
@@ -65,7 +66,7 @@ from ._daytona_backend import DaytonaBackend
 class DaytonaWorkspace(SandboxedWorkspaceBase):
     """Workspace backed by a Daytona sandbox.
 
-    ``default_mcps`` and ``skill_paths`` are seed-time inputs and are
+    ``default_mcps`` and ``default_skills`` are seed-time inputs and are
     not interpreted until :meth:`initialize`, after the Daytona backend
     has been provisioned and the shared sandbox lifecycle can restore
     persisted state.
@@ -90,8 +91,12 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
         extra_pip: list[str] | None = None,
         instructions: str = DEFAULT_WORKSPACE_INSTRUCTIONS,
         default_mcps: list[MCPClient] | None = None,
-        skill_paths: list[str] | None = None,
+        default_skills: Sequence[
+            str | Skill | SkillLoaderBase | SkillSourceBase
+        ]
+        | None = None,
         os_user: str | None = None,
+        **kwargs: Any,
     ) -> None:
         """Construct a :class:`DaytonaWorkspace`.
 
@@ -130,8 +135,9 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
             default_mcps (`list[MCPClient] | None`, optional):
                 MCPs registered on first init when no persisted
                 ``.mcp`` exists.
-            skill_paths (`list[str] | None`, optional):
-                Local skill dirs seeded into ``skills/`` on first init.
+            default_skills (`Sequence[str | Skill | SkillLoaderBase | \
+SkillSourceBase] | None`, optional):
+                Skills seeded into ``skills/`` on first init.
             os_user (`str | None`, optional):
                 Optional Daytona OS user. ``None`` means AgentScope
                 lets Daytona and the selected snapshot decide.
@@ -139,7 +145,8 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
         super().__init__(
             workspace_id=workspace_id,
             default_mcps=default_mcps,
-            skill_paths=skill_paths,
+            default_skills=default_skills,
+            **kwargs,
         )
 
         # ── serializable config ─────────────────────────────────

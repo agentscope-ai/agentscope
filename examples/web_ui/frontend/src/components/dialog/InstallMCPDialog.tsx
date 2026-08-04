@@ -1,4 +1,4 @@
-import { CircleAlert } from 'lucide-react';
+import { CircleAlert, Download, Save } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { hubApi, mcpApi } from '@/api';
@@ -135,11 +135,22 @@ export function InstallMCPDialog({ card, editing, onOpenChange, onInstalled }: P
 				)}
 
 				<DialogFooter>
-					<Button variant="outline" onClick={() => onOpenChange(false)}>
+					<Button
+						variant="ghost"
+						onClick={() => onOpenChange(false)}
+						disabled={installing}
+					>
+						<CircleAlert className="size-3.5" />
 						{t('common.cancel')}
 					</Button>
 					<Button onClick={handleInstall} disabled={installing || !name}>
-						{installing && <Spinner />}
+						{installing ? (
+							<Spinner className="size-3.5" />
+						) : editing ? (
+							<Save className="size-3.5" />
+						) : (
+							<Download className="size-3.5" />
+						)}
 						{t(editing ? 'common.save' : 'mcp.install')}
 					</Button>
 				</DialogFooter>

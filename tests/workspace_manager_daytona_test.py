@@ -88,7 +88,7 @@ class TestDaytonaWorkspaceManager(IsolatedAsyncioTestCase):
                 },
                 "extra_pip": ["x"],
                 "default_mcps": [],
-                "skill_paths": [],
+                "default_skills": [],
                 "os_user": "daytona",
             },
         )

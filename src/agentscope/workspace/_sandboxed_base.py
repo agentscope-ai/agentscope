@@ -20,9 +20,11 @@ import asyncio
 import json
 import shlex
 from abc import abstractmethod
+from typing import Any, Sequence
 
 from .._logging import logger
 from ..mcp import MCPClient
+from ..skill import Skill, SkillLoaderBase, SkillSourceBase
 from ._base import WorkspaceBase
 from ._gateway_client import GatewayClient
 from ._utils import (
@@ -119,7 +121,11 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         *,
         workspace_id: str | None = None,
         default_mcps: list[MCPClient] | None = None,
-        skill_paths: list[str] | None = None,
+        default_skills: Sequence[
+            str | Skill | SkillLoaderBase | SkillSourceBase
+        ]
+        | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initialise sandbox-workspace state.
 
@@ -128,13 +134,15 @@ class SandboxedWorkspaceBase(WorkspaceBase):
                 Existing identifier; ``None`` mints a fresh UUID.
             default_mcps (`list[MCPClient] | None`, optional):
                 MCPs registered when no persisted ``.mcp`` exists.
-            skill_paths (`list[str] | None`, optional):
-                Local skill dirs seeded on first start.
+            default_skills (`Sequence[str | Skill | SkillLoaderBase | \
+SkillSourceBase] | None`, optional):
+                Skills seeded into ``skills/`` on first init.
         """
         super().__init__(
             workspace_id=workspace_id,
             default_mcps=default_mcps,
-            skill_paths=skill_paths,
+            default_skills=default_skills,
+            **kwargs,
         )
         self._gateway = None
 
@@ -189,13 +197,16 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         ), "_provision_backend must set self._backend before returning"
 
         # Set up the workspace layout
-        await self._ensure_workspace_layout()
+        first_boot = await self._ensure_workspace_layout()
 
         # Set up the MCP gateway server
         await self._setup_mcp_gateway()
 
-        # Set up the skills if not exists
-        await self._setup_skills()
+        # Seed skills only on the very first boot, for the same reason
+        # ``.mcp`` gates the MCP seeding: one the user later deletes
+        # must not come back on the next start.
+        if first_boot:
+            await self._seed_skills()
 
         self.is_alive = True
 
@@ -315,8 +326,16 @@ class SandboxedWorkspaceBase(WorkspaceBase):
 
     # ── workspace layout helpers ──────────────────────────────────
 
-    async def _ensure_workspace_layout(self) -> None:
-        """Create the standard workspace directories inside the sandbox."""
+    async def _ensure_workspace_layout(self) -> bool:
+        """Create the standard workspace directories inside the sandbox.
+
+        Returns:
+            `bool`:
+                Whether this is the workspace's first boot — i.e. there
+                was no ``.mcp`` file to restore from. A corrupted file
+                is reseeded but does **not** count: the skills beside
+                it are still there.
+        """
         backend = self.get_backend()
         await backend.exec_shell(
             [
@@ -356,7 +375,7 @@ class SandboxedWorkspaceBase(WorkspaceBase):
                 )
             else:
                 if isinstance(parsed, list):
-                    return
+                    return False
                 logger.warning(
                     "%s: %s does not contain a JSON list "
                     "(got %s); reseeding defaults",
@@ -364,7 +383,11 @@ class SandboxedWorkspaceBase(WorkspaceBase):
                     self._mcp_file,
                     type(parsed).__name__,
                 )
+            await backend.write_file(self._mcp_file, payload)
+            return False
+
         await backend.write_file(self._mcp_file, payload)
+        return True
 
     # ── gateway lifecycle helpers ─────────────────────────────────
 

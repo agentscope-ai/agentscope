@@ -5,6 +5,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import type { HubInfo, SkillCard, SkillView } from '@/api';
 import { hubApi, skillApi } from '@/api';
 import { ApiError } from '@/api/client';
+import { DeleteDialog } from '@/components/dialog/DeleteDialog.tsx';
 import { ResourceDetailDrawer } from '@/components/drawer/ResourceDetailDrawer.tsx';
 import { LoadMore } from '@/components/hub/LoadMore.tsx';
 import { ResourcePanel } from '@/components/hub/ResourcePanel.tsx';
@@ -44,6 +45,7 @@ import { useResourceDrawer } from '@/hooks/useResourceDrawer.ts';
 import { useSkillHubCards } from '@/hooks/useSkillHubCards.ts';
 import { useSkillHubs } from '@/hooks/useSkillHubs.ts';
 import { useSkills } from '@/hooks/useSkills.ts';
+import { useTimeUnits } from '@/hooks/useTimeUnits.ts';
 import { useTranslation } from '@/i18n/useI18n';
 import { formatTime } from '@/utils/common';
 
@@ -60,6 +62,7 @@ interface CardItemProps {
 
 function CardItem({ card, installed, installing, now, onInstall, onOpen }: CardItemProps) {
 	const { t } = useTranslation();
+	const units = useTimeUnits();
 
 	return (
 		<Item className="cursor-pointer hover:bg-accent/50" onClick={onOpen}>
@@ -105,6 +108,7 @@ function CardItem({ card, installed, installing, now, onInstall, onOpen }: CardI
 							: t('skill.updatedAgo', {
 									ago: formatTime(now - card.updated_at, {
 										leadingUnitOnly: true,
+										units,
 									}),
 								})
 						: null}
@@ -295,6 +299,7 @@ interface MinePanelProps {
 }
 
 function MinePanel({ skills, loading, onRemove }: MinePanelProps) {
+	const [deleteTarget, setDeleteTarget] = useState<SkillView | null>(null);
 	const { t } = useTranslation();
 	const [query, setQuery] = useState('');
 	// The list view omits SKILL.md; the detail endpoint carries it.
@@ -415,7 +420,7 @@ function MinePanel({ skills, loading, onRemove }: MinePanelProps) {
 										// open the drawer behind it.
 										onClick={(e) => {
 											e.stopPropagation();
-											onRemove(skill.id);
+											setDeleteTarget(skill);
 										}}
 										title={t('common.delete')}
 									>
@@ -438,7 +443,7 @@ function MinePanel({ skills, loading, onRemove }: MinePanelProps) {
 					<Button
 						variant="destructive"
 						onClick={() => {
-							if (drawer.opened) onRemove((drawer.opened as SkillView).id);
+							if (drawer.opened) setDeleteTarget(drawer.opened as SkillView);
 							drawer.close();
 						}}
 					>
@@ -446,6 +451,20 @@ function MinePanel({ skills, loading, onRemove }: MinePanelProps) {
 						{t('common.delete')}
 					</Button>
 				}
+			/>
+			<DeleteDialog
+				open={deleteTarget !== null}
+				onOpenChange={(open) => {
+					if (!open) setDeleteTarget(null);
+				}}
+				title={t('common.deleteTitle', {
+					entity: t('dialog-mcp-delete.skillEntity'),
+					name: deleteTarget?.display_name || deleteTarget?.name || '',
+				})}
+				description={t('common.deleteDescription')}
+				onConfirm={async () => {
+					if (deleteTarget) await onRemove(deleteTarget.id);
+				}}
 			/>
 		</ResourcePanel>
 	);

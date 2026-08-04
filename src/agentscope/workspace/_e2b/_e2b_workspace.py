@@ -39,10 +39,11 @@ manager handles cache, TTL eviction and metadata-based reattachment.
 
 import asyncio
 import shlex
-from typing import Any
+from typing import Any, Sequence
 
 from ..._logging import logger
 from ...mcp import MCPClient
+from ...skill import Skill, SkillLoaderBase, SkillSourceBase
 from .._sandboxed_base import SandboxedWorkspaceBase
 from .._utils import _GATEWAY_BASE_REQUIREMENTS, DEFAULT_WORKSPACE_INSTRUCTIONS
 from ._constants import (
@@ -55,14 +56,13 @@ from ._constants import (
 )
 from ._e2b_backend import E2BBackend
 
-
 # ── the workspace ──────────────────────────────────────────────────
 
 
 class E2BWorkspace(SandboxedWorkspaceBase):
     """Workspace backed by an E2B cloud sandbox.
 
-    ``default_mcps`` and ``skill_paths`` are seed-time inputs and are
+    ``default_mcps`` and ``default_skills`` are seed-time inputs and are
     not retained as instance state past :meth:`initialize`.
     """
 
@@ -86,7 +86,11 @@ class E2BWorkspace(SandboxedWorkspaceBase):
         extra_pip: list[str] | None = None,
         instructions: str = DEFAULT_WORKSPACE_INSTRUCTIONS,
         default_mcps: list[MCPClient] | None = None,
-        skill_paths: list[str] | None = None,
+        default_skills: Sequence[
+            str | Skill | SkillLoaderBase | SkillSourceBase
+        ]
+        | None = None,
+        **kwargs: Any,
     ) -> None:
         """Construct an :class:`E2BWorkspace`.
 
@@ -119,13 +123,15 @@ class E2BWorkspace(SandboxedWorkspaceBase):
             default_mcps (`list[MCPClient] | None`, optional):
                 MCPs registered on first init when no persisted
                 ``.mcp`` exists.
-            skill_paths (`list[str] | None`, optional):
-                Local skill dirs seeded into ``skills/`` on first init.
+            default_skills (`Sequence[str | Skill | SkillLoaderBase | \
+SkillSourceBase] | None`, optional):
+                Skills seeded into ``skills/`` on first init.
         """
         super().__init__(
             workspace_id=workspace_id,
             default_mcps=default_mcps,
-            skill_paths=skill_paths,
+            default_skills=default_skills,
+            **kwargs,
         )
 
         # ── serializable config ─────────────────────────────────

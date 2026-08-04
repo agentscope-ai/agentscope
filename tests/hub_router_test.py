@@ -144,10 +144,16 @@ class FakeSkillHub(SkillHubBase):
         return SkillHubPage(cards=[self.card], next_cursor="page-2")
 
     async def get_skill(self, user_id: str, card_id: str) -> SkillCard:
-        """Return the fixture card, or raise for anything else."""
-        if card_id != "gifgrep":
+        """Return the fixture card, or raise for anything else.
+
+        ``owner/gifgrep`` is the shape a hub whose slugs are not unique
+        mints for a search hit — it has to survive the round trip.
+        """
+        if card_id not in ("gifgrep", "owner/gifgrep"):
             raise KeyError(card_id)
-        return self.card
+        # Echoed the way ClawHub does: the id it mints for a search hit
+        # carries the owner, and that is what an install records.
+        return self.card.model_copy(update={"id": card_id})
 
     async def download(
         self,
@@ -163,7 +169,7 @@ class FakeSkillHub(SkillHubBase):
         if card_id == "nomd":
             yield _zip_bytes({"README.md": "nothing here"})
             return
-        if card_id != "gifgrep":
+        if card_id not in ("gifgrep", "owner/gifgrep"):
             raise KeyError(card_id)
         yield _zip_bytes({"SKILL.md": SKILL_MD, "notes.md": "x"})
 
@@ -272,11 +278,31 @@ class HubRouterTest(IsolatedAsyncioTestCase):
     def test_unknown_card(self) -> None:
         """An unknown card id is a 404."""
         response = self._client.get(
-            "/hub/skill/fakeskills/cards/missing",
+            "/hub/skill/fakeskills/card",
+            params={"card_id": "missing"},
             headers=HEADERS,
         )
 
         self.assertEqual(response.status_code, 404)
+
+    def test_card_id_with_a_slash_round_trips(self) -> None:
+        """A hub whose ids are ``owner/slug`` must still be reachable.
+
+        The id travels as a query parameter for exactly this reason: as
+        a path segment the server decodes ``%2F`` before routing, the
+        route stops matching, and the caller gets a bare 404 from the
+        framework rather than an answer.
+        """
+        fetched = self._client.get(
+            "/hub/skill/fakeskills/card",
+            params={"card_id": "owner/gifgrep"},
+            headers=HEADERS,
+        )
+        installed = self._install_skill("owner/gifgrep")
+
+        self.assertEqual(fetched.status_code, 200)
+        self.assertEqual(installed.status_code, 201)
+        self.assertEqual(installed.json()["card_id"], "owner/gifgrep")
 
     # ── install: MCP ──────────────────────────────────────────────
 
@@ -284,7 +310,8 @@ class HubRouterTest(IsolatedAsyncioTestCase):
         """POST an MCP install. Installing is user-level, so unlike the
         skill endpoint it takes no session scope."""
         return self._client.post(
-            f"/hub/mcp/fake/cards/{card_id}/install",
+            "/hub/mcp/fake/install",
+            params={"card_id": card_id},
             json=body,
             headers=HEADERS,
         )
@@ -335,7 +362,7 @@ class HubRouterTest(IsolatedAsyncioTestCase):
             params=self._scope,
             headers=HEADERS,
         ).json()
-        self.assertEqual([m["name"] for m in listed], [])
+        self.assertEqual([m["name"] for m in listed["mcps"]], [])
 
     def test_install_never_echoes_the_rendered_config(self) -> None:
         """The response must not hand the submitted secret back."""
@@ -560,7 +587,7 @@ class HubRouterTest(IsolatedAsyncioTestCase):
             params=self._scope,
             headers=HEADERS,
         ).json()
-        self.assertEqual([m["name"] for m in listed], ["echo"])
+        self.assertEqual([m["name"] for m in listed["mcps"]], ["echo"])
 
     def test_add_from_library_skips_what_is_already_there(self) -> None:
         """Adding twice is a no-op, not a duplicate or an error."""
@@ -607,8 +634,8 @@ class HubRouterTest(IsolatedAsyncioTestCase):
             headers=HEADERS,
         ).json()
 
-        self.assertFalse(listed[0]["is_healthy"])
-        detail = listed[0]["error"]
+        self.assertFalse(listed["mcps"][0]["is_healthy"])
+        detail = listed["mcps"][0]["error"]
         self.assertTrue(detail)
         # The bare ExceptionGroup message says nothing useful; the leaf
         # cause is what has to come through.
@@ -619,8 +646,8 @@ class HubRouterTest(IsolatedAsyncioTestCase):
     def _install_skill(self, card_id: str, **params: str) -> Any:
         """POST a skill install. User-level, like the MCP one."""
         return self._client.post(
-            f"/hub/skill/fakeskills/cards/{card_id}/install",
-            params=params,
+            "/hub/skill/fakeskills/install",
+            params={"card_id": card_id, **params},
             headers=HEADERS,
         )
 
@@ -655,7 +682,7 @@ class HubRouterTest(IsolatedAsyncioTestCase):
             params=self._scope,
             headers=HEADERS,
         ).json()
-        self.assertEqual([s["name"] for s in listed], [])
+        self.assertEqual([s["name"] for s in listed["skills"]], [])
 
     def test_install_skill_does_not_download(self) -> None:
         """The archive is fetched when the skill reaches a workspace,

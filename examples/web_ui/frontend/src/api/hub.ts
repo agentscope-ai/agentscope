@@ -12,8 +12,10 @@ import type {
 } from './types';
 
 /**
- * Card ids are opaque and may contain characters that are not path-safe —
- * ClawHub's search endpoint, for one, returns ids containing `:`.
+ * Hub ids are ours and path-safe, but encode anyway so a future one with
+ * a space or slash cannot break the URL. Card ids never go in the path:
+ * they are opaque strings minted by the hub — ClawHub's search endpoint
+ * returns `owner/slug` — and a `/` cannot survive a path segment.
  */
 const segment = (value: string) => encodeURIComponent(value);
 
@@ -39,7 +41,7 @@ export const hubApi = {
 			client.get<MCPHubPage>(`/hub/mcp/${segment(hubId)}/cards`, browseQuery(params)),
 
 		getCard: (hubId: string, cardId: string) =>
-			client.get<MCPCard>(`/hub/mcp/${segment(hubId)}/cards/${segment(cardId)}`),
+			client.get<MCPCard>(`/hub/mcp/${segment(hubId)}/card`, { card_id: cardId }),
 
 		/**
 		 * Renders the card's template with `body.values` into the user's
@@ -55,9 +57,9 @@ export const hubApi = {
 			options?: { silent?: boolean },
 		) =>
 			client.post<MCPView>(
-				`/hub/mcp/${segment(hubId)}/cards/${segment(cardId)}/install`,
+				`/hub/mcp/${segment(hubId)}/install`,
 				body,
-				undefined,
+				{ card_id: cardId },
 				options,
 			),
 	},
@@ -70,7 +72,7 @@ export const hubApi = {
 
 		/** Unlike the list endpoint, this also fetches the `SKILL.md` body. */
 		getCard: (hubId: string, cardId: string) =>
-			client.get<SkillCard>(`/hub/skill/${segment(hubId)}/cards/${segment(cardId)}`),
+			client.get<SkillCard>(`/hub/skill/${segment(hubId)}/card`, { card_id: cardId }),
 
 		/**
 		 * Records the card in the user's library. Like the MCP install this
@@ -80,9 +82,9 @@ export const hubApi = {
 		 */
 		install: (hubId: string, cardId: string, name?: string, options?: { silent?: boolean }) =>
 			client.post<SkillView>(
-				`/hub/skill/${segment(hubId)}/cards/${segment(cardId)}/install`,
+				`/hub/skill/${segment(hubId)}/install`,
 				undefined,
-				name ? { name } : undefined,
+				name ? { card_id: cardId, name } : { card_id: cardId },
 				options,
 			),
 	},

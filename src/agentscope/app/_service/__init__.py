@@ -14,6 +14,7 @@ from ._index_worker import IndexWorker
 from ._knowledge_base import KnowledgeBaseService
 from ._mcp_render import MCPRenderError, render_mcp
 from ._model import get_model
+from ._provision import AgentSeeds, resolve_agent_seeds
 from ._tts_model import get_tts_model
 from ._session import SessionService, SessionStatus
 from ._session_projection import SessionProjection
@@ -21,6 +22,7 @@ from ._projectors import SubagentHitlProjector
 from ._toolkit import get_toolkit
 
 __all__ = [
+    "AgentSeeds",
     "AgentView",
     "ChatService",
     "CredentialView",
@@ -40,4 +42,5 @@ __all__ = [
     "get_tts_model",
     "get_toolkit",
     "render_mcp",
+    "resolve_agent_seeds",
 ]

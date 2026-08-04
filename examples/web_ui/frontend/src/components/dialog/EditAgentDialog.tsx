@@ -3,12 +3,13 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import type { AgentView, ContextConfig, InviteConfig, ReActConfig } from '@/api';
+import type { AgentBindings } from '@/components/form/AgentBindingFields';
 import {
-	AgentFormFields,
 	defaultAgentFormValues,
 	type AgentFormValues,
 	type AgentSection,
 } from '@/components/form/AgentFormFields';
+import { AgentFormTabs } from '@/components/form/AgentFormTabs';
 import type { SchemaFormValue } from '@/components/form/SchemaForm';
 import { Alert, AlertDescription } from '@/components/ui/alert.tsx';
 import { Button } from '@/components/ui/button';
@@ -22,6 +23,7 @@ import {
 } from '@/components/ui/dialog';
 import { useAgents } from '@/hooks/useAgents';
 import { useAgentSchema } from '@/hooks/useAgentSchema';
+import { useSessions } from '@/hooks/useSessions';
 import { formatApiErrorForAlert } from '@/lib/api-error';
 
 interface Props {
@@ -35,14 +37,22 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 	const { update } = useAgents();
 	const { t } = useTranslation();
 	const { schema } = useAgentSchema();
+	// A session implies the workspace has booted, which is what
+	// freezes the seed list.
+	const { sessions } = useSessions(open ? agent.id : null);
 	const [submitting, setSubmitting] = useState(false);
 	const [values, setValues] = useState<AgentFormValues | null>(null);
+	const [bindings, setBindings] = useState<AgentBindings>({
+		mcp_ids: [],
+		skill_ids: [],
+	});
 	const [errorMsg, setErrorMsg] = useState('');
 
 	useEffect(() => {
 		if (!open || !schema) {
 			if (!open) {
 				setValues(null);
+				setBindings({ mcp_ids: [], skill_ids: [] });
 				setErrorMsg('');
 			}
 			return;
@@ -60,6 +70,10 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 			context_config: { ...base.context_config, ...(d.context_config ?? {}) },
 			react_config: { ...base.react_config, ...(d.react_config ?? {}) },
 			invite_config: { ...base.invite_config, ...(d.invite_config ?? {}) },
+		});
+		setBindings({
+			mcp_ids: d.mcp_ids ?? [],
+			skill_ids: d.skill_ids ?? [],
 		});
 		setErrorMsg('');
 	}, [open, schema, agent]);
@@ -86,6 +100,7 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 					context_config: values.context_config as unknown as ContextConfig,
 					react_config: values.react_config as unknown as ReActConfig,
 					invite_config: values.invite_config as unknown as InviteConfig,
+					...bindings,
 				},
 				{ silent: true },
 			);
@@ -102,20 +117,25 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="!w-[500px] !max-w-[500px]">
+			<DialogContent className="sm:max-w-2xl">
 				<DialogHeader>
 					<DialogTitle>{t('dialog-agent-edit.title')}</DialogTitle>
 					<DialogDescription className="sr-only">
 						{t('dialog-agent-edit.description')}
 					</DialogDescription>
 				</DialogHeader>
-				<div className="no-scrollbar -mx-4 max-h-[75vh] overflow-y-auto px-4">
-					{schema && values ? (
-						<AgentFormFields schema={schema} values={values} onChange={handleChange} />
-					) : (
-						<p className="text-muted-foreground text-sm">{t('common.loading')}</p>
-					)}
-				</div>
+				{schema && values ? (
+					<AgentFormTabs
+						schema={schema}
+						values={values}
+						onChange={handleChange}
+						bindings={bindings}
+						onBindingsChange={setBindings}
+						hasWorkspace={sessions.length > 0}
+					/>
+				) : (
+					<p className="text-muted-foreground text-sm">{t('common.loading')}</p>
+				)}
 				{errorMsg && (
 					<Alert variant="destructive">
 						<CircleAlert />

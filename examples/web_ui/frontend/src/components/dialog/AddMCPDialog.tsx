@@ -119,8 +119,14 @@ export function AddMCPDialog({ children, present, onAdd, onAddFromLibrary }: Pro
 					</TabsList>
 
 					{/* Fixed height on the shared container rather than per
-					    tab, so the dialog does not resize as you switch. */}
-					<div className="mt-4 h-80 overflow-y-auto scroll-fade">
+					    tab, so the dialog does not resize as you switch.
+
+					    ``-mx-4 px-4``: ``overflow-y-auto`` makes the x axis
+					    clip too, which would slice the focus ring off both
+					    sides of a full-width input. The padding gives the
+					    ring room; the negative margin keeps content at the
+					    same x. */}
+					<div className="-mx-4 mt-4 h-80 overflow-y-auto px-4 scroll-fade">
 						<TabsContent value="installed">
 							{loading ? (
 								<div className="flex justify-center py-10">

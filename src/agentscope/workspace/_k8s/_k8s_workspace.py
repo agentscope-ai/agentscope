@@ -28,13 +28,13 @@ Docker engine for the Kubernetes API (``kubernetes_asyncio``):
 
 import asyncio
 import shlex
-from typing import Any
+from typing import Any, Sequence
 
 from ..._logging import logger
 from ...mcp import MCPClient
+from ...skill import Skill, SkillLoaderBase, SkillSourceBase
 from .._sandboxed_base import SandboxedWorkspaceBase
 from .._utils import _GATEWAY_BASE_REQUIREMENTS, DEFAULT_WORKSPACE_INSTRUCTIONS
-from ._k8s_backend import K8sBackend
 from ._constants import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_IMAGE,
@@ -43,7 +43,7 @@ from ._constants import (
     SYSTEM_DEPS,
     _k8s_safe_name,
 )
-
+from ._k8s_backend import K8sBackend
 
 # ── the workspace ──────────────────────────────────────────────────
 
@@ -51,7 +51,7 @@ from ._constants import (
 class K8sWorkspace(SandboxedWorkspaceBase):
     """Workspace backed by a Kubernetes Pod with PVC persistence.
 
-    ``default_mcps`` and ``skill_paths`` are seed-time inputs and are
+    ``default_mcps`` and ``default_skills`` are seed-time inputs and are
     not retained as instance state past :meth:`initialize`.
     """
 
@@ -84,7 +84,11 @@ class K8sWorkspace(SandboxedWorkspaceBase):
         instructions: str = DEFAULT_WORKSPACE_INSTRUCTIONS,
         # ── Seed ──
         default_mcps: list[MCPClient] | None = None,
-        skill_paths: list[str] | None = None,
+        default_skills: Sequence[
+            str | Skill | SkillLoaderBase | SkillSourceBase
+        ]
+        | None = None,
+        **kwargs: Any,
     ) -> None:
         """Construct a :class:`K8sWorkspace`.
 
@@ -129,13 +133,15 @@ class K8sWorkspace(SandboxedWorkspaceBase):
                 System-prompt fragment template.
             default_mcps (`list[MCPClient] | None`, optional):
                 MCPs seeded on first init.
-            skill_paths (`list[str] | None`, optional):
-                Skill directories seeded on first init.
+            default_skills (`Sequence[str | Skill | SkillLoaderBase | \
+SkillSourceBase] | None`, optional):
+                Skills seeded into ``skills/`` on first init.
         """
         super().__init__(
             workspace_id=workspace_id,
             default_mcps=default_mcps,
-            skill_paths=skill_paths,
+            default_skills=default_skills,
+            **kwargs,
         )
 
         # ── serializable config ─────────────────────────────────

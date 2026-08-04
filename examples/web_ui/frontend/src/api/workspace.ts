@@ -3,9 +3,9 @@ import type { UploadProgress } from './knowledgeBase';
 import type {
 	AddFromLibraryResponse,
 	AddSkillRequest,
+	ListWorkspaceMCPsResponse,
+	ListWorkspaceSkillsResponse,
 	MCPClient,
-	MCPClientStatus,
-	Skill,
 } from './types';
 
 export interface UploadOptions {
@@ -100,7 +100,7 @@ function uploadSkillXhr(
 export const workspaceApi = {
 	mcp: {
 		list: (agentId: string, sessionId: string) =>
-			client.get<MCPClientStatus[]>('/workspace/mcp', {
+			client.get<ListWorkspaceMCPsResponse>('/workspace/mcp', {
 				agent_id: agentId,
 				session_id: sessionId,
 			}),
@@ -129,7 +129,10 @@ export const workspaceApi = {
 
 	skill: {
 		list: (agentId: string, sessionId: string) =>
-			client.get<Skill[]>('/workspace/skill', { agent_id: agentId, session_id: sessionId }),
+			client.get<ListWorkspaceSkillsResponse>('/workspace/skill', {
+				agent_id: agentId,
+				session_id: sessionId,
+			}),
 
 		/**
 		 * @deprecated The path is resolved on the server. Use `upload`

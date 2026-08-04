@@ -17,6 +17,7 @@ from fastapi import HTTPException
 
 from .._bus_ops import enqueue_run_trigger, publish_session_event
 from ..message_bus import MessageBus, MessageBusKeys
+from ..hub import SkillHubBase
 from ..rag.knowledge_base_manager import KnowledgeBaseManagerBase
 from ..storage import StorageBase, AgentRecord, SessionRecord
 from .._manager import BackgroundTaskManager, SchedulerManager
@@ -36,6 +37,7 @@ from .._types import (
 )
 from ._access import ResourceAccessService
 from ._model import get_model
+from ._provision import resolve_agent_seeds
 from ._tts_model import get_tts_model
 from ._toolkit import get_toolkit
 from ._session_projection import SessionProjection
@@ -81,6 +83,7 @@ class ChatService:
         background_task_manager: BackgroundTaskManager,
         message_bus: MessageBus,
         resource_access_service: ResourceAccessService,
+        skill_hubs: dict[str, SkillHubBase] | None = None,
         knowledge_base_manager: KnowledgeBaseManagerBase | None = None,
         extra_agent_middlewares: AgentMiddlewareFactory | None = None,
         extra_agent_tools: AgentToolFactory | None = None,
@@ -114,6 +117,10 @@ class ChatService:
                 assembly and model / TTS construction all route
                 through this service so shared credentials, agents,
                 and knowledge bases work uniformly.
+            skill_hubs (`dict[str, SkillHubBase] | None`, optional):
+                Registered skill hubs, keyed by id. Needed to seed a
+                brand-new workspace with the skills its agent comes
+                with, since those are re-downloaded rather than stored.
             knowledge_base_manager (`KnowledgeBaseManagerBase | None`, \
              optional):
                 The application's knowledge base manager.  When
@@ -152,6 +159,7 @@ class ChatService:
         self._background_task_manager = background_task_manager
         self._message_bus = message_bus
         self._access = resource_access_service
+        self._skill_hubs = skill_hubs or {}
         self._knowledge_base_manager = knowledge_base_manager
         self._extra_agent_middlewares = extra_agent_middlewares
         self._extra_agent_tools = extra_agent_tools
@@ -520,11 +528,23 @@ class ChatService:
                         f"agent {agent_id!r}."
                     ),
                 )
+            # The seeds only bite if this call is what constructs the
+            # workspace; a chat that starts before the user ever opens
+            # the panel is otherwise the one path that would leave the
+            # agent without the tools it comes with.
+            seeds = await resolve_agent_seeds(
+                self._storage,
+                self._skill_hubs,
+                user_id,
+                agent_id,
+            )
             workspace = await self._workspace_manager.get_workspace(
                 user_id,
                 agent_id,
                 session_id,
                 session_record.config.workspace_id,
+                seed_mcps=seeds.mcps,
+                seed_skills=seeds.skills,
             )
 
             # Add workspace working directory to the permission context

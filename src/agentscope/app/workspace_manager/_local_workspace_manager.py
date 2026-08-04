@@ -4,12 +4,15 @@
 import asyncio
 import os
 import time
+from typing import Sequence
 
 from typing_extensions import deprecated
 
 from ..._logging import logger
+from ...mcp import MCPClient
+from ...skill import Skill, SkillLoaderBase, SkillSourceBase
 from ...workspace import LocalWorkspace
-from ._base import WorkspaceManagerBase, IsolationPolicy
+from ._base import IsolationPolicy, WorkspaceManagerBase
 
 
 class LocalWorkspaceManager(WorkspaceManagerBase):
@@ -26,7 +29,11 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
         basedir: str,
         *,
         isolation: IsolationPolicy = IsolationPolicy.PER_AGENT,
-        default_mcps: list | None = None,
+        default_mcps: list[MCPClient] | None = None,
+        default_skills: Sequence[
+            str | Skill | SkillLoaderBase | SkillSourceBase
+        ]
+        | None = None,
         skill_paths: list[str] | None = None,
         ttl: float = 3600.0,
     ) -> None:
@@ -41,14 +48,18 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
                 :class:`DockerWorkspaceManager` for semantics.
             default_mcps (`list | None`, optional):
                 MCP clients seeded into brand-new workspaces.
+            default_skills (`Sequence[str | Skill | SkillLoaderBase | \
+SkillSourceBase] | None`, optional):
+                Skills seeded into brand-new workspaces.
             skill_paths (`list[str] | None`, optional):
-                Skill directories seeded into brand-new workspaces.
+                **Deprecated.** Pass local directories in
+                ``default_skills`` instead.
             ttl (`float`, defaults to `3600.0`):
                 Seconds before an idle cached workspace is evicted.
         """
         self._basedir = os.path.abspath(basedir)
-        self._default_mcps = default_mcps or []
-        self._skill_paths = skill_paths or []
+        self._default_mcps = list(default_mcps or [])
+        self._default_skills = [*(skill_paths or []), *(default_skills or [])]
         self._ttl = ttl
         # workspace_id → (workspace, last_access_monotonic)
         self._cache: dict[str, tuple[LocalWorkspace, float]] = {}
@@ -73,6 +84,9 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
         agent_id: str,
         session_id: str,
         workspace_id: str | None = None,
+        seed_mcps: list[MCPClient] | None = None,
+        seed_skills: Sequence[str | Skill | SkillLoaderBase | SkillSourceBase]
+        | None = None,
     ) -> LocalWorkspace:
         """Return an initialized workspace, reconstructing from
         disk on cache miss.
@@ -132,8 +146,11 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
             ws = LocalWorkspace(
                 workspace_id=workspace_id,
                 workdir=workdir,
-                default_mcps=self._default_mcps,
-                skill_paths=self._skill_paths,
+                default_mcps=[*self._default_mcps, *(seed_mcps or [])],
+                default_skills=[
+                    *self._default_skills,
+                    *(seed_skills or []),
+                ],
             )
             await ws.initialize()
             self._cache[workspace_id] = (ws, time.monotonic())
@@ -164,7 +181,7 @@ class LocalWorkspaceManager(WorkspaceManagerBase):
         ws = LocalWorkspace(
             workdir=workdir,
             default_mcps=self._default_mcps,
-            skill_paths=self._skill_paths,
+            default_skills=self._default_skills,
         )
         await ws.initialize()
         async with self._lock:

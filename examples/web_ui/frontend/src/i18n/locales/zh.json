@@ -50,7 +50,15 @@
 		"mine": "我的",
 		"my-mcp": "已安装的 MCP",
 		"skill-hub": "技能中心",
-		"my-skill": "已安装的技能"
+		"my-skill": "已安装的技能",
+		"timeUnits": {
+			"s": "秒",
+			"m": "分",
+			"h": "小时",
+			"d": "天",
+			"mon": "个月",
+			"y": "年"
+		}
 	},
 	"error": {
 		"description": "页面遇到意外错误。你可以重试或返回首页。",
@@ -211,6 +219,28 @@
 				"label": "邀请说明",
 				"placeholder": "简要描述此 Agent 的专长；允许被邀请时必填。"
 			}
+		},
+		"bindings": {
+			"alreadySeeded": "该智能体已有工作区，改动只对新工作区生效。",
+			"mcps": {
+				"browseHub": "去 MCP 中心看看",
+				"description": "智能体工作区自带的 MCP 服务，只在创建工作区时一次性注入。",
+				"empty": "先从中心安装一个，之后就能在这里选。",
+				"emptyTitle": "还没有 MCP 服务",
+				"searchPlaceholder": "搜索 MCP 服务"
+			},
+			"skills": {
+				"browseHub": "去技能中心看看",
+				"description": "智能体工作区自带的技能，只在创建工作区时一次性注入。",
+				"empty": "先从中心安装一个，之后就能在这里选。",
+				"emptyTitle": "还没有技能",
+				"searchPlaceholder": "搜索技能"
+			}
+		},
+		"tabs": {
+			"general": "基本配置",
+			"mcps": "自带 MCP",
+			"skills": "自带技能"
 		}
 	},
 	"dialog-agent-edit": {
@@ -607,7 +637,10 @@
 			"emptyTitle": "无结果",
 			"emptyDescription": "没有匹配 “{{query}}” 的结果。"
 		},
-		"loading": "加载中…"
+		"loading": "加载中…",
+		"seedErrors": {
+			"title": "该智能体自带的部分工具没有装上"
+		}
 	},
 	"team-sidebar": {
 		"membersHeading": "成员",

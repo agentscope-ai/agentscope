@@ -1,12 +1,17 @@
 import { useState, useEffect, useCallback } from 'react';
 
 import { workspaceApi } from '@/api';
-import type { MCPClient, MCPClientStatus, Skill } from '@/api';
+import type { MCPClient, MCPClientStatus, SeedErrors, Skill } from '@/api';
 import type { UploadOptions } from '@/api/workspace';
 
 export function useWorkspace(agentId: string | null, sessionId: string | null) {
 	const [mcps, setMcps] = useState<MCPClientStatus[]>([]);
 	const [skills, setSkills] = useState<Skill[]>([]);
+	// What the agent came with but could not be given. Computed server
+	// side against what is actually in the workspace, so a tool the user
+	// removed on purpose never shows up here.
+	const [mcpSeedErrors, setMcpSeedErrors] = useState<SeedErrors>({});
+	const [skillSeedErrors, setSkillSeedErrors] = useState<SeedErrors>({});
 	const [loading, setLoading] = useState(false);
 	const [skillsLoading, setSkillsLoading] = useState(false);
 	const [error, setError] = useState<Error | null>(null);
@@ -19,7 +24,9 @@ export function useWorkspace(agentId: string | null, sessionId: string | null) {
 		setLoading(true);
 		setError(null);
 		try {
-			setMcps(await workspaceApi.mcp.list(agentId, sessionId));
+			const body = await workspaceApi.mcp.list(agentId, sessionId);
+			setMcps(body.mcps);
+			setMcpSeedErrors(body.seed_errors);
 		} catch (e) {
 			setError(e as Error);
 		} finally {
@@ -34,7 +41,9 @@ export function useWorkspace(agentId: string | null, sessionId: string | null) {
 		}
 		setSkillsLoading(true);
 		try {
-			setSkills(await workspaceApi.skill.list(agentId, sessionId));
+			const body = await workspaceApi.skill.list(agentId, sessionId);
+			setSkills(body.skills);
+			setSkillSeedErrors(body.seed_errors);
 		} catch (e) {
 			setError(e as Error);
 		} finally {
@@ -132,6 +141,8 @@ export function useWorkspace(agentId: string | null, sessionId: string | null) {
 
 	return {
 		mcps,
+		mcpSeedErrors,
+		skillSeedErrors,
 		loading,
 		error,
 		refetch,

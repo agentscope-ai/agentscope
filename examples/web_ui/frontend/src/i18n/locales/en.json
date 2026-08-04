@@ -50,7 +50,15 @@
 		"mine": "Mine",
 		"my-mcp": "Installed MCPs",
 		"skill-hub": "Skill Hub",
-		"my-skill": "Installed skills"
+		"my-skill": "Installed skills",
+		"timeUnits": {
+			"s": "s",
+			"m": "m",
+			"h": "h",
+			"d": "d",
+			"mon": "mon",
+			"y": "y"
+		}
 	},
 	"error": {
 		"description": "The page hit an unexpected error. You can retry or go back home.",
@@ -211,6 +219,28 @@
 				"label": "Invite description",
 				"placeholder": "Briefly describe this agent's expertise; required when invitable is on."
 			}
+		},
+		"bindings": {
+			"alreadySeeded": "This agent already has a workspace — changes apply to new ones only.",
+			"mcps": {
+				"browseHub": "Browse MCP hubs",
+				"description": "MCP servers the agent's workspace comes with, injected once when that workspace is created.",
+				"empty": "Install one from a hub first, then it can be picked here.",
+				"emptyTitle": "No MCP servers yet",
+				"searchPlaceholder": "Search MCP servers"
+			},
+			"skills": {
+				"browseHub": "Browse skill hubs",
+				"description": "Skills the agent's workspace comes with, injected once when that workspace is created.",
+				"empty": "Install one from a hub first, then it can be picked here.",
+				"emptyTitle": "No skills yet",
+				"searchPlaceholder": "Search skills"
+			}
+		},
+		"tabs": {
+			"general": "General",
+			"mcps": "Seed MCPs",
+			"skills": "Seed Skills"
 		}
 	},
 	"dialog-agent-edit": {
@@ -607,7 +637,10 @@
 			"emptyTitle": "No results",
 			"emptyDescription": "Nothing matches “{{query}}”."
 		},
-		"loading": "Loading…"
+		"loading": "Loading…",
+		"seedErrors": {
+			"title": "Some of this agent's own tools are missing"
+		}
 	},
 	"team-sidebar": {
 		"membersHeading": "Members",

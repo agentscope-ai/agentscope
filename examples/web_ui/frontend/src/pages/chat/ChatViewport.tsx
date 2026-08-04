@@ -163,6 +163,8 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		});
 	const {
 		mcps,
+		mcpSeedErrors,
+		skillSeedErrors,
 		loading: mcpsLoading,
 		addMcps,
 		addMcpsFromLibrary,
@@ -233,6 +235,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 				content: (
 					<McpPanel
 						mcps={mcps}
+						seedErrors={mcpSeedErrors}
 						loading={mcpsLoading}
 						onAdd={addMcps}
 						onAddFromLibrary={addMcpsFromLibrary}
@@ -246,6 +249,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 				content: (
 					<SkillPanel
 						skills={skills}
+						seedErrors={skillSeedErrors}
 						loading={skillsLoading}
 						onUpload={uploadSkill}
 						onAddFromLibrary={addSkillsFromLibrary}
@@ -302,6 +306,8 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 			t,
 			tasksContext,
 			mcps,
+			mcpSeedErrors,
+			skillSeedErrors,
 			mcpsLoading,
 			addMcps,
 			addMcpsFromLibrary,

@@ -33,6 +33,18 @@ class CreateAgentRequest(BaseModel):
             "``invitable ⇒ non-empty description`` invariant."
         ),
     )
+    mcp_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Ids of the caller's installed MCPs this agent comes with. "
+            "Seeded into each of its workspaces the first time that "
+            "workspace boots."
+        ),
+    )
+    skill_ids: list[str] = Field(
+        default_factory=list,
+        description="Ids of the caller's installed skills, same seeding.",
+    )
 
 
 class CreateAgentResponse(BaseModel):
@@ -67,6 +79,18 @@ class UpdateAgentRequest(BaseModel):
             "object to update; omit to leave both invitable-related "
             "fields unchanged."
         ),
+    )
+    mcp_ids: list[str] | None = Field(
+        default=None,
+        description=(
+            "New set of bound MCP ids, replacing the old one. Pass an "
+            "empty list to clear; omit to leave unchanged. Only affects "
+            "workspaces that do not exist yet."
+        ),
+    )
+    skill_ids: list[str] | None = Field(
+        default=None,
+        description="New set of bound skill ids, same semantics.",
     )
 
 

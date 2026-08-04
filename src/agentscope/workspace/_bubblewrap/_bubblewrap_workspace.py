@@ -13,10 +13,11 @@ import shutil
 import socket
 import sys
 import tempfile
-from typing import Any
+from typing import Any, Sequence
 
 from ..._logging import logger
 from ...mcp import MCPClient
+from ...skill import Skill, SkillLoaderBase, SkillSourceBase
 from .._gateway_client import GatewayClient
 from .._sandboxed_base import SandboxedWorkspaceBase
 from .._utils import (
@@ -86,7 +87,11 @@ class BubblewrapWorkspace(SandboxedWorkspaceBase):
         extra_pip: list[str] | None = None,
         instructions: str = _DEFAULT_INSTRUCTIONS,
         default_mcps: list[MCPClient] | None = None,
-        skill_paths: list[str] | None = None,
+        default_skills: Sequence[
+            str | Skill | SkillLoaderBase | SkillSourceBase
+        ]
+        | None = None,
+        **kwargs: Any,
     ) -> None:
         """Construct a :class:`BubblewrapWorkspace`.
 
@@ -120,8 +125,9 @@ class BubblewrapWorkspace(SandboxedWorkspaceBase):
                 System-prompt fragment template.
             default_mcps (`list[MCPClient] | None`, optional):
                 MCPs seeded on first initialization.
-            skill_paths (`list[str] | None`, optional):
-                Local skill directories seeded on first initialization.
+            default_skills (`Sequence[str | Skill | SkillLoaderBase | \
+SkillSourceBase] | None`, optional):
+                Skills seeded into ``skills/`` on first init.
         """
         self._validate_gateway_port(gateway_port)
         if not share_net:
@@ -138,7 +144,8 @@ class BubblewrapWorkspace(SandboxedWorkspaceBase):
         super().__init__(
             workspace_id=workspace_id,
             default_mcps=default_mcps,
-            skill_paths=skill_paths,
+            default_skills=default_skills,
+            **kwargs,
         )
 
         self.workdir = SANDBOX_WORKDIR

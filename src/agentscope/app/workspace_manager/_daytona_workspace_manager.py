@@ -24,10 +24,11 @@ Daytona-specific behavior:
 
 import asyncio
 import time
-from typing import Self
+from typing import Self, Sequence
 
 from ..._logging import logger
 from ...mcp import MCPClient
+from ...skill import Skill, SkillLoaderBase, SkillSourceBase
 from ...workspace import DaytonaWorkspace
 from ...workspace._daytona._constants import (
     DEFAULT_GATEWAY_PORT,
@@ -58,6 +59,10 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
         sandbox_metadata: dict[str, str] | None = None,
         extra_pip: list[str] | None = None,
         default_mcps: list[MCPClient] | None = None,
+        default_skills: Sequence[
+            str | Skill | SkillLoaderBase | SkillSourceBase
+        ]
+        | None = None,
         skill_paths: list[str] | None = None,
         os_user: str | None = None,
         ttl: float = 3600.0,
@@ -95,8 +100,12 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
             default_mcps (`list[MCPClient] | None`, optional):
                 MCP clients seeded into brand-new workspaces. Persisted
                 ``.mcp`` state wins on reattach.
+            default_skills (`Sequence[str | Skill | SkillLoaderBase | \
+SkillSourceBase] | None`, optional):
+                Skills seeded into brand-new workspaces.
             skill_paths (`list[str] | None`, optional):
-                Skill directories seeded into brand-new workspaces.
+                **Deprecated.** Pass local directories in
+                ``default_skills`` instead.
             os_user (`str | None`, optional):
                 Optional Daytona OS user forwarded to workspace create
                 params. ``None`` leaves user selection to Daytona.
@@ -116,7 +125,7 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
         self._sandbox_metadata = dict(sandbox_metadata or {})
         self._extra_pip = list(extra_pip or [])
         self._default_mcps = list(default_mcps or [])
-        self._skill_paths = list(skill_paths or [])
+        self._default_skills = [*(skill_paths or []), *(default_skills or [])]
         self._os_user = os_user
         self._ttl = ttl
         self._sweep_interval = sweep_interval
@@ -150,6 +159,9 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
         workspace_id: str | None,
         user_id: str,
         agent_id: str,
+        seed_mcps: list[MCPClient] | None = None,
+        seed_skills: Sequence[str | Skill | SkillLoaderBase | SkillSourceBase]
+        | None = None,
     ) -> DaytonaWorkspace:
         """Construct a :class:`DaytonaWorkspace` and initialize it.
 
@@ -167,8 +179,8 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
             env=self._env,
             sandbox_metadata=self._metadata_for(user_id, agent_id),
             extra_pip=self._extra_pip,
-            default_mcps=self._default_mcps,
-            skill_paths=self._skill_paths,
+            default_mcps=[*self._default_mcps, *(seed_mcps or [])],
+            default_skills=[*self._default_skills, *(seed_skills or [])],
             os_user=self._os_user,
         )
         await ws.initialize()
@@ -182,6 +194,9 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
         agent_id: str,
         session_id: str,
         workspace_id: str | None = None,
+        seed_mcps: list[MCPClient] | None = None,
+        seed_skills: Sequence[str | Skill | SkillLoaderBase | SkillSourceBase]
+        | None = None,
     ) -> DaytonaWorkspace:
         """Return an initialized workspace, reattaching on cache miss.
 
@@ -234,6 +249,8 @@ class DaytonaWorkspaceManager(WorkspaceManagerBase):
                 workspace_id=workspace_id,
                 user_id=user_id,
                 agent_id=agent_id,
+                seed_mcps=seed_mcps,
+                seed_skills=seed_skills,
             )
             self._cache[workspace_id] = (ws, time.monotonic())
             return ws
