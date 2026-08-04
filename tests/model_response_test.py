@@ -53,6 +53,23 @@ class ChatResponseAppendTest(IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         """The async setup method."""
 
+    async def test_finished_reason_attribute_matches_mapping(self) -> None:
+        """Attribute access must return the explicitly provided reason."""
+        response = ChatResponse(
+            content=[],
+            is_last=True,
+            finished_reason=FinishedReason.INTERRUPTED,
+        )
+
+        self.assertEqual(
+            response.finished_reason,
+            response["finished_reason"],
+        )
+        self.assertEqual(
+            response.finished_reason,
+            FinishedReason.INTERRUPTED,
+        )
+
     # ------------------------------------------------------------------
     # append_text
     # ------------------------------------------------------------------
