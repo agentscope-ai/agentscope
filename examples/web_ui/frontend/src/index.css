@@ -85,8 +85,8 @@ svg.lucide {
 
 	--destructive: oklch(0.577 0.245 27.325);
 
-	/* --input: oklch(0.922 0 0); */
-	--input: rgba(24, 25, 28, 0.06);
+	--input: oklch(0.922 0 0);
+	/* --input: rgba(24, 25, 28, 0.06); */
 
 	/* --ring: oklch(0.708 0 0); */
 	--ring: rgba(24, 25, 28, 0.22);

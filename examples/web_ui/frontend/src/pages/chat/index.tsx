@@ -209,10 +209,13 @@ const ChatPageInner = () => {
 						<SidebarGroupLabel className="justify-between">
 							{t('common.agent')}
 							<AgentDialog onCreated={refetchAgents}>
-								<Plus
-									id="tour-create-agent"
-									className="text-sidebar-foreground/70 size-4"
-								/>
+								<Button
+									variant="ghost"
+									size="icon-xs"
+									title={t('dialog-agent-create.title')}
+								>
+									<Plus id="tour-create-agent" className="size-3.5" />
+								</Button>
 							</AgentDialog>
 						</SidebarGroupLabel>
 						<SidebarGroupContent className="flex items-center">

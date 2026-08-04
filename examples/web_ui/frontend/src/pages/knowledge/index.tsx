@@ -147,14 +147,14 @@ export const KnowledgePage = () => {
 					<SidebarGroup className="mt-6 px-2 py-0">
 						<SidebarGroupLabel className="justify-between">
 							{t('knowledge.list.label')}
-							<button
-								type="button"
-								className="text-sidebar-foreground/70 hover:text-foreground"
+							<Button
+								variant="ghost"
+								size="icon-xs"
 								onClick={() => setCreateDialogOpen(true)}
 								title={t('knowledge.list.createButton')}
 							>
-								<Plus className="size-4" />
-							</button>
+								<Plus className="size-3.5" />
+							</Button>
 						</SidebarGroupLabel>
 						<SidebarGroupContent>
 							{knowledgeBases.length === 0 ? (
