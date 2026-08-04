@@ -391,6 +391,32 @@ class BackendBase(ABC):
             return path
         return home + path[1:]
 
+    async def realpath(self, path: str) -> str:
+        """Resolve symbolic links for an existing backend path.
+
+        The default invokes ``realpath`` inside the backend environment,
+        avoiding accidental resolution against the host filesystem.
+
+        Args:
+            path (`str`):
+                Existing path inside the backend's environment.
+
+        Returns:
+            `str`:
+                Canonical absolute path with symbolic links resolved.
+
+        Raises:
+            `FileNotFoundError`:
+                The path does not exist or cannot be resolved.
+        """
+        result = await self.exec_shell(["realpath", path])
+        if not result.ok():
+            raise FileNotFoundError(path)
+        return result.stdout.decode(
+            "utf-8",
+            errors="surrogateescape",
+        ).strip()
+
     async def file_exists(self, path: str) -> bool:
         """Return ``True`` if ``path`` exists (file or directory).
 
@@ -497,6 +523,35 @@ class BackendBase(ABC):
             return None
         try:
             return float(
+                result.stdout.decode("utf-8", errors="replace").strip(),
+            )
+        except ValueError:
+            return None
+
+    async def stat_size(self, path: str) -> int | None:
+        """Return the size of ``path`` in bytes, or ``None``.
+
+        Tries GNU ``stat -c %s`` first and falls back to BSD
+        ``stat -f %z`` for portability across Linux and macOS.
+
+        Args:
+            path (`str`):
+                Path to stat inside the backend's environment.
+
+        Returns:
+            `int | None`:
+                Size in bytes, or ``None`` when unavailable.
+        """
+        quoted = shlex.quote(path)
+        script = (
+            f"stat -c %s {quoted} 2>/dev/null || "
+            f"stat -f %z {quoted} 2>/dev/null"
+        )
+        result = await self.exec_shell(["sh", "-c", script])
+        if not result.ok():
+            return None
+        try:
+            return int(
                 result.stdout.decode("utf-8", errors="replace").strip(),
             )
         except ValueError:
@@ -700,6 +755,25 @@ class LocalBackend(BackendBase):
         """
         return os.path.expanduser(path)
 
+    async def realpath(self, path: str) -> str:
+        """Resolve symbolic links for an existing local path.
+
+        Args:
+            path (`str`):
+                Existing local path.
+
+        Returns:
+            `str`:
+                Canonical absolute path with symbolic links resolved.
+
+        Raises:
+            `FileNotFoundError`:
+                The path does not exist.
+        """
+        if not os.path.exists(path):
+            raise FileNotFoundError(path)
+        return os.path.realpath(path)
+
     async def file_exists(self, path: str) -> bool:
         """Check if a local path exists.
 
@@ -770,6 +844,22 @@ class LocalBackend(BackendBase):
         """
         try:
             return os.stat(path).st_mtime
+        except (OSError, FileNotFoundError):
+            return None
+
+    async def stat_size(self, path: str) -> int | None:
+        """Return the size of a local path in bytes.
+
+        Args:
+            path (`str`):
+                Path to stat.
+
+        Returns:
+            `int | None`:
+                Size in bytes, or ``None`` if the path is unavailable.
+        """
+        try:
+            return os.stat(path).st_size
         except (OSError, FileNotFoundError):
             return None
 

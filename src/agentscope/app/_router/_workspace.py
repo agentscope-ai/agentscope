@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """Workspace router — manage MCP clients and skills on a workspace."""
+import mimetypes
+
 from fastapi import (
     APIRouter,
     Depends,
@@ -10,7 +12,8 @@ from fastapi import (
     UploadFile,
     status,
 )
-from pydantic import ValidationError
+from fastapi.responses import Response
+from pydantic import BaseModel, Field, ValidationError
 
 from ..deps import (
     get_current_user_id,
@@ -30,6 +33,7 @@ from ..workspace_manager import WorkspaceManagerBase
 from ..storage import MCPRecord, StorageBase
 from ...mcp import MCPClient
 from ...skill import Skill
+from ...tool import BackendBase
 from ...workspace import WorkspaceBase
 from ._schema import (
     AddFromLibraryRequest,
@@ -42,6 +46,21 @@ from ._schema import (
 from ..._utils._common import _describe_exception
 
 workspace_router = APIRouter(prefix="/workspace", tags=["workspace"])
+
+
+class ArtifactEntry(BaseModel):
+    """A directory entry in a session workspace."""
+
+    name: str
+    is_dir: bool
+    size_bytes: int | None = Field(
+        default=None,
+        description="File size in bytes, or null when unavailable.",
+    )
+    updated_at: float | None = Field(
+        default=None,
+        description="Last modification time as a Unix timestamp.",
+    )
 
 
 async def _resolve_workspace(
@@ -85,6 +104,77 @@ async def _resolve_workspace(
         session_id,
         session_record.config.workspace_id,
     )
+
+
+def _safe_resolve_artifact_path(
+    backend: BackendBase,
+    workspace_root: str,
+    requested: str,
+) -> str:
+    """Resolve a relative artifact path inside ``workspace_root``.
+
+    Uses the backend's path semantics so local Windows workspaces and
+    POSIX-based remote workspaces apply the same confinement rule.
+
+    Args:
+        backend (`BackendBase`):
+            Filesystem backend that owns the path.
+        workspace_root (`str`):
+            Root directory of the session workspace.
+        requested (`str`):
+            Relative path supplied by the client.
+
+    Returns:
+        `str`:
+            Normalized absolute path inside ``workspace_root``.
+
+    Raises:
+        `HTTPException`:
+            ``400`` when the path is absolute or escapes the workspace.
+    """
+    requested = requested or "."
+    if backend.isabs(requested):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Artifact path must be relative to the workspace.",
+        )
+
+    root = backend.normpath(workspace_root)
+    normalized = backend.abspath(requested, cwd=root)
+    root_prefix = backend.join_path(root, "")
+    if normalized != root and not normalized.startswith(root_prefix):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Requested path escapes the workspace root.",
+        )
+    return normalized
+
+
+async def _confine_existing_artifact_path(
+    backend: BackendBase,
+    workspace_root: str,
+    target: str,
+) -> str:
+    """Resolve an existing artifact without following links outside."""
+    if not await backend.file_exists(target):
+        return target
+
+    try:
+        real_root = backend.normpath(await backend.realpath(workspace_root))
+        real_target = backend.normpath(await backend.realpath(target))
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Requested path could not be safely resolved.",
+        ) from e
+
+    root_prefix = backend.join_path(real_root, "")
+    if real_target != real_root and not real_target.startswith(root_prefix):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Requested path resolves outside the workspace root.",
+        )
+    return real_target
 
 
 # ---------------------------------------------------------------------------
@@ -444,3 +534,136 @@ async def remove_skill(
         workspace_manager,
     )
     await workspace.remove_skill(skill_name)
+
+
+# ---------------------------------------------------------------------------
+# Artifact endpoints
+# ---------------------------------------------------------------------------
+
+
+@workspace_router.get("/artifacts/list_dir")
+async def list_workspace_dir(
+    agent_id: str = Query(...),
+    session_id: str = Query(...),
+    path: str = Query(
+        default="",
+        description="Relative path inside the workspace.",
+    ),
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+    workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
+) -> list[ArtifactEntry]:
+    """List one directory inside a session workspace."""
+    workspace = await _resolve_workspace(
+        user_id,
+        agent_id,
+        session_id,
+        storage,
+        workspace_manager,
+    )
+    backend = workspace.get_backend()
+    target = _safe_resolve_artifact_path(
+        backend,
+        workspace.workdir,
+        path,
+    )
+    target = await _confine_existing_artifact_path(
+        backend,
+        workspace.workdir,
+        target,
+    )
+
+    if not await backend.is_dir(target):
+        if await backend.file_exists(target):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Requested path is a file, not a directory.",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Directory not found.",
+        )
+
+    result: list[ArtifactEntry] = []
+    for name in await backend.list_dir(target):
+        entry_path = backend.join_path(target, name)
+        try:
+            entry_path = await _confine_existing_artifact_path(
+                backend,
+                workspace.workdir,
+                entry_path,
+            )
+        except HTTPException:
+            continue
+        is_dir = await backend.is_dir(entry_path)
+        result.append(
+            ArtifactEntry(
+                name=name,
+                is_dir=is_dir,
+                size_bytes=(
+                    None if is_dir else await backend.stat_size(entry_path)
+                ),
+                updated_at=await backend.stat_mtime(entry_path),
+            ),
+        )
+    return result
+
+
+@workspace_router.get("/artifacts/read_file")
+async def read_workspace_file(
+    agent_id: str = Query(...),
+    session_id: str = Query(...),
+    path: str = Query(..., description="Relative path inside the workspace."),
+    download: bool = Query(
+        default=False,
+        description="Force a Content-Disposition attachment.",
+    ),
+    user_id: str = Depends(get_current_user_id),
+    storage: StorageBase = Depends(get_storage),
+    workspace_manager: WorkspaceManagerBase = Depends(get_workspace_manager),
+) -> Response:
+    """Return one file from a session workspace."""
+    workspace = await _resolve_workspace(
+        user_id,
+        agent_id,
+        session_id,
+        storage,
+        workspace_manager,
+    )
+    backend = workspace.get_backend()
+    target = _safe_resolve_artifact_path(
+        backend,
+        workspace.workdir,
+        path,
+    )
+    basename = backend.basename(target) or "artifact"
+    target = await _confine_existing_artifact_path(
+        backend,
+        workspace.workdir,
+        target,
+    )
+
+    if await backend.is_dir(target):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Requested path is a directory, not a file.",
+        )
+    if not await backend.file_exists(target):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found.",
+        )
+
+    media_type = mimetypes.guess_type(basename)[0]
+    headers: dict[str, str] = {}
+    if download:
+        from urllib.parse import quote
+
+        headers[
+            "Content-Disposition"
+        ] = f"attachment; filename*=UTF-8''{quote(basename)}"
+    return Response(
+        content=await backend.read_file(target),
+        media_type=media_type or "application/octet-stream",
+        headers=headers,
+    )

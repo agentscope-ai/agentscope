@@ -3,8 +3,9 @@
 
 Exercises the three abstract primitives (``exec_shell``, ``read_file``,
 ``write_file``) plus the derived filesystem helpers (``file_exists``,
-``is_dir``, ``list_dir``, ``stat_mtime``, ``delete_path``) of the
-host-local backend, and the module-level ``normalize_newlines`` helper.
+``is_dir``, ``list_dir``, ``realpath``, ``stat_mtime``, ``stat_size``,
+``delete_path``) of the host-local backend, and the module-level
+``normalize_newlines`` helper.
 
 ``LocalBackend`` is designed to run on every platform (it spawns
 programs from an argv list without a shell and implements the
@@ -264,6 +265,38 @@ class TestLocalBackendFilesystemHelpers(IsolatedAsyncioTestCase):
                 os.path.join(self.temp_dir.name, "missing"),
             ),
         )
+
+    async def test_stat_size(self) -> None:
+        """``stat_size`` returns bytes for a file and None when missing."""
+        path = os.path.join(self.temp_dir.name, "f.txt")
+        await self.backend.write_file(path, b"payload")
+        self.assertEqual(await self.backend.stat_size(path), 7)
+        self.assertIsNone(
+            await self.backend.stat_size(
+                os.path.join(self.temp_dir.name, "missing"),
+            ),
+        )
+
+    async def test_realpath_resolves_symlink(self) -> None:
+        """``realpath`` resolves a local symlink to its target."""
+        target = os.path.join(self.temp_dir.name, "target.txt")
+        link = os.path.join(self.temp_dir.name, "link.txt")
+        await self.backend.write_file(target, b"x")
+        try:
+            os.symlink(target, link)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"symlink unavailable: {exc}")
+        self.assertEqual(
+            await self.backend.realpath(link),
+            os.path.realpath(target),
+        )
+
+    async def test_realpath_missing_raises(self) -> None:
+        """``realpath`` rejects a path that does not exist."""
+        with self.assertRaises(FileNotFoundError):
+            await self.backend.realpath(
+                os.path.join(self.temp_dir.name, "missing"),
+            )
 
     async def test_delete_path_file(self) -> None:
         """``delete_path`` removes a single file."""
