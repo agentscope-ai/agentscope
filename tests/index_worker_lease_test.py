@@ -97,6 +97,8 @@ class _SlowPipelineWorker(IndexWorker):
         self.pipeline_started = asyncio.Event()
         self.pipeline_cancelled = False
         self.pipeline_completed = False
+        self.heartbeat_started = asyncio.Event()
+        self.heartbeat_stopped = False
 
     async def _run_pipeline(
         self,
@@ -114,9 +116,56 @@ class _SlowPipelineWorker(IndexWorker):
             self.pipeline_cancelled = True
             raise
 
+    async def _heartbeat(
+        self,
+        user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+    ) -> None:
+        """Record heartbeat cancellation while preserving worker behavior."""
+        self.heartbeat_started.set()
+        try:
+            await super()._heartbeat(
+                user_id,
+                knowledge_base_id,
+                document_id,
+            )
+        finally:
+            self.heartbeat_stopped = True
+
 
 class IndexWorkerLeaseTest(IsolatedAsyncioTestCase):
     """Pipeline-vs-heartbeat race coverage."""
+
+    async def test_external_cancel_stops_child_tasks_and_releases(
+        self,
+    ) -> None:
+        """Cancelling process must not leave pipeline or heartbeat running."""
+        storage = _LeaseStorage()
+        worker = _SlowPipelineWorker(storage, pipeline_seconds=5.0)
+        process_task = asyncio.create_task(
+            worker.process("u", "kb", "doc-cancelled"),
+        )
+
+        await asyncio.wait_for(
+            asyncio.gather(
+                worker.pipeline_started.wait(),
+                worker.heartbeat_started.wait(),
+            ),
+            timeout=1.0,
+        )
+        process_task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await process_task
+
+        self.assertTrue(worker.pipeline_cancelled)
+        self.assertFalse(worker.pipeline_completed)
+        self.assertTrue(worker.heartbeat_stopped)
+        self.assertEqual(
+            [u for u in storage.status_updates if u["status"] == "error"],
+            [],
+        )
+        self.assertEqual(len(storage.released), 1)
 
     async def test_lost_lease_cancels_pipeline_and_marks_error(self) -> None:
         """Renew returning False mid-pipeline must abort the pipeline.
