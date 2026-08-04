@@ -21,7 +21,7 @@ import io
 import posixpath
 import shlex
 import tarfile
-from typing import Any
+from typing import Any, AsyncIterator
 
 from ...tool import BackendBase, ExecResult
 
@@ -290,8 +290,57 @@ class K8sBackend(BackendBase):
             info = tarfile.TarInfo(name=name)
             info.size = len(data)
             tf.addfile(info, io.BytesIO(data))
-        tar_bytes = buf.getvalue()
 
+        await self._exec_ws_stdin(
+            ["tar", "xf", "-", "-C", parent],
+            [buf.getvalue()],
+            path,
+        )
+
+    async def write_stream(
+        self,
+        path: str,
+        stream: AsyncIterator[bytes],
+    ) -> None:
+        """Stream bytes into ``path`` inside the Pod.
+
+        Pipes to ``cat`` rather than ``tar`` because a tar header
+        needs the member size up front, which a stream cannot give.
+
+        Args:
+            path (`str`):
+                Destination path inside the Pod.
+            stream (`AsyncIterator[bytes]`):
+                The chunks to write, in order.
+        """
+        parent = posixpath.dirname(path) or "/"
+        await self.exec_shell(["mkdir", "-p", parent])
+        await self._exec_ws_stdin(
+            ["sh", "-c", 'cat > "$1"', "sh", path],
+            stream,
+            path,
+        )
+
+    async def _exec_ws_stdin(
+        self,
+        command: list[str],
+        stdin: AsyncIterator[bytes] | list[bytes],
+        path: str,
+    ) -> None:
+        """Run ``command`` in the Pod, feeding ``payload`` to stdin.
+
+        Args:
+            command (`list[str]`):
+                The argv to exec inside the container.
+            stdin (`AsyncIterator[bytes] | list[bytes]`):
+                Chunks written to stdin, in order.
+            path (`str`):
+                The destination path, for the error message only.
+
+        Raises:
+            `RuntimeError`:
+                If the command exits non-zero inside the Pod.
+        """
         from kubernetes_asyncio import client as k8s_client
         from kubernetes_asyncio.stream import WsApiClient
 
@@ -302,7 +351,7 @@ class K8sBackend(BackendBase):
             ws = await v1_ws.connect_get_namespaced_pod_exec(
                 self._pod_name,
                 self._namespace,
-                command=["tar", "xf", "-", "-C", parent],
+                command=command,
                 container=self._container_name,
                 stderr=True,
                 stdin=True,
@@ -314,9 +363,12 @@ class K8sBackend(BackendBase):
             exit_code = 0
 
             async with ws as sock:
-                await sock.send_bytes(
-                    bytes([0]) + tar_bytes,
-                )
+                if isinstance(stdin, list):
+                    for chunk in stdin:
+                        await sock.send_bytes(bytes([0]) + chunk)
+                else:
+                    async for chunk in stdin:
+                        await sock.send_bytes(bytes([0]) + chunk)
                 await sock.send_bytes(bytes([0]))
 
                 async for msg in sock:
@@ -353,6 +405,6 @@ class K8sBackend(BackendBase):
                     errors="replace",
                 )
                 raise RuntimeError(
-                    f"write_file to {path!r} failed: "
-                    f"tar xf exited {exit_code}: {stderr_text}",
+                    f"write to {path!r} failed: "
+                    f"{command[0]} exited {exit_code}: {stderr_text}",
                 )

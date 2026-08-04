@@ -15,10 +15,12 @@ from ._model import (
     KnowledgeBaseRecord,
     KnowledgeDocumentRecord,
     KnowledgeDocumentStatus,
+    MCPRecord,
     ScheduleRecord,
     SessionRecord,
     SessionConfig,
     SessionSource,
+    SkillRecord,
     TeamRecord,
 )
 from ._utils import _dump_with_secrets
@@ -61,10 +63,20 @@ class RedisStorage(StorageBase):
         )
         agent: str = "agentscope:user:{user_id}:agent:{agent_id}"
         session: str = "agentscope:user:{user_id}:session:{session_id}"
+        mcp: str = "agentscope:user:{user_id}:mcp:{mcp_id}"
+        skill: str = "agentscope:user:{user_id}:skill:{skill_id}"
 
         # Index keys (Redis Sets — store all IDs for a given scope)
         credential_index: str = "agentscope:user:{user_id}:credentials"
         agent_index: str = "agentscope:user:{user_id}:agents"
+        mcp_index: str = "agentscope:user:{user_id}:mcps"
+        skill_index: str = "agentscope:user:{user_id}:skills"
+
+        # Name indexes (Redis Hash — name → record id). Each doubles as
+        # the per-user uniqueness constraint and as the lookup for the
+        # workspace relation, which joins on name rather than record id.
+        mcp_name_index: str = "agentscope:user:{user_id}:mcp_names"
+        skill_name_index: str = "agentscope:user:{user_id}:skill_names"
         session_index: str = (
             "agentscope:user:{user_id}:agent:{agent_id}:sessions"
         )
@@ -398,6 +410,285 @@ class RedisStorage(StorageBase):
         )
         deleted = await self._client.delete(key)
         await self._client.srem(index_key, credential_id)
+        return deleted > 0
+
+    async def upsert_mcp(self, user_id: str, mcp_record: MCPRecord) -> str:
+        """Create or update an installed-MCP record for the given user.
+
+        Keeps the name index in step with the write: the name is claimed
+        for this record, and a rename releases the old one. A name held
+        by a different record is rejected outright — the workspace
+        relation joins on name, so two records sharing one would make
+        that join ambiguous.
+
+        Args:
+            user_id (`str`): The owner user id.
+            mcp_record (`MCPRecord`): The record to write.
+
+        Returns:
+            `str`: The id of the created or updated record.
+
+        Raises:
+            `ValueError`: When another record already uses the name.
+        """
+        name_key = self._key(
+            self.key_config.mcp_name_index,
+            user_id=user_id,
+        )
+        holder = await self._client.hget(name_key, mcp_record.client.name)
+        if holder is not None and holder != mcp_record.id:
+            raise ValueError(
+                f"An MCP named {mcp_record.client.name!r} already exists "
+                f"for this user.",
+            )
+
+        key = self._key(
+            self.key_config.mcp,
+            user_id=user_id,
+            mcp_id=mcp_record.id,
+        )
+        raw = await self._client.get(key)
+
+        mcp_record.user_id = user_id
+        if raw:
+            mcp_record.updated_at = datetime.now()
+
+        await self._set_with_ttl(key, mcp_record.model_dump_json())
+        await self._client.sadd(
+            self._key(self.key_config.mcp_index, user_id=user_id),
+            mcp_record.id,
+        )
+        await self._client.hset(
+            name_key,
+            mcp_record.client.name,
+            mcp_record.id,
+        )
+
+        if raw:
+            previous = MCPRecord.model_validate_json(raw).client.name
+            if previous != mcp_record.client.name:
+                await self._client.hdel(name_key, previous)
+
+        return mcp_record.id
+
+    async def list_mcps(self, user_id: str) -> list[MCPRecord]:
+        """Return every installed-MCP record belonging to the user.
+
+        Args:
+            user_id (`str`): The owner user id.
+
+        Returns:
+            `list[MCPRecord]`: All installed-MCP records for the user.
+        """
+        index_key = self._key(self.key_config.mcp_index, user_id=user_id)
+        ids = await self._client.smembers(index_key)
+        records = []
+        for mcp_id in ids:
+            raw = await self._client.get(
+                self._key(
+                    self.key_config.mcp,
+                    user_id=user_id,
+                    mcp_id=mcp_id,
+                ),
+            )
+            if raw:
+                records.append(MCPRecord.model_validate_json(raw))
+        return records
+
+    async def get_mcp(self, user_id: str, mcp_id: str) -> MCPRecord | None:
+        """Fetch a single installed-MCP record by id."""
+        key = self._key(
+            self.key_config.mcp,
+            user_id=user_id,
+            mcp_id=mcp_id,
+        )
+        raw = await self._client.get(key)
+        return MCPRecord.model_validate_json(raw) if raw else None
+
+    async def get_mcp_by_name(
+        self,
+        user_id: str,
+        name: str,
+    ) -> MCPRecord | None:
+        """Fetch an installed-MCP record by its MCP name."""
+        mcp_id = await self._client.hget(
+            self._key(self.key_config.mcp_name_index, user_id=user_id),
+            name,
+        )
+        return await self.get_mcp(user_id, mcp_id) if mcp_id else None
+
+    async def delete_mcp(self, user_id: str, mcp_id: str) -> bool:
+        """Delete an installed-MCP record and drop it from both indexes.
+
+        Args:
+            user_id (`str`): The owner user id.
+            mcp_id (`str`): The id of the record to delete.
+
+        Returns:
+            `bool`: ``True`` if the record existed and was deleted.
+        """
+        record = await self.get_mcp(user_id, mcp_id)
+
+        deleted = await self._client.delete(
+            self._key(
+                self.key_config.mcp,
+                user_id=user_id,
+                mcp_id=mcp_id,
+            ),
+        )
+        await self._client.srem(
+            self._key(self.key_config.mcp_index, user_id=user_id),
+            mcp_id,
+        )
+        if record:
+            await self._client.hdel(
+                self._key(self.key_config.mcp_name_index, user_id=user_id),
+                record.client.name,
+            )
+        return deleted > 0
+
+    async def upsert_skill(
+        self,
+        user_id: str,
+        skill_record: SkillRecord,
+    ) -> str:
+        """Create or update an installed-skill record for the user.
+
+        Mirrors :meth:`upsert_mcp` — see it for the name-index rules.
+
+        Args:
+            user_id (`str`): The owner user id.
+            skill_record (`SkillRecord`): The record to write.
+
+        Returns:
+            `str`: The id of the created or updated record.
+
+        Raises:
+            `ValueError`: When another record already uses the name.
+        """
+        name_key = self._key(
+            self.key_config.skill_name_index,
+            user_id=user_id,
+        )
+        holder = await self._client.hget(name_key, skill_record.name)
+        if holder is not None and holder != skill_record.id:
+            raise ValueError(
+                f"A skill named {skill_record.name!r} already exists for "
+                f"this user.",
+            )
+
+        key = self._key(
+            self.key_config.skill,
+            user_id=user_id,
+            skill_id=skill_record.id,
+        )
+        raw = await self._client.get(key)
+
+        skill_record.user_id = user_id
+        if raw:
+            skill_record.updated_at = datetime.now()
+
+        await self._set_with_ttl(key, skill_record.model_dump_json())
+        await self._client.sadd(
+            self._key(self.key_config.skill_index, user_id=user_id),
+            skill_record.id,
+        )
+        await self._client.hset(name_key, skill_record.name, skill_record.id)
+
+        if raw:
+            previous = SkillRecord.model_validate_json(raw).name
+            if previous != skill_record.name:
+                await self._client.hdel(name_key, previous)
+
+        return skill_record.id
+
+    async def list_skills(self, user_id: str) -> list[SkillRecord]:
+        """Return every installed-skill record belonging to the user.
+
+        Args:
+            user_id (`str`): The owner user id.
+
+        Returns:
+            `list[SkillRecord]`: All installed-skill records for the user.
+        """
+        index_key = self._key(self.key_config.skill_index, user_id=user_id)
+        ids = await self._client.smembers(index_key)
+        records = []
+        for skill_id in ids:
+            raw = await self._client.get(
+                self._key(
+                    self.key_config.skill,
+                    user_id=user_id,
+                    skill_id=skill_id,
+                ),
+            )
+            if raw:
+                records.append(SkillRecord.model_validate_json(raw))
+        return records
+
+    async def get_skill(
+        self,
+        user_id: str,
+        skill_id: str,
+    ) -> SkillRecord | None:
+        """Fetch a single installed-skill record by id."""
+        key = self._key(
+            self.key_config.skill,
+            user_id=user_id,
+            skill_id=skill_id,
+        )
+        raw = await self._client.get(key)
+        return SkillRecord.model_validate_json(raw) if raw else None
+
+    async def get_skill_by_name(
+        self,
+        user_id: str,
+        name: str,
+    ) -> SkillRecord | None:
+        """Fetch an installed-skill record by its skill name."""
+        skill_id = await self._client.hget(
+            self._key(self.key_config.skill_name_index, user_id=user_id),
+            name,
+        )
+        if not skill_id:
+            return None
+        return await self.get_skill(user_id, skill_id)
+
+    async def delete_skill(
+        self,
+        user_id: str,
+        skill_id: str,
+    ) -> bool:
+        """Delete an installed-skill record and drop both index entries.
+
+        Args:
+            user_id (`str`): The owner user id.
+            skill_id (`str`): The id of the record to delete.
+
+        Returns:
+            `bool`: ``True`` if the record existed and was deleted.
+        """
+        record = await self.get_skill(user_id, skill_id)
+
+        deleted = await self._client.delete(
+            self._key(
+                self.key_config.skill,
+                user_id=user_id,
+                skill_id=skill_id,
+            ),
+        )
+        await self._client.srem(
+            self._key(self.key_config.skill_index, user_id=user_id),
+            skill_id,
+        )
+        if record:
+            await self._client.hdel(
+                self._key(
+                    self.key_config.skill_name_index,
+                    user_id=user_id,
+                ),
+                record.name,
+            )
         return deleted > 0
 
     async def upsert_agent(

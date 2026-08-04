@@ -19,6 +19,8 @@
 		"interrupted": "Interrupted",
 		"knowledge": "Knowledge Bases",
 		"loading": "Loading...",
+		"shownCount": "{{count}} shown",
+		"selectedCount": "{{selected}} of {{total}} selected",
 		"model": "Model",
 		"name": "Name",
 		"no": "No",
@@ -43,7 +45,12 @@
 		"time": "Time",
 		"yes": "Yes",
 		"deleteTitle": "Delete {{entity}} \"{{name}}\"?",
-		"deleteDescription": "This action cannot be undone."
+		"deleteDescription": "This action cannot be undone.",
+		"mcp-hub": "MCP Hub",
+		"mine": "Mine",
+		"my-mcp": "Installed MCPs",
+		"skill-hub": "Skill Hub",
+		"my-skill": "Installed skills"
 	},
 	"error": {
 		"description": "The page hit an unexpected error. You can retry or go back home.",
@@ -121,6 +128,7 @@
 			"upstream": "The upstream model service returned an error.",
 			"connection": "Could not reach the model service — network error or timeout.",
 			"internal": "An unexpected internal error occurred.",
+			"setup": "The session could not be prepared — check the agent's model, tools and knowledge bases.",
 			"unknown": "The reply failed with an unknown error."
 		}
 	},
@@ -410,13 +418,9 @@
 		"dont_ask-tooltip": "Convert all ASK decisions to DENY; suitable for scheduled tasks or background execution when user is unavailable"
 	},
 	"dialog-mcp-create": {
-		"title": "Add MCP Servers",
-		"description": "Add new MCP server(s) by configuration.",
 		"configLabel": "MCP Configuration",
 		"keepAlive": "Keep Alive",
 		"keepAliveDesc": "Maintain state across interactions. Enable for browser-use or other long-running MCPs.",
-		"adding": "Adding…",
-		"added": "Added",
 		"parseError": "Invalid JSON configuration: {{message}}",
 		"missingMcpServers": "Configuration must contain a \"mcpServers\" object.",
 		"emptyMcpServers": "No MCP servers found in configuration."
@@ -425,12 +429,6 @@
 		"entity": "MCP server",
 		"skillEntity": "skill",
 		"skillDescription": "Are you sure you want to remove this skill from the workspace?"
-	},
-	"dialog-skill-add": {
-		"title": "Add skill",
-		"description": "Enter the path to a skill directory to add it to the workspace.",
-		"pathLabel": "Skill path",
-		"pathPlaceholder": "/path/to/skill"
 	},
 	"schedule": {
 		"calendar": "Calendar",
@@ -553,9 +551,16 @@
 			"description": "The MCP servers equipped in the workspace.",
 			"searchPlaceholder": "Search MCP in the workspace",
 			"add": "Add MCP",
+			"addDescription": "Reuse one you have already installed, or paste a configuration.",
+			"fromConfig": "From configuration",
 			"tools": "{{count}} tools",
+			"unhealthy": "This MCP could not be reached",
+			"healthy": "Connected",
 			"emptyTitle": "No MCP servers",
-			"emptyDescription": "Add an MCP server to equip the workspace with tools."
+			"emptyDescription": "Add an MCP server to equip the workspace with tools.",
+			"fromInstalled": "Installed MCPs",
+			"installedEmptyTitle": "Nothing installed yet",
+			"installedEmptyDescription": "Install one from the MCP Hub, or paste a configuration."
 		},
 		"skill": {
 			"title": "Skills",
@@ -563,7 +568,17 @@
 			"searchPlaceholder": "Search skills in the workspace",
 			"add": "Add Skill",
 			"emptyTitle": "No skills",
-			"emptyDescription": "Add a skill to equip the workspace."
+			"emptyDescription": "Add a skill to equip the workspace.",
+			"addDescription": "Pick from your installed skills, or upload a local folder.",
+			"fromInstalled": "From installed",
+			"fromFolder": "Upload a folder",
+			"installedEmptyTitle": "No installed skills yet",
+			"installedEmptyDescription": "Install one from the skill hub, then add it here.",
+			"pickFolderTitle": "Pick a skill folder",
+			"pickFolderDescription": "The folder must hold a SKILL.md at its root.",
+			"pickFolder": "Choose folder",
+			"pickAnother": "Choose another",
+			"fileCount": "{{count}} files"
 		},
 		"knowledge": {
 			"title": "Knowledge Bases",
@@ -600,5 +615,59 @@
 		"running": "Running",
 		"idle": "Idle",
 		"missingSession": "(no session)"
+	},
+	"mcp": {
+		"subtitle": "Browse and install MCP servers",
+		"hubsLabel": "Hubs",
+		"searchPlaceholder": "Search this hub",
+		"mineSearchPlaceholder": "Search your MCPs",
+		"noHubsTitle": "No hubs available",
+		"noHubsDescription": "Ask your administrator to add one.",
+		"noCardsTitle": "Nothing found",
+		"noCardsDescription": "Try a different keyword.",
+		"mineDescription": "The MCP servers you have installed",
+		"mineEmptyTitle": "No MCP servers yet",
+		"mineEmptyDescription": "Install one from a hub on the left.",
+		"needsConfig": "Needs configuration",
+		"stateful": "Stateful",
+		"configLabel": "Configuration",
+		"install": "Install",
+		"installed": "Installed",
+		"installTitle": "Install {{name}}",
+		"installDescription": "Adds it to your MCPs. Pick a session to use it in afterwards.",
+		"editTitle": "Edit {{name}}",
+		"editDescription": "Leave a secret blank to keep the one already stored.",
+		"nameLabel": "Name",
+		"loadFailedTitle": "Couldn't reach the server",
+		"loadFailedDescription": "Check the server URL and that the service is running.",
+		"retry": "Retry"
+	},
+	"skill": {
+		"subtitle": "Browse and install skills",
+		"hubsLabel": "Hubs",
+		"searchPlaceholder": "Search this hub",
+		"mineSearchPlaceholder": "Search your skills",
+		"noHubsTitle": "No hubs available",
+		"noHubsDescription": "Ask your administrator to add one.",
+		"noCardsTitle": "Nothing found",
+		"noCardsDescription": "Try a different keyword.",
+		"mineDescription": "The skills you have installed",
+		"mineEmptyTitle": "No skills yet",
+		"mineEmptyDescription": "Install one from a hub on the left.",
+		"install": "Install",
+		"installed": "Installed",
+		"versionLabel": "Version",
+		"hubLabel": "Hub",
+		"updatedLabel": "Updated",
+		"updatedAgo": "Updated {{ago}} ago",
+		"updatedRecently": "Just updated",
+		"installsLabel": "Installs",
+		"downloadsLabel": "Downloads",
+		"linkLabel": "Page",
+		"viewOnHub": "View on hub",
+		"noReadme": "This skill ships no SKILL.md body.",
+		"loadFailedTitle": "Couldn't reach the server",
+		"loadFailedDescription": "Check the server URL and that the service is running.",
+		"retry": "Retry"
 	}
 }

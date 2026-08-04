@@ -19,6 +19,8 @@
 		"interrupted": "已中断",
 		"knowledge": "知识库",
 		"loading": "加载中...",
+		"shownCount": "已显示 {{count}} 个",
+		"selectedCount": "已选中 {{selected}} 个，共 {{total}} 个",
 		"model": "模型",
 		"name": "名称",
 		"no": "否",
@@ -43,7 +45,12 @@
 		"time": "时间",
 		"yes": "是",
 		"deleteTitle": "删除{{entity}} \"{{name}}\"？",
-		"deleteDescription": "此操作无法撤销。"
+		"deleteDescription": "此操作无法撤销。",
+		"mcp-hub": "MCP 中心",
+		"mine": "我的",
+		"my-mcp": "已安装的 MCP",
+		"skill-hub": "技能中心",
+		"my-skill": "已安装的技能"
 	},
 	"error": {
 		"description": "页面遇到意外错误。你可以重试或返回首页。",
@@ -121,6 +128,7 @@
 			"upstream": "上游模型服务返回了错误。",
 			"connection": "无法连接模型服务 —— 网络错误或超时。",
 			"internal": "发生了未预期的内部错误。",
+			"setup": "会话准备失败 —— 请检查该 agent 的模型、工具和知识库配置。",
 			"unknown": "回复因未知错误失败。"
 		}
 	},
@@ -410,13 +418,9 @@
 		"dont_ask-tooltip": "将所有 ASK 决策转为 DENY，适合定时任务或用户不在场时的后台执行"
 	},
 	"dialog-mcp-create": {
-		"title": "添加 MCP 服务器",
-		"description": "通过配置添加新的 MCP 服务器。",
 		"configLabel": "MCP 配置",
 		"keepAlive": "保持连接",
 		"keepAliveDesc": "在交互间保持状态。适用于浏览器操作或其他长时间运行的 MCP。",
-		"adding": "添加中…",
-		"added": "已添加",
 		"parseError": "JSON 配置无效：{{message}}",
 		"missingMcpServers": "配置中必须包含 \"mcpServers\" 对象。",
 		"emptyMcpServers": "配置中未找到 MCP 服务器。"
@@ -425,12 +429,6 @@
 		"entity": "MCP 服务器",
 		"skillEntity": "技能",
 		"skillDescription": "确定要将该技能从工作区中移除吗？"
-	},
-	"dialog-skill-add": {
-		"title": "添加技能",
-		"description": "输入技能目录的路径以添加到工作区。",
-		"pathLabel": "技能路径",
-		"pathPlaceholder": "/path/to/skill"
 	},
 	"schedule": {
 		"calendar": "日历",
@@ -553,9 +551,16 @@
 			"description": "工作区中配置的 MCP 服务器。",
 			"searchPlaceholder": "在工作区中搜索 MCP",
 			"add": "添加 MCP",
+			"addDescription": "复用已安装的 MCP，或粘贴一份配置。",
+			"fromConfig": "从 configuration 导入",
 			"tools": "{{count}} 个工具",
+			"unhealthy": "该 MCP 无法连接",
+			"healthy": "连接正常",
 			"emptyTitle": "暂无 MCP 服务器",
-			"emptyDescription": "添加 MCP 服务器为工作区配备工具。"
+			"emptyDescription": "添加 MCP 服务器为工作区配备工具。",
+			"fromInstalled": "导入已安装的 MCP",
+			"installedEmptyTitle": "还没有安装任何 MCP",
+			"installedEmptyDescription": "去 MCP 中心安装一个，或在这里粘贴配置。"
 		},
 		"skill": {
 			"title": "技能",
@@ -563,7 +568,17 @@
 			"searchPlaceholder": "在工作区中搜索技能",
 			"add": "添加技能",
 			"emptyTitle": "暂无技能",
-			"emptyDescription": "添加技能为工作区配备能力。"
+			"emptyDescription": "添加技能为工作区配备能力。",
+			"addDescription": "从已安装的 Skill 中选择，或上传本地文件夹。",
+			"fromInstalled": "导入已安装 Skill",
+			"fromFolder": "从文件夹上传",
+			"installedEmptyTitle": "还没有已安装的 Skill",
+			"installedEmptyDescription": "先到 Skill 市场安装，再从这里加入工作区。",
+			"pickFolderTitle": "选择一个 Skill 文件夹",
+			"pickFolderDescription": "文件夹根目录需要包含 SKILL.md。",
+			"pickFolder": "选择文件夹",
+			"pickAnother": "重新选择",
+			"fileCount": "{{count}} 个文件"
 		},
 		"knowledge": {
 			"title": "知识库",
@@ -600,5 +615,59 @@
 		"running": "运行中",
 		"idle": "空闲",
 		"missingSession": "（无会话）"
+	},
+	"mcp": {
+		"subtitle": "浏览并安装 MCP 服务",
+		"hubsLabel": "来源",
+		"searchPlaceholder": "在该来源中搜索",
+		"mineSearchPlaceholder": "搜索你的 MCP",
+		"noHubsTitle": "暂无可用来源",
+		"noHubsDescription": "请联系管理员添加。",
+		"noCardsTitle": "没有找到内容",
+		"noCardsDescription": "换个关键词试试。",
+		"mineDescription": "你已安装的 MCP 服务",
+		"mineEmptyTitle": "还没有 MCP 服务",
+		"mineEmptyDescription": "从左侧的来源中安装一个。",
+		"needsConfig": "需要配置",
+		"stateful": "有状态",
+		"configLabel": "配置",
+		"install": "安装",
+		"installed": "已安装",
+		"installTitle": "安装 {{name}}",
+		"installDescription": "添加到你的 MCP 中，之后可在会话里启用。",
+		"editTitle": "编辑 {{name}}",
+		"editDescription": "密钥留空则沿用已保存的值。",
+		"nameLabel": "名称",
+		"loadFailedTitle": "无法连接服务",
+		"loadFailedDescription": "请检查服务地址，以及服务是否已启动。",
+		"retry": "重试"
+	},
+	"skill": {
+		"subtitle": "浏览并安装技能",
+		"hubsLabel": "来源",
+		"searchPlaceholder": "在该来源中搜索",
+		"mineSearchPlaceholder": "搜索你的技能",
+		"noHubsTitle": "暂无可用来源",
+		"noHubsDescription": "请联系管理员添加。",
+		"noCardsTitle": "没有找到内容",
+		"noCardsDescription": "换个关键词试试。",
+		"mineDescription": "你已安装的技能",
+		"mineEmptyTitle": "还没有技能",
+		"mineEmptyDescription": "从左侧的来源中安装一个。",
+		"install": "安装",
+		"installed": "已安装",
+		"versionLabel": "版本",
+		"hubLabel": "来源",
+		"updatedLabel": "更新于",
+		"updatedAgo": "{{ago}}前更新",
+		"updatedRecently": "刚刚更新",
+		"installsLabel": "安装量",
+		"downloadsLabel": "下载量",
+		"linkLabel": "页面",
+		"viewOnHub": "在来源站点查看",
+		"noReadme": "该技能没有提供 SKILL.md 正文。",
+		"loadFailedTitle": "无法连接服务",
+		"loadFailedDescription": "请检查服务地址，以及服务是否已启动。",
+		"retry": "重试"
 	}
 }

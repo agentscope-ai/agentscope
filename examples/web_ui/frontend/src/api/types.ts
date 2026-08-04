@@ -389,6 +389,12 @@ export interface ToolInfo {
 export interface MCPClientStatus extends MCPClient {
 	is_healthy: boolean;
 	tools: ToolInfo[];
+	/**
+	 * Why listing this MCP's tools failed. `null` when healthy — a red dot
+	 * alone leaves nothing to act on, since a wrong API key, an unreachable
+	 * host and a missing command all look the same.
+	 */
+	error: string | null;
 }
 
 // ─── Skill ────────────────────────────────────────────────────────────────────
@@ -401,8 +407,212 @@ export interface Skill {
 	updated_at: number;
 }
 
+/**
+ * @deprecated The path is resolved on the server, which only means
+ * anything for a single-host deployment. Upload a folder or install
+ * from the library instead.
+ */
 export interface AddSkillRequest {
 	skill_path: string;
+}
+
+// ─── Hub ──────────────────────────────────────────────────────────────────────
+
+/** One registered hub, as shown in the hub picker. */
+export interface HubInfo {
+	hub_id: string;
+	display_name: string;
+	description: string;
+	/** `null` when the hub has no icon; fall back rather than leave a gap. */
+	icon_url: string | null;
+}
+
+/**
+ * Query for browsing one hub. Pagination is cursor-based — pass the previous
+ * page's `next_cursor` to load more; a `null` cursor means the end.
+ */
+export interface HubBrowseParams {
+	/** Keyword search. Some hubs answer this from a separate, unpaginated endpoint. */
+	q?: string;
+	cursor?: string;
+	/** 1-200, defaults to 20 server-side. */
+	limit?: number;
+}
+
+interface HubCardBase {
+	/** The hub this card came from. Together with `id` it addresses the card globally. */
+	hub_id: string;
+	/**
+	 * The card's id on its hub — opaque, and not necessarily URL-safe (some
+	 * registries use ids containing `:`). Always encode it into a path.
+	 */
+	id: string;
+	name: string;
+	display_name?: string | null;
+	description: string;
+	tags: string[];
+	version?: string | null;
+}
+
+/**
+ * An MCP listing: a *template*, not something connectable. `config_template`
+ * holds `${...}` placeholders that the server fills from the values submitted
+ * at install time — never substitute them client-side.
+ */
+export interface MCPCard extends HubCardBase {
+	is_stateful: boolean;
+	updated_at?: number | null;
+	/** Who published it. `null` when the hub does not say. */
+	author?: string | null;
+	/** An image representing it. `null` when the hub offers none. */
+	icon_url?: string | null;
+	/** Its page on the hub's website. `null` if it has none. */
+	url?: string | null;
+	/** `null` means uncounted, which is not the same as zero. */
+	installs?: number | null;
+	downloads?: number | null;
+	/** `none` — install directly, no form. `inputs` — render `inputs_schema`. */
+	auth: 'none' | 'inputs';
+	/**
+	 * JSON Schema for the install form. Empty (no `properties`) when the card
+	 * needs no configuration, so branch on `auth` before rendering.
+	 * Secret fields carry `writeOnly: true` / `format: 'password'`.
+	 */
+	inputs_schema: Partial<JSONSchema>;
+	/**
+	 * The server's long-form docs. Only populated by the detail endpoint —
+	 * READMEs run to tens of kilobytes, so listings leave them out.
+	 */
+	readme?: string | null;
+	/** Shown read-only; the placeholders are resolved server-side. */
+	config_template: StdioMCPConfig | HttpMCPConfig;
+}
+
+/** A skill listing. Unlike an MCP there is nothing to configure. */
+export interface SkillCard extends HubCardBase {
+	updated_at?: number | null;
+	/** Who published it. `null` when the hub does not say. */
+	author?: string | null;
+	/**
+	 * An image representing the skill. `null` when the hub offers none —
+	 * fall back rather than rendering a broken image.
+	 */
+	icon_url?: string | null;
+	/**
+	 * How many times the skill has been installed. `null` means the hub does
+	 * not count installs — which is not the same as zero, so don't render it.
+	 */
+	installs?: number | null;
+	/** How many times it has been downloaded. `null` when uncounted. */
+	downloads?: number | null;
+	/** The skill's page on the hub's website. `null` if it has none. */
+	url?: string | null;
+	/** The `SKILL.md` body — only populated by the detail endpoint. */
+	markdown?: string | null;
+	metadata: Record<string, unknown>;
+}
+
+export interface MCPHubPage {
+	cards: MCPCard[];
+	/** `null` when this is the last page. */
+	next_cursor: string | null;
+}
+
+export interface SkillHubPage {
+	cards: SkillCard[];
+	next_cursor: string | null;
+}
+
+/**
+ * The outcome of putting library MCPs into a workspace, reported per MCP:
+ * connecting happens one at a time, so a bad API key on the third pick must
+ * not throw away the two that worked.
+ */
+export interface AddFromLibraryResponse {
+	/** Now in the workspace. Excludes ones already present. */
+	added: string[];
+	/** Whatever could not be added, mapped to why. */
+	failed: Record<string, string>;
+}
+
+/** A library edit. Omitted fields are left alone. */
+export interface UpdateMCPRequest {
+	name?: string;
+	/**
+	 * New answers, merged over the stored ones — send only what changed, so
+	 * a write-only field the form never echoed back survives.
+	 */
+	values?: Record<string, unknown>;
+	enabled?: boolean;
+}
+
+export interface InstallMCPRequest {
+	/**
+	 * Name to install under, defaulting to the card's. Must match
+	 * `[a-zA-Z0-9_-]+`; use it to resolve a 409 name clash.
+	 */
+	name?: string | null;
+	/** Answers to `inputs_schema`, e.g. API keys. */
+	values: Record<string, unknown>;
+}
+
+// ─── Installed MCPs and skills ────────────────────────────────────────────────
+
+/**
+ * One MCP in the user's own library, which is where an install lands —
+ * distinct from `WorkspaceMCP`, which is what one session's workspace holds.
+ *
+ * The rendered config is not exposed: it carries the values submitted at
+ * install time, API keys included.
+ */
+export interface MCPView {
+	id: string;
+	/** Unique per user — the handle a workspace refers to it by. */
+	name: string;
+	is_stateful: boolean;
+	enabled: boolean;
+	/**
+	 * Snapshotted from the card at install time, so they survive the hub
+	 * going away — and may lag behind it.
+	 */
+	display_name: string | null;
+	description: string;
+	tags: string[];
+	author: string | null;
+	icon_url: string | null;
+	url: string | null;
+	/** `null` when the MCP was added by hand rather than from a hub. */
+	hub_id: string | null;
+	card_id: string | null;
+	version: string | null;
+}
+
+/**
+ * One skill in the user's own library. Unlike an MCP, the skill's files are
+ * not stored — the record says where they came from, and the archive is
+ * re-fetched from the hub when the skill reaches a workspace.
+ */
+export interface SkillView {
+	id: string;
+	/** Unique per user — the handle a workspace refers to it by. */
+	name: string;
+	enabled: boolean;
+	display_name: string | null;
+	description: string;
+	tags: string[];
+	/** Snapshotted from the card at install time, so the library keeps the
+	 *  identity of the listing it came from. */
+	author: string | null;
+	icon_url: string | null;
+	url: string | null;
+	hub_id: string | null;
+	card_id: string | null;
+	version: string | null;
+}
+
+/** A library skill with its `SKILL.md` body, from the detail endpoint. */
+export interface SkillRecord extends SkillView {
+	markdown: string;
 }
 
 // ─── Schedule ─────────────────────────────────────────────────────────────────
