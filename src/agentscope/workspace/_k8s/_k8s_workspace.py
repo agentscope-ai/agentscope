@@ -605,9 +605,11 @@ class K8sWorkspace(SandboxedWorkspaceBase):
             f"apt-get update -qq "
             f"&& apt-get install -y --no-install-recommends {sys_deps} "
             f"&& rm -rf /var/lib/apt/lists/*",
-            "curl -LsSf https://astral.sh/uv/install.sh "
-            "| env UV_INSTALL_DIR=/usr/local/bin "
-            "INSTALLER_NO_MODIFY_PATH=1 sh",
+            # uv → prefer pre-installed uv; otherwise install from Aliyun
+            # PyPI mirror. astral.sh has no CN mirror.
+            "command -v uv >/dev/null 2>&1 || "
+            "python3 -m pip install --break-system-packages -q "
+            "-i https://mirrors.aliyun.com/pypi/simple/ uv",
             f"uv venv {self._gateway_venv}",
             f"uv pip install --python {self._gateway_python} {pip_args}",
             f"uv pip install --python {self._gateway_python} "

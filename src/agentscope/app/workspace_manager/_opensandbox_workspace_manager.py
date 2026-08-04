@@ -116,6 +116,7 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
         ttl: float = 3600.0,
         sweep_interval: float = DEFAULT_SWEEP_INTERVAL,
         skip_system_bootstrap: bool = False,
+        pypi_index_url: str | None = None,
     ) -> None:
         """Initialize the OpenSandbox workspace manager.
 
@@ -173,6 +174,12 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
             sweep_interval (`float`, defaults to `DEFAULT_SWEEP_INTERVAL`):
                 How often the background sweeper wakes up to look for
                 idle workspaces.
+            skip_system_bootstrap (`bool`, defaults to ``False``):
+                Forwarded to :class:`OpenSandboxWorkspace`. See its
+                docstring for semantics.
+            pypi_index_url (`str | None`, optional):
+                Forwarded to :class:`OpenSandboxWorkspace`. See its
+                docstring for semantics.
         """
         self._image = image
         self._api_key = api_key
@@ -192,6 +199,7 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
         self._ttl = ttl
         self._sweep_interval = sweep_interval
         self._skip_system_bootstrap = skip_system_bootstrap
+        self._pypi_index_url = pypi_index_url
         super().__init__(isolation=isolation)
 
         # workspace_id -> (workspace, last_access_monotonic)
@@ -235,6 +243,7 @@ class OpenSandboxWorkspaceManager(WorkspaceManagerBase):
             default_mcps=self._default_mcps,
             skill_paths=self._skill_paths,
             skip_system_bootstrap=self._skip_system_bootstrap,
+            pypi_index_url=self._pypi_index_url,
         )
         await ws.initialize()
         return ws

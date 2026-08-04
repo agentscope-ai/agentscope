@@ -549,29 +549,39 @@ class BubblewrapWorkspace(SandboxedWorkspaceBase):
 
     @staticmethod
     def _install_uv_script(bin_dir: str) -> str:
-        """Return shell code that downloads and executes the uv installer."""
+        """Return shell code that installs uv.
+
+        Prefer a pre-installed uv; otherwise install from the Aliyun
+        PyPI mirror (astral.sh has no CN mirror).
+        """
         quoted_bin_dir = shlex.quote(bin_dir)
         return (
             "set -eu; "
-            "tmp_installer=$(mktemp); "
-            'cleanup_installer() { rm -f "$tmp_installer"; }; '
-            "trap cleanup_installer EXIT INT TERM; "
-            "curl -LsSf --retry 5 --retry-delay 2 --retry-all-errors "
-            "--connect-timeout 15 --max-time 60 --retry-max-time 180 "
-            '-o "$tmp_installer" '
-            "https://astral.sh/uv/install.sh; "
-            f"env UV_INSTALL_DIR={quoted_bin_dir} "
-            'INSTALLER_NO_MODIFY_PATH=1 sh "$tmp_installer"; '
-            'rm -f "$tmp_installer"; '
-            "trap - EXIT INT TERM"
+            "if command -v uv >/dev/null 2>&1; then "
+            f"ln -sf \"$(command -v uv)\" {quoted_bin_dir}/uv; "
+            "exit 0; "
+            "fi; "
+            "python3 -m pip install --break-system-packages -q "
+            "-i https://mirrors.aliyun.com/pypi/simple/ uv; "
+            f"ln -sf \"$(command -v uv)\" {quoted_bin_dir}/uv; "
         )
 
     def _install_ripgrep_script(self) -> str:
-        """Return shell code that installs official ripgrep release assets."""
+        """Return shell code that installs official ripgrep release assets.
+
+        GitHub releases are slow/unreliable from CN networks, so the
+        download URL is prefixed with a GitHub accelerator mirror
+        (``ghproxy.com`` by default). Set ``AGENTSCOPE_RIPGREP_MIRROR``
+        to an empty string to hit GitHub directly, or to another mirror
+        (e.g. ``https://ghfast.top/``) if the default one is down. The
+        SHA-256 checksums below are unaffected by the mirror prefix.
+        """
         bin_dir = shlex.quote(f"{self._gateway_home}/bin")
         cache_dir = shlex.quote(f"{SANDBOX_CACHE_DIR}/ripgrep")
         version = "14.1.0"
+        github_mirror = os.getenv("AGENTSCOPE_RIPGREP_MIRROR", "https://ghproxy.com/")
         base_url = (
+            f"{github_mirror}"
             "https://github.com/BurntSushi/ripgrep/releases/download/"
             f"{version}"
         )

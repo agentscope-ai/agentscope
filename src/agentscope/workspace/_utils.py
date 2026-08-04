@@ -101,6 +101,7 @@ _GATEWAY_BASE_REQUIREMENTS: tuple[str, ...] = (
     "mcp",
     "uvicorn",
     "fastapi",
+    "httpx",
 )
 
 

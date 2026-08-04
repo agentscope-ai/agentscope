@@ -295,7 +295,11 @@ class GatewayMCPClient(MCPClient):
             )
         data = json.loads(body)
 
-        raw_tools = [mcp.types.Tool.model_validate(d) for d in data]
+        raw_tools = []
+        for d in data:
+            if "inputSchema" not in d:
+                d["inputSchema"] = {"type": "object", "properties": {}}
+            raw_tools.append(mcp.types.Tool.model_validate(d))
         self._cached_tools = raw_tools
 
         # Gateway returns the unfiltered upstream view; honour the same

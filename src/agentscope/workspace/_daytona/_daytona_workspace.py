@@ -456,12 +456,11 @@ class DaytonaWorkspace(SandboxedWorkspaceBase):
             "sudo apt-get update -qq "
             "&& sudo apt-get install -y --no-install-recommends ripgrep "
             "&& sudo rm -rf /var/lib/apt/lists/*",
-            # 2. Astral uv — same shell installer as Docker/E2B. The
-            #    SDK-reported user home is the install root so we do not
-            #    assume /home/daytona or any fixed OS user.
-            f"curl -LsSf https://astral.sh/uv/install.sh "
-            f"| env UV_INSTALL_DIR={shlex.quote(uv_install_dir)} "
-            f"INSTALLER_NO_MODIFY_PATH=1 sh",
+            # 2. uv → prefer pre-installed uv; otherwise install from
+            #    Aliyun PyPI mirror. astral.sh has no CN mirror.
+            f"command -v uv >/dev/null 2>&1 || "
+            f"python3 -m pip install --break-system-packages -q "
+            f"-i https://mirrors.aliyun.com/pypi/simple/ uv",
             # 3. Gateway venv + base requirements.
             f"{shlex.quote(self._uv_bin)} venv "
             f"{shlex.quote(self._gateway_venv)}",
