@@ -9,7 +9,8 @@
 	},
 	"dependencies": {
 		"express": "^4.19.2",
-		"cors": "^2.8.5"
+		"cors": "^2.8.5",
+		"http-proxy-middleware": "^3.0.5"
 	},
 	"devDependencies": {
 		"@types/express": "^4.17.21",
