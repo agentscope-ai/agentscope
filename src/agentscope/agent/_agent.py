@@ -3,6 +3,7 @@
 import asyncio
 import collections
 import inspect
+import json
 import re
 
 from asyncio import Queue
@@ -92,6 +93,7 @@ from ..tool import (
     ToolChoice,
     ToolResponse,
 )
+from ..tool._utils import _coerce_tool_args
 from ..permission import (
     PermissionBehavior,
     PermissionEngine,
@@ -2077,8 +2079,18 @@ class Agent:
                 tool.input_schema,
             )
 
-            # Validate the parsed input with the tool schema
-            # TODO: Maybe some logic to mix the validation error in runtime
+            # Coerce types before validation (e.g. str "42" → int 42).
+            if parsed_input and tool.input_schema:
+                parsed_input = _coerce_tool_args(
+                    parsed_input, tool.input_schema
+                )
+                tool_call.input = json.dumps(parsed_input)
+
+            # Validate the coerced input against the tool schema.
+            # TODO: feed validation errors back to the model so it can
+            # auto-correct.  Type coercion above already handles common
+            # LLM mistakes (e.g. "42" → 42), so this would mainly cover
+            # missing required params or structural mismatches.
             try:
                 jsonschema.validate(parsed_input, tool.input_schema)
             except jsonschema.ValidationError as e:

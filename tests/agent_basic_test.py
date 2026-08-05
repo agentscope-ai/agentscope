@@ -1638,5 +1638,104 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         expected_context = [{**msg_base, **_} for _ in expected_context]
         self.assertListEqual(context_dicts, expected_context)
 
+    async def test_tool_arg_coercion_in_agent(self) -> None:
+        """Agent coerces type-mismatched tool arguments before validation,
+        and both permission checking and execution receive the coerced value.
+        """
+        permission_inputs: list[dict[str, Any]] = []
+        executed_args: list[Any] = []
+
+        class MockIntTool(ToolBase):
+            name: str = "mock_int_tool"
+            description: str = "A tool with an integer parameter"
+            input_schema: dict[str, Any] = {
+                "type": "object",
+                "properties": {
+                    "n": {"type": "integer", "description": "An integer"},
+                },
+                "required": ["n"],
+            }
+            is_concurrency_safe: bool = True
+            is_read_only: bool = False
+            is_external_tool: bool = False
+            is_mcp: bool = False
+
+            async def check_permissions(
+                self,
+                tool_input: dict[str, Any],
+                context: PermissionContext,
+            ) -> PermissionDecision:
+                permission_inputs.append(dict(tool_input))
+                return PermissionDecision(
+                    behavior=PermissionBehavior.ALLOW,
+                    message="Always allow",
+                )
+
+            async def __call__(self, n: int, **kwargs: Any) -> ToolChunk:
+                executed_args.append(n)
+                return ToolChunk(
+                    content=[TextBlock(text=f"Got int: {n}")],
+                )
+
+        self.agent.toolkit = Toolkit(tools=[MockIntTool()])
+        tool_call_id = "tool_call_coerce"
+
+        # Model returns "42" as a string — type mismatch for integer param
+        tool_call = ToolCallBlock(
+            id=tool_call_id,
+            name="mock_int_tool",
+            input='{"n": "42"}',
+        )
+        self.model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[
+                            TextBlock(text="Calling..."),
+                            tool_call,
+                        ],
+                        is_last=True,
+                    ),
+                ],
+                [
+                    ChatResponse(
+                        content=[TextBlock(text="Done")],
+                        is_last=True,
+                    ),
+                ],
+            ],
+        )
+
+        events = []
+        async for event in self.agent.reply_stream(
+            UserMsg(name="user", content="Test"),
+        ):
+            events.append(event.model_dump(mode="json"))
+
+        # Permission and execution must both receive the coerced int value
+        self.assertEqual(
+            permission_inputs,
+            [{"n": 42}],
+            "Permission should receive coerced int, not str",
+        )
+        self.assertEqual(
+            executed_args,
+            [42],
+            "Tool should receive coerced int, not str",
+        )
+        self.assertIsInstance(
+            executed_args[0],
+            int,
+            "Tool argument must be int, not str",
+        )
+
+        # Tool result should be success
+        tool_result_end = [
+            e for e in events if e["type"] == "TOOL_RESULT_END"
+        ]
+        self.assertTrue(
+            any(e["state"] == "success" for e in tool_result_end),
+        )
+
     async def asyncTearDown(self) -> None:
         """The async teardown method."""
