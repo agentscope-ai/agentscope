@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 from datetime import timedelta
 import hashlib
+import os
 import shlex
 from typing import TYPE_CHECKING, Literal
 
@@ -32,6 +33,19 @@ if TYPE_CHECKING:
         NetworkPolicy,
         SandboxInfo,
     )
+
+
+# ── Gateway proxy-direct 开关（AGENTSCOPE_GATEWAY_PROXY_DIRECT）────────
+# 默认开启（"1"）：沙箱 gateway 以 --host 0.0.0.0 启动，GatewayClient 改走
+# OpenSandbox server-proxy 直连（跳过 exec_shell shim 的 spawn 开销，
+# 工具调用 ~1s → ~0.5s）。仅 OpenSandbox 沙箱模式生效（本类 override
+# _gateway_proxy_url 才返回非 None）；Docker/E2B 等无 server-proxy 的
+# 沙箱不受影响，保持 loopback + shim。传输层故障自动 fallback 回 shim。
+# 关闭（"0"/"false"/"no"/"off"）：gateway 维持 127.0.0.1 绑定，走原
+# exec_shell shim 通道，行为与官方一致。
+AGENTSCOPE_GATEWAY_PROXY_DIRECT_ENABLED = os.getenv(
+    "AGENTSCOPE_GATEWAY_PROXY_DIRECT", "1"
+).strip().lower() not in ("0", "false", "no", "off")
 
 
 class OpenSandboxWorkspace(SandboxedWorkspaceBase):
@@ -172,6 +186,39 @@ class OpenSandboxWorkspace(SandboxedWorkspaceBase):
             "bin",
             "python",
         )
+
+    async def _gateway_proxy_url(self) -> tuple[str, dict[str, str]] | None:
+        """OpenSandbox server-proxy direct transport (default on).
+
+        Only active while a sandbox exists (i.e. sandbox mode) and the
+        ``AGENTSCOPE_GATEWAY_PROXY_DIRECT`` switch is enabled: returns
+        the server-proxy ``(base_url, headers)`` for the gateway port.
+        ``_sandboxed_base`` then launches the gateway with
+        ``--host 0.0.0.0`` and wires :class:`GatewayClient` to the
+        proxy route (with automatic fallback to the in-sandbox shim).
+
+        Returns ``None`` — keeping loopback binding + shim transport —
+        when the switch is off, no sandbox is attached, or the SDK
+        cannot produce an endpoint (provider-side limitation).
+        """
+        if not AGENTSCOPE_GATEWAY_PROXY_DIRECT_ENABLED:
+            return None
+        if self._sandbox is None:
+            return None
+        try:
+            endpoint = await self._sandbox.get_endpoint(self.gateway_port)
+        except Exception as exc:
+            logger.warning(
+                "OpenSandboxWorkspace: get_endpoint(%s) failed (%s); "
+                "falling back to the in-sandbox shim transport.",
+                self.gateway_port,
+                exc,
+            )
+            return None
+        url = endpoint.endpoint
+        if not url:
+            return None
+        return str(url).rstrip("/"), dict(endpoint.headers or {})
 
     async def _provision_backend(self) -> None:
         """Reattach or create the sandbox and bind the backend.

@@ -427,6 +427,20 @@ class SandboxedWorkspaceBase(WorkspaceBase):
 
     # ── gateway lifecycle helpers ─────────────────────────────────
 
+    async def _gateway_proxy_url(self) -> tuple[str, dict[str, str]] | None:
+        """Return ``(base_url, headers)`` when this backend supports a
+        host-side proxy-direct transport to the in-sandbox gateway, or
+        ``None`` to keep the legacy in-sandbox shim transport.
+
+        Only sandbox providers that expose a server-side proxy route
+        should override this (OpenSandbox's ``use_server_proxy``
+        endpoint is the canonical example). When a proxy route is
+        returned the gateway is launched with ``--host 0.0.0.0`` so the
+        provider's proxy can reach it through the sandbox container
+        address; otherwise the gateway keeps its loopback-only binding.
+        """
+        return None
+
     async def _setup_mcp_gateway(self) -> None:
         """Bootstrap (once) and launch the in-sandbox gateway.
 
@@ -435,10 +449,14 @@ class SandboxedWorkspaceBase(WorkspaceBase):
         1. Bootstrap the venv + script if :attr:`_gateway_script` is
            missing (Docker's image already has it → fast-path).
         2. Kill any leftover gateway from a previous resume.
-        3. Launch a fresh gateway pointed at ``.mcp``.
+        3. Launch a fresh gateway pointed at ``.mcp`` (bound to
+           ``0.0.0.0`` when :meth:`_gateway_proxy_url` is non-``None``,
+           loopback otherwise).
         4. Bind :attr:`_gateway` and poll ``/health``.
         """
         backend = self.get_backend()
+        gateway_proxy = await self._gateway_proxy_url()
+        gateway_bind_host = "0.0.0.0" if gateway_proxy is not None else "127.0.0.1"
 
         # Provision the venv + script on first use. Fast-path skips
         # when the script already exists (Docker image build, E2B
@@ -491,6 +509,7 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             f"{shlex.quote(self._gateway_script)} "
             f"--config {shlex.quote(self._mcp_file)} "
             f"--port {self.gateway_port} "
+            f"--host {gateway_bind_host} "
             f"> {shlex.quote(self._gateway_log)} 2>&1 &"
         )
         await backend.exec_shell(["sh", "-c", launch_cmd])
@@ -501,6 +520,8 @@ class SandboxedWorkspaceBase(WorkspaceBase):
             gateway_port=self.gateway_port,
             timeout=30.0,
             gateway_log_path=self._gateway_log,
+            proxy_base_url=gateway_proxy[0] if gateway_proxy else None,
+            proxy_headers=gateway_proxy[1] if gateway_proxy else None,
         )
         health_timeout = 30.0
         deadline = asyncio.get_event_loop().time() + health_timeout

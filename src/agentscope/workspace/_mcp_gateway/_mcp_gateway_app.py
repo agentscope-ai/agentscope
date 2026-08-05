@@ -170,6 +170,7 @@ async def _connect_initial(
 async def _run(
     config_path: str,
     port: int,
+    host: str,
     auth_token: str | None = None,
     instance_nonce: str | None = None,
 ) -> None:
@@ -199,7 +200,7 @@ async def _run(
 
     uvi_cfg = uvicorn.Config(
         app,
-        host="127.0.0.1",
+        host=host,
         port=port,
         log_level="info",
     )
@@ -218,6 +219,17 @@ def main() -> None:
         description="In-workspace MCP gateway (FastAPI)",
     )
     parser.add_argument("--config", required=True)
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help=(
+            "Address to bind. Keep the default loopback binding when the "
+            "host talks to the gateway through an in-sandbox shim; pass "
+            "0.0.0.0 when the host needs to reach the gateway through the "
+            "sandbox provider's server-side proxy (see "
+            "AGENTSCOPE_GATEWAY_PROXY_DIRECT)."
+        ),
+    )
     parser.add_argument("--port", type=int, default=5600)
     parser.add_argument("--auth-token")
     parser.add_argument("--instance-nonce")
@@ -226,6 +238,7 @@ def main() -> None:
         _run(
             args.config,
             args.port,
+            args.host,
             auth_token=args.auth_token,
             instance_nonce=args.instance_nonce,
         ),

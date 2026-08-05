@@ -14,11 +14,23 @@ Three classes:
 * :class:`GatewayMCPTool` — :class:`ToolBase` whose ``__call__``
   invokes the upstream tool via ``POST /mcps/{name}/tools/{tool}``.
 
-Every request runs inside the sandbox: the host writes an optional
-body to a sandbox tempfile, spawns a small Python shim via
-:meth:`BackendBase.exec_shell` (see :mod:`._gateway_shim`), and parses
-the JSON envelope the shim prints on stdout. No host→sandbox network
-reachability is required — the gateway only binds sandbox loopback.
+Requests use one of two transports, selected per-client via
+``proxy_base_url``:
+
+* **In-sandbox shim (legacy, default)** — the host writes an optional
+  body to a sandbox tempfile, spawns a small Python shim via
+  :meth:`BackendBase.exec_shell` (see :mod:`._gateway_shim`), and
+  parses the JSON envelope the shim prints on stdout. No
+  host→sandbox network reachability is required — the gateway only
+  binds sandbox loopback. Costs one ``exec_shell`` spawn (~1s) per
+  request.
+* **Host-side proxy direct** — when ``proxy_base_url`` is given (an
+  OpenSandbox server-proxy endpoint, see ``AGENTSCOPE_GATEWAY_PROXY_DIRECT``),
+  every request is sent straight over HTTP to
+  ``<proxy_base_url><path>``, skipping the shim spawn entirely
+  (~0.5s per tool call). Transport failures automatically fall back
+  to the in-sandbox shim so the gateway remains usable if the proxy
+  route is unavailable.
 """
 
 from __future__ import annotations
@@ -383,6 +395,8 @@ class GatewayClient:
         gateway_log_path: str | None = None,
         auth_token: str | None = None,
         instance_nonce: str | None = None,
+        proxy_base_url: str | None = None,
+        proxy_headers: dict[str, str] | None = None,
     ) -> None:
         """Build a workspace-side gateway facade.
 
@@ -403,19 +417,32 @@ class GatewayClient:
             tmp_dir (`str`, defaults to `SANDBOX_TMP_DIR`):
                 Sandbox directory for request/response tempfiles. Must
                 be writable by the gateway process.
-            gateway_log_path (`str | None`, defaults to `None`):
-                Sandbox-side path of the gateway's stdout/stderr log
-                file. When set, :meth:`exec_request` failures trigger
-                a ``/health`` probe and — if the gateway is
-                unreachable — a tail of this log is emitted at
-                ``ERROR`` level to help diagnose crashes.
-            auth_token (`str | None`, defaults to `None`):
-                Optional bearer token forwarded to the gateway by the
-                in-sandbox shim.
-            instance_nonce (`str | None`, defaults to `None`):
-                Optional nonce expected from ``/health``. Used by shared
-                network backends to make sure the probed port belongs to the
-                gateway process that was just launched before sending auth.
+        gateway_log_path (`str | None`, defaults to `None`):
+            Sandbox-side path of the gateway's stdout/stderr log
+            file. When set, :meth:`exec_request` failures trigger
+            a ``/health`` probe and — if the gateway is
+            unreachable — a tail of this log is emitted at
+            ``ERROR`` level to help diagnose crashes.
+        auth_token (`str | None`, defaults to `None`):
+            Optional bearer token forwarded to the gateway by the
+            in-sandbox shim (and, in proxy-direct mode, sent as a
+            ``Authorization: Bearer`` header).
+        instance_nonce (`str | None`, defaults to `None`):
+            Optional nonce expected from ``/health``. Used by shared
+            network backends to make sure the probed port belongs to the
+            gateway process that was just launched before sending auth.
+        proxy_base_url (`str | None`, defaults to `None`):
+            When set, enables the host-side proxy-direct transport:
+            requests go straight to ``<proxy_base_url><path>`` over
+            HTTP instead of spawning an in-sandbox shim. Typically
+            ``http://<server>:8101/v1/sandboxes/<id>/proxy/<gateway_port>``
+            (OpenSandbox ``use_server_proxy`` endpoint). Requires the
+            gateway to have been started with ``--host 0.0.0.0``.
+            Transport failures fall back to the in-sandbox shim.
+        proxy_headers (`dict[str, str] | None`, defaults to `None`):
+            Extra headers the proxy route requires (returned by the
+            sandbox provider's endpoint descriptor, e.g. routing /
+            auth headers). Merged into every proxy-direct request.
         """
         self.backend = backend
         self.gateway_port = gateway_port
@@ -425,6 +452,10 @@ class GatewayClient:
         self.gateway_log_path = gateway_log_path
         self.auth_token = auth_token
         self.instance_nonce = instance_nonce
+        self.proxy_base_url = proxy_base_url
+        self.proxy_headers = proxy_headers or {}
+        # Lazily-created httpx client for proxy-direct transport.
+        self._http_client: Any = None
         # Health-probe timeout is kept short so the diagnostic path adds
         # little latency to the failing request. It only runs on the
         # error path, never on the hot path.
@@ -514,10 +545,14 @@ class GatewayClient:
         return client
 
     async def aclose(self) -> None:
-        """No-op kept for API parity — the transport holds no host-side
-        resources, but callers keep their shutdown idiom.
+        """Release host-side resources (the lazily-created proxy-direct
+        HTTP client). Callers keep their existing shutdown idiom.
         """
-        return
+        if self._http_client is not None:
+            try:
+                await self._http_client.aclose()
+            finally:
+                self._http_client = None
 
     # ── transport ─────────────────────────────────────────────────
 
@@ -529,9 +564,19 @@ class GatewayClient:
         body: Any = None,
         include_auth: bool = True,
     ) -> tuple[int, bytes]:
-        """Relay one HTTP request through the sandbox.
+        """Relay one HTTP request to the gateway.
 
-        Writes ``body`` (if any) to a sandbox tempfile, runs
+        When :attr:`proxy_base_url` is set (proxy-direct mode), the
+        request is sent straight over HTTP to
+        ``<proxy_base_url><path>``; a transport failure (connection
+        refused, timeout, network error) falls back to the in-sandbox
+        shim so the gateway remains usable even if the proxy route is
+        down. HTTP-level errors (4xx/5xx from the gateway) are NOT
+        transport failures and never fall back — the shim would hit
+        the same response.
+
+        Otherwise (legacy mode) the request runs inside the sandbox:
+        writes ``body`` (if any) to a sandbox tempfile, runs
         ``python3 -c <SHIM_SCRIPT> ...`` inside the sandbox via
         :meth:`BackendBase.exec_shell`, and parses the JSON envelope
         the shim prints on stdout. Inline bodies are base64-decoded;
@@ -567,6 +612,72 @@ class GatewayClient:
             `RuntimeError`:
                 Shim crash (non-zero exit / non-JSON stdout) or
                 transport failure (``status == -1``).
+        """
+        if self.proxy_base_url is not None:
+            try:
+                return await self._exec_request_http(
+                    method,
+                    path,
+                    body=body,
+                    include_auth=include_auth,
+                )
+            except Exception as exc:
+                if path != "/health":
+                    logger.warning(
+                        "Gateway proxy-direct transport failed for %s %s "
+                        "(%s); falling back to the in-sandbox shim.",
+                        method,
+                        path,
+                        exc,
+                    )
+                # Fall through to the legacy exec_shell path.
+        return await self._exec_request_shell(
+            method,
+            path,
+            body=body,
+            include_auth=include_auth,
+        )
+
+    async def _exec_request_http(
+        self,
+        method: str,
+        path: str,
+        *,
+        body: Any = None,
+        include_auth: bool = True,
+    ) -> tuple[int, bytes]:
+        """Proxy-direct transport: one plain HTTP request to
+        ``<proxy_base_url><path>``.
+
+        Raises on network-level failures only (the caller falls back to
+        the in-sandbox shim). HTTP-level status codes are returned as-is.
+        """
+        import httpx  # lazy import — httpx is optional for legacy shim mode
+
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient(timeout=self.timeout)
+        headers = dict(self.proxy_headers)
+        if include_auth and self.auth_token:
+            headers["Authorization"] = f"Bearer {self.auth_token}"
+        resp = await self._http_client.request(
+            method,
+            f"{self.proxy_base_url}{path}",
+            json=body if body is not None else None,
+            headers=headers,
+        )
+        return resp.status_code, resp.content
+
+    async def _exec_request_shell(
+        self,
+        method: str,
+        path: str,
+        *,
+        body: Any = None,
+        include_auth: bool = True,
+    ) -> tuple[int, bytes]:
+        """Legacy in-sandbox transport: relay one HTTP request through
+        an ``exec_shell``-spawned Python shim (see the original
+        :meth:`exec_request` docstring).
         """
         body_file = ""
         wrote_body_file: str | None = None
